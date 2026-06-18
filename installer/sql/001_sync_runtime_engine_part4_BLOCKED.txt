@@ -1,0 +1,19 @@
+001_sync_runtime_engine_part4.sql
+
+BLOCKED
+
+Required before generation:
+
+EXEC sp_help sync_table_registry
+
+Paste complete output.
+
+Cannot generate:
+- sp_Runtime_CreateChunks
+- sp_Runtime_GetNextChunk
+- sp_Runtime_UpdateChunkStatus
+
+Reason:
+sync_table_registry schema is not available.
+Column names must not be assumed.
+SQL Server 2014 compatible procedures must be generated from actual schema only.

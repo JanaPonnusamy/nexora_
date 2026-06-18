@@ -1,0 +1,15 @@
+STEP-1
+python install_phase20C_user_role_assignment_runtime_v1.py
+
+STEP-2
+taskkill /F /IM python.exe
+
+STEP-3
+cd E:\Nexora\backend
+python -m api.app
+
+STEP-4
+Invoke-RestMethod -Method POST http://127.0.0.1:8000/api/user-roles/seed
+
+STEP-5
+Invoke-RestMethod http://127.0.0.1:8000/api/user-roles/user/4055B2C9-30E8-4062-9D52-666EF0769D4B

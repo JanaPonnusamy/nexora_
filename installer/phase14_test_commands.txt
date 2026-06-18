@@ -1,0 +1,19 @@
+PHASE-14 TEST
+
+RUN COMMAND
+
+cd E:\Nexora\backend
+python api\app.py
+
+OR
+
+cd E:\Nexora\backend
+uvicorn api.app:app --reload
+
+TEST COMMAND
+
+curl http://127.0.0.1:8000/health
+
+EXPECTED
+
+{"status":"healthy"}

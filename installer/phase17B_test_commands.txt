@@ -1,0 +1,13 @@
+
+STEP-1
+taskkill /F /IM python.exe
+
+STEP-2
+cd E:\Nexora\backend
+python -m api.app
+
+STEP-3
+Invoke-RestMethod http://127.0.0.1:8000/api/tenants
+
+STEP-4
+Invoke-RestMethod http://127.0.0.1:8000/api/tenants/A7EB45BD-BDD7-4EE6-BD7B-61D1C7F4305D

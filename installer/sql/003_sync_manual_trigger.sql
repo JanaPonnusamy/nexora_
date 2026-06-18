@@ -1,0 +1,1 @@
+003_sync_manual_trigger.sql

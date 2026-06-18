@@ -1,0 +1,18 @@
+
+STEP-1
+python install_phase20A_role_seed_runtime_v1.py
+
+STEP-2
+taskkill /F /IM python.exe
+
+STEP-3
+cd E:\Nexora\backend
+python -m api.app
+
+STEP-4
+Invoke-RestMethod -Method POST http://127.0.0.1:8000/api/roles/seed
+
+EXPECTED
+
+status : success
+roles_created : 6

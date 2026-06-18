@@ -1,0 +1,15 @@
+STEP-1
+python install_phase19AB_authentication_database_runtime_v1.py
+
+STEP-2
+taskkill /F /IM python.exe
+
+STEP-3
+cd E:\Nexora\backend
+python -m api.app
+
+STEP-4
+Invoke-RestMethod -Method POST -Uri http://127.0.0.1:8000/api/auth/login -ContentType "application/json" -Body '{"username":"superadmin","password":"JANA1711"}'
+
+STEP-5
+Invoke-RestMethod http://127.0.0.1:8000/api/auth/me

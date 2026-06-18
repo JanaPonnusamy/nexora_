@@ -1,0 +1,22 @@
+
+STEP-1
+
+taskkill /F /IM python.exe
+
+STEP-2
+
+cd E:\Nexora\backend
+python api\app.py
+
+STEP-3 NEW POWERSHELL
+
+Invoke-RestMethod http://127.0.0.1:8000/openapi.json
+
+VERIFY
+
+/health
+/health/db
+
+STEP-4
+
+Invoke-RestMethod http://127.0.0.1:8000/health/db

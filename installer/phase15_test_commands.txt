@@ -1,0 +1,16 @@
+
+RUN
+
+cd E:\Nexora\backend
+pip install pyodbc sqlalchemy python-dotenv
+
+python api\app.py
+
+TEST
+
+Invoke-RestMethod http://127.0.0.1:8000/health/db
+
+EXPECTED
+
+status   : healthy
+database : connected

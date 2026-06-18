@@ -1,0 +1,12 @@
+STEP-1
+taskkill /F /IM python.exe
+
+STEP-2
+cd E:\Nexora\backend
+python api\app.py
+
+STEP-3
+Invoke-RestMethod -Method POST -Uri http://127.0.0.1:8000/api/auth/login -ContentType "application/json" -Body '{"username":"admin","password":"Admin123"}'
+
+STEP-4
+Invoke-RestMethod http://127.0.0.1:8000/api/auth/me

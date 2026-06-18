@@ -1,0 +1,22 @@
+
+STEP-1
+
+python install_phase18A_store_seed_runtime_v1.py
+
+STEP-2
+
+taskkill /F /IM python.exe
+
+STEP-3
+
+cd E:\Nexora\backend
+python -m api.app
+
+STEP-4
+
+Invoke-RestMethod -Method POST http://127.0.0.1:8000/api/stores/seed
+
+EXPECTED
+
+status : success
+stores_created : 5

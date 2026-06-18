@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment
+.env
+
+# Logs
+logs/
+*.log
+
+# Backup
+backup/
+
+# VS Code
+.vscode/
+
+# Pytest
+.pytest_cache/
+
+# Python virtual env
+venv/
+.venv/
+
+# SQL Server
+*.mdf
+*.ldf
+*.bak
+
+# OS
+Thumbs.db
+.DS_Store

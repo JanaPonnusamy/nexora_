@@ -1,0 +1,1 @@
+GET /api/modules\nGET /api/modules/{module_id}\n

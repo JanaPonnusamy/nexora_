@@ -1,0 +1,74 @@
+ALTER TABLE tenants
+ADD website_url VARCHAR(500) NULL;
+
+ALTER TABLE stores
+ADD gst_number VARCHAR(100) NULL;
+
+ALTER TABLE stores
+ADD drug_license_no VARCHAR(100) NULL;
+
+ALTER TABLE stores
+ADD address1 VARCHAR(500) NULL;
+
+ALTER TABLE stores
+ADD address2 VARCHAR(500) NULL;
+
+ALTER TABLE stores
+ADD city VARCHAR(100) NULL;
+
+ALTER TABLE stores
+ADD state VARCHAR(100) NULL;
+
+ALTER TABLE stores
+ADD country VARCHAR(100) NULL;
+
+ALTER TABLE stores
+ADD pincode VARCHAR(20) NULL;
+
+ALTER TABLE stores
+ADD contact_person VARCHAR(100) NULL;
+
+ALTER TABLE stores
+ADD contact_mobile VARCHAR(50) NULL;
+
+ALTER TABLE stores
+ADD contact_email VARCHAR(200) NULL;
+
+ALTER TABLE stores
+ADD store_abbreviation VARCHAR(20) NULL;
+
+ALTER TABLE stores
+ADD agent_version VARCHAR(50) NULL;
+
+ALTER TABLE stores
+ADD last_heartbeat DATETIME NULL;
+
+ALTER TABLE stores
+ADD agent_installed_at DATETIME NULL;
+
+
+ALTER TABLE users
+ADD failed_login_attempts INT NOT NULL DEFAULT 0;
+
+ALTER TABLE users
+ADD locked_until DATETIME NULL;
+
+ALTER TABLE users
+ADD force_password_change BIT NOT NULL DEFAULT 1;
+
+ALTER TABLE users
+ADD password_changed_at DATETIME NULL;
+
+ALTER TABLE users
+ADD created_by UNIQUEIDENTIFIER NULL;
+
+ALTER TABLE users
+ADD updated_by UNIQUEIDENTIFIER NULL;
+
+
+
+ALTER TABLE users
+ADD password_reset_token VARCHAR(200) NULL;
+
+ALTER TABLE users
+ADD password_reset_expiry DATETIME NULL;
