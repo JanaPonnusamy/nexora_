@@ -1,6 +1,7 @@
 import type { Tenant } from '../../types/tenant'
 import { StatusBadge } from '../common/StatusBadge'
 import { TenantActions } from './TenantActions'
+import { tenantAccent } from './tenantAccent'
 
 interface TenantCardListProps {
   tenants: Tenant[]
@@ -23,10 +24,15 @@ export function TenantCardList({
         <div className="card list-card" key={tenant.tenant_id} onClick={() => onView(tenant)}>
           <div className="card-body">
             <div className="d-flex justify-content-between align-items-start gap-2">
-              <div className="min-w-0">
-                <div className="fw-semibold text-truncate">{tenant.tenant_name}</div>
-                <div className="text-secondary small">
-                  {tenant.tenant_code} · {tenant.tenant_abbreviation}
+              <div className="d-flex align-items-center gap-2 min-w-0">
+                <span className={`tenant-avatar tenant-avatar--${tenantAccent(tenant.tenant_code)}`}>
+                  <i className="bi bi-building" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <div className="fw-semibold text-truncate">{tenant.tenant_name}</div>
+                  <div className="text-secondary small">
+                    {tenant.tenant_code} · {tenant.tenant_abbreviation}
+                  </div>
                 </div>
               </div>
               <StatusBadge active={tenant.is_active} />

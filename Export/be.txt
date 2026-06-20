@@ -1,17 +1,4 @@
 ========================================================================================================================
-FILE: requirements.txt
-========================================================================================================================
-
-fastapi
-uvicorn
-sqlalchemy
-pyodbc
-pydantic
-python-dotenv
-
-
-
-========================================================================================================================
 FILE: __init__.py
 ========================================================================================================================
 
@@ -450,6 +437,12 @@ FILE: controllers\sync_admin_controller.py
 ========================================================================================================================
 
 
+# Architecture freeze:
+#   Heartbeat = Agent Health (store_agent_registry / agent_heartbeat_log) -- never
+#               touches the store database.
+#   Sync = Business Data -- store DB is read-only and connected only during a sync
+#          execution. Store status is derived from store_agent_registry +
+#          agent_heartbeat_log + sync_execution only.
 from fastapi import APIRouter, HTTPException
 from services.sync_admin_service import SyncAdminService
 from dtos.sync_request import SyncTableRequest, SyncTableStatusRequest, ColumnMappingRequest
@@ -946,125 +939,133 @@ FILE: modules\sync\repository.py
 from config.database import get_connection
 
 
-def get_catalog_column(
-    schema_name,
-    table_name,
-    column_name
-):
+def bulk_register_schema_catalog(rows):
     conn = get_connection()
-    cur = conn.cursor()
 
-    cur.execute(
-        """
-        SELECT catalog_id
-        FROM sync.sync_schema_catalog
-        WHERE schema_name=?
-          AND table_name=?
-          AND column_name=?
-        """,
-        (
-            schema_name,
-            table_name,
-            column_name
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT schema_name,
+                   table_name,
+                   column_name
+            FROM sync.sync_schema_catalog
+            """
         )
-    )
 
-    row = cur.fetchone()
+        existing_rows = {
+            (
+                r.schema_name,
+                r.table_name,
+                r.column_name
+            ): True
+            for r in cursor.fetchall()
+        }
 
-    conn.close()
+        insert_rows = []
+        update_rows = []
 
-    return row
+        for row in rows:
 
+            key = (
+                row["schema_name"],
+                row["table_name"],
+                row["column_name"]
+            )
 
-def insert_catalog_column(column):
+            if key in existing_rows:
 
-    conn = get_connection()
-    cur = conn.cursor()
+                update_rows.append(
+                    (
+                        row.get("data_type"),
+                        row.get("max_length"),
+                        row.get("numeric_precision"),
+                        row.get("numeric_scale"),
+                        row.get("is_nullable"),
+                        row.get("ordinal_position"),
+                        row.get("source_database"),
+                        row["schema_name"],
+                        row["table_name"],
+                        row["column_name"]
+                    )
+                )
 
-    cur.execute(
-        """
-        INSERT INTO sync.sync_schema_catalog
-        (
-            schema_name,
-            table_name,
-            column_name,
-            data_type,
-            max_length,
-            precision_value,
-            scale_value,
-            is_nullable,
-            is_identity,
-            is_primary_key,
-            ordinal_position,
-            first_discovered_at,
-            last_discovered_at,
-            is_active
-        )
-        VALUES
-        (
-            ?,?,?,?,?,?,?,?,?,?,
-            ?,GETDATE(),GETDATE(),1
-        )
-        """,
-        (
-            column["schema_name"],
-            column["table_name"],
-            column["column_name"],
-            column["data_type"],
-            column["max_length"],
-            column["precision_value"],
-            column["scale_value"],
-            int(column["is_nullable"]),
-            int(column["is_identity"]),
-            int(column["is_primary_key"]),
-            column["ordinal_position"]
-        )
-    )
+            else:
 
-    conn.commit()
-    conn.close()
+                insert_rows.append(
+                    (
+                        row.get("source_database"),
+                        row["schema_name"],
+                        row["table_name"],
+                        row["column_name"],
+                        row.get("data_type"),
+                        row.get("max_length"),
+                        row.get("numeric_precision"),
+                        row.get("numeric_scale"),
+                        row.get("is_nullable"),
+                        row.get("ordinal_position")
+                    )
+                )
 
+        if insert_rows:
 
-def update_catalog_column(column):
+            cursor.executemany(
+                """
+                INSERT INTO sync.sync_schema_catalog
+                (
+                    source_database,
+                    schema_name,
+                    table_name,
+                    column_name,
+                    data_type,
+                    max_length,
+                    numeric_precision,
+                    numeric_scale,
+                    is_nullable,
+                    ordinal_position
+                )
+                VALUES
+                (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                insert_rows
+            )
 
-    conn = get_connection()
-    cur = conn.cursor()
+        if update_rows:
 
-    cur.execute(
-        """
-        UPDATE sync.sync_schema_catalog
-        SET
-            data_type=?,
-            max_length=?,
-            precision_value=?,
-            scale_value=?,
-            is_nullable=?,
-            is_identity=?,
-            is_primary_key=?,
-            ordinal_position=?,
-            last_discovered_at=GETDATE()
-        WHERE
-            schema_name=?
-            AND table_name=?
-            AND column_name=?
-        """,
-        (
-            column["data_type"],
-            column["max_length"],
-            column["precision_value"],
-            column["scale_value"],
-            int(column["is_nullable"]),
-            int(column["is_identity"]),
-            int(column["is_primary_key"]),
-            column["ordinal_position"],
-            column["schema_name"],
-            column["table_name"],
-            column["column_name"]
-        )
-    )
+            cursor.executemany(
+                """
+                UPDATE sync.sync_schema_catalog
+                   SET data_type = ?,
+                       max_length = ?,
+                       numeric_precision = ?,
+                       numeric_scale = ?,
+                       is_nullable = ?,
+                       ordinal_position = ?,
+                       source_database = ?
+                 WHERE schema_name = ?
+                   AND table_name = ?
+                   AND column_name = ?
+                """,
+                update_rows
+            )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+        return {
+            "inserted": len(insert_rows),
+            "updated": len(update_rows),
+            "total": len(rows)
+        }
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
 
 
 
@@ -1126,59 +1127,62 @@ class SchemaRegisterRequest(BaseModel):
 FILE: modules\sync\service.py
 ========================================================================================================================
 
-from .repository import (
-    get_catalog_column,
-    insert_catalog_column,
-    update_catalog_column
+from modules.sync.repository import (
+    bulk_register_schema_catalog
 )
 
 
-def register_schema(payload):
+def register_schema_catalog(payload):
 
-    result = {
-        "status": "success",
-        "tables_processed": 0,
-        "columns_processed": 0,
-        "new_columns": 0,
-        "updated_columns": 0
-    }
+    rows = []
 
-    for table in payload.tables:
+    for row in payload.columns:
 
-        result["tables_processed"] += 1
-
-        for column in table.columns:
-
-            result["columns_processed"] += 1
-
-            row = {
-                "schema_name": table.schema_name,
-                "table_name": table.table_name,
-                "column_name": column.column_name,
-                "data_type": column.data_type,
-                "max_length": column.max_length,
-                "precision_value": column.precision_value,
-                "scale_value": column.scale_value,
-                "is_nullable": column.is_nullable,
-                "is_identity": column.is_identity,
-                "is_primary_key": column.is_primary_key,
-                "ordinal_position": column.ordinal_position
+        rows.append(
+            {
+                "source_database": getattr(
+                    row,
+                    "source_database",
+                    None
+                ),
+                "schema_name": row.schema_name,
+                "table_name": row.table_name,
+                "column_name": row.column_name,
+                "data_type": getattr(
+                    row,
+                    "data_type",
+                    None
+                ),
+                "max_length": getattr(
+                    row,
+                    "max_length",
+                    None
+                ),
+                "numeric_precision": getattr(
+                    row,
+                    "numeric_precision",
+                    None
+                ),
+                "numeric_scale": getattr(
+                    row,
+                    "numeric_scale",
+                    None
+                ),
+                "is_nullable": getattr(
+                    row,
+                    "is_nullable",
+                    None
+                ),
+                "ordinal_position": getattr(
+                    row,
+                    "ordinal_position",
+                    None
+                )
             }
+        )
 
-            exists = get_catalog_column(
-                table.schema_name,
-                table.table_name,
-                column.column_name
-            )
+    return bulk_register_schema_catalog(rows)
 
-            if exists:
-                update_catalog_column(row)
-                result["updated_columns"] += 1
-            else:
-                insert_catalog_column(row)
-                result["new_columns"] += 1
-
-    return result
 
 
 ========================================================================================================================
@@ -1666,6 +1670,23 @@ class StoreRepository:
 FILE: repositories\sync_admin_repository.py
 ========================================================================================================================
 
+"""
+Sync Administration data access.
+
+ARCHITECTURE NOTE
+-----------------
+Heartbeat = Agent Health ONLY. The Store Agent (Windows service) polls HO every
+~30 seconds and writes to dbo.store_agent_registry / dbo.agent_heartbeat_log.
+The heartbeat NEVER opens the store database -- it does not read GRN, Bills,
+Sales, Purchases or any business table.
+
+Sync = Business Data. The store database is READ-ONLY and is connected only
+during an active sync execution; there is no persistent connection.
+
+Therefore store online/offline + activity is derived ONLY from
+store_agent_registry + agent_heartbeat_log + sync_execution -- never from store
+business tables.
+"""
 
 from config.database import get_connection
 
@@ -1683,7 +1704,15 @@ class SyncAdminRepository:
 
         cur.execute("SELECT COUNT(*) FROM dbo.stores WHERE is_active = 1")
         total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM dbo.stores WHERE is_active = 1 AND last_seen >= DATEADD(MINUTE, -5, GETDATE())")
+        # Online = agent heartbeat seen within the last 90s (30s poll, allow 3 misses).
+        cur.execute("""
+        SELECT COUNT(*) FROM dbo.stores s
+        WHERE s.is_active = 1 AND EXISTS (
+            SELECT 1 FROM dbo.store_agent_registry reg
+            WHERE reg.store_id = s.store_id AND reg.is_active = 1
+              AND reg.last_heartbeat >= DATEADD(SECOND, -90, GETDATE())
+        )
+        """)
         online = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM dbo.sync_execution WHERE execution_status = 'RUNNING'")
         running = cur.fetchone()[0]
@@ -1704,11 +1733,13 @@ class SyncAdminRepository:
         }
 
         cur.execute("""
-        SELECT s.store_id, s.store_code, s.store_name, s.connection_type,
-            CASE WHEN s.last_seen >= DATEADD(MINUTE, -5, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
+        SELECT s.store_id, s.store_code, s.store_name,
+            reg.connection_type,
+            CASE WHEN reg.last_heartbeat >= DATEADD(SECOND, -90, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
             (SELECT MAX(h.completed_at) FROM dbo.sync_execution_history h WHERE h.store_id = s.store_id) AS last_sync,
             (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status = 'RUNNING') AS running
         FROM dbo.stores s
+        LEFT JOIN dbo.store_agent_registry reg ON reg.store_id = s.store_id AND reg.is_active = 1
         WHERE s.is_active = 1
         ORDER BY s.store_code
         """)
@@ -1756,11 +1787,14 @@ class SyncAdminRepository:
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-        SELECT s.store_id, s.store_code, s.store_name, s.connection_type, s.last_seen,
-            CASE WHEN s.last_seen >= DATEADD(MINUTE, -5, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
+        SELECT s.store_id, s.store_code, s.store_name,
+            reg.connection_type,
+            reg.last_heartbeat,
+            CASE WHEN reg.last_heartbeat >= DATEADD(SECOND, -90, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
             (SELECT MAX(h.completed_at) FROM dbo.sync_execution_history h WHERE h.store_id = s.store_id) AS last_sync,
             (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status IN ('QUEUED','RUNNING')) AS pending_queue
         FROM dbo.stores s
+        LEFT JOIN dbo.store_agent_registry reg ON reg.store_id = s.store_id AND reg.is_active = 1
         WHERE s.is_active = 1
         ORDER BY s.store_code
         """)

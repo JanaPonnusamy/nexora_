@@ -680,6 +680,66 @@ body {
   overflow-y: auto;
 }
 
+/* ===== Tenant polish (tenant module only) ===== */
+.tenant-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 0.55rem;
+  color: #fff;
+  font-size: 1rem;
+}
+
+.tenant-avatar--0 { background: var(--bs-primary); }
+.tenant-avatar--1 { background: var(--bs-success); }
+.tenant-avatar--2 { background: var(--bs-info); }
+.tenant-avatar--3 { background: var(--bs-warning); }
+.tenant-avatar--4 { background: var(--bs-danger); }
+.tenant-avatar--5 { background: var(--bs-indigo, #6610f2); }
+
+.tenant-empty {
+  padding: 0.5rem 0 1rem;
+}
+
+.tenant-empty__hero {
+  text-align: center;
+  padding: 2.5rem 1rem 2rem;
+}
+
+.tenant-empty__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  margin-bottom: 1rem;
+  border-radius: 24px;
+  font-size: 2.25rem;
+  color: #fff;
+  background: linear-gradient(135deg, var(--bs-primary), var(--bs-indigo, #6610f2));
+  box-shadow: 0 14px 32px -14px rgba(13, 110, 253, 0.65);
+}
+
+.tenant-feature {
+  border-color: var(--bs-border-color);
+}
+
+.tenant-feature__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 0.7rem;
+  font-size: 1.25rem;
+  color: #fff;
+}
+
+.tenant-feature__icon--0 { background: var(--bs-primary); }
+.tenant-feature__icon--1 { background: var(--bs-success); }
+.tenant-feature__icon--2 { background: var(--bs-info); }
+.tenant-feature__icon--3 { background: var(--bs-warning); }
+
 /* ===== Mobile offcanvas backdrop ===== */
 .app-sidebar-backdrop {
   position: fixed;

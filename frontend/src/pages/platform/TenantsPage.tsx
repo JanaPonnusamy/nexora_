@@ -8,6 +8,7 @@ import { TenantToolbar } from '../../components/tenants/TenantToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { TenantTable } from '../../components/tenants/TenantTable'
 import { TenantCardList } from '../../components/tenants/TenantCardList'
+import { TenantEmptyState } from '../../components/tenants/TenantEmptyState'
 import { TenantFormModal } from '../../components/tenants/TenantFormModal'
 import { useTenants } from '../../hooks/useTenants'
 import type { Tenant } from '../../types/tenant'
@@ -47,13 +48,7 @@ export default function TenantsPage() {
       return <ErrorState description={error} onRetry={reload} />
     }
     if (tenants.length === 0) {
-      return (
-        <EmptyState
-          icon="bi-building"
-          title="No tenants yet"
-          description="Create your first tenant to get started."
-        />
-      )
+      return <TenantEmptyState onAdd={() => setModal({ mode: 'create' })} />
     }
     if (filtered.length === 0) {
       return (

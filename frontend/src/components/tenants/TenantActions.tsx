@@ -39,7 +39,7 @@ export function TenantActions({
           aria-label={`Edit ${tenantName}`}
           onClick={stop(onEdit)}
         >
-          <i className="bi bi-pencil" aria-hidden="true" />
+          <i className="bi bi-pencil text-warning" aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -48,7 +48,7 @@ export function TenantActions({
           aria-label={`View stores for ${tenantName}`}
           onClick={stop(onStores)}
         >
-          <i className="bi bi-shop" aria-hidden="true" />
+          <i className="bi bi-shop text-info" aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -57,7 +57,7 @@ export function TenantActions({
           aria-label={`View users for ${tenantName}`}
           onClick={stop(onUsers)}
         >
-          <i className="bi bi-people" aria-hidden="true" />
+          <i className="bi bi-people text-success" aria-hidden="true" />
         </button>
       </span>
     </div>

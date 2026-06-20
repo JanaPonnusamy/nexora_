@@ -1,53 +1,40 @@
-from .repository import (
-    get_catalog_column,
-    insert_catalog_column,
-    update_catalog_column
+from modules.sync.repository import (
+    bulk_register_schema_catalog
 )
 
 
 def register_schema(payload):
 
-    result = {
-        "status": "success",
-        "tables_processed": 0,
-        "columns_processed": 0,
-        "new_columns": 0,
-        "updated_columns": 0
-    }
+    rows = []
 
-    for table in payload.tables:
+    if isinstance(payload, list):
 
-        result["tables_processed"] += 1
+        for row in payload:
 
-        for column in table.columns:
-
-            result["columns_processed"] += 1
-
-            row = {
-                "schema_name": table.schema_name,
-                "table_name": table.table_name,
-                "column_name": column.column_name,
-                "data_type": column.data_type,
-                "max_length": column.max_length,
-                "precision_value": column.precision_value,
-                "scale_value": column.scale_value,
-                "is_nullable": column.is_nullable,
-                "is_identity": column.is_identity,
-                "is_primary_key": column.is_primary_key,
-                "ordinal_position": column.ordinal_position
-            }
-
-            exists = get_catalog_column(
-                table.schema_name,
-                table.table_name,
-                column.column_name
+            rows.append(
+                {
+                    "schema_name": row["schema_name"],
+                    "table_name": row["table_name"],
+                    "column_name": row["column_name"],
+                    "data_type": row["data_type"],
+                    "max_length": row.get("max_length"),
+                    "precision_value": row.get("precision_value"),
+                    "scale_value": row.get("scale_value"),
+                    "is_nullable": row.get("is_nullable", False),
+                    "is_identity": row.get("is_identity", False),
+                    "is_primary_key": row.get("is_primary_key", False),
+                    "ordinal_position": row["ordinal_position"],
+                    "first_discovered_store_id": row.get(
+                        "first_discovered_store_id"
+                    )
+                }
             )
 
-            if exists:
-                update_catalog_column(row)
-                result["updated_columns"] += 1
-            else:
-                insert_catalog_column(row)
-                result["new_columns"] += 1
+    result = bulk_register_schema_catalog(rows)
 
-    return result
+    return {
+        "status": "success",
+        "columns_processed": result["total"],
+        "new_columns": result["inserted"],
+        "updated_columns": result["updated"]
+    }

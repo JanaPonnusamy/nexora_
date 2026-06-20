@@ -1,6 +1,7 @@
 import type { Tenant } from '../../types/tenant'
 import { StatusBadge } from '../common/StatusBadge'
 import { TenantActions } from './TenantActions'
+import { tenantAccent } from './tenantAccent'
 
 interface TenantTableProps {
   tenants: Tenant[]
@@ -33,7 +34,14 @@ export function TenantTable({ tenants, onView, onEdit, onStores, onUsers }: Tena
             >
               <td>{tenant.tenant_code}</td>
               <td>{tenant.tenant_abbreviation}</td>
-              <td className="fw-medium">{tenant.tenant_name}</td>
+              <td className="fw-medium">
+                <span className="d-inline-flex align-items-center gap-2">
+                  <span className={`tenant-avatar tenant-avatar--${tenantAccent(tenant.tenant_code)}`}>
+                    <i className="bi bi-building" aria-hidden="true" />
+                  </span>
+                  {tenant.tenant_name}
+                </span>
+              </td>
               <td>
                 <code>{tenant.db_name}</code>
               </td>

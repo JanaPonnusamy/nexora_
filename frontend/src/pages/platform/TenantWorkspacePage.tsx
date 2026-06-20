@@ -8,6 +8,7 @@ import { StatusBadge } from '../../components/common/StatusBadge'
 import { Skeleton } from '../../components/common/Skeleton'
 import { TenantStores } from '../../components/tenants/TenantStores'
 import { TenantFormModal } from '../../components/tenants/TenantFormModal'
+import { tenantAccent } from '../../components/tenants/tenantAccent'
 import { useTenant } from '../../hooks/useTenant'
 import { useTenantStores } from '../../hooks/useTenantStores'
 import { tenantService } from '../../services/tenantService'
@@ -98,6 +99,9 @@ export default function TenantWorkspacePage() {
             </ol>
           </nav>
           <div className="workspace-header__title">
+            <span className={`tenant-avatar tenant-avatar--${tenantAccent(tenant.tenant_code)}`}>
+              <i className="bi bi-building" aria-hidden="true" />
+            </span>
             <h1 className="h3 mb-0">{tenant.tenant_name}</h1>
             <StatusBadge active={tenant.is_active} />
           </div>
