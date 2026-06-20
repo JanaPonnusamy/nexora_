@@ -12,6 +12,7 @@ import RolesPage from '../pages/platform/RolesPage'
 import RoleWorkspacePage from '../pages/platform/RoleWorkspacePage'
 import ModulesPage from '../pages/administration/ModulesPage'
 import ModuleWorkspacePage from '../pages/administration/ModuleWorkspacePage'
+import SyncAdministrationPage from '../pages/sync/SyncAdministrationPage'
 import PermissionsPage from '../pages/administration/PermissionsPage'
 import ReportsPage from '../pages/ReportsPage'
 import SettingsPage from '../pages/SettingsPage'
@@ -38,6 +39,7 @@ export function AppRouter() {
         <Route path="/platform/roles/:roleId" element={<RoleWorkspacePage />} />
         <Route path="/administration/modules" element={<ModulesPage />} />
         <Route path="/administration/modules/:moduleId" element={<ModuleWorkspacePage />} />
+        <Route path="/sync-administration" element={<SyncAdministrationPage />} />
         <Route path="/administration/permissions" element={<PermissionsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

@@ -23,6 +23,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Permissions', to: '/administration/permissions', icon: 'bi-shield-lock' },
     ],
   },
+  { kind: 'link', label: 'Sync Administration', to: '/sync-administration', icon: 'bi-arrow-repeat' },
   { kind: 'link', label: 'Reports', to: '/reports', icon: 'bi-bar-chart' },
   { kind: 'link', label: 'Settings', to: '/settings', icon: 'bi-gear' },
 ]

@@ -12,6 +12,7 @@ from controllers.module_controller import router as module_router
 from controllers.role_module_access_controller import router as role_module_access_router
 from controllers.user_controller import router as user_router, relations_router as user_relations_router
 from controllers.permission_controller import router as permission_router
+from controllers.sync_admin_controller import router as sync_admin_router
 from modules.sync.router import router as sync_router
 
 app = FastAPI(title='NEXORA API')
@@ -37,6 +38,7 @@ app.include_router(role_module_access_router)
 app.include_router(user_router)
 app.include_router(user_relations_router)
 app.include_router(permission_router)
+app.include_router(sync_admin_router)
 app.include_router(sync_router)
 
 @app.get('/health')

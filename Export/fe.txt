@@ -944,6 +944,29 @@ body {
   }
 }
 
+/* ===== Permission matrix ===== */
+.permission-matrix thead th {
+  white-space: nowrap;
+}
+
+.permission-matrix__corner,
+.permission-matrix__module {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 11rem;
+  background: var(--bs-body-bg);
+}
+
+.permission-cell {
+  width: 2.5rem;
+}
+
+.sync-catalog-list {
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
 /* ===== Mobile offcanvas backdrop ===== */
 .app-sidebar-backdrop {
   position: fixed;
@@ -1327,6 +1350,360 @@ export function Header({ onToggleNav }: HeaderProps) {
         </div>
       </div>
     </header>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\modules\ModuleActions.tsx
+========================================================================================================================
+
+import type { MouseEvent } from 'react'
+
+interface ModuleActionsProps {
+  moduleName: string
+  onView: () => void
+  onEdit: () => void
+}
+
+export function ModuleActions({ moduleName, onView, onEdit }: ModuleActionsProps) {
+  const stop = (handler: () => void) => (event: MouseEvent) => {
+    event.stopPropagation()
+    handler()
+  }
+
+  return (
+    <div className="row-actions" role="group" aria-label={`Actions for ${moduleName}`}>
+      <button
+        type="button"
+        className="btn btn-sm btn-primary row-actions__primary"
+        aria-label={`Open ${moduleName} workspace`}
+        onClick={stop(onView)}
+      >
+        <i className="bi bi-box-arrow-up-right me-1" aria-hidden="true" />
+        Open
+      </button>
+      <span className="row-actions__group">
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary"
+          title="Edit"
+          aria-label={`Edit ${moduleName}`}
+          onClick={stop(onEdit)}
+        >
+          <i className="bi bi-pencil" aria-hidden="true" />
+        </button>
+      </span>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\modules\ModuleCardList.tsx
+========================================================================================================================
+
+import type { Module } from '../../types/module'
+import { StatusBadge } from '../common/StatusBadge'
+import { ModuleActions } from './ModuleActions'
+
+interface ModuleCardListProps {
+  modules: Module[]
+  onView: (module: Module) => void
+  onEdit: (module: Module) => void
+}
+
+export function ModuleCardList({ modules, onView, onEdit }: ModuleCardListProps) {
+  return (
+    <div className="d-md-none vstack gap-2">
+      {modules.map((module) => (
+        <div className="card list-card" key={module.module_id} onClick={() => onView(module)}>
+          <div className="card-body">
+            <div className="d-flex justify-content-between align-items-start gap-2">
+              <div className="min-w-0">
+                <div className="fw-semibold text-truncate">{module.module_name}</div>
+                <div className="text-secondary small">
+                  <code>{module.module_code}</code>
+                </div>
+              </div>
+              <StatusBadge active={module.is_active} />
+            </div>
+            <div className="text-secondary small mt-2 text-truncate">
+              {module.description ?? '—'}
+            </div>
+            <div className="mt-3">
+              <ModuleActions
+                moduleName={module.module_name}
+                onView={() => onView(module)}
+                onEdit={() => onEdit(module)}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\modules\ModuleFormModal.tsx
+========================================================================================================================
+
+import { useState } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
+import type { Module, ModuleInput } from '../../types/module'
+import { moduleService } from '../../services/moduleService'
+
+interface ModuleFormModalProps {
+  mode: 'create' | 'edit'
+  module?: Module
+  onClose: () => void
+  onSaved: () => void
+}
+
+const EMPTY_FORM: ModuleInput = {
+  module_code: '',
+  module_name: '',
+  description: '',
+}
+
+export function ModuleFormModal({ mode, module, onClose, onSaved }: ModuleFormModalProps) {
+  const [form, setForm] = useState<ModuleInput>(() =>
+    module
+      ? {
+          module_code: module.module_code,
+          module_name: module.module_name,
+          description: module.description ?? '',
+        }
+      : EMPTY_FORM,
+  )
+  const [validated, setValidated] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const updateField =
+    (key: keyof ModuleInput) =>
+    (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      setForm((current) => ({ ...current, [key]: event.target.value }))
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!event.currentTarget.checkValidity()) {
+      setValidated(true)
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      if (mode === 'create') {
+        await moduleService.create(form)
+      } else if (module) {
+        await moduleService.update(module.module_id, form)
+      }
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save module')
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="modal fade show d-block" tabIndex={-1} role="dialog">
+        <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-content">
+            <form
+              className={`needs-validation${validated ? ' was-validated' : ''}`}
+              noValidate
+              onSubmit={handleSubmit}
+            >
+              <div className="modal-header">
+                <h5 className="modal-title">{mode === 'create' ? 'Add Module' : 'Edit Module'}</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close"
+                  onClick={onClose}
+                  disabled={submitting}
+                />
+              </div>
+              <div className="modal-body vstack gap-3">
+                {error && <div className="alert alert-danger py-2 mb-0">{error}</div>}
+                <div>
+                  <label htmlFor="module-code" className="form-label">
+                    Module Code
+                  </label>
+                  <input
+                    id="module-code"
+                    className="form-control"
+                    required
+                    value={form.module_code}
+                    onChange={updateField('module_code')}
+                  />
+                  <div className="invalid-feedback">Module code is required.</div>
+                </div>
+                <div>
+                  <label htmlFor="module-name" className="form-label">
+                    Module Name
+                  </label>
+                  <input
+                    id="module-name"
+                    className="form-control"
+                    required
+                    value={form.module_name}
+                    onChange={updateField('module_name')}
+                  />
+                  <div className="invalid-feedback">Module name is required.</div>
+                </div>
+                <div>
+                  <label htmlFor="module-description" className="form-label">
+                    Description
+                  </label>
+                  <textarea
+                    id="module-description"
+                    className="form-control"
+                    rows={3}
+                    value={form.description}
+                    onChange={updateField('description')}
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-link"
+                  onClick={onClose}
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />
+                      Saving…
+                    </>
+                  ) : (
+                    'Save'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop fade show" />
+    </>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\modules\ModuleTable.tsx
+========================================================================================================================
+
+import type { Module } from '../../types/module'
+import { StatusBadge } from '../common/StatusBadge'
+import { ModuleActions } from './ModuleActions'
+
+interface ModuleTableProps {
+  modules: Module[]
+  onView: (module: Module) => void
+  onEdit: (module: Module) => void
+}
+
+export function ModuleTable({ modules, onView, onEdit }: ModuleTableProps) {
+  return (
+    <div className="table-responsive d-none d-md-block">
+      <table className="table table-hover align-middle data-table">
+        <thead>
+          <tr>
+            <th scope="col">Module Code</th>
+            <th scope="col">Module Name</th>
+            <th scope="col">Description</th>
+            <th scope="col">Status</th>
+            <th scope="col" className="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {modules.map((module) => (
+            <tr key={module.module_id} className="data-row" onClick={() => onView(module)}>
+              <td>
+                <code>{module.module_code}</code>
+              </td>
+              <td className="fw-medium">{module.module_name}</td>
+              <td className="text-secondary">{module.description ?? '—'}</td>
+              <td>
+                <StatusBadge active={module.is_active} />
+              </td>
+              <td className="text-end">
+                <ModuleActions
+                  moduleName={module.module_name}
+                  onView={() => onView(module)}
+                  onEdit={() => onEdit(module)}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\modules\ModuleToolbar.tsx
+========================================================================================================================
+
+import type { ChangeEvent } from 'react'
+import type { StatusFilter } from '../tenants/TenantToolbar'
+
+interface ModuleToolbarProps {
+  search: string
+  onSearchChange: (value: string) => void
+  status: StatusFilter
+  onStatusChange: (value: StatusFilter) => void
+  onAdd: () => void
+}
+
+export function ModuleToolbar({ search, onSearchChange, status, onStatusChange, onAdd }: ModuleToolbarProps) {
+  return (
+    <div className="list-toolbar">
+      <div className="list-toolbar__search">
+        <i className="bi bi-search" aria-hidden="true" />
+        <input
+          type="search"
+          className="form-control"
+          placeholder="Search modules"
+          aria-label="Search modules"
+          value={search}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => onSearchChange(event.target.value)}
+        />
+      </div>
+
+      <select
+        className="form-select list-toolbar__filter"
+        aria-label="Filter by status"
+        value={status}
+        onChange={(event: ChangeEvent<HTMLSelectElement>) => onStatusChange(event.target.value as StatusFilter)}
+      >
+        <option value="all">All statuses</option>
+        <option value="active">Active</option>
+        <option value="inactive">Inactive</option>
+      </select>
+
+      <button type="button" className="btn btn-primary ms-auto" onClick={onAdd}>
+        <i className="bi bi-plus-lg me-1" aria-hidden="true" />
+        Add Module
+      </button>
+    </div>
   )
 }
 
@@ -1907,6 +2284,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Permissions', to: '/administration/permissions', icon: 'bi-shield-lock' },
     ],
   },
+  { kind: 'link', label: 'Sync Administration', to: '/sync-administration', icon: 'bi-arrow-repeat' },
   { kind: 'link', label: 'Reports', to: '/reports', icon: 'bi-bar-chart' },
   { kind: 'link', label: 'Settings', to: '/settings', icon: 'bi-gear' },
 ]
@@ -2494,6 +2872,829 @@ export function StoreToolbar({
         <i className="bi bi-plus-lg me-1" aria-hidden="true" />
         Add Store
       </button>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\ColumnMappingTab.tsx
+========================================================================================================================
+
+import { useEffect, useState } from 'react'
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { syncService } from '../../services/syncService'
+import { EmptyState } from '../common/EmptyState'
+import { ErrorState } from '../common/ErrorState'
+import { TableSkeleton } from '../common/TableSkeleton'
+import type { TableColumn } from '../../types/sync'
+
+type ToggleField = 'is_selected' | 'is_pk' | 'is_hash'
+
+export function ColumnMappingTab() {
+  const { data: tables, isLoading: tablesLoading, error: tablesError, reload } = useAsyncData(syncService.tables)
+  const [selectedId, setSelectedId] = useState('')
+  const [tableName, setTableName] = useState('')
+  const [columns, setColumns] = useState<TableColumn[]>([])
+  const [columnsLoading, setColumnsLoading] = useState(false)
+  const [columnsError, setColumnsError] = useState<string | null>(null)
+  const [saving, setSaving] = useState<Set<string>>(new Set())
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (tables && tables.length > 0 && !selectedId) {
+      setSelectedId(tables[0].sync_table_id)
+    }
+  }, [tables, selectedId])
+
+  useEffect(() => {
+    if (!selectedId) return
+    let active = true
+    setColumnsLoading(true)
+    setColumnsError(null)
+    syncService
+      .tableColumns(selectedId)
+      .then((result) => {
+        if (!active) return
+        setTableName(result.table_name)
+        setColumns(result.columns)
+      })
+      .catch((err) => {
+        if (!active) return
+        setColumnsError(err instanceof Error ? err.message : 'Failed to load columns')
+      })
+      .finally(() => {
+        if (active) setColumnsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [selectedId])
+
+  const toggle = async (column: TableColumn, field: ToggleField) => {
+    if (saving.has(column.column_name)) return
+    const updated: TableColumn = { ...column, [field]: !column[field] }
+    setColumns((prev) => prev.map((c) => (c.column_name === column.column_name ? updated : c)))
+    setSaving((prev) => new Set(prev).add(column.column_name))
+    setActionError(null)
+    try {
+      await syncService.saveMapping({
+        sync_table_id: selectedId,
+        table_name: tableName,
+        column_name: updated.column_name,
+        data_type: updated.data_type,
+        is_selected: updated.is_selected,
+        is_pk: updated.is_pk,
+        is_hash: updated.is_hash,
+        is_watermark: updated.is_watermark,
+        column_order: updated.column_order,
+      })
+    } catch (err) {
+      setColumns((prev) => prev.map((c) => (c.column_name === column.column_name ? column : c)))
+      setActionError(err instanceof Error ? err.message : 'Failed to save mapping')
+    } finally {
+      setSaving((prev) => {
+        const next = new Set(prev)
+        next.delete(column.column_name)
+        return next
+      })
+    }
+  }
+
+  const toggleButton = (column: TableColumn, field: ToggleField, label: string) => {
+    const on = column[field]
+    return (
+      <button
+        type="button"
+        className={`btn btn-sm permission-cell ${on ? 'btn-success' : 'btn-outline-secondary'}`}
+        aria-pressed={on}
+        aria-label={`${on ? 'Disable' : 'Enable'} ${label} for ${column.column_name}`}
+        disabled={saving.has(column.column_name)}
+        onClick={() => toggle(column, field)}
+      >
+        {saving.has(column.column_name) ? (
+          <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+        ) : (
+          <i className={`bi ${on ? 'bi-check-lg' : 'bi-x-lg'}`} aria-hidden="true" />
+        )}
+      </button>
+    )
+  }
+
+  if (tablesLoading) return <TableSkeleton rows={5} columns={6} />
+  if (tablesError || !tables) return <ErrorState description={tablesError ?? 'Failed to load tables'} onRetry={reload} />
+  if (tables.length === 0) {
+    return (
+      <EmptyState
+        icon="bi-diagram-3"
+        title="No configured tables"
+        description="Configure a sync table first, then map its columns here."
+      />
+    )
+  }
+
+  return (
+    <div>
+      <div className="mb-3 col-md-5 col-lg-4">
+        <label htmlFor="mapping-table" className="form-label">Configured Table</label>
+        <select
+          id="mapping-table"
+          className="form-select"
+          value={selectedId}
+          onChange={(e) => setSelectedId(e.target.value)}
+        >
+          {tables.map((table) => (
+            <option key={table.sync_table_id} value={table.sync_table_id}>
+              {table.table_name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {actionError && <div className="alert alert-danger py-2">{actionError}</div>}
+
+      {columnsLoading ? (
+        <TableSkeleton rows={5} columns={6} />
+      ) : columnsError ? (
+        <ErrorState description={columnsError} onRetry={() => setSelectedId(selectedId)} />
+      ) : columns.length === 0 ? (
+        <EmptyState
+          icon="bi-diagram-3"
+          title="No catalog columns"
+          description="No discovered columns for this table yet. Register the store schema to populate the catalog."
+        />
+      ) : (
+        <div className="table-responsive">
+          <table className="table table-hover align-middle data-table">
+            <thead>
+              <tr>
+                <th scope="col">Enabled</th>
+                <th scope="col">Store Column</th>
+                <th scope="col">HO Column</th>
+                <th scope="col">Store Type</th>
+                <th scope="col">HO Type</th>
+                <th scope="col">PK</th>
+                <th scope="col">Hash</th>
+              </tr>
+            </thead>
+            <tbody>
+              {columns.map((column) => (
+                <tr key={column.column_name}>
+                  <td>{toggleButton(column, 'is_selected', 'sync')}</td>
+                  <td className="fw-medium">{column.column_name}</td>
+                  <td>{column.column_name}</td>
+                  <td className="text-secondary">{column.data_type}</td>
+                  <td className="text-secondary">{column.data_type}</td>
+                  <td>{toggleButton(column, 'is_pk', 'primary key')}</td>
+                  <td>{toggleButton(column, 'is_hash', 'hash')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\ControlCenterTab.tsx
+========================================================================================================================
+
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { syncService } from '../../services/syncService'
+import { EmptyState } from '../common/EmptyState'
+import { ErrorState } from '../common/ErrorState'
+import { TableSkeleton } from '../common/TableSkeleton'
+import { AgentBadge, ConnectionType, SyncStatusBadge } from './SyncBadges'
+import { formatDateTime } from '../../utils/format'
+import type { SyncKpis } from '../../types/sync'
+
+const KPI_CONFIG: { key: keyof SyncKpis; label: string; icon: string }[] = [
+  { key: 'stores_online', label: 'Stores Online', icon: 'bi-reception-4' },
+  { key: 'stores_offline', label: 'Stores Offline', icon: 'bi-reception-0' },
+  { key: 'sync_running', label: 'Sync Running', icon: 'bi-arrow-repeat' },
+  { key: 'queued', label: 'Queued', icon: 'bi-hourglass-split' },
+  { key: 'completed_today', label: 'Completed Today', icon: 'bi-check-circle' },
+  { key: 'failed_today', label: 'Failed Today', icon: 'bi-x-circle' },
+]
+
+export function ControlCenterTab() {
+  const { data, isLoading, error, reload } = useAsyncData(syncService.controlCenter)
+
+  if (isLoading) return <TableSkeleton rows={6} columns={5} />
+  if (error || !data) return <ErrorState description={error ?? 'Failed to load control center'} onRetry={reload} />
+
+  return (
+    <div>
+      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-3 mb-4">
+        {KPI_CONFIG.map((kpi) => (
+          <div className="col" key={kpi.key}>
+            <div className="card kpi-card h-100">
+              <div className="card-body">
+                <div className="kpi-card__header">
+                  <span className="kpi-card__label">{kpi.label}</span>
+                  <span className="kpi-card__icon">
+                    <i className={`bi ${kpi.icon}`} aria-hidden="true" />
+                  </span>
+                </div>
+                <div className="kpi-card__value">{data.kpis[kpi.key]}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {data.stores.length === 0 ? (
+        <EmptyState icon="bi-shop" title="No stores" description="Active stores will appear here." />
+      ) : (
+        <div className="table-responsive">
+          <table className="table table-hover align-middle data-table">
+            <thead>
+              <tr>
+                <th scope="col">Store Code</th>
+                <th scope="col">Store Name</th>
+                <th scope="col">Connection</th>
+                <th scope="col">Agent</th>
+                <th scope="col">Activity</th>
+                <th scope="col">Last Sync</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.stores.map((store) => (
+                <tr key={store.store_id}>
+                  <td>{store.store_code}</td>
+                  <td className="fw-medium">{store.store_name}</td>
+                  <td><ConnectionType value={store.connection_type} /></td>
+                  <td><AgentBadge status={store.agent_status} /></td>
+                  <td>{store.current_activity}</td>
+                  <td>{formatDateTime(store.last_sync)}</td>
+                  <td><SyncStatusBadge status={store.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\SchedulesTab.tsx
+========================================================================================================================
+
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { syncService } from '../../services/syncService'
+import { EmptyState } from '../common/EmptyState'
+import { ErrorState } from '../common/ErrorState'
+import { TableSkeleton } from '../common/TableSkeleton'
+import { SyncStatusBadge } from './SyncBadges'
+import { formatDateTime } from '../../utils/format'
+
+export function SchedulesTab() {
+  const { data, isLoading, error, reload } = useAsyncData(syncService.schedules)
+
+  if (isLoading) return <TableSkeleton rows={5} columns={5} />
+  if (error || !data) return <ErrorState description={error ?? 'Failed to load schedules'} onRetry={reload} />
+  if (data.length === 0) {
+    return (
+      <EmptyState
+        icon="bi-calendar-event"
+        title="No schedules yet"
+        description="Sync schedules will appear here once configured."
+      />
+    )
+  }
+
+  return (
+    <div className="table-responsive">
+      <table className="table table-hover align-middle data-table">
+        <thead>
+          <tr>
+            <th scope="col">Schedule Name</th>
+            <th scope="col">Frequency</th>
+            <th scope="col">Next Run</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((schedule) => (
+            <tr key={schedule.schedule_id}>
+              <td className="fw-medium">{schedule.schedule_name}</td>
+              <td>{schedule.schedule_type ?? '—'}</td>
+              <td>{formatDateTime(schedule.start_time)}</td>
+              <td><SyncStatusBadge status={schedule.is_enabled ? 'Online' : 'Offline'} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\StoreHealthTab.tsx
+========================================================================================================================
+
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { syncService } from '../../services/syncService'
+import { EmptyState } from '../common/EmptyState'
+import { ErrorState } from '../common/ErrorState'
+import { TableSkeleton } from '../common/TableSkeleton'
+import { AgentBadge, ConnectionType } from './SyncBadges'
+import { formatDateTime } from '../../utils/format'
+
+export function StoreHealthTab() {
+  const { data, isLoading, error, reload } = useAsyncData(syncService.storeHealth)
+
+  if (isLoading) return <TableSkeleton rows={5} columns={6} />
+  if (error || !data) return <ErrorState description={error ?? 'Failed to load store health'} onRetry={reload} />
+  if (data.length === 0) {
+    return <EmptyState icon="bi-heart-pulse" title="No stores" description="Active stores will appear here." />
+  }
+
+  return (
+    <div className="table-responsive">
+      <table className="table table-hover align-middle data-table">
+        <thead>
+          <tr>
+            <th scope="col">Store Code</th>
+            <th scope="col">Store Name</th>
+            <th scope="col">Connection</th>
+            <th scope="col">Agent</th>
+            <th scope="col">Last Heartbeat</th>
+            <th scope="col">Last Sync</th>
+            <th scope="col">Pending Queue</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((store) => (
+            <tr key={store.store_id}>
+              <td>{store.store_code}</td>
+              <td className="fw-medium">{store.store_name}</td>
+              <td><ConnectionType value={store.connection_type} /></td>
+              <td><AgentBadge status={store.agent_status} /></td>
+              <td>{formatDateTime(store.last_heartbeat)}</td>
+              <td>{formatDateTime(store.last_sync)}</td>
+              <td>{store.pending_queue}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\SyncBadges.tsx
+========================================================================================================================
+
+const CONNECTION_ICONS: Record<string, string> = {
+  LAN: 'bi-ethernet',
+  WiFi: 'bi-wifi',
+  Internet: 'bi-globe2',
+  Offline: 'bi-plug',
+}
+
+export function ConnectionType({ value }: { value: string }) {
+  const icon = CONNECTION_ICONS[value] ?? 'bi-question-circle'
+  return (
+    <span className="d-inline-flex align-items-center gap-1">
+      <i className={`bi ${icon}`} aria-hidden="true" />
+      {value}
+    </span>
+  )
+}
+
+export function AgentBadge({ status }: { status: string }) {
+  const online = status === 'Online'
+  return (
+    <span className={`badge ${online ? 'text-bg-success' : 'text-bg-secondary'}`}>{status}</span>
+  )
+}
+
+const STATUS_TONE: Record<string, string> = {
+  COMPLETED: 'text-bg-success',
+  FAILED: 'text-bg-danger',
+  RUNNING: 'text-bg-primary',
+  Syncing: 'text-bg-primary',
+  QUEUED: 'text-bg-warning',
+  Online: 'text-bg-success',
+  Offline: 'text-bg-secondary',
+}
+
+export function SyncStatusBadge({ status }: { status: string | null }) {
+  if (!status) return <span className="text-secondary">—</span>
+  return <span className={`badge ${STATUS_TONE[status] ?? 'text-bg-secondary'}`}>{status}</span>
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\SyncHistoryTab.tsx
+========================================================================================================================
+
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { syncService } from '../../services/syncService'
+import { EmptyState } from '../common/EmptyState'
+import { ErrorState } from '../common/ErrorState'
+import { TableSkeleton } from '../common/TableSkeleton'
+import { SyncStatusBadge } from './SyncBadges'
+import { formatDateTime } from '../../utils/format'
+
+function formatDuration(seconds: number | null): string {
+  if (seconds === null || seconds === undefined) return '—'
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${seconds % 60}s`
+}
+
+export function SyncHistoryTab() {
+  const { data, isLoading, error, reload } = useAsyncData(syncService.history)
+
+  if (isLoading) return <TableSkeleton rows={6} columns={6} />
+  if (error || !data) return <ErrorState description={error ?? 'Failed to load sync history'} onRetry={reload} />
+  if (data.length === 0) {
+    return (
+      <EmptyState
+        icon="bi-clock-history"
+        title="No sync history yet"
+        description="Completed and failed sync runs will appear here."
+      />
+    )
+  }
+
+  return (
+    <div className="table-responsive">
+      <table className="table table-hover align-middle data-table">
+        <thead>
+          <tr>
+            <th scope="col">Execution Id</th>
+            <th scope="col">Store</th>
+            <th scope="col">Scope</th>
+            <th scope="col">Started</th>
+            <th scope="col">Completed</th>
+            <th scope="col">Duration</th>
+            <th scope="col">Rows</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((row) => (
+            <tr key={row.sync_id}>
+              <td>{row.sync_id}</td>
+              <td className="fw-medium">{row.store_name ?? row.store_code ?? '—'}</td>
+              <td>{row.scope ?? '—'}</td>
+              <td>{formatDateTime(row.started_at)}</td>
+              <td>{formatDateTime(row.completed_at)}</td>
+              <td>{formatDuration(row.duration_seconds)}</td>
+              <td>{row.rows}</td>
+              <td><SyncStatusBadge status={row.status} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\SyncTableFormModal.tsx
+========================================================================================================================
+
+import { useState } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
+import type { CatalogTable, SyncTable, SyncTableInput } from '../../types/sync'
+import { syncService } from '../../services/syncService'
+
+interface SyncTableFormModalProps {
+  mode: 'create' | 'edit'
+  table?: SyncTable
+  onClose: () => void
+  onSaved: () => void
+}
+
+interface FormState {
+  table_name: string
+  sync_mode: string
+  watermark_column: string
+  window_days: string
+  custom_where: string
+  sync_order: string
+}
+
+export function SyncTableFormModal({ mode, table, onClose, onSaved }: SyncTableFormModalProps) {
+  const [form, setForm] = useState<FormState>(() => ({
+    table_name: table?.table_name ?? '',
+    sync_mode: table?.sync_mode ?? 'UPSERT',
+    watermark_column: table?.watermark_column ?? '',
+    window_days: table?.window_days != null ? String(table.window_days) : '',
+    custom_where: table?.custom_where ?? '',
+    sync_order: table?.sync_order != null ? String(table.sync_order) : '0',
+  }))
+  const [catalogSearch, setCatalogSearch] = useState('')
+  const [catalogResults, setCatalogResults] = useState<CatalogTable[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const isRolling = form.sync_mode === 'ROLLING_WINDOW'
+
+  const update =
+    (key: keyof FormState) =>
+    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+      setForm((current) => ({ ...current, [key]: event.target.value }))
+
+  const searchCatalog = async () => {
+    setCatalogLoading(true)
+    setError(null)
+    try {
+      setCatalogResults(await syncService.catalogTables(catalogSearch.trim()))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to search catalog')
+    } finally {
+      setCatalogLoading(false)
+    }
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!form.table_name.trim()) {
+      setError('Select a table from the catalog')
+      return
+    }
+    if (isRolling && (!form.watermark_column.trim() || form.window_days.trim() === '')) {
+      setError('Watermark column and window days are required for ROLLING_WINDOW')
+      return
+    }
+
+    const input: SyncTableInput = {
+      table_name: form.table_name.trim(),
+      sync_mode: form.sync_mode,
+      watermark_column: isRolling ? form.watermark_column.trim() || null : null,
+      window_days: isRolling ? Number(form.window_days) : null,
+      custom_where: form.custom_where.trim() || null,
+      sync_order: Number(form.sync_order) || 0,
+      is_active: table?.is_active ?? true,
+    }
+
+    setSubmitting(true)
+    setError(null)
+    try {
+      if (mode === 'create') {
+        await syncService.createTable(input)
+      } else if (table) {
+        await syncService.updateTable(table.sync_table_id, input)
+      }
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save table')
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="modal fade show d-block" tabIndex={-1} role="dialog">
+        <div className="modal-dialog modal-dialog-centered modal-lg">
+          <div className="modal-content">
+            <form onSubmit={handleSubmit}>
+              <div className="modal-header">
+                <h5 className="modal-title">{mode === 'create' ? 'Add Sync Table' : 'Edit Sync Table'}</h5>
+                <button type="button" className="btn-close" aria-label="Close" onClick={onClose} disabled={submitting} />
+              </div>
+              <div className="modal-body vstack gap-3">
+                {error && <div className="alert alert-danger py-2 mb-0">{error}</div>}
+
+                {mode === 'create' && (
+                  <div>
+                    <label className="form-label">Catalog Table</label>
+                    <div className="input-group">
+                      <input
+                        type="search"
+                        className="form-control"
+                        placeholder="Search discovered tables"
+                        aria-label="Search catalog tables"
+                        value={catalogSearch}
+                        onChange={(e) => setCatalogSearch(e.target.value)}
+                      />
+                      <button type="button" className="btn btn-outline-secondary" onClick={searchCatalog} disabled={catalogLoading}>
+                        {catalogLoading ? (
+                          <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+                        ) : (
+                          <i className="bi bi-search" aria-hidden="true" />
+                        )}
+                      </button>
+                    </div>
+                    {catalogResults.length > 0 && (
+                      <ul className="list-group mt-2 sync-catalog-list">
+                        {catalogResults.map((item) => (
+                          <li key={`${item.schema_name}.${item.table_name}`} className="list-group-item p-0">
+                            <button
+                              type="button"
+                              className={`btn btn-sm w-100 text-start ${form.table_name === item.table_name ? 'btn-primary' : 'btn-link'}`}
+                              onClick={() => setForm((c) => ({ ...c, table_name: item.table_name }))}
+                            >
+                              {item.schema_name}.{item.table_name}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="form-text">Selected: {form.table_name || '—'} (tables cannot be typed manually)</div>
+                  </div>
+                )}
+
+                <div className="row g-3">
+                  <div className="col-md-6">
+                    <label htmlFor="sync-mode" className="form-label">Sync Mode</label>
+                    <select id="sync-mode" className="form-select" value={form.sync_mode} onChange={update('sync_mode')}>
+                      <option value="UPSERT">UPSERT</option>
+                      <option value="ROLLING_WINDOW">ROLLING_WINDOW</option>
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label htmlFor="sync-order" className="form-label">Sync Order</label>
+                    <input id="sync-order" type="number" className="form-control" value={form.sync_order} onChange={update('sync_order')} />
+                  </div>
+                  <div className="col-md-6">
+                    <label htmlFor="watermark" className="form-label">Watermark Column</label>
+                    <input id="watermark" className="form-control" value={form.watermark_column} onChange={update('watermark_column')} disabled={!isRolling} placeholder={isRolling ? '' : 'Not used for UPSERT'} />
+                  </div>
+                  <div className="col-md-6">
+                    <label htmlFor="window-days" className="form-label">Window Days</label>
+                    <input id="window-days" type="number" className="form-control" value={form.window_days} onChange={update('window_days')} disabled={!isRolling} placeholder={isRolling ? '' : 'Not used for UPSERT'} />
+                  </div>
+                  <div className="col-12">
+                    <label htmlFor="custom-where" className="form-label">Custom Where</label>
+                    <textarea id="custom-where" className="form-control" rows={2} value={form.custom_where} onChange={update('custom_where')} />
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-link" onClick={onClose} disabled={submitting}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />
+                      Saving…
+                    </>
+                  ) : (
+                    'Save'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop fade show" />
+    </>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\TableConfigTab.tsx
+========================================================================================================================
+
+import { useState } from 'react'
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { syncService } from '../../services/syncService'
+import { EmptyState } from '../common/EmptyState'
+import { ErrorState } from '../common/ErrorState'
+import { TableSkeleton } from '../common/TableSkeleton'
+import { SyncTableFormModal } from './SyncTableFormModal'
+import type { SyncTable } from '../../types/sync'
+
+type ModalState = { mode: 'create' } | { mode: 'edit'; table: SyncTable } | null
+
+export function TableConfigTab() {
+  const { data, isLoading, error, reload } = useAsyncData(syncService.tables)
+  const [modal, setModal] = useState<ModalState>(null)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const toggleEnabled = async (table: SyncTable) => {
+    setTogglingId(table.sync_table_id)
+    setActionError(null)
+    try {
+      await syncService.setTableStatus(table.sync_table_id, !table.is_active)
+      await reload()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to update table')
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
+  const renderBody = () => {
+    if (isLoading) return <TableSkeleton rows={5} columns={6} />
+    if (error || !data) return <ErrorState description={error ?? 'Failed to load tables'} onRetry={reload} />
+    if (data.length === 0) {
+      return (
+        <EmptyState
+          icon="bi-table"
+          title="No tables configured"
+          description="Add a discovered table from the schema catalog to start configuring sync."
+          action={{ label: 'Add Table', icon: 'bi-plus-lg', onClick: () => setModal({ mode: 'create' }) }}
+        />
+      )
+    }
+    return (
+      <div className="table-responsive">
+        <table className="table table-hover align-middle data-table">
+          <thead>
+            <tr>
+              <th scope="col">Enabled</th>
+              <th scope="col">Table Name</th>
+              <th scope="col">Sync Mode</th>
+              <th scope="col">Watermark Column</th>
+              <th scope="col">Window Days</th>
+              <th scope="col">Custom Where</th>
+              <th scope="col">Sync Order</th>
+              <th scope="col" className="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((table) => (
+              <tr key={table.sync_table_id}>
+                <td>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${table.is_active ? 'btn-success' : 'btn-outline-secondary'}`}
+                    aria-pressed={table.is_active}
+                    aria-label={`${table.is_active ? 'Disable' : 'Enable'} ${table.table_name}`}
+                    disabled={togglingId === table.sync_table_id}
+                    onClick={() => toggleEnabled(table)}
+                  >
+                    {togglingId === table.sync_table_id ? (
+                      <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+                    ) : (
+                      <i className={`bi ${table.is_active ? 'bi-check-lg' : 'bi-x-lg'}`} aria-hidden="true" />
+                    )}
+                  </button>
+                </td>
+                <td className="fw-medium">{table.table_name}</td>
+                <td><span className="badge text-bg-secondary">{table.sync_mode}</span></td>
+                <td>{table.watermark_column ?? '—'}</td>
+                <td>{table.window_days ?? '—'}</td>
+                <td className="text-secondary">{table.custom_where ?? '—'}</td>
+                <td>{table.sync_order}</td>
+                <td className="text-end">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-secondary"
+                    title="Edit"
+                    aria-label={`Edit ${table.table_name}`}
+                    onClick={() => setModal({ mode: 'edit', table })}
+                  >
+                    <i className="bi bi-pencil" aria-hidden="true" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="d-flex justify-content-end mb-3">
+        <button type="button" className="btn btn-primary" onClick={() => setModal({ mode: 'create' })}>
+          <i className="bi bi-plus-lg me-1" aria-hidden="true" />
+          Add Table
+        </button>
+      </div>
+      {actionError && <div className="alert alert-danger py-2">{actionError}</div>}
+      {renderBody()}
+      {modal && (
+        <SyncTableFormModal
+          mode={modal.mode}
+          table={modal.mode === 'edit' ? modal.table : undefined}
+          onClose={() => setModal(null)}
+          onSaved={() => {
+            setModal(null)
+            void reload()
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -3547,6 +4748,41 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
 
 ========================================================================================================================
+FILE: src\hooks\useAsyncData.ts
+========================================================================================================================
+
+import { useCallback, useEffect, useState } from 'react'
+
+/** Generic read hook: returns { data, isLoading, error, reload } for a stable fetcher. */
+export function useAsyncData<T>(fetcher: () => Promise<T>) {
+  const [data, setData] = useState<T | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      setData(await fetcher())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load data')
+    } finally {
+      setIsLoading(false)
+    }
+    // fetcher is a stable module-level service function
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  return { data, isLoading, error, reload: load }
+}
+
+
+
+========================================================================================================================
 FILE: src\hooks\useAuth.ts
 ========================================================================================================================
 
@@ -3559,6 +4795,111 @@ export function useAuth() {
     throw new Error('useAuth must be used within an AuthProvider')
   }
   return context
+}
+
+
+
+========================================================================================================================
+FILE: src\hooks\useModule.ts
+========================================================================================================================
+
+import { useCallback, useEffect, useState } from 'react'
+import type { Module } from '../types/module'
+import { moduleService } from '../services/moduleService'
+
+export function useModule(moduleId: string | undefined) {
+  const [module, setModule] = useState<Module | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    if (!moduleId) {
+      return
+    }
+    setIsLoading(true)
+    setError(null)
+    try {
+      setModule(await moduleService.getById(moduleId))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load module')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [moduleId])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  return { module, isLoading, error, reload: load }
+}
+
+
+
+========================================================================================================================
+FILE: src\hooks\useModules.ts
+========================================================================================================================
+
+import { useCallback, useEffect, useState } from 'react'
+import type { Module } from '../types/module'
+import { moduleService } from '../services/moduleService'
+
+export function useModules() {
+  const [modules, setModules] = useState<Module[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      setModules(await moduleService.list())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load modules')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  return { modules, isLoading, error, reload: load }
+}
+
+
+
+========================================================================================================================
+FILE: src\hooks\usePermissionMatrix.ts
+========================================================================================================================
+
+import { useCallback, useEffect, useState } from 'react'
+import type { PermissionMatrix } from '../types/permission'
+import { permissionService } from '../services/permissionService'
+
+export function usePermissionMatrix() {
+  const [matrix, setMatrix] = useState<PermissionMatrix | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      setMatrix(await permissionService.getMatrix())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load permission matrix')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  return { matrix, isLoading, error, reload: load }
 }
 
 
@@ -4082,18 +5423,277 @@ export default function SettingsPage() {
 FILE: src\pages\administration\ModulesPage.tsx
 ========================================================================================================================
 
+import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
+import { ErrorState } from '../../components/common/ErrorState'
+import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { ModuleToolbar } from '../../components/modules/ModuleToolbar'
+import type { StatusFilter } from '../../components/tenants/TenantToolbar'
+import { ModuleTable } from '../../components/modules/ModuleTable'
+import { ModuleCardList } from '../../components/modules/ModuleCardList'
+import { ModuleFormModal } from '../../components/modules/ModuleFormModal'
+import { useModules } from '../../hooks/useModules'
+import type { Module } from '../../types/module'
+
+type ModalState = { mode: 'create' } | { mode: 'edit'; module: Module } | null
 
 export default function ModulesPage() {
+  const navigate = useNavigate()
+  const { modules, isLoading, error, reload } = useModules()
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState<StatusFilter>('all')
+  const [modal, setModal] = useState<ModalState>(null)
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return modules.filter((module) => {
+      if (status === 'active' && !module.is_active) return false
+      if (status === 'inactive' && module.is_active) return false
+      if (!query) return true
+      return [module.module_code, module.module_name, module.description ?? ''].some((value) =>
+        value.toLowerCase().includes(query),
+      )
+    })
+  }, [modules, search, status])
+
+  const openWorkspace = (module: Module) =>
+    navigate(`/administration/modules/${module.module_id}`)
+
+  const renderContent = () => {
+    if (isLoading) {
+      return <TableSkeleton rows={6} columns={4} />
+    }
+    if (error) {
+      return <ErrorState description={error} onRetry={reload} />
+    }
+    if (modules.length === 0) {
+      return (
+        <EmptyState
+          icon="bi-boxes"
+          title="No modules yet"
+          description="Create your first module to get started."
+          action={{ label: 'Add Module', icon: 'bi-plus-lg', onClick: () => setModal({ mode: 'create' }) }}
+        />
+      )
+    }
+    if (filtered.length === 0) {
+      return (
+        <EmptyState
+          icon="bi-search"
+          title="No matching modules"
+          description="Try adjusting your search or status filter."
+        />
+      )
+    }
+    return (
+      <>
+        <ModuleTable
+          modules={filtered}
+          onView={(module) => openWorkspace(module)}
+          onEdit={(module) => setModal({ mode: 'edit', module })}
+        />
+        <ModuleCardList
+          modules={filtered}
+          onView={(module) => openWorkspace(module)}
+          onEdit={(module) => setModal({ mode: 'edit', module })}
+        />
+      </>
+    )
+  }
+
   return (
     <div className="container-fluid px-0">
       <PageHeader title="Modules" breadcrumb={['Administration', 'Modules']} />
-      <EmptyState
-        icon="bi-boxes"
-        title="No modules yet"
-        description="Module management arrives in a later phase. Registered modules will be listed here."
+      <ModuleToolbar
+        search={search}
+        onSearchChange={setSearch}
+        status={status}
+        onStatusChange={setStatus}
+        onAdd={() => setModal({ mode: 'create' })}
       />
+      {renderContent()}
+      {modal && (
+        <ModuleFormModal
+          mode={modal.mode}
+          module={modal.mode === 'edit' ? modal.module : undefined}
+          onClose={() => setModal(null)}
+          onSaved={() => {
+            setModal(null)
+            void reload()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\pages\administration\ModuleWorkspacePage.tsx
+========================================================================================================================
+
+import { useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { PageHeader } from '../../components/common/PageHeader'
+import { ErrorState } from '../../components/common/ErrorState'
+import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { StatusBadge } from '../../components/common/StatusBadge'
+import { ModuleFormModal } from '../../components/modules/ModuleFormModal'
+import { useModule } from '../../hooks/useModule'
+import { moduleService } from '../../services/moduleService'
+
+export default function ModuleWorkspacePage() {
+  const { moduleId } = useParams<{ moduleId: string }>()
+  const { module, isLoading, error, reload } = useModule(moduleId)
+  const [editing, setEditing] = useState(false)
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [statusError, setStatusError] = useState<string | null>(null)
+
+  const toggleStatus = async () => {
+    if (!module) return
+    setStatusBusy(true)
+    setStatusError(null)
+    try {
+      await moduleService.setStatus(module.module_id, !module.is_active)
+      await reload()
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : 'Failed to update status')
+    } finally {
+      setStatusBusy(false)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="container-fluid px-0">
+        <PageHeader title="Module" breadcrumb={['Administration', 'Modules', '…']} />
+        <TableSkeleton rows={4} columns={2} />
+      </div>
+    )
+  }
+
+  if (error || !module) {
+    return (
+      <div className="container-fluid px-0">
+        <PageHeader title="Module" breadcrumb={['Administration', 'Modules', 'Not found']} />
+        <ErrorState
+          title="Module unavailable"
+          description={error ?? 'This module could not be found.'}
+          onRetry={reload}
+        />
+        <div className="text-center mt-3">
+          <Link to="/administration/modules" className="btn btn-link">
+            Back to Modules
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="container-fluid px-0">
+      <div className="workspace-header">
+        <div className="workspace-header__info">
+          <nav aria-label="breadcrumb">
+            <ol className="breadcrumb small mb-2">
+              <li className="breadcrumb-item">Administration</li>
+              <li className="breadcrumb-item">
+                <Link to="/administration/modules">Modules</Link>
+              </li>
+              <li className="breadcrumb-item active" aria-current="page">
+                {module.module_name}
+              </li>
+            </ol>
+          </nav>
+          <div className="workspace-header__title">
+            <h1 className="h3 mb-0">{module.module_name}</h1>
+            <StatusBadge active={module.is_active} />
+          </div>
+          <div className="workspace-stats">
+            <span className="workspace-stat">
+              <i className="bi bi-upc-scan" aria-hidden="true" />
+              <strong className="workspace-stat__value">{module.module_code}</strong>
+              <span>Module Code</span>
+            </span>
+          </div>
+        </div>
+        <div className="workspace-header__actions">
+          <button type="button" className="btn btn-outline-secondary" onClick={() => setEditing(true)}>
+            <i className="bi bi-pencil me-1" aria-hidden="true" />
+            Edit
+          </button>
+          <button
+            type="button"
+            className={`btn ${module.is_active ? 'btn-outline-danger' : 'btn-outline-success'}`}
+            onClick={toggleStatus}
+            disabled={statusBusy}
+          >
+            {statusBusy ? (
+              <span className="spinner-border spinner-border-sm me-1" aria-hidden="true" />
+            ) : (
+              <i
+                className={`bi ${module.is_active ? 'bi-pause-circle' : 'bi-play-circle'} me-1`}
+                aria-hidden="true"
+              />
+            )}
+            {module.is_active ? 'Deactivate' : 'Activate'}
+          </button>
+        </div>
+      </div>
+
+      {statusError && <div className="alert alert-danger py-2">{statusError}</div>}
+
+      <ul className="nav nav-tabs mb-3" role="tablist">
+        <li className="nav-item" role="presentation">
+          <button
+            type="button"
+            role="tab"
+            id="tab-overview"
+            aria-selected={true}
+            aria-controls="panel-overview"
+            className="nav-link active"
+          >
+            <i className="bi bi-info-circle me-1" aria-hidden="true" />
+            Overview
+          </button>
+        </li>
+      </ul>
+
+      <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">
+        <div className="card">
+          <div className="card-body">
+            <dl className="row mb-0 workspace-details">
+              <dt className="col-sm-3">Module Code</dt>
+              <dd className="col-sm-9">
+                <code>{module.module_code}</code>
+              </dd>
+              <dt className="col-sm-3">Module Name</dt>
+              <dd className="col-sm-9">{module.module_name}</dd>
+              <dt className="col-sm-3">Description</dt>
+              <dd className="col-sm-9">{module.description ?? '—'}</dd>
+              <dt className="col-sm-3">Status</dt>
+              <dd className="col-sm-9">
+                <StatusBadge active={module.is_active} />
+              </dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+
+      {editing && (
+        <ModuleFormModal
+          mode="edit"
+          module={module}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false)
+            void reload()
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -4104,18 +5704,143 @@ export default function ModulesPage() {
 FILE: src\pages\administration\PermissionsPage.tsx
 ========================================================================================================================
 
+import { useEffect, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
+import { ErrorState } from '../../components/common/ErrorState'
+import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { usePermissionMatrix } from '../../hooks/usePermissionMatrix'
+import { permissionService } from '../../services/permissionService'
+
+const cellKey = (roleId: string, moduleId: string) => `${roleId}:${moduleId}`
 
 export default function PermissionsPage() {
+  const { matrix, isLoading, error, reload } = usePermissionMatrix()
+  const [assigned, setAssigned] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState<Set<string>>(new Set())
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (matrix) {
+      setAssigned(new Set(matrix.assignments.map((a) => cellKey(a.role_id, a.module_id))))
+    }
+  }, [matrix])
+
+  const toggle = async (roleId: string, moduleId: string) => {
+    const key = cellKey(roleId, moduleId)
+    if (busy.has(key)) return
+    const currentlyAssigned = assigned.has(key)
+
+    setAssigned((prev) => {
+      const next = new Set(prev)
+      if (currentlyAssigned) next.delete(key)
+      else next.add(key)
+      return next
+    })
+    setBusy((prev) => new Set(prev).add(key))
+    setActionError(null)
+
+    try {
+      if (currentlyAssigned) {
+        await permissionService.remove(roleId, moduleId)
+      } else {
+        await permissionService.assign(roleId, moduleId)
+      }
+    } catch (err) {
+      setAssigned((prev) => {
+        const next = new Set(prev)
+        if (currentlyAssigned) next.add(key)
+        else next.delete(key)
+        return next
+      })
+      setActionError(err instanceof Error ? err.message : 'Failed to update assignment')
+    } finally {
+      setBusy((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }
+  }
+
+  const renderContent = () => {
+    if (isLoading) {
+      return <TableSkeleton rows={6} columns={4} />
+    }
+    if (error || !matrix) {
+      return <ErrorState description={error ?? 'Failed to load permission matrix'} onRetry={reload} />
+    }
+    if (matrix.roles.length === 0 || matrix.modules.length === 0) {
+      return (
+        <EmptyState
+          icon="bi-grid-3x3-gap"
+          title="Nothing to assign yet"
+          description="Active roles and modules are required to manage permissions."
+        />
+      )
+    }
+
+    return (
+      <>
+        {actionError && <div className="alert alert-danger py-2">{actionError}</div>}
+        <div className="table-responsive">
+          <table className="table align-middle data-table permission-matrix">
+            <thead>
+              <tr>
+                <th scope="col" className="permission-matrix__corner">Module</th>
+                {matrix.roles.map((role) => (
+                  <th scope="col" key={role.role_id} className="text-center">
+                    {role.role_name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.modules.map((module) => (
+                <tr key={module.module_id}>
+                  <th scope="row" className="permission-matrix__module">
+                    <div className="fw-medium">{module.module_name}</div>
+                    <code className="small">{module.module_code}</code>
+                  </th>
+                  {matrix.roles.map((role) => {
+                    const key = cellKey(role.role_id, module.module_id)
+                    const isAssigned = assigned.has(key)
+                    const isBusy = busy.has(key)
+                    return (
+                      <td key={role.role_id} className="text-center">
+                        <button
+                          type="button"
+                          className={`btn btn-sm permission-cell ${isAssigned ? 'btn-success' : 'btn-outline-secondary'}`}
+                          aria-pressed={isAssigned}
+                          aria-label={`${isAssigned ? 'Unassign' : 'Assign'} ${module.module_name} for ${role.role_name}`}
+                          disabled={isBusy}
+                          onClick={() => toggle(role.role_id, module.module_id)}
+                        >
+                          {isBusy ? (
+                            <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+                          ) : (
+                            <i
+                              className={`bi ${isAssigned ? 'bi-check-lg' : 'bi-x-lg'}`}
+                              aria-hidden="true"
+                            />
+                          )}
+                        </button>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )
+  }
+
   return (
     <div className="container-fluid px-0">
       <PageHeader title="Permissions" breadcrumb={['Administration', 'Permissions']} />
-      <EmptyState
-        icon="bi-shield-lock"
-        title="Permission matrix coming soon"
-        description="The permission matrix arrives in a later phase. Role and module access will be managed here."
-      />
+      {renderContent()}
     </div>
   )
 }
@@ -5653,6 +7378,79 @@ export default function UserWorkspacePage() {
 
 
 ========================================================================================================================
+FILE: src\pages\sync\SyncAdministrationPage.tsx
+========================================================================================================================
+
+import { useSearchParams } from 'react-router-dom'
+import { PageHeader } from '../../components/common/PageHeader'
+import { ControlCenterTab } from '../../components/sync/ControlCenterTab'
+import { SchedulesTab } from '../../components/sync/SchedulesTab'
+import { TableConfigTab } from '../../components/sync/TableConfigTab'
+import { ColumnMappingTab } from '../../components/sync/ColumnMappingTab'
+import { StoreHealthTab } from '../../components/sync/StoreHealthTab'
+import { SyncHistoryTab } from '../../components/sync/SyncHistoryTab'
+
+type SyncTab = 'control' | 'schedules' | 'tables' | 'mapping' | 'health' | 'history'
+
+const TABS: { key: SyncTab; label: string; icon: string }[] = [
+  { key: 'control', label: 'Control Center', icon: 'bi-speedometer2' },
+  { key: 'schedules', label: 'Schedules', icon: 'bi-calendar-event' },
+  { key: 'tables', label: 'Table Configuration', icon: 'bi-table' },
+  { key: 'mapping', label: 'Column Mapping', icon: 'bi-diagram-3' },
+  { key: 'health', label: 'Store Health', icon: 'bi-heart-pulse' },
+  { key: 'history', label: 'Sync History', icon: 'bi-clock-history' },
+]
+
+const TAB_KEYS = TABS.map((t) => t.key)
+
+export default function SyncAdministrationPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const param = searchParams.get('tab')
+  const activeTab: SyncTab = (TAB_KEYS as string[]).includes(param ?? '')
+    ? (param as SyncTab)
+    : 'control'
+
+  const setTab = (tab: SyncTab) =>
+    setSearchParams(tab === 'control' ? {} : { tab }, { replace: true })
+
+  return (
+    <div className="container-fluid px-0">
+      <PageHeader title="Sync Administration" breadcrumb={['Sync Administration']} />
+
+      <ul className="nav nav-tabs mb-3 flex-nowrap overflow-auto" role="tablist">
+        {TABS.map((tab) => (
+          <li className="nav-item" key={tab.key} role="presentation">
+            <button
+              type="button"
+              role="tab"
+              id={`tab-${tab.key}`}
+              aria-selected={activeTab === tab.key}
+              aria-controls={`panel-${tab.key}`}
+              className={`nav-link text-nowrap${activeTab === tab.key ? ' active' : ''}`}
+              onClick={() => setTab(tab.key)}
+            >
+              <i className={`bi ${tab.icon} me-1`} aria-hidden="true" />
+              {tab.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
+        {activeTab === 'control' && <ControlCenterTab />}
+        {activeTab === 'schedules' && <SchedulesTab />}
+        {activeTab === 'tables' && <TableConfigTab />}
+        {activeTab === 'mapping' && <ColumnMappingTab />}
+        {activeTab === 'health' && <StoreHealthTab />}
+        {activeTab === 'history' && <SyncHistoryTab />}
+      </div>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
 FILE: src\routes\AppRouter.tsx
 ========================================================================================================================
 
@@ -5669,6 +7467,8 @@ import UserWorkspacePage from '../pages/platform/UserWorkspacePage'
 import RolesPage from '../pages/platform/RolesPage'
 import RoleWorkspacePage from '../pages/platform/RoleWorkspacePage'
 import ModulesPage from '../pages/administration/ModulesPage'
+import ModuleWorkspacePage from '../pages/administration/ModuleWorkspacePage'
+import SyncAdministrationPage from '../pages/sync/SyncAdministrationPage'
 import PermissionsPage from '../pages/administration/PermissionsPage'
 import ReportsPage from '../pages/ReportsPage'
 import SettingsPage from '../pages/SettingsPage'
@@ -5694,6 +7494,8 @@ export function AppRouter() {
         <Route path="/platform/roles" element={<RolesPage />} />
         <Route path="/platform/roles/:roleId" element={<RoleWorkspacePage />} />
         <Route path="/administration/modules" element={<ModulesPage />} />
+        <Route path="/administration/modules/:moduleId" element={<ModuleWorkspacePage />} />
+        <Route path="/sync-administration" element={<SyncAdministrationPage />} />
         <Route path="/administration/permissions" element={<PermissionsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
@@ -5793,6 +7595,47 @@ export const api = {
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
+  delete: <T>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: 'DELETE',
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+}
+
+
+
+========================================================================================================================
+FILE: src\services\moduleService.ts
+========================================================================================================================
+
+import { api } from './apiClient'
+import type { Module, ModuleInput } from '../types/module'
+
+export const moduleService = {
+  list: () => api.get<Module[]>('/api/modules'),
+  getById: (moduleId: string) => api.get<Module>(`/api/modules/${moduleId}`),
+  create: (input: ModuleInput) => api.post<Module>('/api/modules', input),
+  update: (moduleId: string, input: ModuleInput) =>
+    api.put<Module>(`/api/modules/${moduleId}`, input),
+  setStatus: (moduleId: string, isActive: boolean) =>
+    api.patch<Module>(`/api/modules/${moduleId}/status`, { is_active: isActive }),
+}
+
+
+
+========================================================================================================================
+FILE: src\services\permissionService.ts
+========================================================================================================================
+
+import { api } from './apiClient'
+import type { PermissionMatrix } from '../types/permission'
+
+export const permissionService = {
+  getMatrix: () => api.get<PermissionMatrix>('/api/permissions/matrix'),
+  assign: (roleId: string, moduleId: string) =>
+    api.post('/api/permissions/assign', { role_id: roleId, module_id: moduleId }),
+  remove: (roleId: string, moduleId: string) =>
+    api.delete('/api/permissions/assign', { role_id: roleId, module_id: moduleId }),
 }
 
 
@@ -5832,6 +7675,54 @@ export const storeService = {
     api.put<Store>(`/api/stores/${storeId}`, input),
   setStatus: (storeId: string, isActive: boolean) =>
     api.patch<Store>(`/api/stores/${storeId}/status`, { is_active: isActive }),
+}
+
+
+
+========================================================================================================================
+FILE: src\services\syncService.ts
+========================================================================================================================
+
+import { api } from './apiClient'
+import type {
+  CatalogTable,
+  ControlCenter,
+  StoreHealthRow,
+  SyncHistoryRow,
+  SyncSchedule,
+  SyncTable,
+  SyncTableInput,
+  TableColumns,
+} from '../types/sync'
+
+export const syncService = {
+  controlCenter: () => api.get<ControlCenter>('/api/sync/control-center'),
+  schedules: () => api.get<SyncSchedule[]>('/api/sync/schedules'),
+  storeHealth: () => api.get<StoreHealthRow[]>('/api/sync/store-health'),
+  history: () => api.get<SyncHistoryRow[]>('/api/sync/history'),
+  catalogTables: (search: string) =>
+    api.get<CatalogTable[]>(
+      `/api/sync/catalog/tables${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+    ),
+  tables: () => api.get<SyncTable[]>('/api/sync/tables'),
+  createTable: (input: SyncTableInput) => api.post<SyncTable>('/api/sync/tables', input),
+  updateTable: (syncTableId: string, input: SyncTableInput) =>
+    api.put<SyncTable>(`/api/sync/tables/${syncTableId}`, input),
+  setTableStatus: (syncTableId: string, isActive: boolean) =>
+    api.patch<SyncTable>(`/api/sync/tables/${syncTableId}/status`, { is_active: isActive }),
+  tableColumns: (syncTableId: string) =>
+    api.get<TableColumns>(`/api/sync/tables/${syncTableId}/columns`),
+  saveMapping: (body: {
+    sync_table_id: string
+    table_name: string
+    column_name: string
+    data_type: string
+    is_selected: boolean
+    is_pk: boolean
+    is_hash: boolean
+    is_watermark: boolean
+    column_order: number
+  }) => api.put('/api/sync/mappings', body),
 }
 
 
@@ -5943,6 +7834,26 @@ export interface AuthContextValue {
 
 
 ========================================================================================================================
+FILE: src\types\module.ts
+========================================================================================================================
+
+export interface Module {
+  module_id: string
+  module_code: string
+  module_name: string
+  description: string | null
+  is_active: boolean
+}
+
+export interface ModuleInput {
+  module_code: string
+  module_name: string
+  description: string
+}
+
+
+
+========================================================================================================================
 FILE: src\types\navigation.ts
 ========================================================================================================================
 
@@ -5955,6 +7866,34 @@ export interface NavLinkItem {
 export type NavEntry =
   | ({ kind: 'link' } & NavLinkItem)
   | { kind: 'group'; label: string; icon: string; children: NavLinkItem[] }
+
+
+
+========================================================================================================================
+FILE: src\types\permission.ts
+========================================================================================================================
+
+export interface PermissionRole {
+  role_id: string
+  role_name: string
+}
+
+export interface PermissionModule {
+  module_id: string
+  module_code: string
+  module_name: string
+}
+
+export interface PermissionAssignment {
+  role_id: string
+  module_id: string
+}
+
+export interface PermissionMatrix {
+  roles: PermissionRole[]
+  modules: PermissionModule[]
+  assignments: PermissionAssignment[]
+}
 
 
 
@@ -6033,6 +7972,112 @@ export interface TenantStore {
   store_id: string
   store_code: string
   store_name: string
+}
+
+
+
+========================================================================================================================
+FILE: src\types\sync.ts
+========================================================================================================================
+
+export interface SyncKpis {
+  stores_online: number
+  stores_offline: number
+  sync_running: number
+  queued: number
+  completed_today: number
+  failed_today: number
+}
+
+export interface ControlCenterStore {
+  store_id: string
+  store_code: string
+  store_name: string
+  connection_type: string
+  agent_status: string
+  last_sync: string | null
+  current_activity: string
+  is_syncing: boolean
+  status: string
+}
+
+export interface ControlCenter {
+  kpis: SyncKpis
+  stores: ControlCenterStore[]
+}
+
+export interface SyncSchedule {
+  schedule_id: number
+  schedule_name: string
+  schedule_type: string | null
+  start_time: string | null
+  is_enabled: boolean
+}
+
+export interface StoreHealthRow {
+  store_id: string
+  store_code: string
+  store_name: string
+  connection_type: string
+  last_heartbeat: string | null
+  agent_status: string
+  last_sync: string | null
+  pending_queue: number
+}
+
+export interface SyncHistoryRow {
+  sync_id: number
+  store_id: string | null
+  store_code: string | null
+  store_name: string | null
+  scope: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number | null
+  rows: number
+  status: string | null
+}
+
+export interface CatalogTable {
+  schema_name: string
+  table_name: string
+}
+
+export interface SyncTable {
+  sync_table_id: string
+  table_name: string
+  is_active: boolean
+  sync_mode: string
+  watermark_column: string | null
+  window_days: number | null
+  custom_where: string | null
+  sync_order: number
+}
+
+export interface SyncTableInput {
+  table_name: string
+  sync_mode: string
+  watermark_column: string | null
+  window_days: number | null
+  custom_where: string | null
+  sync_order: number
+  is_active: boolean
+}
+
+export interface TableColumn {
+  column_name: string
+  data_type: string
+  column_order: number
+  catalog_is_pk: boolean
+  is_selected: boolean
+  is_pk: boolean
+  is_hash: boolean
+  is_watermark: boolean
+}
+
+export interface TableColumns {
+  table_name: string
+  columns: TableColumn[]
 }
 
 

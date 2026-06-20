@@ -35,6 +35,8 @@ from controllers.user_role_controller import router as user_role_router
 from controllers.module_controller import router as module_router
 from controllers.role_module_access_controller import router as role_module_access_router
 from controllers.user_controller import router as user_router, relations_router as user_relations_router
+from controllers.permission_controller import router as permission_router
+from controllers.sync_admin_controller import router as sync_admin_router
 from modules.sync.router import router as sync_router
 
 app = FastAPI(title='NEXORA API')
@@ -59,6 +61,8 @@ app.include_router(module_router)
 app.include_router(role_module_access_router)
 app.include_router(user_router)
 app.include_router(user_relations_router)
+app.include_router(permission_router)
+app.include_router(sync_admin_router)
 app.include_router(sync_router)
 
 @app.get('/health')
@@ -167,6 +171,7 @@ FILE: controllers\module_controller.py
 
 from fastapi import APIRouter, HTTPException
 from services.module_service import ModuleService
+from dtos.module_request import ModuleRequest, ModuleStatusRequest
 
 router = APIRouter(prefix='/api/modules', tags=['Modules'])
 
@@ -176,18 +181,91 @@ def seed_modules():
     return {'status':'success','modules_created':count}
 
 @router.get('')
-def get_modules():
-    return ModuleService().get_all()
+def get_modules(search: str | None = None, status: str | None = None):
+    return ModuleService().get_all(search, status)
 
 @router.get('/{module_id}')
 def get_module(module_id:str):
-
     module = ModuleService().get_by_id(module_id)
-
     if not module:
         raise HTTPException(status_code=404, detail='Module not found')
-
     return module
+
+@router.post('', status_code=201)
+def create_module(body: ModuleRequest):
+    module_code = body.module_code.strip()
+    module_name = body.module_name.strip()
+    if not module_code:
+        raise HTTPException(status_code=400, detail='Module code is required')
+    if not module_name:
+        raise HTTPException(status_code=400, detail='Module name is required')
+    if ModuleService().module_code_exists(module_code):
+        raise HTTPException(status_code=400, detail='Module code already exists')
+    description = body.description.strip() if body.description else None
+    new_id = ModuleService().create(module_code, module_name, description)
+    return ModuleService().get_by_id(str(new_id))
+
+@router.put('/{module_id}')
+def update_module(module_id:str, body: ModuleRequest):
+    module_code = body.module_code.strip()
+    module_name = body.module_name.strip()
+    if not module_code:
+        raise HTTPException(status_code=400, detail='Module code is required')
+    if not module_name:
+        raise HTTPException(status_code=400, detail='Module name is required')
+    if not ModuleService().get_by_id(module_id):
+        raise HTTPException(status_code=404, detail='Module not found')
+    if ModuleService().module_code_exists(module_code, module_id):
+        raise HTTPException(status_code=400, detail='Module code already exists')
+    description = body.description.strip() if body.description else None
+    ModuleService().update(module_id, module_code, module_name, description)
+    return ModuleService().get_by_id(module_id)
+
+@router.patch('/{module_id}/status')
+def set_module_status(module_id:str, body: ModuleStatusRequest):
+    if not ModuleService().get_by_id(module_id):
+        raise HTTPException(status_code=404, detail='Module not found')
+    ModuleService().set_active(module_id, body.is_active)
+    return ModuleService().get_by_id(module_id)
+
+
+
+========================================================================================================================
+FILE: controllers\permission_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter, HTTPException
+from services.role_module_access_service import RoleModuleAccessService
+from dtos.permission_request import PermissionAssignRequest
+
+router = APIRouter(prefix="/api/permissions", tags=["Permissions"])
+
+@router.get("/matrix")
+def get_matrix():
+    return RoleModuleAccessService().get_matrix()
+
+@router.post("/assign")
+def assign_permission(body: PermissionAssignRequest):
+    svc = RoleModuleAccessService()
+    if not svc.role_exists(body.role_id):
+        raise HTTPException(status_code=404, detail="Role Not Found")
+    if not svc.module_exists(body.module_id):
+        raise HTTPException(status_code=404, detail="Module Not Found")
+    if svc.assignment_active(body.role_id, body.module_id):
+        raise HTTPException(status_code=400, detail="Assignment already exists")
+    svc.assign(body.role_id, body.module_id)
+    return {"success": True, "message": "Module assigned to role"}
+
+@router.delete("/assign")
+def remove_permission(body: PermissionAssignRequest):
+    svc = RoleModuleAccessService()
+    if not svc.role_exists(body.role_id):
+        raise HTTPException(status_code=404, detail="Role Not Found")
+    if not svc.module_exists(body.module_id):
+        raise HTTPException(status_code=404, detail="Module Not Found")
+    svc.remove(body.role_id, body.module_id)
+    return {"success": True, "message": "Module access removed"}
 
 
 
@@ -208,8 +286,8 @@ def seed_roles():
     return {"status":"success","roles_created":count}
 
 @router.get("")
-def get_roles():
-    return RoleService().get_all()
+def get_roles(search: str | None = None, status: str | None = None):
+    return RoleService().get_all(search, status)
 
 @router.get("/{role_id}")
 def get_role(role_id:str):
@@ -223,6 +301,8 @@ def create_role(body: RoleRequest):
     role_name = body.role_name.strip()
     if not role_name:
         raise HTTPException(status_code=400, detail="Role name is required")
+    if RoleService().role_name_exists(role_name):
+        raise HTTPException(status_code=400, detail="Role name already exists")
     description = body.description.strip() if body.description else None
     new_id = RoleService().create(role_name, description)
     return RoleService().get_by_id(str(new_id))
@@ -234,6 +314,8 @@ def update_role(role_id:str, body: RoleRequest):
         raise HTTPException(status_code=400, detail="Role name is required")
     if not RoleService().get_by_id(role_id):
         raise HTTPException(status_code=404, detail="Role Not Found")
+    if RoleService().role_name_exists(role_name, role_id):
+        raise HTTPException(status_code=400, detail="Role name already exists")
     description = body.description.strip() if body.description else None
     RoleService().update(role_id, role_name, description)
     return RoleService().get_by_id(role_id)
@@ -270,28 +352,202 @@ def get_role_permissions(role_id:str):
 FILE: controllers\store_controller.py
 ========================================================================================================================
 
-
 from fastapi import APIRouter
 from services.store_service import StoreService
 
-router = APIRouter(prefix="/api/stores", tags=["Stores"])
+router = APIRouter(
+    prefix="/api/stores",
+    tags=["Stores"]
+)
 
 @router.get("")
 def get_stores():
+
     rows = StoreService().get_all()
-    return [{"store_id":str(r[0]),"tenant_id":str(r[1]),"store_code":r[2],"store_name":r[3],"server_name":r[4],"database_name":r[5],"is_active":bool(r[6])} for r in rows]
+
+    return [
+        {
+            "store_id": str(r[0]),
+            "tenant_id": str(r[1]),
+            "store_code": r[2],
+            "store_name": r[3],
+            "server_name": r[4],
+            "database_name": r[5],
+            "is_active": bool(r[6])
+        }
+        for r in rows
+    ]
+
 
 @router.get("/tenant/{tenant_id}")
-def get_by_tenant(tenant_id:str):
-    rows = StoreService().get_by_tenant(tenant_id)
-    return [{"store_id":str(r[0]),"store_code":r[2],"store_name":r[3]} for r in rows]
+def get_by_tenant(tenant_id: str):
+
+    rows = StoreService().get_by_tenant(
+        tenant_id
+    )
+
+    return [
+        {
+            "store_id": str(r[0]),
+            "store_code": r[2],
+            "store_name": r[3]
+        }
+        for r in rows
+    ]
+
+
+@router.get("/{store_id}/agent-config")
+def get_agent_config(store_id: str):
+
+    row = StoreService().get_agent_config(
+        store_id
+    )
+
+    if not row:
+        return {
+            "error": "Store Not Found"
+        }
+
+    return {
+        "store_id": str(row[0]),
+        "store_code": row[1],
+        "server_name": row[2],
+        "database_name": row[3],
+        "username": row[4],
+        "password_encrypted":
+            row[5].hex()
+            if row[5]
+            else None,
+        "connection_type": row[6],
+        "agent_version": row[7],
+        "is_active": bool(row[8])
+    }
+
 
 @router.get("/{store_id}")
-def get_store(store_id:str):
+def get_store(store_id: str):
+
     r = StoreService().get_by_id(store_id)
+
     if not r:
-        return {"error":"Store Not Found"}
-    return {"store_id":str(r[0]),"tenant_id":str(r[1]),"store_code":r[2],"store_name":r[3],"server_name":r[4],"database_name":r[5],"is_active":bool(r[6])}
+        return {
+            "error": "Store Not Found"
+        }
+
+    return {
+        "store_id": str(r[0]),
+        "tenant_id": str(r[1]),
+        "store_code": r[2],
+        "store_name": r[3],
+        "server_name": r[4],
+        "database_name": r[5],
+        "is_active": bool(r[6])
+    }
+
+
+========================================================================================================================
+FILE: controllers\sync_admin_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter, HTTPException
+from services.sync_admin_service import SyncAdminService
+from dtos.sync_request import SyncTableRequest, SyncTableStatusRequest, ColumnMappingRequest
+
+router = APIRouter(prefix="/api/sync", tags=["Sync Administration"])
+
+# ===== Control Center / Schedules / Store Health / History (read-only) =====
+
+@router.get("/control-center")
+def control_center():
+    return SyncAdminService().control_center()
+
+@router.get("/schedules")
+def get_schedules():
+    return SyncAdminService().get_schedules()
+
+@router.get("/store-health")
+def store_health():
+    return SyncAdminService().store_health()
+
+@router.get("/history")
+def get_history():
+    return SyncAdminService().get_history()
+
+@router.get("/history/{sync_id}/details")
+def get_history_details(sync_id: int):
+    return SyncAdminService().get_history_details(sync_id)
+
+# ===== Table Configuration =====
+
+@router.get("/catalog/tables")
+def catalog_tables(search: str | None = None):
+    return SyncAdminService().catalog_tables(search)
+
+@router.get("/tables")
+def get_tables():
+    return SyncAdminService().get_tables()
+
+@router.get("/tables/{sync_table_id}")
+def get_table(sync_table_id: str):
+    table = SyncAdminService().get_table_by_id(sync_table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Sync table not found")
+    return table
+
+@router.post("/tables", status_code=201)
+def create_table(body: SyncTableRequest):
+    svc = SyncAdminService()
+    table_name = body.table_name.strip()
+    if not table_name:
+        raise HTTPException(status_code=400, detail="Table name is required")
+    error, watermark, window = svc.normalize_mode_fields(body.sync_mode, body.watermark_column, body.window_days)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    if svc.table_name_exists(table_name):
+        raise HTTPException(status_code=400, detail="Table is already configured")
+    new_id = svc.create_table(table_name, body.sync_mode.upper(), watermark, window,
+                              body.custom_where, body.sync_order, body.is_active)
+    return svc.get_table_by_id(str(new_id))
+
+@router.put("/tables/{sync_table_id}")
+def update_table(sync_table_id: str, body: SyncTableRequest):
+    svc = SyncAdminService()
+    table_name = body.table_name.strip()
+    if not table_name:
+        raise HTTPException(status_code=400, detail="Table name is required")
+    error, watermark, window = svc.normalize_mode_fields(body.sync_mode, body.watermark_column, body.window_days)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    if not svc.get_table_by_id(sync_table_id):
+        raise HTTPException(status_code=404, detail="Sync table not found")
+    if svc.table_name_exists(table_name, sync_table_id):
+        raise HTTPException(status_code=400, detail="Table is already configured")
+    svc.update_table(sync_table_id, table_name, body.sync_mode.upper(), watermark, window,
+                     body.custom_where, body.sync_order)
+    return svc.get_table_by_id(sync_table_id)
+
+@router.patch("/tables/{sync_table_id}/status")
+def set_table_status(sync_table_id: str, body: SyncTableStatusRequest):
+    svc = SyncAdminService()
+    if not svc.get_table_by_id(sync_table_id):
+        raise HTTPException(status_code=404, detail="Sync table not found")
+    svc.set_table_active(sync_table_id, body.is_active)
+    return svc.get_table_by_id(sync_table_id)
+
+# ===== Column Mapping =====
+
+@router.get("/tables/{sync_table_id}/columns")
+def get_table_columns(sync_table_id: str):
+    result = SyncAdminService().get_table_columns(sync_table_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Sync table not found")
+    return result
+
+@router.put("/mappings")
+def upsert_mapping(body: ColumnMappingRequest):
+    SyncAdminService().upsert_mapping(body)
+    return {"success": True, "message": "Column mapping saved"}
 
 
 
@@ -522,6 +778,36 @@ class LoginResponse(BaseModel):
 
 
 ========================================================================================================================
+FILE: dtos\module_request.py
+========================================================================================================================
+
+
+from pydantic import BaseModel
+
+class ModuleRequest(BaseModel):
+    module_code: str
+    module_name: str
+    description: str | None = None
+
+class ModuleStatusRequest(BaseModel):
+    is_active: bool
+
+
+
+========================================================================================================================
+FILE: dtos\permission_request.py
+========================================================================================================================
+
+
+from pydantic import BaseModel
+
+class PermissionAssignRequest(BaseModel):
+    role_id: str
+    module_id: str
+
+
+
+========================================================================================================================
 FILE: dtos\role_request.py
 ========================================================================================================================
 
@@ -534,6 +820,38 @@ class RoleRequest(BaseModel):
 
 class RoleStatusRequest(BaseModel):
     is_active: bool
+
+
+
+========================================================================================================================
+FILE: dtos\sync_request.py
+========================================================================================================================
+
+
+from pydantic import BaseModel
+
+class SyncTableRequest(BaseModel):
+    table_name: str
+    sync_mode: str
+    watermark_column: str | None = None
+    window_days: int | None = None
+    custom_where: str | None = None
+    sync_order: int = 0
+    is_active: bool = True
+
+class SyncTableStatusRequest(BaseModel):
+    is_active: bool
+
+class ColumnMappingRequest(BaseModel):
+    sync_table_id: str
+    table_name: str
+    column_name: str
+    data_type: str
+    is_selected: bool = False
+    is_pk: bool = False
+    is_hash: bool = False
+    is_watermark: bool = False
+    column_order: int = 0
 
 
 
@@ -876,54 +1194,104 @@ FILE: repositories\module_repository.py
 
 
 from config.database import get_connection
-import uuid
 
 class ModuleRepository:
 
     def seed_modules(self):
         return 0
 
-    def get_all_modules(self):
-
+    def get_all_modules(self, search=None, status=None):
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute(
-            'SELECT module_id,module_code,module_name,description,is_active FROM dbo.modules ORDER BY module_name'
-        )
+        where = []
+        params = []
+        if search:
+            where.append("(module_code LIKE ? OR module_name LIKE ? OR description LIKE ?)")
+            like = f"%{search}%"
+            params.extend([like, like, like])
+        if status == 'active':
+            where.append("is_active = 1")
+        elif status == 'inactive':
+            where.append("is_active = 0")
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+        cur.execute(f"""
+        SELECT module_id,module_code,module_name,description,is_active
+        FROM dbo.modules
+        {where_sql}
+        ORDER BY module_name
+        """, params)
 
         rows = cur.fetchall()
         conn.close()
-
-        result = []
-
-        for row in rows:
-            result.append({
-                'module_id': str(row[0]),
-                'module_code': row[1],
-                'module_name': row[2],
-                'description': row[3],
-                'is_active': bool(row[4])
-            })
-
-        return result
+        return [self._serialize(r) for r in rows]
 
     def get_module_by_id(self, module_id):
-
         conn = get_connection()
         cur = conn.cursor()
-
         cur.execute(
             'SELECT module_id,module_code,module_name,description,is_active FROM dbo.modules WHERE module_id=?',
             module_id
         )
-
         row = cur.fetchone()
         conn.close()
-
         if not row:
             return None
+        return self._serialize(row)
 
+    def module_code_exists(self, module_code, exclude_id=None):
+        conn = get_connection()
+        cur = conn.cursor()
+        if exclude_id:
+            cur.execute("SELECT COUNT(*) FROM dbo.modules WHERE module_code = ? AND module_id <> ?", module_code, exclude_id)
+        else:
+            cur.execute("SELECT COUNT(*) FROM dbo.modules WHERE module_code = ?", module_code)
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+
+    def create(self, module_code, module_name, description):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO dbo.modules (module_id, module_code, module_name, description, is_active)
+        OUTPUT INSERTED.module_id
+        VALUES (NEWID(), ?, ?, ?, 1)
+        """, module_code, module_name, description)
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        return new_id
+
+    def update(self, module_id, module_code, module_name, description):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.modules
+        SET module_code = ?, module_name = ?, description = ?
+        WHERE module_id = ?
+        """, module_code, module_name, description, module_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def set_active(self, module_id, is_active):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.modules
+        SET is_active = ?
+        WHERE module_id = ?
+        """, 1 if is_active else 0, module_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    @staticmethod
+    def _serialize(row):
         return {
             'module_id': str(row[0]),
             'module_code': row[1],
@@ -994,6 +1362,83 @@ class RoleModuleAccessRepository:
             "modules": modules
         }
 
+    # ----- permission matrix (role <-> module assignment) -----
+
+    def get_matrix(self):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("SELECT role_id, role_name FROM dbo.roles WHERE is_active = 1 ORDER BY role_name")
+        roles = [{"role_id": str(r[0]), "role_name": r[1]} for r in cur.fetchall()]
+
+        cur.execute("SELECT module_id, module_code, module_name FROM dbo.modules WHERE is_active = 1 ORDER BY module_name")
+        modules = [{"module_id": str(r[0]), "module_code": r[1], "module_name": r[2]} for r in cur.fetchall()]
+
+        cur.execute("SELECT DISTINCT role_id, module_id FROM dbo.role_module_access WHERE is_active = 1")
+        assignments = [{"role_id": str(r[0]), "module_id": str(r[1])} for r in cur.fetchall()]
+
+        conn.close()
+        return {"roles": roles, "modules": modules, "assignments": assignments}
+
+    def role_exists(self, role_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM dbo.roles WHERE role_id = ?", role_id)
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+
+    def module_exists(self, module_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM dbo.modules WHERE module_id = ?", module_id)
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+
+    def assignment_active(self, role_id, module_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM dbo.role_module_access WHERE role_id = ? AND module_id = ? AND is_active = 1",
+            role_id, module_id
+        )
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+
+    def assign(self, role_id, module_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM dbo.role_module_access WHERE role_id = ? AND module_id = ?",
+            role_id, module_id
+        )
+        if cur.fetchone()[0] > 0:
+            cur.execute(
+                "UPDATE dbo.role_module_access SET is_active = 1, can_view = 1 WHERE role_id = ? AND module_id = ?",
+                role_id, module_id
+            )
+        else:
+            cur.execute(
+                "INSERT INTO dbo.role_module_access (role_id, module_id, can_view, is_active) VALUES (?, ?, 1, 1)",
+                role_id, module_id
+            )
+        conn.commit()
+        conn.close()
+
+    def remove(self, role_id, module_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE dbo.role_module_access SET is_active = 0 WHERE role_id = ? AND module_id = ?",
+            role_id, module_id
+        )
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
 
 
 ========================================================================================================================
@@ -1040,11 +1485,25 @@ class RoleRepository:
 
         return inserted
 
-    def get_all_roles(self):
+    def get_all_roles(self, search=None, status=None):
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("""
+        where = []
+        params = []
+
+        if search:
+            where.append("(r.role_name LIKE ? OR r.description LIKE ?)")
+            like = f"%{search}%"
+            params.extend([like, like])
+        if status == 'active':
+            where.append("r.is_active = 1")
+        elif status == 'inactive':
+            where.append("r.is_active = 0")
+
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+        cur.execute(f"""
         SELECT
             r.role_id,
             r.role_name,
@@ -1052,8 +1511,9 @@ class RoleRepository:
             r.is_active,
             (SELECT COUNT(DISTINCT usr.user_id) FROM dbo.user_store_roles usr WHERE usr.role_id = r.role_id) AS assigned_users
         FROM dbo.roles r
+        {where_sql}
         ORDER BY r.role_name
-        """)
+        """, params)
 
         rows = cur.fetchall()
         conn.close()
@@ -1077,6 +1537,17 @@ class RoleRepository:
         row = cur.fetchone()
         conn.close()
         return row
+
+    def role_name_exists(self, role_name, exclude_id=None):
+        conn = get_connection()
+        cur = conn.cursor()
+        if exclude_id:
+            cur.execute("SELECT COUNT(*) FROM dbo.roles WHERE role_name = ? AND role_id <> ?", role_name, exclude_id)
+        else:
+            cur.execute("SELECT COUNT(*) FROM dbo.roles WHERE role_name = ?", role_name)
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
 
     def create(self, role_name, description):
         conn = get_connection()
@@ -1164,6 +1635,367 @@ class StoreRepository:
         rows = cur.fetchall()
         conn.close()
         return rows
+    
+    def get_agent_config(self, store_id):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+        SELECT
+            store_id,
+            store_code,
+            server_name,
+            database_name,
+            username,
+            password_encrypted,
+            connection_type,
+            agent_version,
+            is_active
+        FROM dbo.stores
+        WHERE store_id = ?
+        """, store_id)
+
+        row = cur.fetchone()
+
+        conn.close()
+
+        return row
+
+
+========================================================================================================================
+FILE: repositories\sync_admin_repository.py
+========================================================================================================================
+
+
+from config.database import get_connection
+
+def _iso(value):
+    return value.isoformat() if value else None
+
+
+class SyncAdminRepository:
+
+    # ===== Control Center (read-only) =====
+
+    def control_center(self):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("SELECT COUNT(*) FROM dbo.stores WHERE is_active = 1")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM dbo.stores WHERE is_active = 1 AND last_seen >= DATEADD(MINUTE, -5, GETDATE())")
+        online = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution WHERE execution_status = 'RUNNING'")
+        running = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution WHERE execution_status = 'QUEUED'")
+        queued = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution_history WHERE status = 'COMPLETED' AND CAST(started_at AS DATE) = CAST(GETDATE() AS DATE)")
+        completed_today = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution_history WHERE status = 'FAILED' AND CAST(started_at AS DATE) = CAST(GETDATE() AS DATE)")
+        failed_today = cur.fetchone()[0]
+
+        kpis = {
+            "stores_online": online,
+            "stores_offline": total - online,
+            "sync_running": running,
+            "queued": queued,
+            "completed_today": completed_today,
+            "failed_today": failed_today,
+        }
+
+        cur.execute("""
+        SELECT s.store_id, s.store_code, s.store_name, s.connection_type,
+            CASE WHEN s.last_seen >= DATEADD(MINUTE, -5, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
+            (SELECT MAX(h.completed_at) FROM dbo.sync_execution_history h WHERE h.store_id = s.store_id) AS last_sync,
+            (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status = 'RUNNING') AS running
+        FROM dbo.stores s
+        WHERE s.is_active = 1
+        ORDER BY s.store_code
+        """)
+        stores = []
+        for r in cur.fetchall():
+            is_running = (r[6] or 0) > 0
+            stores.append({
+                "store_id": str(r[0]),
+                "store_code": r[1],
+                "store_name": r[2],
+                "connection_type": r[3] or "Offline",
+                "agent_status": r[4],
+                "last_sync": _iso(r[5]),
+                "current_activity": "Syncing" if is_running else "Idle",
+                "is_syncing": is_running,
+                "status": "Syncing" if is_running else r[4],
+            })
+
+        conn.close()
+        return {"kpis": kpis, "stores": stores}
+
+    # ===== Schedules (read-only) =====
+
+    def get_schedules(self):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT schedule_id, schedule_name, schedule_type, start_time, is_enabled
+        FROM dbo.sync_schedule
+        ORDER BY schedule_name
+        """)
+        rows = [{
+            "schedule_id": r[0],
+            "schedule_name": r[1],
+            "schedule_type": r[2],
+            "start_time": _iso(r[3]),
+            "is_enabled": bool(r[4]),
+        } for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    # ===== Store Health (read-only) =====
+
+    def store_health(self):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT s.store_id, s.store_code, s.store_name, s.connection_type, s.last_seen,
+            CASE WHEN s.last_seen >= DATEADD(MINUTE, -5, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
+            (SELECT MAX(h.completed_at) FROM dbo.sync_execution_history h WHERE h.store_id = s.store_id) AS last_sync,
+            (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status IN ('QUEUED','RUNNING')) AS pending_queue
+        FROM dbo.stores s
+        WHERE s.is_active = 1
+        ORDER BY s.store_code
+        """)
+        rows = [{
+            "store_id": str(r[0]),
+            "store_code": r[1],
+            "store_name": r[2],
+            "connection_type": r[3] or "Offline",
+            "last_heartbeat": _iso(r[4]),
+            "agent_status": r[5],
+            "last_sync": _iso(r[6]),
+            "pending_queue": r[7] or 0,
+        } for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    # ===== Sync History (read-only) =====
+
+    def get_history(self):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT TOP 200 h.sync_id, h.store_id, h.sync_mode, h.started_at, h.completed_at,
+            h.duration_seconds, h.processed_rows, h.status,
+            st.store_code, st.store_name
+        FROM dbo.sync_execution_history h
+        LEFT JOIN dbo.stores st ON st.store_id = h.store_id
+        ORDER BY h.started_at DESC
+        """)
+        rows = [{
+            "sync_id": r[0],
+            "store_id": str(r[1]) if r[1] else None,
+            "store_code": r[8],
+            "store_name": r[9],
+            "scope": r[2],
+            "started_at": _iso(r[3]),
+            "completed_at": _iso(r[4]),
+            "duration_seconds": r[5],
+            "rows": r[6] or 0,
+            "status": r[7],
+        } for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    def get_history_details(self, sync_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT table_name, chunk_no, rows_processed, rows_failed, duration_seconds, status, error_message
+        FROM dbo.sync_execution_details
+        WHERE sync_id = ?
+        ORDER BY table_name, chunk_no
+        """, sync_id)
+        rows = [{
+            "table_name": r[0],
+            "chunk_no": r[1],
+            "rows_processed": r[2] or 0,
+            "rows_failed": r[3] or 0,
+            "duration_seconds": r[4],
+            "status": r[5],
+            "error_message": r[6],
+        } for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    # ===== Table Configuration (CRUD) =====
+
+    def catalog_tables(self, search=None):
+        conn = get_connection()
+        cur = conn.cursor()
+        if search:
+            cur.execute("""
+            SELECT DISTINCT schema_name, table_name
+            FROM sync.sync_schema_catalog
+            WHERE is_active = 1 AND table_name LIKE ?
+            ORDER BY table_name
+            """, f"%{search}%")
+        else:
+            cur.execute("""
+            SELECT DISTINCT schema_name, table_name
+            FROM sync.sync_schema_catalog
+            WHERE is_active = 1
+            ORDER BY table_name
+            """)
+        rows = [{"schema_name": r[0], "table_name": r[1]} for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    def get_tables(self):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT sync_table_id, table_name, is_active, sync_mode, watermark_column, window_days, custom_where, sync_order
+        FROM sync.sync_table_master
+        ORDER BY sync_order, table_name
+        """)
+        rows = [self._serialize_table(r) for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    def get_table_by_id(self, sync_table_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT sync_table_id, table_name, is_active, sync_mode, watermark_column, window_days, custom_where, sync_order
+        FROM sync.sync_table_master
+        WHERE sync_table_id = ?
+        """, sync_table_id)
+        row = cur.fetchone()
+        conn.close()
+        return self._serialize_table(row) if row else None
+
+    def table_name_exists(self, table_name, exclude_id=None):
+        conn = get_connection()
+        cur = conn.cursor()
+        if exclude_id:
+            cur.execute("SELECT COUNT(*) FROM sync.sync_table_master WHERE table_name = ? AND sync_table_id <> ?", table_name, exclude_id)
+        else:
+            cur.execute("SELECT COUNT(*) FROM sync.sync_table_master WHERE table_name = ?", table_name)
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+
+    def create_table(self, table_name, sync_mode, watermark_column, window_days, custom_where, sync_order, is_active):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO sync.sync_table_master
+            (sync_table_id, table_name, is_active, sync_mode, watermark_column, window_days, custom_where, sync_order, created_at)
+        OUTPUT INSERTED.sync_table_id
+        VALUES (NEWID(), ?, ?, ?, ?, ?, ?, ?, GETDATE())
+        """, table_name, 1 if is_active else 0, sync_mode, watermark_column, window_days, custom_where, sync_order)
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        return new_id
+
+    def update_table(self, sync_table_id, table_name, sync_mode, watermark_column, window_days, custom_where, sync_order):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE sync.sync_table_master
+        SET table_name = ?, sync_mode = ?, watermark_column = ?, window_days = ?, custom_where = ?, sync_order = ?
+        WHERE sync_table_id = ?
+        """, table_name, sync_mode, watermark_column, window_days, custom_where, sync_order, sync_table_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def set_table_active(self, sync_table_id, is_active):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE sync.sync_table_master SET is_active = ? WHERE sync_table_id = ?", 1 if is_active else 0, sync_table_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    @staticmethod
+    def _serialize_table(r):
+        return {
+            "sync_table_id": str(r[0]),
+            "table_name": r[1],
+            "is_active": bool(r[2]),
+            "sync_mode": r[3],
+            "watermark_column": r[4],
+            "window_days": r[5],
+            "custom_where": r[6],
+            "sync_order": r[7],
+        }
+
+    # ===== Column Mapping (CRUD) =====
+
+    def get_table_columns(self, sync_table_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT table_name FROM sync.sync_table_master WHERE sync_table_id = ?", sync_table_id)
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return None
+        table_name = row[0]
+
+        cur.execute("""
+        SELECT c.column_name, c.data_type, c.ordinal_position, c.is_primary_key,
+            m.mapping_id, m.is_selected, m.is_pk, m.is_hash, m.is_watermark
+        FROM sync.sync_schema_catalog c
+        LEFT JOIN sync.sync_column_mapping m
+            ON m.sync_table_id = ? AND m.column_name = c.column_name
+        WHERE c.table_name = ? AND c.is_active = 1
+        ORDER BY c.ordinal_position
+        """, sync_table_id, table_name)
+
+        columns = []
+        for r in cur.fetchall():
+            has_mapping = r[4] is not None
+            columns.append({
+                "column_name": r[0],
+                "data_type": r[1],
+                "column_order": r[2],
+                "catalog_is_pk": bool(r[3]),
+                "is_selected": bool(r[5]) if has_mapping else False,
+                "is_pk": bool(r[6]) if has_mapping else bool(r[3]),
+                "is_hash": bool(r[7]) if has_mapping else False,
+                "is_watermark": bool(r[8]) if has_mapping else False,
+            })
+        conn.close()
+        return {"table_name": table_name, "columns": columns}
+
+    def upsert_mapping(self, sync_table_id, table_name, column_name, data_type,
+                       is_selected, is_pk, is_hash, is_watermark, column_order):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM sync.sync_column_mapping WHERE sync_table_id = ? AND column_name = ?",
+            sync_table_id, column_name
+        )
+        exists = cur.fetchone()[0] > 0
+        if exists:
+            cur.execute("""
+            UPDATE sync.sync_column_mapping
+            SET data_type = ?, is_selected = ?, is_pk = ?, is_hash = ?, is_watermark = ?, column_order = ?
+            WHERE sync_table_id = ? AND column_name = ?
+            """, data_type, int(is_selected), int(is_pk), int(is_hash), int(is_watermark), column_order,
+                 sync_table_id, column_name)
+        else:
+            cur.execute("""
+            INSERT INTO sync.sync_column_mapping
+                (mapping_id, sync_table_id, table_name, column_name, data_type, is_selected, is_pk, is_hash, is_watermark, column_order, created_at)
+            VALUES (NEWID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE())
+            """, sync_table_id, table_name, column_name, data_type,
+                 int(is_selected), int(is_pk), int(is_hash), int(is_watermark), column_order)
+        conn.commit()
+        conn.close()
 
 
 
@@ -1517,11 +2349,23 @@ class ModuleService:
     def seed_modules(self):
         return ModuleRepository().seed_modules()
 
-    def get_all(self):
-        return ModuleRepository().get_all_modules()
+    def get_all(self, search=None, status=None):
+        return ModuleRepository().get_all_modules(search, status)
 
     def get_by_id(self, module_id):
         return ModuleRepository().get_module_by_id(module_id)
+
+    def module_code_exists(self, module_code, exclude_id=None):
+        return ModuleRepository().module_code_exists(module_code, exclude_id)
+
+    def create(self, module_code, module_name, description):
+        return ModuleRepository().create(module_code, module_name, description)
+
+    def update(self, module_id, module_code, module_name, description):
+        return ModuleRepository().update(module_id, module_code, module_name, description)
+
+    def set_active(self, module_id, is_active):
+        return ModuleRepository().set_active(module_id, is_active)
 
 
 
@@ -1539,6 +2383,26 @@ class RoleModuleAccessService:
     def get_role_permission_matrix(self, role_id):
         return RoleModuleAccessRepository().get_role_permission_matrix(role_id)
 
+    # ----- permission matrix (role <-> module assignment) -----
+
+    def get_matrix(self):
+        return RoleModuleAccessRepository().get_matrix()
+
+    def role_exists(self, role_id):
+        return RoleModuleAccessRepository().role_exists(role_id)
+
+    def module_exists(self, module_id):
+        return RoleModuleAccessRepository().module_exists(module_id)
+
+    def assignment_active(self, role_id, module_id):
+        return RoleModuleAccessRepository().assignment_active(role_id, module_id)
+
+    def assign(self, role_id, module_id):
+        return RoleModuleAccessRepository().assign(role_id, module_id)
+
+    def remove(self, role_id, module_id):
+        return RoleModuleAccessRepository().remove(role_id, module_id)
+
 
 
 ========================================================================================================================
@@ -1553,8 +2417,8 @@ class RoleService:
     def seed_roles(self):
         return RoleRepository().seed_roles()
 
-    def get_all(self):
-        rows = RoleRepository().get_all_roles()
+    def get_all(self, search=None, status=None):
+        rows = RoleRepository().get_all_roles(search, status)
         return [self._serialize(r) for r in rows]
 
     def get_by_id(self, role_id):
@@ -1562,6 +2426,9 @@ class RoleService:
         if not r:
             return None
         return self._serialize(r)
+
+    def role_name_exists(self, role_name, exclude_id=None):
+        return RoleRepository().role_name_exists(role_name, exclude_id)
 
     def create(self, role_name, description):
         return RoleRepository().create(role_name, description)
@@ -1585,13 +2452,42 @@ class RoleService:
 
 
 ========================================================================================================================
-FILE: services\store_service.py
+FILE: services\store_crypto_service.py
 ========================================================================================================================
 
+from cryptography.fernet import Fernet
+
+class StoreCryptoService:
+
+    @staticmethod
+    def generate_key():
+        return Fernet.generate_key()
+
+    @staticmethod
+    def encrypt_password(password: str, key: bytes) -> bytes:
+        return Fernet(key).encrypt(
+            password.encode("utf-8")
+        )
+
+    @staticmethod
+    def decrypt_password(
+        encrypted_password: bytes,
+        key: bytes
+    ) -> str:
+        return Fernet(key).decrypt(
+            encrypted_password
+        ).decode("utf-8")
+
+
+
+========================================================================================================================
+FILE: services\store_service.py
+========================================================================================================================
 
 from repositories.store_repository import StoreRepository
 
 class StoreService:
+
     def get_all(self):
         return StoreRepository().get_all()
 
@@ -1600,6 +2496,82 @@ class StoreService:
 
     def get_by_tenant(self, tenant_id):
         return StoreRepository().get_by_tenant(tenant_id)
+
+    def get_agent_config(self, store_id):
+        return StoreRepository().get_agent_config(store_id)
+
+
+========================================================================================================================
+FILE: services\sync_admin_service.py
+========================================================================================================================
+
+
+from repositories.sync_admin_repository import SyncAdminRepository
+
+class SyncAdminService:
+
+    # read-only
+    def control_center(self):
+        return SyncAdminRepository().control_center()
+
+    def get_schedules(self):
+        return SyncAdminRepository().get_schedules()
+
+    def store_health(self):
+        return SyncAdminRepository().store_health()
+
+    def get_history(self):
+        return SyncAdminRepository().get_history()
+
+    def get_history_details(self, sync_id):
+        return SyncAdminRepository().get_history_details(sync_id)
+
+    # table configuration
+    def catalog_tables(self, search=None):
+        return SyncAdminRepository().catalog_tables(search)
+
+    def get_tables(self):
+        return SyncAdminRepository().get_tables()
+
+    def get_table_by_id(self, sync_table_id):
+        return SyncAdminRepository().get_table_by_id(sync_table_id)
+
+    def table_name_exists(self, table_name, exclude_id=None):
+        return SyncAdminRepository().table_name_exists(table_name, exclude_id)
+
+    def create_table(self, table_name, sync_mode, watermark_column, window_days, custom_where, sync_order, is_active):
+        return SyncAdminRepository().create_table(table_name, sync_mode, watermark_column, window_days, custom_where, sync_order, is_active)
+
+    def update_table(self, sync_table_id, table_name, sync_mode, watermark_column, window_days, custom_where, sync_order):
+        return SyncAdminRepository().update_table(sync_table_id, table_name, sync_mode, watermark_column, window_days, custom_where, sync_order)
+
+    def set_table_active(self, sync_table_id, is_active):
+        return SyncAdminRepository().set_table_active(sync_table_id, is_active)
+
+    # column mapping
+    def get_table_columns(self, sync_table_id):
+        return SyncAdminRepository().get_table_columns(sync_table_id)
+
+    def upsert_mapping(self, body):
+        return SyncAdminRepository().upsert_mapping(
+            body.sync_table_id, body.table_name, body.column_name, body.data_type,
+            body.is_selected, body.is_pk, body.is_hash, body.is_watermark, body.column_order
+        )
+
+    @staticmethod
+    def normalize_mode_fields(sync_mode, watermark_column, window_days):
+        """UPSERT clears watermark/window; ROLLING_WINDOW requires them. Returns (error, watermark, window)."""
+        mode = (sync_mode or "").upper()
+        if mode == "UPSERT":
+            return None, None, None
+        if mode == "ROLLING_WINDOW":
+            wc = (watermark_column or "").strip() or None
+            if not wc:
+                return "Watermark column is required for ROLLING_WINDOW", None, None
+            if window_days is None:
+                return "Window days is required for ROLLING_WINDOW", None, None
+            return None, wc, window_days
+        return "Sync mode must be UPSERT or ROLLING_WINDOW", None, None
 
 
 

@@ -675,6 +675,11 @@ body {
   width: 2.5rem;
 }
 
+.sync-catalog-list {
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
 /* ===== Mobile offcanvas backdrop ===== */
 .app-sidebar-backdrop {
   position: fixed;
