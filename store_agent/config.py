@@ -1,0 +1,7 @@
+SQL_SERVER = ""
+SQL_DATABASE = ""
+SQL_USERNAME = ""
+SQL_PASSWORD = ""
+
+STORE_ID = ""
+HO_API_URL = "http://127.0.0.1:8000"

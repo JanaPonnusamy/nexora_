@@ -39,3 +39,28 @@ class StoreRepository:
         rows = cur.fetchall()
         conn.close()
         return rows
+    
+    def get_agent_config(self, store_id):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+        SELECT
+            store_id,
+            store_code,
+            server_name,
+            database_name,
+            username,
+            password_encrypted,
+            connection_type,
+            agent_version,
+            is_active
+        FROM dbo.stores
+        WHERE store_id = ?
+        """, store_id)
+
+        row = cur.fetchone()
+
+        conn.close()
+
+        return row

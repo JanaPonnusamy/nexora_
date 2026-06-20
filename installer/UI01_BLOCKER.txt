@@ -1,0 +1,11 @@
+UI-01 INSTALLER NOT GENERATED
+
+Missing required inputs:
+- Frontend target path
+- React JS or React TS
+- Existing frontend folder status (new/existing)
+- Vite or CRA
+- Router version
+- Preferred package manager (npm/pnpm)
+
+Provide these and generate full installer in next step.

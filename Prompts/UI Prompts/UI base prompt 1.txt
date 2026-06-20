@@ -1,0 +1,457 @@
+# NEXORA PLATFORM
+
+# UI-01B PLATFORM SHELL IMPLEMENTATION
+
+# CLAUDE CODE EXECUTION PROMPT
+
+Project Root:
+
+E:\Nexora\frontend
+
+Technology Stack:
+
+* React 18
+* TypeScript
+* Vite
+* Bootstrap 5
+* Bootstrap Icons
+* React Router DOM
+* Context API
+* LocalStorage
+* JWT Ready Authentication Framework
+
+IMPORTANT RULES
+
+1. Generate production-ready code only.
+2. No mockups.
+3. No placeholders.
+4. No TODO comments.
+5. No demo content.
+6. No sample dashboards.
+7. Mobile-first responsive implementation.
+8. Clean enterprise design.
+9. Create complete working implementation.
+10. Use Bootstrap 5 components wherever possible.
+11. No Material UI.
+12. No Tailwind.
+13. No Chakra.
+14. No Ant Design.
+15. No inline styles unless unavoidable.
+16. Use reusable components.
+17. Create proper folder structure.
+18. Build must compile without errors.
+19. Dark and Light theme must be fully functional.
+20. All code must be TypeScript.
+
+==================================================
+PHASE
+=====
+
+UI-01B
+
+NEXORA PLATFORM SHELL
+
+==================================================
+OBJECTIVE
+=========
+
+Create the complete frontend application shell that will be used by all future modules.
+
+The shell must be enterprise-grade.
+
+The shell must support:
+
+* Desktop
+* Large Laptop
+* Laptop
+* Tablet
+* Mobile
+
+without layout breakage.
+
+==================================================
+RESPONSIVE DESIGN FREEZE
+========================
+
+Desktop
+
+> = 1400px
+
+Large Laptop
+1200px - 1399px
+
+Laptop
+992px - 1199px
+
+Tablet
+768px - 991px
+
+Mobile
+< 768px
+
+==================================================
+SIDEBAR BEHAVIOR
+================
+
+Desktop
+
+Expanded Sidebar
+
+Tablet
+
+Collapsed Sidebar
+
+Mobile
+
+Bootstrap Offcanvas Sidebar
+
+==================================================
+THEME SYSTEM
+============
+
+Support:
+
+* Dark Theme
+* Light Theme
+
+Requirements:
+
+* Theme toggle in header
+* Persist using localStorage
+* Load saved theme on startup
+* Fall back to system theme
+* Apply theme globally
+
+==================================================
+LAYOUT STRUCTURE
+================
+
+Header
+
+Sidebar
+
+Main Content
+
+Status Bar
+
+Structure:
+
++----------------------------------------------------+
+| Header                                             |
++----------------------------------------------------+
+| Sidebar | Main Content                             |
+|         |                                          |
+|         |                                          |
+|         |                                          |
++----------------------------------------------------+
+| Status Bar                                         |
++----------------------------------------------------+
+
+==================================================
+HEADER
+======
+
+Responsive Header
+
+Include:
+
+* Application Logo
+* Breadcrumb
+* Theme Toggle
+* Notification Icon
+* User Profile Menu
+* Logout Menu
+
+Mobile:
+
+* Hamburger Menu
+* Logo
+* Theme Toggle
+* User Menu
+
+==================================================
+STATUS BAR
+==========
+
+Bottom fixed status bar
+
+Display:
+
+* Current Theme
+* Build Version
+* Current User
+* Current Tenant
+
+Responsive
+
+==================================================
+SIDEBAR MENU
+============
+
+NO SIDEBAR SCROLLING ON DESKTOP
+
+Only Root Modules Visible
+
+Dashboard
+
+Platform
+
+Sync
+
+Procurement
+
+Inventory
+
+Reports
+
+Settings
+
+==================================================
+PLATFORM SUB MENU
+=================
+
+Tenants
+
+Stores
+
+Users
+
+Roles
+
+==================================================
+SYNC SUB MENU
+=============
+
+Sync Monitor
+
+Sync Jobs
+
+==================================================
+PROCUREMENT SUB MENU
+====================
+
+Supplier
+
+Demand
+
+Transfer
+
+Procurement
+
+==================================================
+INVENTORY SUB MENU
+==================
+
+Stock
+
+==================================================
+ROUTING
+=======
+
+Create React Router structure
+
+/dashboard
+
+/platform/tenants
+
+/platform/stores
+
+/platform/users
+
+/platform/roles
+
+/sync/monitor
+
+/sync/jobs
+
+/procurement/supplier
+
+/procurement/demand
+
+/procurement/transfer
+
+/procurement/procurement
+
+/inventory/stock
+
+/reports
+
+/settings
+
+==================================================
+PROTECTED ROUTE FRAMEWORK
+=========================
+
+Create JWT-ready architecture
+
+Do NOT implement login yet.
+
+Create:
+
+AuthContext
+
+ProtectedRoute
+
+Route Guard Framework
+
+Token Storage Service
+
+Future API Integration Ready
+
+==================================================
+PERMISSION MENU ENGINE
+======================
+
+Create Context API architecture.
+
+Future API:
+
+GET /api/role-module-access/role/{role_id}
+
+Menu Visibility must support:
+
+can_view = true
+
+Hide menu when permission denied.
+
+Create framework now.
+
+Backend integration later.
+
+==================================================
+PAGES
+=====
+
+Create placeholder production pages:
+
+DashboardPage
+
+TenantsPage
+
+StoresPage
+
+UsersPage
+
+RolesPage
+
+SyncMonitorPage
+
+SyncJobsPage
+
+SupplierPage
+
+DemandPage
+
+TransferPage
+
+ProcurementPage
+
+StockPage
+
+ReportsPage
+
+SettingsPage
+
+Each page:
+
+* Responsive
+* Bootstrap Layout
+* Breadcrumb Ready
+* Title Section
+* Content Container
+
+==================================================
+FOLDER STRUCTURE
+================
+
+Create if missing:
+
+src
+
+src/assets
+
+src/components
+
+src/components/header
+
+src/components/sidebar
+
+src/components/statusbar
+
+src/components/common
+
+src/layouts
+
+src/pages
+
+src/pages/platform
+
+src/pages/sync
+
+src/pages/procurement
+
+src/pages/inventory
+
+src/routes
+
+src/contexts
+
+src/services
+
+src/types
+
+src/hooks
+
+src/utils
+
+==================================================
+BOOTSTRAP
+=========
+
+Install and configure:
+
+bootstrap
+
+bootstrap-icons
+
+Import globally.
+
+==================================================
+OUTPUT REQUIREMENTS
+===================
+
+1. Create all required files.
+2. Update package.json.
+3. Update main.tsx.
+4. Update App.tsx.
+5. Create routing.
+6. Create contexts.
+7. Create layouts.
+8. Create responsive sidebar.
+9. Create responsive header.
+10. Create status bar.
+11. Ensure npm run dev succeeds.
+12. Ensure npm run build succeeds.
+
+==================================================
+FINAL VALIDATION
+================
+
+Run:
+
+npm install
+
+npm run dev
+
+npm run build
+
+Fix all errors.
+
+Do not stop until build succeeds.
+
+Output:
+
+* Files Created
+* Files Updated
+* Build Result
+* Final Directory Tree

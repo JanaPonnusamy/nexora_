@@ -1,0 +1,1723 @@
+========================================================================================================================
+FILE: requirements.txt
+========================================================================================================================
+
+fastapi
+uvicorn
+sqlalchemy
+pyodbc
+pydantic
+python-dotenv
+
+
+
+========================================================================================================================
+FILE: __init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: api\app.py
+========================================================================================================================
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from config.database import get_connection
+
+from controllers.auth_controller import router as auth_router
+from controllers.tenant_controller import router as tenant_router
+from controllers.store_controller import router as store_router
+from controllers.role_controller import router as role_router
+from controllers.user_role_controller import router as user_role_router
+from controllers.module_controller import router as module_router
+from controllers.role_module_access_controller import router as role_module_access_router
+from controllers.user_controller import router as user_router, relations_router as user_relations_router
+from modules.sync.router import router as sync_router
+
+app = FastAPI(title='NEXORA API')
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+    ],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
+
+app.include_router(auth_router)
+app.include_router(tenant_router)
+app.include_router(store_router)
+app.include_router(role_router)
+app.include_router(user_role_router)
+app.include_router(module_router)
+app.include_router(role_module_access_router)
+app.include_router(user_router)
+app.include_router(user_relations_router)
+app.include_router(sync_router)
+
+@app.get('/health')
+def health():
+    return {'status':'healthy'}
+
+@app.get('/health/db')
+def health_db():
+    try:
+        conn = get_connection()
+        conn.close()
+        return {'status':'healthy','database':'connected'}
+    except Exception as ex:
+        return {'status':'failed','error':str(ex)}
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=8000)
+
+
+
+========================================================================================================================
+FILE: api\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: config\database.py
+========================================================================================================================
+
+import pyodbc
+
+def get_connection():
+    conn_str = (
+        'DRIVER={ODBC Driver 17 for SQL Server};'
+        'SERVER=192.168.10.73;'
+        'DATABASE=NEXORA_PLATFORM;'
+        'UID=sa;'
+        'PWD=Admin123;'
+        'TrustServerCertificate=yes;'
+    )
+    return pyodbc.connect(conn_str)
+
+
+
+========================================================================================================================
+FILE: config\logger.py
+========================================================================================================================
+
+import logging
+
+
+
+========================================================================================================================
+FILE: config\settings.py
+========================================================================================================================
+
+APP_NAME='NEXORA'
+
+
+
+========================================================================================================================
+FILE: config\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: controllers\auth_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter
+from dtos.login_request import LoginRequest
+from services.auth_service import AuthService
+
+router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
+_current_user = None
+
+@router.post("/login")
+def login(req: LoginRequest):
+    global _current_user
+
+    user = AuthService().login(req.username, req.password)
+
+    if not user:
+        return {"error":"Invalid Username Or Password"}
+
+    _current_user = user
+    return user
+
+@router.get("/me")
+def me():
+    return _current_user if _current_user else {"error":"Not Logged In"}
+
+
+
+========================================================================================================================
+FILE: controllers\module_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter, HTTPException
+from services.module_service import ModuleService
+
+router = APIRouter(prefix='/api/modules', tags=['Modules'])
+
+@router.post('/seed')
+def seed_modules():
+    count = ModuleService().seed_modules()
+    return {'status':'success','modules_created':count}
+
+@router.get('')
+def get_modules():
+    return ModuleService().get_all()
+
+@router.get('/{module_id}')
+def get_module(module_id:str):
+
+    module = ModuleService().get_by_id(module_id)
+
+    if not module:
+        raise HTTPException(status_code=404, detail='Module not found')
+
+    return module
+
+
+
+========================================================================================================================
+FILE: controllers\role_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter, HTTPException
+from services.role_service import RoleService
+from dtos.role_request import RoleRequest, RoleStatusRequest
+
+router = APIRouter(prefix="/api/roles", tags=["Roles"])
+
+@router.post("/seed")
+def seed_roles():
+    count = RoleService().seed_roles()
+    return {"status":"success","roles_created":count}
+
+@router.get("")
+def get_roles():
+    return RoleService().get_all()
+
+@router.get("/{role_id}")
+def get_role(role_id:str):
+    r = RoleService().get_by_id(role_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Role Not Found")
+    return r
+
+@router.post("", status_code=201)
+def create_role(body: RoleRequest):
+    role_name = body.role_name.strip()
+    if not role_name:
+        raise HTTPException(status_code=400, detail="Role name is required")
+    description = body.description.strip() if body.description else None
+    new_id = RoleService().create(role_name, description)
+    return RoleService().get_by_id(str(new_id))
+
+@router.put("/{role_id}")
+def update_role(role_id:str, body: RoleRequest):
+    role_name = body.role_name.strip()
+    if not role_name:
+        raise HTTPException(status_code=400, detail="Role name is required")
+    if not RoleService().get_by_id(role_id):
+        raise HTTPException(status_code=404, detail="Role Not Found")
+    description = body.description.strip() if body.description else None
+    RoleService().update(role_id, role_name, description)
+    return RoleService().get_by_id(role_id)
+
+@router.patch("/{role_id}/status")
+def set_role_status(role_id:str, body: RoleStatusRequest):
+    if not RoleService().get_by_id(role_id):
+        raise HTTPException(status_code=404, detail="Role Not Found")
+    RoleService().set_active(role_id, body.is_active)
+    return RoleService().get_by_id(role_id)
+
+
+
+========================================================================================================================
+FILE: controllers\role_module_access_controller.py
+========================================================================================================================
+
+from fastapi import APIRouter
+from services.role_module_access_service import RoleModuleAccessService
+
+router = APIRouter(prefix="/api/role-module-access", tags=["Role Module Access"])
+
+@router.post("/seed")
+def seed_permissions():
+    return RoleModuleAccessService().seed_super_admin_permissions()
+
+@router.get("/role/{role_id}")
+def get_role_permissions(role_id:str):
+    return RoleModuleAccessService().get_role_permission_matrix(role_id)
+
+
+
+========================================================================================================================
+FILE: controllers\store_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter
+from services.store_service import StoreService
+
+router = APIRouter(prefix="/api/stores", tags=["Stores"])
+
+@router.get("")
+def get_stores():
+    rows = StoreService().get_all()
+    return [{"store_id":str(r[0]),"tenant_id":str(r[1]),"store_code":r[2],"store_name":r[3],"server_name":r[4],"database_name":r[5],"is_active":bool(r[6])} for r in rows]
+
+@router.get("/tenant/{tenant_id}")
+def get_by_tenant(tenant_id:str):
+    rows = StoreService().get_by_tenant(tenant_id)
+    return [{"store_id":str(r[0]),"store_code":r[2],"store_name":r[3]} for r in rows]
+
+@router.get("/{store_id}")
+def get_store(store_id:str):
+    r = StoreService().get_by_id(store_id)
+    if not r:
+        return {"error":"Store Not Found"}
+    return {"store_id":str(r[0]),"tenant_id":str(r[1]),"store_code":r[2],"store_name":r[3],"server_name":r[4],"database_name":r[5],"is_active":bool(r[6])}
+
+
+
+========================================================================================================================
+FILE: controllers\tenant_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter, HTTPException
+from services.tenant_service import TenantService
+from dtos.tenant_request import TenantRequest, TenantStatusRequest
+
+router = APIRouter(prefix="/api/tenants", tags=["Tenants"])
+
+def _serialize(r):
+    return {
+        "tenant_id": str(r[0]),
+        "tenant_code": r[1],
+        "tenant_abbreviation": r[2],
+        "tenant_name": r[3],
+        "db_name": r[4],
+        "is_active": bool(r[5]),
+    }
+
+@router.get("")
+def get_tenants():
+    rows = TenantService().get_all()
+    return [_serialize(r) for r in rows]
+
+@router.get("/{tenant_id}")
+def get_tenant(tenant_id: str):
+    r = TenantService().get_by_id(tenant_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Tenant Not Found")
+    return _serialize(r)
+
+@router.post("", status_code=201)
+def create_tenant(body: TenantRequest):
+    new_id = TenantService().create(
+        body.tenant_code, body.tenant_abbreviation, body.tenant_name, body.db_name
+    )
+    r = TenantService().get_by_id(str(new_id))
+    return _serialize(r)
+
+@router.put("/{tenant_id}")
+def update_tenant(tenant_id: str, body: TenantRequest):
+    TenantService().update(
+        tenant_id, body.tenant_code, body.tenant_abbreviation, body.tenant_name, body.db_name
+    )
+    r = TenantService().get_by_id(tenant_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Tenant Not Found")
+    return _serialize(r)
+
+@router.patch("/{tenant_id}/status")
+def set_tenant_status(tenant_id: str, body: TenantStatusRequest):
+    TenantService().set_active(tenant_id, body.is_active)
+    r = TenantService().get_by_id(tenant_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Tenant Not Found")
+    return _serialize(r)
+
+
+
+========================================================================================================================
+FILE: controllers\user_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter, HTTPException
+from services.user_service import UserService
+from dtos.user_request import UserRequest, UserStatusRequest
+
+router = APIRouter(prefix="/api/users", tags=["Users"])
+relations_router = APIRouter(tags=["Users"])
+
+def _serialize_list(r):
+    return {
+        "user_id": str(r[0]),
+        "username": r[1],
+        "full_name": r[2],
+        "tenant_id": str(r[3]) if r[3] else None,
+        "tenant_name": r[4],
+        "is_active": bool(r[5]),
+        "last_login": r[6].isoformat() if r[6] else None,
+        "store_count": int(r[7]) if r[7] is not None else 0,
+        "role_count": int(r[8]) if r[8] is not None else 0,
+    }
+
+def _serialize_detail(r):
+    return {
+        "user_id": str(r[0]),
+        "username": r[1],
+        "full_name": r[2],
+        "first_name": r[3],
+        "last_name": r[4],
+        "email": r[5],
+        "mobile": r[6],
+        "tenant_id": str(r[7]) if r[7] else None,
+        "tenant_name": r[8],
+        "is_platform_user": bool(r[9]),
+        "is_active": bool(r[10]),
+        "last_login": r[11].isoformat() if r[11] else None,
+        "store_count": int(r[12]) if r[12] is not None else 0,
+        "role_count": int(r[13]) if r[13] is not None else 0,
+    }
+
+@router.get("")
+def get_users(
+    search: str | None = None,
+    tenant_id: str | None = None,
+    store_id: str | None = None,
+    role_id: str | None = None,
+    status: str | None = None,
+):
+    rows = UserService().get_all(search, tenant_id, store_id, role_id, status)
+    return [_serialize_list(r) for r in rows]
+
+@router.get("/{user_id}")
+def get_user(user_id: str):
+    r = UserService().get_by_id(user_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="User Not Found")
+    return _serialize_detail(r)
+
+@router.post("", status_code=201)
+def create_user(body: UserRequest):
+    username = body.username.strip()
+    full_name = body.full_name.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Full name is required")
+    if not body.password or not body.password.strip():
+        raise HTTPException(status_code=400, detail="Password is required")
+    if UserService().username_exists(username):
+        raise HTTPException(status_code=400, detail="Username already exists")
+    new_id = UserService().create(username, full_name, body.password)
+    r = UserService().get_by_id(str(new_id))
+    return _serialize_detail(r)
+
+@router.put("/{user_id}")
+def update_user(user_id: str, body: UserRequest):
+    username = body.username.strip()
+    full_name = body.full_name.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Full name is required")
+    if not UserService().get_by_id(user_id):
+        raise HTTPException(status_code=404, detail="User Not Found")
+    if UserService().username_exists(username, user_id):
+        raise HTTPException(status_code=400, detail="Username already exists")
+    UserService().update(user_id, username, full_name)
+    r = UserService().get_by_id(user_id)
+    return _serialize_detail(r)
+
+@router.patch("/{user_id}/status")
+def set_user_status(user_id: str, body: UserStatusRequest):
+    if not UserService().get_by_id(user_id):
+        raise HTTPException(status_code=404, detail="User Not Found")
+    UserService().set_active(user_id, body.is_active)
+    r = UserService().get_by_id(user_id)
+    return _serialize_detail(r)
+
+@relations_router.get("/api/tenants/{tenant_id}/users")
+def get_users_by_tenant(tenant_id: str):
+    rows = UserService().get_all(tenant_id=tenant_id)
+    return [_serialize_list(r) for r in rows]
+
+@relations_router.get("/api/stores/{store_id}/users")
+def get_users_by_store(store_id: str):
+    rows = UserService().get_all(store_id=store_id)
+    return [_serialize_list(r) for r in rows]
+
+
+
+========================================================================================================================
+FILE: controllers\user_role_controller.py
+========================================================================================================================
+
+
+from fastapi import APIRouter
+from services.user_role_service import UserRoleService
+
+router = APIRouter(prefix="/api/user-roles", tags=["User Roles"])
+
+@router.post("/seed")
+def seed():
+    count = UserRoleService().seed()
+    return {"status":"success","assignments_created":count}
+
+@router.get("/user/{user_id}")
+def get_user_roles(user_id:str):
+    return UserRoleService().get_roles(user_id)
+
+
+
+========================================================================================================================
+FILE: controllers\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: dtos\login_request.py
+========================================================================================================================
+
+from pydantic import BaseModel
+
+class LoginRequest(BaseModel):
+    username:str
+    password:str
+
+
+
+========================================================================================================================
+FILE: dtos\login_response.py
+========================================================================================================================
+
+from pydantic import BaseModel
+
+class LoginResponse(BaseModel):
+    token:str
+    username:str
+
+
+
+========================================================================================================================
+FILE: dtos\role_request.py
+========================================================================================================================
+
+
+from pydantic import BaseModel
+
+class RoleRequest(BaseModel):
+    role_name: str
+    description: str | None = None
+
+class RoleStatusRequest(BaseModel):
+    is_active: bool
+
+
+
+========================================================================================================================
+FILE: dtos\tenant_request.py
+========================================================================================================================
+
+
+from pydantic import BaseModel
+
+class TenantRequest(BaseModel):
+    tenant_code: str
+    tenant_abbreviation: str
+    tenant_name: str
+    db_name: str
+
+class TenantStatusRequest(BaseModel):
+    is_active: bool
+
+
+
+========================================================================================================================
+FILE: dtos\user_request.py
+========================================================================================================================
+
+
+from pydantic import BaseModel
+
+class UserRequest(BaseModel):
+    username: str
+    full_name: str
+    password: str | None = None
+
+class UserStatusRequest(BaseModel):
+    is_active: bool
+
+
+
+========================================================================================================================
+FILE: dtos\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: middleware\auth_middleware.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: middleware\exception_middleware.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: middleware\request_middleware.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: middleware\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: models\user_model.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: models\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: modules\sync\repository.py
+========================================================================================================================
+
+from config.database import get_connection
+
+
+def get_catalog_column(
+    schema_name,
+    table_name,
+    column_name
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT catalog_id
+        FROM sync.sync_schema_catalog
+        WHERE schema_name=?
+          AND table_name=?
+          AND column_name=?
+        """,
+        (
+            schema_name,
+            table_name,
+            column_name
+        )
+    )
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    return row
+
+
+def insert_catalog_column(column):
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO sync.sync_schema_catalog
+        (
+            schema_name,
+            table_name,
+            column_name,
+            data_type,
+            max_length,
+            precision_value,
+            scale_value,
+            is_nullable,
+            is_identity,
+            is_primary_key,
+            ordinal_position,
+            first_discovered_at,
+            last_discovered_at,
+            is_active
+        )
+        VALUES
+        (
+            ?,?,?,?,?,?,?,?,?,?,
+            ?,GETDATE(),GETDATE(),1
+        )
+        """,
+        (
+            column["schema_name"],
+            column["table_name"],
+            column["column_name"],
+            column["data_type"],
+            column["max_length"],
+            column["precision_value"],
+            column["scale_value"],
+            int(column["is_nullable"]),
+            int(column["is_identity"]),
+            int(column["is_primary_key"]),
+            column["ordinal_position"]
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def update_catalog_column(column):
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE sync.sync_schema_catalog
+        SET
+            data_type=?,
+            max_length=?,
+            precision_value=?,
+            scale_value=?,
+            is_nullable=?,
+            is_identity=?,
+            is_primary_key=?,
+            ordinal_position=?,
+            last_discovered_at=GETDATE()
+        WHERE
+            schema_name=?
+            AND table_name=?
+            AND column_name=?
+        """,
+        (
+            column["data_type"],
+            column["max_length"],
+            column["precision_value"],
+            column["scale_value"],
+            int(column["is_nullable"]),
+            int(column["is_identity"]),
+            int(column["is_primary_key"]),
+            column["ordinal_position"],
+            column["schema_name"],
+            column["table_name"],
+            column["column_name"]
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+
+========================================================================================================================
+FILE: modules\sync\router.py
+========================================================================================================================
+
+from fastapi import APIRouter
+
+from .schemas import SchemaRegisterRequest
+from .service import register_schema
+
+router = APIRouter(
+    prefix="/api/sync/schema",
+    tags=["Sync Schema"]
+)
+
+
+@router.post("/register")
+def schema_register(
+    payload: SchemaRegisterRequest
+):
+    return register_schema(payload)
+
+
+========================================================================================================================
+FILE: modules\sync\schemas.py
+========================================================================================================================
+
+from pydantic import BaseModel
+from typing import List, Optional
+
+
+class ColumnSchema(BaseModel):
+    column_name: str
+    data_type: str
+    max_length: Optional[int] = None
+    precision_value: Optional[int] = None
+    scale_value: Optional[int] = None
+    is_nullable: bool
+    is_identity: bool
+    is_primary_key: bool
+    ordinal_position: int
+
+
+class TableSchema(BaseModel):
+    schema_name: str
+    table_name: str
+    columns: List[ColumnSchema]
+
+
+class SchemaRegisterRequest(BaseModel):
+    store_id: str
+    database_name: str
+    tables: List[TableSchema]
+
+
+========================================================================================================================
+FILE: modules\sync\service.py
+========================================================================================================================
+
+from .repository import (
+    get_catalog_column,
+    insert_catalog_column,
+    update_catalog_column
+)
+
+
+def register_schema(payload):
+
+    result = {
+        "status": "success",
+        "tables_processed": 0,
+        "columns_processed": 0,
+        "new_columns": 0,
+        "updated_columns": 0
+    }
+
+    for table in payload.tables:
+
+        result["tables_processed"] += 1
+
+        for column in table.columns:
+
+            result["columns_processed"] += 1
+
+            row = {
+                "schema_name": table.schema_name,
+                "table_name": table.table_name,
+                "column_name": column.column_name,
+                "data_type": column.data_type,
+                "max_length": column.max_length,
+                "precision_value": column.precision_value,
+                "scale_value": column.scale_value,
+                "is_nullable": column.is_nullable,
+                "is_identity": column.is_identity,
+                "is_primary_key": column.is_primary_key,
+                "ordinal_position": column.ordinal_position
+            }
+
+            exists = get_catalog_column(
+                table.schema_name,
+                table.table_name,
+                column.column_name
+            )
+
+            if exists:
+                update_catalog_column(row)
+                result["updated_columns"] += 1
+            else:
+                insert_catalog_column(row)
+                result["new_columns"] += 1
+
+    return result
+
+
+========================================================================================================================
+FILE: modules\sync\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: repositories\module_repository.py
+========================================================================================================================
+
+
+from config.database import get_connection
+import uuid
+
+class ModuleRepository:
+
+    def seed_modules(self):
+        return 0
+
+    def get_all_modules(self):
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            'SELECT module_id,module_code,module_name,description,is_active FROM dbo.modules ORDER BY module_name'
+        )
+
+        rows = cur.fetchall()
+        conn.close()
+
+        result = []
+
+        for row in rows:
+            result.append({
+                'module_id': str(row[0]),
+                'module_code': row[1],
+                'module_name': row[2],
+                'description': row[3],
+                'is_active': bool(row[4])
+            })
+
+        return result
+
+    def get_module_by_id(self, module_id):
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            'SELECT module_id,module_code,module_name,description,is_active FROM dbo.modules WHERE module_id=?',
+            module_id
+        )
+
+        row = cur.fetchone()
+        conn.close()
+
+        if not row:
+            return None
+
+        return {
+            'module_id': str(row[0]),
+            'module_code': row[1],
+            'module_name': row[2],
+            'description': row[3],
+            'is_active': bool(row[4])
+        }
+
+
+
+========================================================================================================================
+FILE: repositories\role_module_access_repository.py
+========================================================================================================================
+
+from config.database import get_connection
+
+class RoleModuleAccessRepository:
+
+    def seed_super_admin_permissions(self):
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("EXEC dbo.sp_RoleModuleAccess_Seed")
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": "Super Admin permissions seeded successfully"
+        }
+
+    def get_role_permission_matrix(self, role_id):
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT r.role_id,r.role_name,m.module_id,m.module_code,m.module_name,rma.can_view,rma.can_create,rma.can_edit,rma.can_delete,rma.can_export FROM dbo.role_module_access rma INNER JOIN dbo.roles r ON rma.role_id=r.role_id INNER JOIN dbo.modules m ON rma.module_id=m.module_id WHERE rma.role_id=? ORDER BY m.module_name",
+            role_id
+        )
+
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            return None
+
+        modules = []
+
+        for row in rows:
+            modules.append({
+                "module_id": str(row[2]),
+                "module_code": row[3],
+                "module_name": row[4],
+                "can_view": bool(row[5]),
+                "can_create": bool(row[6]),
+                "can_edit": bool(row[7]),
+                "can_delete": bool(row[8]),
+                "can_export": bool(row[9])
+            })
+
+        return {
+            "role_id": str(rows[0][0]),
+            "role_name": rows[0][1],
+            "total_modules": len(modules),
+            "modules": modules
+        }
+
+
+
+========================================================================================================================
+FILE: repositories\role_repository.py
+========================================================================================================================
+
+
+from config.database import get_connection
+import uuid
+
+class RoleRepository:
+
+    def seed_roles(self):
+        roles = [
+            ('SUPER_ADMIN','Platform Control'),
+            ('TENANT_ADMIN','Tenant Control'),
+            ('STORE_ADMIN','Store Administration'),
+            ('STORE_MANAGER','Store Operations'),
+            ('STORE_USER','Standard User'),
+            ('SYNC_OPERATOR','Sync Monitoring')
+        ]
+
+        conn = get_connection()
+        cur = conn.cursor()
+        inserted = 0
+
+        for role_name, description in roles:
+            cur.execute("SELECT COUNT(*) FROM dbo.roles WHERE role_name=?", role_name)
+
+            if cur.fetchone()[0] > 0:
+                continue
+
+            cur.execute(
+                "INSERT INTO dbo.roles(role_id,role_name,description,is_active) VALUES (?,?,?,1)",
+                str(uuid.uuid4()),
+                role_name,
+                description
+            )
+
+            inserted += 1
+
+        conn.commit()
+        conn.close()
+
+        return inserted
+
+    def get_all_roles(self):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+        SELECT
+            r.role_id,
+            r.role_name,
+            r.description,
+            r.is_active,
+            (SELECT COUNT(DISTINCT usr.user_id) FROM dbo.user_store_roles usr WHERE usr.role_id = r.role_id) AS assigned_users
+        FROM dbo.roles r
+        ORDER BY r.role_name
+        """)
+
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+
+    def get_role_by_id(self, role_id):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+        SELECT
+            r.role_id,
+            r.role_name,
+            r.description,
+            r.is_active,
+            (SELECT COUNT(DISTINCT usr.user_id) FROM dbo.user_store_roles usr WHERE usr.role_id = r.role_id) AS assigned_users
+        FROM dbo.roles r
+        WHERE r.role_id = ?
+        """, role_id)
+
+        row = cur.fetchone()
+        conn.close()
+        return row
+
+    def create(self, role_name, description):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO dbo.roles (role_id, role_name, description, is_active)
+        OUTPUT INSERTED.role_id
+        VALUES (NEWID(), ?, ?, 1)
+        """, role_name, description)
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        return new_id
+
+    def update(self, role_id, role_name, description):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.roles
+        SET role_name = ?, description = ?
+        WHERE role_id = ?
+        """, role_name, description, role_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def set_active(self, role_id, is_active):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.roles
+        SET is_active = ?
+        WHERE role_id = ?
+        """, 1 if is_active else 0, role_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+
+
+========================================================================================================================
+FILE: repositories\store_repository.py
+========================================================================================================================
+
+
+from config.database import get_connection
+
+class StoreRepository:
+
+    def get_all(self):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT store_id,tenant_id,store_code,store_name,server_name,database_name,is_active
+        FROM dbo.stores
+        ORDER BY store_code
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+
+    def get_by_id(self, store_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT store_id,tenant_id,store_code,store_name,server_name,database_name,is_active
+        FROM dbo.stores
+        WHERE store_id = ?
+        """, store_id)
+        row = cur.fetchone()
+        conn.close()
+        return row
+
+    def get_by_tenant(self, tenant_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT store_id,tenant_id,store_code,store_name,server_name,database_name,is_active
+        FROM dbo.stores
+        WHERE tenant_id = ?
+        ORDER BY store_code
+        """, tenant_id)
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+
+
+
+========================================================================================================================
+FILE: repositories\tenant_repository.py
+========================================================================================================================
+
+
+from config.database import get_connection
+
+class TenantRepository:
+
+    def get_all(self):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT tenant_id,tenant_code,tenant_abbreviation,tenant_name,db_name,is_active
+        FROM dbo.tenants
+        ORDER BY tenant_name
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+
+    def get_by_id(self, tenant_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT tenant_id,tenant_code,tenant_abbreviation,tenant_name,db_name,is_active
+        FROM dbo.tenants
+        WHERE tenant_id = ?
+        """, tenant_id)
+        row = cur.fetchone()
+        conn.close()
+        return row
+
+    def create(self, tenant_code, tenant_abbreviation, tenant_name, db_name):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO dbo.tenants (tenant_id,tenant_code,tenant_abbreviation,tenant_name,db_name,is_active)
+        OUTPUT INSERTED.tenant_id
+        VALUES (NEWID(), ?, ?, ?, ?, 1)
+        """, tenant_code, tenant_abbreviation, tenant_name, db_name)
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        return new_id
+
+    def update(self, tenant_id, tenant_code, tenant_abbreviation, tenant_name, db_name):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.tenants
+        SET tenant_code = ?, tenant_abbreviation = ?, tenant_name = ?, db_name = ?
+        WHERE tenant_id = ?
+        """, tenant_code, tenant_abbreviation, tenant_name, db_name, tenant_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def set_active(self, tenant_id, is_active):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.tenants
+        SET is_active = ?
+        WHERE tenant_id = ?
+        """, 1 if is_active else 0, tenant_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+
+
+========================================================================================================================
+FILE: repositories\user_repository.py
+========================================================================================================================
+
+
+from config.database import get_connection
+
+# Column order returned by the list query (see get_all).
+LIST_COLUMNS = """
+        u.user_id,
+        u.username,
+        LTRIM(RTRIM(u.first_name + ISNULL(' ' + u.last_name, ''))) AS full_name,
+        u.tenant_id,
+        t.tenant_name,
+        u.is_active,
+        u.last_login,
+        (SELECT COUNT(DISTINCT usr.store_id) FROM dbo.user_store_roles usr WHERE usr.user_id = u.user_id) AS store_count,
+        (SELECT COUNT(DISTINCT usr.role_id) FROM dbo.user_store_roles usr WHERE usr.user_id = u.user_id) AS role_count
+"""
+
+class UserRepository:
+
+    # ----- existing authentication helpers -----
+
+    def get_user_by_username(self, username):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT user_id,username,password_hash,first_name,is_platform_user,is_active
+        FROM dbo.users
+        WHERE username = ?
+        """, username)
+        row = cur.fetchone()
+        conn.close()
+        return row
+
+    def update_last_login(self, user_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.users
+        SET last_login = GETDATE()
+        WHERE user_id = ?
+        """, user_id)
+        conn.commit()
+        conn.close()
+
+    # ----- user management (CRUD) -----
+
+    def get_all(self, search=None, tenant_id=None, store_id=None, role_id=None, status=None):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        where = []
+        params = []
+
+        if search:
+            where.append("(u.username LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ?)")
+            like = f"%{search}%"
+            params.extend([like, like, like, like])
+        if tenant_id:
+            where.append("u.tenant_id = ?")
+            params.append(tenant_id)
+        if store_id:
+            where.append("EXISTS (SELECT 1 FROM dbo.user_store_roles usr WHERE usr.user_id = u.user_id AND usr.store_id = ?)")
+            params.append(store_id)
+        if role_id:
+            where.append("EXISTS (SELECT 1 FROM dbo.user_store_roles usr WHERE usr.user_id = u.user_id AND usr.role_id = ?)")
+            params.append(role_id)
+        if status == 'active':
+            where.append("u.is_active = 1")
+        elif status == 'inactive':
+            where.append("u.is_active = 0")
+
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+        cur.execute(f"""
+        SELECT
+        {LIST_COLUMNS}
+        FROM dbo.users u
+        LEFT JOIN dbo.tenants t ON u.tenant_id = t.tenant_id
+        {where_sql}
+        ORDER BY u.first_name, u.last_name
+        """, params)
+
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+
+    def get_by_id(self, user_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT
+            u.user_id,
+            u.username,
+            LTRIM(RTRIM(u.first_name + ISNULL(' ' + u.last_name, ''))) AS full_name,
+            u.first_name,
+            u.last_name,
+            u.email,
+            u.mobile,
+            u.tenant_id,
+            t.tenant_name,
+            u.is_platform_user,
+            u.is_active,
+            u.last_login,
+            (SELECT COUNT(DISTINCT usr.store_id) FROM dbo.user_store_roles usr WHERE usr.user_id = u.user_id) AS store_count,
+            (SELECT COUNT(DISTINCT usr.role_id) FROM dbo.user_store_roles usr WHERE usr.user_id = u.user_id) AS role_count
+        FROM dbo.users u
+        LEFT JOIN dbo.tenants t ON u.tenant_id = t.tenant_id
+        WHERE u.user_id = ?
+        """, user_id)
+        row = cur.fetchone()
+        conn.close()
+        return row
+
+    def username_exists(self, username, exclude_id=None):
+        conn = get_connection()
+        cur = conn.cursor()
+        if exclude_id:
+            cur.execute("SELECT COUNT(*) FROM dbo.users WHERE username = ? AND user_id <> ?", username, exclude_id)
+        else:
+            cur.execute("SELECT COUNT(*) FROM dbo.users WHERE username = ?", username)
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+
+    def create(self, username, first_name, last_name, password_hash):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO dbo.users (user_id, username, password_hash, first_name, last_name, is_platform_user, is_active, created_at)
+        OUTPUT INSERTED.user_id
+        VALUES (NEWID(), ?, ?, ?, ?, 0, 1, GETDATE())
+        """, username, password_hash, first_name, last_name)
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        return new_id
+
+    def update(self, user_id, username, first_name, last_name):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.users
+        SET username = ?, first_name = ?, last_name = ?, updated_at = GETDATE()
+        WHERE user_id = ?
+        """, username, first_name, last_name, user_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def set_active(self, user_id, is_active):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.users
+        SET is_active = ?, updated_at = GETDATE()
+        WHERE user_id = ?
+        """, 1 if is_active else 0, user_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+
+
+========================================================================================================================
+FILE: repositories\user_role_repository.py
+========================================================================================================================
+
+
+from config.database import get_connection
+
+class UserRoleRepository:
+
+    def seed_superadmin_assignment(self):
+        user_id = '4055B2C9-30E8-4062-9D52-666EF0769D4B'
+        role_id = '85BD267C-B7C6-4FA9-A2CA-A11EEC6624E7'
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("SELECT TOP 1 store_id FROM dbo.stores ORDER BY store_code")
+        store = cur.fetchone()
+
+        if not store:
+            conn.close()
+            return 0
+
+        store_id = str(store[0])
+
+        cur.execute("SELECT COUNT(*) FROM dbo.user_store_roles WHERE user_id=? AND store_id=? AND role_id=?", user_id, store_id, role_id)
+
+        if cur.fetchone()[0] == 0:
+            cur.execute("INSERT INTO dbo.user_store_roles (user_id,store_id,role_id,is_active) VALUES (?,?,?,1)", user_id, store_id, role_id)
+            conn.commit()
+            conn.close()
+            return 1
+
+        conn.close()
+        return 0
+
+    def get_user_roles(self, user_id):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+        SELECT r.role_id,r.role_name,s.store_id,s.store_code,s.store_name
+        FROM dbo.user_store_roles usr
+        INNER JOIN dbo.roles r ON usr.role_id=r.role_id
+        INNER JOIN dbo.stores s ON usr.store_id=s.store_id
+        WHERE usr.user_id=?
+        """, user_id)
+
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+
+
+
+========================================================================================================================
+FILE: repositories\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: services\auth_service.py
+========================================================================================================================
+
+
+import bcrypt
+from repositories.user_repository import UserRepository
+
+class AuthService:
+
+    def login(self, username, password):
+        repo = UserRepository()
+        user = repo.get_user_by_username(username)
+
+        if not user:
+            return None
+
+        if not bool(user[5]):
+            return None
+
+        if not bcrypt.checkpw(password.encode('utf-8'), user[2].encode('utf-8')):
+            return None
+
+        repo.update_last_login(user[0])
+
+        return {
+            "user_id": str(user[0]),
+            "username": user[1],
+            "first_name": user[3],
+            "is_platform_user": bool(user[4]),
+            "is_active": bool(user[5])
+        }
+
+
+
+========================================================================================================================
+FILE: services\module_service.py
+========================================================================================================================
+
+
+from repositories.module_repository import ModuleRepository
+
+class ModuleService:
+
+    def seed_modules(self):
+        return ModuleRepository().seed_modules()
+
+    def get_all(self):
+        return ModuleRepository().get_all_modules()
+
+    def get_by_id(self, module_id):
+        return ModuleRepository().get_module_by_id(module_id)
+
+
+
+========================================================================================================================
+FILE: services\role_module_access_service.py
+========================================================================================================================
+
+from repositories.role_module_access_repository import RoleModuleAccessRepository
+
+class RoleModuleAccessService:
+
+    def seed_super_admin_permissions(self):
+        return RoleModuleAccessRepository().seed_super_admin_permissions()
+
+    def get_role_permission_matrix(self, role_id):
+        return RoleModuleAccessRepository().get_role_permission_matrix(role_id)
+
+
+
+========================================================================================================================
+FILE: services\role_service.py
+========================================================================================================================
+
+
+from repositories.role_repository import RoleRepository
+
+class RoleService:
+
+    def seed_roles(self):
+        return RoleRepository().seed_roles()
+
+    def get_all(self):
+        rows = RoleRepository().get_all_roles()
+        return [self._serialize(r) for r in rows]
+
+    def get_by_id(self, role_id):
+        r = RoleRepository().get_role_by_id(role_id)
+        if not r:
+            return None
+        return self._serialize(r)
+
+    def create(self, role_name, description):
+        return RoleRepository().create(role_name, description)
+
+    def update(self, role_id, role_name, description):
+        return RoleRepository().update(role_id, role_name, description)
+
+    def set_active(self, role_id, is_active):
+        return RoleRepository().set_active(role_id, is_active)
+
+    @staticmethod
+    def _serialize(r):
+        return {
+            "role_id": str(r[0]),
+            "role_name": r[1],
+            "description": r[2],
+            "is_active": bool(r[3]),
+            "assigned_users": int(r[4]) if r[4] is not None else 0,
+        }
+
+
+
+========================================================================================================================
+FILE: services\store_service.py
+========================================================================================================================
+
+
+from repositories.store_repository import StoreRepository
+
+class StoreService:
+    def get_all(self):
+        return StoreRepository().get_all()
+
+    def get_by_id(self, store_id):
+        return StoreRepository().get_by_id(store_id)
+
+    def get_by_tenant(self, tenant_id):
+        return StoreRepository().get_by_tenant(tenant_id)
+
+
+
+========================================================================================================================
+FILE: services\tenant_service.py
+========================================================================================================================
+
+
+from repositories.tenant_repository import TenantRepository
+
+class TenantService:
+    def get_all(self):
+        return TenantRepository().get_all()
+
+    def get_by_id(self, tenant_id):
+        return TenantRepository().get_by_id(tenant_id)
+
+    def create(self, tenant_code, tenant_abbreviation, tenant_name, db_name):
+        return TenantRepository().create(tenant_code, tenant_abbreviation, tenant_name, db_name)
+
+    def update(self, tenant_id, tenant_code, tenant_abbreviation, tenant_name, db_name):
+        return TenantRepository().update(tenant_id, tenant_code, tenant_abbreviation, tenant_name, db_name)
+
+    def set_active(self, tenant_id, is_active):
+        return TenantRepository().set_active(tenant_id, is_active)
+
+
+
+========================================================================================================================
+FILE: services\user_role_service.py
+========================================================================================================================
+
+
+from repositories.user_role_repository import UserRoleRepository
+
+class UserRoleService:
+
+    def seed(self):
+        return UserRoleRepository().seed_superadmin_assignment()
+
+    def get_roles(self, user_id):
+        rows = UserRoleRepository().get_user_roles(user_id)
+
+        return [{
+            "role_id": str(r[0]),
+            "role_name": r[1],
+            "store_id": str(r[2]),
+            "store_code": r[3],
+            "store_name": r[4]
+        } for r in rows]
+
+
+
+========================================================================================================================
+FILE: services\user_service.py
+========================================================================================================================
+
+
+import bcrypt
+from repositories.user_repository import UserRepository
+
+class UserService:
+
+    def get_all(self, search=None, tenant_id=None, store_id=None, role_id=None, status=None):
+        return UserRepository().get_all(search, tenant_id, store_id, role_id, status)
+
+    def get_by_id(self, user_id):
+        return UserRepository().get_by_id(user_id)
+
+    def username_exists(self, username, exclude_id=None):
+        return UserRepository().username_exists(username, exclude_id)
+
+    def create(self, username, full_name, password):
+        first_name, last_name = self._split_name(full_name)
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        return UserRepository().create(username, first_name, last_name, password_hash)
+
+    def update(self, user_id, username, full_name):
+        first_name, last_name = self._split_name(full_name)
+        return UserRepository().update(user_id, username, first_name, last_name)
+
+    def set_active(self, user_id, is_active):
+        return UserRepository().set_active(user_id, is_active)
+
+    @staticmethod
+    def _split_name(full_name):
+        parts = full_name.strip().split(' ', 1)
+        first_name = parts[0]
+        last_name = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+        return first_name, last_name
+
+
+
+========================================================================================================================
+FILE: services\__init__.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: tests\test_auth.py
+========================================================================================================================
+
+
+
+
+========================================================================================================================
+FILE: tests\test_tenant.py
+========================================================================================================================
+
+# Phase17
+
+
+
+========================================================================================================================
+FILE: tests\__init__.py
+========================================================================================================================
+
+
+
