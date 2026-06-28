@@ -1,0 +1,26 @@
+[
+  {
+    "identifier": "PR-BR-001",
+    "name": "90 Day Average",
+    "module": "Procurement",
+    "version": "1.0",
+    "priority": "High",
+    "status": "Active",
+    "dependencies": [],
+    "description": "Trailing 90-day demand baseline.",
+    "path": "docs/BUSINESS_RULES/PR-BR-001-90-day-average.md"
+  },
+  {
+    "identifier": "PR-BR-002",
+    "name": "Min Day Rule",
+    "module": "Procurement",
+    "version": "1.0",
+    "priority": "High",
+    "status": "Active",
+    "dependencies": [
+      "PR-BR-001"
+    ],
+    "description": "",
+    "path": "docs/BUSINESS_RULES/PR-BR-002-min-day-rule.md"
+  }
+]

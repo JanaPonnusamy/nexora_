@@ -1,0 +1,244 @@
+---
+module: Procurement
+version: 0.1
+status: Draft
+owner: Solution Architecture
+updated: 2026-06-27
+---
+
+# Procurement V1 — Business Analysis
+
+## Topic 02: Procurement Workspace
+
+> **Method:** Search-first, matching regions only. Code is evidence; the FDD is the output.
+> No code generated, no business redesign.
+>
+> **Evidence read (Topic 02 only):**
+> - Legacy Python: `repository/session_repo.py`, `services/session_service.py`,
+>   `repository/product_repo.py`, `sql/px_launcher_sp.sql` (3 SPs),
+>   `sql/nx_sp_GetSupplierQueueByRefresh.sql`. Keyword sweep for
+>   `priority|section|skip|manual_review|demand|workspace` across the module.
+> - Legacy Python frontend: `procurex-ui/state/useProcureStore.js` (empty placeholder).
+> - Legacy VB.NET: `OrderProcess.vb` → `LoadOrderData` (the working-list builder; matched method only).
+
+---
+
+### 1. Business Summary
+
+The **Procurement Workspace** is the surface on which the Purchase Manager reviews the products
+that need an order decision for a given Refresh and turns them into supplier-bound order
+quantities. The legacy systems implement **two very different workspace shapes**, and the
+Business Architecture Specification proposes a **third**:
+
+- **VB.NET (original):** a single **flat, product-centric review grid** of recently received
+  products that have not yet been ordered. Supplier is a column; the manager keys an order
+  quantity and a supplier per row. Items leave the grid once ordered.
+- **Python (ProcureX rewrite):** a **supplier-queue workspace**. The Refresh first generates a
+  "virtual product list" (`order_virtual_items`); the workspace then derives, per product, the
+  **top suppliers from purchase history**, and presents work **grouped by supplier** for
+  assignment.
+- **Specification (target):** a **sectioned workspace** — Customer Demand, High Priority,
+  Normal, Pending, Skipped, Manual Review, Completed.
+
+Neither legacy system implements the specification's section taxonomy. This is the central
+finding of Topic 02 and the key design decision to ratify.
+
+---
+
+### 2. Current Implementation
+
+**Legacy Python — workspace navigation (supplier-centric):**
+
+1. `nx_sp_GetCyclesByStore(StoreName)` → cycles for the store.
+2. `nx_sp_GetRefreshesByCycleLatest(CycleID)` → refreshes (latest first).
+3. `nx_sp_OpenProcureWorkspace(RefreshID, UserID, RoleName)` → returns only the **refresh header**
+   (`refresh_id`, `refresh_status`, `cycle_id`, `store_name`, user, role). It does **not** return
+   grid rows — there is no sectioned payload.
+4. `nx_sp_GetSupplierQueueByRefresh(RefreshId, StoreName)` → the **supplier queue**: for every
+   product in `order_virtual_items`, rank suppliers from `purchasetrans` history by
+   `purchase_count DESC, last_grn_date DESC`, keep the **top 3** per product, then aggregate per
+   supplier `total_products` and `total_required_qty` (`SUM(final_required_qty)`), ordered by
+   `total_products DESC`.
+5. `nx_sp_GetProductsBySupplier(RefreshId, SupplierCode, StoreName)` → the products for a chosen
+   supplier (the working rows the manager acts on).
+
+So the Python workspace = **open refresh → pick a supplier from the history-ranked queue → work
+that supplier's products**. The unit of work is the **supplier**, not a priority section.
+
+**Legacy VB.NET — working grid (product-centric):** `LoadOrderData(storeName, specificDate)` builds
+a flat grid from `PurchaseTrans4Order ⋈ Products` with these business filters:
+
+- store-scoped and date-scoped (`GRNDate >= specificDate`);
+- `ProductType = 1` (orderable products only);
+- `GrnNumber >` the last processed `LastGRN` from `OrderHeaderDetails` → **incremental: only
+  purchases received since the last order are eligible**;
+- `OrderQty IS NULL OR 0` → **only not-yet-ordered products appear; a product leaves the grid
+  once an order quantity is set**.
+
+Columns surfaced: stock (`TotalStock`), receipt (`StockReceived`, `FreeQty`), `SupplierName` /
+`SupplierCode`, costs (`ItemCost`, `PTR`, `MRP`), `GRNDate`/`GRNNo`, and editable `OrderQty` +
+`OrSupplier`. Supplier defaults from the source purchase transaction (the last supplier).
+
+**Frontend:** `useProcureStore.js` is an empty placeholder — no workspace model is defined there;
+the UI consumes the supplier-queue / products-by-supplier APIs.
+
+**Schema-vocabulary note:** the launcher SPs (`px_launcher_sp.sql`) reference `Order_cycles`
+(`cycle_id`, `store_name`, `created_date`) and `Order_refresh` (`refresh_id`), whereas the Topic-01
+core SPs use `order_cycles` (`id`, `StoreName`) and `order_cycle_refreshes`. Two inconsistent
+naming conventions coexist (see Conflicts).
+
+---
+
+### 3. Business Rules (extracted)
+
+| # | Rule | Evidence |
+|---|------|----------|
+| WS-01 | The workspace is scoped to a **single Refresh** of a cycle; the manager opens a store → cycle → refresh → workspace. | session SPs |
+| WS-02 | The working set for a Refresh is the **virtual product list** (`order_virtual_items`) generated by the engine; each carries `final_required_qty`. | supplier-queue SQL |
+| WS-03 | **(Python) Supplier candidates are derived from purchase history**: per product, rank suppliers from `purchasetrans` by purchase frequency then most-recent GRN; keep the **top 3**. | `nx_sp_GetSupplierQueueByRefresh` |
+| WS-04 | **(Python) Work is organised as a supplier queue**: suppliers ordered by how many products they cover (`total_products DESC`), with `total_required_qty` per supplier. | `nx_sp_GetSupplierQueueByRefresh` |
+| WS-05 | **(Python) The manager drills supplier → products** (`nx_sp_GetProductsBySupplier`). | product_repo |
+| WS-06 | **(VB) The working list is incremental by GRN**: only products from GRNs newer than the last order's `LastGRN` appear. | `LoadOrderData` |
+| WS-07 | **(VB) Only orderable products** (`ProductType = 1`) are eligible. | `LoadOrderData` |
+| WS-08 | **(VB) A product leaves the workspace once ordered** (`OrderQty` set > 0). | `LoadOrderData` |
+| WS-09 | **(VB) Supplier defaults from the source purchase transaction** (last supplier), editable as `OrSupplier`. | `LoadOrderData` |
+| WS-10 | The workspace shows decision context per product: current stock, last receipt, costs (ItemCost/PTR/MRP), supplier, GRN reference. | `LoadOrderData` columns |
+
+---
+
+### 4. Missing Rules (in the Specification but absent in legacy)
+
+- **M-01 — Section taxonomy.** Neither legacy organises the workspace into the spec's sections
+  (Customer Demand, High Priority, Normal, Pending, Skipped, Manual Review, Completed). The
+  keyword sweep found **no** `priority` / `section` / `skip` / `manual_review` / `demand`
+  concept in the workspace layer.
+- **M-02 — Customer Demand surfaced in workspace.** No evidence demands appear in the workspace
+  (deferred to Topic 04).
+- **M-03 — Pending section.** No explicit "Pending" workspace bucket (VB drops ordered items;
+  Python pending lives in `order_items.remaining_qty` — Topic 05).
+- **M-04 — Skipped / Manual Review states.** No skip policies or manual-review routing exist.
+- **M-05 — Completed section.** No "Completed" view; VB simply removes ordered items.
+
+### 4b. Extra Rules (in legacy but not in the Specification)
+
+- **X-01 — Supplier Queue workspace (Python).** Organising procurement **supplier-by-supplier**,
+  with suppliers ranked by coverage, is a genuine, valuable business pattern the spec does not
+  describe.
+- **X-02 — History-based supplier suggestion (top 3 by frequency + recency).** A concrete
+  supplier-recommendation rule (relevant to Topic 06).
+- **X-03 — Incremental-by-GRN working list (VB).** Only newly-received purchases since the last
+  order are reviewed — a "process the delta" model.
+- **X-04 — Auto-drop on order (VB).** Ordered products self-remove from the working grid.
+
+---
+
+### 5. Conflicts
+
+| # | Conflict | Detail | Risk |
+|---|----------|--------|------|
+| C-01 | **Three divergent workspace models.** | VB flat product grid vs Python supplier queue vs spec sections. | Fundamental: defines the entire UX and data shape. Must be chosen before build. |
+| C-02 | **Navigation axis: supplier-centric vs product-centric.** | Python works supplier→products; VB and spec work product-first. | Determines how demand/priority/skip can even be expressed. |
+| C-03 | **Schema vocabulary split.** | Launcher SPs use `Order_cycles`/`Order_refresh`; core SPs use `order_cycles`/`order_cycle_refreshes`. | Same logical entity, two names/casings — to be standardized (consistent with Topic-01 D5). |
+| C-04 | **Where "section/priority" lives.** | Spec needs per-line section/priority; `order_virtual_items` is not queried by any section/priority column today. | The engine (Topic 03) must emit section/priority for the spec model to work. |
+| C-05 | **Pending visibility.** | Spec shows Pending as a workspace section; legacy hides ordered/pending items. | Conflicts with Topic-01 D2 (pending carries forward and must remain visible). |
+
+---
+
+### 6. Recommended Design (documentation-level, no code)
+
+1. **Adopt the specification's sectioned workspace as the target**, but **preserve the legacy
+   Supplier Queue as a complementary view/mode** (X-01/X-02) rather than discarding it — the two
+   are not mutually exclusive: sections answer *"what must I decide and how urgent?"*, the
+   supplier queue answers *"how do I place these efficiently with suppliers?"* (relevant to
+   Topic 06 export).
+2. **Make the Decision Engine emit per-line `section` and `priority`** onto `order_virtual_items`
+   (Topic 03 input), so the workspace can render the spec's sections without re-deriving them
+   (resolves C-04).
+3. **Keep the workspace product-centric for review** (sections, skip, demand, manual review),
+   and **supplier-centric for placement** (assignment/export). Document this as two phases of one
+   workspace.
+4. **Preserve the valuable legacy patterns** as explicit rules: history-based top-3 supplier
+   suggestion (→ Topic 06), and "process the new-GRN delta" as an engine input (→ Topic 03).
+5. **Pending must remain visible** in the workspace (Pending section) consistent with Topic-01 D2;
+   do not auto-hide ordered/pending lines — mark them, carry them.
+6. **Standardize the cycle/refresh schema names** (one vocabulary) per Topic-01 D5 (resolves C-03).
+
+---
+
+### 7. Questions (for business owner sign-off)
+
+1. **Workspace model:** Adopt the specification's **sectioned** workspace (Customer Demand / High
+   Priority / Normal / Pending / Skipped / Manual Review / Completed) as the target? And should
+   the legacy **Supplier Queue** be retained as a secondary placement view, or dropped?
+2. **Navigation:** Should the manager primarily work **product-first** (review/decide) and only
+   switch to **supplier-first** for placement, or stay supplier-first throughout (legacy Python)?
+3. **Supplier suggestion:** Keep the legacy **top-3 suppliers by purchase frequency + recency** as
+   the recommendation rule (to be detailed in Topic 06)?
+4. **New-GRN delta:** Should the engine consider only **newly received purchases since the last
+   refresh/order** (VB incremental model), or re-evaluate the full rolling window each Refresh?
+5. **Pending in workspace:** Confirm Pending lines stay **visible** in the workspace (per Topic-01
+   D2) rather than being auto-hidden once ordered (VB behaviour).
+
+---
+
+---
+
+### 8. Access Control — Roles & Permissions (PR-BR-017…020, 025)
+
+> Approved business rules PR-BR-017…025 were ratified and incorporated into the FDD
+> (§3.4–3.6, §5.4/5.4a, §6.6, §7.0). This section compares them against the **legacy
+> procurement auth layer** read as evidence: `auth/roles.py`, `auth/permissions.py`,
+> `auth/auth_dependency.py`.
+
+**Current Implementation (legacy):**
+
+- Roles: `SUPER_ADMIN`, `ADMIN`, `PURCHASE`, `VIEWER`.
+- Permission map (`ROLE_PERMISSIONS`):
+  - `SUPER_ADMIN` → `*`
+  - `ADMIN` → `cycle:create`, `cycle:refresh`, `cycle:close`, `report:view`
+  - `PURCHASE` → `assignment:create`, `assignment:update`, `export:create`, `validation:update`, `report:view`
+  - `VIEWER` → `report:view`
+- Enforcement: FastAPI dependencies `require_roles(*roles)` and `require_permission(name)`; role read from the JWT.
+
+**Comparison to approved rules:**
+
+| Approved rule | Legacy alignment | Gap / action |
+|---------------|------------------|--------------|
+| PR-BR-019 — Cycle create/close = admin | `cycle:create` / `cycle:close` granted to `ADMIN` + `SUPER_ADMIN` only. **Aligned.** | Add per-user "Procurement Administration" grant (legacy map is role-fixed, no per-user grant). |
+| PR-BR-020 — Refresh = admin | `cycle:refresh` is `ADMIN`/`SUPER_ADMIN` only; `PURCHASE` has none. **Aligned.** | — |
+| PR-BR-018 — PM owns assignment/export/overrides | `PURCHASE` has `assignment:*`, `export:create`, `validation:update`. **Mostly aligned.** | No explicit permissions for **Skip**, **Final Quantity edit**, **Pending Finalization**; export is `create` not **approve**. Add discrete permissions (e.g. `line:skip`, `line:final_qty`, `pending:finalize`, `export:approve`). |
+| PR-BR-017 — Workspace restricted | Only 4 procurement roles exist; no general store-user access. **Aligned in spirit.** | Confirm `VIEWER` (report-only) is intended; it is **not** in the approved role model. |
+| PR-BR-025 — Procurement independent of Sync | Procurement auth has **no** sync permissions/endpoints. **Aligned** (confirms the architecture principle). | — |
+
+**Rules (extracted):**
+
+| # | Rule | Evidence |
+|---|------|----------|
+| WS-11 | Procurement endpoints are role/permission gated via JWT (`require_roles` / `require_permission`). | `auth_dependency.py` |
+| WS-12 | Cycle create/close/refresh are restricted to `ADMIN`/`SUPER_ADMIN`. | `permissions.py` |
+| WS-13 | `PURCHASE` (Purchase Manager) is limited to assignment, export, validation (+ reports); **no** cycle/refresh rights. | `permissions.py` |
+| WS-14 | Procurement carries **no** synchronization permissions — Sync stays in its own module. | `permissions.py` (absence) |
+
+**Conflicts / gaps:**
+
+- **AC-01** — Legacy `ROLE_PERMISSIONS` is a **fixed role→permission map**; PR-BR-019's
+  *"users explicitly granted Procurement Administration permission"* needs a **per-user grant**
+  mechanism not present today.
+- **AC-02** — Missing discrete permissions for approved Purchase Manager actions: **Skip**,
+  **Final Quantity edit**, **Pending Finalization**, and **Export Approval** (vs `export:create`).
+- **AC-03** — Extra legacy `VIEWER` role (report-only) is absent from the approved role model;
+  reconcile (keep as an authorized report viewer, or drop).
+
+**Questions added:**
+
+6. Should the `VIEWER` (report-only) role be retained, folded into "authorized administrative
+   users", or removed?
+7. Is **Supplier Export Approval** a distinct permission/step from creating the export
+   (`export:create` vs `export:approve`)?
+
+---
+
+*Topic 02 complete (workspace shape + access control). Next in order: **Topic 03 — Decision Engine**
+(keywords: min_days, max_days, daily_average, monthly, bill, wanted, priority, formula). Entry point
+already located: `nx_sp_BuildVirtualProductList` populates `order_virtual_items.final_required_qty`;
+the VB `OrderProcess.vb` / `Form1.vb` order-quantity logic is the original formula source.*

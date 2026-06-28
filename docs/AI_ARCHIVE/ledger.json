@@ -1,0 +1,12 @@
+[
+  {
+    "identifier": "AI-0001",
+    "source": "Claude",
+    "kind": "output",
+    "title": "Procurement Business Architecture Spec",
+    "approval_status": "Approved",
+    "revision": 2,
+    "date": "2026-06-27",
+    "path": "docs/AI_ARCHIVE/prompt-history/AI-0001-procurement-business-architecture-spec.md"
+  }
+]
