@@ -23,3 +23,21 @@ class ColumnMappingRequest(BaseModel):
     is_hash: bool = False
     is_watermark: bool = False
     column_order: int = 0
+
+
+class ScheduleRequest(BaseModel):
+    schedule_name: str
+    schedule_type: str = "DAILY"          # DAILY | ONCE
+    store_id: str | None = None           # None = all stores in the tenant
+    start_time: str                       # ISO datetime; DAILY uses time-of-day
+    sync_mode: str = "FULL"
+    is_enabled: bool = True
+    tenant_id: str | None = None
+
+
+class ScheduleSuspendRequest(BaseModel):
+    suspended_until: str | None = None    # ISO datetime; null clears suspension
+
+
+class ScheduleStatusRequest(BaseModel):
+    is_enabled: bool

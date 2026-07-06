@@ -89,25 +89,190 @@ class SyncAdminRepository:
         conn.close()
         return {"kpis": kpis, "stores": stores}
 
-    # ===== Schedules (read-only) =====
+    # ===== Schedules (CRUD + suspend) =====
+
+    _schema_ready = False
+
+    def ensure_schema(self, cur):
+        """Idempotently add the columns the schedule screen needs. Safe to run
+        on every process; COL_LENGTH checks are cheap and the ALTERs only fire
+        when a column is genuinely missing."""
+        if SyncAdminRepository._schema_ready:
+            return
+        for stmt in (
+            "IF COL_LENGTH('dbo.sync_schedule','store_id') IS NULL "
+            "ALTER TABLE dbo.sync_schedule ADD store_id UNIQUEIDENTIFIER NULL",
+            "IF COL_LENGTH('dbo.sync_schedule','sync_mode') IS NULL "
+            "ALTER TABLE dbo.sync_schedule ADD sync_mode VARCHAR(20) NOT NULL "
+            "CONSTRAINT DF_sync_schedule_sync_mode DEFAULT 'FULL'",
+            "IF COL_LENGTH('dbo.sync_schedule','suspended_until') IS NULL "
+            "ALTER TABLE dbo.sync_schedule ADD suspended_until DATETIME NULL",
+            "IF COL_LENGTH('dbo.sync_schedule','last_run_at') IS NULL "
+            "ALTER TABLE dbo.sync_schedule ADD last_run_at DATETIME NULL",
+            "IF COL_LENGTH('dbo.sync_schedule','updated_at') IS NULL "
+            "ALTER TABLE dbo.sync_schedule ADD updated_at DATETIME NULL",
+        ):
+            cur.execute(stmt)
+        SyncAdminRepository._schema_ready = True
+
+    @staticmethod
+    def _status(is_enabled, suspended_until):
+        import datetime as _dt
+        if suspended_until and suspended_until > _dt.datetime.now():
+            return "Suspended"
+        return "Active" if is_enabled else "Disabled"
+
+    def _serialize_schedule(self, r):
+        return {
+            "schedule_id": r[0],
+            "tenant_id": str(r[1]) if r[1] else None,
+            "store_id": str(r[2]) if r[2] else None,
+            "store_code": r[3],
+            "store_name": r[4],
+            "schedule_name": r[5],
+            "schedule_type": r[6],
+            "start_time": _iso(r[7]),
+            "sync_mode": r[8],
+            "is_enabled": bool(r[9]),
+            "suspended_until": _iso(r[10]),
+            "last_run_at": _iso(r[11]),
+            "created_at": _iso(r[12]),
+            "status": self._status(bool(r[9]), r[10]),
+        }
+
+    _SELECT = """
+        SELECT sc.schedule_id, sc.tenant_id, sc.store_id, st.store_code, st.store_name,
+               sc.schedule_name, sc.schedule_type, sc.start_time, sc.sync_mode,
+               sc.is_enabled, sc.suspended_until, sc.last_run_at, sc.created_at
+        FROM dbo.sync_schedule sc
+        LEFT JOIN dbo.stores st ON st.store_id = sc.store_id
+    """
 
     def get_schedules(self):
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("""
-        SELECT schedule_id, schedule_name, schedule_type, start_time, is_enabled
-        FROM dbo.sync_schedule
-        ORDER BY schedule_name
-        """)
-        rows = [{
-            "schedule_id": r[0],
-            "schedule_name": r[1],
-            "schedule_type": r[2],
-            "start_time": _iso(r[3]),
-            "is_enabled": bool(r[4]),
-        } for r in cur.fetchall()]
+        self.ensure_schema(cur)
+        cur.execute(self._SELECT + " ORDER BY sc.start_time, sc.schedule_name")
+        rows = [self._serialize_schedule(r) for r in cur.fetchall()]
         conn.close()
         return rows
+
+    def get_schedule(self, schedule_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        self.ensure_schema(cur)
+        cur.execute(self._SELECT + " WHERE sc.schedule_id = ?", schedule_id)
+        row = cur.fetchone()
+        conn.close()
+        return self._serialize_schedule(row) if row else None
+
+    def _resolve_tenant(self, cur, store_id, tenant_id):
+        if store_id:
+            cur.execute("SELECT tenant_id FROM dbo.stores WHERE store_id = ?", store_id)
+            row = cur.fetchone()
+            if row:
+                return row[0]
+        if tenant_id:
+            return tenant_id
+        cur.execute("SELECT TOP 1 tenant_id FROM dbo.tenants ORDER BY tenant_name")
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    def create_schedule(self, schedule_name, schedule_type, store_id, start_time,
+                        sync_mode, is_enabled, tenant_id=None):
+        conn = get_connection()
+        cur = conn.cursor()
+        self.ensure_schema(cur)
+        tenant = self._resolve_tenant(cur, store_id, tenant_id)
+        cur.execute("""
+        INSERT INTO dbo.sync_schedule
+            (tenant_id, store_id, schedule_name, schedule_type, start_time,
+             sync_mode, is_enabled, created_at, updated_at)
+        OUTPUT INSERTED.schedule_id
+        VALUES (?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+        """, tenant, store_id, schedule_name, schedule_type, start_time,
+             sync_mode, 1 if is_enabled else 0)
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        return new_id
+
+    def update_schedule(self, schedule_id, schedule_name, schedule_type, store_id,
+                        start_time, sync_mode, is_enabled):
+        conn = get_connection()
+        cur = conn.cursor()
+        self.ensure_schema(cur)
+        cur.execute("""
+        UPDATE dbo.sync_schedule
+        SET schedule_name = ?, schedule_type = ?, store_id = ?, start_time = ?,
+            sync_mode = ?, is_enabled = ?, updated_at = GETDATE()
+        WHERE schedule_id = ?
+        """, schedule_name, schedule_type, store_id, start_time, sync_mode,
+             1 if is_enabled else 0, schedule_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def set_schedule_status(self, schedule_id, is_enabled):
+        conn = get_connection()
+        cur = conn.cursor()
+        self.ensure_schema(cur)
+        cur.execute("UPDATE dbo.sync_schedule SET is_enabled = ?, updated_at = GETDATE() "
+                    "WHERE schedule_id = ?", 1 if is_enabled else 0, schedule_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def suspend_schedule(self, schedule_id, suspended_until):
+        conn = get_connection()
+        cur = conn.cursor()
+        self.ensure_schema(cur)
+        cur.execute("UPDATE dbo.sync_schedule SET suspended_until = ?, updated_at = GETDATE() "
+                    "WHERE schedule_id = ?", suspended_until, schedule_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def delete_schedule(self, schedule_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM dbo.sync_schedule WHERE schedule_id = ?", schedule_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def seed_default_schedules(self):
+        """Per-store daily schedules: a morning run staggered 06:15-06:25 (2 min
+        apart) plus an afternoon run at 13:00 (staggered). Idempotent by name."""
+        import datetime as _dt
+        conn = get_connection()
+        cur = conn.cursor()
+        self.ensure_schema(cur)
+        cur.execute("SELECT store_id, store_code, tenant_id FROM dbo.stores "
+                    "WHERE is_active = 1 ORDER BY store_code")
+        stores = cur.fetchall()
+        created = 0
+        for idx, (store_id, code, tenant_id) in enumerate(stores):
+            morning = _dt.datetime(2000, 1, 1, 6, 15) + _dt.timedelta(minutes=2 * idx)
+            afternoon = _dt.datetime(2000, 1, 1, 13, 0) + _dt.timedelta(minutes=2 * idx)
+            for name, when in ((f"{code} Morning Sync", morning),
+                               (f"{code} Afternoon Sync", afternoon)):
+                cur.execute("SELECT COUNT(*) FROM dbo.sync_schedule WHERE schedule_name = ?", name)
+                if cur.fetchone()[0] == 0:
+                    cur.execute("""
+                    INSERT INTO dbo.sync_schedule
+                        (tenant_id, store_id, schedule_name, schedule_type, start_time,
+                         sync_mode, is_enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, 'DAILY', ?, 'FULL', 1, GETDATE(), GETDATE())
+                    """, tenant_id, store_id, name, when)
+                    created += 1
+        conn.commit()
+        conn.close()
+        return {"created": created, "stores": len(stores)}
 
     # ===== Store Health (read-only) =====
 
@@ -220,6 +385,43 @@ class SyncAdminRepository:
         ORDER BY sync_order, table_name
         """)
         rows = [self._serialize_table(r) for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    def available_tables(self, search=None):
+        """Every discovered catalog table left-joined to its configured state,
+        so the Table Configuration tab can search the full source schema and
+        enable tables that are not yet in the master."""
+        conn = get_connection()
+        cur = conn.cursor()
+        sql = """
+        SELECT c.schema_name, c.table_name,
+               m.sync_table_id, m.is_active, m.sync_mode
+        FROM (
+            SELECT DISTINCT schema_name, table_name
+            FROM sync.sync_schema_catalog
+            WHERE is_active = 1
+        ) c
+        LEFT JOIN sync.sync_table_master m
+               ON m.table_name = c.table_name
+        {where}
+        ORDER BY c.table_name
+        """
+        if search:
+            cur.execute(sql.format(where="WHERE c.table_name LIKE ?"), f"%{search}%")
+        else:
+            cur.execute(sql.format(where=""))
+        rows = [
+            {
+                "schema_name": r[0],
+                "table_name": r[1],
+                "sync_table_id": str(r[2]) if r[2] is not None else None,
+                "is_configured": r[2] is not None,
+                "is_active": bool(r[3]) if r[3] is not None else False,
+                "sync_mode": r[4],
+            }
+            for r in cur.fetchall()
+        ]
         conn.close()
         return rows
 

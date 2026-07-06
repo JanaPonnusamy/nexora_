@@ -5,6 +5,7 @@ import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
 import { usePermissionMatrix } from '../../hooks/usePermissionMatrix'
 import { permissionService } from '../../services/permissionService'
+import { ToggleCheck } from '../../components/dashboard/ToggleCheck'
 
 const cellKey = (roleId: string, moduleId: string) => `${roleId}:${moduleId}`
 
@@ -102,23 +103,12 @@ export default function PermissionsPage() {
                     const isBusy = busy.has(key)
                     return (
                       <td key={role.role_id} className="text-center">
-                        <button
-                          type="button"
-                          className={`btn btn-sm permission-cell ${isAssigned ? 'btn-success' : 'btn-outline-secondary'}`}
-                          aria-pressed={isAssigned}
-                          aria-label={`${isAssigned ? 'Unassign' : 'Assign'} ${module.module_name} for ${role.role_name}`}
-                          disabled={isBusy}
+                        <ToggleCheck
+                          checked={isAssigned}
+                          busy={isBusy}
+                          label={`${isAssigned ? 'Unassign' : 'Assign'} ${module.module_name} for ${role.role_name}`}
                           onClick={() => toggle(role.role_id, module.module_id)}
-                        >
-                          {isBusy ? (
-                            <span className="spinner-border spinner-border-sm" aria-hidden="true" />
-                          ) : (
-                            <i
-                              className={`bi ${isAssigned ? 'bi-check-lg' : 'bi-x-lg'}`}
-                              aria-hidden="true"
-                            />
-                          )}
-                        </button>
+                        />
                       </td>
                     )
                   })}

@@ -910,6 +910,640 @@ body {
 .tenant-feature__icon--2 { background: var(--bs-info); }
 .tenant-feature__icon--3 { background: var(--bs-warning); }
 
+/* ===== Professionalization: density + typography ===== */
+:root {
+  --app-gutter: 1.25rem;
+}
+
+.card-body {
+  padding: 0.9rem 1rem;
+}
+
+.page-header {
+  margin-bottom: 1rem;
+}
+
+.page-header h1 {
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+}
+
+.overview-section {
+  margin-bottom: 1.25rem;
+}
+
+.workspace-header {
+  margin-bottom: 1.25rem;
+}
+
+/* Compact enterprise grid density */
+.data-table {
+  font-size: 0.8125rem;
+}
+
+.data-table > :not(caption) > * > * {
+  padding: 0.3rem 0.5rem;
+  vertical-align: middle;
+}
+
+.data-table thead th {
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+  font-size: 0.7rem;
+}
+
+.data-table td {
+  font-size: 0.8125rem;
+}
+
+.data-table .badge,
+.data-table .status-badge {
+  font-size: 0.7rem;
+  padding: 0.2em 0.5em;
+}
+
+.data-table .btn-sm {
+  --bs-btn-padding-y: 0.15rem;
+  --bs-btn-padding-x: 0.4rem;
+  --bs-btn-font-size: 0.75rem;
+}
+
+.row-actions {
+  gap: 0.3rem;
+}
+
+.row-actions__group {
+  gap: 0.2rem;
+}
+
+/* ===== Dashboard atoms ===== */
+.stat-card {
+  border-color: var(--bs-border-color);
+}
+
+.stat-card .card-body {
+  padding: 0.7rem 0.85rem;
+}
+
+.stat-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.stat-card__label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.stat-card__icon {
+  display: grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 0.45rem;
+  font-size: 0.85rem;
+}
+
+.stat-card__value {
+  margin-top: 0.3rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--bs-emphasis-color);
+}
+
+.donut-chart {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.donut-chart__total {
+  font-size: 1.25rem;
+  font-weight: 700;
+  fill: var(--bs-emphasis-color);
+}
+
+.donut-chart__legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 8.5rem;
+  font-size: 0.8rem;
+}
+
+.donut-chart__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.donut-chart__swatch {
+  flex: 0 0 auto;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 0.2rem;
+}
+
+.dashboard-panel__title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+  margin-bottom: 0.6rem;
+}
+
+.activity-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.activity-feed__item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.85rem;
+}
+
+.activity-feed__time {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color);
+  white-space: nowrap;
+}
+
+.col-narrow {
+  width: 3.5rem;
+}
+
+.cell-clip {
+  max-width: 14rem;
+}
+
+/* ===== Compact toggle (replaces oversized checkbox buttons) ===== */
+.toggle-check {
+  display: inline-grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.35rem;
+  background: var(--bs-body-bg);
+  color: var(--bs-secondary-color);
+  font-size: 0.8rem;
+  line-height: 1;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.toggle-check:hover:not(:disabled) {
+  border-color: var(--bs-success);
+}
+
+.toggle-check--on {
+  background: var(--bs-success);
+  border-color: var(--bs-success);
+  color: #fff;
+}
+
+.toggle-check:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 1px;
+}
+
+/* ===== Control Center (operations console) ===== */
+.cc {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 0.5rem;
+  border-radius: 1rem;
+  background:
+    radial-gradient(720px 320px at 0% -10%, color-mix(in srgb, var(--bs-primary) 16%, transparent), transparent 60%),
+    radial-gradient(720px 320px at 100% -10%, color-mix(in srgb, var(--bs-success) 12%, transparent), transparent 60%);
+}
+
+.cc-glass {
+  border: 1px solid color-mix(in srgb, var(--bs-border-color) 65%, transparent);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--bs-body-bg) 70%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 10px 26px -18px rgba(0, 0, 0, 0.45);
+}
+
+/* KPI tiles */
+.cc-kpi {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.cc-kpi__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 2.3rem;
+  height: 2.3rem;
+  border-radius: 0.6rem;
+  color: #fff;
+  font-size: 1.05rem;
+  box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.5);
+}
+
+.cc-kpi__value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--bs-emphasis-color);
+}
+
+.cc-kpi__label {
+  margin-top: 0.1rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.cc-kpi__sub {
+  font-size: 0.66rem;
+  color: var(--bs-secondary-color);
+}
+
+.cc-kpi--primary { border-left: 3px solid #2563eb; }
+.cc-kpi--success { border-left: 3px solid #059669; }
+.cc-kpi--info { border-left: 3px solid #0ea5e9; }
+.cc-kpi--indigo { border-left: 3px solid #6366f1; }
+.cc-kpi--danger { border-left: 3px solid #dc2626; }
+.cc-kpi--secondary { border-left: 3px solid #64748b; }
+
+/* tone gradients (shared by KPI + mini icons) */
+.cc-kpi__icon--primary, .cc-mini--primary .cc-mini__icon { background: linear-gradient(135deg, #4f8cff, #2563eb); }
+.cc-kpi__icon--success, .cc-mini--success .cc-mini__icon { background: linear-gradient(135deg, #34d399, #059669); }
+.cc-kpi__icon--info, .cc-mini--info .cc-mini__icon { background: linear-gradient(135deg, #38bdf8, #0ea5e9); }
+.cc-kpi__icon--indigo, .cc-mini--indigo .cc-mini__icon { background: linear-gradient(135deg, #818cf8, #6366f1); }
+.cc-kpi__icon--warning, .cc-mini--warning .cc-mini__icon { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
+.cc-kpi__icon--danger, .cc-mini--danger .cc-mini__icon { background: linear-gradient(135deg, #fb7185, #e11d48); }
+.cc-kpi__icon--secondary, .cc-mini--secondary .cc-mini__icon { background: linear-gradient(135deg, #94a3b8, #64748b); }
+
+/* toolbar */
+.cc-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.cc-toolbar__control {
+  width: auto;
+  min-width: 9rem;
+  border-radius: 999px;
+}
+
+.cc-toolbar__search {
+  position: relative;
+  flex: 1 1 12rem;
+  max-width: 20rem;
+}
+
+.cc-toolbar__search .bi {
+  position: absolute;
+  top: 50%;
+  left: 0.8rem;
+  transform: translateY(-50%);
+  color: var(--bs-secondary-color);
+  pointer-events: none;
+}
+
+.cc-toolbar__search .form-control {
+  padding-left: 2rem;
+  border-radius: 999px;
+}
+
+/* segmented connection control */
+.cc-seg {
+  display: inline-flex;
+  gap: 0.15rem;
+  padding: 0.2rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bs-secondary-bg) 70%, transparent);
+  border: 1px solid var(--bs-border-color);
+}
+
+.cc-seg__btn {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.25rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--bs-secondary-color);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.cc-seg__btn:hover {
+  color: var(--bs-emphasis-color);
+}
+
+.cc-seg__btn--active {
+  background: linear-gradient(135deg, #4f8cff, #2563eb);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 4px 10px -4px rgba(37, 99, 235, 0.6);
+}
+
+/* gradient action buttons */
+.cc-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.35rem 0.95rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+}
+
+.cc-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.cc-action:disabled {
+  opacity: 0.5;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.cc-action--sync { background: linear-gradient(135deg, #22c55e, #16a34a); }
+.cc-action--pause { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
+.cc-action--stop { background: linear-gradient(135deg, #fb7185, #e11d48); }
+
+/* grid progress */
+.cc-progress {
+  height: 0.45rem;
+  min-width: 5rem;
+}
+
+.cc-grid__progress {
+  width: 8rem;
+}
+
+.cc-running__name {
+  flex: 0 0 auto;
+  width: 10rem;
+  font-size: 0.85rem;
+}
+
+/* live log feed */
+.cc-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.cc-log__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cc-log__msg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cc-log__time {
+  font-size: 0.72rem;
+  color: var(--bs-secondary-color);
+  white-space: nowrap;
+}
+
+.cc-log__dot {
+  flex: 0 0 auto;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--bs-secondary);
+}
+
+.cc-log__dot--completed { background: var(--bs-success); }
+.cc-log__dot--failed { background: var(--bs-danger); }
+.cc-log__dot--running { background: var(--bs-primary); }
+.cc-log__dot--queued { background: var(--bs-warning); }
+
+/* mini stat tiles (bottom summary) */
+.cc-mini-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.cc-mini {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--bs-border-color);
+}
+
+.cc-mini__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.5rem;
+  color: #fff;
+  font-size: 0.85rem;
+}
+
+.cc-mini__value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--bs-emphasis-color);
+}
+
+.cc-mini__label {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--bs-secondary-color);
+}
+
+/* ===== Control Center 2026 ===== */
+.cc-panelhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.cc-panelhead__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+.cc-link {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--bs-primary);
+  cursor: pointer;
+  text-decoration: none;
+}
+.cc-link:hover { text-decoration: underline; }
+
+.cc-pill {
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+
+.cc-type {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
+  border-radius: 0.5rem;
+  white-space: nowrap;
+}
+.cc-type--upsert { background: rgba(14, 165, 233, 0.14); color: #0284c7; }
+.cc-type--rolling { background: rgba(139, 92, 246, 0.16); color: #7c3aed; }
+.cc-type--muted { background: var(--bs-tertiary-bg); color: var(--bs-secondary-color); }
+
+.cc-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--bs-secondary);
+}
+.cc-dot--running { background: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.18); }
+.cc-dot--paused { background: #f59e0b; }
+.cc-dot--online { background: #16a34a; }
+.cc-dot--offline { background: #cbd5e1; }
+
+.cc-legend { display: flex; flex-direction: column; gap: 0.4rem; }
+.cc-legend__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+.cc-legend__label { flex: 1 1 auto; color: var(--bs-secondary-color); }
+.cc-legend__value { font-weight: 700; color: var(--bs-emphasis-color); }
+.cc-legend__sub { color: var(--bs-secondary-color); font-size: 0.74rem; }
+
+.cc-donutwrap { display: flex; align-items: center; gap: 1rem; }
+.cc-donutwrap .donut-chart { flex: 0 0 auto; }
+.cc-donutwrap .donut-chart__legend { display: none; }
+
+.cc-storecard {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.85rem;
+  padding: 0.85rem;
+  height: 100%;
+  background: var(--bs-body-bg);
+}
+.cc-storecard__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.cc-view {
+  display: inline-flex;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.55rem;
+  overflow: hidden;
+}
+.cc-view__btn {
+  border: 0;
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.7rem;
+  color: var(--bs-secondary-color);
+}
+.cc-view__btn--active { background: var(--bs-primary); color: #fff; }
+
+.cc-iconbtn {
+  border: 1px solid var(--bs-border-color);
+  background: transparent;
+  border-radius: 0.5rem;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  color: var(--bs-secondary-color);
+}
+
+.cc-health-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  text-align: center;
+}
+.cc-health__value { font-size: 1.15rem; font-weight: 800; line-height: 1; }
+.cc-health__label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.02em; color: var(--bs-secondary-color); margin-top: 0.2rem; }
+
+/* ===== Operations monitoring panels ===== */
+.monitor-panel__metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.monitor-panel__metric:last-child {
+  border-bottom: 0;
+}
+
+.monitor-panel__metric strong {
+  color: var(--bs-emphasis-color);
+}
+
+.table-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+}
+
 /* ===== Mobile offcanvas backdrop ===== */
 .app-sidebar-backdrop {
   position: fixed;
@@ -1202,6 +1836,148 @@ export function ThemeToggle() {
 
 
 ========================================================================================================================
+FILE: src\components\dashboard\DonutChart.tsx
+========================================================================================================================
+
+export interface DonutSegment {
+  label: string
+  value: number
+  color: string
+}
+
+interface DonutChartProps {
+  segments: DonutSegment[]
+  size?: number
+  thickness?: number
+}
+
+export function DonutChart({ segments, size = 124, thickness = 16 }: DonutChartProps) {
+  const total = segments.reduce((sum, segment) => sum + segment.value, 0)
+  const radius = (size - thickness) / 2
+  const circumference = 2 * Math.PI * radius
+  const center = size / 2
+  let offset = 0
+
+  return (
+    <div className="donut-chart">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Distribution chart">
+        <g transform={`rotate(-90 ${center} ${center})`}>
+          {total === 0 ? (
+            <circle
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="none"
+              stroke="var(--bs-secondary-bg)"
+              strokeWidth={thickness}
+            />
+          ) : (
+            segments.map((segment) => {
+              const length = (segment.value / total) * circumference
+              const element = (
+                <circle
+                  key={segment.label}
+                  cx={center}
+                  cy={center}
+                  r={radius}
+                  fill="none"
+                  stroke={segment.color}
+                  strokeWidth={thickness}
+                  strokeDasharray={`${length} ${circumference - length}`}
+                  strokeDashoffset={-offset}
+                />
+              )
+              offset += length
+              return element
+            })
+          )}
+        </g>
+        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" className="donut-chart__total">
+          {total}
+        </text>
+      </svg>
+      <ul className="donut-chart__legend list-unstyled mb-0">
+        {segments.map((segment) => (
+          <li key={segment.label} className="donut-chart__legend-item">
+            <span className="donut-chart__swatch" style={{ backgroundColor: segment.color }} />
+            <span>{segment.label}</span>
+            <span className="text-secondary ms-auto">{segment.value}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\dashboard\StatCard.tsx
+========================================================================================================================
+
+import type { ReactNode } from 'react'
+
+interface StatCardProps {
+  label: string
+  value: ReactNode
+  icon?: string
+  tone?: string
+}
+
+export function StatCard({ label, value, icon, tone = 'primary' }: StatCardProps) {
+  return (
+    <div className="card stat-card h-100">
+      <div className="card-body">
+        <div className="stat-card__row">
+          <span className="stat-card__label">{label}</span>
+          {icon && (
+            <span className={`stat-card__icon text-bg-${tone}`}>
+              <i className={`bi ${icon}`} aria-hidden="true" />
+            </span>
+          )}
+        </div>
+        <div className="stat-card__value">{value}</div>
+      </div>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\dashboard\ToggleCheck.tsx
+========================================================================================================================
+
+interface ToggleCheckProps {
+  checked: boolean
+  onClick: () => void
+  label: string
+  busy?: boolean
+}
+
+/** Compact check toggle — replaces oversized bordered checkbox buttons. */
+export function ToggleCheck({ checked, onClick, label, busy }: ToggleCheckProps) {
+  return (
+    <button
+      type="button"
+      className={`toggle-check${checked ? ' toggle-check--on' : ''}`}
+      aria-pressed={checked}
+      aria-label={label}
+      disabled={busy}
+      onClick={onClick}
+    >
+      {busy ? (
+        <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+      ) : (
+        <i className={`bi ${checked ? 'bi-check-lg' : 'bi-dash'}`} aria-hidden="true" />
+      )}
+    </button>
+  )
+}
+
+
+
+========================================================================================================================
 FILE: src\components\header\Header.tsx
 ========================================================================================================================
 
@@ -1324,8 +2100,7 @@ export function ModuleActions({ moduleName, onView, onEdit }: ModuleActionsProps
         aria-label={`Open ${moduleName} workspace`}
         onClick={stop(onView)}
       >
-        <i className="bi bi-box-arrow-up-right me-1" aria-hidden="true" />
-        Open
+        <i className="bi bi-box-arrow-up-right" aria-hidden="true" />
       </button>
       <span className="row-actions__group">
         <button
@@ -1703,13 +2478,13 @@ FILE: src\components\platform-overview\KpiSection.tsx
 ========================================================================================================================
 
 import { usePlatformOverview } from '../../hooks/usePlatformOverview'
-import { EmptyState } from '../common/EmptyState'
+import { ErrorState } from '../common/ErrorState'
 import { KpiCard } from './KpiCard'
 import { KpiCardSkeleton } from './KpiCardSkeleton'
 import { KPI_DEFINITIONS } from './overviewConfig'
 
 export function KpiSection() {
-  const { metrics, isLoading } = usePlatformOverview()
+  const { metrics, isLoading, error, reload } = usePlatformOverview()
 
   return (
     <section className="overview-section">
@@ -1723,12 +2498,8 @@ export function KpiSection() {
             </div>
           ))}
         </div>
-      ) : metrics.length === 0 ? (
-        <EmptyState
-          icon="bi-bar-chart"
-          title="No metrics yet"
-          description="Platform metrics will appear here once data is available."
-        />
+      ) : error ? (
+        <ErrorState description={error} onRetry={reload} />
       ) : (
         <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-3">
           {metrics.map((metric) => (
@@ -1854,6 +2625,145 @@ export function QuickActions() {
 
 
 ========================================================================================================================
+FILE: src\components\platform-overview\RecentSyncActivityCard.tsx
+========================================================================================================================
+
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { syncService } from '../../services/syncService'
+import { SyncStatusBadge } from '../sync/SyncBadges'
+import { Skeleton } from '../common/Skeleton'
+import { ErrorState } from '../common/ErrorState'
+import { formatDateTime } from '../../utils/format'
+
+export function RecentSyncActivityCard() {
+  const { data, isLoading, error, reload } = useAsyncData(syncService.history)
+  const recent = (data ?? []).slice(0, 6)
+
+  return (
+    <div className="card h-100">
+      <div className="card-body">
+        <div className="dashboard-panel__title">Recent Sync Activity</div>
+        {isLoading ? (
+          <Skeleton height="7rem" />
+        ) : error ? (
+          <ErrorState description={error} onRetry={reload} />
+        ) : recent.length === 0 ? (
+          <p className="text-secondary small mb-0">No sync runs recorded yet.</p>
+        ) : (
+          <div className="activity-feed">
+            {recent.map((row) => (
+              <div className="activity-feed__item" key={row.sync_id}>
+                <SyncStatusBadge status={row.status} />
+                <span className="text-truncate">{row.store_name ?? row.store_code ?? 'Store'}</span>
+                <span className="activity-feed__time">{formatDateTime(row.started_at)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\platform-overview\StoreHealthSummaryCard.tsx
+========================================================================================================================
+
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { syncService } from '../../services/syncService'
+import { DonutChart } from '../dashboard/DonutChart'
+import { Skeleton } from '../common/Skeleton'
+import { ErrorState } from '../common/ErrorState'
+
+export function StoreHealthSummaryCard() {
+  const { data, isLoading, error, reload } = useAsyncData(syncService.storeHealth)
+
+  const online = data?.filter((store) => store.agent_status === 'Online').length ?? 0
+  const offline = (data?.length ?? 0) - online
+
+  return (
+    <div className="card h-100">
+      <div className="card-body">
+        <div className="dashboard-panel__title">Store Health</div>
+        {isLoading ? (
+          <Skeleton height="7rem" />
+        ) : error || !data ? (
+          <ErrorState description={error ?? 'Failed to load store health'} onRetry={reload} />
+        ) : (
+          <DonutChart
+            segments={[
+              { label: 'Online', value: online, color: 'var(--bs-success)' },
+              { label: 'Offline', value: offline, color: 'var(--bs-secondary)' },
+            ]}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\platform-overview\SystemStatusCard.tsx
+========================================================================================================================
+
+import { useAsyncData } from '../../hooks/useAsyncData'
+import { api } from '../../services/apiClient'
+import { Skeleton } from '../common/Skeleton'
+
+interface SystemStatus {
+  apiStatus: string
+  dbStatus: string
+}
+
+async function fetchSystemStatus(): Promise<SystemStatus> {
+  const [health, db] = await Promise.all([
+    api.get<{ status: string }>('/health'),
+    api.get<{ status: string; database?: string }>('/health/db'),
+  ])
+  return { apiStatus: health.status, dbStatus: db.status }
+}
+
+function StatusRow({ label, ok, text }: { label: string; ok: boolean; text: string }) {
+  return (
+    <div className="activity-feed__item">
+      <span className={`badge ${ok ? 'text-bg-success' : 'text-bg-danger'}`}>
+        <i className={`bi ${ok ? 'bi-check-circle' : 'bi-exclamation-triangle'} me-1`} aria-hidden="true" />
+        {text}
+      </span>
+      <span>{label}</span>
+    </div>
+  )
+}
+
+export function SystemStatusCard() {
+  const { data, isLoading, error } = useAsyncData(fetchSystemStatus)
+
+  return (
+    <div className="card h-100">
+      <div className="card-body">
+        <div className="dashboard-panel__title">System Status</div>
+        {isLoading ? (
+          <Skeleton height="3rem" />
+        ) : error || !data ? (
+          <StatusRow label="Platform API" ok={false} text="Unreachable" />
+        ) : (
+          <div className="activity-feed">
+            <StatusRow label="Platform API" ok={data.apiStatus === 'healthy'} text={data.apiStatus === 'healthy' ? 'Healthy' : 'Down'} />
+            <StatusRow label="Database" ok={data.dbStatus === 'healthy'} text={data.dbStatus === 'healthy' ? 'Connected' : 'Disconnected'} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
 FILE: src\components\roles\RoleActions.tsx
 ========================================================================================================================
 
@@ -1880,8 +2790,7 @@ export function RoleActions({ roleName, onView, onEdit, onUsers }: RoleActionsPr
         aria-label={`Open ${roleName} workspace`}
         onClick={stop(onView)}
       >
-        <i className="bi bi-box-arrow-up-right me-1" aria-hidden="true" />
-        Open
+        <i className="bi bi-box-arrow-up-right" aria-hidden="true" />
       </button>
       <span className="row-actions__group">
         <button
@@ -2204,18 +3113,26 @@ FILE: src\components\sidebar\navConfig.ts
 
 import type { NavEntry } from '../../types/navigation'
 
-/** Navigation structure per design1.md (single source of truth). */
+/** Grouped navigation sections (UI-02 — stronger operational hierarchy). */
 export const NAV_ENTRIES: NavEntry[] = [
-  { kind: 'link', label: 'Platform Overview', to: '/overview', icon: 'bi-grid-1x2' },
   {
     kind: 'group',
     label: 'Platform',
-    icon: 'bi-buildings',
+    icon: 'bi-grid-1x2',
     children: [
+      { label: 'Overview', to: '/overview', icon: 'bi-speedometer2' },
       { label: 'Tenants', to: '/platform/tenants', icon: 'bi-building' },
       { label: 'Stores', to: '/platform/stores', icon: 'bi-shop' },
       { label: 'Users', to: '/platform/users', icon: 'bi-people' },
       { label: 'Roles', to: '/platform/roles', icon: 'bi-person-badge' },
+    ],
+  },
+  {
+    kind: 'group',
+    label: 'Sync',
+    icon: 'bi-arrow-repeat',
+    children: [
+      { label: 'Sync Administration', to: '/sync-administration', icon: 'bi-arrow-repeat' },
     ],
   },
   {
@@ -2227,9 +3144,15 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Permissions', to: '/administration/permissions', icon: 'bi-shield-lock' },
     ],
   },
-  { kind: 'link', label: 'Sync Administration', to: '/sync-administration', icon: 'bi-arrow-repeat' },
-  { kind: 'link', label: 'Reports', to: '/reports', icon: 'bi-bar-chart' },
-  { kind: 'link', label: 'Settings', to: '/settings', icon: 'bi-gear' },
+  {
+    kind: 'group',
+    label: 'System',
+    icon: 'bi-gear',
+    children: [
+      { label: 'Reports', to: '/reports', icon: 'bi-bar-chart' },
+      { label: 'Settings', to: '/settings', icon: 'bi-gear' },
+    ],
+  },
 ]
 
 
@@ -2373,8 +3296,7 @@ export function StoreActions({
         aria-label={`Open ${storeName} workspace`}
         onClick={stop(onView)}
       >
-        <i className="bi bi-box-arrow-up-right me-1" aria-hidden="true" />
-        Open
+        <i className="bi bi-box-arrow-up-right" aria-hidden="true" />
       </button>
       <span className="row-actions__group">
         <button
@@ -2481,6 +3403,14 @@ import type { ChangeEvent, FormEvent } from 'react'
 import type { Store, StoreInput } from '../../types/store'
 import type { Tenant } from '../../types/tenant'
 import { storeService } from '../../services/storeService'
+import { ApiError } from '../../services/apiClient'
+
+function describeStoreError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.message
+  }
+  return err instanceof Error ? err.message : 'Failed to save store'
+}
 
 interface StoreFormModalProps {
   mode: 'create' | 'edit'
@@ -2535,7 +3465,7 @@ export function StoreFormModal({ mode, store, tenants, onClose, onSaved }: Store
       }
       onSaved()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save store')
+      setError(describeStoreError(err))
       setSubmitting(false)
     }
   }
@@ -2663,6 +3593,45 @@ export function StoreFormModal({ mode, store, tenants, onClose, onSaved }: Store
       </div>
       <div className="modal-backdrop fade show" />
     </>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\stores\StoreSummary.tsx
+========================================================================================================================
+
+import type { Store } from '../../types/store'
+import { StatCard } from '../dashboard/StatCard'
+
+export function StoreSummary({ stores }: { stores: Store[] }) {
+  const total = stores.length
+  const active = stores.filter((store) => store.is_active).length
+  const inactive = total - active
+  const servers = new Set(stores.map((store) => store.server_name).filter(Boolean)).size
+  const databases = new Set(stores.map((store) => store.database_name).filter(Boolean)).size
+
+  return (
+    <div className="overview-section">
+      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-3">
+        <div className="col">
+          <StatCard label="Total Stores" value={total} icon="bi-shop" tone="primary" />
+        </div>
+        <div className="col">
+          <StatCard label="Active" value={active} icon="bi-check-circle" tone="success" />
+        </div>
+        <div className="col">
+          <StatCard label="Inactive" value={inactive} icon="bi-pause-circle" tone="secondary" />
+        </div>
+        <div className="col">
+          <StatCard label="Servers" value={servers} icon="bi-hdd-network" tone="info" />
+        </div>
+        <div className="col">
+          <StatCard label="Databases" value={databases} icon="bi-database" tone="warning" />
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -2825,18 +3794,22 @@ export function StoreToolbar({
 FILE: src\components\sync\ColumnMappingTab.tsx
 ========================================================================================================================
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAsyncData } from '../../hooks/useAsyncData'
 import { syncService } from '../../services/syncService'
 import { EmptyState } from '../common/EmptyState'
 import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
+import { StatCard } from '../dashboard/StatCard'
+import { ToggleCheck } from '../dashboard/ToggleCheck'
 import type { TableColumn } from '../../types/sync'
 
 type ToggleField = 'is_selected' | 'is_pk' | 'is_hash'
 
 export function ColumnMappingTab() {
   const { data: tables, isLoading: tablesLoading, error: tablesError, reload } = useAsyncData(syncService.tables)
+  const [tableSearch, setTableSearch] = useState('')
+  const [columnSearch, setColumnSearch] = useState('')
   const [selectedId, setSelectedId] = useState('')
   const [tableName, setTableName] = useState('')
   const [columns, setColumns] = useState<TableColumn[]>([])
@@ -2845,11 +3818,18 @@ export function ColumnMappingTab() {
   const [saving, setSaving] = useState<Set<string>>(new Set())
   const [actionError, setActionError] = useState<string | null>(null)
 
+  const filteredTables = useMemo(() => {
+    const query = tableSearch.trim().toLowerCase()
+    const list = tables ?? []
+    if (!query) return list
+    return list.filter((table) => table.table_name.toLowerCase().includes(query))
+  }, [tables, tableSearch])
+
   useEffect(() => {
-    if (tables && tables.length > 0 && !selectedId) {
-      setSelectedId(tables[0].sync_table_id)
+    if (filteredTables.length > 0 && !filteredTables.some((t) => t.sync_table_id === selectedId)) {
+      setSelectedId(filteredTables[0].sync_table_id)
     }
-  }, [tables, selectedId])
+  }, [filteredTables, selectedId])
 
   useEffect(() => {
     if (!selectedId) return
@@ -2874,6 +3854,19 @@ export function ColumnMappingTab() {
       active = false
     }
   }, [selectedId])
+
+  const stats = {
+    total: columns.length,
+    mapped: columns.filter((c) => c.is_selected).length,
+    pk: columns.filter((c) => c.is_pk).length,
+    hash: columns.filter((c) => c.is_hash).length,
+  }
+
+  const visibleColumns = useMemo(() => {
+    const query = columnSearch.trim().toLowerCase()
+    if (!query) return columns
+    return columns.filter((column) => column.column_name.toLowerCase().includes(query))
+  }, [columns, columnSearch])
 
   const toggle = async (column: TableColumn, field: ToggleField) => {
     if (saving.has(column.column_name)) return
@@ -2905,27 +3898,7 @@ export function ColumnMappingTab() {
     }
   }
 
-  const toggleButton = (column: TableColumn, field: ToggleField, label: string) => {
-    const on = column[field]
-    return (
-      <button
-        type="button"
-        className={`btn btn-sm permission-cell ${on ? 'btn-success' : 'btn-outline-secondary'}`}
-        aria-pressed={on}
-        aria-label={`${on ? 'Disable' : 'Enable'} ${label} for ${column.column_name}`}
-        disabled={saving.has(column.column_name)}
-        onClick={() => toggle(column, field)}
-      >
-        {saving.has(column.column_name) ? (
-          <span className="spinner-border spinner-border-sm" aria-hidden="true" />
-        ) : (
-          <i className={`bi ${on ? 'bi-check-lg' : 'bi-x-lg'}`} aria-hidden="true" />
-        )}
-      </button>
-    )
-  }
-
-  if (tablesLoading) return <TableSkeleton rows={5} columns={6} />
+  if (tablesLoading) return <TableSkeleton rows={6} columns={6} />
   if (tablesError || !tables) return <ErrorState description={tablesError ?? 'Failed to load tables'} onRetry={reload} />
   if (tables.length === 0) {
     return (
@@ -2939,26 +3912,54 @@ export function ColumnMappingTab() {
 
   return (
     <div>
-      <div className="mb-3 col-md-5 col-lg-4">
-        <label htmlFor="mapping-table" className="form-label">Configured Table</label>
-        <select
-          id="mapping-table"
-          className="form-select"
-          value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
-        >
-          {tables.map((table) => (
-            <option key={table.sync_table_id} value={table.sync_table_id}>
-              {table.table_name}
-            </option>
-          ))}
-        </select>
+      <div className="row row-cols-2 row-cols-md-4 g-3 mb-3">
+        <div className="col"><StatCard label="Columns" value={stats.total} icon="bi-list-columns" tone="primary" /></div>
+        <div className="col"><StatCard label="Mapped" value={stats.mapped} icon="bi-check-circle" tone="success" /></div>
+        <div className="col"><StatCard label="PK" value={stats.pk} icon="bi-key" tone="warning" /></div>
+        <div className="col"><StatCard label="Hash" value={stats.hash} icon="bi-hash" tone="info" /></div>
+      </div>
+
+      <div className="row g-2 mb-3">
+        <div className="col-12 col-md-4">
+          <input
+            type="search"
+            className="form-control"
+            placeholder="Search tables"
+            aria-label="Search tables"
+            value={tableSearch}
+            onChange={(e) => setTableSearch(e.target.value)}
+          />
+        </div>
+        <div className="col-12 col-md-5">
+          <select
+            className="form-select"
+            aria-label="Configured table"
+            value={selectedId}
+            onChange={(e) => setSelectedId(e.target.value)}
+          >
+            {filteredTables.map((table) => (
+              <option key={table.sync_table_id} value={table.sync_table_id}>
+                {table.table_name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="col-12 col-md-3">
+          <input
+            type="search"
+            className="form-control"
+            placeholder="Search columns"
+            aria-label="Search columns"
+            value={columnSearch}
+            onChange={(e) => setColumnSearch(e.target.value)}
+          />
+        </div>
       </div>
 
       {actionError && <div className="alert alert-danger py-2">{actionError}</div>}
 
       {columnsLoading ? (
-        <TableSkeleton rows={5} columns={6} />
+        <TableSkeleton rows={6} columns={6} />
       ) : columnsError ? (
         <ErrorState description={columnsError} onRetry={() => setSelectedId(selectedId)} />
       ) : columns.length === 0 ? (
@@ -2967,30 +3968,38 @@ export function ColumnMappingTab() {
           title="No catalog columns"
           description="No discovered columns for this table yet. Register the store schema to populate the catalog."
         />
+      ) : visibleColumns.length === 0 ? (
+        <EmptyState icon="bi-search" title="No matching columns" description="Try a different column search." />
       ) : (
         <div className="table-responsive">
           <table className="table table-hover align-middle data-table">
             <thead>
               <tr>
-                <th scope="col">Enabled</th>
+                <th scope="col" className="col-narrow text-center">On</th>
                 <th scope="col">Store Column</th>
                 <th scope="col">HO Column</th>
                 <th scope="col">Store Type</th>
                 <th scope="col">HO Type</th>
-                <th scope="col">PK</th>
-                <th scope="col">Hash</th>
+                <th scope="col" className="col-narrow text-center">PK</th>
+                <th scope="col" className="col-narrow text-center">Hash</th>
               </tr>
             </thead>
             <tbody>
-              {columns.map((column) => (
+              {visibleColumns.map((column) => (
                 <tr key={column.column_name}>
-                  <td>{toggleButton(column, 'is_selected', 'sync')}</td>
+                  <td className="text-center">
+                    <ToggleCheck checked={column.is_selected} busy={saving.has(column.column_name)} label={`Toggle sync for ${column.column_name}`} onClick={() => toggle(column, 'is_selected')} />
+                  </td>
                   <td className="fw-medium">{column.column_name}</td>
                   <td>{column.column_name}</td>
                   <td className="text-secondary">{column.data_type}</td>
                   <td className="text-secondary">{column.data_type}</td>
-                  <td>{toggleButton(column, 'is_pk', 'primary key')}</td>
-                  <td>{toggleButton(column, 'is_hash', 'hash')}</td>
+                  <td className="text-center">
+                    <ToggleCheck checked={column.is_pk} busy={saving.has(column.column_name)} label={`Toggle primary key for ${column.column_name}`} onClick={() => toggle(column, 'is_pk')} />
+                  </td>
+                  <td className="text-center">
+                    <ToggleCheck checked={column.is_hash} busy={saving.has(column.column_name)} label={`Toggle hash for ${column.column_name}`} onClick={() => toggle(column, 'is_hash')} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -3007,82 +4016,789 @@ export function ColumnMappingTab() {
 FILE: src\components\sync\ControlCenterTab.tsx
 ========================================================================================================================
 
+import type { ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { ControlCenter, LiveStore, SyncHistoryRow } from '../../types/sync'
 import { useAsyncData } from '../../hooks/useAsyncData'
 import { syncService } from '../../services/syncService'
-import { EmptyState } from '../common/EmptyState'
+import { storeService } from '../../services/storeService'
+import { tenantService } from '../../services/tenantService'
 import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
-import { AgentBadge, ConnectionType, SyncStatusBadge } from './SyncBadges'
+import { ConnectionType, SyncStatusBadge } from './SyncBadges'
+import { DonutChart } from '../dashboard/DonutChart'
 import { formatDateTime } from '../../utils/format'
-import type { SyncKpis } from '../../types/sync'
 
-const KPI_CONFIG: { key: keyof SyncKpis; label: string; icon: string }[] = [
-  { key: 'stores_online', label: 'Stores Online', icon: 'bi-reception-4' },
-  { key: 'stores_offline', label: 'Stores Offline', icon: 'bi-reception-0' },
-  { key: 'sync_running', label: 'Sync Running', icon: 'bi-arrow-repeat' },
-  { key: 'queued', label: 'Queued', icon: 'bi-hourglass-split' },
-  { key: 'completed_today', label: 'Completed Today', icon: 'bi-check-circle' },
-  { key: 'failed_today', label: 'Failed Today', icon: 'bi-x-circle' },
+const PAGE_SIZE = 10
+const CONNECTIONS = ['All', 'LAN', 'WiFi', 'Internet']
+const SYNC_TYPES: { label: string; value: string }[] = [
+  { label: 'All', value: 'All' },
+  { label: 'Upsert', value: 'UPSERT' },
+  { label: 'Rolling Window', value: 'ROLLING_WINDOW' },
 ]
 
-export function ControlCenterTab() {
-  const { data, isLoading, error, reload } = useAsyncData(syncService.controlCenter)
+async function fetchControlCenter() {
+  const [cc, storeList, tenantList, schedules, history] = await Promise.all([
+    syncService.controlCenter(),
+    storeService.list(),
+    tenantService.list(),
+    syncService.schedules(),
+    syncService.history(),
+  ])
+  return { cc, storeList, tenantList, schedules, history }
+}
 
-  if (isLoading) return <TableSkeleton rows={6} columns={5} />
+function pct(part: number, total: number): string {
+  if (!total) return '0%'
+  return `${((part / total) * 100).toFixed(2)}%`
+}
+
+function fmtNum(n: number | null | undefined): string {
+  return n == null ? '—' : n.toLocaleString()
+}
+
+function fmtEta(seconds: number | null): string {
+  if (seconds == null || seconds <= 0) return '—'
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  if (m >= 60) {
+    const h = Math.floor(m / 60)
+    return `${h}h ${m % 60}m`
+  }
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
+function timeOnly(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function KpiTile({ icon, tone, value, label, sub }: { icon: string; tone: string; value: ReactNode; label: string; sub?: string }) {
+  return (
+    <div className={`card cc-glass cc-kpi cc-kpi--${tone}`}>
+      <span className={`cc-kpi__icon cc-kpi__icon--${tone}`}>
+        <i className={`bi ${icon}`} aria-hidden="true" />
+      </span>
+      <div>
+        <div className="cc-kpi__value">{value}</div>
+        <div className="cc-kpi__label">{label}</div>
+        {sub && <div className="cc-kpi__sub">{sub}</div>}
+      </div>
+    </div>
+  )
+}
+
+function PanelHead({ title, icon, action }: { title: string; icon?: string; action?: ReactNode }) {
+  return (
+    <div className="cc-panelhead">
+      <span className="cc-panelhead__title">
+        {icon && <i className={`bi ${icon}`} aria-hidden="true" />}
+        {title}
+      </span>
+      {action}
+    </div>
+  )
+}
+
+function SyncTypeBadge({ value }: { value: string | null }) {
+  if (!value) return <span className="cc-type cc-type--muted">—</span>
+  const v = value.toUpperCase()
+  if (v.includes('ROLL')) return <span className="cc-type cc-type--rolling">Rolling Window</span>
+  return <span className="cc-type cc-type--upsert">Upsert</span>
+}
+
+function LiveBar({ value }: { value: number }) {
+  return (
+    <div className="progress cc-progress" role="progressbar" aria-valuenow={value}>
+      <div className="progress-bar progress-bar-striped progress-bar-animated bg-primary" style={{ width: `${Math.min(100, Math.max(2, value))}%` }} />
+    </div>
+  )
+}
+
+function DonutPanel({ title, segments }: { title: string; segments: { label: string; value: number; color: string }[] }) {
+  const total = segments.reduce((a, s) => a + s.value, 0)
+  return (
+    <div className="card cc-glass h-100">
+      <div className="card-body">
+        <PanelHead title={title} />
+        <div className="cc-donutwrap">
+          <DonutChart segments={segments} />
+          <div className="cc-legend flex-fill">
+            {segments.map((s) => (
+              <div key={s.label} className="cc-legend__row">
+                <span className="cc-dot" style={{ background: s.color }} />
+                <span className="cc-legend__label">{s.label}</span>
+                <span className="cc-legend__value">{s.value}</span>
+                <span className="cc-legend__sub">({pct(s.value, total)})</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function ControlCenterTab() {
+  const { data, isLoading, error, reload } = useAsyncData(fetchControlCenter)
+  const [tenantFilter, setTenantFilter] = useState('all')
+  const [connectionFilter, setConnectionFilter] = useState('All')
+  const [syncTypeFilter, setSyncTypeFilter] = useState('All')
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
+  const [view, setView] = useState<'table' | 'card'>('table')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
+  const [dynamic, setDynamic] = useState<{ cc: ControlCenter; history: SyncHistoryRow[] } | null>(null)
+  const [liveMap, setLiveMap] = useState<Record<string, LiveStore>>({})
+
+  useEffect(() => {
+    let active = true
+    const tick = async () => {
+      try {
+        const [cc, hist, liveRows] = await Promise.all([
+          syncService.controlCenter(),
+          syncService.history(),
+          syncService.live(),
+        ])
+        if (!active) return
+        setDynamic({ cc, history: hist })
+        setLiveMap(Object.fromEntries(liveRows.map((r) => [r.store_id, r])))
+      } catch {
+        /* keep last good state */
+      }
+    }
+    void tick()
+    const id = setInterval(tick, 2000)
+    return () => {
+      active = false
+      clearInterval(id)
+    }
+  }, [])
+
+  const tenantNames = useMemo(
+    () => new Map((data?.tenantList ?? []).map((t) => [t.tenant_id, t.tenant_name])),
+    [data],
+  )
+  const storeTenant = useMemo(
+    () => new Map((data?.storeList ?? []).map((s) => [s.store_id, s.tenant_id])),
+    [data],
+  )
+
+  const rows = useMemo(() => {
+    const stores = (dynamic?.cc ?? data?.cc)?.stores ?? []
+    return stores.map((store) => {
+      const tenantId = storeTenant.get(store.store_id)
+      const live = liveMap[store.store_id]
+      return {
+        ...store,
+        tenant_name: (tenantId && tenantNames.get(tenantId)) || '—',
+        tenant_id: tenantId,
+        live,
+        is_syncing: store.is_syncing || Boolean(live),
+      }
+    })
+  }, [data, dynamic, liveMap, storeTenant, tenantNames])
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return rows.filter((row) => {
+      if (tenantFilter !== 'all' && row.tenant_id !== tenantFilter) return false
+      if (connectionFilter !== 'All' && row.connection_type !== connectionFilter) return false
+      if (syncTypeFilter !== 'All') {
+        const t = (row.live?.sync_type ?? '').toUpperCase()
+        if (syncTypeFilter === 'ROLLING_WINDOW' ? !t.includes('ROLL') : t !== 'UPSERT') return false
+      }
+      if (query && !`${row.store_code} ${row.store_name}`.toLowerCase().includes(query)) return false
+      return true
+    })
+  }, [rows, tenantFilter, connectionFilter, syncTypeFilter, search])
+
+  async function runSyncSelected() {
+    const targets = rows.filter((r) => selected.has(r.store_id) && r.tenant_id)
+    if (targets.length === 0) return
+    setBusy(true)
+    try {
+      await Promise.all(
+        targets.map((r) =>
+          syncService.createTask({ tenant_id: r.tenant_id as string, store_id: r.store_id, execution_type: 'FULL', sync_mode: 'FULL' }),
+        ),
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function control(action: 'PAUSE' | 'STOP') {
+    if (selected.size === 0) return
+    setBusy(true)
+    try {
+      await syncService.control([...selected], action)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function runOne(storeId: string, tenantId?: string) {
+    if (!tenantId) return
+    setBusy(true)
+    try {
+      await syncService.createTask({ tenant_id: tenantId, store_id: storeId, execution_type: 'FULL', sync_mode: 'FULL' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (isLoading) return <TableSkeleton rows={8} columns={12} />
   if (error || !data) return <ErrorState description={error ?? 'Failed to load control center'} onRetry={reload} />
 
+  const { storeList, tenantList, schedules } = data
+  const cc = dynamic?.cc ?? data.cc
+  const history = dynamic?.history ?? data.history
+  const { kpis } = cc
+  const totalStores = storeList.length
+  const liveList = Object.values(liveMap)
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const clampedPage = Math.min(page, totalPages - 1)
+  const pageRows = filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE)
+  const rangeStart = filtered.length === 0 ? 0 : clampedPage * PAGE_SIZE + 1
+  const rangeEnd = Math.min(filtered.length, clampedPage * PAGE_SIZE + PAGE_SIZE)
+
+  const online = kpis.stores_online
+  const offline = kpis.stores_offline
+  const syncing = Math.max(kpis.sync_running, liveList.length)
+  const connCounts = CONNECTIONS.slice(1).map((c) => ({ type: c, count: rows.filter((r) => r.connection_type === c).length }))
+
+  const success = history.filter((h) => h.status === 'COMPLETED').length
+  const failure = history.filter((h) => h.status === 'FAILED').length
+  const totalRecords = history.reduce((a, h) => a + (h.rows ?? 0), 0)
+  const successRate = success + failure ? ((success / (success + failure)) * 100).toFixed(0) : '100'
+  const avgSpeed = liveList.length ? Math.round(liveList.reduce((a, l) => a + l.speed_rows_sec, 0) / liveList.length) : 0
+  const upcoming = schedules.filter((s) => s.is_enabled)
+
+  const upsertSyncs = liveList.filter((l) => (l.sync_type ?? '').toUpperCase() === 'UPSERT').length
+  const rollingSyncs = liveList.filter((l) => (l.sync_type ?? '').toUpperCase().includes('ROLL')).length
+  const notSyncing = totalStores - liveList.length
+
+  const allVisibleSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.store_id))
+  const toggleAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allVisibleSelected) pageRows.forEach((r) => next.delete(r.store_id))
+      else pageRows.forEach((r) => next.add(r.store_id))
+      return next
+    })
+  }
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
   return (
-    <div>
-      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-3 mb-4">
-        {KPI_CONFIG.map((kpi) => (
-          <div className="col" key={kpi.key}>
-            <div className="card kpi-card h-100">
-              <div className="card-body">
-                <div className="kpi-card__header">
-                  <span className="kpi-card__label">{kpi.label}</span>
-                  <span className="kpi-card__icon">
-                    <i className={`bi ${kpi.icon}`} aria-hidden="true" />
-                  </span>
-                </div>
-                <div className="kpi-card__value">{data.kpis[kpi.key]}</div>
+    <div className="cc">
+      {/* KPI row */}
+      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-2 mb-2">
+        <div className="col"><KpiTile icon="bi-building" tone="primary" value={tenantList.length} label="Total Tenants" sub="Active Tenants" /></div>
+        <div className="col"><KpiTile icon="bi-shop" tone="success" value={totalStores} label="Total Stores" sub="Registered Stores" /></div>
+        <div className="col"><KpiTile icon="bi-wifi" tone="info" value={online} label="Stores Online" sub={pct(online, totalStores)} /></div>
+        <div className="col"><KpiTile icon="bi-arrow-repeat" tone="indigo" value={syncing} label="Stores Syncing" sub={pct(syncing, totalStores)} /></div>
+        <div className="col"><KpiTile icon="bi-check-circle" tone="success" value={kpis.completed_today} label="Completed Today" sub="100% Success" /></div>
+        <div className="col"><KpiTile icon="bi-exclamation-triangle" tone={kpis.failed_today ? 'danger' : 'secondary'} value={kpis.failed_today} label="Failed Today" sub={`${kpis.failed_today ? pct(kpis.failed_today, kpis.completed_today + kpis.failed_today) : '0%'} Failure`} /></div>
+      </div>
+
+      {/* Active Sync Details */}
+      <div className="card cc-glass mb-2">
+        <div className="card-body">
+          <PanelHead
+            title="Active Sync Details"
+            action={<span className="cc-link">View All Active Syncs <i className="bi bi-arrow-right" /></span>}
+          />
+          <span className="cc-pill mb-2 d-inline-block">{liveList.length} Active</span>
+          <div className="table-responsive">
+            <table className="table align-middle data-table mb-0">
+              <thead>
+                <tr>
+                  <th scope="col">Store</th>
+                  <th scope="col">Current Table</th>
+                  <th scope="col">Chunk</th>
+                  <th scope="col" className="text-end">Rows Processed</th>
+                  <th scope="col" className="text-end">Rows Remaining</th>
+                  <th scope="col" className="text-end">Speed</th>
+                  <th scope="col">ETA</th>
+                  <th scope="col">Last Update</th>
+                </tr>
+              </thead>
+              <tbody>
+                {liveList.length === 0 ? (
+                  <tr><td colSpan={8} className="text-center text-secondary py-3">No active syncs.</td></tr>
+                ) : (
+                  liveList.map((l) => (
+                    <tr key={l.execution_id}>
+                      <td>
+                        <span className={`cc-dot cc-dot--${l.status === 'PAUSED' ? 'paused' : 'running'} me-2`} />
+                        <span className="fw-medium">{l.store_code}</span>
+                        <span className="text-secondary"> — {l.store_name}</span>
+                      </td>
+                      <td>
+                        <div className="fw-medium">{l.current_table ?? '—'}</div>
+                        <SyncTypeBadge value={l.sync_type} />
+                      </td>
+                      <td>
+                        <span className="fw-medium">{l.chunk_no ?? '—'}{l.total_chunks ? ` / ${l.total_chunks}` : ''}</span>
+                        {l.chunk_size != null && <div className="text-secondary small">{l.chunk_size.toLocaleString()} rows</div>}
+                      </td>
+                      <td className="text-end">{fmtNum(l.rows_processed)}</td>
+                      <td className="text-end">{fmtNum(l.rows_remaining)}</td>
+                      <td className="text-end text-success fw-medium">{l.speed_rows_sec > 0 ? `${l.speed_rows_sec.toLocaleString()} rows/sec` : '—'}</td>
+                      <td>{fmtEta(l.eta_seconds)}</td>
+                      <td>{timeOnly(l.updated_at)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Selection + action toolbar */}
+      <div className="card cc-glass mb-2">
+        <div className="card-body py-2 cc-toolbar">
+          <label className="d-inline-flex align-items-center gap-2 small fw-medium mb-0">
+            <input type="checkbox" className="form-check-input mt-0" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select all" />
+            Select All ({selected.size})
+          </label>
+          <select className="form-select form-select-sm cc-toolbar__control" aria-label="Tenant" value={tenantFilter} onChange={(e) => { setTenantFilter(e.target.value); setPage(0) }}>
+            <option value="all">All Tenants</option>
+            {tenantList.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
+          </select>
+          <div className="cc-seg" role="group" aria-label="Connection type">
+            {CONNECTIONS.map((c) => (
+              <button key={c} type="button" className={`cc-seg__btn${connectionFilter === c ? ' cc-seg__btn--active' : ''}`} onClick={() => { setConnectionFilter(c); setPage(0) }}>{c}</button>
+            ))}
+          </div>
+          <div className="cc-seg" role="group" aria-label="Sync type">
+            {SYNC_TYPES.map((t) => (
+              <button key={t.value} type="button" className={`cc-seg__btn${syncTypeFilter === t.value ? ' cc-seg__btn--active' : ''}`} onClick={() => { setSyncTypeFilter(t.value); setPage(0) }}>{t.label}</button>
+            ))}
+          </div>
+          <div className="ms-auto d-flex gap-2">
+            <button type="button" className="cc-action cc-action--sync" disabled={busy || selected.size === 0} onClick={runSyncSelected}><i className="bi bi-play-fill" />Sync Selected</button>
+            <button type="button" className="cc-action cc-action--pause" disabled={busy || selected.size === 0} onClick={() => control('PAUSE')}><i className="bi bi-pause-fill" />Pause Selected</button>
+            <button type="button" className="cc-action cc-action--stop" disabled={busy || selected.size === 0} onClick={() => control('STOP')}><i className="bi bi-stop-fill" />Stop Selected</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Store sync status */}
+      <div className="card cc-glass mb-3">
+        <div className="card-body">
+          <div className="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+            <div className="dashboard-panel__title mb-0">Store Sync Status ({filtered.length} stores)</div>
+            <div className="d-flex align-items-center gap-2">
+              <div className="cc-view">
+                <button type="button" className={`cc-view__btn${view === 'table' ? ' cc-view__btn--active' : ''}`} onClick={() => setView('table')}>Table View</button>
+                <button type="button" className={`cc-view__btn${view === 'card' ? ' cc-view__btn--active' : ''}`} onClick={() => setView('card')}>Card View</button>
+              </div>
+              <div className="cc-toolbar__search">
+                <i className="bi bi-search" aria-hidden="true" />
+                <input type="search" className="form-control form-control-sm" placeholder="Search store..." aria-label="Search store" value={search} onChange={(e) => { setSearch(e.target.value); setPage(0) }} />
               </div>
             </div>
           </div>
-        ))}
+
+          {view === 'table' ? (
+            <div className="table-responsive">
+              <table className="table table-hover align-middle data-table cc-grid">
+                <thead>
+                  <tr>
+                    <th scope="col"><input type="checkbox" className="form-check-input" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select page" /></th>
+                    <th scope="col">Store Code</th>
+                    <th scope="col">Store Name</th>
+                    <th scope="col">Connection</th>
+                    <th scope="col">Sync Type</th>
+                    <th scope="col">Current Table</th>
+                    <th scope="col">Chunk</th>
+                    <th scope="col" className="text-end">Rows</th>
+                    <th scope="col">Progress</th>
+                    <th scope="col" className="text-end">Speed</th>
+                    <th scope="col">Last Sync</th>
+                    <th scope="col">Status</th>
+                    <th scope="col" className="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.length === 0 ? (
+                    <tr><td colSpan={13} className="text-center text-secondary py-3">No stores match the current filters.</td></tr>
+                  ) : (
+                    pageRows.map((row) => {
+                      const live = row.live
+                      return (
+                        <tr key={row.store_id}>
+                          <td><input type="checkbox" className="form-check-input" checked={selected.has(row.store_id)} onChange={() => toggleOne(row.store_id)} aria-label={`Select ${row.store_name}`} /></td>
+                          <td className="fw-medium">{row.store_code}</td>
+                          <td className="text-secondary">{row.store_name}</td>
+                          <td><ConnectionType value={row.connection_type} /></td>
+                          <td><SyncTypeBadge value={live?.sync_type ?? null} /></td>
+                          <td>{live?.current_table ? <span className="fw-medium">{live.current_table}</span> : <span className="text-secondary">—</span>}</td>
+                          <td>
+                            {live?.chunk_no != null ? (
+                              <>
+                                <span className="fw-medium">{live.chunk_no}{live.total_chunks ? ` / ${live.total_chunks}` : ''}</span>
+                                {live.chunk_size != null && <div className="text-secondary small">{live.chunk_size.toLocaleString()} rows</div>}
+                              </>
+                            ) : <span className="text-secondary">—</span>}
+                          </td>
+                          <td className="text-end">
+                            {live && live.total_rows ? (
+                              <span>{live.rows_processed.toLocaleString()} <span className="text-secondary">/ {live.total_rows.toLocaleString()}</span></span>
+                            ) : live ? live.rows_processed.toLocaleString() : <span className="text-secondary">—</span>}
+                          </td>
+                          <td className="cc-grid__progress">
+                            {live ? (
+                              <>
+                                <LiveBar value={live.progress_pct} />
+                                <div className="text-secondary small mt-1">{live.progress_pct}%</div>
+                              </>
+                            ) : <span className="text-secondary small">0%</span>}
+                          </td>
+                          <td className="text-end">{live && live.speed_rows_sec > 0 ? <span className="text-success fw-medium">{live.speed_rows_sec.toLocaleString()}</span> : <span className="text-secondary">—</span>}</td>
+                          <td><div className="small">{formatDateTime(row.last_sync)}</div></td>
+                          <td><SyncStatusBadge status={live ? (live.status === 'PAUSED' ? 'QUEUED' : 'Syncing') : row.status} /></td>
+                          <td className="text-end">
+                            <button type="button" className="btn btn-sm btn-outline-primary" disabled={!row.tenant_id || busy} title={row.tenant_id ? 'Queue full sync' : 'Tenant unknown'} aria-label={`Sync ${row.store_name}`} onClick={() => runOne(row.store_id, row.tenant_id)}>
+                              <i className="bi bi-play-fill" aria-hidden="true" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-2">
+              {pageRows.length === 0 ? (
+                <p className="text-secondary small mb-0">No stores match the current filters.</p>
+              ) : (
+                pageRows.map((row) => {
+                  const live = row.live
+                  return (
+                    <div className="col" key={row.store_id}>
+                      <div className="cc-storecard">
+                        <div className="cc-storecard__head">
+                          <div>
+                            <div className="fw-semibold">{row.store_code}</div>
+                            <div className="text-secondary small">{row.store_name}</div>
+                          </div>
+                          <SyncStatusBadge status={live ? 'Syncing' : row.status} />
+                        </div>
+                        <div className="d-flex align-items-center gap-2 small text-secondary mb-2">
+                          <ConnectionType value={row.connection_type} />
+                          <SyncTypeBadge value={live?.sync_type ?? null} />
+                        </div>
+                        {live ? (
+                          <>
+                            <div className="d-flex justify-content-between small mb-1">
+                              <span className="fw-medium">{live.current_table}</span>
+                              <span className="text-secondary">{live.progress_pct}%</span>
+                            </div>
+                            <LiveBar value={live.progress_pct} />
+                            <div className="d-flex justify-content-between small text-secondary mt-1">
+                              <span>{live.rows_processed.toLocaleString()} rows</span>
+                              <span>{live.speed_rows_sec > 0 ? `${live.speed_rows_sec.toLocaleString()}/s · ETA ${fmtEta(live.eta_seconds)}` : '—'}</span>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-secondary small">Idle · last sync {formatDateTime(row.last_sync)}</div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )}
+
+          <div className="table-pager">
+            <span className="text-secondary">Showing {rangeStart} to {rangeEnd} of {filtered.length} stores</span>
+            <div className="btn-group btn-group-sm">
+              <button type="button" className="btn btn-outline-secondary" disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}><i className="bi bi-chevron-left" /></button>
+              <span className="btn btn-outline-secondary disabled">{clampedPage + 1} / {totalPages}</span>
+              <button type="button" className="btn btn-outline-secondary" disabled={clampedPage >= totalPages - 1} onClick={() => setPage(clampedPage + 1)}><i className="bi bi-chevron-right" /></button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {data.stores.length === 0 ? (
-        <EmptyState icon="bi-shop" title="No stores" description="Active stores will appear here." />
-      ) : (
-        <div className="table-responsive">
-          <table className="table table-hover align-middle data-table">
-            <thead>
-              <tr>
-                <th scope="col">Store Code</th>
-                <th scope="col">Store Name</th>
-                <th scope="col">Connection</th>
-                <th scope="col">Agent</th>
-                <th scope="col">Activity</th>
-                <th scope="col">Last Sync</th>
-                <th scope="col">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.stores.map((store) => (
-                <tr key={store.store_id}>
-                  <td>{store.store_code}</td>
-                  <td className="fw-medium">{store.store_name}</td>
-                  <td><ConnectionType value={store.connection_type} /></td>
-                  <td><AgentBadge status={store.agent_status} /></td>
-                  <td>{store.current_activity}</td>
-                  <td>{formatDateTime(store.last_sync)}</td>
-                  <td><SyncStatusBadge status={store.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Insight panels */}
+      <div className="row row-cols-1 row-cols-md-2 row-cols-xl-4 g-3 mb-3">
+        <div className="col">
+          <DonutPanel
+            title="Sync Overview"
+            segments={[
+              { label: 'Syncing', value: syncing, color: '#2563eb' },
+              { label: 'Online', value: Math.max(online - syncing, 0), color: '#16a34a' },
+              { label: 'Offline', value: offline, color: '#f59e0b' },
+            ]}
+          />
         </div>
-      )}
+        <div className="col">
+          <DonutPanel
+            title="Agent Connection Status"
+            segments={[
+              { label: 'Online', value: online, color: '#16a34a' },
+              { label: 'Offline', value: offline, color: '#dc2626' },
+            ]}
+          />
+        </div>
+        <div className="col">
+          <div className="card cc-glass h-100">
+            <div className="card-body">
+              <PanelHead title="Recent Sync Activity" action={<span className="cc-link">View All</span>} />
+              {history.length === 0 ? (
+                <p className="text-secondary small mb-0">No activity yet.</p>
+              ) : (
+                <ul className="cc-log">
+                  {history.slice(0, 5).map((row) => (
+                    <li key={row.sync_id} className="cc-log__row">
+                      <span className={`cc-log__dot cc-log__dot--${(row.status ?? '').toLowerCase()}`} />
+                      <span className="cc-log__msg text-truncate">{row.store_name ?? row.store_code ?? 'Store'} — {row.status?.toLowerCase()}</span>
+                      <span className="cc-log__time">{timeOnly(row.started_at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="col">
+          <div className="card cc-glass h-100">
+            <div className="card-body">
+              <PanelHead title="Sync Health" />
+              <div className="cc-health-grid mb-3">
+                <div><div className="cc-health__value text-success">{successRate}%</div><div className="cc-health__label">Success Rate</div></div>
+                <div><div className="cc-health__value text-primary">{avgSpeed.toLocaleString()}</div><div className="cc-health__label">Avg Speed</div></div>
+                <div><div className="cc-health__value" style={{ color: '#7c3aed' }}>{(totalRecords / 1_000_000).toFixed(2)}M</div><div className="cc-health__label">Rows Today</div></div>
+                <div><div className={`cc-health__value ${failure ? 'text-danger' : 'text-secondary'}`}>{failure}</div><div className="cc-health__label">Failures</div></div>
+              </div>
+              <PanelHead title="Live Events" action={<span className="cc-link">View All</span>} />
+              {liveList.length === 0 && history.length === 0 ? (
+                <p className="text-secondary small mb-0">No events.</p>
+              ) : (
+                <ul className="cc-log">
+                  {liveList.slice(0, 2).map((l) => (
+                    <li key={l.execution_id} className="cc-log__row">
+                      <span className="cc-log__dot cc-log__dot--running" />
+                      <span className="cc-log__msg text-truncate">{l.store_code} — {l.current_table} chunk {l.chunk_no} uploaded</span>
+                      <span className="cc-log__time">{timeOnly(l.updated_at)}</span>
+                    </li>
+                  ))}
+                  {history.slice(0, 3).map((row) => (
+                    <li key={`h${row.sync_id}`} className="cc-log__row">
+                      <span className={`cc-log__dot cc-log__dot--${(row.status ?? '').toLowerCase()}`} />
+                      <span className="cc-log__msg text-truncate">{row.store_code ?? 'Store'} — {row.status?.toLowerCase()}</span>
+                      <span className="cc-log__time">{timeOnly(row.started_at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom summary */}
+      <div className="row row-cols-1 row-cols-md-3 g-3">
+        <div className="col">
+          <div className="card cc-glass h-100">
+            <div className="card-body">
+              <PanelHead title="Connection Summary" />
+              <div className="cc-legend">
+                {connCounts.map((c, i) => (
+                  <div key={c.type} className="cc-legend__row">
+                    <span className="cc-dot" style={{ background: ['#2563eb', '#0ea5e9', '#6366f1'][i] }} />
+                    <span className="cc-legend__label">{c.type}</span>
+                    <span className="cc-legend__value">{c.count}</span>
+                    <span className="cc-legend__sub">{pct(c.count, rows.length)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="col">
+          <div className="card cc-glass h-100">
+            <div className="card-body">
+              <PanelHead title="Sync Type Distribution" />
+              <div className="cc-legend">
+                <div className="cc-legend__row"><span className="cc-dot" style={{ background: '#0ea5e9' }} /><span className="cc-legend__label">Upsert (Master)</span><span className="cc-legend__value">{upsertSyncs}</span></div>
+                <div className="cc-legend__row"><span className="cc-dot" style={{ background: '#7c3aed' }} /><span className="cc-legend__label">Rolling Window</span><span className="cc-legend__value">{rollingSyncs}</span></div>
+                <div className="cc-legend__row"><span className="cc-dot" style={{ background: '#cbd5e1' }} /><span className="cc-legend__label">Not Syncing</span><span className="cc-legend__value">{notSyncing}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="col">
+          <div className="card cc-glass h-100">
+            <div className="card-body">
+              <PanelHead title={`Schedule Summary (${upcoming.length} enabled)`} />
+              {upcoming.length === 0 ? (
+                <p className="text-secondary small mb-0">No schedules configured.</p>
+              ) : (
+                <ul className="cc-log">
+                  {upcoming.slice(0, 5).map((s) => (
+                    <li key={s.schedule_id} className="cc-log__row">
+                      <i className="bi bi-calendar-event text-warning" aria-hidden="true" />
+                      <span className="cc-log__msg text-truncate">{s.schedule_name}</span>
+                      <span className="cc-log__time">{formatDateTime(s.start_time)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\LiveOperationsTab.tsx
+========================================================================================================================
+
+import { useEffect, useState } from 'react'
+import type { LiveStore } from '../../types/sync'
+import { syncService } from '../../services/syncService'
+import { SyncStatusBadge } from './SyncBadges'
+
+function fmtEta(seconds: number | null): string {
+  if (seconds == null || seconds <= 0) return '—'
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  if (m >= 60) return `${Math.floor(m / 60)}h ${m % 60}m`
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
+export function LiveOperationsTab() {
+  const [live, setLive] = useState<LiveStore[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    const tick = async () => {
+      try {
+        const rows = await syncService.live()
+        if (!active) return
+        setLive(rows)
+        setLoaded(true)
+      } catch {
+        /* keep last good state */
+      }
+    }
+    void tick()
+    const id = setInterval(tick, 2000)
+    return () => {
+      active = false
+      clearInterval(id)
+    }
+  }, [])
+
+  const allSelected = live.length > 0 && live.every((l) => selected.has(l.store_id))
+  const toggleAll = () =>
+    setSelected(allSelected ? new Set() : new Set(live.map((l) => l.store_id)))
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  async function control(action: 'PAUSE' | 'STOP') {
+    if (selected.size === 0) return
+    setBusy(true)
+    try {
+      await syncService.control([...selected], action)
+      setSelected(new Set())
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="cc">
+      <div className="card cc-glass mb-3">
+        <div className="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
+          <span className="cc-panelhead__title mb-0">Live Operations</span>
+          <span className="cc-pill">{live.length} Active</span>
+          <span className="text-secondary small">live · refreshing every 2s</span>
+          <div className="ms-auto d-flex gap-2">
+            <button type="button" className="cc-action cc-action--pause" disabled={busy || selected.size === 0} onClick={() => control('PAUSE')}><i className="bi bi-pause-fill" />Pause Selected</button>
+            <button type="button" className="cc-action cc-action--stop" disabled={busy || selected.size === 0} onClick={() => control('STOP')}><i className="bi bi-stop-fill" />Stop Selected</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card cc-glass">
+        <div className="card-body">
+          <div className="table-responsive">
+            <table className="table table-hover align-middle data-table cc-grid">
+              <thead>
+                <tr>
+                  <th scope="col"><input type="checkbox" className="form-check-input" checked={allSelected} onChange={toggleAll} aria-label="Select all" /></th>
+                  <th scope="col">Store</th>
+                  <th scope="col">Current Table</th>
+                  <th scope="col" className="text-end">Rows Changed</th>
+                  <th scope="col" className="text-end">Rows Uploaded</th>
+                  <th scope="col" className="text-end">Inserted</th>
+                  <th scope="col" className="text-end">Updated</th>
+                  <th scope="col">Chunk</th>
+                  <th scope="col" className="text-end">Speed</th>
+                  <th scope="col">ETA</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {live.length === 0 ? (
+                  <tr><td colSpan={11} className="text-center text-secondary py-4">{loaded ? 'No active syncs right now.' : 'Loading…'}</td></tr>
+                ) : (
+                  live.map((l) => (
+                    <tr key={l.execution_id}>
+                      <td><input type="checkbox" className="form-check-input" checked={selected.has(l.store_id)} onChange={() => toggleOne(l.store_id)} aria-label={`Select ${l.store_code}`} /></td>
+                      <td>
+                        <span className={`cc-dot cc-dot--${l.status === 'PAUSED' ? 'paused' : 'running'} me-2`} />
+                        <span className="fw-medium">{l.store_code}</span>
+                        <div className="text-secondary small">{l.store_name}</div>
+                      </td>
+                      <td className="fw-medium">{l.current_table ?? '—'}</td>
+                      <td className="text-end">{l.rows_changed.toLocaleString()}</td>
+                      <td className="text-end">{l.rows_uploaded.toLocaleString()}</td>
+                      <td className="text-end text-success">{l.rows_inserted.toLocaleString()}</td>
+                      <td className="text-end text-primary">{l.rows_updated.toLocaleString()}</td>
+                      <td>{l.chunk_no != null ? `${l.chunk_no}${l.total_chunks ? ` / ${l.total_chunks}` : ''}` : '—'}</td>
+                      <td className="text-end">{l.speed_rows_sec > 0 ? <span className="text-success fw-medium">{l.speed_rows_sec.toLocaleString()} rows/sec</span> : '—'}</td>
+                      <td>{fmtEta(l.eta_seconds)}</td>
+                      <td><SyncStatusBadge status={l.status === 'PAUSED' ? 'QUEUED' : 'Syncing'} /></td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -3154,6 +4870,7 @@ import { EmptyState } from '../common/EmptyState'
 import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
 import { AgentBadge, ConnectionType } from './SyncBadges'
+import { StatCard } from '../dashboard/StatCard'
 import { formatDateTime } from '../../utils/format'
 
 // Architecture: Heartbeat = Agent Health only (it never reads the store DB).
@@ -3168,8 +4885,27 @@ export function StoreHealthTab() {
   if (isLoading) return <TableSkeleton rows={5} columns={6} />
   if (error || !data) return <ErrorState description={error ?? 'Failed to load store health'} onRetry={reload} />
 
+  const online = data.filter((store) => store.agent_status === 'Online').length
+  const offline = data.length - online
+  const pending = data.reduce((sum, store) => sum + (store.pending_queue ?? 0), 0)
+
   return (
     <div>
+      <div className="row row-cols-2 row-cols-md-4 g-3 mb-3">
+        <div className="col">
+          <StatCard label="Stores" value={data.length} icon="bi-shop" tone="primary" />
+        </div>
+        <div className="col">
+          <StatCard label="Online" value={online} icon="bi-reception-4" tone="success" />
+        </div>
+        <div className="col">
+          <StatCard label="Offline" value={offline} icon="bi-reception-0" tone="secondary" />
+        </div>
+        <div className="col">
+          <StatCard label="Pending Queue" value={pending} icon="bi-hourglass-split" tone="warning" />
+        </div>
+      </div>
+
       <h2 className="overview-section__title">Sync Health</h2>
       {data.length === 0 ? (
         <EmptyState icon="bi-heart-pulse" title="No stores" description="Active stores will appear here." />
@@ -3285,6 +5021,8 @@ import { EmptyState } from '../common/EmptyState'
 import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
 import { SyncStatusBadge } from './SyncBadges'
+import { StatCard } from '../dashboard/StatCard'
+import { DonutChart } from '../dashboard/DonutChart'
 import { formatDateTime } from '../../utils/format'
 
 function formatDuration(seconds: number | null): string {
@@ -3299,46 +5037,87 @@ export function SyncHistoryTab() {
 
   if (isLoading) return <TableSkeleton rows={6} columns={6} />
   if (error || !data) return <ErrorState description={error ?? 'Failed to load sync history'} onRetry={reload} />
-  if (data.length === 0) {
-    return (
-      <EmptyState
-        icon="bi-clock-history"
-        title="No sync history yet"
-        description="Completed and failed sync runs will appear here."
-      />
-    )
-  }
+
+  const success = data.filter((row) => row.status === 'COMPLETED').length
+  const failure = data.filter((row) => row.status === 'FAILED').length
+  const records = data.reduce((sum, row) => sum + (row.rows ?? 0), 0)
+  const durations = data.map((row) => row.duration_seconds).filter((d): d is number => d != null)
+  const avgDuration = durations.length
+    ? Math.round(durations.reduce((sum, d) => sum + d, 0) / durations.length)
+    : null
 
   return (
-    <div className="table-responsive">
-      <table className="table table-hover align-middle data-table">
-        <thead>
-          <tr>
-            <th scope="col">Execution Id</th>
-            <th scope="col">Store</th>
-            <th scope="col">Scope</th>
-            <th scope="col">Started</th>
-            <th scope="col">Completed</th>
-            <th scope="col">Duration</th>
-            <th scope="col">Rows</th>
-            <th scope="col">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row) => (
-            <tr key={row.sync_id}>
-              <td>{row.sync_id}</td>
-              <td className="fw-medium">{row.store_name ?? row.store_code ?? '—'}</td>
-              <td>{row.scope ?? '—'}</td>
-              <td>{formatDateTime(row.started_at)}</td>
-              <td>{formatDateTime(row.completed_at)}</td>
-              <td>{formatDuration(row.duration_seconds)}</td>
-              <td>{row.rows}</td>
-              <td><SyncStatusBadge status={row.status} /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div>
+      <div className="row g-3 mb-3">
+        <div className="col-6 col-xl-3">
+          <StatCard label="Success" value={success} icon="bi-check-circle" tone="success" />
+        </div>
+        <div className="col-6 col-xl-3">
+          <StatCard label="Failure" value={failure} icon="bi-x-circle" tone="danger" />
+        </div>
+        <div className="col-6 col-xl-3">
+          <StatCard label="Records Processed" value={records.toLocaleString()} icon="bi-database" tone="info" />
+        </div>
+        <div className="col-6 col-xl-3">
+          <StatCard label="Avg Duration" value={formatDuration(avgDuration)} icon="bi-stopwatch" tone="primary" />
+        </div>
+      </div>
+
+      {data.length === 0 ? (
+        <EmptyState
+          icon="bi-clock-history"
+          title="No sync history yet"
+          description="Completed and failed sync runs will appear here."
+        />
+      ) : (
+        <div className="row g-3">
+          <div className="col-12 col-xl-9">
+            <div className="table-responsive">
+              <table className="table table-hover align-middle data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Execution Id</th>
+                    <th scope="col">Store</th>
+                    <th scope="col">Scope</th>
+                    <th scope="col">Started</th>
+                    <th scope="col">Completed</th>
+                    <th scope="col">Duration</th>
+                    <th scope="col">Rows</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.map((row) => (
+                    <tr key={row.sync_id}>
+                      <td>{row.sync_id}</td>
+                      <td className="fw-medium">{row.store_name ?? row.store_code ?? '—'}</td>
+                      <td>{row.scope ?? '—'}</td>
+                      <td>{formatDateTime(row.started_at)}</td>
+                      <td>{formatDateTime(row.completed_at)}</td>
+                      <td>{formatDuration(row.duration_seconds)}</td>
+                      <td>{row.rows}</td>
+                      <td><SyncStatusBadge status={row.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="col-12 col-xl-3">
+            <div className="card h-100">
+              <div className="card-body">
+                <div className="dashboard-panel__title">Success vs Failure</div>
+                <DonutChart
+                  segments={[
+                    { label: 'Success', value: success, color: 'var(--bs-success)' },
+                    { label: 'Failure', value: failure, color: 'var(--bs-danger)' },
+                  ]}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -3546,22 +5325,63 @@ export function SyncTableFormModal({ mode, table, onClose, onSaved }: SyncTableF
 FILE: src\components\sync\TableConfigTab.tsx
 ========================================================================================================================
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import type { ChangeEvent } from 'react'
 import { useAsyncData } from '../../hooks/useAsyncData'
 import { syncService } from '../../services/syncService'
 import { EmptyState } from '../common/EmptyState'
 import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
 import { SyncTableFormModal } from './SyncTableFormModal'
+import { StatCard } from '../dashboard/StatCard'
+import { ToggleCheck } from '../dashboard/ToggleCheck'
 import type { SyncTable } from '../../types/sync'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; table: SyncTable } | null
+type StatusFilter = 'all' | 'enabled' | 'disabled'
+type ModeFilter = 'all' | 'UPSERT' | 'ROLLING_WINDOW'
+
+const PAGE_SIZE = 20
 
 export function TableConfigTab() {
   const { data, isLoading, error, reload } = useAsyncData(syncService.tables)
   const [modal, setModal] = useState<ModalState>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [workflowBusy, setWorkflowBusy] = useState<'populate' | 'promote' | null>(null)
+  const [workflowMessage, setWorkflowMessage] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
+  const [page, setPage] = useState(0)
+
+  const tables = data ?? []
+  const stats = {
+    total: tables.length,
+    enabled: tables.filter((t) => t.is_active).length,
+    disabled: tables.filter((t) => !t.is_active).length,
+    upsert: tables.filter((t) => t.sync_mode === 'UPSERT').length,
+    rolling: tables.filter((t) => t.sync_mode === 'ROLLING_WINDOW').length,
+  }
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return tables.filter((table) => {
+      if (statusFilter === 'enabled' && !table.is_active) return false
+      if (statusFilter === 'disabled' && table.is_active) return false
+      if (modeFilter !== 'all' && table.sync_mode !== modeFilter) return false
+      if (query && !table.table_name.toLowerCase().includes(query)) return false
+      return true
+    })
+  }, [tables, search, statusFilter, modeFilter])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const clampedPage = Math.min(page, totalPages - 1)
+  const pageRows = filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE)
+  const rangeStart = filtered.length === 0 ? 0 : clampedPage * PAGE_SIZE + 1
+  const rangeEnd = Math.min(filtered.length, clampedPage * PAGE_SIZE + PAGE_SIZE)
+
+  const resetPage = () => setPage(0)
 
   const toggleEnabled = async (table: SyncTable) => {
     setTogglingId(table.sync_table_id)
@@ -3576,88 +5396,207 @@ export function TableConfigTab() {
     }
   }
 
-  const renderBody = () => {
-    if (isLoading) return <TableSkeleton rows={5} columns={6} />
-    if (error || !data) return <ErrorState description={error ?? 'Failed to load tables'} onRetry={reload} />
-    if (data.length === 0) {
-      return (
-        <EmptyState
-          icon="bi-table"
-          title="No tables configured"
-          description="Add a discovered table from the schema catalog to start configuring sync."
-          action={{ label: 'Add Table', icon: 'bi-plus-lg', onClick: () => setModal({ mode: 'create' }) }}
-        />
+  const runPopulate = async () => {
+    setWorkflowBusy('populate')
+    setActionError(null)
+    setWorkflowMessage(null)
+    try {
+      const result = await syncService.populateRegistry()
+      setWorkflowMessage(
+        `Registry populated: ${result.new_tables} new (${result.tables_discovered} discovered, ${result.total_registry_tables} in registry).`,
       )
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to populate registry')
+    } finally {
+      setWorkflowBusy(null)
     }
-    return (
-      <div className="table-responsive">
-        <table className="table table-hover align-middle data-table">
-          <thead>
-            <tr>
-              <th scope="col">Enabled</th>
-              <th scope="col">Table Name</th>
-              <th scope="col">Sync Mode</th>
-              <th scope="col">Watermark Column</th>
-              <th scope="col">Window Days</th>
-              <th scope="col">Custom Where</th>
-              <th scope="col">Sync Order</th>
-              <th scope="col" className="text-end">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((table) => (
-              <tr key={table.sync_table_id}>
-                <td>
-                  <button
-                    type="button"
-                    className={`btn btn-sm ${table.is_active ? 'btn-success' : 'btn-outline-secondary'}`}
-                    aria-pressed={table.is_active}
-                    aria-label={`${table.is_active ? 'Disable' : 'Enable'} ${table.table_name}`}
-                    disabled={togglingId === table.sync_table_id}
-                    onClick={() => toggleEnabled(table)}
-                  >
-                    {togglingId === table.sync_table_id ? (
-                      <span className="spinner-border spinner-border-sm" aria-hidden="true" />
-                    ) : (
-                      <i className={`bi ${table.is_active ? 'bi-check-lg' : 'bi-x-lg'}`} aria-hidden="true" />
-                    )}
-                  </button>
-                </td>
-                <td className="fw-medium">{table.table_name}</td>
-                <td><span className="badge text-bg-secondary">{table.sync_mode}</span></td>
-                <td>{table.watermark_column ?? '—'}</td>
-                <td>{table.window_days ?? '—'}</td>
-                <td className="text-secondary">{table.custom_where ?? '—'}</td>
-                <td>{table.sync_order}</td>
-                <td className="text-end">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline-secondary"
-                    title="Edit"
-                    aria-label={`Edit ${table.table_name}`}
-                    onClick={() => setModal({ mode: 'edit', table })}
-                  >
-                    <i className="bi bi-pencil" aria-hidden="true" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    )
   }
+
+  const runPromote = async () => {
+    setWorkflowBusy('promote')
+    setActionError(null)
+    setWorkflowMessage(null)
+    try {
+      const result = await syncService.promoteTables()
+      setWorkflowMessage(
+        `Promoted ${result.promoted_tables} table(s) to master (${result.total_master_tables} total).`,
+      )
+      await reload()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to promote tables')
+    } finally {
+      setWorkflowBusy(null)
+    }
+  }
+
+  if (isLoading) return <TableSkeleton rows={8} columns={6} />
+  if (error || !data) return <ErrorState description={error ?? 'Failed to load tables'} onRetry={reload} />
 
   return (
     <div>
-      <div className="d-flex justify-content-end mb-3">
-        <button type="button" className="btn btn-primary" onClick={() => setModal({ mode: 'create' })}>
-          <i className="bi bi-plus-lg me-1" aria-hidden="true" />
-          Add Table
-        </button>
+      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-3 mb-3">
+        <div className="col"><StatCard label="Total Tables" value={stats.total} icon="bi-table" tone="primary" /></div>
+        <div className="col"><StatCard label="Enabled" value={stats.enabled} icon="bi-check-circle" tone="success" /></div>
+        <div className="col"><StatCard label="Disabled" value={stats.disabled} icon="bi-pause-circle" tone="secondary" /></div>
+        <div className="col"><StatCard label="Upsert" value={stats.upsert} icon="bi-arrow-repeat" tone="info" /></div>
+        <div className="col"><StatCard label="Rolling Window" value={stats.rolling} icon="bi-clock-history" tone="warning" /></div>
       </div>
+
+      <div className="list-toolbar">
+        <div className="list-toolbar__search">
+          <i className="bi bi-search" aria-hidden="true" />
+          <input
+            type="search"
+            className="form-control"
+            placeholder="Search tables"
+            aria-label="Search tables"
+            value={search}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => {
+              setSearch(e.target.value)
+              resetPage()
+            }}
+          />
+        </div>
+        <select
+          className="form-select list-toolbar__filter"
+          aria-label="Filter by status"
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value as StatusFilter)
+            resetPage()
+          }}
+        >
+          <option value="all">All statuses</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <select
+          className="form-select list-toolbar__filter"
+          aria-label="Filter by sync mode"
+          value={modeFilter}
+          onChange={(e) => {
+            setModeFilter(e.target.value as ModeFilter)
+            resetPage()
+          }}
+        >
+          <option value="all">All modes</option>
+          <option value="UPSERT">Upsert</option>
+          <option value="ROLLING_WINDOW">Rolling Window</option>
+        </select>
+        <div className="ms-auto d-flex flex-wrap gap-2">
+          <button type="button" className="btn btn-outline-secondary" onClick={runPopulate} disabled={workflowBusy !== null}>
+            {workflowBusy === 'populate' ? (
+              <span className="spinner-border spinner-border-sm me-1" aria-hidden="true" />
+            ) : (
+              <i className="bi bi-arrow-down-up me-1" aria-hidden="true" />
+            )}
+            Populate
+          </button>
+          <button type="button" className="btn btn-outline-primary" onClick={runPromote} disabled={workflowBusy !== null}>
+            {workflowBusy === 'promote' ? (
+              <span className="spinner-border spinner-border-sm me-1" aria-hidden="true" />
+            ) : (
+              <i className="bi bi-arrow-up-circle me-1" aria-hidden="true" />
+            )}
+            Promote
+          </button>
+          <button type="button" className="btn btn-primary" onClick={() => setModal({ mode: 'create' })}>
+            <i className="bi bi-plus-lg me-1" aria-hidden="true" />
+            Add Table
+          </button>
+        </div>
+      </div>
+
+      {workflowMessage && <div className="alert alert-info py-2">{workflowMessage}</div>}
       {actionError && <div className="alert alert-danger py-2">{actionError}</div>}
-      {renderBody()}
+
+      {tables.length === 0 ? (
+        <EmptyState
+          icon="bi-table"
+          title="No tables configured"
+          description="Populate the registry and promote discovered tables, or add one from the catalog."
+          action={{ label: 'Add Table', icon: 'bi-plus-lg', onClick: () => setModal({ mode: 'create' }) }}
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon="bi-search" title="No matching tables" description="Try adjusting your search or filters." />
+      ) : (
+        <>
+          <div className="table-responsive">
+            <table className="table table-hover align-middle data-table">
+              <thead>
+                <tr>
+                  <th scope="col" className="col-narrow">Enabled</th>
+                  <th scope="col">Table Name</th>
+                  <th scope="col">Sync Mode</th>
+                  <th scope="col">Watermark</th>
+                  <th scope="col">Window</th>
+                  <th scope="col">Custom Where</th>
+                  <th scope="col">Order</th>
+                  <th scope="col" className="text-end">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((table) => (
+                  <tr key={table.sync_table_id}>
+                    <td className="text-center">
+                      <ToggleCheck
+                        checked={table.is_active}
+                        busy={togglingId === table.sync_table_id}
+                        label={`${table.is_active ? 'Disable' : 'Enable'} ${table.table_name}`}
+                        onClick={() => toggleEnabled(table)}
+                      />
+                    </td>
+                    <td className="fw-medium">{table.table_name}</td>
+                    <td><span className="badge text-bg-secondary">{table.sync_mode}</span></td>
+                    <td>{table.watermark_column ?? '—'}</td>
+                    <td>{table.window_days ?? '—'}</td>
+                    <td className="text-secondary text-truncate cell-clip">{table.custom_where ?? '—'}</td>
+                    <td>{table.sync_order}</td>
+                    <td className="text-end">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-secondary"
+                        title="Edit"
+                        aria-label={`Edit ${table.table_name}`}
+                        onClick={() => setModal({ mode: 'edit', table })}
+                      >
+                        <i className="bi bi-pencil" aria-hidden="true" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="table-pager">
+            <span className="text-secondary">
+              Showing {rangeStart}–{rangeEnd} of {filtered.length}
+            </span>
+            <div className="btn-group btn-group-sm">
+              <button
+                type="button"
+                className="btn btn-outline-secondary"
+                disabled={clampedPage === 0}
+                onClick={() => setPage(clampedPage - 1)}
+              >
+                <i className="bi bi-chevron-left" aria-hidden="true" /> Prev
+              </button>
+              <span className="btn btn-outline-secondary disabled">
+                {clampedPage + 1} / {totalPages}
+              </span>
+              <button
+                type="button"
+                className="btn btn-outline-secondary"
+                disabled={clampedPage >= totalPages - 1}
+                onClick={() => setPage(clampedPage + 1)}
+              >
+                Next <i className="bi bi-chevron-right" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {modal && (
         <SyncTableFormModal
           mode={modal.mode}
@@ -3669,6 +5608,114 @@ export function TableConfigTab() {
           }}
         />
       )}
+    </div>
+  )
+}
+
+
+
+========================================================================================================================
+FILE: src\components\sync\TableStatisticsTab.tsx
+========================================================================================================================
+
+import { useEffect, useState } from 'react'
+import type { TableStat } from '../../types/sync'
+import { syncService } from '../../services/syncService'
+import { formatDateTime } from '../../utils/format'
+
+export function TableStatisticsTab() {
+  const [stats, setStats] = useState<TableStat[]>([])
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    const tick = async () => {
+      try {
+        const rows = await syncService.tableStats()
+        if (!active) return
+        setStats(rows)
+        setLoaded(true)
+      } catch {
+        /* keep last good state */
+      }
+    }
+    void tick()
+    const id = setInterval(tick, 5000)
+    return () => {
+      active = false
+      clearInterval(id)
+    }
+  }, [])
+
+  const totals = stats.reduce(
+    (a, s) => ({
+      ho: a.ho + s.ho_rows,
+      changed: a.changed + s.changed_today,
+      uploaded: a.uploaded + s.uploaded_today,
+      updated: a.updated + s.updated_today,
+    }),
+    { ho: 0, changed: 0, uploaded: 0, updated: 0 },
+  )
+
+  return (
+    <div className="cc">
+      <div className="row row-cols-2 row-cols-md-4 g-2 mb-3">
+        <div className="col"><div className="card cc-glass cc-kpi cc-kpi--info"><span className="cc-kpi__icon cc-kpi__icon--info"><i className="bi bi-database" /></span><div><div className="cc-kpi__value">{totals.ho.toLocaleString()}</div><div className="cc-kpi__label">HO Rows</div></div></div></div>
+        <div className="col"><div className="card cc-glass cc-kpi cc-kpi--indigo"><span className="cc-kpi__icon cc-kpi__icon--indigo"><i className="bi bi-arrow-repeat" /></span><div><div className="cc-kpi__value">{totals.changed.toLocaleString()}</div><div className="cc-kpi__label">Changed Today</div></div></div></div>
+        <div className="col"><div className="card cc-glass cc-kpi cc-kpi--success"><span className="cc-kpi__icon cc-kpi__icon--success"><i className="bi bi-cloud-upload" /></span><div><div className="cc-kpi__value">{totals.uploaded.toLocaleString()}</div><div className="cc-kpi__label">Uploaded Today</div></div></div></div>
+        <div className="col"><div className="card cc-glass cc-kpi cc-kpi--primary"><span className="cc-kpi__icon cc-kpi__icon--primary"><i className="bi bi-pencil-square" /></span><div><div className="cc-kpi__value">{totals.updated.toLocaleString()}</div><div className="cc-kpi__label">Updated Today</div></div></div></div>
+      </div>
+
+      <div className="card cc-glass">
+        <div className="card-body">
+          <div className="d-flex align-items-center justify-content-between mb-2">
+            <div className="dashboard-panel__title mb-0">Table Statistics ({stats.length} tables)</div>
+            <span className="text-secondary small">live · refreshing every 5s</span>
+          </div>
+          <div className="table-responsive">
+            <table className="table table-hover align-middle data-table cc-grid">
+              <thead>
+                <tr>
+                  <th scope="col">Table</th>
+                  <th scope="col">Mode</th>
+                  <th scope="col" className="text-end">Source Rows</th>
+                  <th scope="col" className="text-end">HO Rows</th>
+                  <th scope="col" className="text-end">Changed Today</th>
+                  <th scope="col" className="text-end">Uploaded Today</th>
+                  <th scope="col" className="text-end">Inserted Today</th>
+                  <th scope="col" className="text-end">Updated Today</th>
+                  <th scope="col" className="text-end">Skipped Today</th>
+                  <th scope="col">Last Sync</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.length === 0 ? (
+                  <tr><td colSpan={10} className="text-center text-secondary py-4">{loaded ? 'No tables configured.' : 'Loading…'}</td></tr>
+                ) : (
+                  stats.map((s) => (
+                    <tr key={s.table_name}>
+                      <td className="fw-medium">{s.table_name}</td>
+                      <td>
+                        <span className={`cc-type ${s.sync_mode === 'UPSERT' ? 'cc-type--upsert' : 'cc-type--rolling'}`}>
+                          {s.sync_mode === 'UPSERT' ? 'Master' : 'Rolling Window'}
+                        </span>
+                      </td>
+                      <td className="text-end">{s.source_rows != null ? s.source_rows.toLocaleString() : '—'}</td>
+                      <td className="text-end fw-medium">{s.ho_rows.toLocaleString()}</td>
+                      <td className="text-end">{s.changed_today.toLocaleString()}</td>
+                      <td className="text-end">{s.uploaded_today.toLocaleString()}</td>
+                      <td className="text-end text-success">{s.inserted_today.toLocaleString()}</td>
+                      <td className="text-end text-primary">{s.updated_today.toLocaleString()}</td>
+                      <td className="text-end text-secondary">{s.skipped_today.toLocaleString()}</td>
+                      <td className="small">{formatDateTime(s.last_sync)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -3724,8 +5771,7 @@ export function TenantActions({
         aria-label={`Open ${tenantName} workspace`}
         onClick={stop(onView)}
       >
-        <i className="bi bi-box-arrow-up-right me-1" aria-hidden="true" />
-        Open
+        <i className="bi bi-box-arrow-up-right" aria-hidden="true" />
       </button>
       <span className="row-actions__group">
         <button
@@ -4297,8 +6343,7 @@ export function UserActions({ userName, onView, onEdit, onRoles, onStores }: Use
         aria-label={`Open ${userName} workspace`}
         onClick={stop(onView)}
       >
-        <i className="bi bi-box-arrow-up-right me-1" aria-hidden="true" />
-        Open
+        <i className="bi bi-box-arrow-up-right" aria-hidden="true" />
       </button>
       <span className="row-actions__group">
         <button
@@ -4984,36 +7029,64 @@ export function usePermissionMatrix() {
 FILE: src\hooks\usePlatformOverview.ts
 ========================================================================================================================
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { KpiMetric } from '../types/platform'
 import { KPI_DEFINITIONS } from '../components/platform-overview/overviewConfig'
+import { tenantService } from '../services/tenantService'
+import { storeService } from '../services/storeService'
+import { userService } from '../services/userService'
+import { roleService } from '../services/roleService'
+import { moduleService } from '../services/moduleService'
 
 interface PlatformOverviewState {
   metrics: KpiMetric[]
   isLoading: boolean
+  error: string | null
+  reload: () => Promise<void>
 }
 
 /**
- * Source of truth for the Platform Overview metrics.
- *
- * UI-02 has no backend, so the metrics resolve immediately with unavailable
- * values (rendered as "—"). When the platform statistics endpoint is added,
- * replace the effect body with the fetch and keep `isLoading` driving the
- * skeleton state.
+ * Real Platform Overview metrics — counts come from the live list endpoints
+ * (tenants/stores/users/roles/modules), not placeholder values.
  */
 export function usePlatformOverview(): PlatformOverviewState {
+  const [metrics, setMetrics] = useState<KpiMetric[]>(
+    KPI_DEFINITIONS.map((definition) => ({ ...definition, value: null })),
+  )
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    setIsLoading(false)
+  const load = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const [tenants, stores, users, roles, modules] = await Promise.all([
+        tenantService.list(),
+        storeService.list(),
+        userService.list(),
+        roleService.list(),
+        moduleService.list(),
+      ])
+      const counts: Record<string, number> = {
+        tenants: tenants.length,
+        stores: stores.length,
+        users: users.length,
+        roles: roles.length,
+        modules: modules.length,
+      }
+      setMetrics(KPI_DEFINITIONS.map((definition) => ({ ...definition, value: counts[definition.key] ?? 0 })))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load metrics')
+    } finally {
+      setIsLoading(false)
+    }
   }, [])
 
-  const metrics = useMemo<KpiMetric[]>(
-    () => KPI_DEFINITIONS.map((definition) => ({ ...definition, value: null })),
-    [],
-  )
+  useEffect(() => {
+    void load()
+  }, [load])
 
-  return { metrics, isLoading }
+  return { metrics, isLoading, error, reload: load }
 }
 
 
@@ -5436,15 +7509,32 @@ FILE: src\pages\PlatformOverviewPage.tsx
 import { PageHeader } from '../components/common/PageHeader'
 import { KpiSection } from '../components/platform-overview/KpiSection'
 import { QuickActions } from '../components/platform-overview/QuickActions'
-import { NavigationCards } from '../components/platform-overview/NavigationCards'
+import { SystemStatusCard } from '../components/platform-overview/SystemStatusCard'
+import { StoreHealthSummaryCard } from '../components/platform-overview/StoreHealthSummaryCard'
+import { RecentSyncActivityCard } from '../components/platform-overview/RecentSyncActivityCard'
 
 export default function PlatformOverviewPage() {
   return (
     <div className="container-fluid px-0">
       <PageHeader title="Platform Overview" breadcrumb={['Platform Overview']} />
       <KpiSection />
+
+      <section className="overview-section">
+        <h2 className="overview-section__title">Operations</h2>
+        <div className="row row-cols-1 row-cols-lg-3 g-3">
+          <div className="col">
+            <StoreHealthSummaryCard />
+          </div>
+          <div className="col">
+            <RecentSyncActivityCard />
+          </div>
+          <div className="col">
+            <SystemStatusCard />
+          </div>
+        </div>
+      </section>
+
       <QuickActions />
-      <NavigationCards />
     </div>
   )
 }
@@ -5787,6 +7877,7 @@ import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
 import { usePermissionMatrix } from '../../hooks/usePermissionMatrix'
 import { permissionService } from '../../services/permissionService'
+import { ToggleCheck } from '../../components/dashboard/ToggleCheck'
 
 const cellKey = (roleId: string, moduleId: string) => `${roleId}:${moduleId}`
 
@@ -5884,23 +7975,12 @@ export default function PermissionsPage() {
                     const isBusy = busy.has(key)
                     return (
                       <td key={role.role_id} className="text-center">
-                        <button
-                          type="button"
-                          className={`btn btn-sm permission-cell ${isAssigned ? 'btn-success' : 'btn-outline-secondary'}`}
-                          aria-pressed={isAssigned}
-                          aria-label={`${isAssigned ? 'Unassign' : 'Assign'} ${module.module_name} for ${role.role_name}`}
-                          disabled={isBusy}
+                        <ToggleCheck
+                          checked={isAssigned}
+                          busy={isBusy}
+                          label={`${isAssigned ? 'Unassign' : 'Assign'} ${module.module_name} for ${role.role_name}`}
                           onClick={() => toggle(role.role_id, module.module_id)}
-                        >
-                          {isBusy ? (
-                            <span className="spinner-border spinner-border-sm" aria-hidden="true" />
-                          ) : (
-                            <i
-                              className={`bi ${isAssigned ? 'bi-check-lg' : 'bi-x-lg'}`}
-                              aria-hidden="true"
-                            />
-                          )}
-                        </button>
+                        />
                       </td>
                     )
                   })}
@@ -6286,6 +8366,7 @@ import { StoreToolbar } from '../../components/stores/StoreToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { StoreTable } from '../../components/stores/StoreTable'
 import { StoreCardList } from '../../components/stores/StoreCardList'
+import { StoreSummary } from '../../components/stores/StoreSummary'
 import { StoreFormModal } from '../../components/stores/StoreFormModal'
 import { useStores } from '../../hooks/useStores'
 import { useTenants } from '../../hooks/useTenants'
@@ -6380,6 +8461,7 @@ export default function StoresPage() {
   return (
     <div className="container-fluid px-0">
       <PageHeader title="Stores" breadcrumb={['Platform', 'Stores']} />
+      {!isLoading && !error && stores.length > 0 && <StoreSummary stores={stores} />}
       <StoreToolbar
         search={search}
         onSearchChange={setSearch}
@@ -7459,16 +9541,20 @@ FILE: src\pages\sync\SyncAdministrationPage.tsx
 import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../../components/common/PageHeader'
 import { ControlCenterTab } from '../../components/sync/ControlCenterTab'
+import { LiveOperationsTab } from '../../components/sync/LiveOperationsTab'
+import { TableStatisticsTab } from '../../components/sync/TableStatisticsTab'
 import { SchedulesTab } from '../../components/sync/SchedulesTab'
 import { TableConfigTab } from '../../components/sync/TableConfigTab'
 import { ColumnMappingTab } from '../../components/sync/ColumnMappingTab'
 import { StoreHealthTab } from '../../components/sync/StoreHealthTab'
 import { SyncHistoryTab } from '../../components/sync/SyncHistoryTab'
 
-type SyncTab = 'control' | 'schedules' | 'tables' | 'mapping' | 'health' | 'history'
+type SyncTab = 'control' | 'live' | 'tablestats' | 'schedules' | 'tables' | 'mapping' | 'health' | 'history'
 
 const TABS: { key: SyncTab; label: string; icon: string }[] = [
   { key: 'control', label: 'Control Center', icon: 'bi-speedometer2' },
+  { key: 'live', label: 'Live Operations', icon: 'bi-broadcast-pin' },
+  { key: 'tablestats', label: 'Table Statistics', icon: 'bi-bar-chart-line' },
   { key: 'schedules', label: 'Schedules', icon: 'bi-calendar-event' },
   { key: 'tables', label: 'Table Configuration', icon: 'bi-table' },
   { key: 'mapping', label: 'Column Mapping', icon: 'bi-diagram-3' },
@@ -7513,6 +9599,8 @@ export default function SyncAdministrationPage() {
 
       <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
         {activeTab === 'control' && <ControlCenterTab />}
+        {activeTab === 'live' && <LiveOperationsTab />}
+        {activeTab === 'tablestats' && <TableStatisticsTab />}
         {activeTab === 'schedules' && <SchedulesTab />}
         {activeTab === 'tables' && <TableConfigTab />}
         {activeTab === 'mapping' && <ColumnMappingTab />}
@@ -7761,13 +9849,20 @@ FILE: src\services\syncService.ts
 import { api } from './apiClient'
 import type {
   CatalogTable,
+  ChunkStatusRow,
   ControlCenter,
+  LiveStore,
+  PendingTask,
+  TableStat,
+  RegistryPopulateResult,
   StoreHealthRow,
   SyncHistoryRow,
   SyncSchedule,
   SyncTable,
   SyncTableInput,
+  SyncTaskResult,
   TableColumns,
+  TablePromoteResult,
 } from '../types/sync'
 
 export const syncService = {
@@ -7780,6 +9875,9 @@ export const syncService = {
       `/api/sync/catalog/tables${search ? `?search=${encodeURIComponent(search)}` : ''}`,
     ),
   tables: () => api.get<SyncTable[]>('/api/sync/tables'),
+  populateRegistry: () =>
+    api.post<RegistryPopulateResult>('/api/sync/table-registry/populate', {}),
+  promoteTables: () => api.post<TablePromoteResult>('/api/sync/table-master/promote', {}),
   createTable: (input: SyncTableInput) => api.post<SyncTable>('/api/sync/tables', input),
   updateTable: (syncTableId: string, input: SyncTableInput) =>
     api.put<SyncTable>(`/api/sync/tables/${syncTableId}`, input),
@@ -7798,6 +9896,30 @@ export const syncService = {
     is_watermark: boolean
     column_order: number
   }) => api.put('/api/sync/mappings', body),
+  createTask: (body: {
+    tenant_id: string
+    store_id: string
+    execution_type?: string
+    sync_mode?: string
+    total_tables?: number
+  }) => api.post<SyncTaskResult>('/api/sync/tasks/create', body),
+  pendingTasks: (storeId: string) =>
+    api.get<PendingTask[]>(`/api/sync/tasks/pending/${storeId}`),
+  startTask: (taskId: string) =>
+    api.post<SyncTaskResult>(`/api/sync/tasks/${taskId}/start`, {}),
+  completeTask: (taskId: string) =>
+    api.post<SyncTaskResult>(`/api/sync/tasks/${taskId}/complete`, {}),
+  failTask: (taskId: string, message: string) =>
+    api.post<SyncTaskResult>(`/api/sync/tasks/${taskId}/fail`, { message }),
+  chunkStatus: (executionId: string) =>
+    api.get<ChunkStatusRow[]>(`/api/sync/chunks/status/${executionId}`),
+  live: () => api.get<LiveStore[]>('/api/sync/live'),
+  tableStats: () => api.get<TableStat[]>('/api/sync/table-stats'),
+  control: (storeIds: string[], action: 'PAUSE' | 'STOP') =>
+    api.post<{ affected: number; action: string }>('/api/sync/control', {
+      store_ids: storeIds,
+      action,
+    }),
 }
 
 
@@ -8153,6 +10275,88 @@ export interface TableColumn {
 export interface TableColumns {
   table_name: string
   columns: TableColumn[]
+}
+
+export interface SyncTaskResult {
+  task_id: string
+  status: string
+}
+
+export interface PendingTask {
+  execution_id: string
+  tenant_id: string
+  store_id: string
+  execution_type: string
+  sync_mode: string
+  execution_status: string
+  started_at: string | null
+  total_tables: number
+}
+
+export interface LiveStore {
+  store_id: string
+  store_code: string | null
+  store_name: string | null
+  execution_id: string
+  status: string
+  sync_type: string | null
+  current_table: string | null
+  chunk_no: number | null
+  total_chunks: number | null
+  chunk_size: number | null
+  rows_processed: number
+  total_rows: number | null
+  rows_remaining: number | null
+  rows_changed: number
+  rows_uploaded: number
+  rows_inserted: number
+  rows_updated: number
+  speed_rows_sec: number
+  eta_seconds: number | null
+  progress_pct: number
+  started_at: string | null
+  updated_at: string | null
+}
+
+export interface TableStat {
+  table_name: string
+  sync_mode: string
+  source_rows: number | null
+  ho_rows: number
+  changed_today: number
+  examined_today: number
+  uploaded_today: number
+  inserted_today: number
+  updated_today: number
+  skipped_today: number
+  last_sync: string | null
+}
+
+export interface ChunkStatusRow {
+  chunk_execution_id: number
+  table_name: string
+  chunk_no: number
+  chunk_status: string
+  rows_processed: number
+  started_at: string | null
+  completed_at: string | null
+  error_message: string | null
+}
+
+export interface RegistryPopulateResult {
+  status: string
+  tables_discovered: number
+  new_tables: number
+  existing_tables: number
+  total_registry_tables: number
+}
+
+export interface TablePromoteResult {
+  status: string
+  registry_tables: number
+  promoted_tables: number
+  existing_tables: number
+  total_master_tables: number
 }
 
 

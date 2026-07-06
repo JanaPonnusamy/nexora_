@@ -165,6 +165,20 @@ import logging\n
 
 
 ========================================================================================================================
+FILE: main.py
+========================================================================================================================
+
+from store_agent.runtime.runtime_host import RuntimeHost
+
+def main():
+    RuntimeHost().start()
+
+if __name__ == "__main__":
+    main()
+
+
+
+========================================================================================================================
 FILE: payload_builder.py
 ========================================================================================================================
 
@@ -338,6 +352,98 @@ class RuntimeSqlConnectionService:
 
 
 ========================================================================================================================
+FILE: run_agent.py
+========================================================================================================================
+
+"""Production store-agent entrypoint: one process per store.
+
+Runs two independent loops:
+  - heartbeat loop (every HEARTBEAT_SECONDS) -> keeps the store ONLINE in HO
+  - sync loop (every SYNC_POLL_SECONDS) -> polls + executes pending sync tasks
+
+The heartbeat is decoupled from sync so a store stays ONLINE even when idle
+or when a sync run is in progress / failing.
+"""
+import threading
+import time
+import traceback
+
+from store_agent.config import STORE_ID, HO_API_URL
+from store_agent.runtime_configuration_loader import RuntimeConfigurationLoader
+from store_agent.runtime_context_factory import RuntimeContextFactory
+from store_agent.runtime_sql_connection_service import RuntimeSqlConnectionService
+from store_agent.services.heartbeat_service import HeartbeatService
+from store_agent.services.sync_runtime_orchestrator import SyncRuntimeOrchestrator
+from store_agent.services.sqlite_cache_service import SqliteCacheService
+from store_agent.services.catalog_delta_service import CatalogDeltaService
+
+HEARTBEAT_SECONDS = 30
+SYNC_POLL_SECONDS = 60
+
+
+def _heartbeat_loop(heartbeat):
+    while True:
+        try:
+            heartbeat.beat()
+        except Exception:
+            print("[HEARTBEAT] failed:\n" + traceback.format_exc())
+        time.sleep(HEARTBEAT_SECONDS)
+
+
+def main():
+    config_url = f"{HO_API_URL}/api/stores/{STORE_ID}/agent-config"
+    runtime_config = RuntimeConfigurationLoader().load(config_url)
+    runtime_context = RuntimeContextFactory().create(runtime_config)
+
+    heartbeat = HeartbeatService(
+        HO_API_URL, STORE_ID,
+        connection_type=runtime_config.get("connection_type"),
+    )
+    heartbeat.register()
+    print("[AGENT] registered store", STORE_ID)
+
+    # Persist bootstrap context into SQLite (single runtime DB).
+    cache = SqliteCacheService()
+    cache.set_config("store_id", STORE_ID)
+    cache.set_config("ho_url", HO_API_URL)
+    cache.set_config("tenant_id", runtime_config.get("tenant_id"))
+
+    threading.Thread(
+        target=_heartbeat_loop, args=(heartbeat,), daemon=True
+    ).start()
+
+    # Phase 028C: discover schema and upload catalog delta once at startup.
+    try:
+        discovery_conn = RuntimeSqlConnectionService().connect(runtime_context)
+        delta = CatalogDeltaService(discovery_conn, cache, HO_API_URL, STORE_ID).run()
+        print("[CATALOG] delta:", delta)
+        discovery_conn.close()
+    except Exception:
+        print("[CATALOG] discovery failed:\n" + traceback.format_exc())
+
+    while True:
+        try:
+            connection = RuntimeSqlConnectionService().connect(runtime_context)
+            orchestrator = SyncRuntimeOrchestrator(
+                connection=connection,
+                ho_api_url=HO_API_URL,
+                store_id=STORE_ID,
+            )
+            result = orchestrator.run_cycle()
+            if result["tasks_processed"]:
+                print("[SYNC] cycle:", result)
+            connection.close()
+        except Exception:
+            print("[SYNC] cycle failed:\n" + traceback.format_exc())
+        time.sleep(SYNC_POLL_SECONDS)
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+========================================================================================================================
 FILE: run_column_schema_discovery.py
 ========================================================================================================================
 
@@ -378,6 +484,42 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+========================================================================================================================
+FILE: run_schema_catalog_upload.py
+========================================================================================================================
+
+from services.schema_catalog_upload_service import (
+    SchemaCatalogUploadService
+)
+
+
+def main():
+
+    result = (
+        SchemaCatalogUploadService()
+        .upload()
+    )
+
+    print()
+    print("=" * 80)
+    print("SYNC-025B-B")
+    print("Schema Catalog Upload")
+    print("=" * 80)
+
+    print()
+
+    for key, value in result.items():
+        print(
+            f"{key}: {value}"
+        )
+
+
+if __name__ == "__main__":
+    main()
+
 
 
 
@@ -553,6 +695,43 @@ def main():
 
     print("SYNC-006 Runtime Ready")
     print(service)
+
+if __name__ == "__main__":
+    main()
+
+
+
+========================================================================================================================
+FILE: run_sync_runtime.py
+========================================================================================================================
+
+from store_agent.config import STORE_ID, HO_API_URL
+from store_agent.runtime_configuration_loader import RuntimeConfigurationLoader
+from store_agent.runtime_context_factory import RuntimeContextFactory
+from store_agent.runtime_sql_connection_service import RuntimeSqlConnectionService
+from store_agent.services.sync_runtime_orchestrator import SyncRuntimeOrchestrator
+
+
+def main():
+    config_url = f"{HO_API_URL}/api/stores/{STORE_ID}/agent-config"
+
+    runtime_config = RuntimeConfigurationLoader().load(config_url)
+    runtime_context = RuntimeContextFactory().create(runtime_config)
+    connection = RuntimeSqlConnectionService().connect(runtime_context)
+
+    orchestrator = SyncRuntimeOrchestrator(
+        connection=connection,
+        ho_api_url=HO_API_URL,
+        store_id=STORE_ID,
+    )
+
+    result = orchestrator.run_cycle()
+
+    print("[OK] Sync Runtime Cycle Complete")
+    print(f"TASKS PROCESSED : {result['tasks_processed']}")
+    for item in result["results"]:
+        print(f"  TASK {item['task_id']} -> {item['status']}")
+
 
 if __name__ == "__main__":
     main()
@@ -1299,6 +1478,843 @@ FILE: __init__.py
 
 
 ========================================================================================================================
+FILE: catalog\catalog_client.py
+========================================================================================================================
+
+import requests
+from store_agent.config import HO_API_URL
+
+def download_catalog():
+    response = requests.get(f"{HO_API_URL}/api/sync/catalog/full", timeout=60)
+    response.raise_for_status()
+    return response.json()
+
+
+
+========================================================================================================================
+FILE: catalog\catalog_database.py
+========================================================================================================================
+
+
+import sqlite3
+from .catalog_models import CATALOG_DB_PATH
+
+def get_connection():
+    return sqlite3.connect(CATALOG_DB_PATH)
+
+def initialize_database():
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sync_table_catalog
+        (
+            sync_table_id TEXT PRIMARY KEY,
+            table_name TEXT NOT NULL,
+            is_active INTEGER NOT NULL,
+            sync_mode TEXT,
+            watermark_column TEXT,
+            window_days INTEGER,
+            window_months INTEGER,
+            custom_where TEXT,
+            sync_order INTEGER,
+            created_at TEXT
+        )
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sync_column_catalog
+        (
+            mapping_id TEXT PRIMARY KEY,
+            sync_table_id TEXT NOT NULL,
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            data_type TEXT,
+            is_selected INTEGER,
+            is_pk INTEGER,
+            is_hash INTEGER,
+            is_watermark INTEGER,
+            column_order INTEGER,
+            created_at TEXT
+        )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: catalog\catalog_models.py
+========================================================================================================================
+
+CATALOG_DB_PATH = r"E:\\Nexora\\data\\catalog.db"
+
+
+
+========================================================================================================================
+FILE: catalog\catalog_repository.py
+========================================================================================================================
+
+
+from .catalog_database import get_connection, initialize_database
+
+initialize_database()
+
+def get_table_count():
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM sync_table_catalog")
+        return cursor.fetchone()[0]
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: catalog\catalog_sync_service.py
+========================================================================================================================
+
+from .catalog_client import download_catalog
+from .catalog_database import get_connection
+
+def refresh_catalog():
+    payload = download_catalog()
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        cur.execute("DELETE FROM sync_column_catalog")
+        cur.execute("DELETE FROM sync_table_catalog")
+
+        for row in payload.get("tables", []):
+            cur.execute(
+                "INSERT INTO sync_table_catalog VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    row.get('sync_table_id'),
+                    row.get('table_name'),
+                    int(bool(row.get('is_active'))),
+                    row.get('sync_mode'),
+                    row.get('watermark_column'),
+                    row.get('window_days'),
+                    row.get('window_months'),
+                    row.get('custom_where'),
+                    row.get('sync_order'),
+                    str(row.get('created_at'))
+                )
+            )
+
+        for row in payload.get("columns", []):
+            cur.execute(
+                "INSERT INTO sync_column_catalog VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    row.get('mapping_id'),
+                    row.get('sync_table_id'),
+                    row.get('table_name'),
+                    row.get('column_name'),
+                    row.get('data_type'),
+                    int(bool(row.get('is_selected'))),
+                    int(bool(row.get('is_pk'))),
+                    int(bool(row.get('is_hash'))),
+                    int(bool(row.get('is_watermark'))),
+                    row.get('column_order'),
+                    str(row.get('created_at'))
+                )
+            )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: config_cache\configuration_cache_database.py
+========================================================================================================================
+
+import sqlite3
+
+DB_PATH = r"E:\Nexora\data\catalog.db"
+
+def get_connection():
+    return sqlite3.connect(DB_PATH)
+
+def initialize_database():
+    conn = get_connection()
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS agent_configuration (store_id TEXT PRIMARY KEY, tenant_id TEXT, store_code TEXT, store_name TEXT, server_name TEXT, database_name TEXT, username TEXT, password_encrypted TEXT, connection_type TEXT, is_active INTEGER, downloaded_at TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: config_cache\configuration_cache_repository.py
+========================================================================================================================
+
+from .configuration_cache_database import get_connection, initialize_database
+
+def initialize():
+    initialize_database()
+
+def upsert_configuration(config):
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO agent_configuration VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                config.get('store_id'),
+                config.get('tenant_id'),
+                config.get('store_code'),
+                config.get('store_name'),
+                config.get('server_name'),
+                config.get('database_name'),
+                config.get('username'),
+                config.get('password_encrypted'),
+                config.get('connection_type'),
+                config.get('is_active'),
+                config.get('downloaded_at')
+            )
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_configuration(store_id):
+    conn = get_connection()
+    conn.row_factory = __import__('sqlite3').Row
+    try:
+        row = conn.execute('SELECT * FROM agent_configuration WHERE store_id=?',(store_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: config_cache\configuration_cache_service.py
+========================================================================================================================
+
+from .configuration_cache_repository import upsert_configuration, get_configuration
+
+class ConfigurationCacheService:
+
+    def save_configuration(self, config):
+        upsert_configuration(config)
+
+    def load_configuration(self, store_id):
+        return get_configuration(store_id)
+
+
+
+========================================================================================================================
+FILE: execution\execution_client.py
+========================================================================================================================
+
+import requests
+
+class ExecutionClient:
+
+    def __init__(self, base_url="http://127.0.0.1:8000"):
+        self.base_url = base_url.rstrip("/")
+
+    def get_pending_execution(self, store_id):
+        response = requests.get(
+            f"{self.base_url}/api/sync/execution/pending/{store_id}",
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def start_execution(self, execution_id):
+        response = requests.post(
+            f"{self.base_url}/api/sync/execution/{execution_id}/start",
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def complete_execution(self, execution_id):
+        response = requests.post(
+            f"{self.base_url}/api/sync/execution/{execution_id}/complete",
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def fail_execution(self, execution_id, error_message):
+        response = requests.post(
+            f"{self.base_url}/api/sync/execution/{execution_id}/fail",
+            json={"error_message": error_message},
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+
+========================================================================================================================
+FILE: execution\execution_context.py
+========================================================================================================================
+
+class ExecutionContext:
+
+    def __init__(
+        self,
+        execution_id,
+        tenant_id,
+        store_id,
+        execution_type,
+        sync_mode
+    ):
+        self.execution_id = execution_id
+        self.tenant_id = tenant_id
+        self.store_id = store_id
+        self.execution_type = execution_type
+        self.sync_mode = sync_mode
+
+
+
+========================================================================================================================
+FILE: execution\execution_dispatcher.py
+========================================================================================================================
+
+from store_agent.execution.execution_result import ExecutionResult
+
+class ExecutionDispatcher:
+
+    def dispatch(self, execution):
+
+        execution_type = execution.execution_type
+
+        if execution_type == 'FULL_SYNC':
+            return self.execute_full_sync()
+
+        if execution_type == 'TABLE_SYNC':
+            return self.execute_table_sync()
+
+        if execution_type == 'CATALOG_REFRESH':
+            return self.execute_catalog_refresh()
+
+        raise Exception(
+            f'Unsupported execution type: {execution_type}'
+        )
+
+    def execute_full_sync(self):
+        return ExecutionResult(
+            True,
+            'FULL_SYNC routed'
+        )
+
+    def execute_table_sync(self):
+        return ExecutionResult(
+            True,
+            'TABLE_SYNC routed'
+        )
+
+    def execute_catalog_refresh(self):
+        return ExecutionResult(
+            True,
+            'CATALOG_REFRESH routed'
+        )
+
+
+
+========================================================================================================================
+FILE: execution\execution_models.py
+========================================================================================================================
+
+class ExecutionModel:
+
+    FIELDS = [
+        "execution_id",
+        "tenant_id",
+        "store_id",
+        "execution_type",
+        "sync_mode",
+        "execution_status",
+        "total_tables",
+        "completed_tables",
+        "failed_tables"
+    ]
+
+
+
+========================================================================================================================
+FILE: execution\execution_polling_service.py
+========================================================================================================================
+
+from store_agent.execution.execution_client import ExecutionClient
+from store_agent.config_cache.configuration_cache_service import ConfigurationCacheService
+
+class ExecutionPollingService:
+
+    def __init__(self):
+        self.client = ExecutionClient()
+
+    def _get_store_id(self):
+
+        config = ConfigurationCacheService().load_configuration(
+            "109339ED-7A1D-49BF-8CC1-4FDAEE46CDC1"
+        )
+
+        if config:
+            return config["store_id"]
+
+        return "109339ED-7A1D-49BF-8CC1-4FDAEE46CDC1"
+
+    def get_pending_execution(self):
+        return self.client.get_pending_execution(
+            self._get_store_id()
+        )
+
+    def start_execution(self, execution_id):
+        return self.client.start_execution(execution_id)
+
+    def complete_execution(self, execution_id):
+        return self.client.complete_execution(execution_id)
+
+    def fail_execution(self, execution_id, error_message):
+        return self.client.fail_execution(
+            execution_id,
+            error_message
+        )
+
+
+
+========================================================================================================================
+FILE: execution\execution_result.py
+========================================================================================================================
+
+class ExecutionResult:
+
+    def __init__(
+        self,
+        success=True,
+        message='',
+        tables_processed=0,
+        rows_processed=0
+    ):
+        self.success = success
+        self.message = message
+        self.tables_processed = tables_processed
+        self.rows_processed = rows_processed
+
+
+
+========================================================================================================================
+FILE: execution\ho_table_creation_client.py
+========================================================================================================================
+
+import requests
+
+class HOTableCreationClient:
+
+    def __init__(self, base_url='http://127.0.0.1:8000'):
+        self.base_url = base_url.rstrip('/')
+
+    def build(self, execution_id):
+
+        response = requests.post(
+            f'{self.base_url}/api/sync/table-creation/build/{execution_id}',
+            timeout=120
+        )
+
+        response.raise_for_status()
+
+        return response.json()
+
+
+
+========================================================================================================================
+FILE: orchestrator\full_sync_context.py
+========================================================================================================================
+
+class FullSyncContext:
+
+    def __init__(self, execution):
+        self.execution = execution
+
+
+
+========================================================================================================================
+FILE: orchestrator\full_sync_orchestrator.py
+========================================================================================================================
+
+from store_agent.runtime.metadata_runtime_reader import MetadataRuntimeReader
+from store_agent.execution.execution_result import ExecutionResult
+from store_agent.orchestrator.table_creation_orchestrator import TableCreationOrchestrator
+
+class FullSyncOrchestrator:
+
+    def execute(self, execution):
+
+        table_result = (
+            TableCreationOrchestrator()
+            .execute()
+        )
+
+        tables = MetadataRuntimeReader().get_tables()
+
+        return ExecutionResult(
+            success=True,
+            message='FULL_SYNC orchestrated',
+            tables_processed=len(tables),
+            rows_processed=0
+        )
+
+
+
+========================================================================================================================
+FILE: orchestrator\table_creation_orchestrator.py
+========================================================================================================================
+
+from store_agent.execution.ho_table_creation_client import HOTableCreationClient
+
+class TableCreationOrchestrator:
+
+    def execute(self, execution_id):
+
+        result = (
+            HOTableCreationClient()
+            .build(execution_id)
+        )
+
+        return {
+            "success": True,
+            "result": result
+        }
+
+
+
+========================================================================================================================
+FILE: orchestrator\table_creation_result.py
+========================================================================================================================
+
+class TableCreationResult:
+
+    def __init__(
+        self,
+        success=True,
+        tables_created=0,
+        columns_created=0,
+        message=''
+    ):
+        self.success = success
+        self.tables_created = tables_created
+        self.columns_created = columns_created
+        self.message = message
+
+
+
+========================================================================================================================
+FILE: runtime\metadata_runtime_reader.py
+========================================================================================================================
+
+
+import sqlite3
+from store_agent.catalog.catalog_models import CATALOG_DB_PATH
+
+class MetadataRuntimeReader:
+
+    def get_tables(self):
+
+        conn = sqlite3.connect(CATALOG_DB_PATH)
+        conn.row_factory = sqlite3.Row
+
+        try:
+            rows = conn.execute(
+                "SELECT * FROM sync_table_catalog WHERE is_active=1 ORDER BY sync_order"
+            ).fetchall()
+
+            return [dict(x) for x in rows]
+
+        finally:
+            conn.close()
+
+    def get_columns(self, table_name):
+
+        conn = sqlite3.connect(CATALOG_DB_PATH)
+        conn.row_factory = sqlite3.Row
+
+        try:
+            rows = conn.execute(
+                "SELECT * FROM sync_column_catalog WHERE table_name=? ORDER BY column_order",
+                (table_name,)
+            ).fetchall()
+
+            return [dict(x) for x in rows]
+
+        finally:
+            conn.close()
+
+
+
+========================================================================================================================
+FILE: runtime\runtime_bootstrap.py
+========================================================================================================================
+
+from store_agent.config import STORE_ID, HO_API_URL
+from store_agent.runtime_configuration_loader import RuntimeConfigurationLoader
+from store_agent.runtime_context_factory import RuntimeContextFactory
+from store_agent.runtime_sql_connection_service import RuntimeSqlConnectionService
+from store_agent.sql_connection_verification_service import SqlConnectionVerificationService
+
+class RuntimeBootstrap:
+
+    def bootstrap(self):
+
+        config_url = (
+            f"{HO_API_URL}/api/stores/{STORE_ID}/agent-config"
+        )
+
+        runtime_config = (
+            RuntimeConfigurationLoader()
+            .load(config_url)
+        )
+
+        runtime_context = (
+            RuntimeContextFactory()
+            .create(runtime_config)
+        )
+
+        connection = (
+            RuntimeSqlConnectionService()
+            .connect(runtime_context)
+        )
+
+        verification = (
+            SqlConnectionVerificationService()
+            .verify(connection)
+        )
+
+        return {
+            "runtime_context": runtime_context,
+            "verification": verification
+        }
+
+
+
+========================================================================================================================
+FILE: runtime\runtime_host.py
+========================================================================================================================
+
+from store_agent.runtime.runtime_bootstrap import RuntimeBootstrap
+from store_agent.runtime.runtime_ready_service import RuntimeReadyService
+from store_agent.runtime.store_agent_runtime import StoreAgentRuntime
+
+class RuntimeHost:
+
+    def start(self):
+
+        bootstrap_result = (
+            RuntimeBootstrap()
+            .bootstrap()
+        )
+
+        ready_result = (
+            RuntimeReadyService()
+            .build(
+                bootstrap_result["verification"]
+            )
+        )
+
+        if not ready_result["runtime_ready"]:
+            raise RuntimeError(
+                "Runtime bootstrap failed"
+            )
+
+        StoreAgentRuntime().run_forever()
+
+
+
+========================================================================================================================
+FILE: runtime\runtime_ready_service.py
+========================================================================================================================
+
+class RuntimeReadyService:
+
+    def build(self, verification):
+
+        return {
+            "runtime_ready": verification.get("is_connected", False)
+        }
+
+
+
+========================================================================================================================
+FILE: runtime\runtime_scheduler.py
+========================================================================================================================
+
+class RuntimeScheduler:
+
+    def run(self):
+        return True
+
+
+
+========================================================================================================================
+FILE: runtime\store_agent_runtime.py
+========================================================================================================================
+
+import time
+
+class StoreAgentRuntime:
+
+    def run_forever(self):
+
+        while True:
+            time.sleep(60)
+
+
+
+========================================================================================================================
+FILE: services\catalog_delta_service.py
+========================================================================================================================
+
+import hashlib
+
+import requests
+
+
+class CatalogDeltaService:
+    """Phase 028C - Schema Discovery + Catalog Delta.
+
+    Reads the store SQL Server schema, compares each column against the local
+    SQLite catalog and uploads only changed/new entries to HO, which updates
+    sync.sync_schema_catalog.
+    """
+
+    _DISCOVERY_SQL = """
+        SELECT s.name, t.name, c.name, ty.name,
+               c.max_length, c.precision, c.scale,
+               c.is_nullable, c.is_identity,
+               CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END,
+               c.column_id
+        FROM sys.tables t
+        INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+        INNER JOIN sys.columns c ON c.object_id = t.object_id
+        INNER JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+        LEFT JOIN (
+            SELECT ic.object_id, ic.column_id
+            FROM sys.index_columns ic
+            INNER JOIN sys.indexes i
+                ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+            WHERE i.is_primary_key = 1
+        ) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
+        WHERE t.is_ms_shipped = 0
+        ORDER BY s.name, t.name, c.column_id
+    """
+
+    def __init__(self, connection, cache, ho_api_url, store_id):
+        self.connection = connection
+        self.cache = cache
+        self.base = ho_api_url.rstrip("/")
+        self.store_id = store_id
+
+    @staticmethod
+    def _hash(row):
+        parts = [str(x) for x in row[3:10]]
+        return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+    def discover(self):
+        cursor = self.connection.cursor()
+        cursor.execute(self._DISCOVERY_SQL)
+        return cursor.fetchall()
+
+    def run(self):
+        rows = self.discover()
+        cached = self.cache.get_catalog_hashes()
+
+        delta_payload = []
+        catalog_entries = []
+        for row in rows:
+            schema_name, table_name, column_name = row[0], row[1], row[2]
+            key = schema_name + "." + table_name + "." + column_name
+            row_hash = self._hash(row)
+            if cached.get(key) == row_hash:
+                continue
+            delta_payload.append({
+                "schema_name": schema_name,
+                "table_name": table_name,
+                "column_name": column_name,
+                "data_type": row[3],
+                "max_length": row[4],
+                "precision_value": row[5],
+                "scale_value": row[6],
+                "is_nullable": bool(row[7]),
+                "is_identity": bool(row[8]),
+                "is_primary_key": bool(row[9]),
+                "ordinal_position": row[10],
+                "first_discovered_store_id": self.store_id,
+            })
+            catalog_entries.append((
+                schema_name, table_name, column_name, row[3], row[4],
+                row[5], row[6], int(bool(row[7])), int(bool(row[8])),
+                int(bool(row[9])), row_hash,
+            ))
+
+        if not delta_payload:
+            return {"discovered": len(rows), "delta": 0, "uploaded": 0}
+
+        response = requests.post(
+            self.base + "/api/sync/schema/register",
+            json=delta_payload,
+            timeout=600,
+        )
+        response.raise_for_status()
+
+        # Persist locally only after HO accepted the delta.
+        self.cache.upsert_catalog(catalog_entries)
+        return {"discovered": len(rows), "delta": len(delta_payload),
+                "uploaded": len(delta_payload)}
+
+
+
+========================================================================================================================
+FILE: services\catalog_sync_service.py
+========================================================================================================================
+
+import requests
+
+
+class CatalogSyncService:
+    """SYNC-030/031 Configuration + Catalog Synchronization Engine."""
+
+    def __init__(self, ho_api_url):
+        self.base = ho_api_url.rstrip("/")
+
+    def download_configuration(self, task_id):
+        response = requests.get(
+            self.base + "/api/sync/configuration/" + str(task_id),
+            timeout=120,
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+
+========================================================================================================================
+FILE: services\chunk_builder_service.py
+========================================================================================================================
+
+class ChunkBuilderService:
+    """SYNC-034 Chunk Builder Engine."""
+
+    def __init__(self, chunk_size=1000):
+        self.chunk_size = chunk_size
+
+    def build(self, rows):
+        chunks = []
+        for index in range(0, len(rows), self.chunk_size):
+            chunks.append(rows[index:index + self.chunk_size])
+        return chunks
+
+
+
+========================================================================================================================
 FILE: services\column_schema_discovery_service.py
 ========================================================================================================================
 
@@ -1357,6 +2373,191 @@ class ColumnSchemaDiscoveryService:
         output_file.write_text(json.dumps(rows, indent=4), encoding="utf-8")
 
         return {"column_count": len(rows), "output_file": str(output_file)}
+
+
+
+========================================================================================================================
+FILE: services\data_extraction_service.py
+========================================================================================================================
+
+import datetime
+import decimal
+
+
+def _json_safe(value):
+    if value is None:
+        return None
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).hex()
+    return value
+
+
+class DataExtractionService:
+    """SYNC-033 Data Extraction Engine."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def _source_columns(self, table_name):
+        cursor = self.connection.cursor()
+        cursor.execute(
+            """
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = ?
+            """,
+            (table_name,),
+        )
+        return {row[0].lower() for row in cursor.fetchall()}
+
+    def extract(self, table_config, watermark=None):
+        table_name = table_config["table_name"]
+        columns = [c["column_name"] for c in table_config.get("columns", [])]
+
+        # Schema-version resilience: only request columns this store actually
+        # has. Different RShopaid versions expose different column sets.
+        available = self._source_columns(table_name)
+        if columns and available:
+            columns = [c for c in columns if c.lower() in available]
+
+        if not columns:
+            select_list = "*"
+        else:
+            select_list = ", ".join("[" + c + "]" for c in columns)
+
+        where = []
+        params = []
+
+        watermark_column = table_config.get("watermark_column")
+
+        # Drop watermark filtering when this store lacks the watermark column.
+        if watermark_column and available and watermark_column.lower() not in available:
+            watermark_column = None
+
+        # Watermark-driven incremental: after the first sync use the stored
+        # watermark (> last); on the first sync fall back to the rolling-window
+        # floor. Master tables have no watermark column -> full scan (hashed).
+        if watermark_column:
+            if watermark:
+                where.append("[" + watermark_column + "] > ?")
+                params.append(watermark)
+            elif table_config.get("window_days"):
+                where.append(
+                    "[" + watermark_column + "] >= DATEADD(day, ?, GETDATE())"
+                )
+                params.append(-int(table_config["window_days"]))
+
+        custom_where = table_config.get("custom_where")
+        if custom_where:
+            where.append("(" + custom_where + ")")
+
+        sql = "SELECT " + select_list + " FROM [" + table_name + "]"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+
+        cursor = self.connection.cursor()
+        cursor.execute(sql, params)
+        col_names = [c[0] for c in cursor.description]
+
+        rows = []
+        max_watermark = watermark
+        for record in cursor.fetchall():
+            row = {
+                col_names[i]: _json_safe(record[i])
+                for i in range(len(col_names))
+            }
+            rows.append(row)
+            if watermark_column and watermark_column in row:
+                value = row[watermark_column]
+                if value is not None and (
+                    max_watermark is None or str(value) > str(max_watermark)
+                ):
+                    max_watermark = value
+
+        return {
+            "table_name": table_name,
+            "columns": col_names,
+            "rows": rows,
+            "row_count": len(rows),
+            "max_watermark": max_watermark,
+        }
+
+
+
+========================================================================================================================
+FILE: services\hash_generation_service.py
+========================================================================================================================
+
+import hashlib
+
+
+class HashGenerationService:
+    """SYNC-032 Hash Generation Engine."""
+
+    def compute_row_hash(self, row, columns):
+        parts = []
+        for column in columns:
+            value = row.get(column)
+            parts.append("" if value is None else str(value))
+        joined = "|".join(parts)
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+    def attach_hash(self, rows, columns, hash_column="row_hash"):
+        for row in rows:
+            row[hash_column] = self.compute_row_hash(row, columns)
+        return rows
+
+
+
+========================================================================================================================
+FILE: services\heartbeat_service.py
+========================================================================================================================
+
+import socket
+
+import requests
+
+
+class HeartbeatService:
+    """Agent health beacon. Writes to HO store_agent_registry /
+    agent_heartbeat_log via the runtime API. Never touches the store DB."""
+
+    def __init__(self, ho_api_url, store_id, connection_type=None,
+                 agent_version="1.0.0"):
+        self.base = ho_api_url.rstrip("/")
+        self.store_id = store_id
+        self.connection_type = connection_type
+        self.agent_version = agent_version
+
+    def _payload(self):
+        try:
+            ip_address = socket.gethostbyname(socket.gethostname())
+        except Exception:
+            ip_address = None
+        return {
+            "store_id": self.store_id,
+            "agent_version": self.agent_version,
+            "connection_type": self.connection_type,
+            "ip_address": ip_address,
+        }
+
+    def register(self):
+        response = requests.post(
+            self.base + "/agent/register", json=self._payload(), timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def beat(self):
+        response = requests.post(
+            self.base + "/agent/heartbeat", json=self._payload(), timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
 
 
 
@@ -1421,6 +2622,77 @@ class SchemaCatalogPayloadGenerator:
             "payload_rows": len(payload),
             "output_file": str(output_file)
         }
+
+
+
+========================================================================================================================
+FILE: services\schema_catalog_upload_service.py
+========================================================================================================================
+
+import json
+from pathlib import Path
+
+import requests
+
+
+class SchemaCatalogUploadService:
+
+    def __init__(self):
+
+        self.base_path = (
+            Path(__file__)
+            .resolve()
+            .parent
+            .parent
+        )
+
+        self.schema_path = (
+            self.base_path
+            / "schema"
+        )
+
+        self.payload_file = (
+            self.schema_path
+            / "schema_catalog_payload.json"
+        )
+
+        self.result_file = (
+            self.schema_path
+            / "schema_upload_result.json"
+        )
+
+        self.endpoint = (
+            "http://127.0.0.1:8000"
+            "/api/sync/schema/register"
+        )
+
+    def upload(self):
+
+        payload = json.loads(
+            self.payload_file.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        response = requests.post(
+            self.endpoint,
+            json=payload,
+            timeout=3600
+        )
+
+        response.raise_for_status()
+
+        result = response.json()
+
+        self.result_file.write_text(
+            json.dumps(
+                result,
+                indent=4
+            ),
+            encoding="utf-8"
+        )
+
+        return result
 
 
 
@@ -1690,6 +2962,729 @@ class SchemaDiscoveryService:
 
 
 ========================================================================================================================
+FILE: services\sqlite_cache_service.py
+========================================================================================================================
+
+import json
+import sqlite3
+import time
+from pathlib import Path
+
+
+class SqliteCacheService:
+    """SYNC-040 V2 SQLite Cache Engine.
+
+    Durable per-store cache enabling true delta sync:
+      - sync_row_cache      : last-known row hash per (table, source_pk)
+      - sync_table_state    : per-table watermark + last full/incremental sync
+      - sync_pending_chunks : outbox for offline-HO recovery
+      - sync_execution_log  : per-table per-execution delta metrics
+    """
+
+    def __init__(self, db_path=None):
+        if db_path is None:
+            db_path = (
+                Path(__file__).resolve().parent.parent
+                / "config_cache"
+                / "store_agent.db"
+            )
+        self.db_path = str(db_path)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def _connect(self):
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    def _init_db(self):
+        conn = self._connect()
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS sync_row_cache (
+                    table_name TEXT NOT NULL,
+                    source_pk TEXT NOT NULL,
+                    row_hash TEXT NOT NULL,
+                    last_sync_time TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (table_name, source_pk)
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_table_state (
+                    table_name TEXT PRIMARY KEY,
+                    last_full_sync TEXT,
+                    last_incremental_sync TEXT,
+                    last_watermark TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_pending_chunks (
+                    chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    execution_id TEXT,
+                    table_name TEXT,
+                    chunk_no INTEGER,
+                    payload TEXT,
+                    total_rows INTEGER,
+                    sync_type TEXT,
+                    status TEXT DEFAULT 'PENDING',
+                    created_on TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_execution_log (
+                    execution_id TEXT NOT NULL,
+                    table_name TEXT NOT NULL,
+                    rows_examined INTEGER DEFAULT 0,
+                    rows_changed INTEGER DEFAULT 0,
+                    rows_uploaded INTEGER DEFAULT 0,
+                    rows_skipped INTEGER DEFAULT 0,
+                    created_on TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (execution_id, table_name)
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_watermark (
+                    table_name TEXT PRIMARY KEY,
+                    watermark_value TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_configuration (
+                    config_key TEXT PRIMARY KEY,
+                    config_value TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_table_config (
+                    sync_table_id TEXT PRIMARY KEY,
+                    table_name TEXT,
+                    sync_mode TEXT,
+                    watermark_column TEXT,
+                    window_days INTEGER,
+                    window_months INTEGER,
+                    custom_where TEXT,
+                    sync_order INTEGER,
+                    is_active INTEGER DEFAULT 1
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_column_config (
+                    sync_table_id TEXT,
+                    table_name TEXT,
+                    column_name TEXT,
+                    data_type TEXT,
+                    is_selected INTEGER,
+                    is_pk INTEGER,
+                    is_hash INTEGER,
+                    is_watermark INTEGER,
+                    column_order INTEGER,
+                    PRIMARY KEY (sync_table_id, column_name)
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_execution (
+                    execution_id TEXT PRIMARY KEY,
+                    status TEXT,
+                    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_ack (
+                    chunk_execution_id INTEGER PRIMARY KEY,
+                    execution_id TEXT,
+                    table_name TEXT,
+                    chunk_no INTEGER,
+                    acked_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS schema_catalog (
+                    schema_name TEXT,
+                    table_name TEXT,
+                    column_name TEXT,
+                    data_type TEXT,
+                    max_length INTEGER,
+                    precision_value INTEGER,
+                    scale_value INTEGER,
+                    is_nullable INTEGER,
+                    is_identity INTEGER,
+                    is_primary_key INTEGER,
+                    catalog_hash TEXT,
+                    PRIMARY KEY (schema_name, table_name, column_name)
+                );
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ---- agent configuration ---------------------------------------------
+
+    def set_config(self, key, value):
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO agent_configuration (config_key, config_value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(config_key) DO UPDATE SET
+                    config_value=excluded.config_value, updated_at=CURRENT_TIMESTAMP
+                """,
+                (key, None if value is None else str(value)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_config(self, key, default=None):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "SELECT config_value FROM agent_configuration WHERE config_key=?",
+                (key,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else default
+        finally:
+            conn.close()
+
+    # ---- downloaded sync configuration (028B) -----------------------------
+
+    def save_sync_config(self, tables):
+        """Replace local sync_table_config / sync_column_config from the HO
+        configuration payload. HO is the single source of truth."""
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM sync_table_config")
+            conn.execute("DELETE FROM sync_column_config")
+            for table in tables:
+                stid = str(table.get("sync_table_id"))
+                conn.execute(
+                    """
+                    INSERT INTO sync_table_config
+                    (sync_table_id, table_name, sync_mode, watermark_column,
+                     window_days, window_months, custom_where, sync_order, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    """,
+                    (stid, table.get("table_name"), table.get("sync_mode"),
+                     table.get("watermark_column"), table.get("window_days"),
+                     table.get("window_months"), table.get("custom_where"),
+                     table.get("sync_order")),
+                )
+                for col in table.get("columns", []):
+                    conn.execute(
+                        """
+                        INSERT INTO sync_column_config
+                        (sync_table_id, table_name, column_name, data_type,
+                         is_selected, is_pk, is_hash, is_watermark, column_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (stid, table.get("table_name"), col.get("column_name"),
+                         col.get("data_type"), int(bool(col.get("is_selected"))),
+                         int(bool(col.get("is_pk"))), int(bool(col.get("is_hash"))),
+                         int(bool(col.get("is_watermark"))), col.get("column_order")),
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def table_config_count(self):
+        conn = self._connect()
+        try:
+            return conn.execute("SELECT COUNT(*) FROM sync_table_config").fetchone()[0]
+        finally:
+            conn.close()
+
+    # ---- schema catalog delta (028C) --------------------------------------
+
+    def get_catalog_hashes(self):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "SELECT schema_name||'.'||table_name||'.'||column_name, catalog_hash "
+                "FROM schema_catalog"
+            )
+            return {row[0]: row[1] for row in cur.fetchall()}
+        finally:
+            conn.close()
+
+    def upsert_catalog(self, entries):
+        if not entries:
+            return
+        conn = self._connect()
+        try:
+            conn.executemany(
+                """
+                INSERT INTO schema_catalog
+                (schema_name, table_name, column_name, data_type, max_length,
+                 precision_value, scale_value, is_nullable, is_identity,
+                 is_primary_key, catalog_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(schema_name, table_name, column_name) DO UPDATE SET
+                    data_type=excluded.data_type, max_length=excluded.max_length,
+                    precision_value=excluded.precision_value,
+                    scale_value=excluded.scale_value, is_nullable=excluded.is_nullable,
+                    is_identity=excluded.is_identity,
+                    is_primary_key=excluded.is_primary_key,
+                    catalog_hash=excluded.catalog_hash
+                """,
+                entries,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ---- execution / ack history (029E) -----------------------------------
+
+    def record_execution(self, execution_id, status, completed=False):
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO sync_execution (execution_id, status, completed_at)
+                VALUES (?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)
+                ON CONFLICT(execution_id) DO UPDATE SET
+                    status=excluded.status,
+                    completed_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE completed_at END
+                """,
+                (execution_id, status, completed, completed),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def record_ack(self, chunk_execution_id, execution_id, table_name, chunk_no):
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO sync_ack
+                (chunk_execution_id, execution_id, table_name, chunk_no, acked_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (chunk_execution_id, execution_id, table_name, chunk_no),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ---- row hash cache (master tables) -----------------------------------
+
+    def get_row_hashes(self, table_name):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "SELECT source_pk, row_hash FROM sync_row_cache WHERE table_name=?",
+                (table_name,),
+            )
+            return {row[0]: row[1] for row in cur.fetchall()}
+        finally:
+            conn.close()
+
+    def upsert_row_hashes(self, table_name, pk_hash_pairs):
+        if not pk_hash_pairs:
+            return
+        conn = self._connect()
+        try:
+            conn.executemany(
+                """
+                INSERT INTO sync_row_cache (table_name, source_pk, row_hash, last_sync_time)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(table_name, source_pk) DO UPDATE SET
+                    row_hash=excluded.row_hash,
+                    last_sync_time=CURRENT_TIMESTAMP
+                """,
+                [(table_name, pk, h) for pk, h in pk_hash_pairs],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_row_hashes(self, table_name, pks):
+        if not pks:
+            return
+        conn = self._connect()
+        try:
+            conn.executemany(
+                "DELETE FROM sync_row_cache WHERE table_name=? AND source_pk=?",
+                [(table_name, pk) for pk in pks],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def row_cache_count(self, table_name):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM sync_row_cache WHERE table_name=?",
+                (table_name,),
+            )
+            return cur.fetchone()[0]
+        finally:
+            conn.close()
+
+    # ---- table state / watermark (transaction tables) ---------------------
+
+    def get_table_state(self, table_name):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                SELECT last_full_sync, last_incremental_sync, last_watermark
+                FROM sync_table_state WHERE table_name=?
+                """,
+                (table_name,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {"last_full_sync": None, "last_incremental_sync": None,
+                        "last_watermark": None}
+            return {"last_full_sync": row[0], "last_incremental_sync": row[1],
+                    "last_watermark": row[2]}
+        finally:
+            conn.close()
+
+    def get_last_watermark(self, table_name):
+        return self.get_table_state(table_name)["last_watermark"]
+
+    def set_last_watermark(self, table_name, value):
+        self._upsert_state(table_name, last_watermark=str(value) if value is not None else None,
+                           last_incremental_sync=_now())
+
+    def mark_full_sync(self, table_name):
+        self._upsert_state(table_name, last_full_sync=_now())
+
+    def _upsert_state(self, table_name, **fields):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "SELECT 1 FROM sync_table_state WHERE table_name=?", (table_name,)
+            )
+            exists = cur.fetchone() is not None
+            if exists:
+                sets = ", ".join(f"{k}=?" for k in fields)
+                conn.execute(
+                    f"UPDATE sync_table_state SET {sets} WHERE table_name=?",
+                    (*fields.values(), table_name),
+                )
+            else:
+                cols = ", ".join(["table_name", *fields.keys()])
+                qs = ", ".join(["?"] * (len(fields) + 1))
+                conn.execute(
+                    f"INSERT INTO sync_table_state ({cols}) VALUES ({qs})",
+                    (table_name, *fields.values()),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # back-compat (V1 callers)
+    def get_watermark(self, table_name):
+        return self.get_last_watermark(table_name)
+
+    def set_watermark(self, table_name, value):
+        self.set_last_watermark(table_name, value)
+
+    # ---- pending chunk outbox (offline-HO recovery) -----------------------
+
+    def queue_chunk(self, execution_id, table_name, chunk_no, payload,
+                    total_rows, sync_type):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO sync_pending_chunks
+                (execution_id, table_name, chunk_no, payload, total_rows, sync_type, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
+                """,
+                (execution_id, table_name, chunk_no, json.dumps(payload),
+                 total_rows, sync_type),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_pending_chunks(self):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                SELECT chunk_id, execution_id, table_name, chunk_no, payload,
+                       total_rows, sync_type
+                FROM sync_pending_chunks WHERE status='PENDING'
+                ORDER BY chunk_id
+                """
+            )
+            return [
+                {
+                    "chunk_id": r[0], "execution_id": r[1], "table_name": r[2],
+                    "chunk_no": r[3], "payload": json.loads(r[4]),
+                    "total_rows": r[5], "sync_type": r[6],
+                }
+                for r in cur.fetchall()
+            ]
+        finally:
+            conn.close()
+
+    def mark_chunk_done(self, chunk_id):
+        conn = self._connect()
+        try:
+            conn.execute(
+                "DELETE FROM sync_pending_chunks WHERE chunk_id=?", (chunk_id,)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def pending_chunk_count(self):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM sync_pending_chunks WHERE status='PENDING'"
+            )
+            return cur.fetchone()[0]
+        finally:
+            conn.close()
+
+    # ---- execution log ----------------------------------------------------
+
+    def log_execution(self, execution_id, table_name, examined, changed,
+                      uploaded, skipped):
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO sync_execution_log
+                (execution_id, table_name, rows_examined, rows_changed,
+                 rows_uploaded, rows_skipped)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(execution_id, table_name) DO UPDATE SET
+                    rows_examined=excluded.rows_examined,
+                    rows_changed=excluded.rows_changed,
+                    rows_uploaded=excluded.rows_uploaded,
+                    rows_skipped=excluded.rows_skipped
+                """,
+                (execution_id, table_name, examined, changed, uploaded, skipped),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def cache_size_bytes(self):
+        try:
+            return Path(self.db_path).stat().st_size
+        except OSError:
+            return 0
+
+
+def _now():
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+
+========================================================================================================================
+FILE: services\sync_ack_processor.py
+========================================================================================================================
+
+import requests
+
+
+class SyncAckProcessor:
+    """SYNC-039 ACK Engine."""
+
+    def __init__(self, ho_api_url):
+        self.base = ho_api_url.rstrip("/")
+
+    def ack(self, chunk_execution_id):
+        response = requests.post(
+            self.base + "/api/sync/chunks/ack",
+            json={"chunk_execution_id": chunk_execution_id},
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+
+========================================================================================================================
+FILE: services\sync_runtime_orchestrator.py
+========================================================================================================================
+
+from store_agent.services.task_polling_service import TaskPollingService
+from store_agent.services.catalog_sync_service import CatalogSyncService
+from store_agent.services.data_extraction_service import DataExtractionService
+from store_agent.services.hash_generation_service import HashGenerationService
+from store_agent.services.chunk_builder_service import ChunkBuilderService
+from store_agent.services.sync_sender_service import SyncSenderService
+from store_agent.services.sync_ack_processor import SyncAckProcessor
+from store_agent.services.sqlite_cache_service import SqliteCacheService
+
+_MASTER_MODES = ("UPSERT", "FULL", "MASTER")
+_WATERMARK_MODES = ("ROLLING_WINDOW", "INCREMENTAL", "DELTA")
+
+
+class SyncRuntimeOrchestrator:
+    """SYNC Runtime V2 - true delta sync orchestrator.
+
+    Master tables  -> per-row hash diff vs SQLite cache; upload only changed.
+    Txn  tables    -> watermark (>last_watermark, rolling-window floor first run).
+    """
+
+    def __init__(self, connection, ho_api_url, store_id, chunk_size=1000):
+        self.connection = connection
+        self.store_id = store_id
+        self.polling = TaskPollingService(ho_api_url)
+        self.catalog = CatalogSyncService(ho_api_url)
+        self.extractor = DataExtractionService(connection)
+        self.hasher = HashGenerationService()
+        self.chunker = ChunkBuilderService(chunk_size)
+        self.sender = SyncSenderService(ho_api_url)
+        self.ack = SyncAckProcessor(ho_api_url)
+        self.cache = SqliteCacheService()
+
+    def run_cycle(self):
+        self.flush_pending()
+        tasks = self.polling.poll(self.store_id)
+        results = []
+        for task in tasks:
+            results.append(self.run_task(task["execution_id"]))
+        return {"tasks_processed": len(tasks), "results": results}
+
+    def run_task(self, task_id):
+        self.polling.start(task_id)
+        self.cache.record_execution(task_id, "RUNNING")
+        try:
+            config = self.catalog.download_configuration(task_id)
+            # 028B: persist HO configuration into SQLite (single source = HO).
+            self.cache.save_sync_config(config.get("tables", []))
+            table_results = []
+            for table in config.get("tables", []):
+                table_results.append(self.run_table(task_id, table))
+            self.polling.complete(task_id)
+            self.cache.record_execution(task_id, "COMPLETED", completed=True)
+            return {"task_id": task_id, "status": "COMPLETED", "tables": table_results}
+        except Exception as ex:
+            try:
+                self.polling.fail(task_id, str(ex))
+            except Exception:
+                pass
+            self.cache.record_execution(task_id, "FAILED", completed=True)
+            return {"task_id": task_id, "status": "FAILED", "error": str(ex)}
+
+    def run_table(self, task_id, table):
+        sync_mode = (table.get("sync_mode") or "").upper()
+        watermark = None
+        if sync_mode in _WATERMARK_MODES and table.get("watermark_column"):
+            # Rolling window: extract only rows in the window / past watermark.
+            watermark = self.cache.get_last_watermark(table["table_name"])
+        extracted = self.extractor.extract(table, watermark=watermark)
+        return self._diff_and_upload(task_id, table, extracted, sync_mode)
+
+    @staticmethod
+    def _hash_columns(cols):
+        """Phase 029A: only is_hash=1 columns participate in the row hash.
+        Falls back to all selected columns if none are flagged."""
+        marked = [c["column_name"] for c in cols if c.get("is_hash")]
+        return marked or [c["column_name"] for c in cols]
+
+    def _diff_and_upload(self, task_id, table, extracted, sync_mode):
+        table_name = table["table_name"]
+        cols = table.get("columns", [])
+        pk_cols = [c["column_name"] for c in cols if c.get("is_pk")]
+        hash_cols = self._hash_columns(cols)
+
+        rows = extracted["rows"]
+        examined = len(rows)
+
+        cached = self.cache.get_row_hashes(table_name)
+        changed_rows = []
+        changed_hashes = []
+        for row in rows:
+            pk = self._pk_value(row, pk_cols)
+            row_hash = self.hasher.compute_row_hash(row, hash_cols)
+            if cached.get(pk) != row_hash:
+                row["row_hash"] = row_hash
+                changed_rows.append(row)
+                changed_hashes.append((pk, row_hash))
+
+        chunks = self.chunker.build(changed_rows)
+        uploaded = self._send_chunks(
+            task_id, table_name, chunks, len(changed_rows),
+            table.get("sync_mode"),
+        )
+
+        # Persist hashes / advance watermark only after successful upload.
+        self.cache.upsert_row_hashes(table_name, changed_hashes)
+        if sync_mode in _WATERMARK_MODES:
+            if extracted.get("max_watermark") is not None:
+                self.cache.set_last_watermark(table_name, extracted["max_watermark"])
+        else:
+            self.cache.mark_full_sync(table_name)
+
+        skipped = examined - len(changed_rows)
+        strategy = "WATERMARK_HASH" if sync_mode in _WATERMARK_MODES else "MASTER_HASH"
+        self.cache.log_execution(task_id, table_name, examined,
+                                 len(changed_rows), uploaded, skipped)
+        self._report(task_id, table_name, table.get("sync_mode"), examined,
+                     len(changed_rows), uploaded, skipped, examined)
+
+        return {"table_name": table_name, "strategy": strategy,
+                "examined": examined, "changed": len(changed_rows),
+                "uploaded": uploaded, "skipped": skipped}
+
+    # ---- transport (with offline outbox) ----------------------------------
+
+    def _send_chunks(self, execution_id, table_name, chunks, total_rows, sync_type):
+        uploaded = 0
+        for chunk_no, chunk in enumerate(chunks, start=1):
+            queue_id = self.cache.queue_chunk(
+                execution_id, table_name, chunk_no, chunk, total_rows, sync_type
+            )
+            response = self.sender.send_chunk(
+                execution_id, table_name, chunk_no, chunk,
+                total_rows=total_rows, sync_type=sync_type,
+            )
+            chunk_execution_id = response.get("chunk_execution_id")
+            if chunk_execution_id is not None:
+                self.ack.ack(chunk_execution_id)
+                self.cache.record_ack(
+                    chunk_execution_id, execution_id, table_name, chunk_no
+                )
+            self.cache.mark_chunk_done(queue_id)
+            uploaded += len(chunk)
+        return uploaded
+
+    def flush_pending(self):
+        for pending in self.cache.get_pending_chunks():
+            try:
+                response = self.sender.send_chunk(
+                    pending["execution_id"], pending["table_name"],
+                    pending["chunk_no"], pending["payload"],
+                    total_rows=pending["total_rows"],
+                    sync_type=pending["sync_type"],
+                )
+                chunk_execution_id = response.get("chunk_execution_id")
+                if chunk_execution_id is not None:
+                    self.ack.ack(chunk_execution_id)
+                self.cache.mark_chunk_done(pending["chunk_id"])
+            except Exception:
+                break  # HO still unreachable; retry next cycle
+
+    def _report(self, execution_id, table_name, sync_type, examined, changed,
+                uploaded, skipped, source_total):
+        try:
+            self.sender.report_table_metrics(
+                execution_id, table_name, sync_type, examined, changed,
+                uploaded, skipped, source_total,
+            )
+        except Exception:
+            pass  # metrics are best-effort, never fail a sync
+
+    @staticmethod
+    def _pk_value(row, pk_cols):
+        if not pk_cols:
+            return "|".join("" if v is None else str(v) for v in row.values())
+        return "|".join("" if row.get(c) is None else str(row.get(c)) for c in pk_cols)
+
+
+
+========================================================================================================================
 FILE: services\sync_schema_catalog_generator.py
 ========================================================================================================================
 
@@ -1790,6 +3785,122 @@ class SyncSchemaCatalogGenerator:
             "payload_rows": len(rows),
             "output_file": str(output_file)
         }
+
+
+
+========================================================================================================================
+FILE: services\sync_sender_service.py
+========================================================================================================================
+
+import requests
+
+
+class SyncSenderService:
+    """SYNC-035 Chunk Sender Engine."""
+
+    def __init__(self, ho_api_url):
+        self.base = ho_api_url.rstrip("/")
+
+    def send_chunk(self, execution_id, table_name, chunk_no, rows,
+                   total_rows=None, sync_type=None):
+        response = requests.post(
+            self.base + "/api/sync/chunks/upload",
+            json={
+                "execution_id": execution_id,
+                "table_name": table_name,
+                "chunk_no": chunk_no,
+                "rows": rows,
+                "total_rows": total_rows,
+                "sync_type": sync_type,
+            },
+            timeout=600,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def report_table_metrics(self, execution_id, table_name, sync_type,
+                             rows_examined, rows_changed, rows_uploaded,
+                             rows_skipped, source_total):
+        response = requests.post(
+            self.base + "/api/sync/tables/report",
+            json={
+                "execution_id": execution_id,
+                "table_name": table_name,
+                "sync_type": sync_type,
+                "rows_examined": rows_examined,
+                "rows_changed": rows_changed,
+                "rows_uploaded": rows_uploaded,
+                "rows_skipped": rows_skipped,
+                "source_total": source_total,
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+
+========================================================================================================================
+FILE: services\task_polling_service.py
+========================================================================================================================
+
+import requests
+
+
+class TaskPollingService:
+    """SYNC-029 Store Agent Polling Engine."""
+
+    def __init__(self, ho_api_url):
+        self.base = ho_api_url.rstrip("/")
+
+    def poll(self, store_id):
+        response = requests.get(
+            self.base + "/api/sync/tasks/pending/" + str(store_id),
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def create_task(self, tenant_id, store_id, execution_type="FULL",
+                    sync_mode="FULL", total_tables=0):
+        response = requests.post(
+            self.base + "/api/sync/tasks/create",
+            json={
+                "tenant_id": tenant_id,
+                "store_id": store_id,
+                "execution_type": execution_type,
+                "sync_mode": sync_mode,
+                "total_tables": total_tables,
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def start(self, task_id):
+        response = requests.post(
+            self.base + "/api/sync/tasks/" + str(task_id) + "/start",
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def complete(self, task_id):
+        response = requests.post(
+            self.base + "/api/sync/tasks/" + str(task_id) + "/complete",
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def fail(self, task_id, message):
+        response = requests.post(
+            self.base + "/api/sync/tasks/" + str(task_id) + "/fail",
+            json={"message": message},
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
 
 
 

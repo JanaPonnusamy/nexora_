@@ -1,5 +1,21 @@
 
+import datetime as _dt
+
 from repositories.sync_admin_repository import SyncAdminRepository
+
+
+def _parse_dt(value):
+    """Accept ISO strings (with optional trailing Z) -> datetime, else None."""
+    if not value:
+        return None
+    if isinstance(value, _dt.datetime):
+        return value
+    text = str(value).replace("Z", "").strip()
+    try:
+        return _dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
 
 class SyncAdminService:
 
@@ -7,8 +23,52 @@ class SyncAdminService:
     def control_center(self):
         return SyncAdminRepository().control_center()
 
+    # ===== Schedules =====
+
     def get_schedules(self):
         return SyncAdminRepository().get_schedules()
+
+    def get_schedule(self, schedule_id):
+        return SyncAdminRepository().get_schedule(schedule_id)
+
+    @staticmethod
+    def validate_schedule(body):
+        """Returns (error, schedule_type, start_dt). DAILY keeps time-of-day on a
+        fixed reference date; ONCE keeps the full datetime."""
+        name = (body.schedule_name or "").strip()
+        if not name:
+            return "Schedule name is required", None, None
+        stype = (body.schedule_type or "DAILY").upper()
+        if stype not in ("DAILY", "ONCE"):
+            return "Schedule type must be DAILY or ONCE", None, None
+        start = _parse_dt(body.start_time)
+        if start is None:
+            return "A valid start time is required", None, None
+        if stype == "DAILY":
+            start = _dt.datetime(2000, 1, 1, start.hour, start.minute)
+        return None, stype, start
+
+    def create_schedule(self, body, schedule_type, start_dt):
+        return SyncAdminRepository().create_schedule(
+            body.schedule_name.strip(), schedule_type, body.store_id, start_dt,
+            (body.sync_mode or "FULL").upper(), body.is_enabled, body.tenant_id)
+
+    def update_schedule(self, schedule_id, body, schedule_type, start_dt):
+        return SyncAdminRepository().update_schedule(
+            schedule_id, body.schedule_name.strip(), schedule_type, body.store_id,
+            start_dt, (body.sync_mode or "FULL").upper(), body.is_enabled)
+
+    def set_schedule_status(self, schedule_id, is_enabled):
+        return SyncAdminRepository().set_schedule_status(schedule_id, is_enabled)
+
+    def suspend_schedule(self, schedule_id, suspended_until):
+        return SyncAdminRepository().suspend_schedule(schedule_id, _parse_dt(suspended_until))
+
+    def delete_schedule(self, schedule_id):
+        return SyncAdminRepository().delete_schedule(schedule_id)
+
+    def seed_default_schedules(self):
+        return SyncAdminRepository().seed_default_schedules()
 
     def store_health(self):
         return SyncAdminRepository().store_health()
@@ -25,6 +85,9 @@ class SyncAdminService:
 
     def get_tables(self):
         return SyncAdminRepository().get_tables()
+
+    def available_tables(self, search=None):
+        return SyncAdminRepository().available_tables(search)
 
     def get_table_by_id(self, sync_table_id):
         return SyncAdminRepository().get_table_by_id(sync_table_id)

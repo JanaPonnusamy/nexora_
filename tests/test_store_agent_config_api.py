@@ -1,2 +1,3 @@
-def test_store_agent_config_api():
-    assert True
+def test_import():
+    from backend.modules.store_agent.config_service import get_configuration
+    assert get_configuration is not None

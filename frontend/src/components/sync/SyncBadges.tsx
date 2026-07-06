@@ -1,3 +1,6 @@
+import { SxChip } from './ui'
+import type { Tone } from './ui'
+
 const CONNECTION_ICONS: Record<string, string> = {
   LAN: 'bi-ethernet',
   WiFi: 'bi-wifi',
@@ -8,7 +11,7 @@ const CONNECTION_ICONS: Record<string, string> = {
 export function ConnectionType({ value }: { value: string }) {
   const icon = CONNECTION_ICONS[value] ?? 'bi-question-circle'
   return (
-    <span className="d-inline-flex align-items-center gap-1">
+    <span className="sx-conn">
       <i className={`bi ${icon}`} aria-hidden="true" />
       {value}
     </span>
@@ -18,21 +21,36 @@ export function ConnectionType({ value }: { value: string }) {
 export function AgentBadge({ status }: { status: string }) {
   const online = status === 'Online'
   return (
-    <span className={`badge ${online ? 'text-bg-success' : 'text-bg-secondary'}`}>{status}</span>
+    <SxChip tone={online ? 'success' : 'muted'} dot running={online}>
+      {status}
+    </SxChip>
   )
 }
 
-const STATUS_TONE: Record<string, string> = {
-  COMPLETED: 'text-bg-success',
-  FAILED: 'text-bg-danger',
-  RUNNING: 'text-bg-primary',
-  Syncing: 'text-bg-primary',
-  QUEUED: 'text-bg-warning',
-  Online: 'text-bg-success',
-  Offline: 'text-bg-secondary',
+const STATUS_TONE: Record<string, Tone> = {
+  COMPLETED: 'success',
+  FAILED: 'danger',
+  RUNNING: 'indigo',
+  Syncing: 'indigo',
+  QUEUED: 'warning',
+  Online: 'success',
+  Offline: 'muted',
 }
 
 export function SyncStatusBadge({ status }: { status: string | null }) {
-  if (!status) return <span className="text-secondary">—</span>
-  return <span className={`badge ${STATUS_TONE[status] ?? 'text-bg-secondary'}`}>{status}</span>
+  if (!status) return <span className="sx-dim">—</span>
+  const tone = STATUS_TONE[status] ?? 'muted'
+  const running = status === 'Syncing' || status === 'RUNNING'
+  return (
+    <SxChip tone={tone} dot running={running}>
+      {status === 'Syncing' ? 'Syncing' : status}
+    </SxChip>
+  )
+}
+
+export function SyncTypeBadge({ value }: { value: string | null }) {
+  if (!value) return <span className="sx-dim">—</span>
+  const v = value.toUpperCase()
+  if (v.includes('ROLL')) return <SxChip tone="violet">Rolling Window</SxChip>
+  return <SxChip tone="teal">Upsert</SxChip>
 }

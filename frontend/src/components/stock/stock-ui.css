@@ -1,0 +1,444 @@
+/* ============================================================
+   Stock Availability (sa-) — isolated module styles.
+   Reuses the sx- design tokens (page root carries `.sx`).
+   ============================================================ */
+
+/* Lock the whole module to the viewport; only panels scroll internally. */
+.sa {
+  color: var(--sx-text);
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sa-head, .sa-search, .sa-branches-head { flex: 0 0 auto; }
+.sa-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ===== Header ===== */
+.sa-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+}
+.sa-head__title i {
+  color: #fff; background: var(--sx-accent);
+  width: 26px; height: 26px; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-right: 0.5rem; font-size: 0.85rem;
+}
+.sa-tenant { flex-direction: row; align-items: center; gap: 0.45rem; }
+.sa-tenant__lbl { margin: 0; }
+.sa-head__crumb {
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sx-faint);
+  margin-bottom: 0.3rem;
+}
+.sa-head__title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+}
+.sa-head__sub { color: var(--sx-muted); font-size: 0.84rem; margin-top: 0.15rem; }
+.sa-tenant { display: flex; flex-direction: row; align-items: center; gap: 0.45rem; }
+.sa-tenant__lbl {
+  font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--sx-faint); margin: 0;
+}
+
+/* ===== Sticky search ===== */
+.sa-search {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  background: var(--sx-surface);
+  border: 1px solid var(--sx-border);
+  border-radius: var(--sx-r-lg);
+  box-shadow: var(--sx-shadow-sm);
+  padding: 0.5rem 0.7rem;
+  margin-bottom: 0.7rem;
+}
+.sa-search .sa-legend { margin-left: auto; }
+.sa-search__tabs { display: flex; gap: 0.3rem; }
+.sa-search__tab {
+  border: 1px solid transparent;
+  background: var(--sx-surface-2);
+  color: var(--sx-muted);
+  font-weight: 600;
+  font-size: 0.83rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: var(--sx-r-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.14s ease;
+}
+.sa-search__tab:hover { background: var(--sx-surface-2); color: var(--sx-text); }
+.sa-search__tab--active {
+  background: var(--sx-accent-soft);
+  color: var(--sx-accent);
+  border-color: var(--sx-accent-soft);
+}
+.sa-search__fields { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+.sa-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--sx-surface-2);
+  border: 1px solid var(--sx-border);
+  border-radius: var(--sx-r-sm);
+  padding: 0.5rem 0.75rem;
+  min-width: 200px;
+}
+.sa-field--grow { flex: 1 1 280px; }
+.sa-field i { color: var(--sx-faint); }
+.sa-field input {
+  border: 0; outline: 0; background: transparent;
+  color: var(--sx-text); width: 100%; font-size: 0.9rem;
+}
+.sa-check {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.86rem; color: var(--sx-muted); white-space: nowrap;
+}
+
+/* ===== Branches header + compact legend ===== */
+.sa-branches-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; margin-bottom: 0.6rem; flex-wrap: wrap;
+}
+.sa-branches-head__title { font-weight: 650; font-size: 0.9rem; color: var(--sx-muted); }
+.sa-legend { display: inline-flex; gap: 0.9rem; font-size: 0.78rem; color: var(--sx-muted); }
+.sa-legend__item { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+/* ===== Stock indicator dots (binary) ===== */
+.sa-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.sa-dot--in { background: #16a34a; }
+.sa-dot--out { background: #dc2626; }
+
+/* ===== Branch cards (colour-coded per store) — fill full width ===== */
+.sa-branches {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.9rem;
+  margin-bottom: 0.9rem;
+}
+.sa-branch {
+  --sa-store: var(--sx-accent);
+  --sa-store-soft: var(--sx-accent-soft);
+  background: var(--sx-surface);
+  border: 1px solid var(--sx-border);
+  border-top: 3px solid var(--sa-store);
+  border-radius: var(--sx-r-md);
+  box-shadow: var(--sx-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sa-branch--skeleton { min-height: 280px; animation: sa-pulse 1.2s ease-in-out infinite; }
+@keyframes sa-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.sa-branch__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.38rem 0.7rem;
+  background: var(--sa-store-soft);
+  border-bottom: 2px solid var(--sa-store);
+}
+.sa-branch__name {
+  font-weight: 800; font-size: 0.9rem; line-height: 1.1;
+  color: var(--sa-store); flex: 0 0 auto;
+}
+.sa-branch__code {
+  font-size: 0.7rem; color: var(--sx-muted); min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* compact rows -> more visible, then scroll inside the card */
+.sa-branch__grid { max-height: 205px; overflow-y: auto; }
+.sa-branch__row {
+  display: grid;
+  grid-template-columns: 1fr 44px 52px;
+  gap: 0.3rem;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--sx-border);
+  padding: 0.22rem 0.85rem 0.22rem 0.6rem;
+  font-size: 0.76rem;
+  color: var(--sx-text);
+  cursor: pointer;
+}
+.sa-branch__row--head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--sx-surface-2);
+  color: var(--sx-faint);
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  padding-top: 0.34rem; padding-bottom: 0.34rem;
+  cursor: default;
+}
+.sa-branch__row:not(.sa-branch__row--head):hover { background: var(--sa-store-soft); }
+.sa-branch__row--active { background: var(--sa-store-soft); box-shadow: inset 3px 0 0 var(--sa-store); }
+.sa-branch__pname {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sa-num { text-align: right; font-variant-numeric: tabular-nums; }
+.sa-dim { color: var(--sx-muted); }
+
+/* ===== Detail area: dense grid filling the full screen width ===== */
+.sa-detail {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Single-row product context strip (replaces the old banner + details panel) */
+.sa-ctx {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 0.5rem 1.1rem; flex-wrap: wrap;
+  background: var(--sx-accent-soft);
+  border-radius: var(--sx-r-md);
+  padding: 0.4rem 0.9rem;
+  margin-bottom: 0.6rem;
+}
+.sa-ctx__lead { display: flex; align-items: center; gap: 0.5rem; color: var(--sx-accent); font-size: 0.95rem; }
+.sa-ctx__lead strong { font-weight: 800; }
+.sa-ctx__stats { display: flex; flex-wrap: wrap; gap: 0.2rem 1.3rem; margin-left: auto; }
+.sa-ctx__stat { display: flex; flex-direction: column; line-height: 1.12; font-size: 0.85rem; font-weight: 650; }
+.sa-ctx__stat b {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--sx-faint);
+}
+.sa-tag {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--sx-border);
+  color: var(--sx-text);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.78rem; font-weight: 650;
+}
+.sa-tag--stock { color: var(--sx-muted); }
+
+/* prod strip spans top-left, chart fills a tall right column */
+.sa-detail__layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(460px, 1.6fr);
+  grid-template-rows: 1fr 1fr;
+  grid-template-areas:
+    "batch sales chart"
+    "purch bill  chart";
+  gap: 0.75rem;
+  align-items: stretch;
+  padding-bottom: 0.25rem;
+}
+.sa-area { min-width: 0; min-height: 0; }
+.sa-area--batch { grid-area: batch; }
+.sa-area--sales { grid-area: sales; }
+.sa-area--purch { grid-area: purch; }
+.sa-area--bill  { grid-area: bill; }
+.sa-area--chart { grid-area: chart; }
+
+@media (max-width: 1200px) {
+  .sa-detail__layout {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto;
+    grid-template-areas:
+      "chart chart"
+      "batch sales"
+      "purch bill";
+  }
+}
+@media (max-width: 700px) {
+  .sa-detail__layout { grid-template-columns: 1fr; grid-template-areas: "chart" "batch" "sales" "purch" "bill"; }
+}
+
+/* every panel fills its cell; data grows into an internal scroll */
+.sa-area > .sx-card {
+  height: 100%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  margin: 0;
+}
+.sa-area > .sx-card > .sx-card__head { flex: 0 0 auto; }
+.sa-area > .sx-card > .sx-card__body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* chart is the hero: no scroll, fill the cell, minimal padding for max plot area */
+.sa-area--chart > .sx-card > .sx-card__body { overflow: hidden; padding: 0.45rem 0.55rem; }
+
+/* compact, uniform panel chrome so headers/rows don't waste vertical space */
+.sa-detail .sx-card__head { padding: 0.35rem 0.75rem; min-height: 0; flex-wrap: nowrap; }
+.sa-detail .sx-card__title { font-size: 0.85rem; }
+.sa-detail .sx-card__sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+/* High-density grids: small padding/font, more visible rows. */
+.sa-detail .sx-table thead th { padding: 0.2rem 0.4rem; font-size: 0.7rem; }
+.sa-detail .sx-table tbody td { padding: 0.17rem 0.4rem; font-size: 0.74rem; }
+/* Sticky column headers: stay fixed while the grid body scrolls. */
+.sa-detail .sx-table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--sx-surface-2);
+}
+/* Right padding after the last column so text never touches the edge. */
+.sa-detail .sx-table th:last-child,
+.sa-detail .sx-table td:last-child { padding-right: 0.85rem; }
+/* Fixed layout + per-column widths (from each table's <colgroup>): numeric
+   columns stay compact and the text column takes the remaining width, so the
+   grid fits its card with no horizontal scroll and minimal truncation. */
+/* table fits its card (fixed layout, 100% width) so the card body is the only
+   scroll container -> sticky thead works and there is no horizontal scroll. */
+.sa-detail .sx-tablewrap { overflow: visible; }
+.sa-detail .sx-table { table-layout: fixed; width: 100%; }
+.sa-detail .sx-table th,
+.sa-detail .sx-table td {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Customer/long text may wrap to show the full value (no truncation). */
+.sa-detail .sx-table td.sa-wrap { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.12; }
+/* Clickable sales rows -> load the bill. */
+.sa-rowsel { cursor: pointer; }
+.sa-rowsel:hover { background: var(--sx-accent-soft); }
+.sa-rowsel--on { background: var(--sx-accent-soft); box-shadow: inset 3px 0 0 var(--sx-accent); }
+
+/* Definition list (Product Details) */
+.sa-deflist { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 1rem; margin: 0; }
+.sa-deflist > div { display: flex; flex-direction: column; }
+.sa-deflist dt { font-size: 0.72rem; color: var(--sx-faint); text-transform: uppercase; letter-spacing: 0.02em; }
+.sa-deflist dd { margin: 0; font-weight: 600; font-size: 0.9rem; }
+
+.sa-bill-total {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.7rem 1.1rem;
+  border-top: 1px solid var(--sx-border);
+  font-size: 0.85rem; color: var(--sx-muted);
+}
+.sa-detail__hint { text-align: center; color: var(--sx-faint); font-size: 0.86rem; padding: 1.5rem 0; }
+
+/* Bill Details — summary chips live in the panel header (Bill No / Customer /
+   Bill Date / Amount). Compact, single row, values never truncated. */
+.sa-bhdr {
+  display: flex; flex-wrap: wrap; justify-content: flex-end;
+  gap: 0.1rem 0.85rem; min-width: 0;
+}
+.sa-bchip {
+  display: flex; flex-direction: column; line-height: 1.05;
+  font-size: 0.76rem; font-weight: 700; white-space: nowrap; flex: 0 0 auto;
+}
+.sa-bchip b {
+  font-size: 0.55rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--sx-faint);
+}
+
+/* ===== Monthly Movement chart — the hero panel (glassy) ===== */
+.sa-chart-card {
+  background:
+    radial-gradient(120% 120% at 0% 0%, rgba(99,102,241,0.10), transparent 55%),
+    radial-gradient(120% 120% at 100% 100%, rgba(20,184,166,0.10), transparent 55%),
+    rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: var(--sx-shadow);
+}
+/* fill the cell so the whole chart is always visible (never clipped) */
+.sa-chart { display: flex; flex-direction: column; gap: 0.5rem; height: 100%; min-height: 0; }
+.sa-chart__caption { flex: 0 0 auto; display: flex; align-items: baseline; justify-content: space-between; }
+.sa-chart__period { font-weight: 800; font-size: 1.1rem; letter-spacing: -0.01em; }
+.sa-chart__hint { font-size: 0.72rem; color: var(--sx-faint); display: inline-flex; gap: 0.3rem; align-items: center; }
+.sa-chart__plot { flex: 1 1 auto; min-height: 0; position: relative; }
+.sa-chart__svg { width: 100%; height: 100%; display: block; }
+/* Hover-month label overlays the plot (no reserved vertical space). */
+.sa-chart__tag {
+  position: absolute; top: 0; right: 6px; z-index: 1;
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.7rem; color: var(--sx-faint); pointer-events: none;
+}
+.sa-chart__tag strong { color: var(--sx-accent); font-weight: 800; font-size: 0.85rem; }
+.sa-chart__svg rect { transition: opacity 0.15s ease; }
+/* Floating month tooltip (Purchase / Sales / Transfer / Adjustment / Stock). */
+.sa-chart__tip {
+  position: absolute; z-index: 5; min-width: 150px; pointer-events: none;
+  background: var(--sx-panel, #fff); border: 1px solid var(--sx-border, #e5e7eb);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,.22); padding: 6px 8px;
+}
+.sa-chart__tip-head { font-weight: 800; font-size: 0.72rem; color: var(--sx-text); margin-bottom: 4px; }
+.sa-chart__tip-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.7rem; line-height: 1.5; }
+.sa-chart__tip-key { display: inline-flex; align-items: center; gap: 5px; color: var(--sx-muted); }
+.sa-chart__tip-val { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--sx-text); }
+.sa-chart__axis { fill: var(--sx-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.sa-chart__barval { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sa-chart__month { fill: var(--sx-muted); font-size: 12px; font-weight: 650; }
+.sa-chart__month--on { fill: var(--sx-accent); font-weight: 800; }
+
+/* one row: all six metrics across, value on top, code below */
+.sa-chart__readout {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.4rem;
+  border-top: 1px solid var(--sx-border);
+  padding-top: 0.45rem;
+}
+.sa-chart__metric {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 0.05rem;
+}
+.sa-chart__metric-val { font-weight: 800; font-size: 1rem; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sa-chart__metric-label {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--sx-muted);
+}
+.sa-chart__swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+
+/* ===== Toasts ===== */
+.sa-toasts {
+  position: fixed; top: 1rem; right: 1rem; z-index: 1080;
+  display: flex; flex-direction: column; gap: 0.5rem; max-width: 360px;
+}
+.sa-toast {
+  display: flex; align-items: center; gap: 0.55rem;
+  background: var(--sx-surface);
+  border: 1px solid var(--sx-border);
+  border-left-width: 4px;
+  border-radius: var(--sx-r-sm);
+  box-shadow: var(--sx-shadow-pop);
+  padding: 0.7rem 0.9rem; font-size: 0.86rem;
+  animation: sa-toast-in 0.18s ease;
+}
+@keyframes sa-toast-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+.sa-toast--success { border-left-color: var(--sx-success); }
+.sa-toast--success i { color: var(--sx-success); }
+.sa-toast--danger { border-left-color: var(--sx-danger); }
+.sa-toast--danger i { color: var(--sx-danger); }
+.sa-toast--info { border-left-color: var(--sx-info); }
+.sa-toast--info i { color: var(--sx-info); }
+.sa-toast__msg { flex: 1; }
+.sa-toast__close { border: 0; background: transparent; color: var(--sx-faint); cursor: pointer; line-height: 1; }
+
+@media (max-width: 640px) {
+  .sa-deflist { grid-template-columns: 1fr; }
+  .sa-chart__readout { grid-template-columns: 1fr; }
+}

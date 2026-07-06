@@ -1,0 +1,20 @@
+/* Product Mapping — a couple of styles layered on top of the shared sx-* kit. */
+
+.sx-input {
+  height: 34px;
+  padding: 0 0.7rem;
+  border: 1px solid var(--sx-border, rgba(148, 163, 184, 0.35));
+  border-radius: 8px;
+  background: var(--sx-surface, transparent);
+  color: inherit;
+  font-size: 0.86rem;
+}
+.sx-input:focus {
+  outline: none;
+  border-color: var(--sx-accent, #6366f1);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.sx-row--active > td {
+  background: rgba(99, 102, 241, 0.10);
+}

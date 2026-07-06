@@ -3,6 +3,14 @@ import type { ChangeEvent, FormEvent } from 'react'
 import type { Store, StoreInput } from '../../types/store'
 import type { Tenant } from '../../types/tenant'
 import { storeService } from '../../services/storeService'
+import { ApiError } from '../../services/apiClient'
+
+function describeStoreError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.message
+  }
+  return err instanceof Error ? err.message : 'Failed to save store'
+}
 
 interface StoreFormModalProps {
   mode: 'create' | 'edit'
@@ -57,7 +65,7 @@ export function StoreFormModal({ mode, store, tenants, onClose, onSaved }: Store
       }
       onSaved()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save store')
+      setError(describeStoreError(err))
       setSubmitting(false)
     }
   }

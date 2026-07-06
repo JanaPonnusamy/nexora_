@@ -32,3 +32,20 @@ venv/
 # OS
 Thumbs.db
 .DS_Store
+
+# Build output / PyInstaller dist / installers / binaries
+dist/
+release/
+build/
+*.exe
+
+# SQLite runtime databases (catalog cache, agent config cache, etc.)
+*.db
+store_agent/config_cache/
+
+# Large packaged platform assets (installer payload — not source)
+ho_setup/assets/Nexora_platform
+
+# Production secrets / environment files
+*.env.production
+deploy/sharadha/ho.env.production

@@ -8,6 +8,7 @@ import { StoreToolbar } from '../../components/stores/StoreToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { StoreTable } from '../../components/stores/StoreTable'
 import { StoreCardList } from '../../components/stores/StoreCardList'
+import { StoreSummary } from '../../components/stores/StoreSummary'
 import { StoreFormModal } from '../../components/stores/StoreFormModal'
 import { useStores } from '../../hooks/useStores'
 import { useTenants } from '../../hooks/useTenants'
@@ -102,6 +103,7 @@ export default function StoresPage() {
   return (
     <div className="container-fluid px-0">
       <PageHeader title="Stores" breadcrumb={['Platform', 'Stores']} />
+      {!isLoading && !error && stores.length > 0 && <StoreSummary stores={stores} />}
       <StoreToolbar
         search={search}
         onSearchChange={setSearch}

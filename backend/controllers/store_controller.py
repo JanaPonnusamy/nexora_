@@ -1,10 +1,22 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from services.store_service import StoreService
+from dtos.store_request import StoreRequest, StoreStatusRequest
 
 router = APIRouter(
     prefix="/api/stores",
     tags=["Stores"]
 )
+
+def _serialize(r):
+    return {
+        "store_id": str(r[0]),
+        "tenant_id": str(r[1]),
+        "store_code": r[2],
+        "store_name": r[3],
+        "server_name": r[4],
+        "database_name": r[5],
+        "is_active": bool(r[6]),
+    }
 
 @router.get("")
 def get_stores():
@@ -89,3 +101,46 @@ def get_store(store_id: str):
         "database_name": r[5],
         "is_active": bool(r[6])
     }
+
+
+@router.post("", status_code=201)
+def create_store(body: StoreRequest):
+    svc = StoreService()
+    store_code = body.store_code.strip()
+    store_name = body.store_name.strip()
+    if not body.tenant_id.strip():
+        raise HTTPException(status_code=400, detail="Tenant is required")
+    if not store_code:
+        raise HTTPException(status_code=400, detail="Store code is required")
+    if not store_name:
+        raise HTTPException(status_code=400, detail="Store name is required")
+    if svc.store_code_exists(store_code, body.tenant_id):
+        raise HTTPException(status_code=400, detail="Store code already exists for this tenant")
+    new_id = svc.create(body.tenant_id, store_code, store_name, body.server_name, body.database_name)
+    return _serialize(svc.get_by_id(str(new_id)))
+
+
+@router.put("/{store_id}")
+def update_store(store_id: str, body: StoreRequest):
+    svc = StoreService()
+    store_code = body.store_code.strip()
+    store_name = body.store_name.strip()
+    if not store_code:
+        raise HTTPException(status_code=400, detail="Store code is required")
+    if not store_name:
+        raise HTTPException(status_code=400, detail="Store name is required")
+    if not svc.get_by_id(store_id):
+        raise HTTPException(status_code=404, detail="Store Not Found")
+    if svc.store_code_exists(store_code, body.tenant_id, store_id):
+        raise HTTPException(status_code=400, detail="Store code already exists for this tenant")
+    svc.update(store_id, body.tenant_id, store_code, store_name, body.server_name, body.database_name)
+    return _serialize(svc.get_by_id(store_id))
+
+
+@router.patch("/{store_id}/status")
+def set_store_status(store_id: str, body: StoreStatusRequest):
+    svc = StoreService()
+    if not svc.get_by_id(store_id):
+        raise HTTPException(status_code=404, detail="Store Not Found")
+    svc.set_active(store_id, body.is_active)
+    return _serialize(svc.get_by_id(store_id))

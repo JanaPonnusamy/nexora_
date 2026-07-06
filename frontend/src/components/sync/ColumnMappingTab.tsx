@@ -1,15 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAsyncData } from '../../hooks/useAsyncData'
 import { syncService } from '../../services/syncService'
 import { EmptyState } from '../common/EmptyState'
 import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
+import { ToggleCheck } from '../dashboard/ToggleCheck'
 import type { TableColumn } from '../../types/sync'
+import {
+  SxCard, SxCardHead, SxCardBody, SxStat, SxSearch, SxTable,
+} from './ui'
 
 type ToggleField = 'is_selected' | 'is_pk' | 'is_hash'
 
 export function ColumnMappingTab() {
   const { data: tables, isLoading: tablesLoading, error: tablesError, reload } = useAsyncData(syncService.tables)
+  const [tableSearch, setTableSearch] = useState('')
+  const [columnSearch, setColumnSearch] = useState('')
   const [selectedId, setSelectedId] = useState('')
   const [tableName, setTableName] = useState('')
   const [columns, setColumns] = useState<TableColumn[]>([])
@@ -18,19 +24,25 @@ export function ColumnMappingTab() {
   const [saving, setSaving] = useState<Set<string>>(new Set())
   const [actionError, setActionError] = useState<string | null>(null)
 
+  const filteredTables = useMemo(() => {
+    const query = tableSearch.trim().toLowerCase()
+    const list = tables ?? []
+    if (!query) return list
+    return list.filter((table) => table.table_name.toLowerCase().includes(query))
+  }, [tables, tableSearch])
+
   useEffect(() => {
-    if (tables && tables.length > 0 && !selectedId) {
-      setSelectedId(tables[0].sync_table_id)
+    if (filteredTables.length > 0 && !filteredTables.some((t) => t.sync_table_id === selectedId)) {
+      setSelectedId(filteredTables[0].sync_table_id)
     }
-  }, [tables, selectedId])
+  }, [filteredTables, selectedId])
 
   useEffect(() => {
     if (!selectedId) return
     let active = true
     setColumnsLoading(true)
     setColumnsError(null)
-    syncService
-      .tableColumns(selectedId)
+    syncService.tableColumns(selectedId)
       .then((result) => {
         if (!active) return
         setTableName(result.table_name)
@@ -40,13 +52,22 @@ export function ColumnMappingTab() {
         if (!active) return
         setColumnsError(err instanceof Error ? err.message : 'Failed to load columns')
       })
-      .finally(() => {
-        if (active) setColumnsLoading(false)
-      })
-    return () => {
-      active = false
-    }
+      .finally(() => { if (active) setColumnsLoading(false) })
+    return () => { active = false }
   }, [selectedId])
+
+  const stats = {
+    total: columns.length,
+    mapped: columns.filter((c) => c.is_selected).length,
+    pk: columns.filter((c) => c.is_pk).length,
+    hash: columns.filter((c) => c.is_hash).length,
+  }
+
+  const visibleColumns = useMemo(() => {
+    const query = columnSearch.trim().toLowerCase()
+    if (!query) return columns
+    return columns.filter((column) => column.column_name.toLowerCase().includes(query))
+  }, [columns, columnSearch])
 
   const toggle = async (column: TableColumn, field: ToggleField) => {
     if (saving.has(column.column_name)) return
@@ -56,120 +77,96 @@ export function ColumnMappingTab() {
     setActionError(null)
     try {
       await syncService.saveMapping({
-        sync_table_id: selectedId,
-        table_name: tableName,
-        column_name: updated.column_name,
-        data_type: updated.data_type,
-        is_selected: updated.is_selected,
-        is_pk: updated.is_pk,
-        is_hash: updated.is_hash,
-        is_watermark: updated.is_watermark,
-        column_order: updated.column_order,
+        sync_table_id: selectedId, table_name: tableName, column_name: updated.column_name,
+        data_type: updated.data_type, is_selected: updated.is_selected, is_pk: updated.is_pk,
+        is_hash: updated.is_hash, is_watermark: updated.is_watermark, column_order: updated.column_order,
       })
     } catch (err) {
       setColumns((prev) => prev.map((c) => (c.column_name === column.column_name ? column : c)))
       setActionError(err instanceof Error ? err.message : 'Failed to save mapping')
     } finally {
-      setSaving((prev) => {
-        const next = new Set(prev)
-        next.delete(column.column_name)
-        return next
-      })
+      setSaving((prev) => { const next = new Set(prev); next.delete(column.column_name); return next })
     }
   }
 
-  const toggleButton = (column: TableColumn, field: ToggleField, label: string) => {
-    const on = column[field]
-    return (
-      <button
-        type="button"
-        className={`btn btn-sm permission-cell ${on ? 'btn-success' : 'btn-outline-secondary'}`}
-        aria-pressed={on}
-        aria-label={`${on ? 'Disable' : 'Enable'} ${label} for ${column.column_name}`}
-        disabled={saving.has(column.column_name)}
-        onClick={() => toggle(column, field)}
-      >
-        {saving.has(column.column_name) ? (
-          <span className="spinner-border spinner-border-sm" aria-hidden="true" />
-        ) : (
-          <i className={`bi ${on ? 'bi-check-lg' : 'bi-x-lg'}`} aria-hidden="true" />
-        )}
-      </button>
-    )
-  }
-
-  if (tablesLoading) return <TableSkeleton rows={5} columns={6} />
+  if (tablesLoading) return <TableSkeleton rows={6} columns={6} />
   if (tablesError || !tables) return <ErrorState description={tablesError ?? 'Failed to load tables'} onRetry={reload} />
   if (tables.length === 0) {
-    return (
-      <EmptyState
-        icon="bi-diagram-3"
-        title="No configured tables"
-        description="Configure a sync table first, then map its columns here."
-      />
-    )
+    return <EmptyState icon="bi-diagram-3" title="No configured tables"
+      description="Configure a sync table first, then map its columns here." />
   }
 
   return (
-    <div>
-      <div className="mb-3 col-md-5 col-lg-4">
-        <label htmlFor="mapping-table" className="form-label">Configured Table</label>
-        <select
-          id="mapping-table"
-          className="form-select"
-          value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
-        >
-          {tables.map((table) => (
-            <option key={table.sync_table_id} value={table.sync_table_id}>
-              {table.table_name}
-            </option>
-          ))}
-        </select>
+    <div className="sx-stack">
+      <div className="row row-cols-2 row-cols-md-4 g-3">
+        <div className="col"><SxStat icon="bi-list-columns" tone="indigo" value={stats.total} label="Columns" /></div>
+        <div className="col"><SxStat icon="bi-check-circle" tone="success" value={stats.mapped} label="Mapped" /></div>
+        <div className="col"><SxStat icon="bi-key" tone="warning" value={stats.pk} label="Primary Keys" /></div>
+        <div className="col"><SxStat icon="bi-hash" tone="info" value={stats.hash} label="Hash Columns" /></div>
       </div>
 
-      {actionError && <div className="alert alert-danger py-2">{actionError}</div>}
-
-      {columnsLoading ? (
-        <TableSkeleton rows={5} columns={6} />
-      ) : columnsError ? (
-        <ErrorState description={columnsError} onRetry={() => setSelectedId(selectedId)} />
-      ) : columns.length === 0 ? (
-        <EmptyState
-          icon="bi-diagram-3"
-          title="No catalog columns"
-          description="No discovered columns for this table yet. Register the store schema to populate the catalog."
-        />
-      ) : (
-        <div className="table-responsive">
-          <table className="table table-hover align-middle data-table">
-            <thead>
-              <tr>
-                <th scope="col">Enabled</th>
-                <th scope="col">Store Column</th>
-                <th scope="col">HO Column</th>
-                <th scope="col">Store Type</th>
-                <th scope="col">HO Type</th>
-                <th scope="col">PK</th>
-                <th scope="col">Hash</th>
-              </tr>
-            </thead>
-            <tbody>
-              {columns.map((column) => (
-                <tr key={column.column_name}>
-                  <td>{toggleButton(column, 'is_selected', 'sync')}</td>
-                  <td className="fw-medium">{column.column_name}</td>
-                  <td>{column.column_name}</td>
-                  <td className="text-secondary">{column.data_type}</td>
-                  <td className="text-secondary">{column.data_type}</td>
-                  <td>{toggleButton(column, 'is_pk', 'primary key')}</td>
-                  <td>{toggleButton(column, 'is_hash', 'hash')}</td>
-                </tr>
+      <div className="sx-split">
+        <SxCard>
+          <SxCardHead title="Tables" icon="bi-table" />
+          <SxCardBody flush>
+            <div className="p-2">
+              <SxSearch value={tableSearch} onChange={setTableSearch} placeholder="Search tables…" ariaLabel="Search tables" />
+            </div>
+            <div className="sx-list">
+              {filteredTables.map((table) => (
+                <button key={table.sync_table_id} type="button"
+                  className={`sx-list__item${table.sync_table_id === selectedId ? ' sx-list__item--active' : ''}`}
+                  onClick={() => setSelectedId(table.sync_table_id)}>
+                  <span>{table.table_name}</span>
+                  {table.is_active && <i className="bi bi-check-circle-fill" style={{ fontSize: '0.75rem', color: 'var(--sx-success)' }} aria-hidden="true" />}
+                </button>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              {filteredTables.length === 0 && <div className="sx-dim small p-2">No tables match.</div>}
+            </div>
+          </SxCardBody>
+        </SxCard>
+
+        <SxCard>
+          <SxCardHead title={tableName || 'Columns'} icon="bi-diagram-3"
+            sub={`${stats.mapped}/${stats.total} mapped`}
+            action={<SxSearch value={columnSearch} onChange={setColumnSearch} placeholder="Search columns…" ariaLabel="Search columns" />} />
+          <SxCardBody flush>
+            {actionError && <div className="p-3 pb-0"><div className="sx-alert sx-alert--danger mb-0">{actionError}</div></div>}
+            {columnsLoading ? (
+              <div className="p-3"><TableSkeleton rows={6} columns={5} /></div>
+            ) : columnsError ? (
+              <div className="p-3"><ErrorState description={columnsError} onRetry={() => setSelectedId(selectedId)} /></div>
+            ) : columns.length === 0 ? (
+              <EmptyState icon="bi-diagram-3" title="No catalog columns"
+                description="No discovered columns for this table yet. Register the store schema to populate the catalog." />
+            ) : visibleColumns.length === 0 ? (
+              <EmptyState icon="bi-search" title="No matching columns" description="Try a different column search." />
+            ) : (
+              <SxTable>
+                <thead>
+                  <tr>
+                    <th>Sync</th><th>Store Column</th><th>HO Column</th>
+                    <th>Store Type</th><th>HO Type</th><th>PK</th><th>Hash</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleColumns.map((column) => (
+                    <tr key={column.column_name}>
+                      <td><ToggleCheck checked={column.is_selected} busy={saving.has(column.column_name)} label={`Toggle sync for ${column.column_name}`} onClick={() => toggle(column, 'is_selected')} /></td>
+                      <td className="sx-strong">{column.column_name}</td>
+                      <td className="sx-dim">{column.column_name}</td>
+                      <td className="sx-dim">{column.data_type}</td>
+                      <td className="sx-dim">{column.data_type}</td>
+                      <td><ToggleCheck checked={column.is_pk} busy={saving.has(column.column_name)} label={`Toggle primary key for ${column.column_name}`} onClick={() => toggle(column, 'is_pk')} /></td>
+                      <td><ToggleCheck checked={column.is_hash} busy={saving.has(column.column_name)} label={`Toggle hash for ${column.column_name}`} onClick={() => toggle(column, 'is_hash')} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </SxTable>
+            )}
+          </SxCardBody>
+        </SxCard>
+      </div>
     </div>
   )
 }

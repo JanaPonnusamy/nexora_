@@ -7,19 +7,72 @@
 #          agent_heartbeat_log + sync_execution only.
 from fastapi import APIRouter, HTTPException
 from services.sync_admin_service import SyncAdminService
-from dtos.sync_request import SyncTableRequest, SyncTableStatusRequest, ColumnMappingRequest
+from dtos.sync_request import (
+    SyncTableRequest, SyncTableStatusRequest, ColumnMappingRequest,
+    ScheduleRequest, ScheduleSuspendRequest, ScheduleStatusRequest,
+)
 
 router = APIRouter(prefix="/api/sync", tags=["Sync Administration"])
 
-# ===== Control Center / Schedules / Store Health / History (read-only) =====
+# ===== Control Center / Store Health / History (read-only) =====
 
 @router.get("/control-center")
 def control_center():
     return SyncAdminService().control_center()
 
+# ===== Schedules (CRUD + suspend + seed) =====
+
 @router.get("/schedules")
 def get_schedules():
     return SyncAdminService().get_schedules()
+
+@router.post("/schedules", status_code=201)
+def create_schedule(body: ScheduleRequest):
+    svc = SyncAdminService()
+    error, schedule_type, start_dt = svc.validate_schedule(body)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    new_id = svc.create_schedule(body, schedule_type, start_dt)
+    return svc.get_schedule(new_id)
+
+@router.put("/schedules/{schedule_id}")
+def update_schedule(schedule_id: int, body: ScheduleRequest):
+    svc = SyncAdminService()
+    if not svc.get_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    error, schedule_type, start_dt = svc.validate_schedule(body)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    svc.update_schedule(schedule_id, body, schedule_type, start_dt)
+    return svc.get_schedule(schedule_id)
+
+@router.patch("/schedules/{schedule_id}/status")
+def set_schedule_status(schedule_id: int, body: ScheduleStatusRequest):
+    svc = SyncAdminService()
+    if not svc.get_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    svc.set_schedule_status(schedule_id, body.is_enabled)
+    return svc.get_schedule(schedule_id)
+
+@router.patch("/schedules/{schedule_id}/suspend")
+def suspend_schedule(schedule_id: int, body: ScheduleSuspendRequest):
+    svc = SyncAdminService()
+    if not svc.get_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    svc.suspend_schedule(schedule_id, body.suspended_until)
+    return svc.get_schedule(schedule_id)
+
+@router.delete("/schedules/{schedule_id}", status_code=204)
+def delete_schedule(schedule_id: int):
+    svc = SyncAdminService()
+    if not svc.get_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    svc.delete_schedule(schedule_id)
+    return None
+
+@router.post("/schedules/seed")
+def seed_schedules():
+    return SyncAdminService().seed_default_schedules()
 
 @router.get("/store-health")
 def store_health():
@@ -42,6 +95,10 @@ def catalog_tables(search: str | None = None):
 @router.get("/tables")
 def get_tables():
     return SyncAdminService().get_tables()
+
+@router.get("/tables/available")
+def available_tables(search: str | None = None):
+    return SyncAdminService().available_tables(search)
 
 @router.get("/tables/{sync_table_id}")
 def get_table(sync_table_id: str):

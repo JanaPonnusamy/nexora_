@@ -25,6 +25,26 @@ from controllers.user_controller import router as user_router, relations_router 
 from controllers.permission_controller import router as permission_router
 from controllers.sync_admin_controller import router as sync_admin_router
 from modules.sync.router import router as sync_router
+from modules.sync.table_registry_router import (
+    router as table_registry_router
+)
+from modules.sync.table_master_router import (
+    router as table_master_router
+)
+
+from modules.sync.catalog_router import (
+    router as catalog_router
+)
+from modules.store_agent.config_router import (
+    router as store_agent_config_router
+)
+from modules.sync.runtime_router import (
+    router as sync_runtime_router,
+    agent_router as sync_agent_router,
+)
+from modules.sync.shared_table_builder_router import (
+    router as sync_shared_table_router,
+)
 
 app = FastAPI(title='NEXORA API')
 
@@ -51,6 +71,13 @@ app.include_router(user_relations_router)
 app.include_router(permission_router)
 app.include_router(sync_admin_router)
 app.include_router(sync_router)
+app.include_router(table_registry_router)
+app.include_router(catalog_router)
+app.include_router(table_master_router)
+app.include_router(store_agent_config_router)
+app.include_router(sync_runtime_router)
+app.include_router(sync_agent_router)
+app.include_router(sync_shared_table_router)
 
 @app.get('/health')
 def health():
@@ -339,13 +366,25 @@ def get_role_permissions(role_id:str):
 FILE: controllers\store_controller.py
 ========================================================================================================================
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from services.store_service import StoreService
+from dtos.store_request import StoreRequest, StoreStatusRequest
 
 router = APIRouter(
     prefix="/api/stores",
     tags=["Stores"]
 )
+
+def _serialize(r):
+    return {
+        "store_id": str(r[0]),
+        "tenant_id": str(r[1]),
+        "store_code": r[2],
+        "store_name": r[3],
+        "server_name": r[4],
+        "database_name": r[5],
+        "is_active": bool(r[6]),
+    }
 
 @router.get("")
 def get_stores():
@@ -430,6 +469,49 @@ def get_store(store_id: str):
         "database_name": r[5],
         "is_active": bool(r[6])
     }
+
+
+@router.post("", status_code=201)
+def create_store(body: StoreRequest):
+    svc = StoreService()
+    store_code = body.store_code.strip()
+    store_name = body.store_name.strip()
+    if not body.tenant_id.strip():
+        raise HTTPException(status_code=400, detail="Tenant is required")
+    if not store_code:
+        raise HTTPException(status_code=400, detail="Store code is required")
+    if not store_name:
+        raise HTTPException(status_code=400, detail="Store name is required")
+    if svc.store_code_exists(store_code, body.tenant_id):
+        raise HTTPException(status_code=400, detail="Store code already exists for this tenant")
+    new_id = svc.create(body.tenant_id, store_code, store_name, body.server_name, body.database_name)
+    return _serialize(svc.get_by_id(str(new_id)))
+
+
+@router.put("/{store_id}")
+def update_store(store_id: str, body: StoreRequest):
+    svc = StoreService()
+    store_code = body.store_code.strip()
+    store_name = body.store_name.strip()
+    if not store_code:
+        raise HTTPException(status_code=400, detail="Store code is required")
+    if not store_name:
+        raise HTTPException(status_code=400, detail="Store name is required")
+    if not svc.get_by_id(store_id):
+        raise HTTPException(status_code=404, detail="Store Not Found")
+    if svc.store_code_exists(store_code, body.tenant_id, store_id):
+        raise HTTPException(status_code=400, detail="Store code already exists for this tenant")
+    svc.update(store_id, body.tenant_id, store_code, store_name, body.server_name, body.database_name)
+    return _serialize(svc.get_by_id(store_id))
+
+
+@router.patch("/{store_id}/status")
+def set_store_status(store_id: str, body: StoreStatusRequest):
+    svc = StoreService()
+    if not svc.get_by_id(store_id):
+        raise HTTPException(status_code=404, detail="Store Not Found")
+    svc.set_active(store_id, body.is_active)
+    return _serialize(svc.get_by_id(store_id))
 
 
 ========================================================================================================================
@@ -817,6 +899,25 @@ class RoleStatusRequest(BaseModel):
 
 
 ========================================================================================================================
+FILE: dtos\store_request.py
+========================================================================================================================
+
+
+from pydantic import BaseModel
+
+class StoreRequest(BaseModel):
+    tenant_id: str
+    store_code: str
+    store_name: str
+    server_name: str | None = None
+    database_name: str | None = None
+
+class StoreStatusRequest(BaseModel):
+    is_active: bool
+
+
+
+========================================================================================================================
 FILE: dtos\sync_request.py
 ========================================================================================================================
 
@@ -933,6 +1034,175 @@ FILE: models\__init__.py
 
 
 ========================================================================================================================
+FILE: modules\store_agent\config_repository.py
+========================================================================================================================
+
+from config.database import get_connection
+
+def get_store_configuration(store_id):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT store_id,tenant_id,store_code,store_name,
+            server_name,database_name,username,password_encrypted,
+            connection_type,is_active
+            FROM dbo.stores
+            WHERE store_id=? AND is_active=1""",
+            (store_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols,row))
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: modules\store_agent\config_router.py
+========================================================================================================================
+
+from fastapi import APIRouter, HTTPException
+from .config_service import get_configuration
+
+router = APIRouter(prefix='/api/store-agent', tags=['Store Agent'])
+
+@router.get('/config/{store_id}')
+def get_config(store_id:str):
+    result = get_configuration(store_id)
+    if not result:
+        raise HTTPException(status_code=404, detail='Store not found')
+    return result
+
+
+
+========================================================================================================================
+FILE: modules\store_agent\config_service.py
+========================================================================================================================
+
+from .config_repository import get_store_configuration
+
+def get_configuration(store_id):
+    return get_store_configuration(store_id)
+
+
+
+========================================================================================================================
+FILE: modules\sync\catalog_repository.py
+========================================================================================================================
+
+from config.database import get_connection
+
+def get_sync_tables():
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+        SELECT sync_table_id,table_name,is_active,sync_mode,
+               watermark_column,window_days,window_months,
+               custom_where,sync_order,created_at
+        FROM sync.sync_table_master
+        WHERE is_active=1
+        ORDER BY sync_order
+        """)
+        cols=[c[0] for c in cursor.description]
+        return [dict(zip(cols,row)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+def get_sync_columns():
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+        SELECT mapping_id,sync_table_id,table_name,column_name,
+               data_type,is_selected,is_pk,is_hash,
+               is_watermark,column_order,created_at
+        FROM sync.sync_column_mapping
+        WHERE is_selected=1
+        ORDER BY table_name,column_order
+        """)
+        cols=[c[0] for c in cursor.description]
+        return [dict(zip(cols,row)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: modules\sync\catalog_router.py
+========================================================================================================================
+
+from fastapi import APIRouter
+from .catalog_service import get_tables,get_columns,get_full_catalog
+
+router = APIRouter(
+    prefix='/api/sync/catalog',
+    tags=['Sync Catalog']
+)
+
+@router.get('/tables')
+def tables():
+    return get_tables()
+
+@router.get('/columns')
+def columns():
+    return get_columns()
+
+@router.get('/full')
+def full():
+    return get_full_catalog()
+
+
+
+========================================================================================================================
+FILE: modules\sync\catalog_service.py
+========================================================================================================================
+
+from .catalog_repository import get_sync_tables,get_sync_columns
+
+def get_tables():
+    return get_sync_tables()
+
+def get_columns():
+    return get_sync_columns()
+
+def get_full_catalog():
+    return {
+        'tables': get_sync_tables(),
+        'columns': get_sync_columns()
+    }
+
+
+
+========================================================================================================================
+FILE: modules\sync\column_mapping_repository.py
+========================================================================================================================
+
+# SYNC-026C repository
+
+
+
+========================================================================================================================
+FILE: modules\sync\column_mapping_router.py
+========================================================================================================================
+
+# SYNC-026C router
+
+
+
+========================================================================================================================
+FILE: modules\sync\column_mapping_service.py
+========================================================================================================================
+
+# SYNC-026C service
+
+
+
+========================================================================================================================
 FILE: modules\sync\repository.py
 ========================================================================================================================
 
@@ -940,131 +1210,172 @@ from config.database import get_connection
 
 
 def bulk_register_schema_catalog(rows):
+
     conn = get_connection()
 
     try:
+
         cursor = conn.cursor()
 
         cursor.execute(
             """
-            SELECT schema_name,
-                   table_name,
-                   column_name
-            FROM sync.sync_schema_catalog
+            CREATE TABLE #SchemaCatalogStage
+            (
+                schema_name varchar(128) NOT NULL,
+                table_name varchar(128) NOT NULL,
+                column_name varchar(128) NOT NULL,
+                data_type varchar(100) NULL,
+                max_length int NULL,
+                precision_value int NULL,
+                scale_value int NULL,
+                is_nullable bit NULL,
+                is_identity bit NULL,
+                is_primary_key bit NULL,
+                ordinal_position int NULL,
+                first_discovered_store_id uniqueidentifier NULL
+            )
             """
         )
 
-        existing_rows = {
-            (
-                r.schema_name,
-                r.table_name,
-                r.column_name
-            ): True
-            for r in cursor.fetchall()
-        }
-
-        insert_rows = []
-        update_rows = []
+        stage_rows = []
 
         for row in rows:
 
-            key = (
-                row["schema_name"],
-                row["table_name"],
-                row["column_name"]
-            )
-
-            if key in existing_rows:
-
-                update_rows.append(
-                    (
-                        row.get("data_type"),
-                        row.get("max_length"),
-                        row.get("numeric_precision"),
-                        row.get("numeric_scale"),
-                        row.get("is_nullable"),
-                        row.get("ordinal_position"),
-                        row.get("source_database"),
-                        row["schema_name"],
-                        row["table_name"],
-                        row["column_name"]
-                    )
-                )
-
-            else:
-
-                insert_rows.append(
-                    (
-                        row.get("source_database"),
-                        row["schema_name"],
-                        row["table_name"],
-                        row["column_name"],
-                        row.get("data_type"),
-                        row.get("max_length"),
-                        row.get("numeric_precision"),
-                        row.get("numeric_scale"),
-                        row.get("is_nullable"),
-                        row.get("ordinal_position")
-                    )
-                )
-
-        if insert_rows:
-
-            cursor.executemany(
-                """
-                INSERT INTO sync.sync_schema_catalog
+            stage_rows.append(
                 (
-                    source_database,
-                    schema_name,
-                    table_name,
-                    column_name,
-                    data_type,
-                    max_length,
-                    numeric_precision,
-                    numeric_scale,
-                    is_nullable,
-                    ordinal_position
+                    row["schema_name"],
+                    row["table_name"],
+                    row["column_name"],
+                    row["data_type"],
+                    row["max_length"],
+                    row["precision_value"],
+                    row["scale_value"],
+                    row["is_nullable"],
+                    row["is_identity"],
+                    row["is_primary_key"],
+                    row["ordinal_position"],
+                    row.get("first_discovered_store_id")
                 )
-                VALUES
-                (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-                """,
-                insert_rows
             )
 
-        if update_rows:
+        cursor.fast_executemany = True
 
-            cursor.executemany(
-                """
-                UPDATE sync.sync_schema_catalog
-                   SET data_type = ?,
-                       max_length = ?,
-                       numeric_precision = ?,
-                       numeric_scale = ?,
-                       is_nullable = ?,
-                       ordinal_position = ?,
-                       source_database = ?
-                 WHERE schema_name = ?
-                   AND table_name = ?
-                   AND column_name = ?
-                """,
-                update_rows
+        cursor.executemany(
+            """
+            INSERT INTO #SchemaCatalogStage
+            (
+                schema_name,
+                table_name,
+                column_name,
+                data_type,
+                max_length,
+                precision_value,
+                scale_value,
+                is_nullable,
+                is_identity,
+                is_primary_key,
+                ordinal_position,
+                first_discovered_store_id
             )
+            VALUES
+            (
+                ?,?,?,?,?,?,?,?,?,?,?,?
+            )
+            """,
+            stage_rows
+        )
+
+        cursor.execute(
+            """
+            UPDATE target
+            SET
+                target.data_type = stage.data_type,
+                target.max_length = stage.max_length,
+                target.precision_value = stage.precision_value,
+                target.scale_value = stage.scale_value,
+                target.is_nullable = stage.is_nullable,
+                target.is_identity = stage.is_identity,
+                target.is_primary_key = stage.is_primary_key,
+                target.ordinal_position = stage.ordinal_position,
+                target.last_discovered_at = GETDATE()
+            FROM sync.sync_schema_catalog target
+            INNER JOIN #SchemaCatalogStage stage
+                ON target.schema_name = stage.schema_name
+               AND target.table_name = stage.table_name
+               AND target.column_name = stage.column_name
+            """
+        )
+
+        updated_rows = cursor.rowcount
+
+        cursor.execute(
+            """
+            INSERT INTO sync.sync_schema_catalog
+            (
+                schema_name,
+                table_name,
+                column_name,
+                data_type,
+                max_length,
+                precision_value,
+                scale_value,
+                is_nullable,
+                is_identity,
+                is_primary_key,
+                ordinal_position,
+                first_discovered_store_id,
+                first_discovered_at,
+                last_discovered_at,
+                is_active
+            )
+            SELECT
+                stage.schema_name,
+                stage.table_name,
+                stage.column_name,
+                stage.data_type,
+                stage.max_length,
+                stage.precision_value,
+                stage.scale_value,
+                stage.is_nullable,
+                stage.is_identity,
+                stage.is_primary_key,
+                stage.ordinal_position,
+                stage.first_discovered_store_id,
+                GETDATE(),
+                GETDATE(),
+                1
+            FROM #SchemaCatalogStage stage
+            LEFT JOIN sync.sync_schema_catalog target
+                ON target.schema_name = stage.schema_name
+               AND target.table_name = stage.table_name
+               AND target.column_name = stage.column_name
+            WHERE target.catalog_id IS NULL
+            """
+        )
+
+        inserted_rows = cursor.rowcount
+
+        cursor.execute(
+            """
+            DROP TABLE #SchemaCatalogStage
+            """
+        )
 
         conn.commit()
 
         return {
-            "inserted": len(insert_rows),
-            "updated": len(update_rows),
+            "inserted": inserted_rows,
+            "updated": updated_rows,
             "total": len(rows)
         }
 
     except Exception:
+
         conn.rollback()
         raise
 
     finally:
+
         conn.close()
 
 
@@ -1075,20 +1386,1224 @@ FILE: modules\sync\router.py
 
 from fastapi import APIRouter
 
-from .schemas import SchemaRegisterRequest
 from .service import register_schema
-
+from typing import List, Dict, Any
 router = APIRouter(
     prefix="/api/sync/schema",
     tags=["Sync Schema"]
 )
 
 
+from typing import List, Dict, Any
+
+
 @router.post("/register")
 def schema_register(
-    payload: SchemaRegisterRequest
+    payload: List[Dict[str, Any]]
 ):
     return register_schema(payload)
+
+
+
+========================================================================================================================
+FILE: modules\sync\runtime_repository.py
+========================================================================================================================
+
+import pyodbc
+
+from config.database import get_connection
+from modules.sync import type_normalizer
+from modules.sync import schema_evolution
+
+
+def _audit(cursor, execution_id, action_name, message=None):
+    cursor.execute(
+        """
+        INSERT INTO dbo.sync_execution_audit
+        (execution_id, action_name, message)
+        VALUES (?, ?, ?)
+        """,
+        (execution_id, action_name, message)
+    )
+
+
+def create_task(tenant_id, store_id, execution_type, sync_mode, total_tables):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO dbo.sync_execution
+            (tenant_id, store_id, execution_type, sync_mode,
+             execution_status, total_tables, initiated_by, created_by)
+            OUTPUT INSERTED.execution_id
+            VALUES (?, ?, ?, ?, 'PENDING', ?, NULL, NULL)
+            """,
+            (tenant_id, store_id, execution_type, sync_mode, total_tables)
+        )
+        execution_id = cursor.fetchone()[0]
+        _audit(cursor, execution_id, 'CREATED', 'Task created')
+        conn.commit()
+        return str(execution_id)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_pending_tasks(store_id):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT execution_id, tenant_id, store_id, execution_type,
+                   sync_mode, execution_status, started_at, total_tables
+            FROM dbo.sync_execution
+            WHERE store_id = ?
+              AND execution_status = 'PENDING'
+            ORDER BY started_at ASC
+            """,
+            (store_id,)
+        )
+        cols = [c[0] for c in cursor.description]
+        rows = cursor.fetchall()
+        return [
+            {
+                **dict(zip(cols, row)),
+                "execution_id": str(row[0]),
+                "tenant_id": str(row[1]),
+                "store_id": str(row[2]),
+                "started_at": row[6].isoformat() if row[6] else None,
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def _set_status(task_id, status, message, set_completed=False):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if set_completed:
+            cursor.execute(
+                """
+                UPDATE dbo.sync_execution
+                SET execution_status = ?, completed_at = GETDATE()
+                WHERE execution_id = ?
+                """,
+                (status, task_id)
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE dbo.sync_execution
+                SET execution_status = ?
+                WHERE execution_id = ?
+                """,
+                (status, task_id)
+            )
+        _audit(cursor, task_id, status, message)
+        conn.commit()
+        return {"task_id": task_id, "status": status}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def start_task(task_id):
+    return _set_status(task_id, 'RUNNING', 'Task started')
+
+
+def complete_task(task_id):
+    return _set_status(task_id, 'COMPLETED', 'Task completed', set_completed=True)
+
+
+def fail_task(task_id, message):
+    return _set_status(task_id, 'FAILED', message, set_completed=True)
+
+
+def get_configuration(task_id):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT execution_id, tenant_id, store_id, execution_type, sync_mode
+            FROM dbo.sync_execution
+            WHERE execution_id = ?
+            """,
+            (task_id,)
+        )
+        task = cursor.fetchone()
+        if not task:
+            return None
+
+        cursor.execute(
+            """
+            SELECT sync_table_id, table_name, sync_mode, watermark_column,
+                   window_days, window_months, custom_where, sync_order
+            FROM sync.sync_table_master
+            WHERE is_active = 1
+            ORDER BY sync_order ASC
+            """
+        )
+        tcols = [c[0] for c in cursor.description]
+        tables = [dict(zip(tcols, r)) for r in cursor.fetchall()]
+
+        for table in tables:
+            table["sync_table_id"] = str(table["sync_table_id"])
+            cursor.execute(
+                """
+                SELECT column_name, data_type, is_selected, is_pk,
+                       is_hash, is_watermark, column_order
+                FROM sync.sync_column_mapping
+                WHERE sync_table_id = ?
+                  AND is_selected = 1
+                ORDER BY column_order ASC
+                """,
+                (table["sync_table_id"],)
+            )
+            ccols = [c[0] for c in cursor.description]
+            table["columns"] = [
+                dict(zip(ccols, r)) for r in cursor.fetchall()
+            ]
+
+        return {
+            "task_id": str(task[0]),
+            "tenant_id": str(task[1]),
+            "store_id": str(task[2]),
+            "execution_type": task[3],
+            "sync_mode": task[4],
+            "tables": tables,
+        }
+    finally:
+        conn.close()
+
+
+def _get_table_keys(cursor, sync_table_name):
+    cursor.execute(
+        """
+        SELECT column_name, is_pk
+        FROM sync.sync_column_mapping m
+        INNER JOIN sync.sync_table_master t
+            ON m.sync_table_id = t.sync_table_id
+        WHERE t.table_name = ?
+          AND m.is_selected = 1
+        ORDER BY m.column_order ASC
+        """,
+        (sync_table_name,)
+    )
+    columns = []
+    pk = []
+    for row in cursor.fetchall():
+        columns.append(row[0])
+        if row[1]:
+            pk.append(row[0])
+    return columns, pk
+
+
+def _diagnose_stage_failure(table_name, chunk_no, columns, staged,
+                            column_meta, bulk_ex):
+    """Locate the exact offending row/column on a fresh connection (the
+    failed transaction is unusable) and return a JSON diagnostic string."""
+    import json
+
+    report = {
+        "table": table_name,
+        "chunk": chunk_no,
+        "bulk_error": str(bulk_ex),
+        "row_index": None,
+        "column": None,
+        "source_value": None,
+        "destination_type": None,
+        "column_error": None,
+    }
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        for row_index, values in enumerate(staged):
+            for column, value in zip(columns, values):
+                meta = column_meta.get(column)
+                cast_type = type_normalizer.cast_type(meta) if meta else "sql_variant"
+                try:
+                    cursor.execute("SELECT CAST(? AS " + cast_type + ")", (value,))
+                    cursor.fetchall()
+                except Exception as col_ex:
+                    report.update(
+                        {
+                            "row_index": row_index,
+                            "column": column,
+                            "source_value": value,
+                            "destination_type": cast_type,
+                            "column_error": str(col_ex),
+                        }
+                    )
+                    print(
+                        "[CHUNK_DIAGNOSTIC] table=%s chunk=%s row=%s column=%s "
+                        "value=%r dest_type=%s error=%s"
+                        % (table_name, chunk_no, row_index, column, value,
+                           cast_type, col_ex)
+                    )
+                    return json.dumps(report, default=str)
+        return json.dumps(report, default=str)
+    finally:
+        conn.close()
+
+
+def _upsert_table_progress(cursor, execution_id, table_name, sync_type,
+                           total_rows, rows_delta):
+    cursor.execute(
+        """
+        UPDATE sync.sync_table_progress
+        SET total_rows = CASE WHEN ? > total_rows THEN ? ELSE total_rows END,
+            rows_sent = rows_sent + ?,
+            chunks_sent = chunks_sent + 1,
+            sync_type = COALESCE(?, sync_type),
+            updated_at = GETDATE()
+        WHERE execution_id = ? AND table_name = ?
+        """,
+        (total_rows or 0, total_rows or 0, rows_delta, sync_type,
+         execution_id, table_name)
+    )
+    if cursor.rowcount == 0:
+        cursor.execute(
+            """
+            INSERT INTO sync.sync_table_progress
+            (execution_id, table_name, sync_type, total_rows, rows_sent,
+             chunks_sent, updated_at)
+            VALUES (?, ?, ?, ?, ?, 1, GETDATE())
+            """,
+            (execution_id, table_name, sync_type, total_rows or 0, rows_delta)
+        )
+
+
+def _accumulate_details(cursor, execution_id, table_name, sync_type,
+                        merged, inserted, updated):
+    """Accumulate HO-side merge metrics into the per-table summary row
+    (chunk_no = 0) of sync_execution_details."""
+    cursor.execute(
+        """
+        UPDATE dbo.sync_execution_details
+        SET rows_processed = ISNULL(rows_processed, 0) + ?,
+            rows_uploaded = ISNULL(rows_uploaded, 0) + ?,
+            rows_inserted = ISNULL(rows_inserted, 0) + ?,
+            rows_updated = ISNULL(rows_updated, 0) + ?,
+            sync_type = COALESCE(?, sync_type),
+            completed_at = GETDATE()
+        WHERE execution_id = ? AND table_name = ? AND chunk_no = 0
+        """,
+        (merged, merged, inserted, updated, sync_type, execution_id, table_name)
+    )
+    if cursor.rowcount == 0:
+        cursor.execute(
+            "SELECT tenant_id, store_id FROM dbo.sync_execution WHERE execution_id = ?",
+            (execution_id,)
+        )
+        owner = cursor.fetchone()
+        tenant_id = owner[0] if owner else None
+        store_id = owner[1] if owner else None
+        cursor.execute(
+            """
+            INSERT INTO dbo.sync_execution_details
+            (execution_id, tenant_id, store_id, table_name, chunk_no, chunk_size,
+             rows_processed, rows_failed, rows_uploaded, rows_inserted,
+             rows_updated, sync_type, status, started_at, created_at)
+            VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, ?, ?, ?, 'RUNNING', GETDATE(), GETDATE())
+            """,
+            (execution_id, tenant_id, store_id, table_name, merged, merged,
+             inserted, updated, sync_type)
+        )
+
+
+def report_table_metrics(execution_id, table_name, sync_type, rows_examined,
+                         rows_changed, rows_uploaded, rows_skipped, source_total):
+    """Agent-reported per-table delta metrics (examined/changed/skipped)."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE dbo.sync_execution_details
+            SET rows_examined = ?, rows_changed = ?, rows_skipped = ?,
+                source_total = ?, sync_type = COALESCE(?, sync_type),
+                completed_at = GETDATE()
+            WHERE execution_id = ? AND table_name = ? AND chunk_no = 0
+            """,
+            (rows_examined, rows_changed, rows_skipped, source_total,
+             sync_type, execution_id, table_name)
+        )
+        if cursor.rowcount == 0:
+            cursor.execute(
+                "SELECT tenant_id, store_id FROM dbo.sync_execution WHERE execution_id = ?",
+                (execution_id,)
+            )
+            owner = cursor.fetchone()
+            tenant_id = owner[0] if owner else None
+            store_id = owner[1] if owner else None
+            cursor.execute(
+                """
+                INSERT INTO dbo.sync_execution_details
+                (execution_id, tenant_id, store_id, table_name, chunk_no, chunk_size,
+                 rows_processed, rows_failed, rows_examined, rows_changed,
+                 rows_uploaded, rows_skipped, source_total, sync_type, status,
+                 started_at, created_at)
+                VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 0, ?, ?, ?, 'RUNNING', GETDATE(), GETDATE())
+                """,
+                (execution_id, tenant_id, store_id, table_name, rows_examined,
+                 rows_changed, rows_skipped, source_total, sync_type)
+            )
+        conn.commit()
+        return {"execution_id": execution_id, "table_name": table_name,
+                "rows_examined": rows_examined, "rows_changed": rows_changed,
+                "rows_skipped": rows_skipped}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_table_statistics():
+    """Per-table statistics for the Table Statistics tab: source rows,
+    HO rows, changed today, uploaded/updated today, last sync."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT sync_table_id, table_name, sync_mode, is_active
+            FROM sync.sync_table_master
+            WHERE is_active = 1
+            ORDER BY sync_order
+            """
+        )
+        tables = cursor.fetchall()
+
+        result = []
+        for sync_table_id, table_name, sync_mode, is_active in tables:
+            # HO physical row count
+            ho_rows = 0
+            cursor.execute("SELECT OBJECT_ID(?, 'U')", ("sync." + table_name,))
+            if cursor.fetchone()[0] is not None:
+                cursor.execute("SELECT COUNT(*) FROM sync.[" + table_name + "]")
+                ho_rows = cursor.fetchone()[0]
+
+            cursor.execute(
+                """
+                SELECT
+                    ISNULL(SUM(rows_examined), 0),
+                    ISNULL(SUM(rows_changed), 0),
+                    ISNULL(SUM(rows_uploaded), 0),
+                    ISNULL(SUM(rows_inserted), 0),
+                    ISNULL(SUM(rows_updated), 0),
+                    ISNULL(SUM(rows_skipped), 0),
+                    MAX(source_total),
+                    MAX(completed_at)
+                FROM dbo.sync_execution_details
+                WHERE table_name = ? AND chunk_no = 0
+                  AND CAST(created_at AS DATE) = CAST(GETDATE() AS DATE)
+                """,
+                (table_name,)
+            )
+            today = cursor.fetchone()
+
+            cursor.execute(
+                """
+                SELECT MAX(completed_at) FROM dbo.sync_execution_details
+                WHERE table_name = ? AND chunk_no = 0
+                """,
+                (table_name,)
+            )
+            last_sync = cursor.fetchone()[0]
+
+            result.append({
+                "table_name": table_name,
+                "sync_mode": sync_mode,
+                "source_rows": int(today[6]) if today[6] else None,
+                "ho_rows": int(ho_rows),
+                "changed_today": int(today[1]),
+                "examined_today": int(today[0]),
+                "uploaded_today": int(today[2]),
+                "inserted_today": int(today[3]),
+                "updated_today": int(today[4]),
+                "skipped_today": int(today[5]),
+                "last_sync": last_sync.isoformat() if last_sync else None,
+            })
+        return result
+    finally:
+        conn.close()
+
+
+def upload_chunk(execution_id, table_name, chunk_no, rows,
+                 total_rows=None, sync_type=None):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO dbo.sync_chunk_execution
+            (execution_id, table_name, chunk_no, chunk_status,
+             rows_processed, started_at)
+            OUTPUT INSERTED.chunk_execution_id
+            VALUES (?, ?, ?, 'RECEIVED', 0, GETDATE())
+            """,
+            (execution_id, table_name, chunk_no)
+        )
+        chunk_execution_id = cursor.fetchone()[0]
+
+        # HO derives store context from the execution (never trusts the row).
+        cursor.execute(
+            "SELECT tenant_id, store_id FROM dbo.sync_execution WHERE execution_id = ?",
+            (execution_id,)
+        )
+        owner = cursor.fetchone()
+        tenant_id = str(owner[0]) if owner and owner[0] else None
+        store_id = str(owner[1]) if owner and owner[1] else None
+
+        # Phase 028D: ensure the store-scoped shared table exists before merge.
+        schema_evolution.ensure_table(cursor, table_name)
+
+        columns, pk = _get_table_keys(cursor, table_name)
+
+        # Target physical schema drives column resolution, typing and scale.
+        column_meta = type_normalizer.get_target_column_meta(
+            cursor, "sync", table_name
+        )
+
+        if not columns:
+            columns = [
+                c for c in (list(rows[0].keys()) if rows else [])
+                if c not in ("store_id", "tenant_id", "row_hash")
+            ]
+
+        # Schema-version resilience: only sync columns that physically exist
+        # in the shared target table. Stores that lack a column simply omit it.
+        columns = [c for c in columns if c in column_meta]
+        pk = [c for c in pk if c in column_meta]
+
+        # Context columns are stamped on every staged row (Phase 029C/D).
+        stage_cols = columns + ["store_id", "tenant_id", "row_hash"]
+
+        merged = 0
+        inserted = 0
+        updated = 0
+        if rows and columns:
+            collist = ", ".join("[" + c + "]" for c in stage_cols)
+            placeholders = ",".join("?" for _ in stage_cols)
+
+            cursor.execute(
+                "SELECT TOP 0 " + collist +
+                " INTO #stage FROM sync.[" + table_name + "]"
+            )
+
+            # Normalize business columns, then append store context per row.
+            business = type_normalizer.normalize_rows(rows, columns, column_meta)
+            staged = [
+                tuple(vals) + (store_id, tenant_id, row.get("row_hash"))
+                for vals, row in zip(business, rows)
+            ]
+
+            insert_sql = (
+                "INSERT INTO #stage (" + collist + ") VALUES (" +
+                placeholders + ")"
+            )
+            try:
+                cursor.fast_executemany = True
+                # Pin decimal precision/scale per column so fast_executemany
+                # binds the whole array against the true column definition.
+                sizes = []
+                has_decimal = False
+                for c in stage_cols:
+                    meta = column_meta.get(c) or {}
+                    if meta.get("type") in ("decimal", "numeric"):
+                        has_decimal = True
+                        sizes.append(
+                            (
+                                pyodbc.SQL_DECIMAL,
+                                meta.get("precision") or 38,
+                                meta.get("scale") or 0,
+                            )
+                        )
+                    else:
+                        sizes.append(None)
+                if has_decimal:
+                    cursor.setinputsizes(sizes)
+                cursor.executemany(insert_sql, staged)
+                if has_decimal:
+                    cursor.setinputsizes(None)
+            except Exception as bulk_ex:
+                detail = _diagnose_stage_failure(
+                    table_name, chunk_no, stage_cols, staged, column_meta, bulk_ex
+                )
+                raise RuntimeError("CHUNK_STAGE_FAILED " + detail)
+
+            insert_cols = ", ".join("[" + c + "]" for c in stage_cols)
+            insert_vals = ", ".join("S.[" + c + "]" for c in stage_cols)
+            if pk:
+                # Merge key = store_id + business PK (multi-store isolation).
+                key_cols = ["store_id"] + pk
+                on = " AND ".join(
+                    "T.[" + k + "]=S.[" + k + "]" for k in key_cols
+                )
+                non_key = [c for c in stage_cols if c not in key_cols]
+                merge = (
+                    "SET NOCOUNT ON;"
+                    "DECLARE @act TABLE(act NVARCHAR(10));"
+                    "MERGE sync.[" + table_name + "] AS T "
+                    "USING #stage AS S ON " + on + " "
+                )
+                if non_key:
+                    update_set = ", ".join(
+                        "T.[" + c + "]=S.[" + c + "]" for c in non_key
+                    )
+                    merge += "WHEN MATCHED THEN UPDATE SET " + update_set + " "
+                merge += (
+                    "WHEN NOT MATCHED THEN INSERT (" + insert_cols + ") "
+                    "VALUES (" + insert_vals + ") "
+                    "OUTPUT $action INTO @act;"
+                    "SELECT "
+                    "SUM(CASE WHEN act='INSERT' THEN 1 ELSE 0 END),"
+                    "SUM(CASE WHEN act='UPDATE' THEN 1 ELSE 0 END) FROM @act;"
+                )
+                cursor.execute(merge)
+                counts = cursor.fetchone()
+                inserted = int(counts[0] or 0)
+                updated = int(counts[1] or 0)
+                cursor.execute("SET NOCOUNT OFF")
+            else:
+                cursor.execute(
+                    "INSERT INTO sync.[" + table_name + "] (" + insert_cols + ") "
+                    "SELECT " + insert_cols + " FROM #stage"
+                )
+                inserted = len(rows)
+
+            merged = len(rows)
+            cursor.execute("DROP TABLE #stage")
+
+        cursor.execute(
+            """
+            UPDATE dbo.sync_chunk_execution
+            SET chunk_status = 'MERGED',
+                rows_processed = ?,
+                completed_at = GETDATE()
+            WHERE chunk_execution_id = ?
+            """,
+            (merged, chunk_execution_id)
+        )
+
+        _upsert_table_progress(
+            cursor, execution_id, table_name, sync_type, total_rows, merged
+        )
+        _accumulate_details(
+            cursor, execution_id, table_name, sync_type, merged, inserted, updated
+        )
+
+        _audit(
+            cursor, execution_id, 'CHUNK_MERGED',
+            table_name + " chunk " + str(chunk_no) + " rows " + str(merged) +
+            " (+" + str(inserted) + "/~" + str(updated) + ")"
+        )
+        conn.commit()
+        return {
+            "chunk_execution_id": int(chunk_execution_id),
+            "table_name": table_name,
+            "chunk_no": chunk_no,
+            "rows_processed": merged,
+            "rows_inserted": inserted,
+            "rows_updated": updated,
+            "status": "MERGED",
+        }
+    except Exception as ex:
+        conn.rollback()
+        conn2 = get_connection()
+        try:
+            c2 = conn2.cursor()
+            c2.execute(
+                """
+                INSERT INTO dbo.sync_chunk_execution
+                (execution_id, table_name, chunk_no, chunk_status,
+                 rows_processed, started_at, completed_at, error_message)
+                VALUES (?, ?, ?, 'FAILED', 0, GETDATE(), GETDATE(), ?)
+                """,
+                (execution_id, table_name, chunk_no, str(ex))
+            )
+            conn2.commit()
+        finally:
+            conn2.close()
+        raise
+    finally:
+        conn.close()
+
+
+def ack_chunk(chunk_execution_id):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE dbo.sync_chunk_execution
+            SET chunk_status = 'ACK', completed_at = GETDATE()
+            WHERE chunk_execution_id = ?
+            """,
+            (chunk_execution_id,)
+        )
+        conn.commit()
+        return {"chunk_execution_id": chunk_execution_id, "status": "ACK"}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def agent_heartbeat(tenant_id, store_id, agent_version=None,
+                    connection_type=None, ip_address=None, register=False):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+
+        if not tenant_id:
+            cursor.execute(
+                "SELECT tenant_id FROM dbo.stores WHERE store_id = ?",
+                (store_id,)
+            )
+            found = cursor.fetchone()
+            if not found:
+                raise ValueError("Unknown store_id: " + str(store_id))
+            tenant_id = found[0]
+
+        cursor.execute(
+            """
+            UPDATE dbo.store_agent_registry
+            SET last_heartbeat = GETDATE(),
+                connection_status = 'ONLINE',
+                is_active = 1,
+                agent_version = COALESCE(?, agent_version),
+                connection_type = COALESCE(?, connection_type)
+            WHERE store_id = ?
+            """,
+            (agent_version, connection_type, store_id)
+        )
+
+        if cursor.rowcount == 0:
+            cursor.execute(
+                """
+                INSERT INTO dbo.store_agent_registry
+                (tenant_id, store_id, agent_version, connection_type,
+                 installed_at, last_heartbeat, connection_status, is_active)
+                VALUES (?, ?, ?, ?, GETDATE(), GETDATE(), 'ONLINE', 1)
+                """,
+                (tenant_id, store_id, agent_version, connection_type)
+            )
+
+        cursor.execute(
+            """
+            INSERT INTO dbo.agent_heartbeat_log
+            (tenant_id, store_id, heartbeat_time, ip_address, agent_version)
+            VALUES (?, ?, GETDATE(), ?, ?)
+            """,
+            (tenant_id, store_id, ip_address, agent_version)
+        )
+
+        conn.commit()
+        return {
+            "store_id": store_id,
+            "connection_status": "ONLINE",
+            "registered": register or cursor.rowcount == 0,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def mark_stale_agents_offline(threshold_seconds=300):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE dbo.store_agent_registry
+            SET connection_status = 'OFFLINE'
+            WHERE is_active = 1
+              AND (last_heartbeat IS NULL
+                   OR last_heartbeat < DATEADD(SECOND, ?, GETDATE()))
+              AND connection_status <> 'OFFLINE'
+            """,
+            (-abs(threshold_seconds),)
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        return {"marked_offline": affected}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_live_status():
+    """Live progress for RUNNING executions, keyed per store. Real totals,
+    rows-remaining, ETA and progress come from sync.sync_table_progress
+    (agent-reported per-table totals)."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT e.execution_id, e.store_id, s.store_code, s.store_name,
+                   e.execution_status, e.started_at,
+                   DATEDIFF(SECOND, e.started_at, GETDATE()) AS elapsed
+            FROM dbo.sync_execution e
+            LEFT JOIN dbo.stores s ON s.store_id = e.store_id
+            WHERE e.execution_status IN ('RUNNING', 'PAUSED')
+            """
+        )
+        executions = cursor.fetchall()
+
+        result = []
+        for (execution_id, store_id, store_code, store_name, status,
+             started_at, elapsed) in executions:
+
+            cursor.execute(
+                """
+                SELECT TOP 1 table_name, chunk_no
+                FROM dbo.sync_chunk_execution
+                WHERE execution_id = ?
+                ORDER BY chunk_execution_id DESC
+                """,
+                (execution_id,)
+            )
+            latest = cursor.fetchone()
+            current_table = latest[0] if latest else None
+            chunk_no = latest[1] if latest else None
+
+            # Whole-execution rows + per-current-table totals.
+            cursor.execute(
+                """
+                SELECT
+                    (SELECT ISNULL(SUM(rows_sent), 0)
+                       FROM sync.sync_table_progress WHERE execution_id = ?),
+                    (SELECT ISNULL(SUM(total_rows), 0)
+                       FROM sync.sync_table_progress WHERE execution_id = ?)
+                """,
+                (execution_id, execution_id)
+            )
+            exec_sent, exec_total = cursor.fetchone()
+            exec_sent = int(exec_sent or 0)
+            exec_total = int(exec_total or 0)
+
+            cur_total = 0
+            cur_sent = 0
+            chunks_sent = 0
+            sync_type = None
+            if current_table:
+                cursor.execute(
+                    """
+                    SELECT total_rows, rows_sent, chunks_sent, sync_type
+                    FROM sync.sync_table_progress
+                    WHERE execution_id = ? AND table_name = ?
+                    """,
+                    (execution_id, current_table)
+                )
+                row = cursor.fetchone()
+                if row:
+                    cur_total = int(row[0] or 0)
+                    cur_sent = int(row[1] or 0)
+                    chunks_sent = int(row[2] or 0)
+                    sync_type = row[3]
+
+            # Delta metrics for the current table (Live Operations columns).
+            rows_changed = 0
+            rows_uploaded = 0
+            rows_inserted = 0
+            rows_updated = 0
+            if current_table:
+                cursor.execute(
+                    """
+                    SELECT ISNULL(rows_changed, 0), ISNULL(rows_uploaded, 0),
+                           ISNULL(rows_inserted, 0), ISNULL(rows_updated, 0)
+                    FROM dbo.sync_execution_details
+                    WHERE execution_id = ? AND table_name = ? AND chunk_no = 0
+                    """,
+                    (execution_id, current_table)
+                )
+                drow = cursor.fetchone()
+                if drow:
+                    rows_changed = int(drow[0])
+                    rows_uploaded = int(drow[1])
+                    rows_inserted = int(drow[2])
+                    rows_updated = int(drow[3])
+
+            elapsed = int(elapsed or 0)
+            speed = round(exec_sent / elapsed, 1) if elapsed > 0 else 0.0
+            rows_remaining = max(exec_total - exec_sent, 0) if exec_total else None
+            eta_seconds = (
+                int(rows_remaining / speed)
+                if rows_remaining and speed > 0 else None
+            )
+            progress = (
+                min(100.0, round((exec_sent / exec_total) * 100, 2))
+                if exec_total else 0.0
+            )
+            avg_chunk = (cur_sent / chunks_sent) if chunks_sent else 0
+            total_chunks = (
+                int(-(-cur_total // avg_chunk)) if avg_chunk and cur_total else None
+            )
+
+            result.append({
+                "store_id": str(store_id),
+                "store_code": store_code,
+                "store_name": store_name,
+                "execution_id": str(execution_id),
+                "status": status,
+                "sync_type": sync_type,
+                "current_table": current_table,
+                "chunk_no": chunk_no,
+                "total_chunks": total_chunks,
+                "chunk_size": int(avg_chunk) if avg_chunk else None,
+                "rows_processed": exec_sent,
+                "total_rows": exec_total or None,
+                "rows_remaining": rows_remaining,
+                "rows_changed": rows_changed,
+                "rows_uploaded": rows_uploaded,
+                "rows_inserted": rows_inserted,
+                "rows_updated": rows_updated,
+                "speed_rows_sec": speed,
+                "eta_seconds": eta_seconds,
+                "progress_pct": progress,
+                "started_at": started_at.isoformat() if started_at else None,
+                "updated_at": _now_iso(),
+            })
+
+        return result
+    finally:
+        conn.close()
+
+
+def _now_iso():
+    import datetime
+    return datetime.datetime.now().isoformat()
+
+
+def control_stores(store_ids, action):
+    """Bulk control of running syncs for a set of stores.
+    action: 'PAUSE' -> PAUSED, 'STOP' -> CANCELLED."""
+    if not store_ids:
+        return {"affected": 0, "action": action}
+    status = "PAUSED" if action == "PAUSE" else "CANCELLED"
+    completed = "" if action == "PAUSE" else ", completed_at = GETDATE()"
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        affected = 0
+        for store_id in store_ids:
+            cursor.execute(
+                "UPDATE dbo.sync_execution SET execution_status = ?" + completed +
+                " WHERE store_id = ? AND execution_status IN ('RUNNING','PAUSED','PENDING')",
+                (status, store_id)
+            )
+            affected += cursor.rowcount
+        conn.commit()
+        return {"affected": affected, "action": action, "status": status}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_chunk_status(execution_id):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT chunk_execution_id, table_name, chunk_no, chunk_status,
+                   rows_processed, started_at, completed_at, error_message
+            FROM dbo.sync_chunk_execution
+            WHERE execution_id = ?
+            ORDER BY chunk_execution_id ASC
+            """,
+            (execution_id,)
+        )
+        cols = [c[0] for c in cursor.description]
+        out = []
+        for row in cursor.fetchall():
+            item = dict(zip(cols, row))
+            item["started_at"] = (
+                row[5].isoformat() if row[5] else None
+            )
+            item["completed_at"] = (
+                row[6].isoformat() if row[6] else None
+            )
+            out.append(item)
+        return out
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: modules\sync\runtime_router.py
+========================================================================================================================
+
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from modules.sync import runtime_service
+
+router = APIRouter(prefix="/api/sync", tags=["Sync Runtime"])
+agent_router = APIRouter(prefix="/agent", tags=["Sync Agent"])
+
+
+class TaskCreateRequest(BaseModel):
+    tenant_id: str
+    store_id: str
+    execution_type: str = "FULL"
+    sync_mode: str = "FULL"
+    total_tables: int = 0
+
+
+class FailRequest(BaseModel):
+    message: Optional[str] = None
+
+
+class ChunkUploadRequest(BaseModel):
+    execution_id: str
+    table_name: str
+    chunk_no: int
+    rows: List[Dict[str, Any]] = []
+    total_rows: Optional[int] = None
+    sync_type: Optional[str] = None
+
+
+class ControlRequest(BaseModel):
+    store_ids: List[str] = []
+    action: str  # PAUSE | STOP
+
+
+class TableMetricsRequest(BaseModel):
+    execution_id: str
+    table_name: str
+    sync_type: Optional[str] = None
+    rows_examined: int = 0
+    rows_changed: int = 0
+    rows_uploaded: int = 0
+    rows_skipped: int = 0
+    source_total: int = 0
+
+
+class ChunkAckRequest(BaseModel):
+    chunk_execution_id: int
+
+
+class HeartbeatRequest(BaseModel):
+    store_id: str
+    tenant_id: Optional[str] = None
+    agent_version: Optional[str] = None
+    connection_type: Optional[str] = None
+    ip_address: Optional[str] = None
+
+
+@router.post("/tasks/create")
+def create_task(payload: TaskCreateRequest):
+    return runtime_service.create_task(payload.dict())
+
+
+@router.get("/tasks/pending/{store_id}")
+def pending_tasks(store_id: str):
+    return runtime_service.get_pending_tasks(store_id)
+
+
+@router.post("/tasks/{task_id}/start")
+def start_task(task_id: str):
+    return runtime_service.start_task(task_id)
+
+
+@router.post("/tasks/{task_id}/complete")
+def complete_task(task_id: str):
+    return runtime_service.complete_task(task_id)
+
+
+@router.post("/tasks/{task_id}/fail")
+def fail_task(task_id: str, payload: FailRequest):
+    return runtime_service.fail_task(task_id, payload.message)
+
+
+@router.get("/configuration/{task_id}")
+def configuration(task_id: str):
+    result = runtime_service.get_configuration(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return result
+
+
+@router.post("/chunks/upload")
+def upload_chunk(payload: ChunkUploadRequest):
+    return runtime_service.upload_chunk(payload.dict())
+
+
+@router.post("/chunks/ack")
+def ack_chunk(payload: ChunkAckRequest):
+    return runtime_service.ack_chunk(payload.chunk_execution_id)
+
+
+@router.get("/chunks/status/{execution_id}")
+def chunk_status(execution_id: str):
+    return runtime_service.get_chunk_status(execution_id)
+
+
+@router.get("/live")
+def live_status():
+    return runtime_service.get_live_status()
+
+
+@router.post("/control")
+def control(payload: ControlRequest):
+    return runtime_service.control_stores(payload.store_ids, payload.action)
+
+
+@router.post("/tables/report")
+def report_table(payload: TableMetricsRequest):
+    return runtime_service.report_table_metrics(payload.dict())
+
+
+@router.get("/table-stats")
+def table_stats():
+    return runtime_service.get_table_statistics()
+
+
+@agent_router.get("/tasks/poll")
+def poll_tasks(store_id: str):
+    return runtime_service.get_pending_tasks(store_id)
+
+
+@agent_router.post("/register")
+def register_agent(payload: HeartbeatRequest):
+    return runtime_service.agent_heartbeat(payload.dict(), register=True)
+
+
+@agent_router.post("/heartbeat")
+def heartbeat(payload: HeartbeatRequest):
+    return runtime_service.agent_heartbeat(payload.dict())
+
+
+@router.post("/agents/sweep-offline")
+def sweep_offline(threshold_seconds: int = 300):
+    return runtime_service.mark_stale_agents_offline(threshold_seconds)
+
+
+
+========================================================================================================================
+FILE: modules\sync\runtime_service.py
+========================================================================================================================
+
+from modules.sync import runtime_repository
+
+
+def create_task(payload):
+    return {
+        "task_id": runtime_repository.create_task(
+            payload["tenant_id"],
+            payload["store_id"],
+            payload.get("execution_type", "FULL"),
+            payload.get("sync_mode", "FULL"),
+            payload.get("total_tables", 0),
+        ),
+        "status": "PENDING",
+    }
+
+
+def get_pending_tasks(store_id):
+    return runtime_repository.get_pending_tasks(store_id)
+
+
+def start_task(task_id):
+    return runtime_repository.start_task(task_id)
+
+
+def complete_task(task_id):
+    return runtime_repository.complete_task(task_id)
+
+
+def fail_task(task_id, message):
+    return runtime_repository.fail_task(task_id, message)
+
+
+def get_configuration(task_id):
+    return runtime_repository.get_configuration(task_id)
+
+
+def upload_chunk(payload):
+    return runtime_repository.upload_chunk(
+        payload["execution_id"],
+        payload["table_name"],
+        payload["chunk_no"],
+        payload.get("rows", []),
+        total_rows=payload.get("total_rows"),
+        sync_type=payload.get("sync_type"),
+    )
+
+
+def control_stores(store_ids, action):
+    return runtime_repository.control_stores(store_ids, action)
+
+
+def ack_chunk(chunk_execution_id):
+    return runtime_repository.ack_chunk(chunk_execution_id)
+
+
+def get_chunk_status(execution_id):
+    return runtime_repository.get_chunk_status(execution_id)
+
+
+def get_live_status():
+    return runtime_repository.get_live_status()
+
+
+def report_table_metrics(payload):
+    return runtime_repository.report_table_metrics(
+        payload["execution_id"],
+        payload["table_name"],
+        payload.get("sync_type"),
+        payload.get("rows_examined", 0),
+        payload.get("rows_changed", 0),
+        payload.get("rows_uploaded", 0),
+        payload.get("rows_skipped", 0),
+        payload.get("source_total", 0),
+    )
+
+
+def get_table_statistics():
+    return runtime_repository.get_table_statistics()
+
+
+def agent_heartbeat(payload, register=False):
+    return runtime_repository.agent_heartbeat(
+        payload.get("tenant_id"),
+        payload["store_id"],
+        payload.get("agent_version"),
+        payload.get("connection_type"),
+        payload.get("ip_address"),
+        register=register,
+    )
+
+
+def mark_stale_agents_offline(threshold_seconds=300):
+    return runtime_repository.mark_stale_agents_offline(threshold_seconds)
+
 
 
 ========================================================================================================================
@@ -1123,6 +2638,105 @@ class SchemaRegisterRequest(BaseModel):
     tables: List[TableSchema]
 
 
+
+========================================================================================================================
+FILE: modules\sync\schema_evolution.py
+========================================================================================================================
+
+"""Phase 028D - HO Schema Evolution Engine.
+
+Before a merge, guarantee the shared target table exists in the `sync` schema
+with: store_id + tenant_id context columns, the mapped business columns, a
+row_hash column, and a STORE-SCOPED composite primary key
+(store_id, <business pk cols>) so multiple stores share one physical table
+without colliding. Only shared sync.* tables - never tenant schemas.
+"""
+from modules.sync.shared_table_builder_service import _column_type
+
+
+def _desired_columns(cursor, table_name):
+    cursor.execute(
+        """
+        SELECT m.column_name,
+               COALESCE(c.data_type, m.data_type) AS data_type,
+               c.max_length, c.precision_value, c.scale_value,
+               c.is_nullable, m.is_pk
+        FROM sync.sync_column_mapping m
+        LEFT JOIN sync.sync_schema_catalog c
+            ON c.table_name = m.table_name AND c.column_name = m.column_name
+        INNER JOIN sync.sync_table_master t
+            ON t.sync_table_id = m.sync_table_id
+        WHERE t.table_name = ? AND m.is_selected = 1
+        ORDER BY m.column_order
+        """,
+        (table_name,),
+    )
+    return cursor.fetchall()
+
+
+def _col_def(col):
+    column_name, data_type, max_length, precision, scale, is_nullable, is_pk = col
+    sql_type = _column_type(data_type, max_length, precision, scale)
+    nullable = "NULL" if (is_nullable and not is_pk) else "NOT NULL"
+    return "[" + column_name + "] " + sql_type + " " + nullable
+
+
+def _object_id(cursor, table_name):
+    cursor.execute("SELECT OBJECT_ID(?, 'U')", ("sync." + table_name,))
+    return cursor.fetchone()[0]
+
+
+def _col_exists(cursor, table_name, column_name):
+    cursor.execute("SELECT COL_LENGTH(?, ?)", ("sync." + table_name, column_name))
+    return cursor.fetchone()[0] is not None
+
+
+def ensure_table(cursor, table_name):
+    """Idempotent. Returns 'CREATED' | 'REBUILT' | 'ALTERED' | 'OK'.
+    Runs on the caller's cursor so it shares the merge transaction."""
+    columns = _desired_columns(cursor, table_name)
+    if not columns:
+        return "NO_CONFIG"
+
+    pk_cols = [c[0] for c in columns if c[6]]
+    exists = _object_id(cursor, table_name) is not None
+    store_scoped = exists and _col_exists(cursor, table_name, "store_id")
+
+    if not exists or not store_scoped:
+        # Build (or rebuild legacy business-PK table) in store-scoped shape.
+        defs = ["[store_id] uniqueidentifier NOT NULL",
+                "[tenant_id] uniqueidentifier NULL"]
+        defs += [_col_def(c) for c in columns]
+        defs.append("[row_hash] varchar(64) NULL")
+        if pk_cols:
+            key = ", ".join("[" + c + "]" for c in (["store_id"] + pk_cols))
+            defs.append(
+                "CONSTRAINT [PK_sync_" + table_name + "] PRIMARY KEY (" + key + ")"
+            )
+        if exists:
+            cursor.execute("DROP TABLE sync.[" + table_name + "]")
+        cursor.execute(
+            "CREATE TABLE sync.[" + table_name + "] (" + ", ".join(defs) + ")"
+        )
+        return "REBUILT" if exists else "CREATED"
+
+    # Store-scoped table already present: add any missing columns.
+    altered = False
+    for col in columns:
+        if not _col_exists(cursor, table_name, col[0]):
+            cursor.execute(
+                "ALTER TABLE sync.[" + table_name + "] ADD " + _col_def(col)
+            )
+            altered = True
+    if not _col_exists(cursor, table_name, "row_hash"):
+        cursor.execute(
+            "ALTER TABLE sync.[" + table_name + "] ADD [row_hash] varchar(64) NULL"
+        )
+        altered = True
+    return "ALTERED" if altered else "OK"
+
+
+
 ========================================================================================================================
 FILE: modules\sync\service.py
 ========================================================================================================================
@@ -1132,56 +2746,772 @@ from modules.sync.repository import (
 )
 
 
-def register_schema_catalog(payload):
+def register_schema(payload):
 
     rows = []
 
-    for row in payload.columns:
+    if isinstance(payload, list):
 
-        rows.append(
-            {
-                "source_database": getattr(
-                    row,
-                    "source_database",
-                    None
-                ),
-                "schema_name": row.schema_name,
-                "table_name": row.table_name,
-                "column_name": row.column_name,
-                "data_type": getattr(
-                    row,
-                    "data_type",
-                    None
-                ),
-                "max_length": getattr(
-                    row,
-                    "max_length",
-                    None
-                ),
-                "numeric_precision": getattr(
-                    row,
-                    "numeric_precision",
-                    None
-                ),
-                "numeric_scale": getattr(
-                    row,
-                    "numeric_scale",
-                    None
-                ),
-                "is_nullable": getattr(
-                    row,
-                    "is_nullable",
-                    None
-                ),
-                "ordinal_position": getattr(
-                    row,
-                    "ordinal_position",
-                    None
-                )
+        for row in payload:
+
+            rows.append(
+                {
+                    "schema_name": row["schema_name"],
+                    "table_name": row["table_name"],
+                    "column_name": row["column_name"],
+                    "data_type": row["data_type"],
+                    "max_length": row.get("max_length"),
+                    "precision_value": row.get("precision_value"),
+                    "scale_value": row.get("scale_value"),
+                    "is_nullable": row.get("is_nullable", False),
+                    "is_identity": row.get("is_identity", False),
+                    "is_primary_key": row.get("is_primary_key", False),
+                    "ordinal_position": row["ordinal_position"],
+                    "first_discovered_store_id": row.get(
+                        "first_discovered_store_id"
+                    )
+                }
+            )
+
+    result = bulk_register_schema_catalog(rows)
+
+    return {
+        "status": "success",
+        "columns_processed": result["total"],
+        "new_columns": result["inserted"],
+        "updated_columns": result["updated"]
+    }
+
+
+
+========================================================================================================================
+FILE: modules\sync\shared_table_builder_repository.py
+========================================================================================================================
+
+from config.database import get_connection
+
+
+def get_active_tables():
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT sync_table_id, table_name
+            FROM sync.sync_table_master
+            WHERE is_active = 1
+            ORDER BY sync_order
+            """
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_table_columns(sync_table_id):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        # The catalog is the discovered source-of-truth schema. Physical DDL
+        # follows the catalog type (incl. exact numeric precision/scale); the
+        # mapping data_type is only a fallback when no catalog row exists.
+        cur.execute(
+            """
+            SELECT m.column_name,
+                   COALESCE(c.data_type, m.data_type) AS data_type,
+                   c.max_length,
+                   c.precision_value, c.scale_value, c.is_nullable, m.is_pk
+            FROM sync.sync_column_mapping m
+            LEFT JOIN sync.sync_schema_catalog c
+                ON c.table_name = m.table_name
+               AND c.column_name = m.column_name
+            WHERE m.sync_table_id = ?
+              AND m.is_selected = 1
+            ORDER BY m.column_order
+            """,
+            (sync_table_id,),
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_physical_columns(table_name):
+    """Current physical column types for sync.<table_name>."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT c.name, t.name, c.precision, c.scale,
+                   (SELECT COUNT(*) FROM sys.index_columns ic
+                    INNER JOIN sys.indexes ix
+                        ON ix.object_id = ic.object_id
+                       AND ix.index_id = ic.index_id
+                    WHERE ic.object_id = c.object_id
+                      AND ic.column_id = c.column_id
+                      AND ix.is_primary_key = 1) AS in_pk
+            FROM sys.columns c
+            INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
+            WHERE c.object_id = OBJECT_ID(?)
+            """,
+            ("sync." + table_name,),
+        )
+        return {
+            row[0].lower(): {
+                "type": row[1].lower(),
+                "precision": row[2],
+                "scale": row[3],
+                "in_pk": bool(row[4]),
             }
+            for row in cur.fetchall()
+        }
+    finally:
+        conn.close()
+
+
+def execute_ddl(sql):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def column_exists(table_name, column_name):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COL_LENGTH(?, ?)",
+            ("sync." + table_name, column_name),
+        )
+        return cur.fetchone()[0] is not None
+    finally:
+        conn.close()
+
+
+def table_exists(table_name):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT OBJECT_ID(?, 'U')", ("sync." + table_name,))
+        return cur.fetchone()[0] is not None
+    finally:
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: modules\sync\shared_table_builder_router.py
+========================================================================================================================
+
+from fastapi import APIRouter
+
+from modules.sync import shared_table_builder_service
+
+router = APIRouter(prefix="/api/sync/shared-tables", tags=["Sync Shared Tables"])
+
+
+@router.post("/build")
+def build_shared_tables():
+    return shared_table_builder_service.build_shared_tables()
+
+
+
+========================================================================================================================
+FILE: modules\sync\shared_table_builder_service.py
+========================================================================================================================
+
+from modules.sync import shared_table_builder_repository as repo
+
+_STRING_TYPES = ("char", "varchar", "nchar", "nvarchar", "binary", "varbinary")
+_DECIMAL_TYPES = ("decimal", "numeric")
+_NUMERIC_FAMILY = (
+    "float", "real", "decimal", "numeric", "money", "smallmoney",
+    "int", "bigint", "smallint", "tinyint",
+)
+
+
+def _column_type(data_type, max_length, precision, scale):
+    dt = (data_type or "varchar").lower()
+
+    if dt in _STRING_TYPES:
+        if max_length is None:
+            length = "255" if dt in ("char", "nchar") else "MAX"
+        elif int(max_length) == -1:
+            length = "MAX"
+        else:
+            length = str(int(max_length))
+        return dt + "(" + length + ")"
+
+    if dt in _DECIMAL_TYPES:
+        # Exact precision/scale copied from the source catalog.
+        p = int(precision) if precision is not None else 18
+        if p > 38 or p < 1:
+            p = 38
+        s = int(scale) if scale is not None else 0
+        if s > p:
+            s = p
+        return dt + "(" + str(p) + "," + str(s) + ")"
+
+    # float/real/int/bigint/bit/date/datetime/... -> bare type name.
+    return dt
+
+
+def _desired(col):
+    """Return (sql_type, base_type, precision, scale, nullable_clause)."""
+    column_name, data_type, max_length, precision, scale, is_nullable, is_pk = col
+    sql_type = _column_type(data_type, max_length, precision, scale)
+    base = (data_type or "varchar").lower()
+    nullable = "NULL" if (is_nullable and not is_pk) else "NOT NULL"
+    p = None
+    s = None
+    if base in _DECIMAL_TYPES:
+        p = int(precision) if precision is not None else 18
+        if p > 38 or p < 1:
+            p = 38
+        s = int(scale) if scale is not None else 0
+        if s > p:
+            s = p
+    return sql_type, base, p, s, nullable
+
+
+def _column_def(col):
+    column_name = col[0]
+    sql_type, _, _, _, nullable = _desired(col)
+    return "[" + column_name + "] " + sql_type + " " + nullable
+
+
+def _needs_alter(col, physical):
+    """True when the existing numeric column does not match the source type."""
+    column_name = col[0]
+    _, base, p, s, _ = _desired(col)
+    current = physical.get(column_name.lower())
+    if current is None or current["in_pk"]:
+        return False
+    if base not in _NUMERIC_FAMILY or current["type"] not in _NUMERIC_FAMILY:
+        return False
+    if current["type"] != base:
+        return True
+    if base in _DECIMAL_TYPES:
+        return current["precision"] != p or current["scale"] != s
+    return False
+
+
+def build_shared_tables():
+    results = []
+
+    for sync_table_id, table_name in repo.get_active_tables():
+        columns = repo.get_table_columns(sync_table_id)
+        if not columns:
+            results.append({"table": table_name, "status": "SKIPPED_NO_COLUMNS"})
+            continue
+
+        pk_cols = [c[0] for c in columns if c[6]]
+
+        if not repo.table_exists(table_name):
+            defs = [_column_def(c) for c in columns]
+            if pk_cols:
+                pk_list = ", ".join("[" + c + "]" for c in pk_cols)
+                defs.append(
+                    "CONSTRAINT [PK_sync_" + table_name + "] PRIMARY KEY ("
+                    + pk_list + ")"
+                )
+            ddl = (
+                "CREATE TABLE sync.[" + table_name + "] ("
+                + ", ".join(defs) + ")"
+            )
+            repo.execute_ddl(ddl)
+            results.append(
+                {
+                    "table": table_name,
+                    "status": "CREATED",
+                    "columns": len(columns),
+                    "pk": pk_cols,
+                }
+            )
+        else:
+            physical = repo.get_physical_columns(table_name)
+            added = 0
+            altered = []
+            for col in columns:
+                if not repo.column_exists(table_name, col[0]):
+                    repo.execute_ddl(
+                        "ALTER TABLE sync.[" + table_name + "] ADD "
+                        + _column_def(col)
+                    )
+                    added += 1
+                elif _needs_alter(col, physical):
+                    sql_type, _, _, _, nullable = _desired(col)
+                    repo.execute_ddl(
+                        "ALTER TABLE sync.[" + table_name + "] ALTER COLUMN ["
+                        + col[0] + "] " + sql_type + " " + nullable
+                    )
+                    altered.append(
+                        {
+                            "column": col[0],
+                            "from": physical[col[0].lower()]["type"],
+                            "to": sql_type,
+                        }
+                    )
+            results.append(
+                {
+                    "table": table_name,
+                    "status": "EXISTS",
+                    "columns_added": added,
+                    "columns_altered": altered,
+                }
+            )
+
+    return {
+        "status": "SUCCESS",
+        "tables_processed": len(results),
+        "results": results,
+    }
+
+
+
+========================================================================================================================
+FILE: modules\sync\table_master_repository.py
+========================================================================================================================
+
+from config.database import get_connection
+
+
+def promote_table_master():
+
+    conn = get_connection()
+
+    try:
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            '''
+            SELECT COUNT(*)
+            FROM dbo.sync_table_registry
+            '''
         )
 
-    return bulk_register_schema_catalog(rows)
+        registry_tables = cursor.fetchone()[0]
+
+        cursor.execute(
+            '''
+            INSERT INTO sync.sync_table_master
+            (
+                sync_table_id,
+                table_name,
+                is_active,
+                sync_mode,
+                watermark_column,
+                window_days,
+                window_months,
+                custom_where,
+                sync_order,
+                created_at
+            )
+            SELECT
+                NEWID(),
+                r.table_name,
+                0,
+                'UPSERT',
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                r.sync_order,
+                GETDATE()
+            FROM dbo.sync_table_registry r
+            LEFT JOIN sync.sync_table_master m
+                ON m.table_name = r.table_name
+            WHERE m.table_name IS NULL
+            '''
+        )
+
+        promoted_tables = cursor.rowcount
+
+        cursor.execute(
+            '''
+            SELECT COUNT(*)
+            FROM sync.sync_table_master
+            '''
+        )
+
+        total_master_tables = cursor.fetchone()[0]
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "registry_tables": registry_tables,
+            "promoted_tables": promoted_tables,
+            "existing_tables": (
+                registry_tables - promoted_tables
+            ),
+            "total_master_tables": total_master_tables
+        }
+
+    except Exception:
+
+        conn.rollback()
+        raise
+
+    finally:
+
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: modules\sync\table_master_router.py
+========================================================================================================================
+
+from fastapi import APIRouter
+
+from modules.sync.table_master_service import (
+    promote
+)
+
+router = APIRouter(
+    prefix="/api/sync/table-master",
+    tags=["Sync Table Master"]
+)
+
+
+@router.post("/promote")
+def promote_tables():
+
+    return promote()
+
+
+
+========================================================================================================================
+FILE: modules\sync\table_master_service.py
+========================================================================================================================
+
+from modules.sync.table_master_repository import (
+    promote_table_master
+)
+
+
+def promote():
+
+    return promote_table_master()
+
+
+
+========================================================================================================================
+FILE: modules\sync\table_registry_repository.py
+========================================================================================================================
+
+from config.database import get_connection
+
+
+def populate_table_registry():
+
+    conn = get_connection()
+
+    try:
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                COUNT(DISTINCT table_name)
+            FROM sync.sync_schema_catalog
+            """
+        )
+
+        tables_discovered = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            INSERT INTO dbo.sync_table_registry
+            (
+                tenant_id,
+                table_name,
+                sync_order,
+                chunk_enabled,
+                refresh_enabled,
+                is_active
+            )
+            SELECT
+                '00000000-0000-0000-0000-000000000000',
+                src.table_name,
+                999,
+                1,
+                1,
+                1
+            FROM
+            (
+                SELECT DISTINCT
+                    table_name
+                FROM sync.sync_schema_catalog
+            ) src
+            LEFT JOIN dbo.sync_table_registry trg
+                ON trg.table_name = src.table_name
+            WHERE trg.table_name IS NULL
+            """
+        )
+
+        new_tables = cursor.rowcount
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM dbo.sync_table_registry
+            """
+        )
+
+        total_registry_tables = cursor.fetchone()[0]
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "tables_discovered": tables_discovered,
+            "new_tables": new_tables,
+            "existing_tables": (
+                tables_discovered - new_tables
+            ),
+            "total_registry_tables": total_registry_tables
+        }
+
+    except Exception:
+
+        conn.rollback()
+        raise
+
+    finally:
+
+        conn.close()
+
+
+
+========================================================================================================================
+FILE: modules\sync\table_registry_router.py
+========================================================================================================================
+
+from fastapi import APIRouter
+
+from modules.sync.table_registry_service import (
+    populate_registry
+)
+
+router = APIRouter(
+    prefix="/api/sync/table-registry",
+    tags=["Sync Table Registry"]
+)
+
+
+@router.post("/populate")
+def populate():
+
+    return populate_registry()
+
+
+
+
+
+========================================================================================================================
+FILE: modules\sync\table_registry_service.py
+========================================================================================================================
+
+from modules.sync.table_registry_repository import (
+    populate_table_registry
+)
+
+
+def populate_registry():
+
+    return populate_table_registry()
+
+
+
+========================================================================================================================
+FILE: modules\sync\type_normalizer.py
+========================================================================================================================
+
+"""Centralized, schema-driven value normalization for the sync runtime.
+
+The store agent transports rows as JSON, so datetimes arrive as ISO strings,
+decimals as floats, binary as hex, etc. Before inserting into the typed
+staging table we coerce each value to the Python type that pyodbc binds
+correctly for the *target column's* SQL Server type. This is driven entirely
+by the destination table schema -- no table or column names are hardcoded.
+"""
+import datetime
+import decimal
+
+_DATETIME_TYPES = {"datetime", "datetime2", "smalldatetime", "datetimeoffset"}
+_DATE_TYPES = {"date"}
+_TIME_TYPES = {"time"}
+_BIT_TYPES = {"bit"}
+_DECIMAL_TYPES = {"decimal", "numeric", "money", "smallmoney"}
+_INT_TYPES = {"int", "bigint", "smallint", "tinyint"}
+_FLOAT_TYPES = {"float", "real"}
+
+_DT_FORMATS = (
+    "%Y-%m-%dT%H:%M:%S.%f",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S.%f",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
+)
+
+# SQL Server 'datetime' (not datetime2) lower bound.
+_SQL_DATETIME_MIN = datetime.datetime(1753, 1, 1)
+
+
+def get_target_column_meta(cursor, schema_name, table_name):
+    """Return {column_name: {type, precision, scale, max_length}}."""
+    cursor.execute(
+        """
+        SELECT c.name, t.name, c.precision, c.scale, c.max_length
+        FROM sys.columns c
+        INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
+        WHERE c.object_id = OBJECT_ID(?)
+        """,
+        (schema_name + "." + table_name,),
+    )
+    return {
+        row[0]: {
+            "type": row[1].lower(),
+            "precision": row[2],
+            "scale": row[3],
+            "max_length": row[4],
+        }
+        for row in cursor.fetchall()
+    }
+
+
+def get_target_column_types(cursor, schema_name, table_name):
+    """Return {column_name: sql_type_lowercase} for a physical table."""
+    return {
+        name: meta["type"]
+        for name, meta in get_target_column_meta(
+            cursor, schema_name, table_name
+        ).items()
+    }
+
+
+def cast_type(meta):
+    """Render a CAST target type string from column metadata (diagnostics)."""
+    sql_type = meta["type"]
+    if sql_type in _DECIMAL_TYPES:
+        p = meta["precision"] or 18
+        s = meta["scale"] if meta["scale"] is not None else 0
+        return sql_type + "(" + str(p) + "," + str(s) + ")"
+    if sql_type in ("char", "varchar", "nchar", "nvarchar", "binary",
+                    "varbinary"):
+        length = meta["max_length"]
+        if length is None or length == -1:
+            return sql_type + "(MAX)"
+        if sql_type in ("nchar", "nvarchar"):
+            length = length // 2
+        return sql_type + "(" + str(length) + ")"
+    return sql_type
+
+
+def _parse_datetime(value):
+    text = value.strip()
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in _DT_FORMATS:
+        try:
+            return datetime.datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    raise ValueError("Unparseable datetime: " + repr(value))
+
+
+def normalize_value(value, sql_type, scale=None):
+    if value is None:
+        return None
+
+    sql_type = (sql_type or "").lower()
+
+    # Treat empty/whitespace strings as NULL for any non-textual column.
+    if isinstance(value, str) and not value.strip():
+        if sql_type not in ("char", "varchar", "nchar", "nvarchar", "text",
+                            "ntext"):
+            return None
+
+    if sql_type in _DATETIME_TYPES:
+        dt = value if isinstance(value, datetime.datetime) else _parse_datetime(value)
+        # Guard the narrow SQL Server 'datetime' range on 2014.
+        if sql_type in ("datetime", "smalldatetime") and dt < _SQL_DATETIME_MIN:
+            return None
+        return dt
+
+    if sql_type in _DATE_TYPES:
+        if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
+            return value
+        return _parse_datetime(value).date()
+
+    if sql_type in _TIME_TYPES:
+        if isinstance(value, datetime.time):
+            return value
+        text = str(value).strip()
+        try:
+            return datetime.time.fromisoformat(text)
+        except ValueError:
+            return _parse_datetime(text).time()
+
+    if sql_type in _BIT_TYPES:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value != 0)
+        return 1 if str(value).strip().lower() in ("1", "true", "y", "yes") else 0
+
+    if sql_type in _DECIMAL_TYPES:
+        d = value if isinstance(value, decimal.Decimal) else decimal.Decimal(str(value))
+        if scale is not None:
+            # Quantize to the destination scale so float-string artifacts
+            # (e.g. 0.30000000000000004) never trip "decimal loses precision".
+            quantum = decimal.Decimal(1).scaleb(-int(scale))
+            d = d.quantize(quantum, rounding=decimal.ROUND_HALF_UP)
+        return d
+
+    if sql_type in _INT_TYPES:
+        if isinstance(value, bool):
+            return int(value)
+        return int(float(value)) if isinstance(value, str) else int(value)
+
+    if sql_type in _FLOAT_TYPES:
+        return float(value)
+
+    # char/varchar/nvarchar/text/uniqueidentifier/etc.
+    return value if isinstance(value, str) else str(value)
+
+
+def _type_and_scale(column_meta, column):
+    meta = column_meta.get(column)
+    if isinstance(meta, dict):
+        return meta.get("type"), meta.get("scale")
+    return meta, None
+
+
+def normalize_rows(rows, columns, column_meta):
+    """Build executemany tuples in `columns` order with coerced values.
+
+    `column_meta` may be {col: type} or {col: {type, scale, ...}}.
+    """
+    staged = []
+    for row in rows:
+        normalized = []
+        for column in columns:
+            sql_type, scale = _type_and_scale(column_meta, column)
+            normalized.append(normalize_value(row.get(column), sql_type, scale))
+        staged.append(tuple(normalized))
+    return staged
 
 
 
@@ -1664,6 +3994,62 @@ class StoreRepository:
         conn.close()
 
         return row
+
+    def store_code_exists(self, store_code, tenant_id, exclude_id=None):
+        conn = get_connection()
+        cur = conn.cursor()
+        if exclude_id:
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.stores WHERE store_code = ? AND tenant_id = ? AND store_id <> ?",
+                store_code, tenant_id, exclude_id
+            )
+        else:
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.stores WHERE store_code = ? AND tenant_id = ?",
+                store_code, tenant_id
+            )
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+
+    def create(self, tenant_id, store_code, store_name, server_name, database_name):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO dbo.stores (store_id, tenant_id, store_code, store_name, server_name, database_name, is_active, created_at)
+        OUTPUT INSERTED.store_id
+        VALUES (NEWID(), ?, ?, ?, ?, ?, 1, GETDATE())
+        """, tenant_id, store_code, store_name, server_name, database_name)
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        return new_id
+
+    def update(self, store_id, tenant_id, store_code, store_name, server_name, database_name):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.stores
+        SET tenant_id = ?, store_code = ?, store_name = ?, server_name = ?, database_name = ?, updated_at = GETDATE()
+        WHERE store_id = ?
+        """, tenant_id, store_code, store_name, server_name, database_name, store_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def set_active(self, store_id, is_active):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE dbo.stores
+        SET is_active = ?, updated_at = GETDATE()
+        WHERE store_id = ?
+        """, 1 if is_active else 0, store_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
 
 
 ========================================================================================================================
@@ -2533,6 +4919,18 @@ class StoreService:
 
     def get_agent_config(self, store_id):
         return StoreRepository().get_agent_config(store_id)
+
+    def store_code_exists(self, store_code, tenant_id, exclude_id=None):
+        return StoreRepository().store_code_exists(store_code, tenant_id, exclude_id)
+
+    def create(self, tenant_id, store_code, store_name, server_name, database_name):
+        return StoreRepository().create(tenant_id, store_code, store_name, server_name, database_name)
+
+    def update(self, store_id, tenant_id, store_code, store_name, server_name, database_name):
+        return StoreRepository().update(store_id, tenant_id, store_code, store_name, server_name, database_name)
+
+    def set_active(self, store_id, is_active):
+        return StoreRepository().set_active(store_id, is_active)
 
 
 ========================================================================================================================

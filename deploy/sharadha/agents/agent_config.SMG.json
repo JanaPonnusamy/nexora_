@@ -1,0 +1,10 @@
+{
+  "ho_url": "https://ho.qvault.in",
+  "tenant_id": "__TENANT_ID__",
+  "tenant_name": "Sharadha",
+  "store_id": "__STORE_ID__",
+  "store_name": "WantedSMG",
+  "store_code": "SMG",
+  "install_path": "D:\\NexoraStoreAgent",
+  "log_level": "INFO"
+}

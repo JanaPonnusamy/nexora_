@@ -1,0 +1,4 @@
+store_code,store_name,server_name,database_name,username,connection_type,branch_codes,ho_url
+SMG,WantedSMG,SERVERT30\WONDERSOFT,shopaid,sa,SQL,,https://ho.qvault.in
+SMA,WantedSMA,DELL-DESKTOP\SQLEXPRESS,OrderNMC,sa,SQL,L,https://ho.qvault.in
+SMF,WantedSMF,DELL-DESKTOP\SQLEXPRESS,OrderNMC,sa,SQL,L,https://ho.qvault.in

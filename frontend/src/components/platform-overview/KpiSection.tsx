@@ -1,11 +1,11 @@
 import { usePlatformOverview } from '../../hooks/usePlatformOverview'
-import { EmptyState } from '../common/EmptyState'
+import { ErrorState } from '../common/ErrorState'
 import { KpiCard } from './KpiCard'
 import { KpiCardSkeleton } from './KpiCardSkeleton'
 import { KPI_DEFINITIONS } from './overviewConfig'
 
 export function KpiSection() {
-  const { metrics, isLoading } = usePlatformOverview()
+  const { metrics, isLoading, error, reload } = usePlatformOverview()
 
   return (
     <section className="overview-section">
@@ -19,12 +19,8 @@ export function KpiSection() {
             </div>
           ))}
         </div>
-      ) : metrics.length === 0 ? (
-        <EmptyState
-          icon="bi-bar-chart"
-          title="No metrics yet"
-          description="Platform metrics will appear here once data is available."
-        />
+      ) : error ? (
+        <ErrorState description={error} onRetry={reload} />
       ) : (
         <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-3">
           {metrics.map((metric) => (

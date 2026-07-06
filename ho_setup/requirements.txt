@@ -1,0 +1,13 @@
+# UniNex HO Setup installer - build + runtime dependencies.
+# (The backend's own runtime deps in backend/requirements.txt are bundled into
+#  HO_Backend.exe by PyInstaller; install both sets on the BUILD machine.)
+requests>=2.31
+pyodbc>=5.0
+pywin32>=306
+python-dotenv>=1.0
+pyinstaller>=6.0
+# Bundled into HO_Backend.exe (must be importable on the build machine):
+fastapi
+uvicorn
+pydantic
+# tkinter ships with the standard CPython Windows installer.

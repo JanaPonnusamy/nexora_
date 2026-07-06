@@ -21,8 +21,7 @@ export function RoleActions({ roleName, onView, onEdit, onUsers }: RoleActionsPr
         aria-label={`Open ${roleName} workspace`}
         onClick={stop(onView)}
       >
-        <i className="bi bi-box-arrow-up-right me-1" aria-hidden="true" />
-        Open
+        <i className="bi bi-box-arrow-up-right" aria-hidden="true" />
       </button>
       <span className="row-actions__group">
         <button

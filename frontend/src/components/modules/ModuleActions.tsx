@@ -20,8 +20,7 @@ export function ModuleActions({ moduleName, onView, onEdit }: ModuleActionsProps
         aria-label={`Open ${moduleName} workspace`}
         onClick={stop(onView)}
       >
-        <i className="bi bi-box-arrow-up-right me-1" aria-hidden="true" />
-        Open
+        <i className="bi bi-box-arrow-up-right" aria-hidden="true" />
       </button>
       <span className="row-actions__group">
         <button

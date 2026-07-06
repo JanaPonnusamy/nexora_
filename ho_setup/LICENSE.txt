@@ -1,0 +1,25 @@
+UniNex Head Office (HO) - Software License Agreement
+
+This software ("UniNex HO") is proprietary to UniNex and is licensed, not sold.
+
+By installing or using this software you agree to the following terms:
+
+1. License. You are granted a non-exclusive, non-transferable license to install
+   and use UniNex HO solely to operate your licensed UniNex tenant deployment.
+
+2. Restrictions. You may not redistribute, sublicense, rent, lease, reverse
+   engineer, decompile, or disassemble the software, except to the extent such
+   restriction is prohibited by applicable law.
+
+3. Data. You are responsible for the data managed by the software, including
+   backups. The installer restores a database from a bundled backup; ensure you
+   have authorization to provision databases on the target SQL Server.
+
+4. Warranty. The software is provided "AS IS" without warranty of any kind,
+   express or implied, including but not limited to the warranties of
+   merchantability and fitness for a particular purpose.
+
+5. Liability. To the maximum extent permitted by law, UniNex shall not be liable
+   for any damages arising out of the use of or inability to use the software.
+
+All rights reserved.

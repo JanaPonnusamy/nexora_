@@ -4,3 +4,4 @@ sqlalchemy
 pyodbc
 pydantic
 python-dotenv
+rapidfuzz

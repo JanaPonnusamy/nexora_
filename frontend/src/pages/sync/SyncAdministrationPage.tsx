@@ -1,16 +1,20 @@
 import { useSearchParams } from 'react-router-dom'
-import { PageHeader } from '../../components/common/PageHeader'
 import { ControlCenterTab } from '../../components/sync/ControlCenterTab'
+import { LiveOperationsTab } from '../../components/sync/LiveOperationsTab'
+import { TableStatisticsTab } from '../../components/sync/TableStatisticsTab'
 import { SchedulesTab } from '../../components/sync/SchedulesTab'
 import { TableConfigTab } from '../../components/sync/TableConfigTab'
 import { ColumnMappingTab } from '../../components/sync/ColumnMappingTab'
 import { StoreHealthTab } from '../../components/sync/StoreHealthTab'
 import { SyncHistoryTab } from '../../components/sync/SyncHistoryTab'
+import '../../components/sync/sync-ui.css'
 
-type SyncTab = 'control' | 'schedules' | 'tables' | 'mapping' | 'health' | 'history'
+type SyncTab = 'control' | 'live' | 'tablestats' | 'schedules' | 'tables' | 'mapping' | 'health' | 'history'
 
 const TABS: { key: SyncTab; label: string; icon: string }[] = [
   { key: 'control', label: 'Control Center', icon: 'bi-speedometer2' },
+  { key: 'live', label: 'Live Operations', icon: 'bi-broadcast-pin' },
+  { key: 'tablestats', label: 'Table Statistics', icon: 'bi-bar-chart-line' },
   { key: 'schedules', label: 'Schedules', icon: 'bi-calendar-event' },
   { key: 'tables', label: 'Table Configuration', icon: 'bi-table' },
   { key: 'mapping', label: 'Column Mapping', icon: 'bi-diagram-3' },
@@ -31,30 +35,39 @@ export default function SyncAdministrationPage() {
     setSearchParams(tab === 'control' ? {} : { tab }, { replace: true })
 
   return (
-    <div className="container-fluid px-0">
-      <PageHeader title="Sync Administration" breadcrumb={['Sync Administration']} />
+    <div className="sx container-fluid px-0">
+      <div className="sx-head">
+        <div>
+          <div className="sx-head__crumb">Sync</div>
+          <h1 className="sx-head__title">Sync Control Center</h1>
+          <div className="sx-head__sub">
+            Monitor agents, orchestrate delta sync and manage table configuration across every store.
+          </div>
+        </div>
+      </div>
 
-      <ul className="nav nav-tabs mb-3 flex-nowrap overflow-auto" role="tablist">
+      <div className="sx-tabs" role="tablist" aria-label="Sync sections">
         {TABS.map((tab) => (
-          <li className="nav-item" key={tab.key} role="presentation">
-            <button
-              type="button"
-              role="tab"
-              id={`tab-${tab.key}`}
-              aria-selected={activeTab === tab.key}
-              aria-controls={`panel-${tab.key}`}
-              className={`nav-link text-nowrap${activeTab === tab.key ? ' active' : ''}`}
-              onClick={() => setTab(tab.key)}
-            >
-              <i className={`bi ${tab.icon} me-1`} aria-hidden="true" />
-              {tab.label}
-            </button>
-          </li>
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            id={`tab-${tab.key}`}
+            aria-selected={activeTab === tab.key}
+            aria-controls={`panel-${tab.key}`}
+            className={`sx-tab${activeTab === tab.key ? ' sx-tab--active' : ''}`}
+            onClick={() => setTab(tab.key)}
+          >
+            <i className={`bi ${tab.icon}`} aria-hidden="true" />
+            {tab.label}
+          </button>
         ))}
-      </ul>
+      </div>
 
       <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
         {activeTab === 'control' && <ControlCenterTab />}
+        {activeTab === 'live' && <LiveOperationsTab />}
+        {activeTab === 'tablestats' && <TableStatisticsTab />}
         {activeTab === 'schedules' && <SchedulesTab />}
         {activeTab === 'tables' && <TableConfigTab />}
         {activeTab === 'mapping' && <ColumnMappingTab />}
