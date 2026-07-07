@@ -306,6 +306,7 @@ export function SupplierQueuePanel({
                             errors={errorsByCode[g.supplier_code] ?? []}
                             busy={busy}
                             onExport={() => runExport(g)}
+                            fmtValue={fmtValue}
                           />
                         )}
                       </div>
@@ -331,6 +332,7 @@ function SupplierReview({
   errors,
   busy,
   onExport,
+  fmtValue,
 }: {
   group: SupplierQueueGroup
   summary: { products: number; qty: number; value: number; margin: number; offers: number }
@@ -339,6 +341,7 @@ function SupplierReview({
   errors: string[]
   busy: boolean
   onExport: () => void
+  fmtValue: (value: number, qty: number) => string
 }) {
   const exportedAll = group.status === 'exported'
   return (
