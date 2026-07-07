@@ -103,6 +103,12 @@ export function SupplierQueuePanel({
     })
   const collapse = () => setExpandChoice('')
 
+  // Never render ₹0.00 unless it is the real calculated value: while totals are
+  // being computed show "Calculating…", and when a line/group has quantity but no
+  // known rate yet (value === 0) show a dash instead of a false ₹0.00.
+  const fmtValue = (value: number, qty: number) =>
+    loading ? 'Calculating…' : value > 0 ? money(value) : qty > 0 ? '—' : money(value)
+
   const eq = (line: SupplierQueueProduct) => exportQty[line.assignment_id] ?? line.final_qty
   const setEq = (line: SupplierQueueProduct, raw: string) => {
     const clean = Math.min(line.final_qty, Number(raw.replace(/[^\d]/g, '') || 0))
@@ -201,7 +207,7 @@ export function SupplierQueuePanel({
           <i className="bi bi-collection" /> Supplier Queue
           {loaded && (
             <span className="pm-sq__sum">
-              {totals.suppliers} suppliers · {totals.products} products · {num(totals.qty)} units · {money(totals.value)}
+              {totals.suppliers} suppliers · {totals.products} products · {num(totals.qty)} units · {fmtValue(totals.value, totals.qty)}
             </span>
           )}
         </button>
@@ -265,7 +271,7 @@ export function SupplierQueuePanel({
                           <span className="pm-sqcard__name">{g.supplier_name ?? g.supplier_code}</span>
                           <span className="pm-sqcard__stat"><b>{num(g.product_count)}</b>Products</span>
                           <span className="pm-sqcard__stat"><b>{num(g.total_qty)}</b>Qty</span>
-                          <span className="pm-sqcard__stat"><b>{money(g.est_value)}</b>Value</span>
+                          <span className="pm-sqcard__stat"><b>{fmtValue(g.est_value, g.total_qty)}</b>Value</span>
                           <span className="pm-sqcard__stat"><b>{num(g.offer_count)}</b>Offers</span>
                           <span className={`pm-sqstat ${st.cls}`}>{st.label}</span>
                           <span className="pm-sqcard__cta">
@@ -340,7 +346,7 @@ function SupplierReview({
       <div className="pm-sqexp__summary">
         <Stat label="Products" value={num(summary.products)} />
         <Stat label="Qty" value={num(summary.qty)} />
-        <Stat label="Value" value={money(summary.value)} />
+        <Stat label="Value" value={fmtValue(summary.value, summary.qty)} />
         <Stat label="Offers" value={num(summary.offers)} />
         <Stat label="Est. Margin" value={money(summary.margin)} />
       </div>
@@ -360,7 +366,7 @@ function SupplierReview({
             {group.lines.map((l) => (
               <tr key={l.assignment_id} className={l.exported ? 'pm-sqexp__row--done' : ''}>
                 <td>{l.product_name ?? l.product_code ?? '—'}</td>
-                <td className="sx-num">{money(l.ptr)}</td>
+                <td className="sx-num">{l.ptr > 0 ? money(l.ptr) : '—'}</td>
                 <td>{l.offer ? <span className="pm-offer">{l.offer}</span> : <span className="sx-dim">—</span>}</td>
                 <td className="sx-num">{num(l.final_qty)}</td>
                 <td className="sx-num">

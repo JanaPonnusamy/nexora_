@@ -18,6 +18,7 @@ import SyncAdministrationPage from '../pages/sync/SyncAdministrationPage'
 import ProductMappingPage from '../pages/mapping/ProductMappingPage'
 import StockAvailabilityPage from '../pages/stock/StockAvailabilityPage'
 import PurchaseWorkspacePage from '../pages/procurement/PurchaseWorkspacePage'
+import ProductIntelligencePage from '../pages/procurement/ProductIntelligencePage'
 import RefreshLauncherPage from '../pages/procurement/RefreshLauncherPage'
 import CycleManagementPage from '../pages/procurement/CycleManagementPage'
 import RefreshManagementPage from '../pages/procurement/RefreshManagementPage'
@@ -62,6 +63,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/procurement/refreshes" element={<RequireCapability cap="PROCUREMENT_ADMIN"><RefreshManagementPage /></RequireCapability>} />
         <Route path="/procurement/refresh" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><RefreshLauncherPage /></RequireCapability>} />
         <Route path="/procurement/workspace" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><PurchaseWorkspacePage /></RequireCapability>} />
+        <Route path="/procurement/intelligence" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><ProductIntelligencePage /></RequireCapability>} />
         <Route path="/reports" element={<RequireCapability cap="REPORTS"><ReportsPage /></RequireCapability>} />
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />
         <Route path="*" element={<RoleLanding />} />

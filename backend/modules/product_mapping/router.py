@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 from modules.product_mapping import dictionary_service, service
 from modules.product_mapping.schemas import (
     ApproveRequest,
+    BulkReviewRequest,
     DictionaryTermCreate,
     DictionaryTermUpdate,
     RejectRequest,
@@ -87,6 +88,41 @@ def reject_mapping(mapping_id: str, payload: RejectRequest, tenant_id: str = Que
     if not updated:
         raise HTTPException(status_code=404, detail="Mapping not found")
     return updated
+
+
+# --------------------------------------------------------------------------
+# Manual Review v2 — bulk approve/reject + progress + product lookup
+# --------------------------------------------------------------------------
+
+@router.get("/manual-review/progress")
+def manual_review_progress(
+    tenant_id: str = Query(...),
+    source_store_id: str = Query(...),
+    target_store_id: str = Query(...),
+):
+    return service.review_progress(tenant_id, source_store_id, target_store_id)
+
+
+@router.post("/manual-review/bulk")
+def manual_review_bulk(payload: BulkReviewRequest, tenant_id: str = Query(...)):
+    try:
+        return service.bulk_review(
+            tenant_id, payload.action,
+            [i.dict() for i in payload.items],
+            payload.source_store_id, payload.target_store_id,
+            page=payload.page, page_size=payload.page_size, actor=payload.actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/products/search")
+def search_products(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+    query: str = Query("", alias="q"),
+    limit: int = Query(25, ge=1, le=100),
+):
+    return service.search_products(tenant_id, store_id, query, limit)
 
 
 # --------------------------------------------------------------------------

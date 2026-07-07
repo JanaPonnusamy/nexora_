@@ -45,6 +45,20 @@ def search_mapped_product(tenant_id, source_store_id, source_product_code, targe
     return repository.search_mapped(tenant_id, source_store_id, source_product_code, target_store_id)
 
 
+def search_products(tenant_id, store_id, query, limit=25):
+    """Correct-Product picker: fast store-scoped lookup, each hit enriched with
+    parsed medicine attributes (brand / strength / form / pack) for display."""
+    rows = source_repository.search_store_products(tenant_id, store_id, query, limit)
+    for r in rows:
+        attrs = medicine_parser.extract_medicine_attributes(r.get("product_name"))
+        r["brand"] = attrs.get("brand")
+        r["strength"] = attrs.get("strength")
+        r["unit_of_strength"] = attrs.get("unit")
+        r["dosage_form"] = attrs.get("dosage_form")
+        r["pack_size"] = attrs.get("pack_size")
+    return rows
+
+
 # --- engine + workflow ----------------------------------------------------
 
 def run_mapping(tenant_id, source_store_id, target_store_id, actor=None):
@@ -83,6 +97,22 @@ def reject_mapping(tenant_id, mapping_id, actor):
     if updated:
         logger.info("mapping %s REJECTED by %s", mapping_id, actor)
     return updated
+
+
+def review_progress(tenant_id, source_store_id, target_store_id):
+    return repository.review_progress(tenant_id, source_store_id, target_store_id)
+
+
+def bulk_review(tenant_id, action, items, source_store_id, target_store_id,
+                page=1, page_size=50, actor=None):
+    """Approve/reject a whole selection in one transaction (Manual Review v2)."""
+    result = repository.bulk_review(
+        tenant_id, action, items, source_store_id, target_store_id,
+        page=page, page_size=page_size, actor=actor)
+    logger.info("bulk %s by %s: approved=%s rejected=%s skipped=%s remaining=%s",
+                action, actor, result["approved"], result["rejected"],
+                result["skipped"], result["remaining"])
+    return result
 
 
 # --- dashboard / statistics / audit --------------------------------------

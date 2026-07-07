@@ -17,6 +17,8 @@ from modules.procurement.compare_router import router as compare_router
 from modules.procurement.orchestration_router import router as orchestration_router
 from modules.procurement.pm_router import router as pm_router
 from modules.procurement.pipeline_router import router as pipeline_router
+from modules.procurement.intelligence_router import router as intelligence_router
+from modules.procurement.optimization_router import router as optimization_router
 
 router = APIRouter(prefix="/api/procurement", tags=["Procurement"])
 
@@ -26,6 +28,10 @@ router.include_router(pipeline_router)
 router.include_router(orchestration_router)
 # Purchase Manager — workspace, supplier queue, assignment, export.
 router.include_router(pm_router)
+# Supplier Order Optimization — the stage between Auto Assignment and Export.
+router.include_router(optimization_router)
+# Product Intelligence — consolidated cross-store grid built from Refresh + VPL.
+router.include_router(intelligence_router)
 # Comparison (runtime) — mounted FIRST so /vpl/compare resolves before the
 # /vpl/{vpl_id} catch-all in the VPL router.
 router.include_router(compare_router)

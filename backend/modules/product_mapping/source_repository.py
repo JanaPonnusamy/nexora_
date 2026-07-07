@@ -45,6 +45,65 @@ def load_store_products(tenant_id, store_id):
         conn.close()
 
 
+def search_store_products(tenant_id, store_id, query, limit=25):
+    """Server-side product lookup in one store for the Correct-Product picker.
+
+    Multi-token AND match on ``ProductName`` (so ``crocin 500 tab`` narrows on
+    brand + strength + form, all of which live inside the name) plus a
+    ProductCode prefix match. Same source table the engine reads, so a picked
+    product is always a real, mappable target. Returns
+    ``[{product_code, product_name, unit, mrp}]`` ordered by name.
+    """
+    q = (query or "").strip()
+    tokens = [t for t in q.split() if t][:6]
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        where = ["p.tenant_id = ?", "p.store_id = ?", "ISNULL(p.isActive, 1) = 1",
+                 "p.ProductName IS NOT NULL"]
+        params = [tenant_id, store_id]
+        # Relevance rank (lower = better): exact code, exact name, name starts-with,
+        # code starts-with, then contains (which also covers brand / strength /
+        # form / generic tokens, since those live inside ProductName). Ties break
+        # by shortest name then alphabetically.
+        rank = "0"
+        order_params = []
+        if tokens:
+            name_clause = " AND ".join(["p.ProductName LIKE '%' + ? + '%'"] * len(tokens))
+            params.extend(tokens)
+            where.append(
+                f"(({name_clause}) OR CAST(p.ProductCode AS VARCHAR(50)) LIKE ? + '%')")
+            params.append(q)
+            rank = """
+                CASE
+                    WHEN CAST(p.ProductCode AS VARCHAR(50)) = ?      THEN 0
+                    WHEN p.ProductName = ?                          THEN 1
+                    WHEN p.ProductName LIKE ? + '%'                 THEN 2
+                    WHEN CAST(p.ProductCode AS VARCHAR(50)) LIKE ? + '%' THEN 3
+                    ELSE 4
+                END"""
+            order_params = [q, q, q, q]
+        cur.execute(
+            f"""
+            SELECT TOP ({int(limit)})
+                   CAST(p.ProductCode AS VARCHAR(50))      AS product_code,
+                   p.ProductName                           AS product_name,
+                   p.UnitDescription                       AS unit,
+                   CAST(ISNULL(p.MRP, 0) AS DECIMAL(18,2)) AS mrp
+            FROM sync.Products p
+            WHERE {' AND '.join(where)}
+            ORDER BY {rank}, LEN(p.ProductName), p.ProductName
+            """,
+            tuple(params + order_params),
+        )
+        rows = _rows_to_dicts(cur)
+        for r in rows:
+            r["mrp"] = float(r["mrp"]) if r["mrp"] is not None else None
+        return rows
+    finally:
+        conn.close()
+
+
 def load_supplier_pairs(tenant_id, source_store_id, target_store_id):
     """Phase-1 cross-store pairs ``[(source_code, target_code)]`` derived from
     the supplier match table joined on (SupplierCode, SupplierProductCode).

@@ -216,6 +216,11 @@
 
 /* ---- Supplier Live Stock: split + compact table + details panel ---------- */
 .pm-split--stock { grid-template-columns: minmax(0, 1.3fr) minmax(340px, 0.7fr); }
+/* Left column stacks a static summary strip over one scroll area. The column
+   itself never scrolls (overflow hidden); only pm-stockgrid__scroll does, so the
+   summary strip keeps its own space and the sticky header sits below it. */
+.pm-split__grid.pm-stockgrid { display: flex; flex-direction: column; overflow: hidden; }
+.pm-stockgrid__scroll { flex: 1; min-height: 0; overflow: auto; }
 .pm-grid--stock tbody td { padding: 3px 8px; }
 .pm-grid--stock .pm-prod__name { font-size: 12px; line-height: 1.2; }
 .pm-grid--stock .pm-prod__meta { font-size: 11px; }
@@ -224,6 +229,11 @@
 .pm-sx__supp { color: #1d4ed8; font-weight: 600; }
 .pm-sx__store { color: #b45309; font-weight: 600; }
 .pm-qty--sm { width: 56px; height: 23px; }
+/* Column alignment (stock grid): text left, numeric right, Qty + Action centered.
+   Header cells inherit their column's alignment so header and body line up. */
+.pm-grid--stock .pm-grid__final { text-align: center; }
+.pm-grid--stock td.pm-grid__final { padding-left: 0; padding-right: 0; }
+.pm-grid--stock .pm-qty--sm { text-align: center; }
 
 /* Add — compact pill with hover lift */
 .pm-btn--add {
@@ -237,14 +247,16 @@
 }
 .pm-btn--add > i { font-size: 11px; }
 
-/* Supplier summary cards (sticky above the grid) */
+/* Supplier summary cards — a static dashboard strip that owns its own space
+   above the grid (never sticky, so it can't overlap the sticky table header). */
 .pm-sxcards {
-  display: flex; gap: 7px; padding: 6px 8px; flex-wrap: wrap; position: sticky; top: 0; z-index: 1;
+  flex: 0 0 auto;
+  display: flex; gap: 7px; padding: 8px; flex-wrap: wrap; align-items: stretch;
   background: var(--bs-body-bg, #fff); border-bottom: 1px solid var(--bs-border-color, #eef2f6);
 }
 .pm-sxcard {
-  display: flex; flex-direction: column; gap: 0; padding: 3px 11px; min-width: 76px;
-  border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 8px; background: #f8fafc;
+  display: flex; flex-direction: column; justify-content: center; gap: 0; padding: 5px 11px; min-width: 76px;
+  border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 8px; background: var(--bs-body-bg, #fff);
 }
 .pm-sxcard__k { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: #94a3b8; font-weight: 600; }
 .pm-sxcard__v { font-size: 13.5px; font-weight: 700; }
@@ -471,6 +483,86 @@
 .pm-sqstat--pending { background: #fef3c7; color: #92400e; }
 .pm-sqstat--exported { background: #e0e7ff; color: #3730a3; }
 .pm-sqcard__exported { font-size: 11.5px; color: #3730a3; background: #eef2ff; padding: 4px 12px; display: flex; align-items: center; gap: 5px; }
+
+/* Operational stage stepper (Review → Assign → Optimize → Export) */
+.pm-stages { display: flex; gap: 6px; padding: 8px 12px 0; flex-wrap: wrap; }
+.pm-stage { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--bs-border-color, #e5e7eb); background: var(--bs-body-bg, #fff); color: #475569; border-radius: 999px; padding: 5px 14px 5px 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.pm-stage:hover:not(:disabled) { border-color: #94a3b8; }
+.pm-stage__no { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 700; }
+.pm-stage--on { border-color: #4f46e5; color: #3730a3; background: #eef2ff; }
+.pm-stage--on .pm-stage__no { background: #4f46e5; color: #fff; }
+.pm-stage--locked { opacity: .5; cursor: not-allowed; }
+
+/* Bulk selection bar (Assign stage, Supplier Purchasing) */
+.pm-selbar { display: flex; align-items: center; gap: 18px; padding: 8px 14px; background: #eef2ff; border-bottom: 1px solid #c7d2fe; }
+.pm-selbar__item { display: flex; flex-direction: column; }
+.pm-selbar__k { font-size: 9.5px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
+.pm-selbar__v { font-size: 13.5px; font-weight: 700; color: #1e293b; font-variant-numeric: tabular-nums; }
+.pm-selbar__spacer { flex: 1; }
+
+/* Keyboard-highlighted supplier search result */
+.pm-suppick__opt--active { background: #eef2ff; }
+
+/* Stage action bar (per-stage next steps) */
+.pm-stagebar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--bs-border-color, #e5e7eb); background: var(--bs-tertiary-bg, #f8fafc); }
+.pm-stagebar__spacer { flex: 1; }
+.pm-stagebar__hint { color: #64748b; font-size: 12px; }
+
+/* Supplier Review panel (right column of the Assign stage when a supplier is picked) */
+.pm-srv { display: flex; flex-direction: column; height: 100%; overflow: auto; }
+.pm-srv__head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--bs-border-color, #e5e7eb); }
+.pm-srv__id { display: flex; flex-direction: column; }
+.pm-srv__name { font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+.pm-srv__code { color: #94a3b8; font-size: 11px; }
+.pm-srv__hint { padding: 16px 12px; color: #64748b; font-size: 12.5px; }
+.pm-srv__summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 10px; }
+.pm-srv__stat { background: var(--bs-body-bg, #fff); border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 8px; padding: 6px 8px; text-align: center; }
+.pm-srv__stat b { display: block; font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.pm-srv__stat span { font-size: 9.5px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
+.pm-srv__stat--val b { color: #166534; }
+.pm-srv__tablewrap { flex: 1; overflow: auto; padding: 0 6px; }
+.pm-srv__table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.pm-srv__table thead th { position: sticky; top: 0; background: var(--bs-tertiary-bg, #f8fafc); text-align: left; font-weight: 600; color: #64748b; padding: 5px 8px; border-bottom: 1px solid var(--bs-border-color, #e5e7eb); }
+.pm-srv__table tbody td { padding: 5px 8px; border-bottom: 1px solid var(--bs-border-color, #f1f5f9); vertical-align: top; }
+.pm-srv__table .sx-num { text-align: right; font-variant-numeric: tabular-nums; }
+.pm-srv__row--done { opacity: .55; }
+.pm-srv__btns { display: inline-flex; gap: 4px; }
+.pm-srv__change { margin-top: 6px; display: flex; gap: 6px; align-items: center; }
+.pm-srv__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border-top: 1px solid var(--bs-border-color, #e5e7eb); }
+.pm-srv__foottotal { font-size: 12.5px; color: #475569; }
+.pm-srv__foottotal b { font-size: 15px; color: #0f172a; margin-left: 4px; }
+.pm-btn--danger { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+.pm-btn--danger:hover:not(:disabled) { background: #fecaca; }
+
+/* Optimization summary tiles */
+.pm-opt__tiles { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.pm-opt__tile { display: flex; flex-direction: column; align-items: center; background: var(--bs-body-bg, #fff); border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 8px; padding: 6px 14px; min-width: 92px; }
+.pm-opt__tile b { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.pm-opt__tile span { font-size: 9.5px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
+.pm-opt__tile--ok b { color: #166534; }
+
+/* Supplier Optimization panel (stage between Auto Assignment and Export) */
+.pm-opt__tablewrap { overflow-x: auto; }
+.pm-opt__table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.pm-opt__table thead th { text-align: left; font-weight: 600; color: #64748b; padding: 7px 10px; border-bottom: 1px solid var(--bs-border-color, #e5e7eb); white-space: nowrap; }
+.pm-opt__table tbody td { padding: 7px 10px; border-bottom: 1px solid var(--bs-border-color, #f1f5f9); vertical-align: top; }
+.pm-opt__table .sx-num { text-align: right; font-variant-numeric: tabular-nums; }
+.pm-opt__gap { color: #b45309; font-weight: 700; }
+.pm-opt__ok { color: #166534; }
+.pm-opt__mininp { width: 84px; text-align: right; }
+.pm-opt__chips { display: flex; flex-wrap: wrap; gap: 5px; max-width: 340px; }
+.pm-opt__chip { display: inline-flex; align-items: center; gap: 5px; background: #eff6ff; color: #1e3a8a; border: 1px solid #bfdbfe; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; }
+.pm-opt__chipfrom { color: #64748b; font-size: 10.5px; }
+.pm-opt__act { white-space: nowrap; }
+.pm-opt__btns { display: inline-flex; gap: 6px; }
+.pm-opt__manual { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+.pm-opt__manualsel { max-width: 230px; font-size: 11.5px; }
+.pm-opt__note { color: #64748b; font-size: 11.5px; margin: 10px 4px 2px; }
+.pm-optstat { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.pm-optstat--ok { background: #dcfce7; color: #166534; }
+.pm-optstat--ready { background: #dbeafe; color: #1e40af; }
+.pm-optstat--short { background: #fef3c7; color: #92400e; }
+.pm-optstat--none { background: #fee2e2; color: #991b1b; }
 
 /* Inline expanded review */
 .pm-sqexp { border-top: 1px dashed var(--bs-border-color, #e5e7eb); padding: 10px 12px; background: var(--bs-tertiary-bg, #f8fafc); }

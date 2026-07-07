@@ -108,3 +108,46 @@ export interface MappingFilters {
   page?: number
   page_size?: number
 }
+
+/** A hit from the Correct-Product picker (target store's product master). */
+export interface ProductSearchResult {
+  product_code: string
+  product_name: string
+  unit: string | null
+  mrp: number | null
+  brand: string | null
+  strength: string | null
+  unit_of_strength: string | null
+  dosage_form: string | null
+  pack_size: string | null
+}
+
+/** One row's decision in a bulk manual-review call. */
+export interface BulkReviewItem {
+  mapping_id: string
+  target_product_code?: string
+  target_product_name?: string
+}
+
+export interface BulkReviewFailure {
+  mapping_id: string
+  reason: string
+}
+
+export interface BulkReviewResult {
+  approved: number
+  rejected: number
+  skipped: number
+  failed: BulkReviewFailure[]
+  remaining: number
+  approved_today: number
+  current_page: number
+  next_page: number
+  total_pages: number
+  has_next: boolean
+}
+
+export interface ReviewProgress {
+  remaining: number
+  approved_today: number
+}

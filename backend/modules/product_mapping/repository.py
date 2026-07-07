@@ -10,6 +10,7 @@ import uuid
 
 from config.database import get_connection
 from modules.procurement._dbutil import as_uid, rows_to_dicts as _rows_to_dicts, stringify
+from modules.product_mapping import scoring
 
 # Statuses a re-run must never overwrite. PENDING is the only regenerable state;
 # APPROVED/AUTO are prior successes and REJECTED is a human "no" — all three are
@@ -352,6 +353,254 @@ def set_status(tenant_id, mapping_id, new_status, actor=None,
         )
         conn.commit()
         return get_mapping(tenant_id, mapping_id)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _pending_count(cur, tenant_id, source_store_id, target_store_id):
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM dbo.product_mapping
+        WHERE tenant_id = ? AND is_deleted = 0 AND status = 'PENDING'
+          AND source_store_id = ? AND target_store_id = ?
+        """,
+        (tenant_id, source_store_id, target_store_id),
+    )
+    return cur.fetchone()[0]
+
+
+def _approved_today(cur, tenant_id, source_store_id, target_store_id):
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM dbo.product_mapping
+        WHERE tenant_id = ? AND is_deleted = 0 AND status = 'APPROVED'
+          AND source_store_id = ? AND target_store_id = ?
+          AND updated_at >= CAST(GETDATE() AS DATE)
+        """,
+        (tenant_id, source_store_id, target_store_id),
+    )
+    return cur.fetchone()[0]
+
+
+def review_progress(tenant_id, source_store_id, target_store_id):
+    """Live counters for the Manual Review dashboard (remaining + approved today)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        return {
+            "remaining": _pending_count(cur, tenant_id, source_store_id, target_store_id),
+            "approved_today": _approved_today(cur, tenant_id, source_store_id, target_store_id),
+        }
+    finally:
+        conn.close()
+
+
+def _approve_detail(old_code, old_name, new_code, new_name, confidence, manual):
+    """Human-readable audit trail entry carrying old product, new product and
+    confidence (the audit table has no dedicated product columns)."""
+    conf = "" if confidence is None else f" @ {confidence:g}"
+    new = f"{new_name or '—'} ({new_code or '—'})"
+    if manual:
+        old = f"{old_name or '—'} ({old_code or '—'})"
+        return (f"manual override: {old} -> {new}{conf}")[:1000]
+    return (f"confirm suggested: {new}{conf}")[:1000]
+
+
+def bulk_review(tenant_id, action, items, source_store_id, target_store_id,
+                page=1, page_size=50, actor=None):
+    """Approve / reject a page of PENDING mappings in ONE transaction.
+
+    ``items`` = ``[{mapping_id, target_product_code?, target_product_name?}]``.
+    An APPROVE item carrying a target is a manual override (re-map @ MANUAL);
+    without one it confirms the engine's suggestion.
+
+    Hardening: duplicate ids collapse; only rows still PENDING change (a
+    ``status = 'PENDING'`` guard + ``OUTPUT`` make it concurrency-safe — a row
+    another reviewer already decided is never overwritten and counts as skipped);
+    deleted rows are silently skipped; override targets are validated against the
+    target store's live, active product master and rejected with a friendly
+    reason if invalid. Every applied change writes an audit row (old product ->
+    new product @ confidence). One transaction; batched, index-friendly SQL keeps
+    a 50-row page well under a second.
+    """
+    by_id = {}
+    for it in items:
+        mid = it.get("mapping_id")
+        if mid:
+            by_id[str(mid)] = it            # duplicate review ids collapse here
+    ids = list(by_id.keys())
+    if not ids:
+        raise ValueError("No mappings were selected.")
+    if action not in ("APPROVE", "REJECT"):
+        raise ValueError(f"Unsupported bulk action: {action}")
+
+    actor_uid = as_uid(actor)
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        # 1. Load the selected rows once: validates existence + not-deleted, and
+        #    supplies current status, the existing (old) target and confidence
+        #    for the audit trail. Single set query — no N+1.
+        placeholders = ",".join("?" * len(ids))
+        cur.execute(
+            f"""
+            SELECT CAST(mapping_id AS VARCHAR(50)), status,
+                   target_product_code, target_product_name, confidence
+            FROM dbo.product_mapping
+            WHERE tenant_id = ? AND is_deleted = 0 AND mapping_id IN ({placeholders})
+            """,
+            tuple([tenant_id] + ids),
+        )
+        existing = {
+            r[0]: {"status": r[1], "old_code": r[2], "old_name": r[3],
+                   "confidence": float(r[4]) if r[4] is not None else None}
+            for r in cur.fetchall()
+        }
+        actionable = [i for i in ids if existing.get(i, {}).get("status") == "PENDING"]
+
+        failed = []   # [{mapping_id, reason}] — invalid override targets
+
+        # 2. Validate manual-override targets against the target store's live,
+        #    active product master in one set query (rejects inactive / deleted /
+        #    unknown / wrong-store codes).
+        override_codes = {
+            str(by_id[i]["target_product_code"])
+            for i in actionable if by_id[i].get("target_product_code")
+        }
+        valid_targets = {}
+        if override_codes:
+            cph = ",".join("?" * len(override_codes))
+            cur.execute(
+                f"""
+                SELECT CAST(ProductCode AS VARCHAR(50)), ProductName
+                FROM sync.Products
+                WHERE tenant_id = ? AND store_id = ? AND ISNULL(isActive, 1) = 1
+                  AND CAST(ProductCode AS VARCHAR(50)) IN ({cph})
+                """,
+                tuple([tenant_id, target_store_id] + list(override_codes)),
+            )
+            valid_targets = {r[0]: r[1] for r in cur.fetchall()}
+
+        approved = rejected = 0
+        audit_rows = []
+
+        if action == "APPROVE":
+            plain, overrides = [], []
+            for i in actionable:
+                code = by_id[i].get("target_product_code")
+                if code:
+                    code = str(code)
+                    if code in valid_targets:
+                        overrides.append(i)
+                    else:
+                        failed.append({
+                            "mapping_id": i,
+                            "reason": f"Product {code} is not an active product in the target store.",
+                        })
+                else:
+                    plain.append(i)
+
+            # 2a. Plain approvals — one set-based, PENDING-guarded UPDATE. OUTPUT
+            #     hands back exactly the rows we actually moved (concurrency-safe).
+            if plain:
+                pph = ",".join("?" * len(plain))
+                cur.execute(
+                    f"""
+                    UPDATE dbo.product_mapping
+                    SET status = 'APPROVED', updated_at = GETDATE(), updated_by = ?
+                    OUTPUT CAST(inserted.mapping_id AS VARCHAR(50))
+                    WHERE tenant_id = ? AND status = 'PENDING' AND mapping_id IN ({pph})
+                    """,
+                    tuple([actor_uid, tenant_id] + plain),
+                )
+                for (mid,) in cur.fetchall():
+                    e = existing[mid]
+                    approved += 1
+                    audit_rows.append((str(uuid.uuid4()), tenant_id, mid, None, "APPROVE",
+                                       "PENDING", "APPROVED", actor_uid,
+                                       _approve_detail(e["old_code"], e["old_name"],
+                                                       e["old_code"], e["old_name"],
+                                                       e["confidence"], manual=False)))
+
+            # 2b. Overrides re-map to a different target each, so loop with the
+            #     same guard + OUTPUT (few rows; comfortably within budget).
+            manual_conf = scoring.CONFIDENCE["MANUAL"]
+            for i in overrides:
+                new_code = str(by_id[i]["target_product_code"])
+                new_name = by_id[i].get("target_product_name") or valid_targets[new_code]
+                cur.execute(
+                    """
+                    UPDATE dbo.product_mapping
+                    SET status = 'APPROVED', target_product_code = ?, target_product_name = ?,
+                        match_method = 'MANUAL', confidence = ?, updated_at = GETDATE(), updated_by = ?
+                    OUTPUT CAST(inserted.mapping_id AS VARCHAR(50))
+                    WHERE tenant_id = ? AND status = 'PENDING' AND mapping_id = ?
+                    """,
+                    (new_code, new_name, manual_conf, actor_uid, tenant_id, i),
+                )
+                if cur.fetchone():
+                    e = existing[i]
+                    approved += 1
+                    audit_rows.append((str(uuid.uuid4()), tenant_id, i, None, "APPROVE",
+                                       "PENDING", "APPROVED", actor_uid,
+                                       _approve_detail(e["old_code"], e["old_name"],
+                                                       new_code, new_name, manual_conf, manual=True)))
+
+        else:  # REJECT
+            if actionable:
+                aph = ",".join("?" * len(actionable))
+                cur.execute(
+                    f"""
+                    UPDATE dbo.product_mapping
+                    SET status = 'REJECTED', updated_at = GETDATE(), updated_by = ?
+                    OUTPUT CAST(inserted.mapping_id AS VARCHAR(50))
+                    WHERE tenant_id = ? AND status = 'PENDING' AND mapping_id IN ({aph})
+                    """,
+                    tuple([actor_uid, tenant_id] + actionable),
+                )
+                for (mid,) in cur.fetchall():
+                    e = existing[mid]
+                    rejected += 1
+                    conf = "" if e["confidence"] is None else f" @ {e['confidence']:g}"
+                    audit_rows.append((str(uuid.uuid4()), tenant_id, mid, None, "REJECT",
+                                       "PENDING", "REJECTED", actor_uid,
+                                       (f"reject suggested: {e['old_name'] or '—'} "
+                                        f"({e['old_code'] or '—'}){conf}")[:1000]))
+
+        if audit_rows:
+            cur.fast_executemany = True
+            cur.executemany(
+                f"INSERT INTO dbo.product_mapping_audit ({','.join(_AUDIT_COLS)}) "
+                f"VALUES ({','.join('?' * len(_AUDIT_COLS))})",
+                audit_rows,
+            )
+        conn.commit()
+
+        # Everything asked for that we did NOT apply (already decided, deleted,
+        # lost a concurrency race, or invalid override target) counts as skipped.
+        acted = approved + rejected
+        skipped = len(ids) - acted
+
+        remaining = _pending_count(cur, tenant_id, source_store_id, target_store_id)
+        approved_today = _approved_today(cur, tenant_id, source_store_id, target_store_id)
+        total_pages = max(1, -(-remaining // int(page_size)))  # ceil
+        current_page = min(max(1, int(page)), total_pages)
+        return {
+            "approved": approved,
+            "rejected": rejected,
+            "skipped": skipped,
+            "failed": failed,
+            "remaining": remaining,
+            "approved_today": approved_today,
+            "current_page": current_page,
+            "next_page": current_page,        # retained for client compatibility
+            "total_pages": total_pages,
+            "has_next": current_page < total_pages,
+        }
     except Exception:
         conn.rollback()
         raise

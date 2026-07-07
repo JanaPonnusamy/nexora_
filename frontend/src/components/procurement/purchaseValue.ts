@@ -15,6 +15,32 @@ export function sortSuppliersByCost(suppliers: SupplierRow[]): SupplierRow[] {
   })
 }
 
+/**
+ * Auto Assign supplier selection — the documented priority. Exactly ONE supplier
+ * is ever assigned automatically per product:
+ *
+ *   1. Exact Product Mapping — a supplier explicitly mapped to the product.
+ *   2. Last Purchase Supplier — the most recently purchased-from supplier.
+ *   3. Preferred Supplier — the most frequently purchased-from supplier.
+ *
+ * The recommendation feed does not carry an exact-mapping flag, so tier 1 is a
+ * no-op here and selection resolves to the Last Purchase supplier (most recent
+ * GRN date), then the Preferred supplier (highest purchase frequency). Returns
+ * the chosen supplier_code, or null when the product has no supplier history.
+ */
+export function autoAssignSupplier(recs: SupplierRow[] | undefined): string | null {
+  if (!recs || recs.length === 0) return null
+  const dated = recs.filter((r) => r.last_grn_date)
+  if (dated.length) {
+    return [...dated].sort(
+      (a, b) =>
+        Date.parse(b.last_grn_date!) - Date.parse(a.last_grn_date!) ||
+        (b.purchase_frequency ?? 0) - (a.purchase_frequency ?? 0),
+    )[0].supplier_code
+  }
+  return [...recs].sort((a, b) => (b.purchase_frequency ?? 0) - (a.purchase_frequency ?? 0))[0].supplier_code
+}
+
 /** Purchase value for a working line: Final Qty × Last Purchase Rate (PTR),
  *  falling back to the VPL ptr_cost when a last rate is not recorded. */
 export function purchaseValue(item: WorkspaceItem): number {

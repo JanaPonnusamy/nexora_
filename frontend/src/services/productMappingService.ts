@@ -1,6 +1,8 @@
 import { api } from './apiClient'
 import type {
   AuditRow,
+  BulkReviewItem,
+  BulkReviewResult,
   Candidate,
   DictionaryEntry,
   Mapping,
@@ -9,6 +11,8 @@ import type {
   MappingFilters,
   MappingPage,
   MappingStatistics,
+  ProductSearchResult,
+  ReviewProgress,
   RunSummary,
 } from '../types/productMapping'
 
@@ -46,6 +50,31 @@ export const productMappingService = {
 
   reject: (tenantId: string, mappingId: string, actor: string | null) =>
     api.post<Mapping>(`${BASE}/mappings/${mappingId}/reject${qs({ tenant_id: tenantId })}`, { actor }),
+
+  // --- Manual Review v2 -----------------------------------------------------
+
+  reviewProgress: (tenantId: string, sourceStoreId: string, targetStoreId: string) =>
+    api.get<ReviewProgress>(
+      `${BASE}/manual-review/progress${qs({ tenant_id: tenantId, source_store_id: sourceStoreId, target_store_id: targetStoreId })}`,
+    ),
+
+  bulkReview: (
+    tenantId: string,
+    body: {
+      action: 'APPROVE' | 'REJECT'
+      items: BulkReviewItem[]
+      source_store_id: string
+      target_store_id: string
+      page: number
+      page_size: number
+      actor: string | null
+    },
+  ) => api.post<BulkReviewResult>(`${BASE}/manual-review/bulk${qs({ tenant_id: tenantId })}`, body),
+
+  searchProducts: (tenantId: string, storeId: string, query: string, limit = 25) =>
+    api.get<ProductSearchResult[]>(
+      `${BASE}/products/search${qs({ tenant_id: tenantId, store_id: storeId, q: query, limit })}`,
+    ),
 
   dashboard: (tenantId: string, sourceStoreId?: string, targetStoreId?: string) =>
     api.get<MappingDashboard>(

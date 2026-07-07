@@ -366,7 +366,7 @@ def get_table_statistics():
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT sync_table_id, table_name, sync_mode, is_active
+            SELECT sync_table_id, table_name, sync_mode, is_active, watermark_column
             FROM sync.sync_table_master
             WHERE is_active = 1
             ORDER BY sync_order
@@ -375,13 +375,24 @@ def get_table_statistics():
         tables = cursor.fetchall()
 
         result = []
-        for sync_table_id, table_name, sync_mode, is_active in tables:
-            # HO physical row count
+        for sync_table_id, table_name, sync_mode, is_active, watermark_column in tables:
+            # HO physical row count + last synced business value (high watermark).
             ho_rows = 0
+            last_business_value = None
             cursor.execute("SELECT OBJECT_ID(?, 'U')", ("sync." + table_name,))
             if cursor.fetchone()[0] is not None:
                 cursor.execute("SELECT COUNT(*) FROM sync.[" + table_name + "]")
                 ho_rows = cursor.fetchone()[0]
+                # Latest business value on the configured watermark column, if any.
+                if watermark_column:
+                    try:
+                        cursor.execute(
+                            "SELECT CONVERT(nvarchar(64), MAX([" + watermark_column + "])) "
+                            "FROM sync.[" + table_name + "]"
+                        )
+                        last_business_value = cursor.fetchone()[0]
+                    except Exception:
+                        last_business_value = None
 
             cursor.execute(
                 """
@@ -423,6 +434,8 @@ def get_table_statistics():
                 "updated_today": int(today[4]),
                 "skipped_today": int(today[5]),
                 "last_sync": last_sync.isoformat() if last_sync else None,
+                "watermark_column": watermark_column,
+                "last_business_value": last_business_value,
             })
         return result
     finally:

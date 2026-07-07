@@ -251,3 +251,65 @@ export interface WorkspaceFilters {
   page?: number
   page_size?: number
 }
+
+/* ---- Supplier Order Optimization Engine --------------------------------- */
+
+/** One suggested move of a product from its current supplier into a
+ *  below-minimum supplier (Accept applies it via the assignment change path). */
+export interface OptimizationMove {
+  assignment_id: string
+  order_item_id: string
+  product_code: string | null
+  product_name: string | null
+  from_supplier: string
+  to_supplier: string
+  qty: number
+  value: number
+}
+
+export type OptimizationStatus = 'ok' | 'ready' | 'short' | 'no_solution'
+
+/** A supplier row in the optimization summary (§5/§7). */
+export interface OptimizationSupplier {
+  supplier_code: string
+  supplier_name?: string | null
+  min_value: number
+  current_value: number
+  gap: number
+  projected_value: number
+  current_products: number
+  status: OptimizationStatus
+  suggestions: OptimizationMove[]
+  /** Full movable pool (below-minimum suppliers only) — powers Manual Move. */
+  movable?: OptimizationMove[]
+}
+
+export interface OptimizationResult {
+  refresh_id: string
+  store_id: string | null
+  price_tolerance: number
+  use_live_stock: boolean
+  below_minimum: number
+  suppliers: OptimizationSupplier[]
+}
+
+export interface OptimizationMoveResult {
+  moved: number
+  skipped: number
+  results: { assignment_id: string; status: string; reason?: string }[]
+}
+
+/** An audit row for a product moved between suppliers (§12). */
+export interface OptimizationAuditRow {
+  move_id: string
+  order_item_id: string
+  assignment_id: string
+  product_code: string | null
+  from_supplier: string | null
+  to_supplier: string
+  moved_qty: number | null
+  moved_value: number | null
+  reason: 'auto' | 'manual'
+  moved_by: string | null
+  moved_at: string | null
+}

@@ -8,6 +8,9 @@ import type {
   GrnResult,
   ManualProduct,
   MappingTarget,
+  OptimizationAuditRow,
+  OptimizationMoveResult,
+  OptimizationResult,
   PendingPage,
   Refresh,
   SupplierQueue,
@@ -273,6 +276,75 @@ export const procurementService = {
   decision: (tenantId: string, orderItemId: string) =>
     api.get<DecisionDetail>(
       `/api/procurement/order-items/${orderItemId}/decision${qs({ tenant_id: tenantId })}`,
+    ),
+
+  // --- Supplier Order Optimization (the stage between Auto Assignment and Export) ---
+
+  // Below-minimum suppliers + the lowest-value suggested moves to fix them.
+  optimization: (
+    tenantId: string,
+    refreshId: string,
+    opts?: { priceTolerance?: number; useLiveStock?: boolean },
+  ) =>
+    api.get<OptimizationResult>(
+      `/api/procurement/refreshes/${refreshId}/optimization${qs({
+        tenant_id: tenantId,
+        price_tolerance: opts?.priceTolerance,
+        use_live_stock: opts?.useLiveStock === false ? 'false' : undefined,
+      })}`,
+    ),
+
+  // Apply accepted suggestion(s) — Accept / Accept All.
+  applyOptimization: (
+    tenantId: string,
+    refreshId: string,
+    moves: { assignment_id: string; to_supplier: string }[],
+    by: string | null,
+    reason: 'auto' | 'manual' = 'auto',
+  ) =>
+    api.post<OptimizationMoveResult>(
+      `/api/procurement/refreshes/${refreshId}/optimization/apply${qs({ tenant_id: tenantId })}`,
+      { moves, reason, applied_by: by },
+    ),
+
+  // Manual Move — move one product to another supplier (§8).
+  manualMove: (
+    tenantId: string,
+    refreshId: string,
+    assignmentId: string,
+    toSupplier: string,
+    by: string | null,
+  ) =>
+    api.post(
+      `/api/procurement/refreshes/${refreshId}/optimization/manual-move${qs({ tenant_id: tenantId })}`,
+      { assignment_id: assignmentId, to_supplier: toSupplier, moved_by: by },
+    ),
+
+  optimizationAudit: (tenantId: string, refreshId: string) =>
+    api
+      .get<{ moves: OptimizationAuditRow[] }>(
+        `/api/procurement/refreshes/${refreshId}/optimization/audit${qs({ tenant_id: tenantId })}`,
+      )
+      .then((r) => r.moves),
+
+  // Per-supplier Minimum Order Value config.
+  minOrders: (tenantId: string, storeId: string) =>
+    api
+      .get<{ min_orders: Record<string, number> }>(
+        `/api/procurement/suppliers/min-orders${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      )
+      .then((r) => r.min_orders),
+
+  setMinOrder: (
+    tenantId: string,
+    supplierCode: string,
+    storeId: string,
+    minOrderValue: number,
+    by: string | null,
+  ) =>
+    api.put(
+      `/api/procurement/suppliers/${supplierCode}/min-order${qs({ tenant_id: tenantId })}`,
+      { store_id: storeId, min_order_value: minOrderValue, updated_by: by },
     ),
 
   // Close a cycle. End GRN / End Sale Bill are auto-read from synced data on the

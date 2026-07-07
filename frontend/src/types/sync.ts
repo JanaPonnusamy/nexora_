@@ -179,6 +179,8 @@ export interface TableStat {
   updated_today: number
   skipped_today: number
   last_sync: string | null
+  watermark_column: string | null
+  last_business_value: string | null
 }
 
 export interface ChunkStatusRow {
