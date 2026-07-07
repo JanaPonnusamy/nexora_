@@ -50,7 +50,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response
   try {
     response = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  } catch {
+  } catch (e) {
+    // A caller-triggered abort (component unmounted / a newer request superseded
+    // this one) is not a request failure — let the caller's own `catch` decide
+    // whether to ignore it (they already checked signal.aborted / a "live" flag).
+    if (e instanceof DOMException && e.name === 'AbortError') throw e
     throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
   }
 
@@ -72,7 +76,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
+  // `signal` lets a caller cancel an in-flight GET (e.g. via AbortController)
+  // when a newer request supersedes it — avoids a slow, stale response from an
+  // earlier render/keystroke overwriting fresher state. Optional and additive;
+  // every existing call site is unaffected.
+  get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
   upload: <T>(path: string, form: FormData) =>

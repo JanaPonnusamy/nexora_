@@ -152,6 +152,14 @@ export default function PurchaseWorkspacePage() {
 
   const importInputRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  // Cancels a prior in-flight workspace fetch when a newer one starts (debounce
+  // timer firing again, an error-path reload, a manual refresh click, etc.) so a
+  // slow, stale response can never overwrite fresher state.
+  const workspaceAbortRef = useRef<AbortController | null>(null)
+  // Guards loadQueue against overlapping runs — it fans out one request per
+  // assigned item, so two concurrent calls (rapid supplier switches, chained
+  // actions) could otherwise resolve out of order and let a stale result win.
+  const queueRunRef = useRef(0)
 
   const say = useCallback((kind: 'success' | 'danger', text: string) => {
     setBanner({ kind, text })
@@ -160,6 +168,20 @@ export default function PurchaseWorkspacePage() {
   const fail = useCallback(
     (e: unknown) => say('danger', e instanceof Error ? e.message : 'Request failed'),
     [say],
+  )
+  // Adding a manual product returns 409 (not a bug — the backend correctly
+  // rejects a duplicate) when that product is already a working item in this
+  // refresh. Surface it as guidance instead of the raw backend detail text, and
+  // never auto-retry: the operator decides the next step (search the grid).
+  const failManualAdd = useCallback(
+    (e: unknown) => {
+      if (e instanceof ApiError && e.status === 409) {
+        say('danger', 'Already in this refresh — search for it in the product grid instead of adding it again.')
+      } else {
+        fail(e)
+      }
+    },
+    [fail, say],
   )
 
   useEffect(() => {
@@ -238,27 +260,40 @@ export default function PurchaseWorkspacePage() {
   }, [tenantId, refreshId])
 
   const loadWorkspace = useCallback(() => {
+    // Supersede any request already in flight before starting a new one.
+    workspaceAbortRef.current?.abort()
     if (!tenantId || !refreshId) {
       setItems([])
       return
     }
+    const controller = new AbortController()
+    workspaceAbortRef.current = controller
     setLoading(true)
     setError(null)
     procurementService
-      .workspace(tenantId, refreshId, {
-        search,
-        movement_class: movement || undefined,
-        // Load the whole refresh (no artificial 300 cap). Typical cycles are
-        // 700–1000 rows; the grid renders them behind an internal scroll.
-        // TODO: true row virtualization for very large (2000+) cycles.
-        page_size: 5000,
-      })
+      .workspace(
+        tenantId, refreshId,
+        {
+          search,
+          movement_class: movement || undefined,
+          // Load the whole refresh (no artificial 300 cap). Typical cycles are
+          // 700–1000 rows; the grid renders them behind an internal scroll.
+          // TODO: true row virtualization for very large (2000+) cycles.
+          page_size: 5000,
+        },
+        controller.signal,
+      )
       .then((p) => {
         setItems(p.items)
         setTotal(p.total ?? p.items.length)
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
-      .finally(() => setLoading(false))
+      .catch((e) => {
+        if (e instanceof DOMException && e.name === 'AbortError') return // superseded, not an error
+        setError(e instanceof Error ? e.message : 'Failed to load')
+      })
+      .finally(() => {
+        if (workspaceAbortRef.current === controller) setLoading(false)
+      })
   }, [tenantId, refreshId, search, movement])
 
   useEffect(() => {
@@ -516,10 +551,26 @@ export default function PurchaseWorkspacePage() {
     [items],
   )
 
-  useEffect(() => {
-    if (visibleItems.length === 0) setSelectedId(null)
-    else if (!visibleItems.some((i) => i.order_item_id === selectedId)) setSelectedId(visibleItems[0].order_item_id)
-  }, [visibleItems, selectedId])
+  // Keep the selection valid whenever the visible list changes (a save/skip/
+  // assign, a filter toggle, a supplier switch). Adjusted DURING RENDER, guarded
+  // by comparing against the previous `visibleItems` reference — React's
+  // documented pattern for "adjusting state when a prop changes"
+  // (https://react.dev/learn/you-might-not-need-an-effect). This used to live in
+  // a useEffect keyed on [visibleItems, selectedId]: a keyboard-driven
+  // save-and-advance changes both `items` (new visibleItems) and `selectedId` in
+  // one batch, that effect could reassign `selectedId` again, which re-armed
+  // ProductGrid's own selection-reset effect, and under the wrong timing the
+  // cascade never settled — "Maximum update depth exceeded". Resolving it
+  // in-render (single pass, no extra effect flush) removes that race entirely.
+  const [prevVisibleItems, setPrevVisibleItems] = useState(visibleItems)
+  if (visibleItems !== prevVisibleItems) {
+    setPrevVisibleItems(visibleItems)
+    if (visibleItems.length === 0) {
+      if (selectedId !== null) setSelectedId(null)
+    } else if (!visibleItems.some((i) => i.order_item_id === selectedId)) {
+      setSelectedId(visibleItems[0].order_item_id)
+    }
+  }
 
   /* ---- Row actions ------------------------------------------------------- */
 
@@ -678,6 +729,12 @@ export default function PurchaseWorkspacePage() {
   // so the queue can show Ready / Pending / Exported cards with product lines.
   const loadQueue = useCallback(async () => {
     if (!canWork) return
+    // Each call fans out one request per assigned item (Promise.all below), so
+    // two overlapping runs (rapid supplier switches, one action chaining into
+    // another) can resolve out of order. Only the LATEST run is allowed to
+    // commit its result — an older, slower run's response is discarded instead
+    // of racing it into state.
+    const runId = ++queueRunRef.current
     setQueueLoading(true)
     try {
       const assignedItems = items.filter((i) => (i.assigned_qty ?? 0) > 0)
@@ -727,6 +784,7 @@ export default function PurchaseWorkspacePage() {
           }
         }),
       )
+      if (runId !== queueRunRef.current) return // superseded by a newer call
       const groups = [...map.values()]
       groups.forEach((g) => {
         g.status = g.exported_count === 0 ? 'ready' : g.exported_count >= g.product_count ? 'exported' : 'partial'
@@ -735,9 +793,9 @@ export default function PurchaseWorkspacePage() {
       setQueueLines(groups)
       setLockedIds(locked)
     } catch (e) {
-      fail(e)
+      if (runId === queueRunRef.current) fail(e)
     } finally {
-      setQueueLoading(false)
+      if (runId === queueRunRef.current) setQueueLoading(false)
     }
   }, [canWork, items, tenantId, fail])
 
@@ -865,7 +923,7 @@ export default function PurchaseWorkspacePage() {
       setManualOpen(false)
       loadWorkspace()
     } catch (e) {
-      fail(e)
+      failManualAdd(e)
     } finally {
       setManualBusy(false)
     }
@@ -912,7 +970,7 @@ export default function PurchaseWorkspacePage() {
       say('success', `Added ${qty} × ${row.product_code} — assign ${supplier?.supplier_code ?? 'a supplier'} in Review mode`)
       loadWorkspace()
     } catch (e) {
-      fail(e)
+      failManualAdd(e)
     } finally {
       setManualBusy(false)
     }

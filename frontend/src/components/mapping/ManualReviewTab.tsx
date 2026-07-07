@@ -40,6 +40,14 @@ export function ManualReviewTab({ ctx }: { ctx: MappingCtx }) {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const load = useCallback((toPage: number, opts?: { keepToast?: boolean }) => {
+    // Guard mirrors <RequireStorePair>: both store ids are required by the
+    // backend (tenant_id/source_store_id/target_store_id are non-optional
+    // Query(...) params), so an incomplete pair must not fetch at all rather
+    // than send a request the API is guaranteed to reject with 422.
+    if (!ctx.sourceStoreId || !ctx.targetStoreId) {
+      setLoading(false)
+      return
+    }
     // Hoisted inner so the empty-page fallback can re-fetch the front of the
     // queue without self-referencing the memoised `load`.
     function fetchPage(page: number) {

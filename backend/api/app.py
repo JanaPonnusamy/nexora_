@@ -129,10 +129,10 @@ def health_db():
 # UNINEX_FRONTEND_DIR, this same service also serves the SPA build and a
 # generated /config.js that points the SPA at the configured API URL. API
 # routers above are registered first and therefore take precedence over the
-# static mount. Unset in development, so nothing changes when running locally.
+# routes below. Unset in development, so nothing changes when running locally.
 _frontend_dir = os.getenv('UNINEX_FRONTEND_DIR')
 if _frontend_dir and os.path.isdir(_frontend_dir):
-    from fastapi.responses import Response
+    from fastapi.responses import FileResponse, Response
     from fastapi.staticfiles import StaticFiles
 
     # Empty (the default) = same-origin/relative: the SPA calls whichever host
@@ -146,9 +146,27 @@ if _frontend_dir and os.path.isdir(_frontend_dir):
         body = f'window.__UNINEX_API_BASE__ = "{_api_base}";\n'
         return Response(content=body, media_type='application/javascript')
 
-    app.mount(
-        '/', StaticFiles(directory=_frontend_dir, html=True), name='frontend'
-    )
+    # Vite's hashed JS/CSS bundles live under /assets — served directly (with
+    # correct caching/range support) via StaticFiles.
+    _assets_dir = os.path.join(_frontend_dir, 'assets')
+    if os.path.isdir(_assets_dir):
+        app.mount('/assets', StaticFiles(directory=_assets_dir), name='frontend-assets')
+
+    # Catch-all SPA fallback — MUST be the last route registered so every API
+    # router above still wins on its own path. A bare StaticFiles mount at "/"
+    # only serves an existing file or a directory's index.html; it does not
+    # know about React Router's client-side routes (e.g. /procurement/
+    # intelligence), so a direct navigation or hard refresh on one of those
+    # 404s at the HTTP layer even though the route exists in the SPA. This
+    # handler serves the matching file when one exists on disk (favicon,
+    # manifest, etc.) and otherwise falls back to index.html so React Router
+    # can resolve the path client-side.
+    @app.get('/{full_path:path}')
+    def spa_fallback(full_path: str):
+        candidate = os.path.join(_frontend_dir, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(_frontend_dir, 'index.html'))
 
 if __name__ == '__main__':
     import uvicorn

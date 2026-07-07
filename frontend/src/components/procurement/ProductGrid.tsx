@@ -121,6 +121,26 @@ export function ProductGrid({
   // grid container instead of falling back to <body>.
   const selectedStatus = items[selectedIndex]?.item_status
 
+  // A new active row always starts in the Final Qty zone (and drops any pending
+  // Esc-skip focus, so navigating onto a skipped row lands on its qty cell).
+  // Adjusted DURING RENDER, guarded by comparing against the previous selection
+  // (React's documented pattern for "adjusting state when a prop changes" —
+  // https://react.dev/learn/you-might-not-need-an-effect). Doing this in a
+  // separate useEffect keyed on `selectedId` made it race the parent's own
+  // selection-repair effect (below): a keyboard advance changes `selectedId`,
+  // this effect resets zone/skipFocusId, the parent's effect can then also
+  // reassign `selectedId`, re-arming this effect again — under the wrong timing
+  // that cascade doesn't settle and React aborts with "Maximum update depth
+  // exceeded". Resolving it in-render collapses the reset into the same pass
+  // as the selection change, so there is nothing left for an effect to chase.
+  const [prevSelectedId, setPrevSelectedId] = useState(selectedId)
+  if (selectedId !== prevSelectedId) {
+    setPrevSelectedId(selectedId)
+    setZone('qty')
+    setSupIndex(0)
+    setSkipFocusId(null)
+  }
+
   // Up to five ranked suppliers for a row, honouring the Supplier-Purchasing
   // collapse. Same shape the row renders, so keyboard and mouse agree.
   const recsFor = (item: WorkspaceItem): SupplierRow[] => {
@@ -132,7 +152,8 @@ export function ProductGrid({
   // Land keyboard focus for the active row: the Final Qty cell in the qty zone
   // (editable rows) or the grid container otherwise — in the supplier zone the
   // container holds focus so Left/Right drive the supplier cursor and the number
-  // caret never interferes.
+  // caret never interferes. This effect only moves DOM focus — it never calls
+  // setState, so it cannot itself re-trigger the render-time reset above.
   useEffect(() => {
     if (selectedIndex < 0) return
     if (zone === 'supplier') { wrapRef.current?.focus(); return }
@@ -147,14 +168,6 @@ export function ProductGrid({
     // changes (not on every edit).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, items.length, zone, selectedStatus, skipFocusId])
-
-  // A new active row always starts in the Final Qty zone (and drops any pending
-  // Esc-skip focus, so navigating onto a skipped row lands on its qty cell).
-  useEffect(() => {
-    setZone('qty')
-    setSupIndex(0)
-    setSkipFocusId(null)
-  }, [selectedId])
 
   // Tell the parent when the Supplier Recommendation zone is active, so the
   // external supplier panel can highlight itself.

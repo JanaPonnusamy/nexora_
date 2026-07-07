@@ -38,7 +38,7 @@ export const procurementService = {
       )
       .then((r) => r.items),
 
-  workspace: (tenantId: string, refreshId: string, f: WorkspaceFilters) =>
+  workspace: (tenantId: string, refreshId: string, f: WorkspaceFilters, signal?: AbortSignal) =>
     api.get<WorkspacePage>(
       `/api/procurement/refreshes/${refreshId}/workspace${qs({
         tenant_id: tenantId,
@@ -51,6 +51,7 @@ export const procurementService = {
         page: f.page,
         page_size: f.page_size,
       })}`,
+      signal,
     ),
 
   setFinalQty: (tenantId: string, orderItemId: string, finalQty: number, reason: string | null, by: string | null) =>
