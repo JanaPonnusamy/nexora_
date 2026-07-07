@@ -127,6 +127,9 @@ export default function PurchaseWorkspacePage() {
   const [busySupplier, setBusySupplier] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
 
+  // Configured Minimum Order Value per supplier (batch-loaded once per store).
+  const [minOrders, setMinOrders] = useState<Record<string, number>>({})
+
   // Supplier context (modes 2/3) + live stock
   const [supplier, setSupplier] = useState<SupplierRow | null>(null)
   const [stockSearch, setStockSearch] = useState('')
@@ -199,6 +202,18 @@ export default function PurchaseWorkspacePage() {
     setStage('review')
     setSupplier(null)
   }, [refreshId])
+
+  // Minimum Order Value per supplier — one batched read per store (drives the
+  // Assignment Summary + supplier-search status; no per-product query).
+  useEffect(() => {
+    if (!tenantId || !selectedStoreId) { setMinOrders({}); return }
+    let live = true
+    procurementService
+      .minOrders(tenantId, selectedStoreId)
+      .then((m) => live && setMinOrders(m))
+      .catch(() => live && setMinOrders({}))
+    return () => { live = false }
+  }, [tenantId, selectedStoreId])
 
   // Batched supplier recommendations for the whole refresh (one round-trip) —
   // powers the Product Grid supplier icons in every mode.
@@ -358,6 +373,21 @@ export default function PurchaseWorkspacePage() {
     return m
   }, [recommendations, queueLines])
   const nameOf = useCallback((code: string) => supplierNames.get(code) ?? code, [supplierNames])
+
+  // Per-supplier context for the search dropdown, resolved from data already
+  // loaded for this refresh (Supplier Queue + Minimum Order config) — no extra
+  // query. Credit is not modelled in the current schema, so it stays unknown.
+  const supplierMetaOf = useCallback(
+    (code: string) => {
+      const g = queueLines.find((x) => x.supplier_code === code)
+      const assignedProducts = g?.product_count ?? 0
+      const purchaseValue = g?.est_value ?? 0
+      const min = minOrders[code] ?? 0
+      const status = assignedProducts === 0 ? 'New' : min > 0 && purchaseValue < min ? 'Below Min' : 'Ready'
+      return { assignedProducts, purchaseValue, status, creditActive: null }
+    },
+    [queueLines, minOrders],
+  )
 
   const onEditChange = (id: string, value: string) => setEdits((d) => ({ ...d, [id]: value }))
 
@@ -593,16 +623,19 @@ export default function PurchaseWorkspacePage() {
       return next
     })
 
-  const bulkAssign = async (supplierCode: string) => {
+  // Shared assignment path: assign a specific set of order items to a supplier
+  // and refresh assigned count / row status (loadWorkspace) + supplier totals
+  // (loadQueue). The backend skips any product already actively assigned, so
+  // manually-assigned products are never overwritten.
+  const assignIds = async (supplierCode: string, ids: string[]) => {
     const code = supplierCode.trim()
-    if (!code) return say('danger', 'Pick or enter a supplier')
-    if (checked.size === 0) return say('danger', 'Select at least one product')
-    const ids = [...checked]
+    if (!code) return say('danger', 'Pick a supplier')
+    if (ids.length === 0) return say('danger', 'Nothing to assign')
     try {
       const res = await procurementService.bulkAssign(tenantId, code, ids, actingUser || null)
       say('success', `Assigned ${res.assigned}${res.skipped ? `, skipped ${res.skipped} (already assigned)` : ''}`)
       // Remember the chosen supplier per row so the Recommendation panel shows it
-      // green immediately; the backend skips any duplicate active assignment.
+      // green immediately.
       setSelectedSupplier((prev) => {
         const next = { ...prev }
         ids.forEach((id) => { next[id] = code })
@@ -614,6 +647,28 @@ export default function PurchaseWorkspacePage() {
     } catch (e) {
       fail(e)
     }
+  }
+
+  // Assign Selected — the checked products.
+  const bulkAssign = (supplierCode: string) => assignIds(supplierCode, [...checked])
+
+  // Assign Remaining — every currently UNASSIGNED, finalized product that the
+  // selected supplier can supply (a candidate in its recommendations). Products
+  // already assigned (to any supplier) are excluded, so nothing is overwritten.
+  const assignRemaining = () => {
+    if (!supplier) return
+    const code = supplier.supplier_code
+    const ids = items
+      .filter(
+        (it) =>
+          it.item_status !== 'skipped' &&
+          (it.assigned_qty ?? 0) === 0 &&
+          (it.final_qty ?? 0) > 0 &&
+          (recommendations[it.order_item_id]?.some((r) => r.supplier_code === code) ?? false),
+      )
+      .map((it) => it.order_item_id)
+    if (ids.length === 0) return say('danger', `No unassigned products that ${supplier.supplier_name ?? code} supplies`)
+    assignIds(code, ids)
   }
 
   /* ---- Supplier queue + export ------------------------------------------- */
@@ -1101,6 +1156,7 @@ export default function PurchaseWorkspacePage() {
                       value={supplier}
                       onPick={setSupplier}
                       onReturnToGrid={() => (document.querySelector('.pm-grid-wrap') as HTMLElement | null)?.focus()}
+                      metaOf={supplierMetaOf}
                     />
                   )}
                   {mode === 'supplier-stock' && (
@@ -1128,40 +1184,59 @@ export default function PurchaseWorkspacePage() {
             </div>
           )}
 
-          {/* Bulk selection bar — appears in the Assign stage once a supplier is
+          {/* Assignment Summary — appears in the Assign stage once a supplier is
               picked (Supplier Purchasing). Assign Selected stays disabled until a
               supplier and at least one product are selected. */}
-          {stage === 'assign' && mode === 'supplier' && supplier && (
-            <div className="pm-selbar">
-              <span className="pm-selbar__item">
-                <span className="pm-selbar__k">Selected Supplier</span>
-                <b className="pm-selbar__v">{supplier.supplier_name ?? supplier.supplier_code}</b>
-              </span>
-              <span className="pm-selbar__item">
-                <span className="pm-selbar__k">Products Selected</span>
-                <b className="pm-selbar__v">{num(checked.size)}</b>
-              </span>
-              <span className="pm-selbar__item">
-                <span className="pm-selbar__k">Assigned</span>
-                <b className="pm-selbar__v">{num(assignedCount)}</b>
-              </span>
-              <span className="pm-selbar__spacer" />
-              <button
-                className="pm-btn pm-btn--ghost"
-                disabled={checked.size === 0}
-                onClick={() => setChecked(new Set())}
-              >
-                Clear Selection
-              </button>
-              <button
-                className="pm-btn pm-btn--primary"
-                disabled={checked.size === 0}
-                onClick={() => bulkAssign(supplier.supplier_code)}
-              >
-                <i className="bi bi-check2-square" /> Assign Selected ({num(checked.size)})
-              </button>
-            </div>
-          )}
+          {stage === 'assign' && mode === 'supplier' && supplier && (() => {
+            const g = selectedGroup
+            const alreadyAssigned = g?.product_count ?? 0
+            const purchaseValue = g?.est_value ?? 0
+            const min = minOrders[supplier.supplier_code] ?? 0
+            const ready = min > 0 ? purchaseValue >= min : alreadyAssigned > 0
+            const readyLabel = min > 0 ? (ready ? 'Ready' : 'Below Min') : alreadyAssigned > 0 ? 'No minimum' : 'New'
+            return (
+              <div className="pm-selbar">
+                <span className="pm-selbar__item">
+                  <span className="pm-selbar__k">Selected Supplier</span>
+                  <b className="pm-selbar__v">{supplier.supplier_name ?? supplier.supplier_code}</b>
+                </span>
+                <span className="pm-selbar__item">
+                  <span className="pm-selbar__k">Products Selected</span>
+                  <b className="pm-selbar__v">{num(checked.size)}</b>
+                </span>
+                <span className="pm-selbar__item">
+                  <span className="pm-selbar__k">Already Assigned</span>
+                  <b className="pm-selbar__v">{num(alreadyAssigned)}</b>
+                </span>
+                <span className="pm-selbar__item">
+                  <span className="pm-selbar__k">Purchase Value</span>
+                  <b className="pm-selbar__v">{queueLoading ? 'Calculating…' : purchaseValue > 0 ? money(purchaseValue) : '—'}</b>
+                </span>
+                <span className="pm-selbar__item">
+                  <span className="pm-selbar__k">Minimum Order</span>
+                  <b className="pm-selbar__v">{min > 0 ? money(min) : '—'}</b>
+                </span>
+                <span className="pm-selbar__item">
+                  <span className="pm-selbar__k">Status</span>
+                  <b className={`pm-optstat ${ready ? 'pm-optstat--ok' : 'pm-optstat--short'}`}>{readyLabel}</b>
+                </span>
+                <span className="pm-selbar__spacer" />
+                <button className="pm-btn pm-btn--ghost" disabled={checked.size === 0} onClick={() => setChecked(new Set())}>
+                  Clear Selection
+                </button>
+                <button className="pm-btn pm-btn--ghost" onClick={assignRemaining}>
+                  <i className="bi bi-list-check" /> Assign Remaining
+                </button>
+                <button
+                  className="pm-btn pm-btn--primary"
+                  disabled={checked.size === 0}
+                  onClick={() => bulkAssign(supplier.supplier_code)}
+                >
+                  <i className="bi bi-check2-square" /> Assign Selected ({num(checked.size)})
+                </button>
+              </div>
+            )
+          })()}
 
           {stage === 'optimize' ? (
             <SupplierOptimizationPanel

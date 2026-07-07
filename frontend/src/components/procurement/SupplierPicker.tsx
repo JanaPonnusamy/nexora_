@@ -3,6 +3,17 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { SupplierRow } from '../../types/procurement'
 import { procurementService } from '../../services/procurementService'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { money, num, date } from '../stock/format'
+
+/** Per-supplier context shown in each search result, resolved from data already
+ *  loaded for the current refresh (no extra query). `creditActive` is undefined
+ *  when no credit source exists in the current schema. */
+export interface SupplierPickMeta {
+  assignedProducts: number
+  purchaseValue: number
+  status: string
+  creditActive?: boolean | null
+}
 
 /** Compact supplier search + select used by the Supplier Purchasing and
  *  Supplier Available Stock modes.
@@ -16,12 +27,14 @@ export function SupplierPicker({
   value,
   onPick,
   onReturnToGrid,
+  metaOf,
 }: {
   tenantId: string
   storeId?: string
   value: SupplierRow | null
   onPick: (supplier: SupplierRow | null) => void
   onReturnToGrid?: () => void
+  metaOf?: (supplierCode: string) => SupplierPickMeta | undefined
 }) {
   const [q, setQ] = useState('')
   const debounced = useDebouncedValue(q)
@@ -123,18 +136,32 @@ export function SupplierPicker({
       </span>
       {open && rows.length > 0 && (
         <ul className="pm-suppick__menu" id="pm-suppick-menu" ref={menuRef} role="listbox">
-          {rows.map((s, i) => (
-            <li key={s.supplier_code} id={`pm-suppick-opt-${i}`} role="option" aria-selected={i === active}>
-              <button
-                className={i === active ? 'pm-suppick__opt--active' : undefined}
-                onMouseEnter={() => setActive(i)}
-                onClick={() => { onPick(s); setOpen(false) }}
-              >
-                <span>{s.supplier_name ?? s.supplier_code}</span>
-                <span className="pm-suppick__code">{s.supplier_code}</span>
-              </button>
-            </li>
-          ))}
+          {rows.map((s, i) => {
+            const m = metaOf?.(s.supplier_code)
+            return (
+              <li key={s.supplier_code} id={`pm-suppick-opt-${i}`} role="option" aria-selected={i === active}>
+                <button
+                  className={`pm-suppick__row${i === active ? ' pm-suppick__opt--active' : ''}`}
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => { onPick(s); setOpen(false) }}
+                >
+                  <span className="pm-suppick__line1">
+                    <span className="pm-suppick__nm">{s.supplier_name ?? s.supplier_code}</span>
+                    <span className="pm-suppick__code">{s.supplier_code}</span>
+                  </span>
+                  {m && (
+                    <span className="pm-suppick__meta">
+                      <span>{num(m.assignedProducts)} assigned</span>
+                      <span>{m.purchaseValue > 0 ? money(m.purchaseValue) : '—'}</span>
+                      <span>Last {date(s.last_grn_date)}</span>
+                      <span className={`pm-suppick__st pm-suppick__st--${m.status.toLowerCase().replace(/\s+/g, '')}`}>{m.status}</span>
+                      <span>Credit {m.creditActive == null ? '—' : m.creditActive ? 'Active' : 'No'}</span>
+                    </span>
+                  )}
+                </button>
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>

@@ -15,30 +15,70 @@ export function sortSuppliersByCost(suppliers: SupplierRow[]): SupplierRow[] {
   })
 }
 
+/** Optional per-product signals for Auto Assign scoring that are not carried in
+ *  the batched recommendation feed (kept optional so the caller adds no extra
+ *  per-product query). */
+export interface AutoAssignSignals {
+  /** Supplier explicitly mapped to this product (Exact Product Mapping). */
+  mappedSupplier?: string | null
+  /** Supplier codes with live stock available for this product. */
+  liveStockCodes?: Set<string> | null
+}
+
+// Relative weights (highest wins). Exact mapping dominates; live stock breaks ties.
+const AA_WEIGHTS = { mapping: 100, lastPurchase: 40, frequency: 30, ptr: 20, liveStock: 10 }
+
 /**
- * Auto Assign supplier selection — the documented priority. Exactly ONE supplier
- * is ever assigned automatically per product:
+ * Auto Assign supplier selection — WEIGHTED SCORING (exactly ONE supplier is
+ * ever chosen per product). Each candidate is scored across, in weight order:
  *
- *   1. Exact Product Mapping — a supplier explicitly mapped to the product.
- *   2. Last Purchase Supplier — the most recently purchased-from supplier.
- *   3. Preferred Supplier — the most frequently purchased-from supplier.
+ *   1. Exact Product Mapping  (100) — supplier explicitly mapped to the product
+ *   2. Last Purchase          ( 40) — most recent GRN date (newest = full)
+ *   3. Purchase Frequency     ( 30) — normalised against the top candidate
+ *   4. Lowest PTR             ( 20) — cheapest last rate = full
+ *   5. Live Stock             ( 10) — stock currently available
  *
- * The recommendation feed does not carry an exact-mapping flag, so tier 1 is a
- * no-op here and selection resolves to the Last Purchase supplier (most recent
- * GRN date), then the Preferred supplier (highest purchase frequency). Returns
+ * The highest total score wins. Mapping/live-stock signals are optional (not in
+ * the batched feed) and simply contribute 0 when absent — so the ranking then
+ * resolves to Last Purchase → Frequency → PTR without any extra query. Returns
  * the chosen supplier_code, or null when the product has no supplier history.
  */
-export function autoAssignSupplier(recs: SupplierRow[] | undefined): string | null {
+export function autoAssignSupplier(
+  recs: SupplierRow[] | undefined,
+  signals?: AutoAssignSignals,
+): string | null {
   if (!recs || recs.length === 0) return null
-  const dated = recs.filter((r) => r.last_grn_date)
-  if (dated.length) {
-    return [...dated].sort(
-      (a, b) =>
-        Date.parse(b.last_grn_date!) - Date.parse(a.last_grn_date!) ||
-        (b.purchase_frequency ?? 0) - (a.purchase_frequency ?? 0),
-    )[0].supplier_code
+
+  const maxFreq = Math.max(1, ...recs.map((r) => r.purchase_frequency ?? 0))
+  const times = recs.map((r) => (r.last_grn_date ? Date.parse(r.last_grn_date) : NaN)).filter((t) => !Number.isNaN(t))
+  const newest = times.length ? Math.max(...times) : NaN
+  const oldest = times.length ? Math.min(...times) : NaN
+  const rates = recs.map((r) => r.last_purchase_rate).filter((x): x is number => x != null)
+  const minRate = rates.length ? Math.min(...rates) : NaN
+  const maxRate = rates.length ? Math.max(...rates) : NaN
+
+  let best: string | null = null
+  let bestScore = -1
+  for (const r of recs) {
+    let s = 0
+    if (signals?.mappedSupplier && r.supplier_code === signals.mappedSupplier) s += AA_WEIGHTS.mapping
+    if (r.last_grn_date && !Number.isNaN(newest)) {
+      const t = Date.parse(r.last_grn_date)
+      const span = newest - oldest
+      s += AA_WEIGHTS.lastPurchase * (span > 0 ? (t - oldest) / span : 1)
+    }
+    s += AA_WEIGHTS.frequency * ((r.purchase_frequency ?? 0) / maxFreq)
+    if (r.last_purchase_rate != null && !Number.isNaN(minRate)) {
+      const span = maxRate - minRate
+      s += AA_WEIGHTS.ptr * (span > 0 ? (maxRate - r.last_purchase_rate) / span : 1)
+    }
+    if (signals?.liveStockCodes?.has(r.supplier_code)) s += AA_WEIGHTS.liveStock
+    if (s > bestScore) {
+      bestScore = s
+      best = r.supplier_code
+    }
   }
-  return [...recs].sort((a, b) => (b.purchase_frequency ?? 0) - (a.purchase_frequency ?? 0))[0].supplier_code
+  return best
 }
 
 /** Purchase value for a working line: Final Qty × Last Purchase Rate (PTR),
