@@ -56,18 +56,23 @@ class DataExtractionService:
         if watermark_column and available and watermark_column.lower() not in available:
             watermark_column = None
 
-        # Watermark-driven incremental: after the first sync use the stored
-        # watermark (> last); on the first sync fall back to the rolling-window
-        # floor. Master tables have no watermark column -> full scan (hashed).
+        # Rolling-window tables must always re-scan the whole trailing window,
+        # not just rows past the last watermark: some sources (e.g. ProductTrans)
+        # key the watermark column to a business bucket (MonthOfStatistics) that
+        # stays fixed while the row itself keeps getting updated in place all
+        # month. A strict "> last watermark" cursor would see that bucket once
+        # and then never re-fetch it again, silently freezing the row. Re-scanning
+        # the full window every run is safe: the hash-diff stage downstream only
+        # uploads rows whose content actually changed.
         if watermark_column:
-            if watermark:
-                where.append("[" + watermark_column + "] > ?")
-                params.append(watermark)
-            elif table_config.get("window_days"):
+            if table_config.get("window_days"):
                 where.append(
                     "[" + watermark_column + "] >= DATEADD(day, ?, GETDATE())"
                 )
                 params.append(-int(table_config["window_days"]))
+            elif watermark:
+                where.append("[" + watermark_column + "] > ?")
+                params.append(watermark)
 
         custom_where = table_config.get("custom_where")
         if custom_where:
