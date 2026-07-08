@@ -33,8 +33,19 @@ const STATUS_TONE: Record<string, Tone> = {
   RUNNING: 'indigo',
   Syncing: 'indigo',
   QUEUED: 'warning',
+  PENDING: 'warning',
+  PAUSED: 'info',
+  CANCELLED: 'muted',
+  PARTIAL: 'warning',
+  PARTIAL_SUCCESS: 'warning',
   Online: 'success',
   Offline: 'muted',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  Syncing: 'Syncing',
+  PARTIAL: 'Partial Success',
+  PARTIAL_SUCCESS: 'Partial Success',
 }
 
 export function SyncStatusBadge({ status }: { status: string | null }) {
@@ -43,7 +54,7 @@ export function SyncStatusBadge({ status }: { status: string | null }) {
   const running = status === 'Syncing' || status === 'RUNNING'
   return (
     <SxChip tone={tone} dot running={running}>
-      {status === 'Syncing' ? 'Syncing' : status}
+      {STATUS_LABEL[status] ?? status}
     </SxChip>
   )
 }

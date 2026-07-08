@@ -79,12 +79,40 @@ def store_health():
     return SyncAdminService().store_health()
 
 @router.get("/history")
-def get_history():
-    return SyncAdminService().get_history()
+def get_history(
+    store_id: str | None = None,
+    status: str | None = None,
+    execution_type: str | None = None,
+    sync_mode: str | None = None,
+    search: str | None = None,
+    limit: int = 200,
+):
+    return SyncAdminService().get_history(
+        store_id=store_id, status=status, execution_type=execution_type,
+        sync_mode=sync_mode, search=search, limit=limit)
 
-@router.get("/history/{sync_id}/details")
-def get_history_details(sync_id: int):
-    return SyncAdminService().get_history_details(sync_id)
+@router.get("/history/statistics")
+def history_statistics():
+    return SyncAdminService().get_statistics()
+
+@router.get("/history/{execution_id}")
+def get_execution_summary(execution_id: str):
+    summary = SyncAdminService().get_execution_summary(execution_id)
+    if not summary:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    return summary
+
+@router.get("/history/{execution_id}/tables")
+def get_execution_tables(execution_id: str):
+    return SyncAdminService().get_execution_tables(execution_id)
+
+@router.get("/history/{execution_id}/chunks")
+def get_execution_chunks(execution_id: str, table_name: str | None = None):
+    return SyncAdminService().get_execution_chunks(execution_id, table_name)
+
+@router.get("/history/{execution_id}/errors")
+def get_execution_errors(execution_id: str):
+    return SyncAdminService().get_execution_errors(execution_id)
 
 # ===== Table Configuration =====
 

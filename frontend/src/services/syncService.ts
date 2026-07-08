@@ -4,20 +4,34 @@ import type {
   CatalogTable,
   ChunkStatusRow,
   ControlCenter,
+  ExecutionChunkRow,
+  ExecutionErrorRow,
+  ExecutionSummary,
+  ExecutionTableRow,
   LiveStore,
   PendingTask,
   TableStat,
   RegistryPopulateResult,
   ScheduleInput,
   StoreHealthRow,
+  SyncHistoryFilters,
   SyncHistoryRow,
   SyncSchedule,
+  SyncStatistics,
   SyncTable,
   SyncTableInput,
   SyncTaskResult,
   TableColumns,
   TablePromoteResult,
 } from '../types/sync'
+
+function buildQuery(params: Record<string, string | undefined>): string {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v != null && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`)
+    .join('&')
+  return qs ? `?${qs}` : ''
+}
 
 export const syncService = {
   controlCenter: () => api.get<ControlCenter>('/api/sync/control-center'),
@@ -35,7 +49,19 @@ export const syncService = {
   seedSchedules: () =>
     api.post<{ created: number; stores: number }>('/api/sync/schedules/seed', {}),
   storeHealth: () => api.get<StoreHealthRow[]>('/api/sync/store-health'),
-  history: () => api.get<SyncHistoryRow[]>('/api/sync/history'),
+  history: (filters: SyncHistoryFilters = {}) =>
+    api.get<SyncHistoryRow[]>(`/api/sync/history${buildQuery(filters)}`),
+  historyStatistics: () => api.get<SyncStatistics>('/api/sync/history/statistics'),
+  executionSummary: (executionId: string) =>
+    api.get<ExecutionSummary>(`/api/sync/history/${executionId}`),
+  executionTables: (executionId: string) =>
+    api.get<ExecutionTableRow[]>(`/api/sync/history/${executionId}/tables`),
+  executionChunks: (executionId: string, tableName?: string) =>
+    api.get<ExecutionChunkRow[]>(
+      `/api/sync/history/${executionId}/chunks${tableName ? `?table_name=${encodeURIComponent(tableName)}` : ''}`,
+    ),
+  executionErrors: (executionId: string) =>
+    api.get<ExecutionErrorRow[]>(`/api/sync/history/${executionId}/errors`),
   catalogTables: (search: string) =>
     api.get<CatalogTable[]>(
       `/api/sync/catalog/tables${search ? `?search=${encodeURIComponent(search)}` : ''}`,

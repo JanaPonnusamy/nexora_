@@ -62,16 +62,126 @@ export interface StoreHealthRow {
 }
 
 export interface SyncHistoryRow {
-  sync_id: number
+  execution_id: string
+  sync_id: string
   store_id: string | null
   store_code: string | null
   store_name: string | null
+  execution_type: string | null
   scope: string | null
+  sync_mode: string | null
+  status: string | null
   started_at: string | null
   completed_at: string | null
   duration_seconds: number | null
+  triggered_by: string | null
+  agent_version: string | null
+  table_count: number
   rows: number
+  rows_read: number
+  rows_uploaded: number
+  rows_inserted: number
+  rows_updated: number
+  rows_deleted: number
+  error_count: number
+  warning_count: number
+  retry_count: number
+}
+
+export interface SyncHistoryFilters {
+  store_id?: string
+  status?: string
+  execution_type?: string
+  sync_mode?: string
+  search?: string
+}
+
+export interface TimelineStage {
+  stage: string
+  at: string | null
+}
+
+export interface ExecutionSummary {
+  execution_id: string
+  tenant_id: string | null
+  store_id: string | null
+  execution_type: string | null
+  sync_mode: string | null
   status: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number | null
+  total_tables: number
+  completed_tables: number
+  failed_tables: number
+  triggered_by: string | null
+  store_code: string | null
+  store_name: string | null
+  agent_version: string | null
+  tenant_name: string | null
+  table_count: number
+  rows_read: number
+  rows_uploaded: number
+  rows_inserted: number
+  rows_updated: number
+  rows_skipped: number
+  error_count: number
+  retry_count: number
+  timeline: TimelineStage[]
+}
+
+export interface ExecutionTableRow {
+  order: number
+  table_name: string
+  direction: string
+  sync_type: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number | null
+  rows_read: number
+  rows_uploaded: number
+  rows_inserted: number
+  rows_updated: number
+  rows_skipped: number
+  status: string
+  rows_failed: number
+  chunk_count: number
+}
+
+export interface ExecutionChunkRow {
+  chunk_execution_id: number
+  table_name: string
+  chunk_no: number
+  status: string
+  rows: number
+  retry_count: number
+  started_at: string | null
+  completed_at: string | null
+  duration_ms: number | null
+  error_message: string | null
+}
+
+export interface ExecutionErrorRow {
+  table_name: string
+  chunk_no: number
+  retry_count: number
+  started_at: string | null
+  completed_at: string | null
+  error_message: string | null
+}
+
+export interface SyncStatistics {
+  total_executions: number
+  successful: number
+  failed: number
+  running: number
+  success_rate: number
+  avg_duration_seconds: number | null
+  rows_uploaded_today: number
+  largest_sync_rows: number
+  largest_sync_id: string | null
+  slowest_table: string | null
+  slowest_table_seconds: number | null
 }
 
 export interface CatalogTable {

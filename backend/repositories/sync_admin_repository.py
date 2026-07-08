@@ -44,11 +44,13 @@ class SyncAdminRepository:
         online = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM dbo.sync_execution WHERE execution_status = 'RUNNING'")
         running = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution WHERE execution_status = 'QUEUED'")
+        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution WHERE execution_status IN ('QUEUED','PENDING')")
         queued = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution_history WHERE status = 'COMPLETED' AND CAST(started_at AS DATE) = CAST(GETDATE() AS DATE)")
+        # History/KPIs come from the live runtime table dbo.sync_execution (the
+        # legacy dbo.sync_execution_history is never populated by the engine).
+        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution WHERE execution_status = 'COMPLETED' AND CAST(started_at AS DATE) = CAST(GETDATE() AS DATE)")
         completed_today = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution_history WHERE status = 'FAILED' AND CAST(started_at AS DATE) = CAST(GETDATE() AS DATE)")
+        cur.execute("SELECT COUNT(*) FROM dbo.sync_execution WHERE execution_status = 'FAILED' AND CAST(started_at AS DATE) = CAST(GETDATE() AS DATE)")
         failed_today = cur.fetchone()[0]
 
         kpis = {
@@ -64,7 +66,7 @@ class SyncAdminRepository:
         SELECT s.store_id, s.store_code, s.store_name,
             reg.connection_type,
             CASE WHEN reg.last_heartbeat >= DATEADD(SECOND, -90, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
-            (SELECT MAX(h.completed_at) FROM dbo.sync_execution_history h WHERE h.store_id = s.store_id) AS last_sync,
+            (SELECT MAX(h.completed_at) FROM dbo.sync_execution h WHERE h.store_id = s.store_id AND h.execution_status = 'COMPLETED') AS last_sync,
             (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status = 'RUNNING') AS running
         FROM dbo.stores s
         LEFT JOIN dbo.store_agent_registry reg ON reg.store_id = s.store_id AND reg.is_active = 1
@@ -284,8 +286,8 @@ class SyncAdminRepository:
             reg.connection_type,
             reg.last_heartbeat,
             CASE WHEN reg.last_heartbeat >= DATEADD(SECOND, -90, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
-            (SELECT MAX(h.completed_at) FROM dbo.sync_execution_history h WHERE h.store_id = s.store_id) AS last_sync,
-            (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status IN ('QUEUED','RUNNING')) AS pending_queue
+            (SELECT MAX(h.completed_at) FROM dbo.sync_execution h WHERE h.store_id = s.store_id AND h.execution_status = 'COMPLETED') AS last_sync,
+            (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status IN ('QUEUED','PENDING','RUNNING')) AS pending_queue
         FROM dbo.stores s
         LEFT JOIN dbo.store_agent_registry reg ON reg.store_id = s.store_id AND reg.is_active = 1
         WHERE s.is_active = 1
@@ -305,53 +307,326 @@ class SyncAdminRepository:
         return rows
 
     # ===== Sync History (read-only) =====
+    #
+    # ROOT CAUSE FIX: the sync engine (modules/sync/runtime_repository.py) writes
+    # every execution to dbo.sync_execution + dbo.sync_execution_details (per-table
+    # summary rows at chunk_no = 0) + dbo.sync_chunk_execution (per-chunk). The
+    # legacy dbo.sync_execution_history table is NEVER written, so reading it made
+    # History permanently empty. All history reads now target the live tables.
 
-    def get_history(self):
+    def get_history(self, store_id=None, status=None, execution_type=None,
+                    sync_mode=None, search=None, limit=200):
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("""
-        SELECT TOP 200 h.sync_id, h.store_id, h.sync_mode, h.started_at, h.completed_at,
-            h.duration_seconds, h.processed_rows, h.status,
-            st.store_code, st.store_name
-        FROM dbo.sync_execution_history h
-        LEFT JOIN dbo.stores st ON st.store_id = h.store_id
-        ORDER BY h.started_at DESC
-        """)
+        where, params = [], []
+        if store_id:
+            where.append("e.store_id = ?"); params.append(store_id)
+        if status:
+            where.append("e.execution_status = ?"); params.append(status)
+        if execution_type:
+            where.append("e.execution_type = ?"); params.append(execution_type)
+        if sync_mode:
+            where.append("e.sync_mode = ?"); params.append(sync_mode)
+        if search:
+            where.append("CAST(e.execution_id AS varchar(50)) LIKE ?")
+            params.append(f"%{search}%")
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        cur.execute(f"""
+        SELECT TOP (?) e.execution_id, e.store_id, e.execution_type, e.sync_mode,
+            e.execution_status, e.started_at, e.completed_at,
+            DATEDIFF(SECOND, e.started_at, ISNULL(e.completed_at, GETDATE())) AS duration_seconds,
+            st.store_code, st.store_name,
+            COALESCE(e.initiated_by, e.created_by) AS triggered_by,
+            d.tbl_count, d.rows_read, d.rows_uploaded, d.rows_inserted, d.rows_updated,
+            ck.err_count, ck.retry_count,
+            (SELECT TOP 1 r.agent_version FROM dbo.store_agent_registry r
+             WHERE r.store_id = e.store_id AND r.is_active = 1
+             ORDER BY r.last_heartbeat DESC) AS agent_version
+        FROM dbo.sync_execution e
+        LEFT JOIN dbo.stores st ON st.store_id = e.store_id
+        OUTER APPLY (
+            SELECT COUNT(DISTINCT d.table_name) AS tbl_count,
+                   SUM(ISNULL(d.rows_examined, d.rows_processed)) AS rows_read,
+                   SUM(ISNULL(d.rows_uploaded, d.rows_processed)) AS rows_uploaded,
+                   SUM(ISNULL(d.rows_inserted, 0)) AS rows_inserted,
+                   SUM(ISNULL(d.rows_updated, 0)) AS rows_updated
+            FROM dbo.sync_execution_details d
+            WHERE d.execution_id = e.execution_id AND d.chunk_no = 0
+        ) d
+        OUTER APPLY (
+            SELECT SUM(CASE WHEN c.chunk_status = 'FAILED' THEN 1 ELSE 0 END) AS err_count,
+                   SUM(ISNULL(c.retry_count, 0)) AS retry_count
+            FROM dbo.sync_chunk_execution c
+            WHERE c.execution_id = e.execution_id
+        ) ck
+        {clause}
+        ORDER BY e.started_at DESC
+        """, [limit] + params)
         rows = [{
-            "sync_id": r[0],
+            "execution_id": str(r[0]),
+            "sync_id": str(r[0]),  # legacy alias for existing callers
             "store_id": str(r[1]) if r[1] else None,
+            "execution_type": r[2],
+            "scope": r[3],
+            "sync_mode": r[3],
+            "status": r[4],
+            "started_at": _iso(r[5]),
+            "completed_at": _iso(r[6]),
+            "duration_seconds": r[7],
             "store_code": r[8],
             "store_name": r[9],
-            "scope": r[2],
-            "started_at": _iso(r[3]),
-            "completed_at": _iso(r[4]),
-            "duration_seconds": r[5],
-            "rows": r[6] or 0,
-            "status": r[7],
+            "triggered_by": str(r[10]) if r[10] else None,
+            "table_count": r[11] or 0,
+            "rows": int(r[12]) if r[12] else 0,
+            "rows_read": int(r[12]) if r[12] else 0,
+            "rows_uploaded": int(r[13]) if r[13] else 0,
+            "rows_inserted": int(r[14]) if r[14] else 0,
+            "rows_updated": int(r[15]) if r[15] else 0,
+            "rows_deleted": 0,  # engine performs upsert-only (no delete propagation)
+            "error_count": int(r[16]) if r[16] else 0,
+            "warning_count": 0,
+            "retry_count": int(r[17]) if r[17] else 0,
+            "agent_version": r[18],
         } for r in cur.fetchall()]
         conn.close()
         return rows
 
-    def get_history_details(self, sync_id):
+    def get_execution_summary(self, execution_id):
+        """Header + derived timeline stages for one execution."""
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-        SELECT table_name, chunk_no, rows_processed, rows_failed, duration_seconds, status, error_message
+        SELECT e.execution_id, e.tenant_id, e.store_id, e.execution_type,
+            e.sync_mode, e.execution_status, e.started_at, e.completed_at,
+            DATEDIFF(SECOND, e.started_at, ISNULL(e.completed_at, GETDATE())),
+            e.total_tables, e.completed_tables, e.failed_tables,
+            COALESCE(e.initiated_by, e.created_by),
+            st.store_code, st.store_name,
+            (SELECT TOP 1 r.agent_version FROM dbo.store_agent_registry r
+             WHERE r.store_id = e.store_id AND r.is_active = 1
+             ORDER BY r.last_heartbeat DESC),
+            (SELECT MAX(t.tenant_name) FROM dbo.tenants t WHERE t.tenant_id = e.tenant_id)
+        FROM dbo.sync_execution e
+        LEFT JOIN dbo.stores st ON st.store_id = e.store_id
+        WHERE e.execution_id = ?
+        """, execution_id)
+        r = cur.fetchone()
+        if not r:
+            conn.close()
+            return None
+
+        # Roll-up metrics from the per-table summary rows (chunk_no = 0).
+        cur.execute("""
+        SELECT COUNT(DISTINCT table_name),
+               SUM(ISNULL(rows_examined, rows_processed)),
+               SUM(ISNULL(rows_uploaded, rows_processed)),
+               SUM(ISNULL(rows_inserted, 0)), SUM(ISNULL(rows_updated, 0)),
+               SUM(ISNULL(rows_skipped, 0))
         FROM dbo.sync_execution_details
-        WHERE sync_id = ?
+        WHERE execution_id = ? AND chunk_no = 0
+        """, execution_id)
+        m = cur.fetchone()
+
+        # Timeline: real timestamps we actually record. Chunk activity brackets
+        # the upload window; fall back to the per-table detail rows when an
+        # execution has no chunk records (older / re-sync runs).
+        cur.execute("""
+        SELECT MIN(started_at), MAX(completed_at),
+               SUM(CASE WHEN chunk_status = 'FAILED' THEN 1 ELSE 0 END),
+               SUM(ISNULL(retry_count, 0))
+        FROM dbo.sync_chunk_execution WHERE execution_id = ?
+        """, execution_id)
+        ck = cur.fetchone()
+        cur.execute("""
+        SELECT MIN(started_at), MAX(completed_at)
+        FROM dbo.sync_execution_details WHERE execution_id = ? AND chunk_no = 0
+        """, execution_id)
+        dtl = cur.fetchone()
+        conn.close()
+
+        started, completed = r[6], r[7]
+        first_activity = ck[0] or dtl[0]
+        last_activity = ck[1] or dtl[1]
+        timeline = [
+            {"stage": "Started", "at": _iso(started)},
+            {"stage": "Table Processing", "at": _iso(first_activity)},
+            {"stage": "Upload / Merge", "at": _iso(last_activity or completed)},
+            {"stage": "Completed", "at": _iso(completed)},
+        ]
+        return {
+            "execution_id": str(r[0]),
+            "tenant_id": str(r[1]) if r[1] else None,
+            "store_id": str(r[2]) if r[2] else None,
+            "execution_type": r[3],
+            "sync_mode": r[4],
+            "status": r[5],
+            "started_at": _iso(started),
+            "completed_at": _iso(completed),
+            "duration_seconds": r[8],
+            "total_tables": r[9],
+            "completed_tables": r[10],
+            "failed_tables": r[11],
+            "triggered_by": str(r[12]) if r[12] else None,
+            "store_code": r[13],
+            "store_name": r[14],
+            "agent_version": r[15],
+            "tenant_name": r[16],
+            "table_count": m[0] or 0,
+            "rows_read": int(m[1]) if m[1] else 0,
+            "rows_uploaded": int(m[2]) if m[2] else 0,
+            "rows_inserted": int(m[3]) if m[3] else 0,
+            "rows_updated": int(m[4]) if m[4] else 0,
+            "rows_skipped": int(m[5]) if m[5] else 0,
+            "error_count": int(ck[2]) if ck[2] else 0,
+            "retry_count": int(ck[3]) if ck[3] else 0,
+            "timeline": timeline,
+        }
+
+    def get_execution_tables(self, execution_id):
+        """Per-table summary rows (chunk_no = 0) for the table execution grid."""
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT table_name, sync_type, started_at, completed_at,
+               DATEDIFF(SECOND, started_at, ISNULL(completed_at, GETDATE())),
+               ISNULL(rows_examined, rows_processed), ISNULL(rows_uploaded, rows_processed),
+               ISNULL(rows_inserted, 0), ISNULL(rows_updated, 0), ISNULL(rows_skipped, 0),
+               status, rows_failed,
+               (SELECT COUNT(*) FROM dbo.sync_chunk_execution c
+                WHERE c.execution_id = d.execution_id AND c.table_name = d.table_name) AS chunk_count
+        FROM dbo.sync_execution_details d
+        WHERE execution_id = ? AND chunk_no = 0
+        ORDER BY started_at, table_name
+        """, execution_id)
+        rows = []
+        for i, r in enumerate(cur.fetchall(), start=1):
+            rows.append({
+                "order": i,
+                "table_name": r[0],
+                "direction": "Store → HO",
+                "sync_type": r[1],
+                "started_at": _iso(r[2]),
+                "completed_at": _iso(r[3]),
+                "duration_seconds": r[4],
+                "rows_read": int(r[5]) if r[5] else 0,
+                "rows_uploaded": int(r[6]) if r[6] else 0,
+                "rows_inserted": int(r[7]) if r[7] else 0,
+                "rows_updated": int(r[8]) if r[8] else 0,
+                "rows_skipped": int(r[9]) if r[9] else 0,
+                "status": r[10],
+                "rows_failed": int(r[11]) if r[11] else 0,
+                "chunk_count": r[12] or 0,
+            })
+        conn.close()
+        return rows
+
+    def get_execution_chunks(self, execution_id, table_name=None):
+        conn = get_connection()
+        cur = conn.cursor()
+        sql = """
+        SELECT chunk_execution_id, table_name, chunk_no, chunk_status,
+               rows_processed, retry_count, started_at, completed_at,
+               DATEDIFF(MILLISECOND, started_at, completed_at), error_message
+        FROM dbo.sync_chunk_execution
+        WHERE execution_id = ?
+        """
+        params = [execution_id]
+        if table_name:
+            sql += " AND table_name = ?"
+            params.append(table_name)
+        sql += " ORDER BY table_name, chunk_no, chunk_execution_id"
+        cur.execute(sql, params)
+        rows = [{
+            "chunk_execution_id": r[0],
+            "table_name": r[1],
+            "chunk_no": r[2],
+            "status": r[3],
+            "rows": int(r[4]) if r[4] else 0,
+            "retry_count": r[5] or 0,
+            "started_at": _iso(r[6]),
+            "completed_at": _iso(r[7]),
+            "duration_ms": r[8],
+            "error_message": r[9],
+        } for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    def get_execution_errors(self, execution_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT table_name, chunk_no, retry_count, started_at, completed_at, error_message
+        FROM dbo.sync_chunk_execution
+        WHERE execution_id = ? AND chunk_status = 'FAILED'
         ORDER BY table_name, chunk_no
-        """, sync_id)
+        """, execution_id)
         rows = [{
             "table_name": r[0],
             "chunk_no": r[1],
-            "rows_processed": r[2] or 0,
-            "rows_failed": r[3] or 0,
-            "duration_seconds": r[4],
-            "status": r[5],
-            "error_message": r[6],
+            "retry_count": r[2] or 0,
+            "started_at": _iso(r[3]),
+            "completed_at": _iso(r[4]),
+            "error_message": r[5],
         } for r in cur.fetchall()]
         conn.close()
         return rows
+
+    def get_statistics(self):
+        """Performance summary cards for the History header."""
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT
+            COUNT(*),
+            SUM(CASE WHEN execution_status = 'COMPLETED' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN execution_status = 'FAILED' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN execution_status = 'RUNNING' THEN 1 ELSE 0 END),
+            AVG(CASE WHEN completed_at IS NOT NULL
+                     THEN DATEDIFF(SECOND, started_at, completed_at) END)
+        FROM dbo.sync_execution
+        """)
+        s = cur.fetchone()
+        cur.execute("""
+        SELECT ISNULL(SUM(ISNULL(rows_uploaded, rows_processed)), 0)
+        FROM dbo.sync_execution_details
+        WHERE chunk_no = 0 AND CAST(created_at AS DATE) = CAST(GETDATE() AS DATE)
+        """)
+        uploaded_today = cur.fetchone()[0]
+        # Largest sync (rows) + slowest table (avg duration) across all history.
+        cur.execute("""
+        SELECT TOP 1 e.execution_id, SUM(ISNULL(d.rows_uploaded, d.rows_processed)) AS tot
+        FROM dbo.sync_execution e
+        JOIN dbo.sync_execution_details d
+             ON d.execution_id = e.execution_id AND d.chunk_no = 0
+        GROUP BY e.execution_id ORDER BY tot DESC
+        """)
+        largest = cur.fetchone()
+        cur.execute("""
+        SELECT TOP 1 table_name,
+               AVG(DATEDIFF(SECOND, started_at, completed_at)) AS avg_dur
+        FROM dbo.sync_execution_details
+        WHERE chunk_no = 0 AND completed_at IS NOT NULL AND started_at IS NOT NULL
+        GROUP BY table_name ORDER BY avg_dur DESC
+        """)
+        slowest = cur.fetchone()
+        conn.close()
+
+        total = s[0] or 0
+        completed = s[1] or 0
+        avg_dur = int(s[4]) if s[4] else None
+        return {
+            "total_executions": total,
+            "successful": completed,
+            "failed": s[2] or 0,
+            "running": s[3] or 0,
+            "success_rate": round(completed / total * 100, 1) if total else 0.0,
+            "avg_duration_seconds": avg_dur,
+            "rows_uploaded_today": int(uploaded_today or 0),
+            "largest_sync_rows": int(largest[1]) if largest and largest[1] else 0,
+            "largest_sync_id": str(largest[0]) if largest else None,
+            "slowest_table": slowest[0] if slowest else None,
+            "slowest_table_seconds": int(slowest[1]) if slowest and slowest[1] else None,
+        }
 
     # ===== Table Configuration (CRUD) =====
 

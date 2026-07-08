@@ -73,11 +73,26 @@ class SyncAdminService:
     def store_health(self):
         return SyncAdminRepository().store_health()
 
-    def get_history(self):
-        return SyncAdminRepository().get_history()
+    def get_history(self, store_id=None, status=None, execution_type=None,
+                    sync_mode=None, search=None, limit=200):
+        return SyncAdminRepository().get_history(
+            store_id=store_id, status=status, execution_type=execution_type,
+            sync_mode=sync_mode, search=search, limit=limit)
 
-    def get_history_details(self, sync_id):
-        return SyncAdminRepository().get_history_details(sync_id)
+    def get_execution_summary(self, execution_id):
+        return SyncAdminRepository().get_execution_summary(execution_id)
+
+    def get_execution_tables(self, execution_id):
+        return SyncAdminRepository().get_execution_tables(execution_id)
+
+    def get_execution_chunks(self, execution_id, table_name=None):
+        return SyncAdminRepository().get_execution_chunks(execution_id, table_name)
+
+    def get_execution_errors(self, execution_id):
+        return SyncAdminRepository().get_execution_errors(execution_id)
+
+    def get_statistics(self):
+        return SyncAdminRepository().get_statistics()
 
     # table configuration
     def catalog_tables(self, search=None):
