@@ -54,6 +54,28 @@ const STAGES: { key: Stage; label: string; icon: string }[] = [
 
 const MOVEMENT = ['', 'FAST', 'MEDIUM', 'SLOW', 'NONMOVING']
 
+// Run async `worker` over `list` with at most `limit` requests in flight at once,
+// so a large fan-out (one request per assigned item) can never open hundreds of
+// simultaneous connections and saturate the backend's request threadpool / SQL
+// connections. `alive()` lets a superseded run stop issuing further requests the
+// moment a newer run starts, instead of racing hundreds of stale calls to done.
+async function runPool<T>(
+  list: T[],
+  limit: number,
+  alive: () => boolean,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, list.length) }, async () => {
+    while (cursor < list.length) {
+      if (!alive()) return
+      const item = list[cursor++]
+      await worker(item)
+    }
+  })
+  await Promise.all(runners)
+}
+
 const MODE_OPTIONS: { label: string; value: PurchaseMode }[] = [
   { label: 'Review All', value: 'review' },
   { label: 'Supplier Purchasing', value: 'supplier' },
@@ -156,6 +178,9 @@ export default function PurchaseWorkspacePage() {
   // timer firing again, an error-path reload, a manual refresh click, etc.) so a
   // slow, stale response can never overwrite fresher state.
   const workspaceAbortRef = useRef<AbortController | null>(null)
+  // Order-item ids with a Final Qty save in flight — dedupes Enter/blur so one
+  // row can never fire two concurrent /final-qty requests.
+  const savingIds = useRef<Set<string>>(new Set())
   // Guards loadQueue against overlapping runs — it fans out one request per
   // assigned item, so two concurrent calls (rapid supplier switches, chained
   // actions) could otherwise resolve out of order and let a stale result win.
@@ -183,6 +208,12 @@ export default function PurchaseWorkspacePage() {
     },
     [fail, say],
   )
+  // A connectivity failure (server unreachable / proxy 502-504) — as opposed to a
+  // real 4xx business rejection. When offline we must NOT auto-reload to reconcile:
+  // that follow-up request would just fail too, amplifying into a request storm.
+  // Show the one banner and stop; the workspace ErrorState already offers Retry.
+  const isOffline = (e: unknown) =>
+    e instanceof ApiError && (e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504)
 
   useEffect(() => {
     tenantService
@@ -434,6 +465,15 @@ export default function PurchaseWorkspacePage() {
       const raw = edits[item.order_item_id]
       const v = raw != null ? Number(raw) : item.final_qty ?? 0
       if (Number.isNaN(v) || v < 0) return
+      // Exactly one request per real change: with no pending edit and a value that
+      // already matches the server there is nothing to save. This is the main
+      // source of duplicate /final-qty calls — pressing Enter/Down to advance
+      // through already-finalised rows previously re-saved every row it passed.
+      if (raw == null && v === (item.final_qty ?? 0)) return
+      // Never let a second Enter (or an Enter immediately followed by the blur of
+      // the same cell) fire a duplicate save while the first is still in flight.
+      if (savingIds.current.has(item.order_item_id)) return
+      savingIds.current.add(item.order_item_id)
       setItems((list) =>
         list.map((it) =>
           it.order_item_id === item.order_item_id
@@ -459,7 +499,9 @@ export default function PurchaseWorkspacePage() {
         await procurementService.setFinalQty(tenantId, item.order_item_id, v, null, actingUser || null)
       } catch (e) {
         fail(e)
-        loadWorkspace()
+        if (!isOffline(e)) loadWorkspace()
+      } finally {
+        savingIds.current.delete(item.order_item_id)
       }
     },
     [edits, tenantId, actingUser, fail, loadWorkspace],
@@ -595,7 +637,7 @@ export default function PurchaseWorkspacePage() {
       await procurementService.skip(tenantId, item.order_item_id, reason, actingUser || null)
     } catch (e) {
       fail(e)
-      loadWorkspace()
+      if (!isOffline(e)) loadWorkspace()
     }
   }
   const restore = async (item: WorkspaceItem) => {
@@ -606,7 +648,7 @@ export default function PurchaseWorkspacePage() {
       await procurementService.restore(tenantId, item.order_item_id, actingUser || null)
     } catch (e) {
       fail(e)
-      loadWorkspace()
+      if (!isOffline(e)) loadWorkspace()
     }
   }
 
@@ -634,7 +676,7 @@ export default function PurchaseWorkspacePage() {
       await procurementService.assign(tenantId, item.order_item_id, supplierCode, remaining, actingUser || null)
     } catch (e) {
       fail(e)
-      loadWorkspace()
+      if (!isOffline(e)) loadWorkspace()
     }
   }
 
@@ -740,8 +782,12 @@ export default function PurchaseWorkspacePage() {
       const assignedItems = items.filter((i) => (i.assigned_qty ?? 0) > 0)
       const map = new Map<string, SupplierQueueGroup>()
       const locked = new Set<string>()
-      await Promise.all(
-        assignedItems.map(async (it) => {
+      // One /assignments request per assigned item, but capped at a few in flight
+      // at once (and abandoned the instant a newer run supersedes this one). The
+      // uncapped Promise.all here used to fire hundreds of simultaneous requests
+      // on a real refresh, saturating the backend's request threadpool + SQL
+      // connections — the root cause of the 502 / connection-reset cascade.
+      await runPool(assignedItems, 6, () => runId === queueRunRef.current, async (it) => {
           const list = await procurementService.assignments(tenantId, it.order_item_id)
           const ptr = it.last_purchase_rate ?? it.ptr_cost ?? 0
           for (const a of list) {
@@ -782,8 +828,7 @@ export default function PurchaseWorkspacePage() {
             }
             map.set(a.supplier_code, g)
           }
-        }),
-      )
+      })
       if (runId !== queueRunRef.current) return // superseded by a newer call
       const groups = [...map.values()]
       groups.forEach((g) => {
