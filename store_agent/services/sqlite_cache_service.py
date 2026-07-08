@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -16,11 +17,21 @@ class SqliteCacheService:
 
     def __init__(self, db_path=None, store_id=None):
         if db_path is None:
-            db_path = (
-                Path(__file__).resolve().parent.parent
-                / "config_cache"
-                / "store_agent.db"
-            )
+            # Under a frozen (PyInstaller onefile) build, __file__ resolves inside
+            # the exe's throwaway per-launch extraction temp dir, which would wipe
+            # this cache on every restart. NEXORA_INSTALL_PATH (set by the service
+            # wrapper from sys.executable's real, persistent location) takes
+            # priority so the cache survives restarts; __file__-relative stays as
+            # the dev/source-mode fallback.
+            install_path = os.environ.get("NEXORA_INSTALL_PATH")
+            if install_path:
+                db_path = Path(install_path) / "cache" / "store_agent.db"
+            else:
+                db_path = (
+                    Path(__file__).resolve().parent.parent
+                    / "config_cache"
+                    / "store_agent.db"
+                )
         self.db_path = str(db_path)
         # Cache identity is (store_id, table_name, source_pk). Every store using
         # the shared runtime DB MUST scope its cache by store_id, otherwise rows

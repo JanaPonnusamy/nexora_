@@ -4,15 +4,18 @@
     python -m store_agent_setup.build agent      # only the agent
 
 Outputs in E:\\Nexora\\dist\\:
-    NexoraStoreAgent\\                 (onedir: exe + _internal, fully standalone)
-        NexoraStoreAgent.exe
-        _internal\\ ...                (embedded Python + bytecode, NO .py source)
+    NexoraStoreAgent.exe              (onefile: single self-contained binary)
     NexoraStoreAgentSettings.exe      (standalone settings utility)
     NexoraStoreAgentSetup.exe         (the wizard; bundles the two above)
 
-Design notes (SYNC-029B):
-* The agent is built ONEDIR, not onefile: faster service start (no per-start
-  extraction) and a stable on-disk home for the SQLite cache.
+Design notes (SYNC-029B, revised for onefile):
+* The agent is built ONEFILE: a single distributable binary, no accompanying
+  _internal folder. Onefile self-extracts into a fresh per-launch temp dir
+  (sys._MEIPASS), so anything that must survive a restart (the SQLite sync
+  cache) is anchored to NEXORA_INSTALL_PATH / sys.executable's real, stable
+  location instead of __file__ -- see SqliteCacheService and
+  store_agent_setup.paths.resource_root / agent_service._agent_install_path,
+  which already used that pattern.
 * store_agent is shipped as COMPILED BYTECODE inside the bundle (collected
   submodules in the PYZ). The .py source tree is NEVER added as data, so no
   source code is deployed to stores.
@@ -47,9 +50,9 @@ def _pyinstaller(*args):
 
 
 def build_agent():
-    """Standalone ONEDIR service host. Embeds Python + the whole store_agent
+    """Standalone ONEFILE service host. Embeds Python + the whole store_agent
     runtime as bytecode. No machine Python, no .py source on disk."""
-    args = ["--onedir", "--name", "NexoraStoreAgent", "--console",
+    args = ["--onefile", "--name", "NexoraStoreAgent", "--console",
             "--paths", str(REPO), "--collect-submodules", "store_agent"]
     for h in _HIDDEN:
         args += ["--hidden-import", h]
@@ -70,15 +73,15 @@ def build_settings():
 
 
 def build_wizard():
-    """The distributable wizard (onefile). Bundles the standalone agent onedir
+    """The distributable wizard (onefile). Bundles the standalone agent exe
     and the settings exe as DATA so the installer can deploy them as-is."""
     args = ["--onefile", "--windowed", "--name", "NexoraStoreAgentSetup",
             "--paths", str(REPO)]
-    agent_dir = DIST / "NexoraStoreAgent"
+    agent_exe = DIST / "NexoraStoreAgent.exe"
     settings_exe = DIST / "NexoraStoreAgentSettings.exe"
-    if agent_dir.is_dir():
-        # Whole standalone agent folder -> _MEIPASS/agent/{exe,_internal}.
-        args += ["--add-data", f"{agent_dir}{SEP}agent"]
+    if agent_exe.is_file():
+        # Single agent binary -> _MEIPASS/agent/NexoraStoreAgent.exe.
+        args += ["--add-data", f"{agent_exe}{SEP}agent"]
     if settings_exe.is_file():
         args += ["--add-data", f"{settings_exe}{SEP}."]
     args.append(str(PKG / "launch_wizard.py"))

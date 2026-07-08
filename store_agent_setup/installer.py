@@ -1,11 +1,13 @@
 """File-system installation for the SELF-CONTAINED Store Agent (SYNC-029B).
 
 Final layout under <install_path> (no Python source, no machine Python needed):
-    NexoraStoreAgent.exe          <- standalone service host (embedded Python)
+    NexoraStoreAgent.exe          <- standalone service host (embedded Python, onefile)
     NexoraStoreAgentSettings.exe  <- standalone settings utility
-    _internal/                    <- PyInstaller runtime (DLLs + bytecode)
     agent_config.json             <- per-store identity (STEP 6)
     cache/  logs/  updates/  backups/
+
+(A legacy onedir build would also carry an _internal/ folder next to the exe;
+copy_runtime_files() still deploys it if present, but it is not required.)
 
 The agent runtime is shipped INSIDE the exe as bytecode; this installer copies
 the prebuilt standalone distribution and never deploys .py source files.
@@ -60,10 +62,12 @@ class Installer:
     # ---- STEP 7: standalone runtime --------------------------------------
 
     def _locate_agent_distribution(self):
-        """Find the prebuilt standalone agent onedir (exe + _internal)."""
+        """Find the prebuilt standalone agent: a single onefile exe (current),
+        or a legacy onedir bundle (exe + _internal) if one is still present."""
         candidates = [
             resource_root() / "agent",                 # bundled in the wizard exe
-            repo_root() / "dist" / "NexoraStoreAgent",  # local build (dev)
+            repo_root() / "dist",                       # local onefile build (dev)
+            repo_root() / "dist" / "NexoraStoreAgent",  # local onedir build (legacy)
         ]
         for candidate in candidates:
             if (candidate / AGENT_EXE_NAME).is_file():
@@ -71,26 +75,28 @@ class Installer:
         return None
 
     def copy_runtime_files(self):
-        """Deploy the standalone agent distribution and the settings exe.
-
-        Copies the exe + _internal verbatim. No .py source is ever written.
-        """
+        """Deploy the standalone agent exe (+ _internal, only if this is a
+        legacy onedir build) and the settings exe. No .py source is ever
+        written. Only the agent exe (and its _internal, if any) are copied --
+        never the whole source `dist` folder, which may also contain the
+        Settings/Setup executables during a local dev build."""
         copied = []
         dist = self._locate_agent_distribution()
         if dist is None:
             raise FileNotFoundError(
                 "Standalone agent distribution not found. Build it first with "
-                "`python -m store_agent_setup.build` (produces dist/NexoraStoreAgent)."
+                "`python -m store_agent_setup.build` (produces dist/NexoraStoreAgent.exe)."
             )
-        for entry in dist.iterdir():
-            target = self.root / entry.name
-            if entry.is_dir():
-                if target.exists():
-                    shutil.rmtree(target)
-                shutil.copytree(entry, target)
-            else:
-                shutil.copy2(entry, target)
-            copied.append(target)
+        exe_target = self.root / AGENT_EXE_NAME
+        shutil.copy2(dist / AGENT_EXE_NAME, exe_target)
+        copied.append(exe_target)
+        internal_src = dist / "_internal"
+        if internal_src.is_dir():
+            internal_target = self.root / "_internal"
+            if internal_target.exists():
+                shutil.rmtree(internal_target)
+            shutil.copytree(internal_src, internal_target)
+            copied.append(internal_target)
         self.log(f"deployed standalone agent from {dist}")
 
         # Settings utility (standalone exe) if present alongside the bundle.
@@ -107,18 +113,20 @@ class Installer:
         return copied
 
     def _verify_standalone(self):
-        """Guarantee the target is a true standalone deploy with NO source."""
+        """Guarantee the target is a true standalone deploy with NO source.
+
+        _internal is a legacy-onedir artifact, not required for a onefile
+        deploy, so its presence is only checked when the source dist has it.
+        """
         exe = self.root / AGENT_EXE_NAME
         if not exe.is_file():
             raise FileNotFoundError(f"{AGENT_EXE_NAME} missing after deploy")
-        if not (self.root / "_internal").is_dir():
-            raise FileNotFoundError("_internal runtime folder missing after deploy")
         stray = [str(p.relative_to(self.root)) for p in self.root.rglob("*.py")]
         if stray:
             raise RuntimeError(
                 "deployment leaked Python source files: " + ", ".join(stray[:10])
             )
-        self.log("verified standalone deploy (exe + _internal present, no .py source)")
+        self.log("verified standalone deploy (exe present, no .py source)")
 
     # ---- full install -----------------------------------------------------
 

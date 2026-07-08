@@ -1,6 +1,6 @@
 """Nexora Store Agent Windows service wrapper (pywin32).
 
-Built into the SELF-CONTAINED NexoraStoreAgent.exe (PyInstaller onedir). The
+Built into the SELF-CONTAINED NexoraStoreAgent.exe (PyInstaller onefile). The
 exe embeds its own Python interpreter and the entire store_agent runtime, so it
 NEVER depends on a machine-installed Python and NEVER loads .py source files
 deployed next to it.

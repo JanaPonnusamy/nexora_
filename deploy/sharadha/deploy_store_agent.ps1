@@ -97,14 +97,21 @@ $storeName = $store.store_name
 Ok "store_id = $storeId  ($storeName)"
 
 # ---- 3. Lay down agent files (optional copy) -------------------------------
+# -AgentDist accepts either a onefile exe directly (current build) or a
+# legacy onedir folder (exe + _internal) for back-compat.
 if ($AgentDist) {
-    if (-not (Test-Path (Join-Path $AgentDist $AgentExe))) {
-        Fail "AgentDist '$AgentDist' does not contain $AgentExe."
-    }
-    Info "Copying agent distribution to $InstallPath ..."
     New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
-    Copy-Item (Join-Path $AgentDist '*') -Destination $InstallPath -Recurse -Force
-    Ok "Agent files deployed."
+    if ((Test-Path $AgentDist -PathType Leaf) -and ($AgentDist -like "*$AgentExe")) {
+        Info "Copying single agent exe to $InstallPath ..."
+        Copy-Item $AgentDist -Destination (Join-Path $InstallPath $AgentExe) -Force
+        Ok "Agent exe deployed."
+    } elseif (Test-Path (Join-Path $AgentDist $AgentExe)) {
+        Info "Copying agent distribution folder to $InstallPath ..."
+        Copy-Item (Join-Path $AgentDist '*') -Destination $InstallPath -Recurse -Force
+        Ok "Agent files deployed."
+    } else {
+        Fail "AgentDist '$AgentDist' is neither $AgentExe nor a folder containing it."
+    }
 }
 
 $exePath = Join-Path $InstallPath $AgentExe
