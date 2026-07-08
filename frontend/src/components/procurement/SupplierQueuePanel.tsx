@@ -60,6 +60,7 @@ const STATUS_META: Record<SupplierQueueGroup['status'], { label: string; cls: st
 export function SupplierQueuePanel({
   groups,
   loading,
+  error,
   mode,
   focusSupplierCode,
   onLoad,
@@ -70,6 +71,7 @@ export function SupplierQueuePanel({
 }: {
   groups: SupplierQueueGroup[]
   loading: boolean
+  error?: string | null
   mode: PurchaseMode
   focusSupplierCode: string | null
   onLoad: () => void
@@ -227,8 +229,15 @@ export function SupplierQueuePanel({
         <div className="pm-sq__body">
           {loading ? (
             <div className="pm-sq__hint">Recalculating supplier totals…</div>
+          ) : error ? (
+            <div className="pm-sq__hint pm-sq__hint--error">
+              <i className="bi bi-exclamation-triangle" /> {error}
+              <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={onLoad}>
+                <i className="bi bi-arrow-repeat" /> Retry
+              </button>
+            </div>
           ) : !loaded ? (
-            <div className="pm-sq__hint">No draft assignments yet. Assign suppliers to products, then Load Suppliers.</div>
+            <div className="pm-sq__hint">No suppliers available. Assign suppliers to products, then Load Suppliers.</div>
           ) : (
             <>
               <div className="pm-sq__toolbar">
@@ -301,6 +310,7 @@ export function SupplierQueuePanel({
                           <SupplierReview
                             group={g}
                             summary={summary(g)}
+                            fmtValue={fmtValue}
                             eq={eq}
                             setEq={setEq}
                             errors={errorsByCode[g.supplier_code] ?? []}
@@ -326,6 +336,7 @@ export function SupplierQueuePanel({
 function SupplierReview({
   group,
   summary,
+  fmtValue,
   eq,
   setEq,
   errors,
@@ -334,6 +345,7 @@ function SupplierReview({
 }: {
   group: SupplierQueueGroup
   summary: { products: number; qty: number; value: number; margin: number; offers: number }
+  fmtValue: (value: number, qty: number) => string
   eq: (l: SupplierQueueProduct) => number
   setEq: (l: SupplierQueueProduct, raw: string) => void
   errors: string[]

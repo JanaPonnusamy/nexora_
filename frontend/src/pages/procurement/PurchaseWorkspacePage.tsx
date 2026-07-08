@@ -76,6 +76,22 @@ async function runPool<T>(
   await Promise.all(runners)
 }
 
+// Reject a request that opens a connection but never sends a response. `fetch`
+// (see apiClient) has no timeout, so a single hung/dropped connection would
+// otherwise never settle — and because the supplier-queue fan-out awaits every
+// request, one stuck request pins the whole queue on its loading skeleton
+// forever. A generous ceiling: real responses return in well under this.
+const REQUEST_TIMEOUT_MS = 20_000
+function withTimeout<T>(p: Promise<T>, ms = REQUEST_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new ApiError('Request timed out', 0)), ms)
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
 const MODE_OPTIONS: { label: string; value: PurchaseMode }[] = [
   { label: 'Review All', value: 'review' },
   { label: 'Supplier Purchasing', value: 'supplier' },
@@ -146,6 +162,9 @@ export default function PurchaseWorkspacePage() {
   // Supplier Queue
   const [queueLines, setQueueLines] = useState<SupplierQueueGroup[]>([])
   const [queueLoading, setQueueLoading] = useState(false)
+  // Set when a queue rebuild fails outright (no supplier data could be loaded)
+  // so the panel can offer Retry instead of showing the loading skeleton forever.
+  const [queueError, setQueueError] = useState<string | null>(null)
   const [busySupplier, setBusySupplier] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
 
@@ -778,17 +797,25 @@ export default function PurchaseWorkspacePage() {
     // of racing it into state.
     const runId = ++queueRunRef.current
     setQueueLoading(true)
+    setQueueError(null)
     try {
       const assignedItems = items.filter((i) => (i.assigned_qty ?? 0) > 0)
       const map = new Map<string, SupplierQueueGroup>()
       const locked = new Set<string>()
+      let failures = 0
       // One /assignments request per assigned item, but capped at a few in flight
       // at once (and abandoned the instant a newer run supersedes this one). The
       // uncapped Promise.all here used to fire hundreds of simultaneous requests
       // on a real refresh, saturating the backend's request threadpool + SQL
       // connections — the root cause of the 502 / connection-reset cascade.
       await runPool(assignedItems, 6, () => runId === queueRunRef.current, async (it) => {
-          const list = await procurementService.assignments(tenantId, it.order_item_id)
+          // Isolate every request: a single failed or hung /assignments call must
+          // never reject the pool (which would abandon the build) nor pin it open
+          // forever (the loading skeleton that never clears). Time it out, count
+          // the miss, and carry on — the queue renders from whatever succeeded.
+          const list = await withTimeout(procurementService.assignments(tenantId, it.order_item_id))
+            .catch(() => { failures += 1; return null })
+          if (!list) return
           const ptr = it.last_purchase_rate ?? it.ptr_cost ?? 0
           for (const a of list) {
             const g =
@@ -837,8 +864,19 @@ export default function PurchaseWorkspacePage() {
       groups.sort((a, b) => b.est_value - a.est_value)
       setQueueLines(groups)
       setLockedIds(locked)
+      // Only a *total* failure (assignments were expected but none could be
+      // loaded) is an error the buyer must retry; a partial miss still renders
+      // the suppliers that loaded rather than blocking the whole queue.
+      if (failures > 0 && groups.length === 0 && assignedItems.length > 0) {
+        setQueueError(`Could not load the supplier queue — ${failures} request${failures === 1 ? '' : 's'} failed. Retry to try again.`)
+      } else {
+        setQueueError(null)
+      }
     } catch (e) {
-      if (runId === queueRunRef.current) fail(e)
+      if (runId === queueRunRef.current) {
+        setQueueError(e instanceof Error ? e.message : 'Failed to load the supplier queue.')
+        fail(e)
+      }
     } finally {
       if (runId === queueRunRef.current) setQueueLoading(false)
     }
@@ -1355,6 +1393,7 @@ export default function PurchaseWorkspacePage() {
             <SupplierQueuePanel
               groups={queueLines}
               loading={queueLoading}
+              error={queueError}
               mode="review"
               focusSupplierCode={null}
               onLoad={loadQueue}
