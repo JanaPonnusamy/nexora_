@@ -1,0 +1,329 @@
+/* Desktop Platform shell — additive, scoped to platform/* components only.
+   Reuses index.css's --app-* variables and .app-statusbar/.empty-state
+   classes; nothing here touches the existing AppShell/Header/Sidebar. */
+:root {
+  --platform-ribbon-height: 84px;
+  --platform-tabs-height: 34px;
+  --platform-nav-rail-width: 220px;
+}
+
+.platform-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+}
+
+/* ===== Ribbon ===== */
+.platform-ribbon {
+  flex: 0 0 var(--platform-ribbon-height);
+  height: var(--platform-ribbon-height);
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--bs-border-color);
+  background: var(--bs-tertiary-bg);
+}
+
+.platform-ribbon__tabs {
+  display: flex;
+  gap: 0.15rem;
+  padding: 0.3rem 0.75rem 0;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.platform-ribbon__tab {
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--bs-secondary-color);
+  border-radius: var(--app-radius) var(--app-radius) 0 0;
+  cursor: pointer;
+}
+
+.platform-ribbon__tab:hover {
+  background: var(--bs-secondary-bg);
+  color: var(--bs-emphasis-color);
+}
+
+.platform-ribbon__tab.is-active {
+  background: var(--bs-body-bg);
+  color: var(--bs-emphasis-color);
+  border: 1px solid var(--bs-border-color);
+  border-bottom-color: var(--bs-body-bg);
+  margin-bottom: -1px;
+}
+
+.platform-ribbon__groups {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+}
+
+.platform-ribbon__empty {
+  display: flex;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--bs-secondary-color);
+}
+
+.platform-ribbon__group {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0 0.75rem;
+  border-right: 1px solid var(--bs-border-color);
+}
+
+.platform-ribbon__group:last-child {
+  border-right: none;
+}
+
+.platform-ribbon__commands {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.platform-ribbon__command {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 3.25rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius);
+  background: transparent;
+  font-size: 0.72rem;
+  color: var(--bs-body-color);
+  cursor: pointer;
+}
+
+.platform-ribbon__command:hover {
+  background: var(--bs-secondary-bg);
+  border-color: var(--bs-border-color);
+}
+
+.platform-ribbon__command i {
+  font-size: 1.1rem;
+}
+
+.platform-ribbon__group-label {
+  margin-top: 0.25rem;
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--bs-secondary-color);
+}
+
+/* ===== Body: nav rail + workspace ===== */
+.platform-shell__body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.platform-nav-rail {
+  flex: 0 0 var(--platform-nav-rail-width);
+  width: var(--platform-nav-rail-width);
+  padding: 0.75rem;
+  border-right: 1px solid var(--bs-border-color);
+  background: var(--bs-tertiary-bg);
+  overflow-y: auto;
+}
+
+.platform-nav-rail__empty {
+  padding: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--bs-secondary-color);
+}
+
+.platform-nav-rail__group {
+  margin-bottom: 0.85rem;
+}
+
+.platform-nav-rail__group-title {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.platform-nav-rail__link {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: none;
+  border-radius: var(--app-radius);
+  background: transparent;
+  font-size: 0.9rem;
+  color: var(--bs-body-color);
+  text-align: left;
+  cursor: pointer;
+}
+
+.platform-nav-rail__link:hover {
+  background: var(--bs-secondary-bg);
+  color: var(--bs-emphasis-color);
+}
+
+.platform-nav-rail__link.active {
+  background: var(--bs-primary);
+  color: #fff;
+}
+
+.platform-nav-rail__icon {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.platform-shell__workspace {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ===== Workspace tabs ===== */
+.platform-tabs {
+  flex: 0 0 var(--platform-tabs-height);
+  height: var(--platform-tabs-height);
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  background: var(--bs-tertiary-bg);
+  overflow-x: auto;
+}
+
+.platform-tabs__tab {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.6rem;
+  font-size: 0.8rem;
+  color: var(--bs-secondary-color);
+  background: transparent;
+  border-radius: var(--app-radius) var(--app-radius) 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.platform-tabs__tab:hover {
+  background: var(--bs-secondary-bg);
+}
+
+.platform-tabs__tab.is-active {
+  background: var(--bs-body-bg);
+  color: var(--bs-emphasis-color);
+}
+
+.platform-tabs__close {
+  display: grid;
+  place-items: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-left: 0.15rem;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.platform-tabs__close:hover {
+  background: var(--bs-danger-bg-subtle, rgba(220, 53, 69, 0.15));
+  color: var(--bs-danger);
+}
+
+/* ===== Workspace host / docking ===== */
+.platform-workspace-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.platform-workspace-host--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.platform-dock__separator {
+  flex: 0 0 6px;
+  background: var(--bs-border-color);
+  cursor: col-resize;
+}
+
+.platform-dock__separator[data-orientation='vertical'] {
+  cursor: row-resize;
+}
+
+.platform-dock__separator:hover,
+.platform-dock__separator[data-resize-handle-active] {
+  background: var(--bs-primary);
+}
+
+/* ===== Status bar ===== */
+.platform-statusbar {
+  flex: 0 0 auto;
+}
+
+/* ===== Error toasts ===== */
+.platform-error-stack {
+  position: fixed;
+  right: 1rem;
+  bottom: calc(var(--app-statusbar-height) + 1rem);
+  z-index: 1080;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 22rem;
+  max-width: calc(100vw - 2rem);
+}
+
+.platform-error-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  border: 1px solid var(--bs-danger-border-subtle, var(--bs-border-color));
+  border-radius: var(--app-radius);
+  background: var(--bs-body-bg);
+  color: var(--bs-emphasis-color);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.25);
+}
+
+.platform-error-toast i {
+  color: var(--bs-danger);
+  margin-top: 0.15rem;
+}
+
+.platform-error-toast__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.platform-error-toast__scope {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bs-secondary-color);
+}
+
+.platform-error-toast__message {
+  font-size: 0.85rem;
+}

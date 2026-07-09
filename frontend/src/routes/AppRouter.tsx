@@ -25,6 +25,7 @@ import RefreshManagementPage from '../pages/procurement/RefreshManagementPage'
 import PermissionsPage from '../pages/administration/PermissionsPage'
 import ReportsPage from '../pages/ReportsPage'
 import SettingsPage from '../pages/SettingsPage'
+import PlatformShellPreviewPage from '../pages/PlatformShellPreviewPage'
 
 /** Sends the user to their role's landing page (Purchase Managers open directly
  *  into the Purchase Manager workspace). */
@@ -35,7 +36,18 @@ function RoleLanding() {
 
 export const appRouter = createBrowserRouter(
   createRoutesFromElements(
-    (
+    <>
+      {/* Desktop Platform shell preview — a separate top-level route (not
+          nested under AppShell) so the new shell can be built and compared
+          side-by-side without touching the existing app. */}
+      <Route
+        path="/platform-shell-preview"
+        element={
+          <ProtectedRoute>
+            <PlatformShellPreviewPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         element={
           <ProtectedRoute>
@@ -68,6 +80,6 @@ export const appRouter = createBrowserRouter(
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />
         <Route path="*" element={<RoleLanding />} />
       </Route>
-    ),
+    </>,
   ),
 )

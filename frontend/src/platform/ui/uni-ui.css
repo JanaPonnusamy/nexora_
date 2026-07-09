@@ -1,0 +1,83 @@
+/* Shared component library styles — additive, scoped to platform/ui/*
+   components only. Reuses Bootstrap CSS variables for theme consistency. */
+
+/* ===== UniLoadingOverlay ===== */
+.uni-loading-overlay {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--bs-secondary-color);
+}
+
+.uni-loading-overlay--full {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bs-body-bg) 80%, transparent);
+  z-index: 5;
+}
+
+/* ===== UniGrid ===== */
+.uni-grid {
+  position: relative;
+}
+
+.uni-grid__table {
+  margin-bottom: 0;
+}
+
+.uni-grid__row--clickable {
+  cursor: pointer;
+}
+
+/* ===== BaseWorkspace ===== */
+.base-workspace__body {
+  position: relative;
+}
+
+/* ===== UniNotification ===== */
+.uni-notification-stack {
+  position: fixed;
+  top: calc(var(--app-header-height, 56px) + 1rem);
+  right: 1rem;
+  z-index: 1080;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 22rem;
+  max-width: calc(100vw - 2rem);
+}
+
+.uni-notification {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--app-radius, 0.5rem);
+  background: var(--bs-body-bg);
+  color: var(--bs-emphasis-color);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.25);
+  font-size: 0.85rem;
+}
+
+.uni-notification__message {
+  flex: 1 1 auto;
+}
+
+.uni-notification--success i {
+  color: var(--bs-success);
+}
+
+.uni-notification--info i {
+  color: var(--bs-info);
+}
+
+.uni-notification--warning i {
+  color: var(--bs-warning);
+}
+
+.uni-notification--error i {
+  color: var(--bs-danger);
+}

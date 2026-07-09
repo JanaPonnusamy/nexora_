@@ -94,6 +94,7 @@ export interface SyncHistoryFilters {
   execution_type?: string
   sync_mode?: string
   search?: string
+  [key: string]: string | undefined
 }
 
 export interface TimelineStage {
