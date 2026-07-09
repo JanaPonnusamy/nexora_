@@ -24,18 +24,31 @@ export class EventBus<EventMap extends Record<string, unknown>> {
   clear(): void {
     this.handlers.clear()
   }
+
+  /** Diagnostic hook for leak-hunting (e.g. a stress test asserting a count returns to 0 after N subscribe/unsubscribe cycles). */
+  listenerCount<K extends keyof EventMap>(event: K): number {
+    return this.handlers.get(event)?.size ?? 0
+  }
 }
 
-// App-wide event map, extended as modules are migrated onto the platform.
-// Centralized here (rather than each module inventing its own event names)
-// so cross-module wiring stays discoverable in one place.
+// App-wide event map. Deliberately contains ONLY the two events the
+// platform itself owns (emitted by ModuleHost) — business event names
+// ('purchase.saved', 'export.finished', ...) do not belong in platform
+// code, or every new module would require editing this shared file.
+// Instead, a module augments this interface via TypeScript declaration
+// merging in its own file:
+//
+//   declare module '../../platform/events/EventBus' {
+//     interface PlatformEventMap {
+//       'purchase.saved': { cycleId: string }
+//     }
+//   }
+//
+// That keeps typed events discoverable (still one interface, just merged
+// across files) without coupling this file to any module's vocabulary.
 export interface PlatformEventMap {
   'module.activated': { moduleId: string }
   'module.deactivated': { moduleId: string }
-  'purchase.saved': { cycleId: string }
-  'inventory.updated': { storeId: string }
-  'refresh.completed': { cycleId: string }
-  'export.finished': { cycleId: string }
   [event: string]: unknown
 }
 

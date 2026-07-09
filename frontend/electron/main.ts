@@ -43,6 +43,11 @@ function loadConfig(): UniNexConfig {
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 
+// A hung or missing renderer 'app:before-quit' listener must never block
+// shutdown — this bounds how long a window's close waits for the renderer's
+// save-state ack before closing anyway.
+const QUIT_ACK_TIMEOUT_MS = 2000
+
 function buildMenu() {
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'File', submenu: [{ role: 'quit' }] },
@@ -139,8 +144,36 @@ async function createWindow() {
     return { action: 'deny' }
   })
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
+  // Ask the renderer to save state before the window actually closes — this
+  // must be intercepted at the WINDOW level, not app 'before-quit': by the
+  // time 'window-all-closed'/'before-quit' fire from the normal OS close-
+  // button path, this window's own 'closed' handler has already nulled out
+  // `mainWindow`, so an app-level listener never sees a live window to send
+  // to. Scoped per-window (not a module-level flag) so a window recreated
+  // via 'activate' (macOS, after all windows closed) gets its own prompt.
+  // The `ipcMain.once`/explicit removeListener pair avoids ever leaving a
+  // stale 'app:quit-ready' listener registered after this window closes.
+  const win = mainWindow
+  let allowClose = false
+  win.on('close', (event) => {
+    if (allowClose) return
+    event.preventDefault()
+    win.webContents.send('app:before-quit')
+    const onAck = () => {
+      clearTimeout(timeoutId)
+      allowClose = true
+      win.close()
+    }
+    ipcMain.once('app:quit-ready', onAck)
+    const timeoutId = setTimeout(() => {
+      ipcMain.removeListener('app:quit-ready', onAck)
+      allowClose = true
+      win.close()
+    }, QUIT_ACK_TIMEOUT_MS)
+  })
+
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
   })
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -151,27 +184,6 @@ async function createWindow() {
     await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 }
-
-// Renderer is asked to run each open module's saveState() before the process
-// actually exits, and acks via 'app:quit-ready' once done. A hung or missing
-// renderer listener must never block shutdown, hence the bounded fallback.
-let quitAcknowledged = false
-const QUIT_ACK_TIMEOUT_MS = 2000
-
-ipcMain.on('app:quit-ready', () => {
-  quitAcknowledged = true
-  app.quit()
-})
-
-app.on('before-quit', (event) => {
-  if (quitAcknowledged || !mainWindow) return
-  event.preventDefault()
-  mainWindow.webContents.send('app:before-quit')
-  setTimeout(() => {
-    quitAcknowledged = true
-    app.quit()
-  }, QUIT_ACK_TIMEOUT_MS)
-})
 
 ipcMain.on('shell:open-external', (_event, url: string) => {
   shell.openExternal(url)

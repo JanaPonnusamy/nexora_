@@ -56,7 +56,9 @@ contextBridge.exposeInMainWorld('uninex', {
   // no token to persist — see auth exploration). Keeps the host's contract
   // stable so a future auth implementation doesn't need a preload API change.
   secureStorage: {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- placeholder signature, see comment above
     get: (_key: string): Promise<string | null> => Promise.resolve(null),
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- placeholder signature, see comment above
     set: (_key: string, _value: string): Promise<void> => Promise.resolve(),
   },
 })

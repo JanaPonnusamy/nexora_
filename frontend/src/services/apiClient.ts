@@ -1,4 +1,5 @@
 import { tokenStorage } from './tokenStorage'
+import { logger } from '../platform/logging/Logger'
 
 // Runtime override (window.__UNINEX_API_BASE__, injected by /config.js in
 // production deployments) takes precedence over the build-time env, so the same
@@ -35,52 +36,91 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+interface RequestOptions extends Omit<RequestInit, 'signal'> {
+  signal?: AbortSignal
+  /**
+   * Aborts the request after this many ms. Omitted (the default for every
+   * existing call site) means no timeout — behavior is unchanged from before
+   * this option existed. New/platform code opts in explicitly.
+   */
+  timeoutMs?: number
+  /**
+   * Automatic retries on total network failure (server unreachable — never on
+   * a reached-but-erroring server, i.e. never for 4xx/5xx). Defaults to 0
+   * (no retry, existing behavior). Only meaningful for idempotent calls —
+   * post/put/patch/delete don't expose this to avoid duplicating writes.
+   */
+  retries?: number
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { timeoutMs, retries = 0, signal: callerSignal, ...init } = options
   const token = tokenStorage.get()
   // For multipart uploads let the browser set Content-Type (with the boundary).
-  const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData
+  const isForm = typeof FormData !== 'undefined' && init.body instanceof FormData
   const headers: Record<string, string> = {
     ...(isForm ? {} : { 'Content-Type': 'application/json' }),
-    ...(options.headers as Record<string, string> | undefined),
+    ...(init.headers as Record<string, string> | undefined),
   }
   if (token) {
     headers.Authorization = `Bearer ${token}`
   }
+  const method = init.method ?? 'GET'
 
-  let response: Response
-  try {
-    response = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  } catch (e) {
-    // A caller-triggered abort (component unmounted / a newer request superseded
-    // this one) is not a request failure — let the caller's own `catch` decide
-    // whether to ignore it (they already checked signal.aborted / a "live" flag).
-    if (e instanceof DOMException && e.name === 'AbortError') throw e
-    throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
-  }
+  for (let attempt = 0; ; attempt++) {
+    const timeoutSignal = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined
+    const signal =
+      callerSignal && timeoutSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : (callerSignal ?? timeoutSignal)
 
-  if (!response.ok) {
-    let detail = response.statusText || 'Request failed'
+    let response: Response
     try {
-      const body = await response.json()
-      detail = body.detail ?? body.error ?? detail
-    } catch {
-      // response had no JSON body
+      response = await fetch(`${BASE_URL}${path}`, { ...init, headers, signal })
+    } catch (e) {
+      // A caller-triggered abort (component unmounted / a newer request superseded
+      // this one) is not a request failure — let the caller's own `catch` decide
+      // whether to ignore it (they already checked signal.aborted / a "live" flag).
+      // A timeout-triggered abort, on the other hand, is a real failure.
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        if (timeoutSignal?.aborted && !callerSignal?.aborted) {
+          throw new ApiError('Request timed out.', 0)
+        }
+        throw e
+      }
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
+        continue
+      }
+      logger.error('api-client', `${method} ${path} unreachable`, e)
+      throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
     }
-    throw new ApiError(detail, response.status)
-  }
 
-  if (response.status === 204) {
-    return undefined as T
+    if (!response.ok) {
+      let detail = response.statusText || 'Request failed'
+      try {
+        const body = await response.json()
+        detail = body.detail ?? body.error ?? detail
+      } catch {
+        // response had no JSON body
+      }
+      logger.error('api-client', `${method} ${path} failed (${response.status})`, detail)
+      throw new ApiError(detail, response.status)
+    }
+
+    if (response.status === 204) {
+      return undefined as T
+    }
+    return (await response.json()) as T
   }
-  return (await response.json()) as T
 }
 
 export const api = {
   // `signal` lets a caller cancel an in-flight GET (e.g. via AbortController)
   // when a newer request supersedes it — avoids a slow, stale response from an
   // earlier render/keystroke overwriting fresher state. Optional and additive;
-  // every existing call site is unaffected.
-  get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
+  // every existing call site is unaffected. Passing an options object instead
+  // (new, opt-in) additionally allows a timeout and/or retry count.
+  get: <T>(path: string, signalOrOptions?: AbortSignal | Pick<RequestOptions, 'signal' | 'timeoutMs' | 'retries'>) =>
+    request<T>(path, signalOrOptions instanceof AbortSignal ? { signal: signalOrOptions } : signalOrOptions),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
   upload: <T>(path: string, form: FormData) =>

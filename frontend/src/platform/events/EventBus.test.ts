@@ -65,4 +65,40 @@ describe('EventBus', () => {
 
     expect(handler).not.toHaveBeenCalled()
   })
+
+  it('registering the same handler reference twice does not duplicate delivery', () => {
+    const bus = new EventBus<PlatformEventMap>()
+    const handler = vi.fn()
+    bus.on('module.activated', handler)
+    bus.on('module.activated', handler)
+
+    bus.emit('module.activated', { moduleId: 'reports' })
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(bus.listenerCount('module.activated')).toBe(1)
+  })
+
+  it('leaves zero listeners after many subscribe/unsubscribe cycles (no leak)', () => {
+    const bus = new EventBus<PlatformEventMap>()
+    for (let i = 0; i < 500; i++) {
+      const unsubscribe = bus.on('refresh.completed', () => {})
+      unsubscribe()
+    }
+    expect(bus.listenerCount('refresh.completed')).toBe(0)
+  })
+
+  it('a module unsubscribing does not affect another module’s subscription to the same event (no cross-module coupling)', () => {
+    const bus = new EventBus<PlatformEventMap>()
+    const moduleAHandler = vi.fn()
+    const moduleBHandler = vi.fn()
+    const unsubscribeA = bus.on('inventory.updated', moduleAHandler)
+    bus.on('inventory.updated', moduleBHandler)
+
+    unsubscribeA()
+    bus.emit('inventory.updated', { storeId: 'store-1' })
+
+    expect(moduleAHandler).not.toHaveBeenCalled()
+    expect(moduleBHandler).toHaveBeenCalledTimes(1)
+    expect(bus.listenerCount('inventory.updated')).toBe(1)
+  })
 })
