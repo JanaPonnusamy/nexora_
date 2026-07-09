@@ -80,27 +80,26 @@ export function PlatformShell() {
   // Global keyboard shortcuts are registered via keyboardManager.register()
   // (by the shell here, or by modules) and consulted from this single
   // document-level listener, so shortcuts never conflict between modules the
-  // way ad hoc per-component onKeyDown handlers can. Esc/F5 are the only
-  // combos with an unambiguous *shell-level* meaning; Ctrl+S/F/N/P/F2/Enter
-  // are reserved for modules to register themselves once they exist — the
+  // way ad hoc per-component onKeyDown handlers can. F5 is the only combo
+  // with an unambiguous *shell-level* meaning; Ctrl+S/F/N/P/F2/Esc/Enter are
+  // reserved for modules to register themselves once they exist — the
   // registry's duplicate-id guard (see KeyboardManager.register) is what
   // actually prevents conflicts, not any hardcoded shell behavior for them.
+  //
+  // Esc deliberately does NOT close the active tab at the shell level
+  // (Phase 3 finding, wrapping Purchase Manager): Esc is one of the most
+  // commonly module-owned keys (cancel an edit, dismiss a popover, skip a
+  // row) and React's preventDefault() does not stop a key event from
+  // bubbling to this shell's own document-level listener — a shell-level
+  // Esc-closes-tab default would silently destroy a module's entire session
+  // every time its own Esc handling fired. Closing a tab is the explicit "x"
+  // button in WorkspaceTabs only.
   useEffect(() => {
-    const unregisterEscape = keyboardManager.register('escape', () => {
-      setWorkspace((prev) => {
-        if (!prev.activeModuleId) return prev
-        const openModuleIds = prev.openModuleIds.filter((id) => id !== prev.activeModuleId)
-        return { openModuleIds, activeModuleId: openModuleIds[openModuleIds.length - 1] }
-      })
-    })
     const unregisterReload = keyboardManager.register('f5', (event) => {
       event.preventDefault()
       setReloadToken((token) => token + 1)
     })
-    return () => {
-      unregisterEscape()
-      unregisterReload()
-    }
+    return unregisterReload
   }, [])
 
   useEffect(() => {

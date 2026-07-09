@@ -30,7 +30,7 @@ frontend/
     pages/PlatformShellPreviewPage.tsx   mounts PlatformShell at /platform-shell-preview
 ```
 
-Nothing under `platform/` references a specific business module. The one exception on purpose is `platform/modules/reports.module.ts` — the Phase 2.4 proof-of-concept wiring the existing Reports page into the framework — plus `registerModules.ts`, which is where real modules get added.
+Nothing under `platform/` references a specific business module. The deliberate exceptions are the `*.module.ts` files — `reports.module.ts` (Phase 2.4 proof-of-concept) and `purchase-manager.module.ts` (Phase 3 MVD) — plus `registerModules.ts`, which is where real modules get added. Both wrap their existing page component completely unmodified; the same components still serve their original `/reports` and `/procurement/workspace` browser routes identically.
 
 ## 2. Module lifecycle
 
@@ -128,11 +128,12 @@ This was a real finding from the Phase 2.5 shared-component review — the origi
 
 `keyboardManager.register(combo, handler)` throws if `combo` is already registered — that's the actual conflict-prevention mechanism (not a hardcoded list). `PlatformShell` attaches one `document`-level `keydown` listener that consults the registry.
 
-Two combos have an unambiguous **shell-level** meaning and are wired by `PlatformShell` itself:
-- **Esc** — closes the active workspace tab. Any component's own local key handler that calls `event.stopPropagation()` naturally pre-empts this (bubble-phase ordering), so a module's inner dialog/popover can safely use Esc for its own purpose.
+Only one combo has an unambiguous **shell-level** meaning and is wired by `PlatformShell` itself:
 - **F5** — remounts the active module (forces its full lifecycle to re-run) instead of the browser's native page reload (`preventDefault()`'d).
 
-`Ctrl+S`, `Ctrl+F`, `Ctrl+N`, `Ctrl+P`, `F2`, `Enter` are **reserved for modules** to register themselves once they exist — there is no generic shell-level meaning for "save" or "new" without a module. Register/unregister in your module's `initialize`/`dispose` lifecycle hooks (or a `useEffect` in the module's component) so the shortcut only exists while the module is actually open.
+**Esc is deliberately *not* a shell-level shortcut.** An earlier version bound Esc to "close the active tab," reasoning that a module's own `event.stopPropagation()` would naturally pre-empt it. That assumption broke in practice: wrapping Purchase Manager (Phase 3) surfaced that its `ProductGrid` uses Esc for "skip this row" — a core, frequent workflow action — and calls `preventDefault()` but not `stopPropagation()` (a very common, reasonable pattern; React's `preventDefault()` only suppresses the browser's default action, not DOM bubbling). Every Esc-to-skip would therefore also have bubbled up and closed the entire Purchase Manager tab. Esc is one of the most commonly module-owned keys (cancel an edit, dismiss a popover, skip a row) and a shell-level default for it is unsafe in general, not just for this one module. Closing a tab is the explicit "×" button in `WorkspaceTabs` only.
+
+`Ctrl+S`, `Ctrl+F`, `Ctrl+N`, `Ctrl+P`, `F2`, `Esc`, `Enter` are **reserved for modules** to register themselves once they need them — there is no generic shell-level meaning for "save" or "new" without a module. Register/unregister in your module's `initialize`/`dispose` lifecycle hooks (or a `useEffect` in the module's component) so the shortcut only exists while the module is actually open. Note that modules are also free to keep their own local `onKeyDown`/`addEventListener` handling entirely outside `keyboardManager` (as Purchase Manager's `ProductGrid`/`PurchaseWorkspacePage` already did before being wrapped, and still does, unmodified) — the registry only prevents conflicts *between things that register through it*, it does not force every module to migrate its existing keyboard handling to use it.
 
 ## 7. Layout & window persistence
 
@@ -174,8 +175,9 @@ See `src/services/apiClient.test.ts` for the retry/timeout/backward-compatibilit
 - **A module never imports Electron/browser host APIs directly** — go through `platform/services`.
 - **A module never edits shared platform files** to add its own vocabulary (event names, nav entries, ribbon tabs) — those are all contribution points (`ModuleDefinition`, declaration merging for `PlatformEventMap`), not places to hardcode business logic.
 - **Reuse `Uni*` components** (`platform/ui`) instead of hand-rolling a table/toast/loading-spinner — `UniGrid` in particular replaces the pattern where 5+ existing modules each built their own `<table>`.
-- **Existing browser-only pages are not modified** to become modules — they're *wrapped* (see `reports.module.ts`): the existing component is reused as-is via `ModuleDefinition.component`, so the same code continues to work identically at its original `/reports` browser route.
+- **Existing browser-only pages are not modified** to become modules — they're *wrapped* (see `reports.module.ts`, `purchase-manager.module.ts`): the existing component is reused as-is via `ModuleDefinition.component`, so the same code continues to work identically at its original browser route.
 - **Don't build ahead of need** — `FileService`/`PrintService`/`UpdateService` and dynamic/hot-loadable module loading are intentionally not built; add them when a real module needs them, not speculatively.
+- **A wrapped page may assume the old AppShell's chrome height** (a hardcoded `calc(100vh - Npx)`, since it predates this shell). Override with a higher-specificity selector scoped to `.platform-workspace-host` in `platform-shell.css` (see the `.platform-workspace-host .pm` rule) — never edit the page's own CSS file, since it's still serving that page's original browser route unmodified.
 
 ## 11. What's verified vs. what needs your own machine
 

@@ -255,6 +255,17 @@
   overflow: auto;
 }
 
+/* Hosted-module chrome-height overrides. Some existing pages (built before
+   this shell existed) size themselves against the OLD AppShell's chrome via
+   a hardcoded `calc(100vh - Npx)` — that offset no longer matches this
+   shell's ribbon+tabs height, so it's overridden here (higher specificity,
+   scoped to .platform-workspace-host only) rather than editing the
+   page's own CSS, which is still used unmodified by its original browser
+   route. Purchase Manager (Phase 3): .pm assumes the old 96px header. */
+.platform-workspace-host .pm {
+  height: 100%;
+}
+
 .platform-workspace-host--empty {
   display: flex;
   align-items: center;
