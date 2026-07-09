@@ -21,6 +21,7 @@ import type {
   WorkspaceFilters,
   WorkspaceItem,
   WorkspacePage,
+  WorkspaceSummary,
 } from '../types/procurement'
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -52,6 +53,17 @@ export const procurementService = {
         page_size: f.page_size,
       })}`,
       signal,
+    ),
+
+  // Footer counts (Total / Pending Review / Assigned / Finalized / Skipped),
+  // computed server-side. Scope matches the grid's base load (search +
+  // movement_class only) — Purchase Value stays client-computed, see
+  // WorkspaceSummary's doc comment.
+  workspaceSummary: (tenantId: string, refreshId: string, search?: string, movementClass?: string) =>
+    api.get<WorkspaceSummary>(
+      `/api/procurement/refreshes/${refreshId}/workspace/summary${qs({
+        tenant_id: tenantId, search, movement_class: movementClass,
+      })}`,
     ),
 
   setFinalQty: (tenantId: string, orderItemId: string, finalQty: number, reason: string | null, by: string | null) =>

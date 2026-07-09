@@ -69,6 +69,21 @@ _FROM = (
 """
 )
 
+# Planning State — a direct SQL port of the PM grid's client-side classifier
+# (was duplicated in the frontend as a JS function run over every loaded row on
+# every render). Identical rule, computed once in the query instead: a skipped
+# item is always 'skipped'; anything with a live assigned quantity is
+# 'assigned'; a reviewed/partial item carrying a real Final Qty is 'finalized';
+# everything else is still 'pending'.
+_PLANNING_STATE_CASE = """
+    CASE
+        WHEN oi.item_status = 'skipped' THEN 'skipped'
+        WHEN ISNULL(oi.assigned_qty, 0) > 0 THEN 'assigned'
+        WHEN oi.item_status IN ('review', 'partial') AND ISNULL(oi.final_qty, 0) > 0 THEN 'finalized'
+        ELSE 'pending'
+    END
+"""
+
 
 def get_item(tenant_id, order_item_id):
     conn = get_connection()
@@ -133,20 +148,36 @@ def list_items(tenant_id, refresh_id, filters, sort_by, sort_dir, page, page_siz
     if filters.get("stock_status"):
         where.append("vp.stock_status = ?")
         params.append(filters["stock_status"])
+    if filters.get("is_manual") is not None:
+        where.append("oi.is_manual = ?")
+        params.append(1 if filters["is_manual"] else 0)
+    # Planning State — was a client-side filter (the grid's 5 visibility
+    # checkboxes) applied in JS over every already-downloaded row; now a real
+    # server predicate so a page/paging change never has to guess how many
+    # rows exist beyond the loaded window.
+    planning_states = filters.get("planning_state")
+    if planning_states:
+        placeholders = ", ".join("?" for _ in planning_states)
+        where.append(f"({_PLANNING_STATE_CASE}) IN ({placeholders})")
+        params.extend(planning_states)
+    # product_type reads sync.Products (pr) — only pull that join into the
+    # query (COUNT included) when this filter is actually requested.
+    needs_pr = bool(filters.get("product_type"))
+    if needs_pr:
+        where.append("pr.ProductType = ?")
+        params.append(filters["product_type"])
 
     where_sql = " AND ".join(where)
     order_col = _SORTABLE.get(sort_by, "oi.product_code")
     order_dir = "DESC" if str(sort_dir).lower() == "desc" else "ASC"
     offset = (page - 1) * page_size
+    count_from = _FROM if needs_pr else _FROM_BASE
 
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        # Filters only ever test oi.* / vp.* columns — the sync.Products join
-        # exists solely to backfill display columns in the page SELECT below,
-        # so the count never needs it.
         cursor.execute(
-            f"SELECT COUNT(*) {_FROM_BASE} WHERE {where_sql}", params
+            f"SELECT COUNT(*) {count_from} WHERE {where_sql}", params
         )
         total = cursor.fetchone()[0]
 
@@ -161,6 +192,78 @@ def list_items(tenant_id, refresh_id, filters, sort_by, sort_dir, page, page_siz
         )
         items = [_stringify(r) for r in _rows_to_dicts(cursor)]
         return items, total
+    finally:
+        conn.close()
+
+
+def get_summary(tenant_id, refresh_id, filters):
+    """Refresh-wide counts for the PM footer — Total Products, Pending Review,
+    Assigned, Finalized, Skipped — computed once in SQL instead of reducing
+    over every loaded row in the browser. Scope matches what the footer has
+    always shown: search + movement_class only, same as the grid's base load;
+    the Planning State / Product Type / Manual filters are display filters for
+    the grid and never narrowed these totals.
+
+    Purchase Value is deliberately NOT computed here. The app's real per-row
+    rate resolution (effectiveCost in purchaseValue.ts) falls back through the
+    bulk supplier-recommendations ranking (supplier_repository.top_suppliers_bulk)
+    before ever touching vp.last_purchase_rate/ptr_cost — confirmed against a
+    real refresh where every oi/vp rate column was NULL yet the app correctly
+    showed a non-zero total sourced entirely from that ranking. Reproducing it
+    here would mean duplicating top_suppliers_bulk's query (itself carrying the
+    same non-SARGable PurchaseTrans join Phase 2 fixed elsewhere) rather than
+    reusing it. Purchase Value stays client-computed from the existing bulk
+    recommendations feed until that ranking query has its own SARGable fix.
+    """
+    where = ["oi.tenant_id = ?", "oi.refresh_id = ?", "oi.is_deleted = 0"]
+    params = [tenant_id, refresh_id]
+    if filters.get("search"):
+        where.append("(oi.product_code LIKE ? OR vp.product_name LIKE ?)")
+        params.extend([f"%{filters['search']}%", f"%{filters['search']}%"])
+    if filters.get("movement_class"):
+        where.append("vp.movement_class = ?")
+        params.append(filters["movement_class"])
+    where_sql = " AND ".join(where)
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT {_PLANNING_STATE_CASE} AS planning_state, COUNT(*) AS cnt
+            {_FROM_BASE}
+            WHERE {where_sql}
+            GROUP BY {_PLANNING_STATE_CASE}
+            """,
+            params,
+        )
+        counts = {"pending": 0, "finalized": 0, "assigned": 0, "skipped": 0}
+        for state, cnt in cursor.fetchall():
+            if state in counts:
+                counts[state] = cnt
+        total = sum(counts.values())
+        # "Pending Review" on the footer has always meant "not yet reviewed AND
+        # not yet skipped" (item_status outside the reviewed set, qty still 0)
+        # — a slightly different cut than the 'pending' planning-state bucket
+        # (which only requires qty == 0, regardless of item_status). Compute it
+        # with its own predicate so the footer number is unchanged.
+        cursor.execute(
+            f"""
+            SELECT COUNT(*) {_FROM_BASE}
+            WHERE {where_sql}
+              AND oi.item_status NOT IN ('review', 'assigned', 'partial', 'skipped')
+              AND ISNULL(oi.final_qty, 0) = 0
+            """,
+            params,
+        )
+        pending_review = cursor.fetchone()[0]
+        return {
+            "total": total,
+            "pending_review": pending_review,
+            "assigned": counts["assigned"],
+            "finalized": counts["finalized"],
+            "skipped": counts["skipped"],
+        }
     finally:
         conn.close()
 

@@ -28,6 +28,13 @@ def list_workspace(tenant_id, refresh_id, filters, sort_by, sort_dir, page, page
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
+def get_summary(tenant_id, refresh_id, filters):
+    """Footer counts (Total / Pending Review / Assigned / Finalized / Skipped),
+    computed in SQL over the whole refresh instead of reduced from every
+    loaded row in the browser."""
+    return repo.get_summary(tenant_id, refresh_id, filters)
+
+
 def get_item(tenant_id, order_item_id):
     return _require_item(tenant_id, order_item_id)
 

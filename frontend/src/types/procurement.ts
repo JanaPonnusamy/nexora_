@@ -144,6 +144,17 @@ export interface WorkspacePage {
   page_size: number
 }
 
+/** Footer counts for the whole refresh, computed server-side. Purchase Value
+ *  is intentionally not part of this — it stays client-computed (see
+ *  workspace_repository.get_summary's docstring for why). */
+export interface WorkspaceSummary {
+  total: number
+  pending_review: number
+  assigned: number
+  finalized: number
+  skipped: number
+}
+
 export interface Assignment {
   assignment_id: string
   order_item_id: string

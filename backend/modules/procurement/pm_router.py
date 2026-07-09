@@ -38,6 +38,12 @@ def workspace(
     item_status: Optional[str] = Query(None),
     movement_class: Optional[str] = Query(None),
     stock_status: Optional[str] = Query(None),
+    # Comma-separated subset of pending|finalized|assigned|skipped — the grid's
+    # Planning State checkboxes. Was applied client-side over every already-
+    # downloaded row; now a real server filter (see _PLANNING_STATE_CASE).
+    planning_state: Optional[str] = Query(None),
+    product_type: Optional[str] = Query(None),
+    is_manual: Optional[bool] = Query(None),
     sort_by: str = Query("product_code"),
     sort_dir: str = Query("asc"),
     page: int = Query(1, ge=1),
@@ -49,10 +55,29 @@ def workspace(
     filters = {
         "search": search, "item_status": item_status,
         "movement_class": movement_class, "stock_status": stock_status,
+        "planning_state": [s for s in planning_state.split(",") if s] if planning_state else None,
+        "product_type": product_type,
+        "is_manual": is_manual,
     }
     return workspace_service.list_workspace(
         tenant_id, refresh_id, filters, sort_by, sort_dir, page, page_size
     )
+
+
+@router.get("/refreshes/{refresh_id}/workspace/summary")
+def workspace_summary(
+    refresh_id: str,
+    tenant_id: str = Query(...),
+    search: Optional[str] = Query(None),
+    movement_class: Optional[str] = Query(None),
+):
+    """Footer counts (Total Products / Pending Review / Assigned / Finalized /
+    Skipped) for the whole refresh, computed in SQL. Scope matches the grid's
+    base load (search + movement_class only) — Planning State / Product Type /
+    Manual are display filters and never narrowed these totals. Purchase Value
+    is not included — see workspace_repository.get_summary's docstring."""
+    filters = {"search": search, "movement_class": movement_class}
+    return workspace_service.get_summary(tenant_id, refresh_id, filters)
 
 
 @router.get("/order-items/{order_item_id}")
