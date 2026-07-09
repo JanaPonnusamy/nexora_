@@ -58,19 +58,19 @@ export function DetailColumn({
     () => stockService.salesHistory(tenantId, storeId, productCode),
     [tenantId, storeId, productCode],
   )
-  const sales = useStockResource(salesFetch, ctxKey)
+  const sales = useStockResource(salesFetch, ctxKey, 'sales')
 
   const purchasesFetch = useCallback(
     () => stockService.purchaseHistory(tenantId, storeId, productCode),
     [tenantId, storeId, productCode],
   )
-  const purchases = useStockResource(purchasesFetch, ctxKey)
+  const purchases = useStockResource(purchasesFetch, ctxKey, 'purchases')
 
   const movementFetch = useCallback(
     () => stockService.monthlyMovement(tenantId, storeId, productCode, 4),
     [tenantId, storeId, productCode],
   )
-  const movement = useStockResource(movementFetch, ctxKey)
+  const movement = useStockResource(movementFetch, ctxKey, 'movement')
 
   if (!item || !hasProduct) {
     return (

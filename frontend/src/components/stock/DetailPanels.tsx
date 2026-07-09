@@ -20,7 +20,7 @@ export function ProductContextBar({ ctx }: { ctx: ProductContext }) {
     () => stockService.productDetails(ctx.tenantId, ctx.storeId, ctx.productCode),
     [ctx.tenantId, ctx.storeId, ctx.productCode],
   )
-  const { data } = useStockResource(fetcher, panelKey(ctx))
+  const { data } = useStockResource(fetcher, panelKey(ctx), 'product-details')
   const stock = data?.total_stock ?? ctx.stock
 
   return (
@@ -54,7 +54,7 @@ export function MovementPanel({ ctx }: { ctx: ProductContext }) {
     () => stockService.monthlyMovement(ctx.tenantId, ctx.storeId, ctx.productCode, 4),
     [ctx.tenantId, ctx.storeId, ctx.productCode],
   )
-  const { data, isLoading, error, reload } = useStockResource(fetcher, panelKey(ctx))
+  const { data, isLoading, error, reload } = useStockResource(fetcher, panelKey(ctx), 'movement')
 
   return (
     <SxCard className="sa-chart-card">
@@ -81,7 +81,7 @@ export function BatchPanel({ ctx }: { ctx: ProductContext }) {
     () => stockService.batchDetails(ctx.tenantId, ctx.storeId, ctx.productCode),
     [ctx.tenantId, ctx.storeId, ctx.productCode],
   )
-  const { data, isLoading, error, reload } = useStockResource(fetcher, panelKey(ctx))
+  const { data, isLoading, error, reload } = useStockResource(fetcher, panelKey(ctx), 'batch')
 
   return (
     <SxCard>
@@ -137,7 +137,7 @@ export function SalesPanel({
     () => stockService.salesHistory(ctx.tenantId, ctx.storeId, ctx.productCode),
     [ctx.tenantId, ctx.storeId, ctx.productCode],
   )
-  const { data, isLoading, error, reload } = useStockResource(fetcher, panelKey(ctx))
+  const { data, isLoading, error, reload } = useStockResource(fetcher, panelKey(ctx), 'sales')
 
   return (
     <SxCard>
@@ -194,7 +194,7 @@ export function PurchasePanel({ ctx }: { ctx: ProductContext }) {
     () => stockService.purchaseHistory(ctx.tenantId, ctx.storeId, ctx.productCode),
     [ctx.tenantId, ctx.storeId, ctx.productCode],
   )
-  const { data, isLoading, error, reload } = useStockResource(fetcher, panelKey(ctx))
+  const { data, isLoading, error, reload } = useStockResource(fetcher, panelKey(ctx), 'purchases')
 
   return (
     <SxCard>
@@ -257,7 +257,7 @@ export function LatestBillPanel({ ctx, selected }: { ctx: ProductContext; select
     () => stockService.salesHistory(ctx.tenantId, ctx.storeId, ctx.productCode),
     [ctx.tenantId, ctx.storeId, ctx.productCode],
   )
-  const sales = useStockResource(salesFetcher, panelKey(ctx))
+  const sales = useStockResource(salesFetcher, panelKey(ctx), 'sales')
   const latest = sales.data?.[0] ?? null
   const eff: SelectedBill | null =
     selected ??
@@ -270,7 +270,7 @@ export function LatestBillPanel({ ctx, selected }: { ctx: ProductContext; select
     () => stockService.billItems(ctx.tenantId, ctx.storeId, effBillNo, effBillDate),
     [ctx.tenantId, ctx.storeId, effBillNo, effBillDate],
   )
-  const bill = useStockResource(billFetcher, billKey)
+  const bill = useStockResource(billFetcher, billKey, 'bill')
 
   const total = (bill.data ?? []).reduce((sum, row) => sum + (row.amount ?? 0), 0)
 
