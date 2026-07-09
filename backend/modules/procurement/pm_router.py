@@ -215,6 +215,13 @@ def list_assignments(order_item_id: str, tenant_id: str = Query(...)):
     return assignment_service.list_for_item(tenant_id, order_item_id)
 
 
+@router.get("/refreshes/{refresh_id}/assignments")
+def list_refresh_assignments(refresh_id: str, tenant_id: str = Query(...)):
+    """Every live assignment for the whole Refresh in one round-trip — powers
+    the Supplier Queue build (was one /assignments request per assigned item)."""
+    return assignment_service.list_for_refresh(tenant_id, refresh_id)
+
+
 @router.post("/order-items/{order_item_id}/assignments")
 def assign(order_item_id: str, payload: AssignRequest, tenant_id: str = Query(...)):
     return assignment_service.assign_single(

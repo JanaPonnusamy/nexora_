@@ -59,6 +59,25 @@ def list_by_order_item(tenant_id, order_item_id):
         conn.close()
 
 
+def list_by_refresh(tenant_id, refresh_id):
+    """Every live assignment for a whole Refresh in one round-trip — powers the
+    Supplier Queue build, which previously fanned out one request per assigned
+    order item (the N+1 that saturated the backend)."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT {_ASSIGN_COLS} "
+            "FROM procurement.procurement_order_item_assignments "
+            "WHERE tenant_id = ? AND refresh_id = ? AND is_deleted = 0 "
+            "ORDER BY order_item_id, created_at",
+            (tenant_id, refresh_id),
+        )
+        return [_stringify(r) for r in _rows_to_dicts(cursor)]
+    finally:
+        conn.close()
+
+
 # --------------------------------------------------------------------------
 # transactional checks/writes (caller-owned connection)
 # --------------------------------------------------------------------------

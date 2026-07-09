@@ -54,28 +54,6 @@ const STAGES: { key: Stage; label: string; icon: string }[] = [
 
 const MOVEMENT = ['', 'FAST', 'MEDIUM', 'SLOW', 'NONMOVING']
 
-// Run async `worker` over `list` with at most `limit` requests in flight at once,
-// so a large fan-out (one request per assigned item) can never open hundreds of
-// simultaneous connections and saturate the backend's request threadpool / SQL
-// connections. `alive()` lets a superseded run stop issuing further requests the
-// moment a newer run starts, instead of racing hundreds of stale calls to done.
-async function runPool<T>(
-  list: T[],
-  limit: number,
-  alive: () => boolean,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0
-  const runners = Array.from({ length: Math.min(limit, list.length) }, async () => {
-    while (cursor < list.length) {
-      if (!alive()) return
-      const item = list[cursor++]
-      await worker(item)
-    }
-  })
-  await Promise.all(runners)
-}
-
 // Reject a request that opens a connection but never sends a response. `fetch`
 // (see apiClient) has no timeout, so a single hung/dropped connection would
 // otherwise never settle — and because the supplier-queue fan-out awaits every
@@ -790,8 +768,7 @@ export default function PurchaseWorkspacePage() {
   // so the queue can show Ready / Pending / Exported cards with product lines.
   const loadQueue = useCallback(async () => {
     if (!canWork) return
-    // Each call fans out one request per assigned item (Promise.all below), so
-    // two overlapping runs (rapid supplier switches, one action chaining into
+    // Two overlapping runs (rapid supplier switches, one action chaining into
     // another) can resolve out of order. Only the LATEST run is allowed to
     // commit its result — an older, slower run's response is discarded instead
     // of racing it into state.
@@ -799,64 +776,60 @@ export default function PurchaseWorkspacePage() {
     setQueueLoading(true)
     setQueueError(null)
     try {
-      const assignedItems = items.filter((i) => (i.assigned_qty ?? 0) > 0)
+      // Every live assignment for the refresh, one round-trip (was one
+      // /assignments request per assigned item — the fan-out that saturated the
+      // backend's request threadpool + SQL connections on a real refresh).
+      const list = await withTimeout(procurementService.refreshAssignments(tenantId, refreshId)).catch(() => null)
+      if (runId !== queueRunRef.current) return // superseded by a newer call
+      if (list === null) {
+        setQueueLines([])
+        setLockedIds(new Set())
+        setQueueError('Could not load the supplier queue. Retry to try again.')
+        return
+      }
       const map = new Map<string, SupplierQueueGroup>()
       const locked = new Set<string>()
-      let failures = 0
-      // One /assignments request per assigned item, but capped at a few in flight
-      // at once (and abandoned the instant a newer run supersedes this one). The
-      // uncapped Promise.all here used to fire hundreds of simultaneous requests
-      // on a real refresh, saturating the backend's request threadpool + SQL
-      // connections — the root cause of the 502 / connection-reset cascade.
-      await runPool(assignedItems, 6, () => runId === queueRunRef.current, async (it) => {
-          // Isolate every request: a single failed or hung /assignments call must
-          // never reject the pool (which would abandon the build) nor pin it open
-          // forever (the loading skeleton that never clears). Time it out, count
-          // the miss, and carry on — the queue renders from whatever succeeded.
-          const list = await withTimeout(procurementService.assignments(tenantId, it.order_item_id))
-            .catch(() => { failures += 1; return null })
-          if (!list) return
-          const ptr = it.last_purchase_rate ?? it.ptr_cost ?? 0
-          for (const a of list) {
-            const g =
-              map.get(a.supplier_code) ??
-              {
-                supplier_code: a.supplier_code, supplier_name: null,
-                product_count: 0, total_qty: 0, est_value: 0, offer_count: 0,
-                exported_count: 0, status: 'ready', exported_at: null,
-                exported_by: null, export_batch_number: null,
-                assignment_ids: [], lines: [],
-              } as SupplierQueueGroup
-            const qty = a.assigned_qty ?? 0
-            const exported = a.assignment_status === 'exported'
-            g.lines.push({
-              assignment_id: a.assignment_id,
-              order_item_id: it.order_item_id,
-              product_name: it.product_name,
-              product_code: it.product_code,
-              ptr,
-              mrp: it.mrp ?? null,
-              offer: it.offer ?? null,
-              final_qty: qty,
-              exported,
-            })
-            g.product_count += 1
-            g.total_qty += qty
-            g.est_value += qty * ptr
-            if (it.offer) g.offer_count += 1
-            if (exported) {
-              locked.add(it.order_item_id)
-              g.exported_count += 1
-              g.exported_at = a.exported_at ?? g.exported_at
-              g.exported_by = a.export_uid ?? g.exported_by
-              g.export_batch_number = a.export_batch_number ?? g.export_batch_number
-            } else {
-              g.assignment_ids.push(a.assignment_id)
-            }
-            map.set(a.supplier_code, g)
-          }
-      })
-      if (runId !== queueRunRef.current) return // superseded by a newer call
+      for (const a of list) {
+        const it = itemById.get(a.order_item_id)
+        if (!it) continue
+        const ptr = it.last_purchase_rate ?? it.ptr_cost ?? 0
+        const g =
+          map.get(a.supplier_code) ??
+          {
+            supplier_code: a.supplier_code, supplier_name: null,
+            product_count: 0, total_qty: 0, est_value: 0, offer_count: 0,
+            exported_count: 0, status: 'ready', exported_at: null,
+            exported_by: null, export_batch_number: null,
+            assignment_ids: [], lines: [],
+          } as SupplierQueueGroup
+        const qty = a.assigned_qty ?? 0
+        const exported = a.assignment_status === 'exported'
+        g.lines.push({
+          assignment_id: a.assignment_id,
+          order_item_id: it.order_item_id,
+          product_name: it.product_name,
+          product_code: it.product_code,
+          ptr,
+          mrp: it.mrp ?? null,
+          offer: it.offer ?? null,
+          final_qty: qty,
+          exported,
+        })
+        g.product_count += 1
+        g.total_qty += qty
+        g.est_value += qty * ptr
+        if (it.offer) g.offer_count += 1
+        if (exported) {
+          locked.add(it.order_item_id)
+          g.exported_count += 1
+          g.exported_at = a.exported_at ?? g.exported_at
+          g.exported_by = a.export_uid ?? g.exported_by
+          g.export_batch_number = a.export_batch_number ?? g.export_batch_number
+        } else {
+          g.assignment_ids.push(a.assignment_id)
+        }
+        map.set(a.supplier_code, g)
+      }
       const groups = [...map.values()]
       groups.forEach((g) => {
         g.status = g.exported_count === 0 ? 'ready' : g.exported_count >= g.product_count ? 'exported' : 'partial'
@@ -864,14 +837,7 @@ export default function PurchaseWorkspacePage() {
       groups.sort((a, b) => b.est_value - a.est_value)
       setQueueLines(groups)
       setLockedIds(locked)
-      // Only a *total* failure (assignments were expected but none could be
-      // loaded) is an error the buyer must retry; a partial miss still renders
-      // the suppliers that loaded rather than blocking the whole queue.
-      if (failures > 0 && groups.length === 0 && assignedItems.length > 0) {
-        setQueueError(`Could not load the supplier queue — ${failures} request${failures === 1 ? '' : 's'} failed. Retry to try again.`)
-      } else {
-        setQueueError(null)
-      }
+      setQueueError(null)
     } catch (e) {
       if (runId === queueRunRef.current) {
         setQueueError(e instanceof Error ? e.message : 'Failed to load the supplier queue.')
@@ -880,7 +846,7 @@ export default function PurchaseWorkspacePage() {
     } finally {
       if (runId === queueRunRef.current) setQueueLoading(false)
     }
-  }, [canWork, items, tenantId, fail])
+  }, [canWork, itemById, tenantId, refreshId, fail])
 
   const exportGroup = async (group: SupplierQueueGroup, assignmentIds: string[]) => {
     if (assignmentIds.length === 0) return say('danger', 'Nothing to export for this supplier')

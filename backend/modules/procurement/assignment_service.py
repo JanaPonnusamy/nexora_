@@ -48,6 +48,12 @@ def list_for_item(tenant_id, order_item_id):
     return {"items": repo.list_by_order_item(tenant_id, order_item_id)}
 
 
+def list_for_refresh(tenant_id, refresh_id):
+    """Every live assignment for a Refresh, one query — the Supplier Queue reads
+    this instead of fanning out one /assignments call per assigned item."""
+    return {"items": repo.list_by_refresh(tenant_id, refresh_id)}
+
+
 def assign_single(tenant_id, order_item_id, supplier_code, qty, remarks, created_by):
     _validate_supplier(supplier_code)
     _validate_qty(qty)

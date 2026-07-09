@@ -41,19 +41,33 @@ _SELECT = """
     pr.ProductType AS product_type
 """
 
-# sync.Products (product master) supplies Pack (SaleUnit) / Unit (UnitDescription)
-# / Product Type when the immutable VPL snapshot did not capture them.
-_FROM = """
+# oi.product_code and vp are joined by every caller; sync.Products (product
+# master, ~hundreds of thousands of rows across all stores) is joined only to
+# backfill Pack / Unit / Product Type when the VPL snapshot didn't capture them
+# — COUNT(*) never needs it, so it gets its own leaner FROM below.
+_FROM_BASE = """
     FROM procurement.procurement_order_items oi
     LEFT JOIN procurement.procurement_virtual_products vp
         ON vp.tenant_id = oi.tenant_id
        AND vp.refresh_id = oi.refresh_id
        AND vp.product_id = oi.product_id
+"""
+
+# sync.Products.ProductCode is INT (clustered PK is (store_id, ProductCode)).
+# Casting BOTH sides to VARCHAR — as this join used to — defeats that index and
+# forces a full clustered index scan of every store's product master on every
+# workspace load. Casting only oi.product_code (varchar, one refresh's rows,
+# never scanned on its own side) keeps pr.ProductCode bare so SQL Server can
+# seek it directly.
+_FROM = (
+    _FROM_BASE
+    + """
     LEFT JOIN sync.Products pr
         ON pr.tenant_id = oi.tenant_id
        AND pr.store_id = oi.store_id
-       AND CAST(pr.ProductCode AS VARCHAR(100)) = CAST(oi.product_code AS VARCHAR(100))
+       AND pr.ProductCode = TRY_CAST(oi.product_code AS INT)
 """
+)
 
 
 def get_item(tenant_id, order_item_id):
@@ -91,8 +105,9 @@ def get_decision(tenant_id, order_item_id):
     conn = get_connection()
     try:
         cursor = conn.cursor()
+        # _DECISION_SELECT never references pr.* — skip the sync.Products join.
         cursor.execute(
-            f"SELECT {_DECISION_SELECT} {_FROM} "
+            f"SELECT {_DECISION_SELECT} {_FROM_BASE} "
             "WHERE oi.tenant_id = ? AND oi.order_item_id = ? AND oi.is_deleted = 0",
             (tenant_id, order_item_id),
         )
@@ -127,8 +142,11 @@ def list_items(tenant_id, refresh_id, filters, sort_by, sort_dir, page, page_siz
     conn = get_connection()
     try:
         cursor = conn.cursor()
+        # Filters only ever test oi.* / vp.* columns — the sync.Products join
+        # exists solely to backfill display columns in the page SELECT below,
+        # so the count never needs it.
         cursor.execute(
-            f"SELECT COUNT(*) {_FROM} WHERE {where_sql}", params
+            f"SELECT COUNT(*) {_FROM_BASE} WHERE {where_sql}", params
         )
         total = cursor.fetchone()[0]
 

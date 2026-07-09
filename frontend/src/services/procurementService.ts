@@ -108,6 +108,15 @@ export const procurementService = {
       )
       .then((r) => r.items),
 
+  // Every live assignment for the whole Refresh, one round-trip — the Supplier
+  // Queue build uses this instead of one /assignments call per assigned item.
+  refreshAssignments: (tenantId: string, refreshId: string) =>
+    api
+      .get<{ items: Assignment[] }>(
+        `/api/procurement/refreshes/${refreshId}/assignments${qs({ tenant_id: tenantId })}`,
+      )
+      .then((r) => r.items),
+
   assign: (tenantId: string, orderItemId: string, supplierCode: string, qty: number, by: string | null) =>
     api.post(
       `/api/procurement/order-items/${orderItemId}/assignments${qs({ tenant_id: tenantId })}`,
