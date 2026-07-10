@@ -2,9 +2,13 @@
 
 Single / bulk assignment, supplier change and removal, with the Module 7
 validations enforced in Python:
-  * assigned total may not exceed the item's Final Quantity
-  * no duplicate active assignment (same item + supplier)
+  * one product may carry at most ONE active supplier assignment per cycle —
+    the backend is the final authority here, never just the frontend
+  * assigned qty may not exceed the item's Final Quantity
   * quantity must be > 0 (no zero / negative)
+Reassigning to a different supplier is a change_supplier call, never a second
+assign_single insert — assign_single/assign_bulk reject a product that
+already has a live assignment to a different supplier (409 / per-item skip).
 Order-item totals are recomputed from the live assignments after every change.
 """
 
@@ -68,6 +72,16 @@ def assign_single(tenant_id, order_item_id, supplier_code, qty, remarks, created
                 status_code=409,
                 detail="An active assignment for this supplier already exists",
             )
+        existing = repo.any_active_assignment(conn, tenant_id, order_item_id)
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Product already assigned to a different supplier",
+                    "assignment_id": existing["assignment_id"],
+                    "supplier_code": existing["supplier_code"],
+                },
+            )
         already = repo.active_assigned_total(conn, tenant_id, order_item_id)
         if already + qty > (item["final_qty"] or 0):
             raise HTTPException(
@@ -121,6 +135,11 @@ def assign_bulk(tenant_id, supplier_code, specs, created_by):
                     raise ValueError("no remaining quantity to assign")
                 if repo.duplicate_active_exists(conn, tenant_id, oid, supplier_code):
                     raise ValueError("duplicate active assignment")
+                existing = repo.any_active_assignment(conn, tenant_id, oid)
+                if existing:
+                    raise ValueError(
+                        f"already assigned to a different supplier ({existing['supplier_code']})"
+                    )
                 already = repo.active_assigned_total(conn, tenant_id, oid)
                 if already + qty > (item["final_qty"] or 0):
                     raise ValueError("would exceed final quantity")

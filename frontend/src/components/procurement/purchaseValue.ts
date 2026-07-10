@@ -15,6 +15,25 @@ export function sortSuppliersByCost(suppliers: SupplierRow[]): SupplierRow[] {
   })
 }
 
+/** The supplier with the most recent purchase (max last_grn_date) — "Preferred
+ *  Supplier" per the buyer's own purchase history. Ties keep the first one
+ *  encountered (list order, already cheapest-first). Display order is NOT
+ *  changed by this — callers badge/pre-select the returned code, they don't
+ *  reorder the list (owner-approved: cheapest stays first). */
+export function preferredSupplier(suppliers: SupplierRow[] | undefined): string | null {
+  if (!suppliers || suppliers.length === 0) return null
+  let best: SupplierRow | null = null
+  let bestTime = -Infinity
+  for (const s of suppliers) {
+    const t = s.last_grn_date ? Date.parse(s.last_grn_date) : NaN
+    if (!Number.isNaN(t) && t > bestTime) {
+      bestTime = t
+      best = s
+    }
+  }
+  return best?.supplier_code ?? null
+}
+
 /** Optional per-product signals for Auto Assign scoring that are not carried in
  *  the batched recommendation feed (kept optional so the caller adds no extra
  *  per-product query). */

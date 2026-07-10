@@ -42,6 +42,9 @@ export function SupplierReviewPanel({
 }) {
   // Which line is currently having its supplier changed (shows the picker inline).
   const [changing, setChanging] = useState<string | null>(null)
+  // Explicit reassignment confirm (§7 — never silently overwrite): the picked
+  // supplier waits here until the buyer confirms the move.
+  const [pendingChange, setPendingChange] = useState<{ assignmentId: string; productName: string; supplier: SupplierRow } | null>(null)
 
   const lines = group?.lines ?? []
   const liveLines = lines.filter((l) => !l.exported)
@@ -97,16 +100,39 @@ export function SupplierReviewPanel({
                       <div className="pm-prod__meta">{l.product_code}{l.exported && <span className="pm-tag ms-1">exported</span>}</div>
                       {changing === l.assignment_id && (
                         <div className="pm-srv__change">
-                          <SupplierPicker
-                            tenantId={tenantId}
-                            storeId={storeId}
-                            value={null}
-                            onPick={(s) => {
-                              if (s) onChangeSupplier(l.assignment_id, s)
-                              setChanging(null)
-                            }}
-                          />
-                          <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => setChanging(null)}>Cancel</button>
+                          {pendingChange?.assignmentId === l.assignment_id ? (
+                            <div className="pm-srv__confirm">
+                              <span>
+                                Already assigned to <b>{supplierName}</b>. Reassign{' '}
+                                <b>{pendingChange.productName}</b> to <b>{pendingChange.supplier.supplier_name ?? pendingChange.supplier.supplier_code}</b>?
+                              </span>
+                              <div className="pm-srv__confirm-btns">
+                                <button
+                                  className="pm-btn pm-btn--danger pm-btn--sm"
+                                  onClick={() => {
+                                    onChangeSupplier(l.assignment_id, pendingChange.supplier)
+                                    setPendingChange(null)
+                                    setChanging(null)
+                                  }}
+                                >
+                                  Reassign
+                                </button>
+                                <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => setPendingChange(null)}>Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <SupplierPicker
+                                tenantId={tenantId}
+                                storeId={storeId}
+                                value={null}
+                                onPick={(s) => {
+                                  if (s) setPendingChange({ assignmentId: l.assignment_id, productName: l.product_name ?? l.product_code ?? 'this product', supplier: s })
+                                }}
+                              />
+                              <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => setChanging(null)}>Cancel</button>
+                            </>
+                          )}
                         </div>
                       )}
                     </td>

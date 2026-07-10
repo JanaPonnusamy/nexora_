@@ -4,6 +4,7 @@ import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
 import { num } from '../stock/format'
 import { DEFAULT_SKIP_MODE } from './skipModes'
 import { SkipModeCell } from './SkipModeCell'
+import { preferredSupplier } from './purchaseValue'
 
 const REVIEWED_STATES = ['review', 'assigned', 'partial']
 
@@ -197,13 +198,14 @@ export function ProductGrid({
   /* ---- Zone transitions & actions --------------------------------------- */
 
   // Right from Final Qty → Supplier Recommendation, starting on the currently
-  // selected supplier (or the top-ranked one).
+  // selected supplier, else the Preferred (latest-purchased) one, else the
+  // top-ranked (cheapest) card — pre-selects visually only, never assigns (§3).
   const enterSupplierZone = () => {
     const cur = items[selectedIndex]
     if (!cur || !editable(cur)) return
     const recs = recsFor(cur)
     if (recs.length === 0) return
-    const selCode = selectedSupplier?.[cur.order_item_id]
+    const selCode = selectedSupplier?.[cur.order_item_id] ?? preferredSupplier(recs)
     const found = recs.findIndex((s) => s.supplier_code === selCode)
     const idx = found < 0 ? 0 : found
     setSupIndex(idx)
@@ -294,7 +296,15 @@ export function ProductGrid({
       else if (e.key === 'ArrowDown') { e.preventDefault(); moveSupplier(1) }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); setZone('qty') }
       else if (e.key === 'Enter') { e.preventDefault(); commitSupplier() }
-      else if (e.key === 'Escape') { e.preventDefault(); skipCurrent() }
+      else if (e.key === 'Tab') {
+        // Next/previous editable product — same as the Final Qty zone (§8).
+        if (gotoEditableRow(e.shiftKey ? -1 : 1)) e.preventDefault()
+      } else if (e.key === 'Escape') {
+        // §8 — Esc here only cancels the supplier highlight and returns to
+        // Final Qty; nothing was committed yet, so there is nothing to skip.
+        e.preventDefault()
+        setZone('qty')
+      }
       return
     }
 
@@ -378,7 +388,11 @@ export function ProductGrid({
                       aria-label="Select row"
                       checked={checked?.has(item.order_item_id) ?? false}
                       onChange={() => onToggle?.(item.order_item_id)}
-                      disabled={skipped || locked}
+                      // A product already owned by a supplier can never be bulk
+                      // re-assigned from here (§1/§2) — reassignment is explicit
+                      // (Change Supplier in the Assign stage's review panel).
+                      disabled={skipped || locked || assigned}
+                      title={assigned ? 'Already assigned — use Change Supplier to reassign' : undefined}
                     />
                   </td>
                 )}

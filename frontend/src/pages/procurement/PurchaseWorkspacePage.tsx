@@ -178,6 +178,9 @@ export default function PurchaseWorkspacePage() {
   // Order-item ids with a Final Qty save in flight — dedupes Enter/blur so one
   // row can never fire two concurrent /final-qty requests.
   const savingIds = useRef<Set<string>>(new Set())
+  // Order-item ids with a supplier assignment in flight — dedupes rapid double
+  // Enter/click in the Supplier Recommendation panel (§11).
+  const assigningIds = useRef<Set<string>>(new Set())
   // Guards loadQueue against overlapping runs — it fans out one request per
   // assigned item, so two concurrent calls (rapid supplier switches, chained
   // actions) could otherwise resolve out of order and let a stale result win.
@@ -390,6 +393,22 @@ export default function PurchaseWorkspacePage() {
     return m
   }, [items])
 
+  // One product → one supplier (§1/§2): the live (non-exported) assignment per
+  // order item, sourced from the same bulk assignments feed the Supplier Queue
+  // already loads — no new endpoint, and it survives a page reload (unlike the
+  // session-only `selectedSupplier` state). Exported lines are excluded since
+  // they're locked/no longer reassignable.
+  const assignedByItem = useMemo(() => {
+    const m = new Map<string, { assignmentId: string; supplierCode: string; supplierName: string | null }>()
+    for (const g of queueLines) {
+      for (const l of g.lines) {
+        if (l.exported) continue
+        m.set(l.order_item_id, { assignmentId: l.assignment_id, supplierCode: g.supplier_code, supplierName: g.supplier_name })
+      }
+    }
+    return m
+  }, [queueLines])
+
   // Staged Final Qty edits that differ from the server value (and are editable).
   const dirtyIds = useMemo(() => {
     const s = new Set<string>()
@@ -537,7 +556,7 @@ export default function PurchaseWorkspacePage() {
   // Client-side view toggles the server can't express. In Supplier Purchasing
   // mode, additionally show only the selected supplier's purchased products.
   const visibleItems = useMemo(() => {
-    const narrowToSupplier = mode === 'supplier' && supplier && supplierProductIds !== null
+    const narrowToSupplier = mode === 'supplier' && Boolean(supplier)
     const planningState = (i: WorkspaceItem) => {
       if (i.item_status === 'skipped') return 'skipped'
       if ((i.assigned_qty ?? 0) > 0) return 'assigned'
@@ -551,11 +570,22 @@ export default function PurchaseWorkspacePage() {
       if (st === 'assigned' && !showAssigned) return false
       if (st === 'skipped' && !showSkipped) return false
       if (i.is_manual && !showManual) return false
+      // Category filter — client-side only, never touches assignments (§5).
       if (productType && String(i.product_type ?? '') !== productType) return false
-      if (narrowToSupplier && !supplierProductIds!.has(i.order_item_id)) return false
+      // Supplier filter (§4): once a supplier is picked, the grid shows only
+      // that supplier's own assignment plus still-unassigned candidates —
+      // never a product owned by a different supplier.
+      if (narrowToSupplier) {
+        const a = assignedByItem.get(i.order_item_id)
+        if (a) {
+          if (a.supplierCode !== supplier!.supplier_code) return false
+        } else if (supplierProductIds !== null && !supplierProductIds.has(i.order_item_id)) {
+          return false
+        }
+      }
       return true
     })
-  }, [items, showPending, showFinalized, showAssigned, showSkipped, showManual, productType, mode, supplier, supplierProductIds])
+  }, [items, showPending, showFinalized, showAssigned, showSkipped, showManual, productType, mode, supplier, supplierProductIds, assignedByItem])
 
   // Supplier codes with live stock for the active supplier (mode 3). Marks that
   // supplier's icon "live"; degrades to the normal recommendation otherwise.
@@ -655,6 +685,9 @@ export default function PurchaseWorkspacePage() {
   const assign = async (item: WorkspaceItem, supplierCode: string) => {
     const remaining = item.remaining_qty ?? 0
     if (remaining <= 0) return say('danger', 'No remaining quantity to assign')
+    // §11 — a rapid double Enter/click must never fire two POSTs for the same row.
+    if (assigningIds.current.has(item.order_item_id)) return
+    assigningIds.current.add(item.order_item_id)
     setSelectedSupplier((prev) => ({ ...prev, [item.order_item_id]: supplierCode }))
     setItems((list) =>
       list.map((it) =>
@@ -671,9 +704,12 @@ export default function PurchaseWorkspacePage() {
     )
     try {
       await procurementService.assign(tenantId, item.order_item_id, supplierCode, remaining, actingUser || null)
+      await loadQueue() // keeps assignedByItem (assignment_id) in sync for the reassign flow
     } catch (e) {
       fail(e)
       if (!isOffline(e)) loadWorkspace()
+    } finally {
+      assigningIds.current.delete(item.order_item_id)
     }
   }
 
@@ -688,15 +724,27 @@ export default function PurchaseWorkspacePage() {
     [],
   )
 
-  // Double click (or explicit Assign) = commit the assignment to the queue.
+  // Double click (or explicit Assign / keyboard Enter) = commit the assignment.
+  // One product → one supplier (§1/§2): a product already assigned to a
+  // DIFFERENT supplier is never silently overwritten here — the backend would
+  // reject it anyway (409), but catching it client-side skips the round trip
+  // and points the buyer at the real reassignment path (Change Supplier in
+  // the Assign stage's Supplier Review panel, which confirms before moving
+  // it — §7). Assigning to the SAME supplier again is just a no-op.
   const onCommitSupplier = useCallback(
     (item: WorkspaceItem, supplierCode: string) => {
+      const existing = assignedByItem.get(item.order_item_id)
+      if (existing && existing.supplierCode === supplierCode) return
+      if (existing) {
+        say('danger', `Already assigned to ${existing.supplierName ?? existing.supplierCode}. Use Change Supplier in the Assign stage to reassign.`)
+        return
+      }
       setSelectedSupplier((prev) => ({ ...prev, [item.order_item_id]: supplierCode }))
       assign(item, supplierCode)
     },
-    // assign is stable enough for this flow; declared below.
+    // assign is stable enough for this flow; declared above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tenantId, actingUser],
+    [tenantId, actingUser, assignedByItem, say],
   )
 
   const toggle = (id: string) =>
@@ -847,6 +895,16 @@ export default function PurchaseWorkspacePage() {
       if (runId === queueRunRef.current) setQueueLoading(false)
     }
   }, [canWork, itemById, tenantId, refreshId, fail])
+
+  // Eagerly load the refresh's assignments as soon as the workspace items are
+  // in (not only when the buyer reaches the Assign/Optimize/Export stage) so
+  // `assignedByItem` — and therefore "Assigned to X" / the one-supplier guard
+  // — is correct from the very first render, including right after a reload.
+  const itemsLoaded = items.length > 0
+  useEffect(() => {
+    if (canWork && itemsLoaded) loadQueue()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canWork, tenantId, refreshId, itemsLoaded])
 
   const exportGroup = async (group: SupplierQueueGroup, assignmentIds: string[]) => {
     if (assignmentIds.length === 0) return say('danger', 'Nothing to export for this supplier')
@@ -1266,6 +1324,16 @@ export default function PurchaseWorkspacePage() {
                       metaOf={supplierMetaOf}
                     />
                   )}
+                  {/* Category filter is available while assigning too (§5) — it
+                      only narrows the grid view, it never touches assignments. */}
+                  {mode !== 'supplier-stock' && (
+                    <select className="sx-select" aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
+                      <option value="">Product Type: all</option>
+                      <option value="1">Pharma</option>
+                      <option value="0">Non-Pharma</option>
+                      <option value="2">Others</option>
+                    </select>
+                  )}
                   {mode === 'supplier-stock' && (
                     <>
                       <span className="sx-search">
@@ -1470,9 +1538,13 @@ export default function PurchaseWorkspacePage() {
                   selectedCode={selectedId ? selectedSupplier[selectedId] ?? null : null}
                   assignedCode={
                     selectedItem && (selectedItem.assigned_qty ?? 0) > 0
-                      ? selectedSupplier[selectedItem.order_item_id] ?? selectedItem.supplier_code ?? null
+                      ? selectedSupplier[selectedItem.order_item_id] ??
+                        assignedByItem.get(selectedItem.order_item_id)?.supplierCode ??
+                        selectedItem.supplier_code ??
+                        null
                       : null
                   }
+                  assignedName={selectedItem ? assignedByItem.get(selectedItem.order_item_id)?.supplierName ?? null : null}
                   liveCodes={liveCodes}
                   active={supplierZoneActive}
                   onSelect={(code) => selectedId && onSelectSupplier(selectedId, code)}

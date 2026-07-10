@@ -1,7 +1,9 @@
+import { useEffect, useRef } from 'react'
 import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
 import type { DrawerTab } from './DetailColumn'
 import { money, num } from '../stock/format'
 import { supplierAbbrev } from './supplierAbbrev'
+import { preferredSupplier } from './purchaseValue'
 
 // Whole days since a date (for "90 Days" style relative Last Purchase labels).
 function daysSince(d?: string | null): number | null {
@@ -40,6 +42,7 @@ export function SupplierRecPanel({
   suppliers,
   selectedCode,
   assignedCode,
+  assignedName,
   liveCodes,
   active,
   onSelect,
@@ -50,6 +53,9 @@ export function SupplierRecPanel({
   suppliers: SupplierRow[]
   selectedCode?: string | null
   assignedCode?: string | null
+  /** Display name of the supplier holding the current assignment (if any) —
+   *  drives the "Already assigned to X" tooltip on every other card. */
+  assignedName?: string | null
   liveCodes?: Set<string> | null
   active?: boolean
   onSelect?: (supplierCode: string) => void
@@ -59,6 +65,13 @@ export function SupplierRecPanel({
   const recommendedQty = item ? item.remaining_qty ?? item.final_qty ?? 0 : 0
   const canAssign = Boolean(item) && item!.item_status !== 'skipped' && recommendedQty > 0
   const shown = suppliers.slice(0, 8)
+  // Auto-scroll (§9): keep the focused/selected card visible during Up/Down
+  // keyboard navigation — same pattern as SupplierPicker's result list.
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  useEffect(() => {
+    if (!selectedCode) return
+    cardRefs.current.get(selectedCode)?.scrollIntoView({ block: 'nearest' })
+  }, [selectedCode])
 
   return (
     <div className={`pm-srp${active ? ' pm-srp--active' : ''}`}>
@@ -74,17 +87,26 @@ export function SupplierRecPanel({
             // Suppliers arrive cheapest-first (sortSuppliersByCost). The first
             // priced supplier is the cheapest → gets the green "best price" accent.
             const cheapestCode = shown.find((s) => s.last_purchase_rate != null)?.supplier_code
+            // Preferred = latest purchased (own purchase history). Badged in
+            // place, not reordered — cheapest-first stays the display order.
+            const preferredCode = preferredSupplier(shown)
             return shown.map((s) => {
             const code = s.supplier_code
             const selected = selectedCode === code
             const assigned = assignedCode === code
             const cheapest = code === cheapestCode
+            const preferred = code === preferredCode
             const live = Boolean(liveCodes?.has(code))
             const days = daysSince(s.last_grn_date)
+            // A different supplier already owns this product — the button
+            // stays reachable (routes into the confirm-reassign flow) but is
+            // disabled from a plain click/Enter fast-path.
+            const ownedElsewhere = Boolean(assignedCode) && !assigned
             return (
               <div
                 key={code}
-                className={`pm-srpcard${selected ? ' pm-srpcard--sel' : ''}${assigned ? ' pm-srpcard--assigned' : ''}${cheapest ? ' pm-srpcard--cheapest' : ''}`}
+                ref={(el) => { if (el) cardRefs.current.set(code, el); else cardRefs.current.delete(code) }}
+                className={`pm-srpcard${selected ? ' pm-srpcard--sel' : ''}${assigned ? ' pm-srpcard--assigned' : ''}${cheapest ? ' pm-srpcard--cheapest' : ''}${ownedElsewhere ? ' pm-srpcard--disabled' : ''}`}
                 onClick={() => onSelect?.(code)}
                 onDoubleClick={() => item && onCommit?.(item, code)}
                 title={s.supplier_name ?? code}
@@ -92,6 +114,7 @@ export function SupplierRecPanel({
                 <div className="pm-srpcard__top">
                   <span className="pm-srpcard__abbr">{supplierAbbrev(s.supplier_name, code)}</span>
                   {cheapest && <span className="pm-srpcard__best" title="Lowest cost (PTR)">BEST</span>}
+                  {preferred && <span className="pm-srpcard__preferred" title="Latest purchasing supplier (purchase history)">PREFERRED</span>}
                   <span className={`pm-srpcard__ptr ${bands[code] ?? ''}`}>{money(s.last_purchase_rate)}</span>
                   {live && <span className="pm-srpcard__live">LIVE</span>}
                 </div>
@@ -101,9 +124,13 @@ export function SupplierRecPanel({
                 </div>
                 <button
                   className="pm-btn pm-btn--success pm-btn--sm pm-srpcard__assign"
-                  disabled={!canAssign}
+                  disabled={!canAssign || ownedElsewhere}
                   onClick={(e) => { e.stopPropagation(); item && onCommit?.(item, code) }}
-                  title={canAssign ? 'Assign the remaining quantity to this supplier' : 'Nothing left to assign'}
+                  title={
+                    assigned ? 'Already assigned to this supplier'
+                      : ownedElsewhere ? `Already assigned to ${assignedName ?? assignedCode} — use Change Supplier in the Assign stage to reassign`
+                        : canAssign ? 'Assign the remaining quantity to this supplier' : 'Nothing left to assign'
+                  }
                 >
                   {assigned ? 'Assigned' : `Assign ${recommendedQty > 0 ? num(recommendedQty) : ''}`}
                 </button>

@@ -1,10 +1,12 @@
 """Data access for Supplier Assignment (Sprint 2, Module 5).
 
-One order item may receive several assignments (partial / multi-supplier). All
-writes run on a caller-owned connection so a bulk assignment is atomic. After
-any assignment change the owning order item's assigned_qty / remaining_qty /
-item_status are recomputed from the live assignments (single source of truth —
-no duplicated totals).
+An order item may carry at most ONE active assignment — one product, one
+supplier per cycle (enforced in assignment_service via any_active_assignment).
+Reassigning to a different supplier goes through change_supplier, never a
+second insert. All writes run on a caller-owned connection so a bulk
+assignment is atomic. After any assignment change the owning order item's
+assigned_qty / remaining_qty / item_status are recomputed from the live
+assignments (single source of truth — no duplicated totals).
 """
 
 from config.database import get_connection
@@ -112,6 +114,29 @@ def duplicate_active_exists(conn, tenant_id, order_item_id, supplier_code,
     cursor = conn.cursor()
     cursor.execute(sql, params)
     return cursor.fetchone() is not None
+
+
+def any_active_assignment(conn, tenant_id, order_item_id, exclude_assignment_id=None):
+    """The item's single active assignment (any supplier), or None.
+
+    Backs the one-product-one-supplier rule: a working item may carry at most
+    one live (non-deleted) assignment regardless of supplier. Returns
+    {assignment_id, supplier_code} rather than a bool so the caller can report
+    which supplier already owns the product without a second query.
+    """
+    sql = (
+        "SELECT TOP (1) assignment_id, supplier_code "
+        "FROM procurement.procurement_order_item_assignments "
+        "WHERE tenant_id = ? AND order_item_id = ? AND is_deleted = 0"
+    )
+    params = [tenant_id, order_item_id]
+    if exclude_assignment_id is not None:
+        sql += " AND assignment_id <> ?"
+        params.append(exclude_assignment_id)
+    cursor = conn.cursor()
+    cursor.execute(sql, params)
+    row = cursor.fetchone()
+    return {"assignment_id": str(row[0]), "supplier_code": row[1]} if row else None
 
 
 def insert_assignment(conn, item, supplier_code, qty, remarks, created_by):

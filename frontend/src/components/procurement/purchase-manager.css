@@ -114,6 +114,12 @@
 .pm-srpcard--cheapest { border-color: #86efac; box-shadow: inset 3px 0 0 #16a34a; }
 .pm-srpcard--cheapest.pm-srpcard--sel { box-shadow: inset 3px 0 0 #16a34a, inset 0 0 0 1px var(--bs-primary, #4f46e5); }
 .pm-srpcard__best { font-size: 9px; font-weight: 800; color: #15803d; background: #dcfce7; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; }
+/* Latest-purchased supplier (own purchase history) — badge only, order unchanged. */
+.pm-srpcard__preferred { font-size: 9px; font-weight: 800; color: #a16207; background: #fef9c3; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; }
+/* A different supplier already owns this product (one-supplier rule) — the
+   card stays visible for context but its Assign button is disabled. */
+.pm-srpcard--disabled { opacity: .55; }
+.pm-srpcard--disabled .pm-srpcard__assign { cursor: not-allowed; }
 .pm-srpcard__top { display: flex; align-items: center; gap: 6px; }
 .pm-srpcard__abbr { font-weight: 800; font-size: 13px; letter-spacing: .02em; color: #0f172a; }
 .pm-srpcard__ptr { margin-left: auto; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -540,6 +546,9 @@
 .pm-srv__row--done { opacity: .55; }
 .pm-srv__btns { display: inline-flex; gap: 4px; }
 .pm-srv__change { margin-top: 6px; display: flex; gap: 6px; align-items: center; }
+/* Explicit reassignment confirm (§7) — never silently overwrite. */
+.pm-srv__confirm { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid #fecaca; background: #fef2f2; border-radius: 8px; font-size: 12px; max-width: 320px; }
+.pm-srv__confirm-btns { display: flex; gap: 6px; }
 .pm-srv__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border-top: 1px solid var(--bs-border-color, #e5e7eb); }
 .pm-srv__foottotal { font-size: 12.5px; color: #475569; }
 .pm-srv__foottotal b { font-size: 15px; color: #0f172a; margin-left: 4px; }
