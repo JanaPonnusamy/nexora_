@@ -106,6 +106,13 @@ export default function PurchaseWorkspacePage() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The refresh_id the currently-loaded `items` actually belong to — set only
+  // once a workspace fetch resolves. Lets the eager Supplier Queue load tell
+  // "still the old refresh's rows" apart from "the new refresh's rows are in"
+  // (items.length > 0 alone can't: both cases are non-empty during a refresh
+  // switch, which used to join fresh assignment rows against a stale itemById
+  // and silently render an empty Supplier Queue until a manual Reload).
+  const [itemsRefreshId, setItemsRefreshId] = useState('')
 
   // Filters
   const [search, setSearch] = useState('')
@@ -290,6 +297,11 @@ export default function PurchaseWorkspacePage() {
     return () => { live = false }
   }, [tenantId, refreshId])
 
+  // search/movement are Review-stage-only controls (not shown once the buyer
+  // moves to Assign/Optimize/Export). Derived to a boolean (not raw `stage`)
+  // so loadWorkspace's identity — and therefore a refetch — only changes when
+  // crossing the Review boundary, not on every Assign→Optimize→Export step.
+  const isReviewStage = stage === 'review'
   const loadWorkspace = useCallback(() => {
     // Supersede any request already in flight before starting a new one.
     workspaceAbortRef.current?.abort()
@@ -305,8 +317,12 @@ export default function PurchaseWorkspacePage() {
       .workspace(
         tenantId, refreshId,
         {
-          search,
-          movement_class: movement || undefined,
+          // A leftover search term used to silently narrow `items` outside
+          // Review, which fed the Supplier Queue's assignment join and made
+          // real assignments for products outside that search vanish from
+          // the Export list — only apply these filters while reviewing.
+          search: isReviewStage ? search : undefined,
+          movement_class: isReviewStage ? (movement || undefined) : undefined,
           // Load the whole refresh (no artificial 300 cap). Typical cycles are
           // 700–1000 rows; the grid renders them behind an internal scroll.
           // TODO: true row virtualization for very large (2000+) cycles.
@@ -317,6 +333,7 @@ export default function PurchaseWorkspacePage() {
       .then((p) => {
         setItems(p.items)
         setTotal(p.total ?? p.items.length)
+        setItemsRefreshId(refreshId)
       })
       .catch((e) => {
         if (e instanceof DOMException && e.name === 'AbortError') return // superseded, not an error
@@ -325,7 +342,7 @@ export default function PurchaseWorkspacePage() {
       .finally(() => {
         if (workspaceAbortRef.current === controller) setLoading(false)
       })
-  }, [tenantId, refreshId, search, movement])
+  }, [tenantId, refreshId, search, movement, isReviewStage])
 
   useEffect(() => {
     const id = window.setTimeout(loadWorkspace, 250)
@@ -855,9 +872,15 @@ export default function PurchaseWorkspacePage() {
       const map = new Map<string, SupplierQueueGroup>()
       const locked = new Set<string>()
       for (const a of list) {
+        // The workspace item is used for the richer display fields (name,
+        // MRP, offer) when it's loaded — but a real assignment is NEVER
+        // dropped from the queue just because itemById doesn't (yet, or
+        // transiently) have a matching row. Falling back to the assignment's
+        // own product_code keeps the Supplier Queue / Export list complete
+        // even if the workspace item list is momentarily narrower than the
+        // full assignment set (e.g. still loading, or filtered elsewhere).
         const it = itemById.get(a.order_item_id)
-        if (!it) continue
-        const ptr = it.last_purchase_rate ?? it.ptr_cost ?? 0
+        const ptr = it?.last_purchase_rate ?? it?.ptr_cost ?? 0
         const g =
           map.get(a.supplier_code) ??
           {
@@ -871,21 +894,21 @@ export default function PurchaseWorkspacePage() {
         const exported = a.assignment_status === 'exported'
         g.lines.push({
           assignment_id: a.assignment_id,
-          order_item_id: it.order_item_id,
-          product_name: it.product_name,
-          product_code: it.product_code,
+          order_item_id: a.order_item_id,
+          product_name: it?.product_name ?? null,
+          product_code: it?.product_code ?? a.product_code ?? null,
           ptr,
-          mrp: it.mrp ?? null,
-          offer: it.offer ?? null,
+          mrp: it?.mrp ?? null,
+          offer: it?.offer ?? null,
           final_qty: qty,
           exported,
         })
         g.product_count += 1
         g.total_qty += qty
         g.est_value += qty * ptr
-        if (it.offer) g.offer_count += 1
+        if (it?.offer) g.offer_count += 1
         if (exported) {
-          locked.add(it.order_item_id)
+          locked.add(a.order_item_id)
           g.exported_count += 1
           g.exported_at = a.exported_at ?? g.exported_at
           g.exported_by = a.export_uid ?? g.exported_by
@@ -917,11 +940,20 @@ export default function PurchaseWorkspacePage() {
   // in (not only when the buyer reaches the Assign/Optimize/Export stage) so
   // `assignedByItem` — and therefore "Assigned to X" / the one-supplier guard
   // — is correct from the very first render, including right after a reload.
-  const itemsLoaded = items.length > 0
+  //
+  // Gated on itemsRefreshId === refreshId (not just items.length > 0): on a
+  // Refresh switch, `items` still holds the PREVIOUS refresh's rows for a
+  // moment while the new fetch is in flight — items.length > 0 stays true
+  // through that gap, so this used to fire loadQueue immediately with a stale
+  // itemById, join every fresh assignment row against the wrong refresh's
+  // items, drop them all, and render an empty Supplier Queue until a manual
+  // Reload. itemsRefreshId only updates once loadWorkspace's fetch actually
+  // resolves, so this now waits for items/itemById to genuinely match.
+  const itemsReady = itemsRefreshId === refreshId && items.length > 0
   useEffect(() => {
-    if (canWork && itemsLoaded) loadQueue()
+    if (canWork && itemsReady) loadQueue()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canWork, tenantId, refreshId, itemsLoaded])
+  }, [canWork, tenantId, refreshId, itemsReady])
 
   const exportGroup = async (group: SupplierQueueGroup, assignmentIds: string[]) => {
     if (assignmentIds.length === 0) return say('danger', 'Nothing to export for this supplier')

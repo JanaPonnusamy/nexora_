@@ -322,6 +322,10 @@
 .sa-rowsel { cursor: pointer; }
 .sa-rowsel:hover { background: var(--sx-accent-soft); }
 .sa-rowsel--on { background: var(--sx-accent-soft); box-shadow: inset 3px 0 0 var(--sx-accent); }
+/* Keyboard-highlighted (arrow-key focused, not yet picked) — distinct from
+   the persisted --on selection so a search-result list's transient highlight
+   during Up/Down navigation is still visible before Enter commits it. */
+.sa-rowsel--active { outline: 2px solid var(--sx-accent); outline-offset: -2px; }
 
 /* Definition list (Product Details) */
 .sa-deflist { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 1rem; margin: 0; }

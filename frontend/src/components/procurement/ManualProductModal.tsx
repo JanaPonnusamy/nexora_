@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ManualProduct } from '../../types/procurement'
 import { procurementService } from '../../services/procurementService'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { useListNav } from '../../hooks/useListNav'
 import { money, num } from '../stock/format'
 
 /** Add Manual Product — searches the real Product Master (sync.Products, NOT the
@@ -25,6 +27,10 @@ export function ManualProductModal({
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<ManualProduct | null>(null)
   const [qty, setQty] = useState('1')
+  // Same index/auto-scroll mechanics as SupplierPicker's search dropdown —
+  // shared via useListNav so this keyboard behavior isn't a second copy.
+  const nav = useListNav(rows.length)
+  const qtyRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const term = debounced.trim()
@@ -36,18 +42,53 @@ export function ManualProductModal({
     setLoading(true)
     procurementService
       .searchProducts(tenantId, storeId, term)
-      .then((r) => live && setRows(r))
+      .then((r) => {
+        if (!live) return
+        setRows(r)
+        nav.reset() // auto-highlight the first result
+      })
       .catch(() => live && setRows([]))
       .finally(() => live && setLoading(false))
     return () => {
       live = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, storeId, debounced])
 
   const submit = () => {
     const n = Number(qty)
     if (!selected || Number.isNaN(n) || n <= 0) return
     onAdd(selected, n)
+  }
+
+  // Selecting a result moves straight to the Qty field — the search →
+  // navigate → pick → quantify → submit flow needs no mouse at any step.
+  const pick = (p: ManualProduct) => {
+    setSelected(p)
+    qtyRef.current?.focus()
+    qtyRef.current?.select()
+  }
+
+  const onSearchKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      nav.reset() // clear the highlight only — Close/backdrop still dismiss the modal
+      return
+    }
+    if (e.key === 'Tab' && !e.shiftKey && rows.length > 0) {
+      // Accept the highlighted result before leaving; the browser still moves
+      // focus to the next control (the Qty field, already next in DOM order).
+      pick(rows[nav.active])
+      return
+    }
+    if (rows.length === 0) return
+    if (e.key === 'ArrowDown') { e.preventDefault(); nav.moveNext() }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); nav.movePrev() }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(rows[nav.active]) }
+  }
+
+  const onQtyKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit() }
   }
 
   return (
@@ -67,7 +108,12 @@ export function ManualProductModal({
               value={q}
               placeholder="Search product name or code…"
               aria-label="Search product master"
+              role="combobox"
+              aria-expanded={rows.length > 0}
+              aria-controls="pm-manual-results"
+              aria-activedescendant={rows.length > 0 ? `pm-manual-opt-${nav.active}` : undefined}
               onChange={(e) => setQ(e.target.value)}
+              onKeyDown={onSearchKey}
             />
           </span>
 
@@ -81,12 +127,17 @@ export function ManualProductModal({
                 <thead>
                   <tr><th>Product</th><th>Unit</th><th className="sx-num">Stock</th><th className="sx-num">MRP</th></tr>
                 </thead>
-                <tbody>
-                  {rows.map((p) => (
+                <tbody id="pm-manual-results" role="listbox">
+                  {rows.map((p, i) => (
                     <tr
                       key={p.product_code}
-                      className={`sa-rowsel${selected?.product_code === p.product_code ? ' sa-rowsel--on' : ''}`}
-                      onClick={() => setSelected(p)}
+                      id={`pm-manual-opt-${i}`}
+                      role="option"
+                      aria-selected={i === nav.active}
+                      ref={nav.itemRef(i)}
+                      className={`sa-rowsel${selected?.product_code === p.product_code ? ' sa-rowsel--on' : ''}${i === nav.active ? ' sa-rowsel--active' : ''}`}
+                      onMouseEnter={() => nav.setActive(i)}
+                      onClick={() => pick(p)}
                     >
                       <td>
                         <div>{p.product_name ?? '—'}</div>
@@ -109,10 +160,13 @@ export function ManualProductModal({
           <label className="pm-modal__qty">
             Qty
             <input
+              ref={qtyRef}
               className="pm-qty"
               inputMode="numeric"
               value={qty}
+              onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => setQty(e.target.value)}
+              onKeyDown={onQtyKey}
             />
           </label>
           <button className="pm-btn pm-btn--primary" onClick={submit} disabled={!selected || busy}>

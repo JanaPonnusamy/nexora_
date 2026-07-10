@@ -165,6 +165,10 @@ export interface Assignment {
   export_batch_number: string | null
   export_uid: string | null
   exported_at: string | null
+  /** Carried on the assignment row itself (not just the workspace item) — a
+   *  fallback display field so a Supplier Queue line is never dropped just
+   *  because its order item isn't in the currently-loaded workspace page. */
+  product_code: string | null
 }
 
 export interface SupplierRow {
