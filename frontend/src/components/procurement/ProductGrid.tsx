@@ -45,6 +45,7 @@ export function ProductGrid({
   onSelect,
   onSkip,
   onRestore,
+  onDefer,
   onToggle,
   onToggleAll,
 }: {
@@ -72,6 +73,9 @@ export function ProductGrid({
   onSelect: (item: WorkspaceItem) => void
   onSkip: (item: WorkspaceItem, reason: string) => void
   onRestore: (item: WorkspaceItem) => void
+  /** Space Bar — Assignment Deferred: keeps Final Qty, excludes the row from
+   *  Auto/Bulk Assignment. Un-defer reuses `onRestore` (same as un-skip). */
+  onDefer?: (item: WorkspaceItem) => void
   onToggle?: (id: string) => void
   onToggleAll?: (ids: string[], on: boolean) => void
 }) {
@@ -99,6 +103,7 @@ export function ProductGrid({
   // re-quantified (which un-skips it), so "skipped" no longer blocks editing.
   const editable = (item: WorkspaceItem) => !lockedIds.has(item.order_item_id)
   const skippedOf = (item: WorkspaceItem) => item.item_status === 'skipped'
+  const deferredOf = (item: WorkspaceItem) => item.item_status === 'deferred'
 
   const qtyValue = (item: WorkspaceItem) =>
     edits[item.order_item_id] ?? String(item.final_qty ?? 0)
@@ -280,6 +285,17 @@ export function ProductGrid({
     setSkipFocusId(cur.order_item_id) // park focus on this row's Skip-Mode selector
   }
 
+  // Space Bar on the current row: toggle Assignment Deferred. A deferred row
+  // keeps its Final Qty (unlike Skip) — it just excludes itself from Auto
+  // Assign / Bulk / Assign Selected until either restored or manually
+  // assigned (which auto-clears the flag). No-op on a skipped or locked row.
+  const toggleDeferredCurrent = () => {
+    const cur = items[selectedIndex]
+    if (!cur || !editable(cur) || skippedOf(cur)) return
+    if (deferredOf(cur)) onRestore(cur)
+    else onDefer?.(cur)
+  }
+
   // Grid-level keys. Caret editing keys inside the number input are handed back
   // to the browser; everything else drives spreadsheet-style navigation split
   // across the Final Qty and Supplier Recommendation zones.
@@ -330,6 +346,9 @@ export function ProductGrid({
     } else if (e.key === 'Escape') {
       e.preventDefault()
       skipCurrent()
+    } else if (e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault()
+      toggleDeferredCurrent()
     }
   }
 
@@ -367,6 +386,7 @@ export function ProductGrid({
         <tbody>
           {items.map((item, i) => {
             const skipped = item.item_status === 'skipped'
+            const deferred = item.item_status === 'deferred'
             const locked = lockedIds.has(item.order_item_id)
             const isSel = selectedId === item.order_item_id
             const dirty = dirtyIds.has(item.order_item_id)
@@ -378,7 +398,7 @@ export function ProductGrid({
             return (
               <tr
                 key={item.order_item_id}
-                className={`pm-row${isSel ? ' pm-row--sel' : ''}${assigned ? ' pm-row--assigned' : ''}${finalized ? ' pm-row--finalized' : ''}${skipped ? ' pm-row--skip' : ''}${locked ? ' pm-row--locked' : ''}`}
+                className={`pm-row${isSel ? ' pm-row--sel' : ''}${assigned ? ' pm-row--assigned' : ''}${finalized ? ' pm-row--finalized' : ''}${skipped ? ' pm-row--skip' : ''}${deferred ? ' pm-row--deferred' : ''}${locked ? ' pm-row--locked' : ''}`}
                 onClick={() => onSelect(item)}
               >
                 {selectable && (
@@ -390,9 +410,15 @@ export function ProductGrid({
                       onChange={() => onToggle?.(item.order_item_id)}
                       // A product already owned by a supplier can never be bulk
                       // re-assigned from here (§1/§2) — reassignment is explicit
-                      // (Change Supplier in the Assign stage's review panel).
-                      disabled={skipped || locked || assigned}
-                      title={assigned ? 'Already assigned — use Change Supplier to reassign' : undefined}
+                      // (Change Supplier). A deferred row (Space Bar) is excluded
+                      // from bulk/Assign-Selected too — it's only assignable
+                      // manually (Right-Arrow → Enter), which auto-clears defer.
+                      disabled={skipped || locked || assigned || deferred}
+                      title={
+                        assigned ? 'Already assigned — use Change Supplier to reassign'
+                          : deferred ? 'Assignment deferred — assign manually or press Space to restore'
+                            : undefined
+                      }
                     />
                   </td>
                 )}
@@ -438,6 +464,20 @@ export function ProductGrid({
                     />
                   ) : assigned ? (
                     <span className="pm-status pm-status--assigned">Assigned</span>
+                  ) : deferred ? (
+                    <span className="pm-status-wrap">
+                      <span className="pm-status pm-status--deferred" title="Excluded from Auto Assign / Assign Selected — assign manually or restore">
+                        Assignment Deferred
+                      </span>
+                      <button
+                        className="pm-linkbtn pm-linkbtn--icon"
+                        title="Restore to review"
+                        aria-label="Restore to review"
+                        onClick={(e) => { e.stopPropagation(); onRestore(item) }}
+                      >
+                        <i className="bi bi-arrow-counterclockwise" aria-hidden="true" />
+                      </button>
+                    </span>
                   ) : (
                     <span className="pm-status-wrap">
                       {finalized ? (

@@ -102,7 +102,24 @@ def skip_item(tenant_id, order_item_id, skip_reason, reviewed_by):
 
 def restore_item(tenant_id, order_item_id, reviewed_by):
     item = _require_item(tenant_id, order_item_id)
-    if item.get("item_status") != "skipped":
-        raise HTTPException(status_code=409, detail="Item is not skipped")
+    if item.get("item_status") not in ("skipped", "deferred"):
+        raise HTTPException(status_code=409, detail="Item is not skipped or deferred")
     repo.restore_item(tenant_id, order_item_id, reviewed_by)
+    return _require_item(tenant_id, order_item_id)
+
+
+def defer_item(tenant_id, order_item_id, reviewed_by):
+    """Assignment Deferred (Space Bar) — excludes the row from Auto Assign and
+    Bulk/Assign-Selected while keeping its Final Qty; a manual single-item
+    assignment (Right-Arrow -> Enter) still works and clears the flag."""
+    item = _require_item(tenant_id, order_item_id)
+    if item.get("item_status") == "skipped":
+        raise HTTPException(status_code=409, detail="Cannot defer a skipped item")
+    if (item.get("assigned_qty") or 0) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot defer an item that already has supplier assignments",
+        )
+    repo.defer_item(tenant_id, order_item_id, reviewed_by)
+    logger.info("Review defer tenant=%s item=%s by=%s", tenant_id, order_item_id, reviewed_by)
     return _require_item(tenant_id, order_item_id)

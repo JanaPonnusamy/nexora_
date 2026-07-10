@@ -24,6 +24,12 @@ class MinOrderUpsert(BaseModel):
     updated_by: Optional[str] = None
 
 
+class ConsiderMinimumOrderUpsert(BaseModel):
+    store_id: str = Field(..., min_length=1)
+    consider_minimum_order: bool
+    updated_by: Optional[str] = None
+
+
 class MoveSpec(BaseModel):
     assignment_id: str = Field(..., min_length=1)
     to_supplier: str = Field(..., min_length=1, max_length=100)
@@ -90,4 +96,21 @@ def set_min_order(
     return service.set_min_order(
         tenant_id, payload.store_id, supplier_code,
         payload.min_order_value, payload.updated_by,
+    )
+
+
+@router.get("/suppliers/min-order-config")
+def min_order_config(tenant_id: str = Query(...), store_id: str = Query(...)):
+    """min_order_value + consider_minimum_order per supplier, one round trip —
+    powers the Minimum Order Settings panel."""
+    return service.list_min_order_config(tenant_id, store_id)
+
+
+@router.put("/suppliers/{supplier_code}/consider-minimum-order")
+def set_consider_minimum_order(
+    supplier_code: str, payload: ConsiderMinimumOrderUpsert, tenant_id: str = Query(...)
+):
+    return service.set_consider_minimum_order(
+        tenant_id, payload.store_id, supplier_code,
+        payload.consider_minimum_order, payload.updated_by,
     )

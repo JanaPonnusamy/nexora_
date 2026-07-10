@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { procurementService } from '../../services/procurementService'
-import type { OptimizationResult, OptimizationSupplier } from '../../types/procurement'
+import type { OptimizationResult, OptimizationSupplier, SupplierMinOrderConfig } from '../../types/procurement'
 import { money, num } from '../stock/format'
 
 /**
@@ -44,6 +44,10 @@ export function SupplierOptimizationPanel({
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [minEdits, setMinEdits] = useState<Record<string, string>>({})
+  // §10/§11 — per-supplier opt-in flag; a configured min_order_value alone no
+  // longer enrolls a supplier in Optimization.
+  const [considerFlags, setConsiderFlags] = useState<Record<string, boolean>>({})
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // Locally rejected suggestion lines (assignment_id) — excluded from Accept.
   const [rejected, setRejected] = useState<Set<string>>(new Set())
   // Manual-move draft: supplier_code -> chosen assignment_id.
@@ -53,9 +57,24 @@ export function SupplierOptimizationPanel({
     if (!tenantId || !refreshId) return
     setLoading(true)
     try {
-      const res = await procurementService.optimization(tenantId, refreshId)
+      const [res, config] = await Promise.all([
+        procurementService.optimization(tenantId, refreshId),
+        storeId
+          ? procurementService.minOrderConfig(tenantId, storeId)
+          : Promise.resolve<Record<string, SupplierMinOrderConfig>>({}),
+      ])
       setResult(res)
-      setMinEdits(Object.fromEntries(res.suppliers.map((s) => [s.supplier_code, String(s.min_value || '')])))
+      // Seed from the raw config (not res.suppliers[].min_value, which analyze()
+      // now reports as the EFFECTIVE minimum — 0 for a not-considered supplier —
+      // so the Settings panel must show what's actually configured, §10/§11).
+      setMinEdits(
+        Object.fromEntries(
+          res.suppliers.map((s) => [s.supplier_code, String(config[s.supplier_code]?.min_order_value || s.min_value || '')]),
+        ),
+      )
+      setConsiderFlags(
+        Object.fromEntries(res.suppliers.map((s) => [s.supplier_code, config[s.supplier_code]?.consider_minimum_order ?? false])),
+      )
       setRejected(new Set())
       setManualPick({})
       setOpen(true)
@@ -64,7 +83,20 @@ export function SupplierOptimizationPanel({
     } finally {
       setLoading(false)
     }
-  }, [tenantId, refreshId, notify])
+  }, [tenantId, refreshId, storeId, notify])
+
+  const toggleConsider = async (code: string) => {
+    const next = !considerFlags[code]
+    setConsiderFlags((d) => ({ ...d, [code]: next })) // optimistic
+    try {
+      await procurementService.setConsiderMinimumOrder(tenantId, code, storeId, next, actingUser || null)
+      await load()
+      notify('success', `${nameOf(code)} ${next ? 'now participates in' : 'excluded from'} Optimization`)
+    } catch (e) {
+      setConsiderFlags((d) => ({ ...d, [code]: !next })) // revert
+      notify('danger', e instanceof Error ? e.message : 'Failed to update setting')
+    }
+  }
 
   // Reset when the refresh changes so stale suggestions never linger.
   useEffect(() => {
@@ -187,6 +219,61 @@ export function SupplierOptimizationPanel({
 
       {open && (
         <div className="pm-sq__body">
+          {result && result.suppliers.length > 0 && (
+            <div className="pm-opt__settings">
+              <button className="pm-sq__toggle pm-opt__settingstoggle" onClick={() => setSettingsOpen((o) => !o)} aria-expanded={settingsOpen}>
+                <i className={`bi ${settingsOpen ? 'bi-chevron-down' : 'bi-chevron-right'}`} />
+                Minimum Order Settings
+                <span className="pm-sq__sum">
+                  {Object.values(considerFlags).filter(Boolean).length} of {result.suppliers.length} suppliers opted in
+                </span>
+              </button>
+              {settingsOpen && (
+                <table className="pm-opt__table pm-opt__settingstable">
+                  <thead>
+                    <tr>
+                      <th>Supplier</th>
+                      <th className="sx-num">Minimum Order Value</th>
+                      <th>Consider in Optimization</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.suppliers.map((s) => (
+                      <tr key={s.supplier_code}>
+                        <td>
+                          <div className="pm-prod__name">{nameOf(s.supplier_code)}</div>
+                          <div className="pm-prod__meta">{s.supplier_code}</div>
+                        </td>
+                        <td className="sx-num">
+                          <input
+                            className="pm-qty pm-opt__mininp"
+                            value={minEdits[s.supplier_code] ?? ''}
+                            inputMode="numeric"
+                            onChange={(e) => setMinEdits((d) => ({ ...d, [s.supplier_code]: e.target.value }))}
+                            onKeyDown={(e) => e.key === 'Enter' && saveMin(s.supplier_code)}
+                            onBlur={() => {
+                              if (Number(minEdits[s.supplier_code]) !== s.min_value) saveMin(s.supplier_code)
+                            }}
+                            aria-label={`Minimum order value for ${s.supplier_code}`}
+                          />
+                        </td>
+                        <td>
+                          <label className="pm-chk">
+                            <input
+                              type="checkbox"
+                              checked={considerFlags[s.supplier_code] ?? false}
+                              onChange={() => toggleConsider(s.supplier_code)}
+                            />
+                            {considerFlags[s.supplier_code] ? 'Considered' : 'Ignored'}
+                          </label>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
           {!result ? (
             <div className="pm-sq__hint">Run Optimize to check which suppliers are below their Minimum Order Value.</div>
           ) : belowMin.length === 0 ? (

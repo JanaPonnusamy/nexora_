@@ -6,10 +6,12 @@ import { money, num } from '../stock/format'
 
 /**
  * Supplier Review panel — the right column of the Supplier Assignment stage once
- * a supplier is selected. Surfaces exactly that supplier's assigned products so
- * the buyer can Review → adjust → Export one supplier at a time:
+ * a supplier is selected. This is the COMPLETE per-supplier workflow (assign →
+ * adjust → export → move on) so the buyer never has to leave the page to reach
+ * the separate Export Monitor:
  *   product · qty · last-purchase cost (PTR) · line value · change · remove
- * plus the supplier's total purchase value and an Export Supplier button.
+ * plus the supplier's total purchase value, Minimum Order status, Assign
+ * Selected, Export Purchase Order and Next Supplier.
  *
  * No new API: change/remove reuse the assignment endpoints; export reuses the
  * refresh export. Values come from the already-computed Supplier Queue group —
@@ -23,10 +25,14 @@ export function SupplierReviewPanel({
   group,
   loading,
   exporting,
+  minOrder,
+  checkedCount,
   onChangeSupplier,
   onRemove,
   onExport,
   onReload,
+  onAssignSelected,
+  onNextSupplier,
 }: {
   tenantId: string
   storeId: string
@@ -35,10 +41,17 @@ export function SupplierReviewPanel({
   group: SupplierQueueGroup | null
   loading: boolean
   exporting: boolean
+  /** Configured Minimum Order Value for this supplier (0 = none configured). */
+  minOrder: number
+  /** Products currently checked in the grid — feeds Assign Selected. */
+  checkedCount: number
   onChangeSupplier: (assignmentId: string, newSupplier: SupplierRow) => void
   onRemove: (assignmentId: string, orderItemId: string) => void
   onExport: (group: SupplierQueueGroup) => void
   onReload: () => void
+  onAssignSelected: () => void
+  /** Advance to the next supplier still requiring review, without exporting. */
+  onNextSupplier: () => void
 }) {
   // Which line is currently having its supplier changed (shows the picker inline).
   const [changing, setChanging] = useState<string | null>(null)
@@ -60,6 +73,11 @@ export function SupplierReviewPanel({
   const totalQty = liveLines.reduce((a, l) => a + l.final_qty, 0)
   const exportedCount = group?.exported_count ?? 0
   const totalAssigned = group?.product_count ?? 0
+  // Same rule as the Assignment Summary bar (§ Assign toolbar): below a
+  // configured minimum, the supplier isn't ready to export yet.
+  const minReady = minOrder > 0 ? totalValue >= minOrder : totalAssigned > 0
+  const minLabel = minOrder <= 0 ? 'No Minimum' : minReady ? 'Ready' : 'Below Min'
+  const minCls = minOrder <= 0 ? 'pm-optstat--ready' : minReady ? 'pm-optstat--ok' : 'pm-optstat--short'
 
   return (
     <div className="pm-srv">
@@ -75,10 +93,6 @@ export function SupplierReviewPanel({
 
       {loading ? (
         <div className="pm-srv__hint">Calculating supplier totals…</div>
-      ) : !group || lines.length === 0 ? (
-        <div className="pm-srv__hint">
-          No products assigned to this supplier yet. Assign products from the grid, then review here.
-        </div>
       ) : (
         <>
           <div className="pm-srv__summary">
@@ -89,8 +103,16 @@ export function SupplierReviewPanel({
             <span className="pm-srv__stat pm-srv__stat--val">
               <b>{loading ? 'Calculating…' : totalKnown ? money(totalValue) : '—'}</b><span>Purchase Value</span>
             </span>
+            <span className="pm-srv__stat">
+              <b className={`pm-optstat ${minCls}`}>{minLabel}</b><span>Minimum Order Status</span>
+            </span>
           </div>
 
+          {!group || lines.length === 0 ? (
+            <div className="pm-srv__hint">
+              No products assigned to this supplier yet. Check products in the grid and use Assign Selected, or assign from the Supplier Recommendation panel.
+            </div>
+          ) : (
           <div className="pm-srv__tablewrap">
             <table className="pm-srv__table">
               <thead>
@@ -174,18 +196,37 @@ export function SupplierReviewPanel({
               </tbody>
             </table>
           </div>
+          )}
 
           <div className="pm-srv__foot">
             <span className="pm-srv__foottotal">
               Supplier Total <b>{totalKnown ? money(totalValue) : '—'}</b>
             </span>
-            <button
-              className="pm-btn pm-btn--success"
-              onClick={() => group && onExport(group)}
-              disabled={exporting || group.assignment_ids.length === 0}
-            >
-              <i className="bi bi-box-arrow-up" /> {exporting ? 'Exporting…' : 'Export Supplier'}
-            </button>
+            <div className="pm-srv__footbtns">
+              <button
+                className="pm-btn pm-btn--ghost"
+                onClick={onAssignSelected}
+                disabled={checkedCount === 0}
+                title="Assign the products checked in the grid to this supplier"
+              >
+                <i className="bi bi-check2-square" /> Assign Selected{checkedCount > 0 ? ` (${num(checkedCount)})` : ''}
+              </button>
+              <button
+                className="pm-btn pm-btn--success"
+                onClick={() => group && onExport(group)}
+                disabled={exporting || !group || group.assignment_ids.length === 0}
+                title="Export this supplier's assigned products as a Purchase Order"
+              >
+                <i className="bi bi-box-arrow-up" /> {exporting ? 'Exporting…' : 'Export Purchase Order'}
+              </button>
+              <button
+                className="pm-btn pm-btn--ghost"
+                onClick={onNextSupplier}
+                title="Move to the next supplier still needing review"
+              >
+                Next Supplier <i className="bi bi-arrow-right" />
+              </button>
+            </div>
           </div>
         </>
       )}

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { PurchaseMode } from '../../types/procurement'
 import { money, num, date } from '../stock/format'
+import { downloadPurchaseOrderCsv, printPurchaseOrderPdf } from './exportDocument'
 
 /* ---- Data model (built by the workspace from draft assignments) ----------- */
 
@@ -67,6 +68,8 @@ export function SupplierQueuePanel({
   onExport,
   onExportSupplier,
   onExportAll,
+  onExportSelected,
+  exportingSelected,
   busySupplier,
   exportingAll,
 }: {
@@ -84,6 +87,11 @@ export function SupplierQueuePanel({
    *  respects deliberate per-line Export-Qty hold-backs. */
   onExportSupplier: (supplierCode: string) => void
   onExportAll: () => void
+  /** Export Selected Suppliers (§12) — a buyer-checked subset, exported one
+   *  call per supplier (same per-supplier export `onExportSupplier` already
+   *  uses under the hood). */
+  onExportSelected: (supplierCodes: string[]) => void
+  exportingSelected?: boolean
   busySupplier: string | null
   exportingAll: boolean
 }) {
@@ -99,6 +107,8 @@ export function SupplierQueuePanel({
   const [exportQty, setExportQty] = useState<Record<string, number>>({})
   const [errorsByCode, setErrorsByCode] = useState<Record<string, string[]>>({})
   const listRef = useRef<HTMLDivElement>(null)
+  // Export Selected Suppliers (§12) — a buyer-checked subset of exportable cards.
+  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set())
 
   // Expanded supplier: auto-focus the selected supplier in non-review modes.
   const [expandChoice, setExpandChoice] = useState<string | null>(null)
@@ -153,6 +163,30 @@ export function SupplierQueuePanel({
   )
 
   const activeGroup = visible[Math.min(activeIndex, visible.length - 1)] ?? null
+
+  // Export Selected Suppliers (§12) — only not-fully-exported cards are
+  // selectable (an already-exported supplier has nothing left to send).
+  const exportableVisible = useMemo(() => visible.filter((g) => g.status !== 'exported'), [visible])
+  const allVisibleSelected =
+    exportableVisible.length > 0 && exportableVisible.every((g) => selectedCodes.has(g.supplier_code))
+  const toggleSelected = (code: string) =>
+    setSelectedCodes((prev) => {
+      const next = new Set(prev)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      return next
+    })
+  const toggleSelectAllVisible = () =>
+    setSelectedCodes((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev)
+        exportableVisible.forEach((g) => next.delete(g.supplier_code))
+        return next
+      }
+      const next = new Set(prev)
+      exportableVisible.forEach((g) => next.add(g.supplier_code))
+      return next
+    })
 
   /* ---- Effective (Export-Qty aware) supplier summary ---------------------- */
   const summary = (g: SupplierQueueGroup) => {
@@ -225,9 +259,19 @@ export function SupplierQueuePanel({
             <i className="bi bi-arrow-repeat" /> {loading ? 'Loading…' : loaded ? 'Reload Queue' : 'Load Suppliers'}
           </button>
           {loaded && (
-            <button className="pm-btn pm-btn--primary" onClick={onExportAll} disabled={exportingAll}>
-              <i className="bi bi-box-arrow-up" /> Export All
-            </button>
+            <>
+              <button
+                className="pm-btn pm-btn--ghost"
+                onClick={() => { onExportSelected([...selectedCodes]); setSelectedCodes(new Set()) }}
+                disabled={selectedCodes.size === 0 || Boolean(exportingSelected)}
+                title="Export every checked supplier's current assignments"
+              >
+                <i className="bi bi-box-arrow-up" /> {exportingSelected ? 'Exporting…' : `Export Selected${selectedCodes.size > 0 ? ` (${selectedCodes.size})` : ''}`}
+              </button>
+              <button className="pm-btn pm-btn--primary" onClick={onExportAll} disabled={exportingAll}>
+                <i className="bi bi-box-arrow-up" /> {exportingAll ? 'Exporting…' : 'Export All Purchase Orders'}
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -267,6 +311,12 @@ export function SupplierQueuePanel({
                   <option value="value">Sort: Highest Value</option>
                   <option value="count">Sort: Most Products</option>
                 </select>
+                {exportableVisible.length > 0 && (
+                  <label className="pm-chk pm-sq__selectall">
+                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} />
+                    Select all visible
+                  </label>
+                )}
               </div>
 
               {visible.length === 0 ? (
@@ -284,6 +334,16 @@ export function SupplierQueuePanel({
                           className={`pm-sqcard${isActive ? ' pm-sqcard--active' : ''}`}
                           onClick={() => setActiveIndex(i)}
                         >
+                          {g.status !== 'exported' && (
+                            <input
+                              type="checkbox"
+                              className="pm-sqcard__chk"
+                              aria-label={`Select ${g.supplier_name ?? g.supplier_code} for export`}
+                              checked={selectedCodes.has(g.supplier_code)}
+                              onChange={() => toggleSelected(g.supplier_code)}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          )}
                           <span className="pm-sqcard__name">{g.supplier_name ?? g.supplier_code}</span>
                           <span className="pm-sqcard__stat"><b>{num(g.product_count)}</b>Products</span>
                           <span className="pm-sqcard__stat"><b>{num(g.total_qty)}</b>Qty</span>
@@ -419,10 +479,10 @@ function SupplierReview({
       <div className="pm-sqexp__foot">
         <span className="pm-sqexp__note">Export sends assigned quantities; set a line to 0 to hold it back.</span>
         <div className="pm-sqexp__btns">
-          <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => downloadCsv(group, eq)}>
+          <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => downloadPurchaseOrderCsv(group, eq)}>
             <i className="bi bi-file-earmark-excel" /> Export Excel
           </button>
-          <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => printPdf(group, eq)}>
+          <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => printPurchaseOrderPdf(group, eq)}>
             <i className="bi bi-file-earmark-pdf" /> Export PDF
           </button>
           <button className="pm-btn pm-btn--success pm-btn--sm" onClick={onExport} disabled={busy || exportedAll || group.assignment_ids.length === 0}>
@@ -443,56 +503,3 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-/* ---- Client-side document export (no backend) ----------------------------- */
-
-function exportRows(group: SupplierQueueGroup, eq: (l: SupplierQueueProduct) => number) {
-  return group.lines
-    .filter((l) => l.exported || eq(l) > 0)
-    .map((l) => ({
-      product: l.product_name ?? l.product_code ?? '',
-      ptr: l.ptr,
-      offer: l.offer ?? '',
-      finalQty: l.final_qty,
-      exportQty: l.exported ? l.final_qty : eq(l),
-    }))
-}
-
-function downloadCsv(group: SupplierQueueGroup, eq: (l: SupplierQueueProduct) => number) {
-  const rows = exportRows(group, eq)
-  const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`
-  const lines = [
-    ['Product', 'PTR', 'Offer', 'Final Qty', 'Export Qty'].join(','),
-    ...rows.map((r) => [r.product, r.ptr, r.offer, r.finalQty, r.exportQty].map(esc).join(',')),
-  ]
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `PO_${group.supplier_code}_${new Date().toISOString().slice(0, 10)}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-function printPdf(group: SupplierQueueGroup, eq: (l: SupplierQueueProduct) => number) {
-  const rows = exportRows(group, eq)
-  const esc = (v: string) => v.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))
-  const body = rows
-    .map((r) => `<tr><td>${esc(r.product)}</td><td class="n">${r.ptr.toFixed(2)}</td><td>${esc(r.offer)}</td><td class="n">${r.finalQty}</td><td class="n">${r.exportQty}</td></tr>`)
-    .join('')
-  const w = window.open('', '_blank', 'width=800,height=900')
-  if (!w) return
-  w.document.write(`<!doctype html><html><head><title>PO ${esc(group.supplier_code)}</title><style>
-    body{font-family:Segoe UI,Arial,sans-serif;padding:24px;color:#0f172a}
-    h1{font-size:18px;margin:0 0 4px} .meta{color:#64748b;font-size:12px;margin-bottom:16px}
-    table{width:100%;border-collapse:collapse;font-size:13px}
-    th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left} th{background:#f8fafc}
-    td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
-  </style></head><body>
-    <h1>Purchase Order — ${esc(group.supplier_name ?? group.supplier_code)}</h1>
-    <div class="meta">Supplier ${esc(group.supplier_code)} · ${rows.length} products · Generated ${new Date().toLocaleString('en-IN')}</div>
-    <table><thead><tr><th>Product</th><th class="n">PTR</th><th>Offer</th><th class="n">Final Qty</th><th class="n">Export Qty</th></tr></thead><tbody>${body}</tbody></table>
-  </body></html>`)
-  w.document.close()
-  w.focus()
-  w.print()
-}

@@ -31,6 +31,7 @@ import { SupplierQueuePanel } from '../../components/procurement/SupplierQueuePa
 import type { SupplierQueueGroup } from '../../components/procurement/SupplierQueuePanel'
 import { SupplierOptimizationPanel } from '../../components/procurement/SupplierOptimizationPanel'
 import { SupplierReviewPanel } from '../../components/procurement/SupplierReviewPanel'
+import { downloadPurchaseOrderCsv } from '../../components/procurement/exportDocument'
 import { ManualProductModal } from '../../components/procurement/ManualProductModal'
 import { SupplierPicker } from '../../components/procurement/SupplierPicker'
 import { SupplierStockTable, stockRowKey } from '../../components/procurement/SupplierStockTable'
@@ -49,7 +50,10 @@ const STAGES: { key: Stage; label: string; icon: string }[] = [
   { key: 'review', label: 'Review Products', icon: 'bi-clipboard-check' },
   { key: 'assign', label: 'Assign Suppliers', icon: 'bi-diagram-3' },
   { key: 'optimize', label: 'Optimize', icon: 'bi-sliders' },
-  { key: 'export', label: 'Export', icon: 'bi-box-arrow-up' },
+  // Not a required step — every supplier's Purchase Order can already be
+  // exported from its own card in the Assign stage (Supplier Review panel).
+  // This stage is a monitoring/history dashboard for the whole refresh.
+  { key: 'export', label: 'Export Monitor', icon: 'bi-box-arrow-up' },
 ]
 
 const MOVEMENT = ['', 'FAST', 'MEDIUM', 'SLOW', 'NONMOVING']
@@ -122,6 +126,7 @@ export default function PurchaseWorkspacePage() {
   const [showFinalized, setShowFinalized] = useState(true)
   const [showAssigned, setShowAssigned] = useState(true)
   const [showSkipped, setShowSkipped] = useState(true)
+  const [showDeferred, setShowDeferred] = useState(true)
   const [showManual, setShowManual] = useState(true)
   // Product Type filter (Product Master ProductType): '' all, '1' Pharma,
   // '0' Non-Pharma, '2' Others. Client-side only — never recalculates the VPL.
@@ -152,6 +157,7 @@ export default function PurchaseWorkspacePage() {
   const [queueError, setQueueError] = useState<string | null>(null)
   const [busySupplier, setBusySupplier] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
+  const [exportingSelected, setExportingSelected] = useState(false)
 
   // Configured Minimum Order Value per supplier (batch-loaded once per store).
   const [minOrders, setMinOrders] = useState<Record<string, number>>({})
@@ -256,10 +262,12 @@ export default function PurchaseWorkspacePage() {
       .catch(fail)
   }, [tenantId, selectedStoreId, fail])
 
-  // A new refresh always starts at the first stage (Review Products) and clears
-  // any picked supplier — the stages are the normalized operational flow.
+  // A new refresh always starts at the first stage (Review Products) in Review
+  // All mode and clears any picked supplier — a sensible default, not a hard
+  // gate (mode stays freely switchable afterwards, independent of stage — §1).
   useEffect(() => {
     setStage('review')
+    setMode('review')
     setSupplier(null)
   }, [refreshId])
 
@@ -577,6 +585,7 @@ export default function PurchaseWorkspacePage() {
     const planningState = (i: WorkspaceItem) => {
       if (i.item_status === 'skipped') return 'skipped'
       if ((i.assigned_qty ?? 0) > 0) return 'assigned'
+      if (i.item_status === 'deferred') return 'deferred'
       if (['review', 'partial'].includes(i.item_status) && (i.final_qty ?? 0) > 0) return 'finalized'
       return 'pending'
     }
@@ -585,6 +594,7 @@ export default function PurchaseWorkspacePage() {
       if (st === 'pending' && !showPending) return false
       if (st === 'finalized' && !showFinalized) return false
       if (st === 'assigned' && !showAssigned) return false
+      if (st === 'deferred' && !showDeferred) return false
       if (st === 'skipped' && !showSkipped) return false
       if (i.is_manual && !showManual) return false
       // Category filter — client-side only, never touches assignments (§5).
@@ -602,7 +612,7 @@ export default function PurchaseWorkspacePage() {
       }
       return true
     })
-  }, [items, showPending, showFinalized, showAssigned, showSkipped, showManual, productType, mode, supplier, supplierProductIds, assignedByItem])
+  }, [items, showPending, showFinalized, showAssigned, showDeferred, showSkipped, showManual, productType, mode, supplier, supplierProductIds, assignedByItem])
 
   // Supplier codes with live stock for the active supplier (mode 3). Marks that
   // supplier's icon "live"; degrades to the normal recommendation otherwise.
@@ -696,6 +706,28 @@ export default function PurchaseWorkspacePage() {
     }
   }
 
+  // Assignment Deferred (Space Bar, §5): optimistic, keeps Final Qty (unlike
+  // Skip) and un-checks the row — excludes it from Auto Assign / Bulk /
+  // Assign Selected until restored (or manually assigned, which auto-clears
+  // it — see assign()/onCommitSupplier, which never block a deferred row).
+  const deferItem = async (item: WorkspaceItem) => {
+    setItems((list) =>
+      list.map((it) => (it.order_item_id === item.order_item_id ? { ...it, item_status: 'deferred' } : it)),
+    )
+    setChecked((prev) => {
+      if (!prev.has(item.order_item_id)) return prev
+      const next = new Set(prev)
+      next.delete(item.order_item_id)
+      return next
+    })
+    try {
+      await procurementService.defer(tenantId, item.order_item_id, actingUser || null)
+    } catch (e) {
+      fail(e)
+      if (!isOffline(e)) loadWorkspace()
+    }
+  }
+
   // Assign is optimistic (no full workspace reload) so the keyboard flow stays
   // fast: remaining → 0, assigned bumps, the row's supplier is remembered so the
   // side panel shows it green. The network call reconciles in the background.
@@ -753,7 +785,7 @@ export default function PurchaseWorkspacePage() {
       const existing = assignedByItem.get(item.order_item_id)
       if (existing && existing.supplierCode === supplierCode) return
       if (existing) {
-        say('danger', `Already assigned to ${existing.supplierName ?? existing.supplierCode}. Use Change Supplier in the Assign stage to reassign.`)
+        say('danger', `Already assigned to ${existing.supplierName ?? existing.supplierCode}. Use Change Supplier to reassign.`)
         return
       }
       setSelectedSupplier((prev) => ({ ...prev, [item.order_item_id]: supplierCode }))
@@ -834,6 +866,7 @@ export default function PurchaseWorkspacePage() {
       .filter(
         (it) =>
           it.item_status !== 'skipped' &&
+          it.item_status !== 'deferred' && // §5/§9 — deferred rows are excluded from every bulk path
           (it.assigned_qty ?? 0) === 0 &&
           (it.final_qty ?? 0) > 0 &&
           (recommendations[it.order_item_id]?.some((r) => r.supplier_code === code) ?? false),
@@ -954,20 +987,32 @@ export default function PurchaseWorkspacePage() {
     if (canWork && itemsReady) loadQueue()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canWork, tenantId, refreshId, itemsReady])
+  // Covers the gap between "workspace selected" and "the first loadQueue call
+  // has actually started" (queueLoading is still its initial `false` there) —
+  // without this, the Assign/Export panels would flash "No suppliers
+  // available" for a moment before the real fetch kicks off (§5 — never show
+  // an empty page while data is still on its way in).
+  const queuePending = canWork && !itemsReady
 
-  const exportGroup = async (group: SupplierQueueGroup, assignmentIds: string[]) => {
-    if (assignmentIds.length === 0) return say('danger', 'Nothing to export for this supplier')
+  // Returns whether the export actually happened, so callers (e.g. the Assign
+  // stage's Export + Next Supplier flow) never advance/download on a failure.
+  // `announce` is false when a caller wants to show its own combined message
+  // instead of this one flashing first.
+  const exportGroup = async (group: SupplierQueueGroup, assignmentIds: string[], announce = true) => {
+    if (assignmentIds.length === 0) { say('danger', 'Nothing to export for this supplier'); return false }
     setBusySupplier(group.supplier_code)
     try {
       const res = await procurementService.exportRefresh(tenantId, refreshId, actingUser, assignmentIds)
-      say('success', `Exported ${res.exported_count} lines (${group.supplier_code})`)
+      if (announce) say('success', `Exported ${res.exported_count} lines (${group.supplier_code})`)
       // §23 — export only stamps the assignment rows (assignment_status/export
       // fields); it never changes an order item's own qty/status, so the queue
       // reload (which already recomputes lockedIds) is enough — no full
       // workspace reload.
       await loadQueue()
+      return true
     } catch (e) {
       fail(e)
+      return false
     } finally {
       setBusySupplier(null)
     }
@@ -1005,6 +1050,33 @@ export default function PurchaseWorkspacePage() {
     }
   }
 
+  // Export Selected Suppliers (§12) — a buyer-checked subset, one per-supplier
+  // export call each (same live-resolve path exportSupplierLive already uses),
+  // sequential so requests never race the shared busySupplier guard.
+  const exportSelectedSuppliers = async (supplierCodes: string[]) => {
+    if (exportingSelected || supplierCodes.length === 0) return
+    setExportingSelected(true)
+    let total = 0
+    let failed = 0
+    try {
+      for (const code of supplierCodes) {
+        try {
+          const res = await procurementService.exportRefresh(tenantId, refreshId, actingUser, undefined, code)
+          total += res.exported_count
+        } catch {
+          failed += 1
+        }
+      }
+      say(
+        failed > 0 ? 'danger' : 'success',
+        `Exported ${total} lines across ${supplierCodes.length - failed} supplier${supplierCodes.length - failed === 1 ? '' : 's'}${failed > 0 ? ` · ${failed} failed` : ''}`,
+      )
+      await loadQueue()
+    } finally {
+      setExportingSelected(false)
+    }
+  }
+
   /* ---- Stages, Auto Assign & Supplier Review ----------------------------- */
 
   // Assignment progress gates the later stages (Supplier Queue / Export stay
@@ -1018,11 +1090,67 @@ export default function PurchaseWorkspacePage() {
     [queueLines, supplier],
   )
 
+  // Suppliers that still have live (not-yet-exported) assigned products — the
+  // set "Next Supplier" cycles through, so it never lands on a supplier with
+  // nothing left to review.
+  const suppliersNeedingReview = useMemo(
+    () => queueLines.filter((g) => g.assignment_ids.length > 0),
+    [queueLines],
+  )
+  // Only supplier_code/supplier_name are ever read off the picked supplier
+  // downstream (grid filter, Supplier Review panel, min-order lookup) — the
+  // Supplier Queue group already carries both, so no extra lookup is needed.
+  const supplierRowFromGroup = (g: SupplierQueueGroup): SupplierRow => ({
+    supplier_code: g.supplier_code,
+    supplier_name: g.supplier_name,
+    purchase_frequency: null,
+    last_grn_date: null,
+    last_grn_no: null,
+    last_purchase_rate: null,
+    avg_lead_days: null,
+  })
+
+  // Next Supplier (manual): move on from the current supplier — whether or not
+  // it was exported — to whichever supplier needing review comes after it in
+  // the queue, wrapping around. Never jumps back to the first supplier in the
+  // list ("do not return the user to the beginning" — it always continues from
+  // the current position). Stops with a clear message once nobody is left.
+  const advanceToNextSupplier = useCallback(() => {
+    const list = suppliersNeedingReview
+    if (list.length === 0) { say('success', 'All suppliers have been reviewed'); setSupplier(null); return }
+    const curCode = supplier?.supplier_code
+    const idx = curCode ? list.findIndex((g) => g.supplier_code === curCode) : -1
+    const ordered = idx >= 0 ? [...list.slice(idx + 1), ...list.slice(0, idx + 1)] : list
+    const next = ordered.find((g) => g.supplier_code !== curCode) ?? ordered[0]
+    setSupplier(supplierRowFromGroup(next))
+  }, [suppliersNeedingReview, supplier, say])
+
+  // Export Purchase Order + auto-advance (§3): resolve the next supplier BEFORE
+  // exporting (the just-exported supplier's own assignment_ids will be empty
+  // afterwards, so it naturally falls out of `suppliersNeedingReview` once
+  // loadQueue's result lands — no need to wait for that fresh state here).
+  const exportAndAdvance = async (group: SupplierQueueGroup) => {
+    const list = suppliersNeedingReview
+    const idx = list.findIndex((g) => g.supplier_code === group.supplier_code)
+    const ordered = idx >= 0 ? [...list.slice(idx + 1), ...list.slice(0, idx)] : list
+    const next = ordered.find((g) => g.supplier_code !== group.supplier_code) ?? null
+    const ok = await exportGroup(group, group.assignment_ids, false)
+    if (!ok) return
+    downloadPurchaseOrderCsv(group)
+    if (next) {
+      setSupplier(supplierRowFromGroup(next))
+      say('success', `Exported ${group.supplier_code} — moved to ${next.supplier_name ?? next.supplier_code}`)
+    } else {
+      setSupplier(null)
+      say('success', `Exported ${group.supplier_code} — all suppliers reviewed`)
+    }
+  }
+
   // Move to a stage; refresh the supplier totals when leaving Review so the
   // review/optimize/export panels always reflect the latest assignments.
+  // Mode is independent of stage (§1) — navigating stages no longer resets it.
   const goStage = (s: Stage) => {
     if (s === 'export' && !hasAssignments) return say('danger', 'Assign suppliers before exporting')
-    if (s === 'review') setMode('review')
     if (s !== 'review') loadQueue()
     setStage(s)
   }
@@ -1044,11 +1172,13 @@ export default function PurchaseWorkspacePage() {
   const autoAssign = async () => {
     const groups = new Map<string, string[]>()
     let skippedLocked = 0      // skipped / locked rows — not eligible
+    let skippedDeferred = 0    // Assignment Deferred (§5/§9) — not eligible for Auto/Bulk
     let skippedUnreviewed = 0  // Final Qty not set yet — not eligible
     let skippedAssigned = 0    // already owns a supplier (manual or prior auto)
     let skippedNoHistory = 0   // finalized + unassigned, but no supplier candidate
     items.forEach((it) => {
       if (it.item_status === 'skipped' || lockedIds.has(it.order_item_id)) { skippedLocked += 1; return }
+      if (it.item_status === 'deferred') { skippedDeferred += 1; return }
       if ((it.final_qty ?? 0) <= 0) { skippedUnreviewed += 1; return }
       if ((it.remaining_qty ?? 0) <= 0) { skippedAssigned += 1; return }
       const top = autoAssignSupplier(recommendations[it.order_item_id])
@@ -1074,6 +1204,7 @@ export default function PurchaseWorkspacePage() {
       const parts = [`Assigned ${assigned}`]
       const alreadyOwned = skippedAssigned + raceSkipped
       if (alreadyOwned > 0) parts.push(`Skipped ${alreadyOwned} (already assigned)`)
+      if (skippedDeferred > 0) parts.push(`Skipped ${skippedDeferred} (deferred)`)
       if (skippedNoHistory > 0) parts.push(`Skipped ${skippedNoHistory} (no purchase history)`)
       if (failed > 0) parts.push(`Failed ${failed}`)
       say(failed > 0 ? 'danger' : 'success', `Auto Assign — ${parts.join(' · ')}`)
@@ -1114,12 +1245,13 @@ export default function PurchaseWorkspacePage() {
     }
   }
 
-  // Refresh the supplier totals whenever a supplier is picked in the Assign stage
-  // so the right-hand Supplier Review panel reflects the latest assignments.
+  // Refresh the supplier totals whenever a supplier is picked in Supplier
+  // Purchasing mode (any stage — mode is independent of stage, §1) so the
+  // right-hand Supplier Review panel reflects the latest assignments.
   useEffect(() => {
-    if (stage === 'assign' && supplier) loadQueue()
+    if (mode === 'supplier' && supplier) loadQueue()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supplier, stage])
+  }, [supplier, mode])
 
   /* ---- Manual product ---------------------------------------------------- */
 
@@ -1378,19 +1510,25 @@ export default function PurchaseWorkspacePage() {
             })}
           </nav>
 
-          {/* Contextual toolbar — only for the grid stages (Review / Assign). */}
+          {/* Contextual toolbar — only for the grid stages (Review / Assign).
+              Review Mode (Review All / Supplier Purchasing / Supplier Live
+              Stock) is independent of the stage stepper — a buyer can be in
+              any mode while still Reviewing, and Supplier Purchasing keeps
+              its full Assign/Reassign/Remove/Export panel available in any
+              stage (see the right-detail-column condition below). Search /
+              Movement stay Review-stage-only: they're server query params
+              that only ever applied while `isReviewStage` (loadWorkspace),
+              to avoid silently narrowing the Supplier Queue's assignment join. */}
           {(stage === 'review' || stage === 'assign') && (
             <div className="pm-toolbar">
-              {stage === 'assign' && (
-                <div className="pm-toolbar__modes">
-                  {MODE_OPTIONS.map((m) => (
-                    <button key={m.value} className={`pm-mode${mode === m.value ? ' pm-mode--on' : ''}`} onClick={() => setMode(m.value)}>
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {stage === 'review' ? (
+              <div className="pm-toolbar__modes">
+                {MODE_OPTIONS.map((m) => (
+                  <button key={m.value} className={`pm-mode${mode === m.value ? ' pm-mode--on' : ''}`} onClick={() => setMode(m.value)}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {isReviewStage && (
                 <>
                   <span className="sx-search">
                     <i className="bi bi-search" aria-hidden="true" />
@@ -1399,85 +1537,72 @@ export default function PurchaseWorkspacePage() {
                   <select className="sx-select" aria-label="Movement filter" value={movement} onChange={(e) => setMovement(e.target.value)}>
                     {MOVEMENT.map((m) => <option key={m} value={m}>{m || 'Movement: all'}</option>)}
                   </select>
-                  <select className="sx-select" aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
-                    <option value="">Product Type: all</option>
-                    <option value="1">Pharma</option>
-                    <option value="0">Non-Pharma</option>
-                    <option value="2">Others</option>
-                  </select>
+                </>
+              )}
+              {mode !== 'review' && (
+                <SupplierPicker
+                  tenantId={tenantId}
+                  storeId={storeId}
+                  value={supplier}
+                  onPick={setSupplier}
+                  onReturnToGrid={() => (document.querySelector('.pm-grid-wrap') as HTMLElement | null)?.focus()}
+                  metaOf={supplierMetaOf}
+                />
+              )}
+              {/* Category filter is available in every mode/stage (§5) — it
+                  only narrows the grid view, it never touches assignments. */}
+              {mode !== 'supplier-stock' && (
+                <select className="sx-select" aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
+                  <option value="">Product Type: all</option>
+                  <option value="1">Pharma</option>
+                  <option value="0">Non-Pharma</option>
+                  <option value="2">Others</option>
+                </select>
+              )}
+              {/* The supplier workspace is assignment-based, not review-based
+                  (§18): default shows every state (all six stay checked),
+                  these are opt-in narrower views, never an automatic hide. */}
+              {mode !== 'supplier-stock' && (
+                <>
                   <label className="pm-chk"><input type="checkbox" checked={showPending} onChange={(e) => setShowPending(e.target.checked)} /> Pending Review</label>
                   <label className="pm-chk"><input type="checkbox" checked={showFinalized} onChange={(e) => setShowFinalized(e.target.checked)} /> Finalized</label>
                   <label className="pm-chk"><input type="checkbox" checked={showAssigned} onChange={(e) => setShowAssigned(e.target.checked)} /> Assigned</label>
+                  <label className="pm-chk"><input type="checkbox" checked={showDeferred} onChange={(e) => setShowDeferred(e.target.checked)} /> Deferred</label>
                   <label className="pm-chk"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Skipped</label>
                   <label className="pm-chk"><input type="checkbox" checked={showManual} onChange={(e) => setShowManual(e.target.checked)} /> Manual</label>
-                  <div className="pm-toolbar__right">
-                    <button className="pm-btn pm-btn--ghost" onClick={() => setManualOpen(true)}><i className="bi bi-plus-lg" /> Manual</button>
-                    <button className="pm-btn pm-btn--ghost" onClick={loadWorkspace} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  {mode !== 'review' && (
-                    <SupplierPicker
-                      tenantId={tenantId}
-                      storeId={storeId}
-                      value={supplier}
-                      onPick={setSupplier}
-                      onReturnToGrid={() => (document.querySelector('.pm-grid-wrap') as HTMLElement | null)?.focus()}
-                      metaOf={supplierMetaOf}
-                    />
-                  )}
-                  {/* Category filter is available while assigning too (§5) — it
-                      only narrows the grid view, it never touches assignments. */}
-                  {mode !== 'supplier-stock' && (
-                    <select className="sx-select" aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
-                      <option value="">Product Type: all</option>
-                      <option value="1">Pharma</option>
-                      <option value="0">Non-Pharma</option>
-                      <option value="2">Others</option>
-                    </select>
-                  )}
-                  {/* The supplier workspace is assignment-based, not review-based
-                      (§18): default shows every state (all five stay checked),
-                      these are opt-in narrower views, never an automatic hide. */}
-                  {mode !== 'supplier-stock' && (
-                    <>
-                      <label className="pm-chk"><input type="checkbox" checked={showPending} onChange={(e) => setShowPending(e.target.checked)} /> Pending Review</label>
-                      <label className="pm-chk"><input type="checkbox" checked={showFinalized} onChange={(e) => setShowFinalized(e.target.checked)} /> Finalized</label>
-                      <label className="pm-chk"><input type="checkbox" checked={showAssigned} onChange={(e) => setShowAssigned(e.target.checked)} /> Assigned</label>
-                      <label className="pm-chk"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Skipped</label>
-                      <label className="pm-chk"><input type="checkbox" checked={showManual} onChange={(e) => setShowManual(e.target.checked)} /> Manual</label>
-                    </>
-                  )}
-                  {mode === 'supplier-stock' && (
-                    <>
-                      <span className="sx-search">
-                        <i className="bi bi-search" aria-hidden="true" />
-                        <input type="search" value={stockSearch} placeholder="Search live stock…" aria-label="Search live stock" onChange={(e) => setStockSearch(e.target.value)} />
-                      </span>
-                      <button
-                        className="pm-btn pm-btn--import"
-                        disabled={!supplier}
-                        title={supplier ? 'Import this supplier’s stock from Excel' : 'Select a supplier first'}
-                        onClick={() => importInputRef.current?.click()}
-                      >
-                        <i className="bi bi-upload" /> Import Stock
-                      </button>
-                      <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" hidden onChange={(e) => onImportPick(e.target.files?.[0] ?? null)} />
-                    </>
-                  )}
-                  <div className="pm-toolbar__right">
-                    <button className="pm-btn pm-btn--ghost" onClick={loadWorkspace} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
-                  </div>
                 </>
               )}
+              {mode === 'supplier-stock' && (
+                <>
+                  <span className="sx-search">
+                    <i className="bi bi-search" aria-hidden="true" />
+                    <input type="search" value={stockSearch} placeholder="Search live stock…" aria-label="Search live stock" onChange={(e) => setStockSearch(e.target.value)} />
+                  </span>
+                  <button
+                    className="pm-btn pm-btn--import"
+                    disabled={!supplier}
+                    title={supplier ? 'Import this supplier’s stock from Excel' : 'Select a supplier first'}
+                    onClick={() => importInputRef.current?.click()}
+                  >
+                    <i className="bi bi-upload" /> Import Stock
+                  </button>
+                  <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" hidden onChange={(e) => onImportPick(e.target.files?.[0] ?? null)} />
+                </>
+              )}
+              <div className="pm-toolbar__right">
+                {isReviewStage && (
+                  <button className="pm-btn pm-btn--ghost" onClick={() => setManualOpen(true)}><i className="bi bi-plus-lg" /> Manual</button>
+                )}
+                <button className="pm-btn pm-btn--ghost" onClick={loadWorkspace} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
+              </div>
             </div>
           )}
 
-          {/* Assignment Summary — appears in the Assign stage once a supplier is
-              picked (Supplier Purchasing). Assign Selected stays disabled until a
-              supplier and at least one product are selected. */}
-          {stage === 'assign' && mode === 'supplier' && supplier && (() => {
+          {/* Assignment Summary — appears whenever Supplier Purchasing mode has a
+              supplier picked, in any stage (mode is now independent of stage —
+              §1). Assign Selected stays disabled until a supplier and at least
+              one product are selected. */}
+          {mode === 'supplier' && supplier && (() => {
             const g = selectedGroup
             const alreadyAssigned = g?.product_count ?? 0
             const purchaseValue = g?.est_value ?? 0
@@ -1541,7 +1666,7 @@ export default function PurchaseWorkspacePage() {
           ) : stage === 'export' ? (
             <SupplierQueuePanel
               groups={queueLines}
-              loading={queueLoading}
+              loading={queueLoading || queuePending}
               error={queueError}
               mode="review"
               focusSupplierCode={null}
@@ -1549,10 +1674,12 @@ export default function PurchaseWorkspacePage() {
               onExport={exportGroup}
               onExportSupplier={exportSupplierLive}
               onExportAll={exportAll}
+              onExportSelected={exportSelectedSuppliers}
+              exportingSelected={exportingSelected}
               busySupplier={busySupplier}
               exportingAll={exportingAll}
             />
-          ) : stage === 'assign' && mode === 'supplier-stock' ? (
+          ) : mode === 'supplier-stock' ? (
             !supplier ? (
               <div className="pm-stockmode">
                 <EmptyState icon="bi-truck" title="Pick a supplier" description="Choose a supplier to see their live stock intersected with the current VPL." />
@@ -1598,6 +1725,20 @@ export default function PurchaseWorkspacePage() {
                         orderQty={Number(stockDraft[stockRowKey(selectedStockRow)]) || null}
                         supplierName={supplier.supplier_name ?? null}
                         onWhy={matchedStockItem ? () => openInfo(matchedStockItem, 'decision') : undefined}
+                        supplierCode={supplier.supplier_code}
+                        assignedSupplier={matchedStockItem ? assignedByItem.get(matchedStockItem.order_item_id) ?? null : null}
+                        onAssign={matchedStockItem ? () => assign(matchedStockItem, supplier.supplier_code) : undefined}
+                        onRemoveAssignment={
+                          matchedStockItem
+                            ? () => {
+                                const a = assignedByItem.get(matchedStockItem.order_item_id)
+                                if (a) reviewRemove(a.assignmentId, matchedStockItem.order_item_id)
+                              }
+                            : undefined
+                        }
+                        onDefer={matchedStockItem ? () => deferItem(matchedStockItem) : undefined}
+                        onRestore={matchedStockItem ? () => restore(matchedStockItem) : undefined}
+                        busy={manualBusy}
                       />
                       <div className="pm-stockdetail__hist">
                         <DetailColumn
@@ -1644,6 +1785,7 @@ export default function PurchaseWorkspacePage() {
                     onToggleAll={toggleAll}
                     onSkip={skip}
                     onRestore={restore}
+                    onDefer={deferItem}
                   />
                 )}
               </div>
@@ -1669,19 +1811,23 @@ export default function PurchaseWorkspacePage() {
                 />
               </div>
               <div className="pm-split__detail">
-                {stage === 'assign' && supplier ? (
+                {mode === 'supplier' && supplier ? (
                   <SupplierReviewPanel
                     tenantId={tenantId}
                     storeId={storeId}
                     supplierCode={supplier.supplier_code}
                     supplierName={supplier.supplier_name ?? supplier.supplier_code}
                     group={selectedGroup}
-                    loading={queueLoading}
+                    loading={queueLoading || queuePending}
                     exporting={busySupplier === supplier.supplier_code}
+                    minOrder={minOrders[supplier.supplier_code] ?? 0}
+                    checkedCount={checked.size}
                     onChangeSupplier={reviewChangeSupplier}
                     onRemove={reviewRemove}
-                    onExport={(g) => exportGroup(g, g.assignment_ids)}
+                    onExport={exportAndAdvance}
                     onReload={loadQueue}
+                    onAssignSelected={() => bulkAssign(supplier.supplier_code)}
+                    onNextSupplier={advanceToNextSupplier}
                   />
                 ) : (
                   <DetailColumn
@@ -1690,6 +1836,8 @@ export default function PurchaseWorkspacePage() {
                     onOpenInfo={openInfo}
                     onOpenBill={setBill}
                     onViewAll={(kind) => selectedItem && setViewAll({ kind, item: selectedItem })}
+                    assignedSupplier={selectedItem ? assignedByItem.get(selectedItem.order_item_id) ?? null : null}
+                    onChangeSupplier={reviewChangeSupplier}
                   />
                 )}
               </div>
@@ -1734,8 +1882,13 @@ export default function PurchaseWorkspacePage() {
                 <button className="pm-btn pm-btn--ghost" onClick={() => goStage('optimize')}>
                   Optimize <i className="bi bi-arrow-right" />
                 </button>
-                <button className="pm-btn pm-btn--ghost" disabled={!hasAssignments} onClick={() => goStage('export')}>
-                  Review Suppliers <i className="bi bi-arrow-right" />
+                <button
+                  className="pm-btn pm-btn--ghost"
+                  disabled={!hasAssignments}
+                  onClick={() => goStage('export')}
+                  title="Optional — every supplier can already be exported from its own card above"
+                >
+                  Export Monitor <i className="bi bi-arrow-right" />
                 </button>
               </>
             )}
@@ -1746,7 +1899,7 @@ export default function PurchaseWorkspacePage() {
                 </button>
                 <span className="pm-stagebar__spacer" />
                 <button className="pm-btn pm-btn--primary" disabled={!hasAssignments} onClick={() => goStage('export')}>
-                  Continue to Export <i className="bi bi-arrow-right" />
+                  View Export Monitor <i className="bi bi-arrow-right" />
                 </button>
               </>
             )}
@@ -1755,7 +1908,9 @@ export default function PurchaseWorkspacePage() {
                 <button className="pm-btn pm-btn--ghost" onClick={() => goStage('optimize')}>
                   <i className="bi bi-arrow-left" /> Back to Optimize
                 </button>
-                <span className="pm-stagebar__hint">Export a single supplier from its card, or use Export All.</span>
+                <span className="pm-stagebar__hint">
+                  Monitoring dashboard for the whole refresh — export a single supplier from its card, use Export All, or export directly from each supplier's Assign panel.
+                </span>
               </>
             )}
           </div>

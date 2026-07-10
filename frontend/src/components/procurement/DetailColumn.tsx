@@ -1,13 +1,23 @@
 import { useCallback, useState } from 'react'
 import type { PurchaseRow, SalesRow } from '../../types/stock'
-import type { WorkspaceItem } from '../../types/procurement'
+import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
 import type { BillTarget } from './BillDrawer'
 import { stockService } from '../../services/stockService'
 import { useStockResource } from '../stock/useStockResource'
 import { MovementChart } from '../stock/MovementChart'
 import { EmptyState } from '../common/EmptyState'
+import { SupplierPicker } from './SupplierPicker'
 import { money, num, date } from '../stock/format'
 import '../stock/stock-ui.css'
+
+/** The item's current live (non-exported) assignment, if any — used to offer
+ *  inline Change Supplier from the Review-All detail panel (§4), without
+ *  requiring the buyer to switch to Supplier Purchasing mode. */
+export interface AssignedSupplierInfo {
+  assignmentId: string
+  supplierCode: string
+  supplierName: string | null
+}
 
 /** Which drawer tab a panel action opens. */
 export type DrawerTab = 'info' | 'history' | 'decision'
@@ -28,6 +38,8 @@ export function DetailColumn({
   onOpenInfo,
   onOpenBill,
   onViewAll,
+  assignedSupplier,
+  onChangeSupplier,
 }: {
   tenantId: string
   item: WorkspaceItem | null
@@ -36,8 +48,13 @@ export function DetailColumn({
   onOpenBill?: (target: BillTarget) => void
   /** Open the full History "View All" dialog (search / sort / export). */
   onViewAll?: (kind: ViewAllKind) => void
+  /** The selected item's current supplier assignment, if any (§4 — lets Review
+   *  All mode offer Change Supplier without switching to Supplier Purchasing). */
+  assignedSupplier?: AssignedSupplierInfo | null
+  onChangeSupplier?: (assignmentId: string, newSupplier: SupplierRow) => void
 }) {
   const [viewMode, setViewMode] = useState<'summary' | 'history'>('summary')
+  const [changingSupplier, setChangingSupplier] = useState(false)
 
   const storeId = item?.store_id ?? ''
   const productCode = item?.product_code ?? ''
@@ -97,6 +114,31 @@ export function DetailColumn({
             {item.unit_description && <span><b>Unit</b>{item.unit_description}</span>}
             {item.pack && <span><b>Pack</b>{item.pack}</span>}
           </div>
+          {/* Inline Change Supplier (§4) — reassignment reachable from Review
+              All mode too, not only Supplier Purchasing's own review panel. */}
+          {assignedSupplier && onChangeSupplier && (
+            changingSupplier ? (
+              <div className="pm-dhead__changesup">
+                <SupplierPicker
+                  tenantId={tenantId}
+                  storeId={item.store_id ?? undefined}
+                  value={null}
+                  onPick={(s) => {
+                    if (s) onChangeSupplier(assignedSupplier.assignmentId, s)
+                    setChangingSupplier(false)
+                  }}
+                  onReturnToGrid={() => setChangingSupplier(false)}
+                />
+                <button className="pm-linkbtn pm-linkbtn--sm" onClick={() => setChangingSupplier(false)}>Cancel</button>
+              </div>
+            ) : (
+              <div className="pm-dhead__assigned">
+                <i className="bi bi-truck" aria-hidden="true" />
+                Assigned to <b>{assignedSupplier.supplierName ?? assignedSupplier.supplierCode}</b>
+                <button className="pm-linkbtn pm-linkbtn--sm" onClick={() => setChangingSupplier(true)}>Change</button>
+              </div>
+            )
+          )}
         </div>
         <div className="pm-dhead__actions">
           <div className="pm-vswitch" role="tablist" aria-label="Detail view mode">

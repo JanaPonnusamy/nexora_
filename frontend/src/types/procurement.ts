@@ -153,6 +153,7 @@ export interface WorkspaceSummary {
   assigned: number
   finalized: number
   skipped: number
+  deferred: number
 }
 
 export interface Assignment {
@@ -312,6 +313,14 @@ export interface OptimizationMoveResult {
   moved: number
   skipped: number
   results: { assignment_id: string; status: string; reason?: string }[]
+}
+
+/** Per-supplier Minimum Order config — the raw configured value plus whether
+ *  the supplier is actually opted into Optimization (§10/§11: a configured
+ *  value alone no longer enrolls a supplier). */
+export interface SupplierMinOrderConfig {
+  min_order_value: number
+  consider_minimum_order: boolean
 }
 
 /** An audit row for a product moved between suppliers (§12). */

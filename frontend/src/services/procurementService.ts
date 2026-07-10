@@ -13,6 +13,7 @@ import type {
   OptimizationResult,
   PendingPage,
   Refresh,
+  SupplierMinOrderConfig,
   SupplierQueue,
   SupplierRecommendation,
   SupplierRow,
@@ -93,6 +94,15 @@ export const procurementService = {
   restore: (tenantId: string, orderItemId: string, by: string | null) =>
     api.post<WorkspaceItem>(
       `/api/procurement/order-items/${orderItemId}/restore${qs({ tenant_id: tenantId })}`,
+      { reviewed_by: by },
+    ),
+
+  // Assignment Deferred (Space Bar) — excludes the row from Auto/Bulk
+  // Assignment while keeping its Final Qty. Un-defer reuses `restore` above
+  // (the backend's restore endpoint now accepts both skipped and deferred).
+  defer: (tenantId: string, orderItemId: string, by: string | null) =>
+    api.post<WorkspaceItem>(
+      `/api/procurement/order-items/${orderItemId}/defer${qs({ tenant_id: tenantId })}`,
       { reviewed_by: by },
     ),
 
@@ -377,6 +387,27 @@ export const procurementService = {
     api.put(
       `/api/procurement/suppliers/${supplierCode}/min-order${qs({ tenant_id: tenantId })}`,
       { store_id: storeId, min_order_value: minOrderValue, updated_by: by },
+    ),
+
+  // Both min_order_value + consider_minimum_order per supplier, one round
+  // trip — powers the Minimum Order Settings panel.
+  minOrderConfig: (tenantId: string, storeId: string) =>
+    api
+      .get<{ config: Record<string, SupplierMinOrderConfig> }>(
+        `/api/procurement/suppliers/min-order-config${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      )
+      .then((r) => r.config),
+
+  setConsiderMinimumOrder: (
+    tenantId: string,
+    supplierCode: string,
+    storeId: string,
+    considerMinimumOrder: boolean,
+    by: string | null,
+  ) =>
+    api.put(
+      `/api/procurement/suppliers/${supplierCode}/consider-minimum-order${qs({ tenant_id: tenantId })}`,
+      { store_id: storeId, consider_minimum_order: considerMinimumOrder, updated_by: by },
     ),
 
   // Close a cycle. End GRN / End Sale Bill are auto-read from synced data on the

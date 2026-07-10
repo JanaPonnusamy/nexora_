@@ -190,7 +190,8 @@
 .pm-row--sel,
 .pm-row--sel.pm-row--finalized,
 .pm-row--sel.pm-row--assigned,
-.pm-row--sel.pm-row--skip {
+.pm-row--sel.pm-row--skip,
+.pm-row--sel.pm-row--deferred {
   background: #dbeafe !important;
   box-shadow: inset 4px 0 0 #2563eb;
 }
@@ -204,6 +205,11 @@
 .pm-row--assigned { background: #f0fdf4; }
 .pm-row--skip { opacity: .62; background: #f1f5f9; }
 .pm-row--sel.pm-row--skip { opacity: 1; }
+/* Assignment Deferred (Space Bar, §5) — greyed like Skip but a distinct amber-
+   grey tone so it isn't confused with a skipped/removed-from-cycle row; Final
+   Qty stays intact and editable. */
+.pm-row--deferred { opacity: .72; background: #f8f5ef; }
+.pm-row--sel.pm-row--deferred { opacity: 1; }
 .pm-prod__name { font-weight: 600; }
 .pm-prod__meta { color: #94a3b8; font-size: 11.5px; display: flex; gap: 4px; }
 .pm-tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; font-weight: 700; text-transform: uppercase; }
@@ -283,6 +289,9 @@
 .pm-sd__kv--supp .pm-sd__v { color: #1d4ed8; }
 .pm-sd__kv--store .pm-sd__v { color: #b45309; }
 .pm-sd__why { margin-left: auto; }
+.pm-sd__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pm-sd__assigned { font-size: 12px; color: #166534; }
+.pm-sd__assigned b { font-weight: 700; }
 
 /* §7 fit — compress the reused DetailColumn ONLY inside the stock panel so the
    supplier block + trend + both histories share the column on 1080p without
@@ -322,6 +331,7 @@
 .pm-status--assigned { background: #dcfce7; color: #166534; }
 .pm-status--notrev { background: #f1f5f9; color: #94a3b8; }
 .pm-status--skip { background: #fee2e2; color: #b91c1c; }
+.pm-status--deferred { background: #fef3c7; color: #92400e; }
 .pm-status--unsaved { display: inline-flex; align-items: center; gap: 5px; background: #fef3c7; color: #b45309; }
 .pm-status--blank { background: transparent; color: #cbd5e1; font-weight: 400; padding: 0; }
 .pm-linkbtn { border: 0; background: transparent; color: #64748b; cursor: pointer; padding: 2px 5px; border-radius: 6px; font-size: 12px; font-weight: 600; }
@@ -421,6 +431,15 @@
 .pm-dhead__meta { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 3px; font-size: 11.5px; color: #64748b; }
 .pm-dhead__meta b { color: #94a3b8; font-weight: 600; margin-right: 5px; text-transform: uppercase; font-size: 10px; letter-spacing: .02em; }
 .pm-dhead__actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
+/* Inline Change Supplier (§4) */
+.pm-dhead__assigned {
+  display: flex; align-items: center; gap: 6px; margin-top: 5px;
+  font-size: 11.5px; color: #166534; background: #f0fdf4; border: 1px solid #bbf7d0;
+  border-radius: 6px; padding: 3px 8px; width: fit-content;
+}
+.pm-dhead__assigned b { font-weight: 700; }
+.pm-dhead__changesup { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+.pm-linkbtn--sm { font-size: 11px; padding: 1px 6px; }
 
 /* Decision Summary */
 .pm-dsum { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -478,10 +497,19 @@
 
 /* Card list (one supplier per row; inline expansion beneath it) */
 .pm-sq__list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow: auto; }
-.pm-sqrow { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; overflow: hidden; }
+/* flex-shrink: 0 is load-bearing: .pm-sqrow's `overflow: hidden` (needed to
+   clip content to the rounded corners) zeroes its flexbox automatic minimum
+   size per spec, so once the list's total content height exceeds max-height
+   the column-flex parent shrinks every row toward that 0 instead of letting
+   `overflow: auto` scroll — collapsing all cards down to a ~2px sliver (just
+   the border) the moment there are enough suppliers to overflow 340px. This
+   is what made a fully-loaded Supplier Queue/Export Monitor render as a wall
+   of blank lines with correct counts above it. */
+.pm-sqrow { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; overflow: hidden; flex-shrink: 0; }
 .pm-sqrow--open { border-color: var(--bs-primary, #4f46e5); box-shadow: 0 2px 10px rgba(79,70,229,.08); }
-.pm-sqcard { display: grid; grid-template-columns: minmax(140px, 1.4fr) repeat(4, minmax(64px, .7fr)) auto auto; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; }
+.pm-sqcard { display: grid; grid-template-columns: auto minmax(140px, 1.4fr) repeat(4, minmax(64px, .7fr)) auto auto; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; }
 .pm-sqcard--active { background: rgba(79,70,229,.06); box-shadow: inset 3px 0 0 var(--bs-primary, #4f46e5); }
+.pm-sqcard__chk { margin: 0; cursor: pointer; }
 .pm-sqcard__name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pm-sqcard__stat { display: flex; flex-direction: column; font-size: 10px; text-transform: uppercase; letter-spacing: .02em; color: #94a3b8; }
 .pm-sqcard__stat b { font-size: 13px; color: #0f172a; font-variant-numeric: tabular-nums; }
@@ -549,9 +577,10 @@
 /* Explicit reassignment confirm (§7) — never silently overwrite. */
 .pm-srv__confirm { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid #fecaca; background: #fef2f2; border-radius: 8px; font-size: 12px; max-width: 320px; }
 .pm-srv__confirm-btns { display: flex; gap: 6px; }
-.pm-srv__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border-top: 1px solid var(--bs-border-color, #e5e7eb); }
+.pm-srv__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border-top: 1px solid var(--bs-border-color, #e5e7eb); flex-wrap: wrap; }
 .pm-srv__foottotal { font-size: 12.5px; color: #475569; }
 .pm-srv__foottotal b { font-size: 15px; color: #0f172a; margin-left: 4px; }
+.pm-srv__footbtns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pm-btn--danger { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
 .pm-btn--danger:hover:not(:disabled) { background: #fecaca; }
 
@@ -561,6 +590,12 @@
 .pm-opt__tile b { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .pm-opt__tile span { font-size: 9.5px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
 .pm-opt__tile--ok b { color: #166534; }
+
+/* Minimum Order Settings sub-panel (§10/§11) — per-supplier opt-in flag */
+.pm-opt__settings { margin-bottom: 10px; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 8px; overflow: hidden; }
+.pm-opt__settingstoggle { width: 100%; justify-content: flex-start; }
+.pm-opt__settingstable { margin: 0; }
+.pm-opt__settingstable thead th, .pm-opt__settingstable tbody td { padding: 6px 10px; }
 
 /* Supplier Optimization panel (stage between Auto Assignment and Export) */
 .pm-opt__tablewrap { overflow-x: auto; }

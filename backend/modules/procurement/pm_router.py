@@ -118,6 +118,15 @@ def restore(order_item_id: str, payload: ReviewedBy, tenant_id: str = Query(...)
     )
 
 
+@router.post("/order-items/{order_item_id}/defer")
+def defer(order_item_id: str, payload: ReviewedBy, tenant_id: str = Query(...)):
+    """Assignment Deferred (Space Bar) — excludes the row from Auto/Bulk
+    Assignment while keeping its Final Qty. Un-defer reuses POST .../restore."""
+    return workspace_service.defer_item(
+        tenant_id, order_item_id, payload.reviewed_by
+    )
+
+
 # --------------------------------------------------------------------------
 # Supplier Queue
 # --------------------------------------------------------------------------

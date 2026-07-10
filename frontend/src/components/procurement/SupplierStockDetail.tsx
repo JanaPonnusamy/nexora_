@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { SupplierStockRow, WorkspaceItem } from '../../types/procurement'
+import type { AssignedSupplierInfo } from './DetailColumn'
 import { money, num, date } from '../stock/format'
 
 const PRODUCT_TYPE: Record<string, string> = { '1': 'Pharma', '0': 'Non-Pharma', '2': 'Others' }
@@ -28,6 +29,13 @@ export function SupplierStockDetail({
   orderQty,
   supplierName,
   onWhy,
+  supplierCode,
+  assignedSupplier,
+  onAssign,
+  onRemoveAssignment,
+  onDefer,
+  onRestore,
+  busy,
 }: {
   row: SupplierStockRow
   item: WorkspaceItem | null
@@ -35,12 +43,25 @@ export function SupplierStockDetail({
   orderQty: number | null
   supplierName: string | null
   onWhy?: () => void
+  /** Live Stock's active supplier code — needed to tell "assign to THIS
+   *  supplier" apart from an assignment already held by a different one. */
+  supplierCode?: string
+  /** The matched item's current live assignment, if any (§8). */
+  assignedSupplier?: AssignedSupplierInfo | null
+  onAssign?: () => void
+  onRemoveAssignment?: () => void
+  onDefer?: () => void
+  onRestore?: () => void
+  busy?: boolean
 }) {
   const pack = item?.pack ?? row.packing ?? null
   const unit = item?.unit_description ?? null
   const type = item?.product_type != null ? PRODUCT_TYPE[String(item.product_type)] ?? '—' : null
   const assigned = item?.assigned_qty ?? 0
   const pending = item?.remaining_qty ?? 0
+  const skipped = item?.item_status === 'skipped'
+  const deferred = item?.item_status === 'deferred'
+  const assignedHere = assignedSupplier != null && assignedSupplier.supplierCode === supplierCode
 
   return (
     <div className="pm-sd">
@@ -56,6 +77,42 @@ export function SupplierStockDetail({
           <KV label="Supplier" value={supplierName ?? row.supplier_code} />
         </div>
       </section>
+
+      {/* Assignment actions (§8) — reference-only stock never decides an
+          assignment itself; these just reuse the same assign/remove/defer
+          paths the rest of the workspace uses, one row at a time. */}
+      {item && !skipped && (
+        <section className="pm-sd__sec">
+          <div className="pm-sd__title">Assignment</div>
+          <div className="pm-sd__actions">
+            {assignedSupplier ? (
+              <>
+                <span className="pm-sd__assigned">
+                  Assigned to <b>{assignedSupplier.supplierName ?? assignedSupplier.supplierCode}</b>
+                </span>
+                <button className="pm-btn pm-btn--ghost pm-btn--sm" disabled={busy} onClick={onRemoveAssignment}>
+                  <i className="bi bi-x-circle" /> Remove Assignment
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="pm-btn pm-btn--primary pm-btn--sm"
+                  disabled={busy || !onAssign || (item.remaining_qty ?? 0) <= 0}
+                  onClick={onAssign}
+                  title={assignedHere ? 'Already assigned to this supplier' : undefined}
+                >
+                  <i className="bi bi-truck" /> Assign to {supplierName ?? supplierCode}
+                </button>
+                <button className="pm-btn pm-btn--ghost pm-btn--sm" disabled={busy} onClick={deferred ? onRestore : onDefer}>
+                  <i className={`bi ${deferred ? 'bi-arrow-counterclockwise' : 'bi-pause-circle'}`} />
+                  {deferred ? ' Restore' : ' Defer'}
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="pm-sd__sec">
         <div className="pm-sd__title">Inventory</div>
