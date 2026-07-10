@@ -60,6 +60,9 @@ from modules.reports.router import (
 from modules.product_mapping.router import (
     router as product_mapping_router
 )
+from modules.document_extraction.router import (
+    router as document_extraction_router
+)
 
 app = FastAPI(title='NEXORA API')
 
@@ -111,6 +114,7 @@ app.include_router(stock_availability_router)
 app.include_router(procurement_router)
 app.include_router(reports_router)
 app.include_router(product_mapping_router)
+app.include_router(document_extraction_router)
 
 @app.get('/health')
 def health():

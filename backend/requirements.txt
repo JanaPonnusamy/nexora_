@@ -5,3 +5,19 @@ pyodbc
 pydantic
 python-dotenv
 rapidfuzz
+
+# document_extraction module — Chunk 5 (Image Processing), installed and wired
+opencv-python
+numpy
+Pillow
+pymupdf
+pdf2image
+
+# document_extraction module — Chunk 6 (OCR abstraction layer), code wired
+# via modules/document_extraction/ocr/ (PaddleOCRProvider); packages
+# themselves not yet pip-installed in this environment
+paddleocr
+paddlepaddle
+
+# document_extraction module — later chunks, listed but NOT installed/wired yet
+openpyxl
