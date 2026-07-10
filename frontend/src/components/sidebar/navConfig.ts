@@ -8,7 +8,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-grid-1x2',
     cap: 'PLATFORM',
     children: [
-      { label: 'Overview', to: '/overview', icon: 'bi-speedometer2', cap: 'PLATFORM' },
+      { label: 'Overview', to: '/overview', icon: 'bi-grid', cap: 'PLATFORM' },
       { label: 'Tenants', to: '/platform/tenants', icon: 'bi-building', cap: 'PLATFORM' },
       { label: 'Stores', to: '/platform/stores', icon: 'bi-shop', cap: 'PLATFORM' },
       { label: 'Users', to: '/platform/users', icon: 'bi-people', cap: 'PLATFORM' },
@@ -30,8 +30,8 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-cart-check',
     cap: 'PROCUREMENT_WORKSPACE',
     children: [
-      { label: 'Cycle Management', to: '/procurement/cycles', icon: 'bi-diagram-3', cap: 'PROCUREMENT_ADMIN' },
-      { label: 'Refresh Management', to: '/procurement/refreshes', icon: 'bi-arrow-repeat', cap: 'PROCUREMENT_ADMIN' },
+      { label: 'Cycle Management', to: '/procurement/cycles', icon: 'bi-calendar-event', cap: 'PROCUREMENT_ADMIN' },
+      { label: 'Refresh Management', to: '/procurement/refreshes', icon: 'bi-arrow-clockwise', cap: 'PROCUREMENT_ADMIN' },
       { label: 'Purchase Manager', to: '/procurement/workspace', icon: 'bi-cart-check', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Product Intelligence', to: '/procurement/intelligence', icon: 'bi-cpu', cap: 'PROCUREMENT_WORKSPACE' },
     ],
@@ -42,7 +42,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-diagram-3',
     cap: 'PRODUCT_MAPPING',
     children: [
-      { label: 'Product Mapping', to: '/product-mapping', icon: 'bi-diagram-3', cap: 'PRODUCT_MAPPING' },
+      { label: 'Product Mapping', to: '/product-mapping', icon: 'bi-bezier2', cap: 'PRODUCT_MAPPING' },
     ],
   },
   {
@@ -60,7 +60,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-sliders',
     cap: 'ADMINISTRATION',
     children: [
-      { label: 'Modules', to: '/administration/modules', icon: 'bi-boxes', cap: 'ADMINISTRATION' },
+      { label: 'Modules', to: '/administration/modules', icon: 'bi-plugin', cap: 'ADMINISTRATION' },
       { label: 'Permissions', to: '/administration/permissions', icon: 'bi-shield-lock', cap: 'ADMINISTRATION' },
     ],
   },
@@ -70,7 +70,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-gear',
     children: [
       { label: 'Reports', to: '/reports', icon: 'bi-bar-chart', cap: 'REPORTS' },
-      { label: 'Settings', to: '/settings', icon: 'bi-gear', cap: 'SETTINGS' },
+      { label: 'Settings', to: '/settings', icon: 'bi-sliders', cap: 'SETTINGS' },
     ],
   },
 ]

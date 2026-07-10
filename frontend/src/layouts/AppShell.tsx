@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import { Header } from '../components/header/Header'
 import { Sidebar } from '../components/sidebar/Sidebar'
-import { StatusBar } from '../components/statusbar/StatusBar'
 
 export function AppShell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -22,7 +21,6 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
-      <StatusBar />
     </div>
   )
 }

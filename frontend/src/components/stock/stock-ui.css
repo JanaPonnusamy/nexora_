@@ -3,6 +3,39 @@
    Reuses the sx- design tokens (page root carries `.sx`).
    ============================================================ */
 
+/* ===== Dark mode: override all sx- tokens under .sx scope ===== */
+[data-bs-theme="dark"] .sx {
+  --sx-surface:        #1e2030;
+  --sx-surface-2:      #181a27;
+  --sx-canvas:         #13151f;
+  --sx-border:         rgba(255, 255, 255, 0.09);
+  --sx-border-strong:  rgba(255, 255, 255, 0.16);
+  --sx-text:           #e8eaf0;
+  --sx-muted:          #8b95b0;
+  --sx-faint:          #545d78;
+
+  --sx-accent:         #818cf8;
+  --sx-accent-2:       #a5b4fc;
+  --sx-accent-soft:    rgba(129, 140, 248, 0.12);
+  --sx-teal:           #2dd4bf;
+  --sx-teal-soft:      rgba(45, 212, 191, 0.12);
+  --sx-success:        #4ade80;
+  --sx-success-soft:   rgba(74, 222, 128, 0.12);
+  --sx-danger:         #f87171;
+  --sx-danger-soft:    rgba(248, 113, 113, 0.12);
+  --sx-warning:        #fbbf24;
+  --sx-warning-soft:   rgba(251, 191, 36, 0.12);
+  --sx-info:           #38bdf8;
+  --sx-info-soft:      rgba(56, 189, 248, 0.12);
+  --sx-violet:         #c084fc;
+  --sx-violet-soft:    rgba(192, 132, 252, 0.12);
+
+  --sx-shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.4);
+  --sx-shadow:     0 6px 20px rgba(0, 0, 0, 0.45);
+  --sx-shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.6);
+  --sx-panel:      #1e2030;
+}
+
 /* Lock the whole module to the viewport; only panels scroll internally. */
 .sa {
   color: var(--sx-text);
@@ -163,6 +196,11 @@
   background: var(--sa-store-soft);
   border-bottom: 2px solid var(--sa-store);
 }
+[data-bs-theme="dark"] .sa-branch__head {
+  /* In dark mode, pastel soft colours are too bright — use a very translucent store tint instead */
+  background: color-mix(in srgb, var(--sa-store) 14%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--sa-store) 65%, transparent);
+}
 .sa-branch__name {
   font-weight: 800; font-size: 0.9rem; line-height: 1.1;
   color: var(--sa-store); flex: 0 0 auto;
@@ -200,7 +238,13 @@
   cursor: default;
 }
 .sa-branch__row:not(.sa-branch__row--head):hover { background: var(--sa-store-soft); }
+[data-bs-theme="dark"] .sa-branch__row:not(.sa-branch__row--head):hover {
+  background: color-mix(in srgb, var(--sa-store) 10%, transparent);
+}
 .sa-branch__row--active { background: var(--sa-store-soft); box-shadow: inset 3px 0 0 var(--sa-store); }
+[data-bs-theme="dark"] .sa-branch__row--active {
+  background: color-mix(in srgb, var(--sa-store) 14%, transparent);
+}
 .sa-branch__pname {
   display: inline-flex; align-items: center; gap: 0.45rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -234,12 +278,15 @@
 }
 .sa-tag {
   display: inline-flex; align-items: center; gap: 0.35rem;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.12);
   border: 1px solid var(--sx-border);
   color: var(--sx-text);
   border-radius: 999px;
   padding: 0.1rem 0.6rem;
   font-size: 0.78rem; font-weight: 650;
+}
+[data-bs-theme="dark"] .sa-tag {
+  background: rgba(255, 255, 255, 0.07);
 }
 .sa-tag--stock { color: var(--sx-muted); }
 
@@ -367,6 +414,13 @@
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: var(--sx-shadow);
 }
+[data-bs-theme="dark"] .sa-chart-card {
+  background:
+    radial-gradient(120% 120% at 0% 0%, rgba(129,140,248,0.14), transparent 55%),
+    radial-gradient(120% 120% at 100% 100%, rgba(45,212,191,0.10), transparent 55%),
+    rgba(30, 32, 48, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
 /* fill the cell so the whole chart is always visible (never clipped) */
 .sa-chart { display: flex; flex-direction: column; gap: 0.5rem; height: 100%; min-height: 0; }
 .sa-chart__caption { flex: 0 0 auto; display: flex; align-items: baseline; justify-content: space-between; }
@@ -385,37 +439,42 @@
 /* Floating month tooltip (Purchase / Sales / Transfer / Adjustment / Stock). */
 .sa-chart__tip {
   position: absolute; z-index: 5; min-width: 150px; pointer-events: none;
-  background: var(--sx-panel, #fff); border: 1px solid var(--sx-border, #e5e7eb);
+  background: var(--sx-surface, #fff); border: 1px solid var(--sx-border, #e5e7eb);
   border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,.22); padding: 6px 8px;
 }
 .sa-chart__tip-head { font-weight: 800; font-size: 0.72rem; color: var(--sx-text); margin-bottom: 4px; }
 .sa-chart__tip-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.7rem; line-height: 1.5; }
 .sa-chart__tip-key { display: inline-flex; align-items: center; gap: 5px; color: var(--sx-muted); }
 .sa-chart__tip-val { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--sx-text); }
-.sa-chart__axis { fill: var(--sx-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
-.sa-chart__barval { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.sa-chart__month { fill: var(--sx-muted); font-size: 12px; font-weight: 650; }
-.sa-chart__month--on { fill: var(--sx-accent); font-weight: 800; }
+.sa-chart__axis { fill: var(--sx-faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+.sa-chart__barval { font-size: 10.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sa-chart__month { fill: var(--sx-muted); font-size: 11.5px; font-weight: 600; }
+.sa-chart__month--on { fill: var(--sx-accent); font-weight: 800; font-size: 12px; }
 
-/* one row: all six metrics across, value on top, code below */
+/* one row: all six metrics across, value on top, label below */
 .sa-chart__readout {
   flex: 0 0 auto;
   display: flex;
-  gap: 0.4rem;
+  gap: 0.3rem;
   border-top: 1px solid var(--sx-border);
-  padding-top: 0.45rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.1rem;
 }
 .sa-chart__metric {
   flex: 1 1 0; min-width: 0;
-  display: flex; flex-direction: column; align-items: center; gap: 0.05rem;
+  display: flex; flex-direction: column; align-items: center; gap: 0.08rem;
 }
-.sa-chart__metric-val { font-weight: 800; font-size: 1rem; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sa-chart__metric-val {
+  font-weight: 800; font-size: 1.05rem;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+  color: var(--sx-muted); /* default — overridden inline when > 0 */
+}
 .sa-chart__metric-label {
-  display: inline-flex; align-items: center; gap: 0.25rem;
-  font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em;
-  text-transform: uppercase; color: var(--sx-muted);
+  display: inline-flex; align-items: center; gap: 0.22rem;
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--sx-faint);
 }
-.sa-chart__swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.sa-chart__swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 
 /* ===== Toasts ===== */
 .sa-toasts {
@@ -446,3 +505,163 @@
   .sa-deflist { grid-template-columns: 1fr; }
   .sa-chart__readout { grid-template-columns: 1fr; }
 }
+
+/* ===== Panel sub-heading count / badges ===== */
+.sa-panel-sub {
+  display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  font-size: 0.72rem; color: var(--sx-muted);
+}
+.sa-badge {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.06rem 0.5rem; border-radius: 999px;
+  font-size: 0.66rem; font-weight: 700; white-space: nowrap;
+}
+.sa-badge--danger  { background: var(--sx-danger-soft);  color: var(--sx-danger); }
+.sa-badge--warning { background: var(--sx-warning-soft); color: var(--sx-warning); }
+
+/* ===== Expiry badge (compact, no icon clutter) ===== */
+.sa-expiry {
+  display: inline-block;
+  padding: 0.08rem 0.45rem; border-radius: 4px;
+  font-size: 0.7rem; font-weight: 650; white-space: nowrap;
+}
+.sa-expiry--ok      { background: var(--sx-success-soft); color: var(--sx-success); }
+.sa-expiry--soon    { background: var(--sx-warning-soft); color: var(--sx-warning); }
+.sa-expiry--expired { background: var(--sx-danger-soft);  color: var(--sx-danger); }
+
+/* ===== Batch row tinting ===== */
+.sa-batch-row--expired td { opacity: 0.7; }
+.sa-batch-row--expired .sa-batch-no { text-decoration: line-through; color: var(--sx-danger); }
+.sa-batch-row--soon   .sa-batch-no { color: var(--sx-warning); font-weight: 700; }
+
+/* ===== Inline stock cell: number + narrow bar stacked ===== */
+.sa-stock-cell {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+}
+.sa-batch-stock { font-weight: 700; line-height: 1; }
+/* Inline bar — lives inside the stock td, not its own column */
+.sa-inbar {
+  display: block; width: 100%; height: 4px;
+  background: var(--sx-border); border-radius: 999px; overflow: hidden;
+}
+.sa-inbar__fill {
+  display: block; height: 100%; min-width: 3px;
+  background: linear-gradient(90deg, var(--sx-accent), var(--sx-accent-2, var(--sx-accent)));
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+
+/* ===== Bill / GRN chip ===== */
+.sa-bill-chip {
+  display: inline-block;
+  background: var(--sx-accent-soft); color: var(--sx-accent);
+  border-radius: 4px; padding: 0.07rem 0.4rem;
+  font-size: 0.71rem; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
+.sa-bill-chip--purch { background: var(--sx-teal-soft); color: var(--sx-teal); }
+
+/* ===== Discount pill ===== */
+.sa-disc-pill {
+  display: inline-block;
+  background: var(--sx-success-soft); color: var(--sx-success);
+  border-radius: 4px; padding: 0.07rem 0.38rem;
+  font-size: 0.68rem; font-weight: 700;
+}
+
+/* ===== Customer cell — single-line truncation ===== */
+.sa-customer-cell {
+  overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 0; /* table layout fixed handles actual width */
+}
+
+/* ===== Qty + Free pair ===== */
+.sa-qty-pair { display: inline-flex; align-items: baseline; gap: 0.2rem; }
+.sa-qty-bold { font-weight: 700; }
+.sa-cost-bold { font-weight: 700; }
+.sa-qty-pair__free {
+  font-size: 0.68rem; font-weight: 700;
+  color: var(--sx-success); background: var(--sx-success-soft);
+  padding: 0.03rem 0.28rem; border-radius: 3px;
+}
+
+/* ===== Bill Details strip — two-zone layout ===== */
+.sa-bill-strip {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.5rem; flex-wrap: wrap;
+  background: var(--sx-surface-2);
+  border-bottom: 1px solid var(--sx-border);
+  padding: 0.45rem 0.85rem;
+}
+/* Left zone: bill number · customer · date in a row */
+.sa-bill-strip__meta {
+  display: flex; align-items: center; gap: 0.5rem 0.8rem;
+  flex-wrap: wrap; min-width: 0;
+}
+.sa-bill-strip__no {
+  font-size: 0.82rem; font-weight: 800; color: var(--sx-accent);
+  white-space: nowrap;
+}
+.sa-bill-strip__cust {
+  font-size: 0.78rem; font-weight: 600; color: var(--sx-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px;
+}
+.sa-bill-strip__date {
+  font-size: 0.73rem; color: var(--sx-muted); white-space: nowrap;
+}
+/* Right zone: total + item count */
+.sa-bill-strip__total {
+  display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;
+}
+.sa-bill-strip__total-label {
+  font-size: 0.63rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--sx-faint);
+}
+.sa-bill-strip__total-val {
+  font-size: 0.92rem; font-weight: 800; color: var(--sx-success);
+  white-space: nowrap;
+}
+.sa-bill-strip__count {
+  background: var(--sx-border); color: var(--sx-muted);
+  border-radius: 999px; padding: 0.1rem 0.5rem;
+  font-size: 0.66rem; font-weight: 700; white-space: nowrap;
+}
+
+/* ===== Highlighted bill row (current product) ===== */
+.sa-bill-row--highlight {
+  background: color-mix(in srgb, var(--sx-accent) 7%, transparent) !important;
+  box-shadow: inset 3px 0 0 var(--sx-accent);
+}
+.sa-bill-product--active { font-weight: 700; color: var(--sx-accent); }
+
+/* ===== MoM trend badges in chart sub-header ===== */
+.sa-chart-sub    { display: inline-flex; align-items: center; gap: 0.5rem; }
+.sa-trend-badges { display: inline-flex; gap: 0.3rem; }
+.sa-trend {
+  display: inline-flex; align-items: center; gap: 0.1rem;
+  padding: 0.05rem 0.38rem; border-radius: 4px;
+  font-size: 0.67rem; font-weight: 700;
+}
+.sa-trend--up       { background: var(--sx-info-soft);    color: var(--sx-info); }
+.sa-trend--up-green { background: var(--sx-success-soft); color: var(--sx-success); }
+.sa-trend--down     { background: var(--sx-danger-soft);  color: var(--sx-danger); }
+
+/* ===== Context bar recency badge ===== */
+.sa-ctx__recency-badge {
+  font-style: normal; font-size: 0.64rem; font-weight: 700;
+  background: var(--sx-accent-soft); color: var(--sx-accent);
+  border-radius: 4px; padding: 0.04rem 0.32rem; margin-left: 0.25rem;
+}
+
+/* ===== Out-of-stock tag variant ===== */
+.sa-tag--stock-out {
+  background: var(--sx-danger-soft);
+  border-color: var(--sx-danger);
+  color: var(--sx-danger);
+}
+[data-bs-theme="dark"] .sa-tag--stock-out {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+

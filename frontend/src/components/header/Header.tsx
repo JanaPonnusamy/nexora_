@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { ThemeToggle } from '../common/ThemeToggle'
 import { useAuth } from '../../hooks/useAuth'
 import { useAccess } from '../../hooks/useAccess'
-import { APP_NAME } from '../../utils/appInfo'
 
 interface HeaderProps {
   onToggleNav: () => void
@@ -28,13 +27,9 @@ export function Header({ onToggleNav }: HeaderProps) {
           <i className="bi bi-list" aria-hidden="true" />
         </button>
         <span className="app-brand">
-          <span className="app-brand__mark">
-            <i className="bi bi-hexagon-fill" aria-hidden="true" />
-          </span>
-          <span className="app-brand__text">
-            <span className="app-brand__name">{APP_NAME}</span>
-            <span className="app-brand__tag">Platform</span>
-          </span>
+          <img src="/logo_mark.png" alt="Axythic Pharma" className="app-brand__logo" />
+          <span className="app-brand__name">Axythic</span>
+          <span className="app-brand__pharma-text">Pharma</span>
         </span>
       </div>
 
