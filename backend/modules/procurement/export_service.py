@@ -19,7 +19,7 @@ import logging
 logger = logging.getLogger("procurement.export")
 
 
-def export_refresh(tenant_id, refresh_id, exported_by, assignment_ids=None):
+def export_refresh(tenant_id, refresh_id, exported_by, assignment_ids=None, supplier_code=None):
     if not exported_by:
         raise HTTPException(
             status_code=403, detail="exported_by (user) is required to export"
@@ -27,7 +27,7 @@ def export_refresh(tenant_id, refresh_id, exported_by, assignment_ids=None):
 
     conn = get_connection()
     try:
-        rows = repo.exportable_assignments(conn, tenant_id, refresh_id, assignment_ids)
+        rows = repo.exportable_assignments(conn, tenant_id, refresh_id, assignment_ids, supplier_code)
         if not rows:
             raise HTTPException(
                 status_code=400, detail="No exportable assignments for this Refresh"

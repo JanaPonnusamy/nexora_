@@ -288,7 +288,8 @@ def remove_assignment(
 @router.post("/refreshes/{refresh_id}/export")
 def export(refresh_id: str, payload: ExportRequest, tenant_id: str = Query(...)):
     return export_service.export_refresh(
-        tenant_id, refresh_id, payload.exported_by, payload.assignment_ids
+        tenant_id, refresh_id, payload.exported_by,
+        payload.assignment_ids, payload.supplier_code,
     )
 
 

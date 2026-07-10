@@ -772,16 +772,33 @@ export default function PurchaseWorkspacePage() {
     try {
       const res = await procurementService.bulkAssign(tenantId, code, ids, actingUser || null)
       say('success', `Assigned ${res.assigned}${res.skipped ? `, skipped ${res.skipped} (already assigned)` : ''}`)
-      // Remember the chosen supplier per row so the Recommendation panel shows it
-      // green immediately.
+      // §23 — patch exactly the rows the backend actually assigned, from its own
+      // per-item results (qty included), instead of a full workspace reload.
+      const okIds = new Set<string>()
+      const qtyById = new Map<string, number>()
+      for (const r of res.results) {
+        if (r.status === 'assigned') { okIds.add(r.order_item_id); qtyById.set(r.order_item_id, r.qty ?? 0) }
+      }
       setSelectedSupplier((prev) => {
         const next = { ...prev }
-        ids.forEach((id) => { next[id] = code })
+        okIds.forEach((id) => { next[id] = code })
         return next
       })
+      setItems((list) =>
+        list.map((it) =>
+          okIds.has(it.order_item_id)
+            ? {
+                ...it,
+                assigned_qty: (it.assigned_qty ?? 0) + (qtyById.get(it.order_item_id) ?? 0),
+                remaining_qty: 0,
+                supplier_code: code,
+                item_status: it.item_status === 'skipped' ? it.item_status : 'assigned',
+              }
+            : it,
+        ),
+      )
       setChecked(new Set())
-      loadWorkspace()   // assigned count + product row status
-      await loadQueue() // supplier totals
+      await loadQueue() // assignment changes + supplier totals (§23 — no full workspace reload)
     } catch (e) {
       fail(e)
     }
@@ -912,8 +929,29 @@ export default function PurchaseWorkspacePage() {
     try {
       const res = await procurementService.exportRefresh(tenantId, refreshId, actingUser, assignmentIds)
       say('success', `Exported ${res.exported_count} lines (${group.supplier_code})`)
+      // §23 — export only stamps the assignment rows (assignment_status/export
+      // fields); it never changes an order item's own qty/status, so the queue
+      // reload (which already recomputes lockedIds) is enough — no full
+      // workspace reload.
       await loadQueue()
-      loadWorkspace()
+    } catch (e) {
+      fail(e)
+    } finally {
+      setBusySupplier(null)
+    }
+  }
+
+  // Plain per-supplier Export (§14): resolves the CURRENT live assignment set
+  // on the backend at request time (supplier_code, not a client id snapshot),
+  // so it can never miss an assignment made after the last queue reload or
+  // send an empty export while real assignments exist.
+  const exportSupplierLive = async (supplierCode: string) => {
+    if (busySupplier) return // §11-style guard: no overlapping export requests
+    setBusySupplier(supplierCode)
+    try {
+      const res = await procurementService.exportRefresh(tenantId, refreshId, actingUser, undefined, supplierCode)
+      say('success', `Exported ${res.exported_count} lines (${supplierCode})`)
+      await loadQueue() // §23 — export status only, no full workspace reload
     } catch (e) {
       fail(e)
     } finally {
@@ -922,12 +960,12 @@ export default function PurchaseWorkspacePage() {
   }
 
   const exportAll = async () => {
+    if (exportingAll) return // §11-style guard: no overlapping export requests
     setExportingAll(true)
     try {
       const res = await procurementService.exportRefresh(tenantId, refreshId, actingUser)
       say('success', `Exported ${res.exported_count} lines as ${res.export_batch_number}`)
-      await loadQueue()
-      loadWorkspace()
+      await loadQueue() // §23 — export status only, no full workspace reload
     } catch (e) {
       fail(e)
     } finally {
@@ -961,26 +999,52 @@ export default function PurchaseWorkspacePage() {
   // supplier chosen by the documented priority (Exact Product Mapping → Last
   // Purchase Supplier → Preferred Supplier — see autoAssignSupplier). Reuses the
   // bulk assignment API — one call per supplier, no new endpoint, no mock data.
+  // Auto Supplier Assignment (§15/§16) — manual always outranks auto. Scope is
+  // strictly: finalized (Final Qty set), not skipped/locked, and NOT already
+  // carrying a supplier (remaining_qty > 0 — every assignment path in this app
+  // commits the full remaining qty in one shot, so remaining_qty <= 0 reliably
+  // means "already owned by a supplier", whether that assignment was made
+  // manually or by a previous Auto Assign run). Products excluded here are
+  // never sent to the backend at all, so their Supplier / Final Qty / Review
+  // Status can't change — and the backend's one-supplier rule (assign_bulk)
+  // is a second, authoritative guard against the narrow race where a manual
+  // assignment lands while this bulk call is already in flight.
   const autoAssign = async () => {
     const groups = new Map<string, string[]>()
+    let skippedLocked = 0      // skipped / locked rows — not eligible
+    let skippedUnreviewed = 0  // Final Qty not set yet — not eligible
+    let skippedAssigned = 0    // already owns a supplier (manual or prior auto)
+    let skippedNoHistory = 0   // finalized + unassigned, but no supplier candidate
     items.forEach((it) => {
-      if (it.item_status === 'skipped') return
-      if ((it.final_qty ?? 0) <= 0) return
-      if ((it.remaining_qty ?? 0) <= 0) return
+      if (it.item_status === 'skipped' || lockedIds.has(it.order_item_id)) { skippedLocked += 1; return }
+      if ((it.final_qty ?? 0) <= 0) { skippedUnreviewed += 1; return }
+      if ((it.remaining_qty ?? 0) <= 0) { skippedAssigned += 1; return }
       const top = autoAssignSupplier(recommendations[it.order_item_id])
-      if (!top) return
+      if (!top) { skippedNoHistory += 1; return }
       if (!groups.has(top)) groups.set(top, [])
       groups.get(top)!.push(it.order_item_id)
     })
-    if (groups.size === 0) return say('danger', 'Nothing to auto-assign — finalize quantities first')
+    if (groups.size === 0) return say('danger', 'Nothing to auto-assign — finalize quantities for unassigned products first')
     setAutoBusy(true)
     try {
       let assigned = 0
+      let raceSkipped = 0 // caught by the backend's own guard mid-run (§7/§12)
+      let failed = 0
       for (const [code, ids] of groups) {
-        const res = await procurementService.bulkAssign(tenantId, code, ids, actingUser || null)
-        assigned += res.assigned
+        try {
+          const res = await procurementService.bulkAssign(tenantId, code, ids, actingUser || null)
+          assigned += res.assigned
+          raceSkipped += res.skipped
+        } catch {
+          failed += ids.length
+        }
       }
-      say('success', `Auto-assigned ${assigned} product${assigned === 1 ? '' : 's'} to their best-price supplier`)
+      const parts = [`Assigned ${assigned}`]
+      const alreadyOwned = skippedAssigned + raceSkipped
+      if (alreadyOwned > 0) parts.push(`Skipped ${alreadyOwned} (already assigned)`)
+      if (skippedNoHistory > 0) parts.push(`Skipped ${skippedNoHistory} (no purchase history)`)
+      if (failed > 0) parts.push(`Failed ${failed}`)
+      say(failed > 0 ? 'danger' : 'success', `Auto Assign — ${parts.join(' · ')}`)
       loadWorkspace()
       await loadQueue()
     } catch (e) {
@@ -990,22 +1054,29 @@ export default function PurchaseWorkspacePage() {
     }
   }
 
+  // Changing supplier never touches the order item's own qty/status (it's
+  // still fully assigned, just to a different supplier) — the queue reload
+  // alone keeps assignedByItem / the review panel / the grid's Assigned tag
+  // correct, no full workspace reload needed (§23).
   const reviewChangeSupplier = async (assignmentId: string, newSupplier: SupplierRow) => {
     try {
       await procurementService.changeSupplier(tenantId, assignmentId, newSupplier.supplier_code, actingUser || null)
       say('success', `Moved to ${newSupplier.supplier_name ?? newSupplier.supplier_code}`)
       await loadQueue()
-      loadWorkspace()
     } catch (e) {
       fail(e)
     }
   }
-  const reviewRemove = async (assignmentId: string) => {
+  // Removing a supplier DOES revert the order item's own status (assigned →
+  // review/draft) — reconcile just that one row from the server instead of
+  // reloading the whole workspace (§23).
+  const reviewRemove = async (assignmentId: string, orderItemId: string) => {
     try {
       await procurementService.removeAssignment(tenantId, assignmentId, actingUser || null)
       say('success', 'Removed from supplier')
+      const fresh = await procurementService.getOrderItem(tenantId, orderItemId)
+      setItems((list) => list.map((it) => (it.order_item_id === orderItemId ? fresh : it)))
       await loadQueue()
-      loadWorkspace()
     } catch (e) {
       fail(e)
     }
@@ -1334,6 +1405,18 @@ export default function PurchaseWorkspacePage() {
                       <option value="2">Others</option>
                     </select>
                   )}
+                  {/* The supplier workspace is assignment-based, not review-based
+                      (§18): default shows every state (all five stay checked),
+                      these are opt-in narrower views, never an automatic hide. */}
+                  {mode !== 'supplier-stock' && (
+                    <>
+                      <label className="pm-chk"><input type="checkbox" checked={showPending} onChange={(e) => setShowPending(e.target.checked)} /> Pending Review</label>
+                      <label className="pm-chk"><input type="checkbox" checked={showFinalized} onChange={(e) => setShowFinalized(e.target.checked)} /> Finalized</label>
+                      <label className="pm-chk"><input type="checkbox" checked={showAssigned} onChange={(e) => setShowAssigned(e.target.checked)} /> Assigned</label>
+                      <label className="pm-chk"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Skipped</label>
+                      <label className="pm-chk"><input type="checkbox" checked={showManual} onChange={(e) => setShowManual(e.target.checked)} /> Manual</label>
+                    </>
+                  )}
                   {mode === 'supplier-stock' && (
                     <>
                       <span className="sx-search">
@@ -1432,6 +1515,7 @@ export default function PurchaseWorkspacePage() {
               focusSupplierCode={null}
               onLoad={loadQueue}
               onExport={exportGroup}
+              onExportSupplier={exportSupplierLive}
               onExportAll={exportAll}
               busySupplier={busySupplier}
               exportingAll={exportingAll}

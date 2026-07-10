@@ -53,6 +53,12 @@ class ChangeSupplierRequest(BaseModel):
 class ExportRequest(BaseModel):
     exported_by: str = Field(..., min_length=1)
     assignment_ids: Optional[List[str]] = None
+    # Export every current, live (draft) assignment for one supplier, resolved
+    # fresh from the DB at request time — used by the plain per-supplier Export
+    # button so it can never miss an assignment made after the last client
+    # reload (§14). Ignored when assignment_ids is given (that path already
+    # reflects an explicit client-side selection, e.g. Export-Qty hold-backs).
+    supplier_code: Optional[str] = None
 
 
 # --- GRN + Pending + Cycle close (Sprint 3) -------------------------------

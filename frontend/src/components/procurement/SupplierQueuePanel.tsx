@@ -65,6 +65,7 @@ export function SupplierQueuePanel({
   focusSupplierCode,
   onLoad,
   onExport,
+  onExportSupplier,
   onExportAll,
   busySupplier,
   exportingAll,
@@ -76,6 +77,12 @@ export function SupplierQueuePanel({
   focusSupplierCode: string | null
   onLoad: () => void
   onExport: (group: SupplierQueueGroup, assignmentIds: string[]) => void
+  /** Plain per-supplier Export (collapsed card) — resolves the CURRENT live
+   *  assignment set on the backend at request time instead of the possibly a
+   *  few-hundred-ms-stale client `groups` snapshot (§14). The expanded Review
+   *  export (below) still passes explicit assignment ids, since that path
+   *  respects deliberate per-line Export-Qty hold-backs. */
+  onExportSupplier: (supplierCode: string) => void
   onExportAll: () => void
   busySupplier: string | null
   exportingAll: boolean
@@ -289,8 +296,9 @@ export function SupplierQueuePanel({
                             </button>
                             <button
                               className="pm-btn pm-btn--success pm-btn--sm"
-                              onClick={() => runExport(g)}
-                              disabled={busy || g.status === 'exported' || g.assignment_ids.length === 0}
+                              onClick={() => onExportSupplier(g.supplier_code)}
+                              disabled={busy || g.status === 'exported' || g.product_count === 0}
+                              title="Export every current assignment for this supplier"
                             >
                               <i className="bi bi-box-arrow-up" /> {busy ? 'Exporting…' : 'Export'}
                             </button>

@@ -11,8 +11,14 @@ from config.database import get_connection
 from modules.procurement._dbutil import as_uid as _as_uid, rows_to_dicts as _rows_to_dicts
 
 
-def exportable_assignments(conn, tenant_id, refresh_id, assignment_ids=None):
-    """Draft (unexported), valid assignments for a Refresh — optionally a subset."""
+def exportable_assignments(conn, tenant_id, refresh_id, assignment_ids=None, supplier_code=None):
+    """Draft (unexported), valid assignments for a Refresh — optionally a subset.
+
+    Always reads live from procurement_order_item_assignments (no caching
+    layer anywhere in this path) — a call with neither filter, or with only
+    supplier_code, resolves the CURRENT full set at request time, so it can
+    never return a stale or empty result while real assignments exist (§14).
+    """
     sql = (
         "SELECT assignment_id, order_item_id, supplier_code, assigned_qty "
         "FROM procurement.procurement_order_item_assignments "
@@ -25,6 +31,9 @@ def exportable_assignments(conn, tenant_id, refresh_id, assignment_ids=None):
         placeholders = ", ".join(["?"] * len(assignment_ids))
         sql += f" AND assignment_id IN ({placeholders})"
         params.extend(assignment_ids)
+    elif supplier_code:
+        sql += " AND supplier_code = ?"
+        params.append(supplier_code)
     cursor = conn.cursor()
     cursor.execute(sql, params)
     return _rows_to_dicts(cursor)

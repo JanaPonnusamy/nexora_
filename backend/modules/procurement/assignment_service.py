@@ -74,13 +74,17 @@ def assign_single(tenant_id, order_item_id, supplier_code, qty, remarks, created
             )
         existing = repo.any_active_assignment(conn, tenant_id, order_item_id)
         if existing:
+            # Plain string detail (matches every other 409 in this module) —
+            # the frontend already guards this path proactively via
+            # assignedByItem, so this is a defensive backend-only fallback,
+            # not the primary UX; the assignment_id/supplier_code are still
+            # discoverable via GET .../order-items/{id}/assignments.
             raise HTTPException(
                 status_code=409,
-                detail={
-                    "message": "Product already assigned to a different supplier",
-                    "assignment_id": existing["assignment_id"],
-                    "supplier_code": existing["supplier_code"],
-                },
+                detail=(
+                    f"Product already assigned to supplier {existing['supplier_code']}. "
+                    "Use Change Supplier to reassign."
+                ),
             )
         already = repo.active_assigned_total(conn, tenant_id, order_item_id)
         if already + qty > (item["final_qty"] or 0):

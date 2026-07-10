@@ -72,6 +72,12 @@ export const procurementService = {
       { final_qty: finalQty, override_reason: reason, reviewed_by: by },
     ),
 
+  // Single working item, fresh from the server — used to reconcile just one
+  // row (e.g. after removing its supplier assignment) without a full
+  // workspace reload (§23).
+  getOrderItem: (tenantId: string, orderItemId: string) =>
+    api.get<WorkspaceItem>(`/api/procurement/order-items/${orderItemId}${qs({ tenant_id: tenantId })}`),
+
   restoreSuggested: (tenantId: string, orderItemId: string, by: string | null) =>
     api.post<WorkspaceItem>(
       `/api/procurement/order-items/${orderItemId}/restore-suggested${qs({ tenant_id: tenantId })}`,
@@ -136,7 +142,11 @@ export const procurementService = {
     ),
 
   bulkAssign: (tenantId: string, supplierCode: string, orderItemIds: string[], by: string | null) =>
-    api.post<{ assigned: number; skipped: number }>(
+    api.post<{
+      assigned: number
+      skipped: number
+      results: { order_item_id: string; status: 'assigned' | 'skipped'; qty?: number; reason?: string }[]
+    }>(
       `/api/procurement/assignments/bulk${qs({ tenant_id: tenantId })}`,
       { supplier_code: supplierCode, items: orderItemIds.map((id) => ({ order_item_id: id })), created_by: by },
     ),
@@ -152,10 +162,10 @@ export const procurementService = {
       `/api/procurement/assignments/${assignmentId}${qs({ tenant_id: tenantId, deleted_by: by ?? undefined })}`,
     ),
 
-  exportRefresh: (tenantId: string, refreshId: string, by: string, assignmentIds?: string[]) =>
+  exportRefresh: (tenantId: string, refreshId: string, by: string, assignmentIds?: string[], supplierCode?: string) =>
     api.post<{ export_batch_number: string; exported_count: number; supplier_count: number }>(
       `/api/procurement/refreshes/${refreshId}/export${qs({ tenant_id: tenantId })}`,
-      { exported_by: by, assignment_ids: assignmentIds },
+      { exported_by: by, assignment_ids: assignmentIds, supplier_code: supplierCode },
     ),
 
   exportHistory: (tenantId: string, refreshId: string) =>

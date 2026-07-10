@@ -533,7 +533,7 @@
 .pm-srv__name { font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
 .pm-srv__code { color: #94a3b8; font-size: 11px; }
 .pm-srv__hint { padding: 16px 12px; color: #64748b; font-size: 12.5px; }
-.pm-srv__summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 10px; }
+.pm-srv__summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 6px; padding: 10px; }
 .pm-srv__stat { background: var(--bs-body-bg, #fff); border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 8px; padding: 6px 8px; text-align: center; }
 .pm-srv__stat b { display: block; font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .pm-srv__stat span { font-size: 9.5px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }

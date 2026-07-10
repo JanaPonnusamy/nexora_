@@ -36,7 +36,7 @@ export function SupplierReviewPanel({
   loading: boolean
   exporting: boolean
   onChangeSupplier: (assignmentId: string, newSupplier: SupplierRow) => void
-  onRemove: (assignmentId: string) => void
+  onRemove: (assignmentId: string, orderItemId: string) => void
   onExport: (group: SupplierQueueGroup) => void
   onReload: () => void
 }) {
@@ -50,8 +50,16 @@ export function SupplierReviewPanel({
   const liveLines = lines.filter((l) => !l.exported)
   // Line value is only "real" when we have a PTR; otherwise show a dash, never ₹0.00.
   const lineValue = (ptr: number, qty: number) => (ptr > 0 ? money(ptr * qty) : '—')
+  // §22 — every count here is scoped to the LIVE (not-yet-exported) lines, the
+  // same set the table below renders, so this strip can never disagree with
+  // the grid it summarizes. Total Assigned / Exported come straight from the
+  // Supplier Queue aggregation (group.product_count / exported_count) — the
+  // same numbers the collapsed card and supplierMetaOf already show.
   const totalValue = liveLines.reduce((a, l) => a + (l.ptr > 0 ? l.ptr * l.final_qty : 0), 0)
   const totalKnown = liveLines.some((l) => l.ptr > 0)
+  const totalQty = liveLines.reduce((a, l) => a + l.final_qty, 0)
+  const exportedCount = group?.exported_count ?? 0
+  const totalAssigned = group?.product_count ?? 0
 
   return (
     <div className="pm-srv">
@@ -74,10 +82,12 @@ export function SupplierReviewPanel({
       ) : (
         <>
           <div className="pm-srv__summary">
-            <span className="pm-srv__stat"><b>{num(group.product_count)}</b><span>Products</span></span>
-            <span className="pm-srv__stat"><b>{num(group.total_qty)}</b><span>Qty</span></span>
+            <span className="pm-srv__stat"><b>{num(totalAssigned)}</b><span>Total Assigned</span></span>
+            <span className="pm-srv__stat"><b>{num(liveLines.length)}</b><span>Pending Export</span></span>
+            <span className="pm-srv__stat"><b>{num(exportedCount)}</b><span>Exported</span></span>
+            <span className="pm-srv__stat"><b>{num(totalQty)}</b><span>Total Qty</span></span>
             <span className="pm-srv__stat pm-srv__stat--val">
-              <b>{loading ? 'Calculating…' : totalKnown ? money(totalValue) : '—'}</b><span>Total Value</span>
+              <b>{loading ? 'Calculating…' : totalKnown ? money(totalValue) : '—'}</b><span>Purchase Value</span>
             </span>
           </div>
 
@@ -151,7 +161,7 @@ export function SupplierReviewPanel({
                           </button>
                           <button
                             className="pm-btn pm-btn--danger pm-btn--sm"
-                            onClick={() => onRemove(l.assignment_id)}
+                            onClick={() => onRemove(l.assignment_id, l.order_item_id)}
                             title="Remove this product from the supplier"
                           >
                             Remove
