@@ -707,8 +707,8 @@ def _find_phone(text: str) -> Optional[str]:
 
 
 # Some letterheads print a floor/street line ABOVE the business name (seen
-# on a real sample invoice: "29, Ground Floor,(Back portion) Asath Road"
-# printed before "NATHAN MEDICALS C PERUNDURAI") -- so the supplier block's
+# on a real sample invoice: a "<no.>, Ground Floor, ... Road" address line
+# printed directly before the company name) -- so the supplier block's
 # literal first line isn't a safe assumption for the name. Lines that look
 # like an address, or that were already claimed as the GSTIN/DL/phone
 # candidate, are skipped in favor of the first remaining line.
@@ -728,8 +728,8 @@ def _looks_like_address(text: str) -> bool:
 
 
 def _looks_like_name(text: str) -> bool:
-    """Rules out invoice-number-shaped OCR fragments ("261PD01001834",
-    a duplicate stamp of the invoice number seen printed near the
+    """Rules out invoice-number-shaped OCR fragments (a duplicate stamp
+    of the invoice number, digit-dominant, seen printed near the
     letterhead on a real sample) and short column-header leftovers
     ("ode", from a fragmented "Code") -- a real business name is
     letter-dominant and more than a couple characters."""
