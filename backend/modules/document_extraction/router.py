@@ -7,7 +7,8 @@ validation + HTTP mapping only.
 
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi.responses import FileResponse
 
 from modules.document_extraction import service
 from modules.document_extraction.schemas import (
@@ -44,6 +45,21 @@ async def upload_imports(
 
 
 # --------------------------------------------------------------------------
+# 1b. Image Processing — was previously only reachable via reprocess()
+#     (from_stage="preprocessing"); exposed directly so the frontend pipeline
+#     can run/report/retry it as its own stage, same pattern as ocr/extract/
+#     validate below.
+# --------------------------------------------------------------------------
+
+@router.post("/imports/{import_id}/preprocess")
+def trigger_preprocess(import_id: int, actor: Optional[str] = Query(None)):
+    result = service.run_image_processing(import_id, actor)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Import not found")
+    return result
+
+
+# --------------------------------------------------------------------------
 # 2. OCR
 # --------------------------------------------------------------------------
 
@@ -73,6 +89,8 @@ def trigger_extract(import_id: int, actor: Optional[str] = Query(None)):
         return service.run_extraction(import_id, actor)
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/imports/{import_id}/extraction")
@@ -106,6 +124,24 @@ def get_validation(import_id: int):
 # --------------------------------------------------------------------------
 # 5. Review
 # --------------------------------------------------------------------------
+
+@router.get("/imports/{import_id}/original")
+def get_original_image(import_id: int, page: int = Query(1, ge=1)):
+    result = service.get_original_file(import_id, page)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Original image not found")
+    path, media_type = result
+    return FileResponse(path, media_type=media_type)
+
+
+@router.get("/imports/{import_id}/preview")
+def get_preview_image(import_id: int, page: int = Query(1, ge=1)):
+    result = service.get_preview_file(import_id, page)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Preview image not found")
+    path, media_type = result
+    return FileResponse(path, media_type=media_type)
+
 
 @router.get("/imports/{import_id}/review")
 def get_review(import_id: int):
@@ -169,12 +205,28 @@ def save_import(import_id: int, payload: SaveRequest):
 # 7. Export
 # --------------------------------------------------------------------------
 
-@router.post("/exports")
+@router.post("/exports", status_code=201)
 def create_export(payload: ExportRequest):
     try:
-        return service.export(payload.import_ids, payload.file_format, payload.actor)
-    except NotImplementedError as exc:
-        raise HTTPException(status_code=501, detail=str(exc))
+        result = service.export(payload.import_ids, payload.file_format, payload.actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        **result,
+        "download_url": f"/api/document-extraction/exports/{result['export_batch_id']}/download",
+    }
+
+
+@router.get("/exports/{export_batch_id}/download")
+def download_export(export_batch_id: str):
+    result = service.get_export_file(export_batch_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Export not found")
+    content, filename, media_type = result
+    return Response(
+        content=content, media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # --------------------------------------------------------------------------
@@ -237,18 +289,25 @@ def delete_import(import_id: int, actor: Optional[str] = Query(None)):
 @router.post("/imports/{import_id}/reprocess")
 def reprocess(import_id: int, payload: ReprocessRequest):
     try:
-        return service.reprocess(import_id, payload.from_stage, payload.actor)
+        result = service.reprocess(import_id, payload.from_stage, payload.actor)
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Import not found")
+    return result
 
 
 # --------------------------------------------------------------------------
-# 11. Supplier Lookup (delegates to Product Mapping-style matching once
-#     Chunk 7 lands; stubbed until supplier_detect.py exists)
+# 11. Supplier Lookup — the Review UI's manual supplier-assignment search box
+#     (Chunk 9, Supplier Identification, wired here in Chunk 14)
 # --------------------------------------------------------------------------
 
 @router.get("/suppliers/lookup")
 def supplier_lookup(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
     gst_number: Optional[str] = Query(None),
     dl_number: Optional[str] = Query(None),
     phone: Optional[str] = Query(None),
@@ -256,10 +315,7 @@ def supplier_lookup(
 ):
     if not any([gst_number, dl_number, phone, name]):
         raise HTTPException(status_code=400, detail="At least one lookup field is required")
-    raise HTTPException(
-        status_code=501,
-        detail="Supplier lookup is implemented in Chunk 7 (Supplier Detection)",
-    )
+    return service.lookup_supplier(tenant_id, store_id, gst_number, dl_number, phone, name)
 
 
 # --------------------------------------------------------------------------

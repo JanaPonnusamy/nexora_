@@ -84,10 +84,30 @@ def save_preview(import_id, page_no: int, content: bytes, extension: str = "jpg"
     return str(target.relative_to(_data_root())).replace("\\", "/")
 
 
+def copy_into_import(source_relative_path: str, dest_import_id, subfolder: str) -> str:
+    """Copies an already-stored file (by its storage-root-relative path)
+    into a DIFFERENT import's own folder, preserving its filename. Used
+    when a multi-page upload turns out to bundle more than one invoice
+    (see invoice_boundary.py) and has to be split into separate imports
+    after the files already live under the original import_id."""
+    source = absolute_path(source_relative_path)
+    directory = _import_dir(dest_import_id, subfolder)
+    target = directory / source.name
+    target.write_bytes(source.read_bytes())
+    return str(target.relative_to(_data_root())).replace("\\", "/")
+
+
 def export_path(export_batch_id, extension: str) -> Path:
     directory = _data_root() / "_exports"
     directory.mkdir(parents=True, exist_ok=True)
     return directory / f"{export_batch_id}.{extension}"
+
+
+def relative_to_root(path: Path) -> str:
+    """Mirrors the relative-path convention save_original()/save_preview()
+    already return, for callers (export) that get an absolute Path from
+    export_path() and need the same storable/relative form."""
+    return str(path.relative_to(_data_root())).replace("\\", "/")
 
 
 def absolute_path(relative_path: str) -> Path:
