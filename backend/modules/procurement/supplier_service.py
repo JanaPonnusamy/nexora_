@@ -72,3 +72,17 @@ def products_for_supplier(tenant_id, refresh_id, supplier_code):
 
 def stats(tenant_id, supplier_code, store_id=None):
     return repo.supplier_stats(tenant_id, supplier_code, store_id)
+
+
+def list_settings(tenant_id, store_id):
+    """Every supplier's Auto Assign settings for a store (auto_assign,
+    min_products, export_rank). The frontend narrows this to suppliers
+    actually relevant to the open refresh (present in its recommendations
+    feed) — kept store-scoped (not refresh-scoped) here so ranks a buyer sets
+    persist across refreshes."""
+    return {"suppliers": repo.list_supplier_settings(tenant_id, store_id)}
+
+
+def update_settings(tenant_id, store_id, supplier_code, auto_assign=None, min_products=None, export_rank=None):
+    repo.update_supplier_settings(tenant_id, store_id, supplier_code, auto_assign, min_products, export_rank)
+    return {"ok": True}

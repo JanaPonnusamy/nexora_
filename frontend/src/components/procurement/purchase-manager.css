@@ -529,6 +529,21 @@
 .pm-sqstat--exported { background: #e0e7ff; color: #3730a3; }
 .pm-sqcard__exported { font-size: 11.5px; color: #3730a3; background: #eef2ff; padding: 4px 12px; display: flex; align-items: center; gap: 5px; }
 
+/* Left supplier list / right product-detail split (Export Monitor review) */
+.pm-sq__split { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(380px, 1.3fr); gap: 12px; align-items: start; }
+.pm-sq__split .pm-sq__list { max-height: 560px; }
+.pm-sq__detail { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; padding: 10px 12px; max-height: 560px; overflow: auto; }
+.pm-sq__detailempty { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; min-height: 220px; color: #94a3b8; }
+@media (max-width: 900px) {
+  .pm-sq__split { grid-template-columns: 1fr; }
+}
+
+.pm-sqexp__totalbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; margin-bottom: 10px; background: linear-gradient(135deg, #eef2ff, #f5f3ff); border: 1px solid #c7d2fe; border-radius: 10px; }
+.pm-sqexp__totalname { font-weight: 800; font-size: 14px; color: #1e1b4b; }
+.pm-sqexp__totalval { display: flex; flex-direction: column; align-items: flex-end; }
+.pm-sqexp__totallbl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .03em; color: #6366f1; font-weight: 700; }
+.pm-sqexp__totalval b { font-size: 19px; font-weight: 800; color: #1e1b4b; font-variant-numeric: tabular-nums; }
+
 /* Operational stage stepper (Review → Assign → Optimize → Export) */
 .pm-stages { display: flex; gap: 6px; padding: 8px 12px 0; flex-wrap: wrap; }
 .pm-stage { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--bs-border-color, #e5e7eb); background: var(--bs-body-bg, #fff); color: #475569; border-radius: 999px; padding: 5px 14px 5px 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
@@ -703,6 +718,15 @@
 .pm-modal__foot { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--bs-border-color, #e5e7eb); }
 .pm-modal__sel { flex: 1; font-size: 12.5px; color: #475569; }
 .pm-modal__qty { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+
+/* ---- Auto Assign preview + Supplier Rank panel --------------------------- */
+.pm-aap__group { padding: 8px 10px; border-bottom: 1px solid var(--bs-border-color, #f1f5f9); }
+.pm-aap__group:last-child { border-bottom: 0; }
+.pm-aap__grouphead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.pm-aap__groupstats { font-size: 11.5px; color: #64748b; font-weight: 600; white-space: nowrap; }
+.pm-aap__products { display: flex; flex-wrap: wrap; gap: 5px; }
+.pm-aap__chip { font-size: 11px; background: var(--bs-tertiary-bg, #f8fafc); border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 6px; padding: 2px 7px; color: #334155; }
+.pm-rankpanel__row--off { opacity: .5; }
 
 /* ---- Pending / GRN ------------------------------------------------------- */
 .pm-pending, .pm-grn { flex: 1; min-height: 0; overflow: auto; }

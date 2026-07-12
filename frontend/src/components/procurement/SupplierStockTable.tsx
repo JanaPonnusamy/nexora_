@@ -8,12 +8,21 @@ import { preferredSupplier } from './purchaseValue'
 /** Stable row key: supplier product code, falling back to the mapped code. */
 export const stockRowKey = (r: SupplierStockRow) => r.supplier_product_code ?? r.product_code ?? ''
 
+/** Loose shape shared by both offer helpers — `scheme`/`free`/`discount` come
+ *  back as either a real number (procurement.supplier_stock's actual live
+ *  column types) or a string (the type this project's SupplierStockRow
+ *  declares), so both are accepted and coerced via Number(). `discount` is a
+ *  VARCHAR column that holds messy free-text in practice (e.g. "16% MICRO
+ *  CARSYON 1"), not always a clean percentage — Number() safely yields NaN
+ *  for those rows rather than a false reading. */
+type OfferFields = { scheme?: number | string | null; free?: number | string | null; discount?: number | string | null }
+
 /** Compact offer badge from the row's real scheme/free/discount (parsed at
  *  import from the supplier's own Excel scheme text, e.g. "10 F 1" -> scheme=10,
  *  free=1) — not the still-unpopulated WorkspaceItem.offer field used
  *  elsewhere in the grid. Buy-X-Get-Y wins display priority over a flat
  *  discount when both are present. */
-export function formatOffer(r: Pick<SupplierStockRow, 'scheme' | 'discount' | 'free'>): string | null {
+export function formatOffer(r: OfferFields): string | null {
   const buy = r.scheme != null ? Number(r.scheme) : 0
   const free = r.free != null ? Number(r.free) : 0
   if (buy > 0 && free > 0) return `${buy}+${free}`
@@ -24,7 +33,7 @@ export function formatOffer(r: Pick<SupplierStockRow, 'scheme' | 'discount' | 'f
 /** Non-blocking warning when a finalized Order Qty misses the Buy-X threshold
  *  of a Buy-X-Get-Y scheme (§ OFFER WARNING — informational only, never
  *  blocks Add/Save). */
-export function offerWarning(r: Pick<SupplierStockRow, 'scheme' | 'free'>, qty: number): string | null {
+export function offerWarning(r: OfferFields, qty: number): string | null {
   const buy = r.scheme != null ? Number(r.scheme) : 0
   const free = r.free != null ? Number(r.free) : 0
   if (buy > 0 && free > 0 && qty > 0 && qty < buy) {

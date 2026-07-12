@@ -88,3 +88,44 @@ def get_supplier_stock(tenant_id, refresh_id, supplier_code, store_id=None, sear
         return _rows_to_dicts(cursor)
     finally:
         conn.close()
+
+
+def products_with_offers(tenant_id, refresh_id, store_id=None):
+    """Distinct store ProductCodes (mapped to this refresh's VPL) that ANY
+    supplier is currently offering a scheme/discount/free-qty for, per
+    procurement.supplier_stock — "Has Offer" filter source for Review All /
+    Supplier Purchasing (forward-looking: what can be bought on offer right
+    now, not historical purchase data). Read-only; degrades to [] if the
+    import target isn't provisioned."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if not _object_exists(cursor, "procurement.supplier_stock"):
+            return []
+        store_clause = "AND ss.store_id = ?" if store_id else ""
+        sql = f"""
+            SELECT DISTINCT CAST(vp.product_code AS VARCHAR(100)) AS product_code
+            FROM procurement.supplier_stock ss
+            INNER JOIN procurement.procurement_virtual_products vp
+                ON vp.tenant_id = ss.tenant_id
+               AND vp.refresh_id = ?
+               AND vp.is_active = 1
+               AND CAST(vp.product_code AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+            WHERE ss.tenant_id = ?
+              {store_clause}
+              AND ss.is_active = 1
+              -- discount is VARCHAR and holds messy free-text in this dataset
+              -- (e.g. "16% MICRO CARSYON 1"), not a clean percentage — a
+              -- numeric compare on it crashes on the non-numeric rows, so any
+              -- present, non-empty value counts as an offer signal instead.
+              AND ( ss.scheme IS NOT NULL
+                    OR ISNULL(ss.free, 0) > 0
+                    OR (ss.discount IS NOT NULL AND ss.discount <> '') )
+        """
+        params = [refresh_id, tenant_id]
+        if store_id:
+            params.append(store_id)
+        cursor.execute(sql, tuple(params))
+        return [r[0] for r in cursor.fetchall()]
+    finally:
+        conn.close()

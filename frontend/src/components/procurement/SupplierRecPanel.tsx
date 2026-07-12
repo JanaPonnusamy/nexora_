@@ -13,6 +13,18 @@ function daysSince(d?: string | null): number | null {
   return Math.max(0, Math.round((Date.now() - t) / 86_400_000))
 }
 
+// A mouse click on a card (plain <div>, no tabIndex) never claims DOM focus —
+// document.activeElement falls back to <body>, which is not a descendant of
+// the grid's own keyboard-owning container, so every arrow key afterwards
+// silently misses ProductGrid/SupplierStockTable's onKeyDown and falls
+// through to the browser's native scroll. Re-parking focus on the grid wrap
+// after every mouse interaction here (same pattern SupplierPicker's
+// onReturnToGrid already uses) keeps the keyboard workflow alive regardless
+// of whether the supplier was picked by mouse or by Right-Arrow/Enter.
+function focusGrid() {
+  (document.querySelector('.pm-grid-wrap') as HTMLElement | null)?.focus()
+}
+
 // Rank the shown suppliers by latest received Item Cost (ascending) and map each
 // onto a 5-band colour scale: lowest → green … highest → red. Suppliers with no
 // recorded cost get no band. Returns a class per supplier_code.
@@ -107,8 +119,8 @@ export function SupplierRecPanel({
                 key={code}
                 ref={(el) => { if (el) cardRefs.current.set(code, el); else cardRefs.current.delete(code) }}
                 className={`pm-srpcard${selected ? ' pm-srpcard--sel' : ''}${assigned ? ' pm-srpcard--assigned' : ''}${cheapest ? ' pm-srpcard--cheapest' : ''}${ownedElsewhere ? ' pm-srpcard--disabled' : ''}`}
-                onClick={() => onSelect?.(code)}
-                onDoubleClick={() => item && onCommit?.(item, code)}
+                onClick={() => { onSelect?.(code); focusGrid() }}
+                onDoubleClick={() => { if (item) onCommit?.(item, code); focusGrid() }}
                 title={s.supplier_name ?? code}
               >
                 <div className="pm-srpcard__top">
@@ -125,7 +137,7 @@ export function SupplierRecPanel({
                 <button
                   className="pm-btn pm-btn--success pm-btn--sm pm-srpcard__assign"
                   disabled={!canAssign || ownedElsewhere}
-                  onClick={(e) => { e.stopPropagation(); item && onCommit?.(item, code) }}
+                  onClick={(e) => { e.stopPropagation(); if (item) onCommit?.(item, code); focusGrid() }}
                   title={
                     assigned ? 'Already assigned to this supplier'
                       : ownedElsewhere ? `Already assigned to ${assignedName ?? assignedCode} — use Change Supplier in the Assign stage to reassign`

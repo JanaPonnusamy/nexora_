@@ -35,7 +35,15 @@ import { ManualProductModal } from '../../components/procurement/ManualProductMo
 import { SupplierPicker } from '../../components/procurement/SupplierPicker'
 import { SupplierStockTable, stockRowKey, formatOffer } from '../../components/procurement/SupplierStockTable'
 import { SupplierStockImportModal } from '../../components/procurement/SupplierStockImportModal'
-import { autoAssignSupplier, effectiveCost, sortSuppliersByCost } from '../../components/procurement/purchaseValue'
+import {
+  autoAssignSupplier,
+  computeRankAssignment,
+  effectiveCost,
+  eligibleForAutoAssign,
+  sortSuppliersByCost,
+} from '../../components/procurement/purchaseValue'
+import { SupplierRankPanel } from '../../components/procurement/SupplierRankPanel'
+import { AutoAssignPreviewModal } from '../../components/procurement/AutoAssignPreviewModal'
 import { money, num } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
 
@@ -129,6 +137,12 @@ export default function PurchaseWorkspacePage() {
   // Product Type filter (Product Master ProductType): '' all, '1' Pharma,
   // '0' Non-Pharma, '2' Others. Client-side only — never recalculates the VPL.
   const [productType, setProductType] = useState('')
+  // "Has Offer" filter: only show products ANY supplier is currently offering
+  // a scheme/discount/free-qty on (procurement.supplier_stock). Fetched once
+  // per refresh (store-scoped, not supplier-scoped) — client-side filter only,
+  // never recalculates the VPL.
+  const [offerOnly, setOfferOnly] = useState(false)
+  const [offerProductCodes, setOfferProductCodes] = useState<Set<string> | null>(null)
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // True while the keyboard "supplier zone" holds focus (rings the side panel).
@@ -273,6 +287,17 @@ export default function PurchaseWorkspacePage() {
       .catch(() => live && setMinOrders({}))
     return () => { live = false }
   }, [tenantId, selectedStoreId])
+
+  // "Has Offer" product codes — one batched read per refresh (store-scoped).
+  useEffect(() => {
+    if (!tenantId || !refreshId) { setOfferProductCodes(null); return }
+    let live = true
+    procurementService
+      .productsWithOffers(tenantId, refreshId)
+      .then((codes) => live && setOfferProductCodes(new Set(codes)))
+      .catch(() => live && setOfferProductCodes(new Set()))
+    return () => { live = false }
+  }, [tenantId, refreshId])
 
   // Batched supplier recommendations for the whole refresh (one round-trip) —
   // powers the Product Grid supplier icons in every mode.
@@ -661,6 +686,13 @@ export default function PurchaseWorkspacePage() {
       if (i.is_manual && !showManual) return false
       // Category filter — client-side only, never touches assignments (§5).
       if (productType && String(i.product_type ?? '') !== productType) return false
+      // Has Offer filter — client-side only, never touches assignments.
+      // offerProductCodes === null means "not loaded yet" and must HIDE
+      // everything while offerOnly is on (same not-yet-loaded rule the
+      // Supplier Purchasing filter already uses below).
+      if (offerOnly) {
+        if (!offerProductCodes || !i.product_code || !offerProductCodes.has(i.product_code)) return false
+      }
       // Supplier Purchasing filter: VPL ∩ this supplier's purchase history,
       // plus anything already assigned to this exact supplier. No supplier
       // picked, or the purchase-history fetch hasn't resolved yet, must HIDE
@@ -685,7 +717,7 @@ export default function PurchaseWorkspacePage() {
       }
       return true
     })
-  }, [items, showPending, showFinalized, showAssigned, showDeferred, showSkipped, showManual, productType, mode, supplier, supplierProductIds, assignedByItem, supplierAllItemIds])
+  }, [items, showPending, showFinalized, showAssigned, showDeferred, showSkipped, showManual, productType, offerOnly, offerProductCodes, mode, supplier, supplierProductIds, assignedByItem, supplierAllItemIds])
 
   // Supplier codes with live stock for the active supplier (mode 3). Marks that
   // supplier's icon "live"; degrades to the normal recommendation otherwise.
@@ -1015,7 +1047,10 @@ export default function PurchaseWorkspacePage() {
           product_code: it?.product_code ?? a.product_code ?? null,
           ptr,
           mrp: it?.mrp ?? null,
-          offer: it?.offer ?? null,
+          // Real scheme/free/discount for THIS supplier+product (from
+          // procurement.supplier_stock via the assignments feed) — WorkspaceItem.offer
+          // is a backend stub that's never populated, so it's not used here.
+          offer: formatOffer({ scheme: a.offer_scheme ?? null, free: a.offer_free ?? null, discount: a.offer_discount ?? null }),
           final_qty: qty,
           exported,
         })
@@ -1043,6 +1078,14 @@ export default function PurchaseWorkspacePage() {
       const groups = [...map.values()]
       groups.forEach((g) => {
         g.status = g.exported_count === 0 ? 'ready' : g.exported_count >= g.product_count ? 'exported' : 'partial'
+        // The assignments feed itself carries no supplier name (just the
+        // code) — backfill from the batched recommendations, which already
+        // LEFT JOIN sync.Suppliers for real names. Read fresh each call (not
+        // baked in at group-creation time) so a supplier queue built before
+        // recommendations finished loading still self-corrects on the next
+        // loadQueue() run instead of freezing on the bare code forever.
+        const realName = supplierNames.get(g.supplier_code)
+        if (realName) g.supplier_name = realName
       })
       groups.sort((a, b) => b.est_value - a.est_value)
       setQueueLines(groups)
@@ -1056,7 +1099,7 @@ export default function PurchaseWorkspacePage() {
     } finally {
       if (runId === queueRunRef.current) setQueueLoading(false)
     }
-  }, [canWork, itemById, tenantId, refreshId, fail])
+  }, [canWork, itemById, tenantId, refreshId, fail, supplierNames])
 
   // Eagerly load the refresh's assignments as soon as the workspace items are
   // in (not only when the buyer reaches the Assign/Optimize/Export stage) so
@@ -1267,70 +1310,105 @@ export default function PurchaseWorkspacePage() {
   // (product_type === 1) — a buyer-facing opt-in, off by default (every
   // product type is eligible unless explicitly narrowed).
   const [pharmaOnly, setPharmaOnly] = useState(false)
+  // Cost mode = today's weighted score (mapping/recency/frequency/PTR/live
+  // stock). Rank mode = greedy by the buyer's manual Supplier Rank (see
+  // SupplierRankPanel / computeRankAssignment) — two distinct algorithms,
+  // never blended.
+  const [assignMode, setAssignMode] = useState<'cost' | 'rank'>('cost')
+  const [autoAssignPreview, setAutoAssignPreview] = useState<{
+    groups: { supplier_code: string; order_item_ids: string[] }[]
+    droppedBelowMin: { supplier_code: string; count: number }[]
+  } | null>(null)
 
-  const autoAssign = async () => {
-    const groups = new Map<string, string[]>()
-    // supplier_code -> its configured minimum product count for this run
-    // (sync.Suppliers.min_products, default 2 — carried on every recommendation
-    // row for that supplier, no extra query).
-    const minProductsByCode = new Map<string, number>()
-    let skippedLocked = 0      // skipped / locked rows — not eligible
-    let skippedDeferred = 0    // Assignment Deferred (§5/§9) — not eligible for Auto/Bulk
-    let skippedUnreviewed = 0  // not actually Reviewed yet — not eligible
-    let skippedAssigned = 0    // already owns a supplier (manual or prior auto)
-    let skippedNoHistory = 0   // reviewed + unassigned, but no supplier candidate
-    let skippedNonPharma = 0   // Pharma Only is on and this product isn't Pharma
-    items.forEach((it) => {
-      if (it.item_status === 'skipped' || lockedIds.has(it.order_item_id)) { skippedLocked += 1; return }
-      if (it.item_status === 'deferred') { skippedDeferred += 1; return }
-      // A row can carry a nonzero Final Qty (pre-seeded from Suggested Qty at
-      // refresh generation) while item_status is still NOT in the Reviewed set
-      // — that row reads "Not Reviewed" in the grid and must stay out of Auto
-      // Assign even though its quantity looks finalized. Checking status (not
-      // just qty) is the actual fix for Auto Assign picking up unreviewed rows.
-      if (!REVIEWED.has(it.item_status) || (it.final_qty ?? 0) <= 0) { skippedUnreviewed += 1; return }
-      if ((it.remaining_qty ?? 0) <= 0) { skippedAssigned += 1; return }
-      if (pharmaOnly && it.product_type !== 1) { skippedNonPharma += 1; return }
-      const recs = recommendations[it.order_item_id]
-      const top = autoAssignSupplier(recs)
-      if (!top) { skippedNoHistory += 1; return }
-      const supRow = recs?.find((r) => r.supplier_code === top)
-      if (supRow?.min_products != null) minProductsByCode.set(top, supRow.min_products)
-      if (!groups.has(top)) groups.set(top, [])
-      groups.get(top)!.push(it.order_item_id)
-    })
+  // Eligible products for the ACTIVE Pharma Only setting — also the exact
+  // scope the Supplier Rank panel's live "Possible Products" preview uses.
+  const autoAssignEligible = useMemo(
+    () => eligibleForAutoAssign(items, lockedIds, pharmaOnly),
+    [items, lockedIds, pharmaOnly],
+  )
+
+  // Step 1 — compute candidate assignments (never calls the assignment API)
+  // and open the preview. Auto Supplier Assignment (§15/§16) — manual always
+  // outranks auto; only genuinely Reviewed, unassigned, non-skipped/locked/
+  // deferred products are ever candidates (eligibleForAutoAssign), so the
+  // backend's own one-supplier guard is a second, defensive check only.
+  const prepareAutoAssign = async () => {
+    if (autoAssignEligible.length === 0) {
+      return say('danger', 'Nothing to auto-assign — finalize quantities for unassigned products first')
+    }
+    const rawGroups: Record<string, string[]> = {}
+    const minProductsByCode: Record<string, number> = {}
+    if (assignMode === 'rank') {
+      setAutoBusy(true)
+      try {
+        const settings = await procurementService.supplierSettings(tenantId, selectedStoreId)
+        const ranks: Record<string, number | null> = {}
+        const autoFlags: Record<string, boolean> = {}
+        settings.forEach((s) => {
+          ranks[s.supplier_code] = s.export_rank
+          autoFlags[s.supplier_code] = s.auto_assign
+          minProductsByCode[s.supplier_code] = s.min_products
+        })
+        const result = computeRankAssignment(autoAssignEligible, recommendations, ranks, autoFlags)
+        Object.assign(rawGroups, result.assignedItems)
+      } catch (e) {
+        fail(e)
+        setAutoBusy(false)
+        return
+      }
+      setAutoBusy(false)
+    } else {
+      autoAssignEligible.forEach((it) => {
+        const recs = recommendations[it.order_item_id]
+        const top = autoAssignSupplier(recs)
+        if (!top) return
+        const supRow = recs?.find((r) => r.supplier_code === top)
+        if (supRow?.min_products != null) minProductsByCode[top] = supRow.min_products
+        if (!rawGroups[top]) rawGroups[top] = []
+        rawGroups[top].push(it.order_item_id)
+      })
+    }
     // A supplier that would only receive a lonely handful of products (below
     // its configured minimum, default 2) is dropped entirely — those products
     // stay unassigned for manual review rather than trickling a single line.
-    let skippedBelowMin = 0
-    for (const [code, ids] of [...groups]) {
-      const min = minProductsByCode.get(code) ?? 2
-      if (ids.length < min) { groups.delete(code); skippedBelowMin += ids.length }
+    const droppedBelowMin: { supplier_code: string; count: number }[] = []
+    const groups: { supplier_code: string; order_item_ids: string[] }[] = []
+    for (const [code, ids] of Object.entries(rawGroups)) {
+      if (ids.length === 0) continue
+      const min = minProductsByCode[code] ?? 2
+      if (ids.length < min) droppedBelowMin.push({ supplier_code: code, count: ids.length })
+      else groups.push({ supplier_code: code, order_item_ids: ids })
     }
-    if (groups.size === 0) return say('danger', 'Nothing to auto-assign — finalize quantities for unassigned products first')
+    if (groups.length === 0 && droppedBelowMin.length === 0) {
+      return say('danger', 'No purchase history found for eligible products')
+    }
+    setAutoAssignPreview({ groups, droppedBelowMin })
+  }
+
+  // Step 2 — the buyer confirmed the preview; now actually assign.
+  const commitAutoAssign = async () => {
+    if (!autoAssignPreview) return
     setAutoBusy(true)
     try {
       let assigned = 0
       let raceSkipped = 0 // caught by the backend's own guard mid-run (§7/§12)
       let failed = 0
-      for (const [code, ids] of groups) {
+      for (const g of autoAssignPreview.groups) {
         try {
-          const res = await procurementService.bulkAssign(tenantId, code, ids, actingUser || null)
+          const res = await procurementService.bulkAssign(tenantId, g.supplier_code, g.order_item_ids, actingUser || null)
           assigned += res.assigned
           raceSkipped += res.skipped
         } catch {
-          failed += ids.length
+          failed += g.order_item_ids.length
         }
       }
       const parts = [`Assigned ${assigned}`]
-      const alreadyOwned = skippedAssigned + raceSkipped
-      if (alreadyOwned > 0) parts.push(`Skipped ${alreadyOwned} (already assigned)`)
-      if (skippedDeferred > 0) parts.push(`Skipped ${skippedDeferred} (deferred)`)
-      if (skippedNoHistory > 0) parts.push(`Skipped ${skippedNoHistory} (no purchase history)`)
-      if (skippedNonPharma > 0) parts.push(`Skipped ${skippedNonPharma} (non-pharma)`)
-      if (skippedBelowMin > 0) parts.push(`Skipped ${skippedBelowMin} (below supplier minimum)`)
+      if (raceSkipped > 0) parts.push(`Skipped ${raceSkipped} (already assigned)`)
+      const belowMinTotal = autoAssignPreview.droppedBelowMin.reduce((a, d) => a + d.count, 0)
+      if (belowMinTotal > 0) parts.push(`${belowMinTotal} left unassigned (below supplier minimum)`)
       if (failed > 0) parts.push(`Failed ${failed}`)
       say(failed > 0 ? 'danger' : 'success', `Auto Assign — ${parts.join(' · ')}`)
+      setAutoAssignPreview(null)
       loadWorkspace()
       await loadQueue()
     } catch (e) {
@@ -1689,6 +1767,14 @@ export default function PurchaseWorkspacePage() {
                   <option value="2">Others</option>
                 </select>
               )}
+              {/* Has Offer filter — any supplier currently offering a
+                  scheme/discount/free-qty on this product (procurement.supplier_stock),
+                  available in every mode/stage that shows the Product Type filter. */}
+              {mode !== 'supplier-stock' && (
+                <label className="pm-chk" title="Only products a supplier currently has an offer on">
+                  <input type="checkbox" checked={offerOnly} onChange={(e) => setOfferOnly(e.target.checked)} /> Has Offer
+                </label>
+              )}
               {/* The supplier workspace is assignment-based, not review-based
                   (§18): default shows every state (all six stay checked),
                   these are opt-in narrower views, never an automatic hide. */}
@@ -1805,6 +1891,17 @@ export default function PurchaseWorkspacePage() {
               </div>
             )
           })()}
+
+          {stage === 'assign' && (
+            <SupplierRankPanel
+              tenantId={tenantId}
+              storeId={storeId || selectedStoreId}
+              eligibleItems={autoAssignEligible}
+              recommendations={recommendations}
+              nameOf={nameOf}
+              notify={say}
+            />
+          )}
 
           {stage === 'optimize' ? (
             <SupplierOptimizationPanel
@@ -2053,9 +2150,19 @@ export default function PurchaseWorkspacePage() {
             )}
             {stage === 'assign' && (
               <>
-                <button className="pm-btn pm-btn--primary" onClick={autoAssign} disabled={autoBusy}>
-                  <i className="bi bi-magic" /> {autoBusy ? 'Assigning…' : 'Auto Assign Suppliers'}
+                <button className="pm-btn pm-btn--primary" onClick={prepareAutoAssign} disabled={autoBusy}>
+                  <i className="bi bi-magic" /> {autoBusy ? 'Preparing…' : 'Auto Assign Suppliers'}
                 </button>
+                <select
+                  className="sx-select"
+                  aria-label="Auto Assign mode"
+                  value={assignMode}
+                  onChange={(e) => setAssignMode(e.target.value as 'cost' | 'rank')}
+                  title="Cost: today's weighted score (mapping/recency/frequency/PTR). Rank: your manual Supplier Rank order."
+                >
+                  <option value="cost">Auto Assign: by Cost</option>
+                  <option value="rank">Auto Assign: by Rank</option>
+                </select>
                 <label className="pm-chk" title="Only auto-assign Pharma-classified products">
                   <input type="checkbox" checked={pharmaOnly} onChange={(e) => setPharmaOnly(e.target.checked)} /> Pharma Only
                 </label>
@@ -2138,6 +2245,19 @@ export default function PurchaseWorkspacePage() {
             setStockReloadKey((k) => k + 1)
             say('success', `Imported ${n} stock line${n === 1 ? '' : 's'} for ${supplier.supplier_code}`)
           }}
+        />
+      )}
+      {autoAssignPreview && (
+        <AutoAssignPreviewModal
+          groups={autoAssignPreview.groups}
+          droppedBelowMin={autoAssignPreview.droppedBelowMin}
+          itemById={itemById}
+          recommendations={recommendations}
+          nameOf={nameOf}
+          mode={assignMode}
+          busy={autoBusy}
+          onConfirm={commitAutoAssign}
+          onClose={() => setAutoAssignPreview(null)}
         />
       )}
 

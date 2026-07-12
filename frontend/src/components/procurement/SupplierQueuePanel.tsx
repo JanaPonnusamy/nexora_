@@ -325,73 +325,95 @@ export function SupplierQueuePanel({
               {visible.length === 0 ? (
                 <div className="pm-sq__hint">No suppliers match the current filter.</div>
               ) : (
-                <div className="pm-sq__list" ref={listRef}>
-                  {visible.map((g, i) => {
-                    const st = STATUS_META[g.status]
-                    const isActive = i === activeIndex
-                    const isOpen = expandedCode === g.supplier_code
-                    const busy = busySupplier === g.supplier_code
-                    return (
-                      <div key={g.supplier_code} className={`pm-sqrow${isOpen ? ' pm-sqrow--open' : ''}`}>
-                        <div
-                          className={`pm-sqcard${isActive ? ' pm-sqcard--active' : ''}`}
-                          onClick={() => setActiveIndex(i)}
-                        >
-                          {g.status !== 'exported' && (
-                            <input
-                              type="checkbox"
-                              className="pm-sqcard__chk"
-                              aria-label={`Select ${g.supplier_name ?? g.supplier_code} for export`}
-                              checked={selectedCodes.has(g.supplier_code)}
-                              onChange={() => toggleSelected(g.supplier_code)}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          )}
-                          <span className="pm-sqcard__name">{g.supplier_name ?? g.supplier_code}</span>
-                          <span className="pm-sqcard__stat"><b>{num(g.product_count)}</b>Products</span>
-                          <span className="pm-sqcard__stat"><b>{num(g.total_qty)}</b>Qty</span>
-                          <span className="pm-sqcard__stat"><b>{fmtValue(g.est_value, g.total_qty)}</b>Value</span>
-                          <span className="pm-sqcard__stat"><b>{num(g.offer_count)}</b>Offers</span>
-                          <span className={`pm-sqstat ${st.cls}`}>{st.label}</span>
-                          <span className="pm-sqcard__cta">
-                            <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => toggleExpand(g.supplier_code)}>
-                              {isOpen ? 'Close' : 'Review'}
-                            </button>
-                            <button
-                              className="pm-btn pm-btn--success pm-btn--sm"
-                              onClick={() => onExportSupplier(g.supplier_code)}
-                              disabled={busy || g.status === 'exported' || g.product_count === 0}
-                              title="Export every current assignment for this supplier"
-                            >
-                              <i className="bi bi-box-arrow-up" /> {busy ? 'Exporting…' : 'Export'}
-                            </button>
-                          </span>
-                        </div>
-
-                        {g.status === 'exported' && (
-                          <div className="pm-sqcard__exported">
-                            <i className="bi bi-check2-circle" /> Exported {date(g.exported_at)}
-                            {g.exported_at && <> · {new Date(g.exported_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>}
-                            {g.exported_by && <> · by {g.exported_by}</>}
-                            {g.export_batch_number && <> · {g.export_batch_number}</>}
+                <div className="pm-sq__split">
+                  <div className="pm-sq__list" ref={listRef}>
+                    {visible.map((g, i) => {
+                      const st = STATUS_META[g.status]
+                      const isActive = i === activeIndex
+                      const isOpen = expandedCode === g.supplier_code
+                      const busy = busySupplier === g.supplier_code
+                      return (
+                        <div key={g.supplier_code} className={`pm-sqrow${isOpen ? ' pm-sqrow--open' : ''}`}>
+                          <div
+                            className={`pm-sqcard${isActive ? ' pm-sqcard--active' : ''}`}
+                            onClick={() => { setActiveIndex(i); if (expandedCode !== g.supplier_code) toggleExpand(g.supplier_code) }}
+                          >
+                            {g.status !== 'exported' && (
+                              <input
+                                type="checkbox"
+                                className="pm-sqcard__chk"
+                                aria-label={`Select ${g.supplier_name ?? g.supplier_code} for export`}
+                                checked={selectedCodes.has(g.supplier_code)}
+                                onChange={() => toggleSelected(g.supplier_code)}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            )}
+                            <span className="pm-sqcard__name">{g.supplier_name ?? g.supplier_code}</span>
+                            <span className="pm-sqcard__stat"><b>{num(g.product_count)}</b>Products</span>
+                            <span className="pm-sqcard__stat"><b>{num(g.total_qty)}</b>Qty</span>
+                            <span className="pm-sqcard__stat"><b>{fmtValue(g.est_value, g.total_qty)}</b>Value</span>
+                            <span className="pm-sqcard__stat"><b>{num(g.offer_count)}</b>Offers</span>
+                            <span className={`pm-sqstat ${st.cls}`}>{st.label}</span>
+                            <span className="pm-sqcard__cta">
+                              <button
+                                className="pm-btn pm-btn--ghost pm-btn--sm"
+                                onClick={(e) => { e.stopPropagation(); toggleExpand(g.supplier_code) }}
+                              >
+                                {isOpen ? 'Close' : 'Review'}
+                              </button>
+                              <button
+                                className="pm-btn pm-btn--success pm-btn--sm"
+                                onClick={(e) => { e.stopPropagation(); onExportSupplier(g.supplier_code) }}
+                                disabled={busy || g.status === 'exported' || g.product_count === 0}
+                                title="Export every current assignment for this supplier"
+                              >
+                                <i className="bi bi-box-arrow-up" /> {busy ? 'Exporting…' : 'Export'}
+                              </button>
+                            </span>
                           </div>
-                        )}
 
-                        {isOpen && (
-                          <SupplierReview
-                            group={g}
-                            summary={summary(g)}
-                            fmtValue={fmtValue}
-                            eq={eq}
-                            setEq={setEq}
-                            errors={errorsByCode[g.supplier_code] ?? []}
-                            busy={busy}
-                            onExport={() => runExport(g)}
-                          />
-                        )}
-                      </div>
-                    )
-                  })}
+                          {g.status === 'exported' && (
+                            <div className="pm-sqcard__exported">
+                              <i className="bi bi-check2-circle" /> Exported {date(g.exported_at)}
+                              {g.exported_at && <> · {new Date(g.exported_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>}
+                              {g.exported_by && <> · by {g.exported_by}</>}
+                              {g.export_batch_number && <> · {g.export_batch_number}</>}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Right panel — the selected supplier's product detail:
+                      PTR / MRP / Offer per line and the running order total,
+                      persistent (not inline-per-row) so it reads as a real
+                      left-list / right-detail split. */}
+                  <div className="pm-sq__detail">
+                    {(() => {
+                      const g = visible.find((x) => x.supplier_code === expandedCode)
+                      if (!g) {
+                        return (
+                          <div className="pm-sq__hint pm-sq__detailempty">
+                            <i className="bi bi-hand-index" /> Select a supplier to review its products.
+                          </div>
+                        )
+                      }
+                      const busy = busySupplier === g.supplier_code
+                      return (
+                        <SupplierReview
+                          group={g}
+                          summary={summary(g)}
+                          fmtValue={fmtValue}
+                          eq={eq}
+                          setEq={setEq}
+                          errors={errorsByCode[g.supplier_code] ?? []}
+                          busy={busy}
+                          onExport={() => runExport(g)}
+                        />
+                      )
+                    })()}
+                  </div>
                 </div>
               )}
             </>
@@ -426,6 +448,13 @@ function SupplierReview({
   const exportedAll = group.status === 'exported'
   return (
     <div className="pm-sqexp">
+      <div className="pm-sqexp__totalbar">
+        <span className="pm-sqexp__totalname">{group.supplier_name ?? group.supplier_code}</span>
+        <span className="pm-sqexp__totalval">
+          <span className="pm-sqexp__totallbl">Total Order Value</span>
+          <b>{fmtValue(summary.value, summary.qty)}</b>
+        </span>
+      </div>
       <div className="pm-sqexp__summary">
         <Stat label="Products" value={num(summary.products)} />
         <Stat label="Qty" value={num(summary.qty)} />
@@ -440,6 +469,7 @@ function SupplierReview({
             <tr>
               <th>Product</th>
               <th className="sx-num">PTR</th>
+              <th className="sx-num">MRP</th>
               <th>Offer</th>
               <th className="sx-num">Final Qty</th>
               <th className="sx-num">Export Qty</th>
@@ -450,6 +480,7 @@ function SupplierReview({
               <tr key={l.assignment_id} className={l.exported ? 'pm-sqexp__row--done' : ''}>
                 <td>{l.product_name ?? l.product_code ?? '—'}</td>
                 <td className="sx-num">{l.ptr > 0 ? money(l.ptr) : '—'}</td>
+                <td className="sx-num">{l.mrp != null && l.mrp > 0 ? money(l.mrp) : '—'}</td>
                 <td>{l.offer ? <span className="pm-offer">{l.offer}</span> : <span className="sx-dim">—</span>}</td>
                 <td className="sx-num">{num(l.final_qty)}</td>
                 <td className="sx-num">

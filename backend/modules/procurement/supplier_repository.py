@@ -202,3 +202,61 @@ def supplier_stats(tenant_id, supplier_code, store_id):
         return rows[0] if rows else {"supplier_code": supplier_code, "total_purchases": 0}
     finally:
         conn.close()
+
+
+def list_supplier_settings(tenant_id, store_id):
+    """Every supplier for a store with its Auto Assign settings (auto_assign,
+    min_products, export_rank) — powers the Supplier Settings panel. Includes
+    every supplier in sync.Suppliers for the store, not just ones with
+    purchase history in the current refresh, so a buyer can rank ahead of
+    time. Ranked suppliers first (ascending), unranked last, then by name."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                CAST(s.suppliercode AS VARCHAR(100))         AS supplier_code,
+                CAST(RTRIM(s.suppliername) AS VARCHAR(300))  AS supplier_name,
+                ISNULL(s.auto_assign, 1)                     AS auto_assign,
+                ISNULL(s.min_products, 2)                    AS min_products,
+                s.export_rank                                AS export_rank
+            FROM sync.Suppliers s
+            WHERE s.tenant_id = ? AND s.store_id = ? AND ISNULL(s.isActive, 1) = 1
+            ORDER BY CASE WHEN s.export_rank IS NULL THEN 1 ELSE 0 END, s.export_rank, RTRIM(s.suppliername)
+            """,
+            (tenant_id, store_id),
+        )
+        return _rows_to_dicts(cursor)
+    finally:
+        conn.close()
+
+
+def update_supplier_settings(tenant_id, store_id, supplier_code, auto_assign=None, min_products=None, export_rank=None):
+    """Partial update of one supplier's Auto Assign settings — only the
+    fields the caller actually passed are touched."""
+    sets = []
+    params = []
+    if auto_assign is not None:
+        sets.append("auto_assign = ?")
+        params.append(1 if auto_assign else 0)
+    if min_products is not None:
+        sets.append("min_products = ?")
+        params.append(min_products)
+    if export_rank is not None:
+        # 0/negative clears the rank back to "unranked" — ranks are 1..N.
+        sets.append("export_rank = ?")
+        params.append(export_rank if export_rank > 0 else None)
+    if not sets:
+        return
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE sync.Suppliers SET {', '.join(sets)} "
+            "WHERE tenant_id = ? AND store_id = ? AND suppliercode = ?",
+            (*params, tenant_id, store_id, supplier_code),
+        )
+        conn.commit()
+    finally:
+        conn.close()

@@ -101,3 +101,11 @@ class PipelineRun(BaseModel):
     min_days: float = 13
     max_days: float = 18
     created_by: Optional[str] = None
+
+
+# --- Supplier Auto Assign settings -----------------------------------------
+
+class SupplierSettingsUpdate(BaseModel):
+    auto_assign: Optional[bool] = None
+    min_products: Optional[int] = Field(None, ge=1)
+    export_rank: Optional[int] = Field(None, ge=0)

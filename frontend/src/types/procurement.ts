@@ -170,6 +170,14 @@ export interface Assignment {
    *  fallback display field so a Supplier Queue line is never dropped just
    *  because its order item isn't in the currently-loaded workspace page. */
   product_code: string | null
+  /** This exact supplier's real scheme/free/discount for this exact product
+   *  (procurement.supplier_stock, when a Live Stock import has mapped it) —
+   *  the real Offer source for the Export Monitor queue. `discount` is a
+   *  VARCHAR column that holds messy free-text in practice (not a clean
+   *  percentage) — treat it as untrusted/best-effort. */
+  offer_scheme?: number | null
+  offer_free?: number | null
+  offer_discount?: string | null
 }
 
 export interface SupplierRow {
@@ -186,6 +194,17 @@ export interface SupplierRow {
   /** Auto Assign only commits a batch to this supplier if it would include at
    *  least this many products (sync.Suppliers.min_products, default 2). */
   min_products?: number
+}
+
+/** One supplier's Auto Assign settings (sync.Suppliers.auto_assign/
+ *  min_products/export_rank) — Supplier Rank & Settings panel row. */
+export interface SupplierSettingsRow {
+  supplier_code: string
+  supplier_name: string | null
+  auto_assign: boolean
+  min_products: number
+  /** null = unranked. Rank 1 = highest priority in Rank-mode Auto Assign. */
+  export_rank: number | null
 }
 
 export interface SupplierQueue {

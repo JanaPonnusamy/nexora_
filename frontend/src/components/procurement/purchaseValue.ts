@@ -105,6 +105,83 @@ export function autoAssignSupplier(
   return best
 }
 
+/** Auto Assign eligibility, shared by Cost mode, Rank mode, and the Supplier
+ *  Rank panel's live counts. A product qualifies only if it's genuinely
+ *  Reviewed (not just carrying a pre-seeded nonzero Final Qty from refresh
+ *  generation — that alone used to let Auto Assign silently pick up rows the
+ *  buyer never actually reviewed), not skipped/locked/deferred, not already
+ *  owned by a supplier, and — when Pharma Only is on — Pharma-classified. */
+export function eligibleForAutoAssign(
+  items: WorkspaceItem[],
+  lockedIds: Set<string>,
+  pharmaOnly: boolean,
+): WorkspaceItem[] {
+  const REVIEWED_STATES = new Set(['review', 'assigned', 'partial'])
+  return items.filter((it) => {
+    if (it.item_status === 'skipped' || lockedIds.has(it.order_item_id)) return false
+    if (it.item_status === 'deferred') return false
+    if (!REVIEWED_STATES.has(it.item_status) || (it.final_qty ?? 0) <= 0) return false
+    if ((it.remaining_qty ?? 0) <= 0) return false
+    if (pharmaOnly && it.product_type !== 1) return false
+    return true
+  })
+}
+
+export interface RankAssignmentResult {
+  /** supplier_code -> claimed order_item_ids, in claim order. */
+  assignedItems: Record<string, string[]>
+  /** Suppliers considered, in claim order (ranked first ascending, then every
+   *  other eligible unranked supplier). */
+  order: string[]
+}
+
+/**
+ * Greedy rank-based allocation (Auto Assign "Rank" mode + the Supplier Rank
+ * panel's live "Possible Products" preview — same function, so the preview
+ * always matches what committing would actually do). Suppliers ranked 1..N
+ * claim first (ascending — rank 1 gets every eligible product it can supply),
+ * then every other eligible-but-unranked supplier claims from what's left, in
+ * a stable order. A higher-priority supplier claiming a shared product (e.g.
+ * one 6 suppliers all sell) removes it from every lower-priority supplier's
+ * pool for the rest of this run — that's the "possible count auto-reduces"
+ * behaviour the panel shows live as ranks change.
+ *
+ * min_products / auto_assign(=false already filtered here) are NOT applied
+ * inside the claim loop — dropping a supplier's whole claim because it's
+ * below their minimum happens once, as a final filter, at commit time (same
+ * two-pass shape Cost mode already uses) so the live preview always shows the
+ * raw claim, and the buyer sees exactly which claims get released back.
+ */
+export function computeRankAssignment(
+  eligibleItems: WorkspaceItem[],
+  recommendations: Record<string, SupplierRow[]>,
+  ranks: Record<string, number | null | undefined>,
+  autoAssignFlags: Record<string, boolean>,
+): RankAssignmentResult {
+  const allCodes = new Set<string>()
+  eligibleItems.forEach((it) => (recommendations[it.order_item_id] ?? []).forEach((r) => allCodes.add(r.supplier_code)))
+  const eligible = [...allCodes].filter((c) => autoAssignFlags[c] !== false)
+  const ranked = eligible.filter((c) => (ranks[c] ?? 0) > 0).sort((a, b) => (ranks[a] ?? 0) - (ranks[b] ?? 0))
+  const unranked = eligible.filter((c) => !((ranks[c] ?? 0) > 0))
+  const order = [...ranked, ...unranked]
+
+  const claimed = new Set<string>()
+  const assignedItems: Record<string, string[]> = {}
+  for (const code of order) {
+    const ids: string[] = []
+    for (const it of eligibleItems) {
+      if (claimed.has(it.order_item_id)) continue
+      const recs = recommendations[it.order_item_id] ?? []
+      if (recs.some((r) => r.supplier_code === code)) {
+        ids.push(it.order_item_id)
+        claimed.add(it.order_item_id)
+      }
+    }
+    assignedItems[code] = ids
+  }
+  return { assignedItems, order }
+}
+
 /** Purchase value for a working line: Final Qty × Last Purchase Rate (PTR),
  *  falling back to the VPL ptr_cost when a last rate is not recorded. */
 export function purchaseValue(item: WorkspaceItem): number {

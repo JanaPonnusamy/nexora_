@@ -64,15 +64,40 @@ def list_by_order_item(tenant_id, order_item_id):
 def list_by_refresh(tenant_id, refresh_id):
     """Every live assignment for a whole Refresh in one round-trip — powers the
     Supplier Queue build, which previously fanned out one request per assigned
-    order item (the N+1 that saturated the backend)."""
+    order item (the N+1 that saturated the backend).
+
+    Also LEFT JOINs procurement.supplier_stock (this exact supplier's real
+    scheme/free/discount for this exact product, when a Live Stock import has
+    ever mapped it) so the Export Monitor's expanded review can show a real
+    Offer, not the WorkspaceItem.offer stub (which the workspace API never
+    populates). Defensively guarded — supplier_stock may not exist on every
+    deployment, same convention as supplier_stock_repository."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
+        cursor.execute("SELECT OBJECT_ID('procurement.supplier_stock')")
+        has_supplier_stock = cursor.fetchone()[0] is not None
+        offer_cols = (
+            "ss.scheme AS offer_scheme, ss.free AS offer_free, ss.discount AS offer_discount"
+            if has_supplier_stock
+            else "CAST(NULL AS INT) AS offer_scheme, CAST(NULL AS INT) AS offer_free, CAST(NULL AS DECIMAL(10,2)) AS offer_discount"
+        )
+        join_clause = (
+            """
+            LEFT JOIN procurement.supplier_stock ss
+                ON ss.tenant_id = a.tenant_id AND ss.store_id = a.store_id
+               AND ss.supplier_code = a.supplier_code AND ss.product_code = a.product_code
+            """
+            if has_supplier_stock
+            else ""
+        )
+        assign_cols = ", ".join(f"a.{c.strip()}" for c in _ASSIGN_COLS.strip().split(","))
         cursor.execute(
-            f"SELECT {_ASSIGN_COLS} "
-            "FROM procurement.procurement_order_item_assignments "
-            "WHERE tenant_id = ? AND refresh_id = ? AND is_deleted = 0 "
-            "ORDER BY order_item_id, created_at",
+            f"SELECT {assign_cols}, {offer_cols} "
+            "FROM procurement.procurement_order_item_assignments a "
+            f"{join_clause}"
+            "WHERE a.tenant_id = ? AND a.refresh_id = ? AND a.is_deleted = 0 "
+            "ORDER BY a.order_item_id, a.created_at",
             (tenant_id, refresh_id),
         )
         return [_stringify(r) for r in _rows_to_dicts(cursor)]

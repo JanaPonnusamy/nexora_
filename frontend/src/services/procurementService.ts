@@ -17,6 +17,7 @@ import type {
   SupplierQueue,
   SupplierRecommendation,
   SupplierRow,
+  SupplierSettingsRow,
   SupplierStockPreview,
   SupplierStockRow,
   WorkspaceFilters,
@@ -283,6 +284,16 @@ export const procurementService = {
       )
       .then((r) => r.items),
 
+  // Product codes ANY supplier currently offers a scheme/discount/free-qty on
+  // (procurement.supplier_stock) — "Has Offer" filter (Review All / Supplier
+  // Purchasing).
+  productsWithOffers: (tenantId: string, refreshId: string) =>
+    api
+      .get<{ product_codes: string[] }>(
+        `/api/procurement/refreshes/${refreshId}/products-with-offers${qs({ tenant_id: tenantId })}`,
+      )
+      .then((r) => r.product_codes),
+
   // --- Supplier Live Stock: Excel import + header mapping ---
   supplierStockMapping: (tenantId: string, storeId: string, supplierCode: string) =>
     api.get<{ mapping: Record<string, string>; targets: MappingTarget[] }>(
@@ -397,6 +408,27 @@ export const procurementService = {
         `/api/procurement/suppliers/min-order-config${qs({ tenant_id: tenantId, store_id: storeId })}`,
       )
       .then((r) => r.config),
+
+  // Auto Assign settings (auto_assign / min_products / export_rank) — every
+  // store supplier, one round trip. Distinct from minOrderConfig above (that
+  // is Supplier Optimization's Minimum Order Value, a different concept).
+  supplierSettings: (tenantId: string, storeId: string) =>
+    api
+      .get<{ suppliers: SupplierSettingsRow[] }>(
+        `/api/procurement/suppliers/settings${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      )
+      .then((r) => r.suppliers),
+
+  updateSupplierSettings: (
+    tenantId: string,
+    storeId: string,
+    supplierCode: string,
+    updates: { auto_assign?: boolean; min_products?: number; export_rank?: number },
+  ) =>
+    api.put(
+      `/api/procurement/suppliers/${supplierCode}/settings${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      updates,
+    ),
 
   setConsiderMinimumOrder: (
     tenantId: string,

@@ -20,7 +20,7 @@ from modules.procurement import pending_service
 from modules.procurement.pm_schemas import (
     FinalQtyUpdate, SkipRequest, ReviewedBy,
     AssignRequest, BulkAssignRequest, ChangeSupplierRequest, ExportRequest,
-    GrnSubmit, PendingAdjust, ManualAdd, PendingBulk,
+    GrnSubmit, PendingAdjust, ManualAdd, PendingBulk, SupplierSettingsUpdate,
 )
 
 router = APIRouter(tags=["Procurement Purchase Manager"])
@@ -181,6 +181,27 @@ def supplier_stats(
     return supplier_service.stats(tenant_id, supplier_code, store_id)
 
 
+@router.get("/suppliers/settings")
+def supplier_settings(tenant_id: str = Query(...), store_id: str = Query(...)):
+    """Every store supplier's Auto Assign settings (auto_assign, min_products,
+    export_rank) — the Supplier Rank & Settings panel narrows this to
+    suppliers relevant to the open refresh client-side."""
+    return supplier_service.list_settings(tenant_id, store_id)
+
+
+@router.put("/suppliers/{supplier_code}/settings")
+def update_supplier_settings(
+    supplier_code: str,
+    body: SupplierSettingsUpdate,
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+):
+    return supplier_service.update_settings(
+        tenant_id, store_id, supplier_code,
+        auto_assign=body.auto_assign, min_products=body.min_products, export_rank=body.export_rank,
+    )
+
+
 # --------------------------------------------------------------------------
 # Supplier Live Stock (read-only: supplier_stock ∩ SupplierProductMatch ∩ VPL)
 # --------------------------------------------------------------------------
@@ -196,6 +217,13 @@ def supplier_stock(
     return supplier_stock_service.list_supplier_stock(
         tenant_id, refresh_id, supplier_code, search, only_available
     )
+
+
+@router.get("/refreshes/{refresh_id}/products-with-offers")
+def products_with_offers(refresh_id: str, tenant_id: str = Query(...)):
+    """Product codes ANY supplier currently offers a scheme/discount/free-qty
+    on — powers the "Has Offer" filter in Review All / Supplier Purchasing."""
+    return supplier_stock_service.products_with_offers(tenant_id, refresh_id)
 
 
 @router.get("/supplier-stock/mapping")
