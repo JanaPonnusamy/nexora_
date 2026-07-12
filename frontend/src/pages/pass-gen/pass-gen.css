@@ -1,0 +1,131 @@
+.pg-page {
+  padding: 1rem 1.25rem 2rem;
+}
+
+.pg-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  background: var(--bs-tertiary-bg);
+}
+
+.pg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pg-field label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.pg-toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.pg-rows {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pg-row {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--bs-body-bg);
+}
+
+.pg-row-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.9rem;
+}
+
+.pg-days {
+  width: 6rem;
+}
+
+.pg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.pg-chip {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: transparent;
+  color: inherit;
+}
+
+.pg-chip.is-on {
+  background: var(--bs-primary);
+  border-color: var(--bs-primary);
+  color: #fff;
+}
+
+.pg-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pg-row-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.pg-results {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.pg-result {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--bs-tertiary-bg);
+}
+
+.pg-result-store {
+  font-size: 0.72rem;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.pg-code {
+  font-family: var(--bs-font-monospace, monospace);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.pg-codes-table {
+  margin-top: 0.5rem;
+  max-width: 34rem;
+}
+
+.pg-codes-table input {
+  width: 5rem;
+}

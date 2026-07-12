@@ -30,8 +30,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-cart-check',
     cap: 'PROCUREMENT_WORKSPACE',
     children: [
-      { label: 'Cycle Management', to: '/procurement/cycles', icon: 'bi-diagram-3', cap: 'PROCUREMENT_ADMIN' },
-      { label: 'Refresh Management', to: '/procurement/refreshes', icon: 'bi-arrow-repeat', cap: 'PROCUREMENT_ADMIN' },
+      { label: 'Cycle & Refresh', to: '/procurement/console', icon: 'bi-arrow-repeat', cap: 'PROCUREMENT_ADMIN' },
       { label: 'Purchase Manager', to: '/procurement/workspace', icon: 'bi-cart-check', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Product Intelligence', to: '/procurement/intelligence', icon: 'bi-cpu', cap: 'PROCUREMENT_WORKSPACE' },
     ],
@@ -43,6 +42,16 @@ export const NAV_ENTRIES: NavEntry[] = [
     cap: 'PRODUCT_MAPPING',
     children: [
       { label: 'Product Mapping', to: '/product-mapping', icon: 'bi-diagram-3', cap: 'PRODUCT_MAPPING' },
+    ],
+  },
+  {
+    kind: 'group',
+    label: 'Document Extraction',
+    icon: 'bi-file-earmark-medical',
+    cap: 'DOCUMENT_EXTRACTION',
+    children: [
+      { label: 'Workspace', to: '/document-extraction/review', icon: 'bi-file-earmark-medical', cap: 'DOCUMENT_EXTRACTION' },
+      { label: 'History', to: '/document-extraction/history', icon: 'bi-clock-history', cap: 'DOCUMENT_EXTRACTION' },
     ],
   },
   {
@@ -70,6 +79,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-gear',
     children: [
       { label: 'Reports', to: '/reports', icon: 'bi-bar-chart', cap: 'REPORTS' },
+      { label: 'Pass Gen', to: '/pass-gen', icon: 'bi-key', cap: 'PASS_GEN' },
       { label: 'Settings', to: '/settings', icon: 'bi-gear', cap: 'SETTINGS' },
     ],
   },

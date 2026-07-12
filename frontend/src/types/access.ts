@@ -17,12 +17,15 @@ export type Capability =
   | 'PROCUREMENT_EXPORT'
   | 'PROCUREMENT_PENDING'
   | 'PROCUREMENT_GRN'
+  | 'DOCUMENT_EXTRACTION'
+  | 'PASS_GEN'
 
 export const ALL_CAPABILITIES: Capability[] = [
   'PLATFORM', 'INVENTORY', 'SYNC', 'ADMINISTRATION', 'REPORTS', 'SETTINGS',
   'PRODUCT_MAPPING',
   'PROCUREMENT_WORKSPACE', 'PROCUREMENT_ADMIN',
   'PROCUREMENT_EXPORT', 'PROCUREMENT_PENDING', 'PROCUREMENT_GRN',
+  'DOCUMENT_EXTRACTION', 'PASS_GEN',
 ]
 
 const PROCUREMENT_CAPS: Capability[] = [
@@ -44,6 +47,8 @@ function capForCode(code: string | null | undefined): Capability | null {
     if (c.includes('GRN')) return 'PROCUREMENT_GRN'
     return 'PROCUREMENT_WORKSPACE'
   }
+  if (c.includes('PASS')) return 'PASS_GEN'
+  if (c.includes('DOCUMENT') || c.includes('EXTRACTION') || c.includes('INVOICE_OCR')) return 'DOCUMENT_EXTRACTION'
   if (c.includes('MAPPING')) return 'PRODUCT_MAPPING'
   if (c.includes('SYNC')) return 'SYNC'
   if (c.includes('STOCK') || c.includes('INVENTORY')) return 'INVENTORY'
