@@ -61,6 +61,35 @@ class ExportRequest(BaseModel):
     supplier_code: Optional[str] = None
 
 
+# --- Export Document (configurable Excel/PDF/Image) ------------------------
+
+class ExportDocumentItem(BaseModel):
+    assignment_id: str
+    qty: float = Field(..., ge=0)
+
+
+class ExportDocumentRequest(BaseModel):
+    items: List[ExportDocumentItem] = Field(..., min_length=1)
+    format: str = Field("excel", pattern="^(excel|pdf|image)$")
+    columns: List[str] = Field(default_factory=list)
+    order_qty_header: str = Field("Order Qty", max_length=40)
+    sort_by: str = Field("product_name", pattern="^(product_name|sub_location|unit_description)$")
+    supplier_code: Optional[str] = None
+
+
+# --- Supplier Reply import (pre-shipment confirmation round-trip) ---------
+
+class SupplierReplyRow(BaseModel):
+    assignment_id: str
+    status: Optional[str] = None
+    available_qty: Optional[float] = None
+
+
+class SupplierReplyImportRequest(BaseModel):
+    rows: List[SupplierReplyRow] = Field(..., min_length=1)
+    imported_by: Optional[str] = None
+
+
 # --- GRN + Pending + Cycle close (Sprint 3) -------------------------------
 
 class GrnSubmit(BaseModel):

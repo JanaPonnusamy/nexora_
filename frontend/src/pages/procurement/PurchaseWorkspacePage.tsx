@@ -44,7 +44,7 @@ import {
 } from '../../components/procurement/purchaseValue'
 import { SupplierRankPanel } from '../../components/procurement/SupplierRankPanel'
 import { AutoAssignPreviewModal } from '../../components/procurement/AutoAssignPreviewModal'
-import { money, num } from '../../components/stock/format'
+import { money, num, date } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
 
 type View = 'purchase' | 'pending' | 'grn'
@@ -1028,7 +1028,25 @@ export default function PurchaseWorkspacePage() {
         // even if the workspace item list is momentarily narrower than the
         // full assignment set (e.g. still loading, or filtered elsewhere).
         const it = itemById.get(a.order_item_id)
-        const ptr = it?.last_purchase_rate ?? it?.ptr_cost ?? 0
+        // Real purchase history (sync.PurchaseTrans) is authoritative when
+        // present — vp.mrp/ptr_cost are never actually written by the VPL
+        // generator, so these fallbacks rarely fire in practice but are kept
+        // for products with no purchase history at all.
+        const ptr = a.pt_ptr ?? it?.last_purchase_rate ?? it?.ptr_cost ?? 0
+        const cost = a.pt_cost ?? null
+        const mrp = a.pt_mrp ?? it?.mrp ?? null
+        // supplier_stock (manual Live Stock import) is a fresher feed than
+        // purchase history when a buyer has actually mapped it — it wins.
+        const hasLiveStockOffer = (a.offer_scheme ?? 0) > 0 && (a.offer_free ?? 0) > 0
+        const offer = hasLiveStockOffer
+          ? formatOffer({ scheme: a.offer_scheme ?? null, free: a.offer_free ?? null, discount: null })
+          : a.pt_offer ?? null
+        const offerSourceLabel =
+          a.pt_offer_source_date || a.pt_offer_source_supplier_name
+            ? `Last received ${a.pt_offer_source_date ? date(a.pt_offer_source_date) : '—'}${
+                a.pt_offer_source_supplier_name ? ` · ${a.pt_offer_source_supplier_name}` : ''
+              }`
+            : null
         const g =
           map.get(a.supplier_code) ??
           {
@@ -1046,11 +1064,11 @@ export default function PurchaseWorkspacePage() {
           product_name: it?.product_name ?? null,
           product_code: it?.product_code ?? a.product_code ?? null,
           ptr,
-          mrp: it?.mrp ?? null,
-          // Real scheme/free/discount for THIS supplier+product (from
-          // procurement.supplier_stock via the assignments feed) — WorkspaceItem.offer
-          // is a backend stub that's never populated, so it's not used here.
-          offer: formatOffer({ scheme: a.offer_scheme ?? null, free: a.offer_free ?? null, discount: a.offer_discount ?? null }),
+          cost,
+          mrp,
+          offer,
+          discount_pct: a.pt_discount_pct ?? null,
+          offer_source_label: offerSourceLabel,
           final_qty: qty,
           exported,
         })
@@ -1063,7 +1081,7 @@ export default function PurchaseWorkspacePage() {
         // a prior batch, or the figure keeps growing stale as export history
         // accumulates instead of resetting to the live working set.
         if (!exported) g.live_value += qty * ptr
-        if (it?.offer) g.offer_count += 1
+        if (offer) g.offer_count += 1
         if (exported) {
           locked.add(a.order_item_id)
           g.exported_count += 1
@@ -1915,6 +1933,10 @@ export default function PurchaseWorkspacePage() {
             />
           ) : stage === 'export' ? (
             <SupplierQueuePanel
+              tenantId={tenantId}
+              refreshId={refreshId}
+              actingUser={actingUser}
+              notify={say}
               groups={queueLines}
               loading={queueLoading || queuePending}
               error={queueError}

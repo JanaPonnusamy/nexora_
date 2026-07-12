@@ -2,7 +2,8 @@ import { useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { PurchaseMode } from '../../types/procurement'
 import { money, num, date } from '../stock/format'
-import { downloadPurchaseOrderCsv, printPurchaseOrderPdf } from './exportDocument'
+import { ExportSettingsDialog } from './ExportSettingsDialog'
+import { SupplierReplyImportDialog } from './SupplierReplyImportDialog'
 
 /* ---- Data model (built by the workspace from draft assignments) ----------- */
 
@@ -12,8 +13,16 @@ export interface SupplierQueueProduct {
   product_name: string | null
   product_code: string | null
   ptr: number
+  /** Landed cost (sync.PurchaseTrans.itemcost) for this supplier's last purchase. */
+  cost: number | null
   mrp: number | null
   offer: string | null
+  /** Flat discount % from the product's overall last purchase (any supplier) —
+   *  always a separate figure from `offer`, never folded into it. */
+  discount_pct: number | null
+  /** Hover text for the offer/discount columns — who/when that overall last
+   *  purchase actually came from, when it may differ from this line's supplier. */
+  offer_source_label: string | null
   /** Quantity committed to this supplier — the maximum exportable for the line. */
   final_qty: number
   exported: boolean
@@ -62,6 +71,10 @@ const STATUS_META: Record<SupplierQueueGroup['status'], { label: string; cls: st
  * PDF/Excel, and mode-aware scoping. No dialogs; no backend changes.
  */
 export function SupplierQueuePanel({
+  tenantId,
+  refreshId,
+  actingUser,
+  notify,
   groups,
   loading,
   error,
@@ -76,6 +89,10 @@ export function SupplierQueuePanel({
   busySupplier,
   exportingAll,
 }: {
+  tenantId: string
+  refreshId: string
+  actingUser: string
+  notify: (kind: 'success' | 'danger', text: string) => void
   groups: SupplierQueueGroup[]
   loading: boolean
   error?: string | null
@@ -112,6 +129,10 @@ export function SupplierQueuePanel({
   const listRef = useRef<HTMLDivElement>(null)
   // Export Selected Suppliers (§12) — a buyer-checked subset of exportable cards.
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set())
+  // Import Supplier Reply — file picked via a hidden input, then handed to
+  // the preview/confirm dialog.
+  const [replyFile, setReplyFile] = useState<File | null>(null)
+  const replyInputRef = useRef<HTMLInputElement>(null)
 
   // Expanded supplier: auto-focus the selected supplier in non-review modes.
   const [expandChoice, setExpandChoice] = useState<string | null>(null)
@@ -261,6 +282,20 @@ export function SupplierQueuePanel({
           <button className="pm-btn pm-btn--ghost" onClick={onLoad} disabled={loading}>
             <i className="bi bi-arrow-repeat" /> {loading ? 'Loading…' : loaded ? 'Reload Queue' : 'Load Suppliers'}
           </button>
+          <input
+            ref={replyInputRef}
+            type="file"
+            accept=".xlsx"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) setReplyFile(f)
+              e.target.value = ''
+            }}
+          />
+          <button className="pm-btn pm-btn--ghost" onClick={() => replyInputRef.current?.click()}>
+            <i className="bi bi-envelope-arrow-down" /> Import Supplier Reply
+          </button>
           {loaded && (
             <>
               <button
@@ -402,6 +437,9 @@ export function SupplierQueuePanel({
                       const busy = busySupplier === g.supplier_code
                       return (
                         <SupplierReview
+                          tenantId={tenantId}
+                          refreshId={refreshId}
+                          notify={notify}
                           group={g}
                           summary={summary(g)}
                           fmtValue={fmtValue}
@@ -420,6 +458,18 @@ export function SupplierQueuePanel({
           )}
         </div>
       )}
+
+      {replyFile && (
+        <SupplierReplyImportDialog
+          tenantId={tenantId}
+          refreshId={refreshId}
+          file={replyFile}
+          actingUser={actingUser}
+          notify={notify}
+          onClose={() => setReplyFile(null)}
+          onImported={() => onLoad()}
+        />
+      )}
     </section>
   )
 }
@@ -427,6 +477,9 @@ export function SupplierQueuePanel({
 /* ---- Expanded supplier review (inline, no dialog) ------------------------- */
 
 function SupplierReview({
+  tenantId,
+  refreshId,
+  notify,
   group,
   summary,
   fmtValue,
@@ -436,6 +489,9 @@ function SupplierReview({
   busy,
   onExport,
 }: {
+  tenantId: string
+  refreshId: string
+  notify: (kind: 'success' | 'danger', text: string) => void
   group: SupplierQueueGroup
   summary: { products: number; qty: number; value: number; margin: number; offers: number }
   fmtValue: (value: number, qty: number) => string
@@ -445,6 +501,7 @@ function SupplierReview({
   busy: boolean
   onExport: () => void
 }) {
+  const [showExportSettings, setShowExportSettings] = useState(false)
   const exportedAll = group.status === 'exported'
   return (
     <div className="pm-sqexp">
@@ -469,8 +526,10 @@ function SupplierReview({
             <tr>
               <th>Product</th>
               <th className="sx-num">PTR</th>
+              <th className="sx-num">Cost</th>
               <th className="sx-num">MRP</th>
               <th>Offer</th>
+              <th className="sx-num">Dis %</th>
               <th className="sx-num">Final Qty</th>
               <th className="sx-num">Export Qty</th>
             </tr>
@@ -480,8 +539,14 @@ function SupplierReview({
               <tr key={l.assignment_id} className={l.exported ? 'pm-sqexp__row--done' : ''}>
                 <td>{l.product_name ?? l.product_code ?? '—'}</td>
                 <td className="sx-num">{l.ptr > 0 ? money(l.ptr) : '—'}</td>
+                <td className="sx-num">{l.cost != null && l.cost > 0 ? money(l.cost) : '—'}</td>
                 <td className="sx-num">{l.mrp != null && l.mrp > 0 ? money(l.mrp) : '—'}</td>
-                <td>{l.offer ? <span className="pm-offer">{l.offer}</span> : <span className="sx-dim">—</span>}</td>
+                <td title={l.offer_source_label ?? undefined}>
+                  {l.offer ? <span className="pm-offer">{l.offer}</span> : <span className="sx-dim">—</span>}
+                </td>
+                <td className="sx-num" title={l.offer_source_label ?? undefined}>
+                  {l.discount_pct != null && l.discount_pct > 0 ? `${num(l.discount_pct)}%` : <span className="sx-dim">—</span>}
+                </td>
                 <td className="sx-num">{num(l.final_qty)}</td>
                 <td className="sx-num">
                   {l.exported ? (
@@ -513,17 +578,25 @@ function SupplierReview({
       <div className="pm-sqexp__foot">
         <span className="pm-sqexp__note">Export sends assigned quantities; set a line to 0 to hold it back.</span>
         <div className="pm-sqexp__btns">
-          <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => downloadPurchaseOrderCsv(group, eq)}>
-            <i className="bi bi-file-earmark-excel" /> Export Excel
-          </button>
-          <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => printPurchaseOrderPdf(group, eq)}>
-            <i className="bi bi-file-earmark-pdf" /> Export PDF
+          <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => setShowExportSettings(true)}>
+            <i className="bi bi-file-earmark-arrow-down" /> Export Document…
           </button>
           <button className="pm-btn pm-btn--success pm-btn--sm" onClick={onExport} disabled={busy || exportedAll || group.assignment_ids.length === 0}>
             <i className="bi bi-box-arrow-up" /> {busy ? 'Exporting…' : 'Export'}
           </button>
         </div>
       </div>
+
+      {showExportSettings && (
+        <ExportSettingsDialog
+          tenantId={tenantId}
+          refreshId={refreshId}
+          group={group}
+          eq={eq}
+          notify={notify}
+          onClose={() => setShowExportSettings(false)}
+        />
+      )}
     </div>
   )
 }

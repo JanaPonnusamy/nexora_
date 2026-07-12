@@ -150,4 +150,31 @@ export const api = {
     }
     return response.blob()
   },
+  // Same as `blob`, but POSTs a JSON body first — for server-generated
+  // documents whose content depends on caller-chosen options (columns,
+  // format, sort) rather than just the URL.
+  postBlob: async (path: string, body: unknown): Promise<Blob> => {
+    const token = tokenStorage.get()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+    let response: Response
+    try {
+      response = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: JSON.stringify(body) })
+    } catch {
+      throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Download failed'
+      try {
+        const parsed = await response.json()
+        detail = parsed.detail ?? parsed.error ?? detail
+      } catch {
+        // response had no JSON body
+      }
+      throw new ApiError(detail, response.status)
+    }
+    return response.blob()
+  },
 }

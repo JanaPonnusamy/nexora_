@@ -9,12 +9,30 @@ assigned_qty / remaining_qty / item_status are recomputed from the live
 assignments (single source of truth — no duplicated totals).
 """
 
+import math
+
 from config.database import get_connection
 from modules.procurement._dbutil import (
     as_uid as _as_uid,
     rows_to_dicts as _rows_to_dicts,
     stringify as _stringify,
 )
+
+
+def _format_offer_ratio(stockreceived, free_qty):
+    """"Buy X get Y free" from a PurchaseTrans row's stockreceived/FreeQty,
+    reduced to its simplest ratio (e.g. 100+10 -> 10+1). None when either side
+    is missing/zero — a flat discount is never expressed here (see
+    ProductDiscPercent / pt_discount_pct, its own separate column)."""
+    try:
+        buy = int(float(stockreceived)) if stockreceived is not None else 0
+        free = int(float(free_qty)) if free_qty is not None else 0
+    except (TypeError, ValueError):
+        return None
+    if buy <= 0 or free <= 0:
+        return None
+    g = math.gcd(buy, free)
+    return f"{buy // g}+{free // g}"
 
 
 _ASSIGN_COLS = """
@@ -66,12 +84,24 @@ def list_by_refresh(tenant_id, refresh_id):
     Supplier Queue build, which previously fanned out one request per assigned
     order item (the N+1 that saturated the backend).
 
+    Enriches each row with real purchase history from sync.PurchaseTrans —
+    the actual source of PTR/Cost/MRP/Offer/Discount%, none of which
+    procurement_virtual_products ever populates:
+      - pt_ptr / pt_cost / pt_mrp / pt_last_purchase_date: THIS row's own
+        (product, supplier) pair's most recent purchase (grndate DESC).
+      - pt_offer / pt_discount_pct / pt_offer_source_*: the product's overall
+        most recent purchase from ANY supplier — offer/discount are a
+        property of the last time the product was bought at all, not
+        necessarily from the supplier this line is currently assigned to.
+        pt_offer_source_supplier_name/date identify that purchase for the
+        Export Monitor's hover tooltip when it differs from this line's own
+        supplier.
     Also LEFT JOINs procurement.supplier_stock (this exact supplier's real
     scheme/free/discount for this exact product, when a Live Stock import has
-    ever mapped it) so the Export Monitor's expanded review can show a real
-    Offer, not the WorkspaceItem.offer stub (which the workspace API never
-    populates). Defensively guarded — supplier_stock may not exist on every
-    deployment, same convention as supplier_stock_repository."""
+    ever mapped it) — a deliberately fresher manual feed, so it still wins
+    over the PurchaseTrans-derived offer when present. Defensively guarded —
+    supplier_stock may not exist on every deployment, same convention as
+    supplier_stock_repository."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -93,14 +123,146 @@ def list_by_refresh(tenant_id, refresh_id):
         )
         assign_cols = ", ".join(f"a.{c.strip()}" for c in _ASSIGN_COLS.strip().split(","))
         cursor.execute(
-            f"SELECT {assign_cols}, {offer_cols} "
-            "FROM procurement.procurement_order_item_assignments a "
-            f"{join_clause}"
-            "WHERE a.tenant_id = ? AND a.refresh_id = ? AND a.is_deleted = 0 "
-            "ORDER BY a.order_item_id, a.created_at",
-            (tenant_id, refresh_id),
+            f"""
+            WITH refresh_assignments AS (
+                SELECT DISTINCT a.tenant_id, a.store_id, a.product_code, a.supplier_code
+                FROM procurement.procurement_order_item_assignments a
+                WHERE a.tenant_id = ? AND a.refresh_id = ? AND a.is_deleted = 0
+            ),
+            supplier_last AS (
+                SELECT
+                    ra.product_code, ra.supplier_code,
+                    pt.purchaseprice AS pt_ptr, pt.itemcost AS pt_cost, pt.mrp AS pt_mrp,
+                    pt.grndate AS pt_last_purchase_date,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ra.product_code, ra.supplier_code
+                        ORDER BY pt.grndate DESC, pt.Grnnumber DESC
+                    ) AS rnk
+                FROM refresh_assignments ra
+                JOIN sync.PurchaseTrans pt
+                    ON pt.tenant_id = ra.tenant_id AND pt.store_id = ra.store_id
+                   AND pt.ProductCode = TRY_CAST(ra.product_code AS INT)
+                   AND pt.SupplierCode = ra.supplier_code
+            ),
+            overall_last AS (
+                SELECT
+                    ra.product_code,
+                    pt.stockreceived AS pt_stockreceived, pt.FreeQty AS pt_free_qty,
+                    pt.ProductDiscPercent AS pt_discount_pct,
+                    pt.SupplierCode AS pt_offer_source_code, pt.grndate AS pt_offer_source_date,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ra.product_code
+                        ORDER BY pt.grndate DESC, pt.Grnnumber DESC
+                    ) AS rnk
+                FROM (SELECT DISTINCT tenant_id, store_id, product_code FROM refresh_assignments) ra
+                JOIN sync.PurchaseTrans pt
+                    ON pt.tenant_id = ra.tenant_id AND pt.store_id = ra.store_id
+                   AND pt.ProductCode = TRY_CAST(ra.product_code AS INT)
+            )
+            SELECT {assign_cols}, {offer_cols},
+                sl.pt_ptr, sl.pt_cost, sl.pt_mrp, sl.pt_last_purchase_date,
+                ol.pt_stockreceived, ol.pt_free_qty, ol.pt_discount_pct, ol.pt_offer_source_date,
+                CAST(RTRIM(osup.suppliername) AS VARCHAR(300)) AS pt_offer_source_supplier_name
+            FROM procurement.procurement_order_item_assignments a
+            {join_clause}
+            LEFT JOIN supplier_last sl
+                ON sl.product_code = a.product_code AND sl.supplier_code = a.supplier_code AND sl.rnk = 1
+            LEFT JOIN overall_last ol
+                ON ol.product_code = a.product_code AND ol.rnk = 1
+            LEFT JOIN sync.Suppliers osup
+                ON osup.tenant_id = a.tenant_id AND osup.store_id = a.store_id
+               AND osup.suppliercode = ol.pt_offer_source_code
+            WHERE a.tenant_id = ? AND a.refresh_id = ? AND a.is_deleted = 0
+            ORDER BY a.order_item_id, a.created_at
+            """,
+            (tenant_id, refresh_id, tenant_id, refresh_id),
         )
-        return [_stringify(r) for r in _rows_to_dicts(cursor)]
+        rows = [_stringify(r) for r in _rows_to_dicts(cursor)]
+        for r in rows:
+            r["pt_offer"] = _format_offer_ratio(r.pop("pt_stockreceived", None), r.pop("pt_free_qty", None))
+        return rows
+    finally:
+        conn.close()
+
+
+def list_for_export(tenant_id, assignment_ids):
+    """A specific set of assignments (by id) with everything the configurable
+    Export Document (Excel/PDF/Image) needs: product_name (from the VPL, via
+    the owning order item), sub_location/unit_description (for the sort-by
+    option), and the same PurchaseTrans-derived PTR/Cost/MRP/Offer/Discount%
+    as list_by_refresh. Deliberately id-scoped rather than refresh-scoped —
+    the export dialog already knows exactly which lines the buyer picked."""
+    if not assignment_ids:
+        return []
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        placeholders = ", ".join("?" for _ in assignment_ids)
+        cursor.execute(
+            f"""
+            WITH target AS (
+                SELECT assignment_id, tenant_id, store_id, order_item_id,
+                       product_code, supplier_code, assigned_qty
+                FROM procurement.procurement_order_item_assignments
+                WHERE tenant_id = ? AND assignment_id IN ({placeholders}) AND is_deleted = 0
+            ),
+            prod AS (
+                SELECT oi.order_item_id, vp.product_name,
+                    COALESCE(NULLIF(RTRIM(vp.sub_location), ''), RTRIM(pr.SubLocation)) AS sub_location,
+                    COALESCE(NULLIF(RTRIM(vp.unit_description), ''), RTRIM(pr.UnitDescription)) AS unit_description
+                FROM procurement.procurement_order_items oi
+                LEFT JOIN procurement.procurement_virtual_products vp
+                    ON vp.tenant_id = oi.tenant_id AND vp.refresh_id = oi.refresh_id
+                   AND vp.product_id = oi.product_id
+                LEFT JOIN sync.Products pr
+                    ON pr.tenant_id = oi.tenant_id AND pr.store_id = oi.store_id
+                   AND pr.ProductCode = TRY_CAST(oi.product_code AS INT)
+                WHERE oi.tenant_id = ? AND oi.order_item_id IN (SELECT order_item_id FROM target)
+            ),
+            supplier_last AS (
+                SELECT
+                    t.assignment_id,
+                    pt.purchaseprice AS pt_ptr, pt.itemcost AS pt_cost, pt.mrp AS pt_mrp,
+                    pt.grndate AS pt_last_purchase_date,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.assignment_id
+                        ORDER BY pt.grndate DESC, pt.Grnnumber DESC
+                    ) AS rnk
+                FROM target t
+                JOIN sync.PurchaseTrans pt
+                    ON pt.tenant_id = t.tenant_id AND pt.store_id = t.store_id
+                   AND pt.ProductCode = TRY_CAST(t.product_code AS INT)
+                   AND pt.SupplierCode = t.supplier_code
+            ),
+            overall_last AS (
+                SELECT
+                    t.assignment_id,
+                    pt.stockreceived AS pt_stockreceived, pt.FreeQty AS pt_free_qty,
+                    pt.ProductDiscPercent AS pt_discount_pct,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.assignment_id
+                        ORDER BY pt.grndate DESC, pt.Grnnumber DESC
+                    ) AS rnk
+                FROM target t
+                JOIN sync.PurchaseTrans pt
+                    ON pt.tenant_id = t.tenant_id AND pt.store_id = t.store_id
+                   AND pt.ProductCode = TRY_CAST(t.product_code AS INT)
+            )
+            SELECT t.assignment_id, t.product_code, t.supplier_code, t.assigned_qty,
+                   p.product_name, p.sub_location, p.unit_description,
+                   sl.pt_ptr, sl.pt_cost, sl.pt_mrp,
+                   ol.pt_stockreceived, ol.pt_free_qty, ol.pt_discount_pct
+            FROM target t
+            LEFT JOIN prod p ON p.order_item_id = t.order_item_id
+            LEFT JOIN supplier_last sl ON sl.assignment_id = t.assignment_id AND sl.rnk = 1
+            LEFT JOIN overall_last ol ON ol.assignment_id = t.assignment_id AND ol.rnk = 1
+            """,
+            (tenant_id, *assignment_ids, tenant_id),
+        )
+        rows = [_stringify(r) for r in _rows_to_dicts(cursor)]
+        for r in rows:
+            r["pt_offer"] = _format_offer_ratio(r.pop("pt_stockreceived", None), r.pop("pt_free_qty", None))
+        return rows
     finally:
         conn.close()
 

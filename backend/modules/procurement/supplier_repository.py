@@ -10,6 +10,11 @@ from config.database import get_connection
 from modules.procurement._dbutil import rows_to_dicts as _rows_to_dicts
 
 
+def _has_supplier_exclusions(cursor):
+    cursor.execute("SELECT OBJECT_ID('procurement.supplier_product_exclusions')")
+    return cursor.fetchone()[0] is not None
+
+
 def top_suppliers(tenant_id, product_code, store_id, limit):
     """Top-N suppliers for a product, ranked by purchase frequency then last GRN."""
     if not store_id or product_code is None:
@@ -17,6 +22,21 @@ def top_suppliers(tenant_id, product_code, store_id, limit):
     conn = get_connection()
     try:
         cursor = conn.cursor()
+        # A supplier that replied Partial/Not Available on this product and
+        # whose cycle then closed is excluded from THIS product's candidates
+        # for one cycle (owner-directed) — see supplier_exclusion_repository.
+        exclusion_clause = (
+            """
+              AND NOT EXISTS (
+                  SELECT 1 FROM procurement.supplier_product_exclusions ex
+                  WHERE ex.tenant_id = pt.tenant_id AND ex.store_id = pt.store_id
+                    AND ex.supplier_code = CAST(pt.SupplierCode AS VARCHAR(100))
+                    AND ex.product_code = CAST(pt.ProductCode AS VARCHAR(100))
+              )
+            """
+            if _has_supplier_exclusions(cursor)
+            else ""
+        )
         cursor.execute(
             f"""
             SELECT TOP ({int(limit)})
@@ -36,6 +56,7 @@ def top_suppliers(tenant_id, product_code, store_id, limit):
                 WHERE pt.tenant_id = ? AND pt.store_id = ?
                   AND CAST(pt.ProductCode AS VARCHAR(100)) = ?
                   AND pt.SupplierCode IS NOT NULL
+                  {exclusion_clause}
                 GROUP BY pt.SupplierCode
             ) a
             LEFT JOIN sync.Suppliers s
@@ -61,8 +82,21 @@ def top_suppliers_bulk(tenant_id, refresh_id, limit):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute(
+        # Same next-cycle exclusion as top_suppliers (see its comment).
+        exclusion_clause = (
             """
+              AND NOT EXISTS (
+                  SELECT 1 FROM procurement.supplier_product_exclusions ex
+                  WHERE ex.tenant_id = oi.tenant_id AND ex.store_id = oi.store_id
+                    AND ex.supplier_code = CAST(pt.SupplierCode AS VARCHAR(100))
+                    AND ex.product_code = CAST(oi.product_code AS VARCHAR(100))
+              )
+            """
+            if _has_supplier_exclusions(cursor)
+            else ""
+        )
+        cursor.execute(
+            f"""
             WITH ranked AS (
                 SELECT
                     CAST(oi.order_item_id AS VARCHAR(100))    AS order_item_id,
@@ -85,6 +119,7 @@ def top_suppliers_bulk(tenant_id, refresh_id, limit):
                    AND pt.ProductCode = TRY_CAST(oi.product_code AS INT)
                 WHERE oi.tenant_id = ? AND oi.refresh_id = ? AND oi.is_deleted = 0
                   AND pt.SupplierCode IS NOT NULL
+                  {exclusion_clause}
                 GROUP BY oi.order_item_id, oi.product_code, oi.store_id, pt.SupplierCode
             )
             SELECT r.order_item_id, r.product_code, r.supplier_code,

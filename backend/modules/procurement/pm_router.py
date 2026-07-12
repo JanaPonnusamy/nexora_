@@ -14,12 +14,15 @@ from modules.procurement import supplier_service
 from modules.procurement import supplier_stock_service
 from modules.procurement import assignment_service
 from modules.procurement import export_service
+from modules.procurement import export_document_service
+from modules.procurement import supplier_reply_service
 from modules.procurement import reconciliation_service
 from modules.procurement import reconciliation_repository
 from modules.procurement import pending_service
 from modules.procurement.pm_schemas import (
     FinalQtyUpdate, SkipRequest, ReviewedBy,
     AssignRequest, BulkAssignRequest, ChangeSupplierRequest, ExportRequest,
+    ExportDocumentRequest, SupplierReplyImportRequest,
     GrnSubmit, PendingAdjust, ManualAdd, PendingBulk, SupplierSettingsUpdate,
 )
 
@@ -327,6 +330,59 @@ def export(refresh_id: str, payload: ExportRequest, tenant_id: str = Query(...))
     return export_service.export_refresh(
         tenant_id, refresh_id, payload.exported_by,
         payload.assignment_ids, payload.supplier_code,
+    )
+
+
+@router.post("/refreshes/{refresh_id}/export-document")
+def export_document(
+    refresh_id: str, payload: ExportDocumentRequest, tenant_id: str = Query(...)
+):
+    """Configurable Export Document — Excel (default, supplier-editable
+    Status/Available Qty + hidden assignment_id for round-trip), PDF, or
+    Image. refresh_id is accepted for URL/route symmetry with the rest of
+    this module but the lines are resolved directly by assignment_id."""
+    from fastapi.responses import Response
+
+    content, filename, media_type = export_document_service.build_document(
+        tenant_id,
+        [i.dict() for i in payload.items],
+        payload.format,
+        payload.columns,
+        payload.order_qty_header,
+        payload.sort_by,
+        payload.supplier_code,
+    )
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/refreshes/{refresh_id}/supplier-reply/preview")
+async def supplier_reply_preview(
+    refresh_id: str,
+    tenant_id: str = Query(...),
+    file: UploadFile = File(...),
+):
+    """Parse the supplier's returned Excel: matched rows + warnings, before
+    anything is written. refresh_id kept for route symmetry — rows are
+    matched directly by the hidden Assignment ID column."""
+    data = await file.read()
+    return supplier_reply_service.preview_reply_import(tenant_id, data, file.filename)
+
+
+@router.post("/refreshes/{refresh_id}/supplier-reply/import")
+def supplier_reply_import(
+    refresh_id: str,
+    payload: SupplierReplyImportRequest,
+    tenant_id: str = Query(...),
+):
+    """Apply a confirmed Supplier Reply preview: Available/Partial/Not
+    Available per line, rolling any shortfall into the existing Pending tab
+    and recording it for next-cycle supplier exclusion at cycle close."""
+    return supplier_reply_service.apply_reply_import(
+        tenant_id, [r.dict() for r in payload.rows], payload.imported_by,
     )
 
 

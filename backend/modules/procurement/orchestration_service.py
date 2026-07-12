@@ -22,6 +22,7 @@ from modules.procurement import decision_service
 from modules.procurement import decision_rules as rules
 from modules.procurement import comparison_service
 from modules.procurement import reconciliation_service
+from modules.procurement import supplier_exclusion_repository as exclusion_repo
 from modules.procurement import platform_source_repository as platform_repo
 from repositories.store_repository import StoreRepository
 
@@ -241,7 +242,22 @@ def close_cycle(tenant_id, cycle_id, closed_by, force=False):
             ),
         }
 
-    # 4a. Clear all pending — no carry-forward into the next cycle.
+    # 4a. Record next-cycle supplier exclusions from any unresolved
+    #     partial/not-available supplier replies, then clear all pending — no
+    #     carry-forward into the next cycle.
+    conn = get_connection()
+    try:
+        excluded = exclusion_repo.record_exclusions_from_replies(conn, tenant_id, cycle_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if excluded:
+        logger.info("Supplier exclusions recorded tenant=%s cycle=%s count=%s",
+                    tenant_id, cycle_id, excluded)
+
     cleared = 0
     if pending_count > 0:
         cleared = cycle_repo.clear_all_pending(tenant_id, cycle_id, closed_by)

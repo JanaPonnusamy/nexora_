@@ -13,9 +13,11 @@ import type {
   OptimizationResult,
   PendingPage,
   Refresh,
+  RefreshRunResult,
   SupplierMinOrderConfig,
   SupplierQueue,
   SupplierRecommendation,
+  SupplierReplyPreview,
   SupplierRow,
   SupplierSettingsRow,
   SupplierStockPreview,
@@ -179,12 +181,55 @@ export const procurementService = {
       { exported_by: by, assignment_ids: assignmentIds, supplier_code: supplierCode },
     ),
 
+  // Configurable Export Document (Excel default / PDF / Image) — returns the
+  // file as a Blob for the caller to download.
+  exportDocument: (
+    tenantId: string,
+    refreshId: string,
+    opts: {
+      items: { assignment_id: string; qty: number }[]
+      format: 'excel' | 'pdf' | 'image'
+      columns: string[]
+      order_qty_header: string
+      sort_by: 'product_name' | 'sub_location' | 'unit_description'
+      supplier_code?: string
+    },
+  ) =>
+    api.postBlob(
+      `/api/procurement/refreshes/${refreshId}/export-document${qs({ tenant_id: tenantId })}`,
+      opts,
+    ),
+
   exportHistory: (tenantId: string, refreshId: string) =>
     api
       .get<{ batches: ExportBatch[] }>(
         `/api/procurement/refreshes/${refreshId}/export-history${qs({ tenant_id: tenantId })}`,
       )
       .then((r) => r.batches),
+
+  // Supplier Reply round-trip — the supplier's completed Excel (Status +
+  // Available Qty) comes back, gets parsed/matched by the hidden Assignment
+  // ID column, and — once confirmed — rolls any shortfall into the existing
+  // Pending tab (see supplier_reply_service on the backend).
+  previewSupplierReply: (tenantId: string, refreshId: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.upload<SupplierReplyPreview>(
+      `/api/procurement/refreshes/${refreshId}/supplier-reply/preview${qs({ tenant_id: tenantId })}`,
+      form,
+    )
+  },
+
+  importSupplierReply: (
+    tenantId: string,
+    refreshId: string,
+    rows: { assignment_id: string; status: string | null; available_qty: number | null }[],
+    by: string | null,
+  ) =>
+    api.post<{ applied: number; skipped: number }>(
+      `/api/procurement/refreshes/${refreshId}/supplier-reply/import${qs({ tenant_id: tenantId })}`,
+      { rows, imported_by: by },
+    ),
 
   // --- Sprint 3: GRN, pending, decision explorer, cycle close ---
   submitGrn: (tenantId: string, refreshId: string, lastGrn: string, by: string | null) =>
@@ -488,7 +533,7 @@ export const procurementService = {
       created_by?: string | null
     },
   ) =>
-    api.post<{ refresh_id: string; generated_product_count: number; working_item_count: number }>(
+    api.post<RefreshRunResult>(
       `/api/procurement/cycles/${cycleId}/refreshes${qs({ tenant_id: tenantId })}`,
       payload,
     ),

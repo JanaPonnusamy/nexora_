@@ -48,6 +48,25 @@ export type CloseCycleResult =
       end_sale_bill_number: string | null
     }
 
+/** What POST /cycles/{id}/refreshes actually returns — the Decision Engine +
+ *  VPL + working-item generation counts, exactly as the orchestration service
+ *  already reports them. Note there is deliberately no supplier / deferred /
+ *  skipped count here: a freshly generated Refresh has no reviewed items yet. */
+export interface RefreshRunResult {
+  refresh_id: string
+  cycle_id: string
+  status: string
+  previous_refresh_id: string | null
+  /** Products that need procurement — the VPL size. */
+  generated_product_count: number
+  included_count: number
+  excluded_count: number
+  /** Working order items generated from the VPL (suggested_qty > 0). */
+  working_item_count: number
+  /** Pending items carried over from the previous Refresh. */
+  carried_forward_count: number
+}
+
 /** Batched supplier recommendations for a working item (Product Grid icons). */
 export interface SupplierRecommendation {
   order_item_id: string
@@ -172,12 +191,27 @@ export interface Assignment {
   product_code: string | null
   /** This exact supplier's real scheme/free/discount for this exact product
    *  (procurement.supplier_stock, when a Live Stock import has mapped it) —
-   *  the real Offer source for the Export Monitor queue. `discount` is a
-   *  VARCHAR column that holds messy free-text in practice (not a clean
-   *  percentage) — treat it as untrusted/best-effort. */
+   *  a fresher manual feed, so it wins over pt_offer below when present.
+   *  `discount` is a VARCHAR column that holds messy free-text in practice
+   *  (not a clean percentage) — treat it as untrusted/best-effort. */
   offer_scheme?: number | null
   offer_free?: number | null
   offer_discount?: string | null
+  /** Real purchase history from sync.PurchaseTrans — this row's own
+   *  (product, supplier) pair's most recent purchase. */
+  pt_ptr?: number | null
+  pt_cost?: number | null
+  pt_mrp?: number | null
+  pt_last_purchase_date?: string | null
+  /** The product's overall most recent purchase from ANY supplier — offer +
+   *  discount are read from whoever sold it last, not necessarily this row's
+   *  own supplier. "Buy X get Y" ratio string (e.g. "10+1"), never a percent —
+   *  a flat discount only ever shows in pt_discount_pct. */
+  pt_offer?: string | null
+  pt_discount_pct?: number | null
+  /** Identifies the overall-last purchase above, for the hover tooltip. */
+  pt_offer_source_supplier_name?: string | null
+  pt_offer_source_date?: string | null
 }
 
 export interface SupplierRow {
@@ -205,6 +239,27 @@ export interface SupplierSettingsRow {
   min_products: number
   /** null = unranked. Rank 1 = highest priority in Rank-mode Auto Assign. */
   export_rank: number | null
+}
+
+/** One row of a parsed Supplier Reply Excel (Export Monitor overhaul) —
+ *  matched back to a live assignment via the sheet's hidden Assignment ID
+ *  column. `applicable` is false when the row can't be applied (no matching
+ *  assignment, or an unrecognized Status value) — surfaced via `warning`. */
+export interface SupplierReplyPreviewRow {
+  assignment_id: string
+  product_name: string | null
+  product_code: string | null
+  supplier_code: string | null
+  assigned_qty: number | null
+  status: 'available' | 'partial' | 'not_available' | null
+  available_qty: number | null
+  warning: string | null
+  applicable: boolean
+}
+
+export interface SupplierReplyPreview {
+  filename: string
+  rows: SupplierReplyPreviewRow[]
 }
 
 export interface SupplierQueue {
