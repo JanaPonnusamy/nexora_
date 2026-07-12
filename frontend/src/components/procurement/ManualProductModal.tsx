@@ -56,6 +56,11 @@ export function ManualProductModal({
   }, [tenantId, storeId, debounced])
 
   const submit = () => {
+    // `busy` disables the footer button, but the Qty field's Enter handler
+    // below bypasses that disabled state — without this check, keyboard
+    // auto-repeat (holding Enter) or a fast double-Enter fires a second
+    // onAdd/POST before the first request's busy flag can re-render in.
+    if (busy) return
     const n = Number(qty)
     if (!selected || Number.isNaN(n) || n <= 0) return
     onAdd(selected, n)

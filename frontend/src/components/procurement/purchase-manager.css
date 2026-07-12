@@ -113,16 +113,20 @@
 /* Cheapest supplier (top of the cost-sorted list) — green "best price" accent. */
 .pm-srpcard--cheapest { border-color: #86efac; box-shadow: inset 3px 0 0 #16a34a; }
 .pm-srpcard--cheapest.pm-srpcard--sel { box-shadow: inset 3px 0 0 #16a34a, inset 0 0 0 1px var(--bs-primary, #4f46e5); }
-.pm-srpcard__best { font-size: 9px; font-weight: 800; color: #15803d; background: #dcfce7; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; }
+.pm-srpcard__best { font-size: 9px; font-weight: 800; color: #15803d; background: #dcfce7; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; flex-shrink: 0; }
 /* Latest-purchased supplier (own purchase history) — badge only, order unchanged. */
-.pm-srpcard__preferred { font-size: 9px; font-weight: 800; color: #a16207; background: #fef9c3; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; }
+.pm-srpcard__preferred { font-size: 9px; font-weight: 800; color: #a16207; background: #fef9c3; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; flex-shrink: 0; }
 /* A different supplier already owns this product (one-supplier rule) — the
    card stays visible for context but its Assign button is disabled. */
 .pm-srpcard--disabled { opacity: .55; }
 .pm-srpcard--disabled .pm-srpcard__assign { cursor: not-allowed; }
 .pm-srpcard__top { display: flex; align-items: center; gap: 6px; }
-.pm-srpcard__abbr { font-weight: 800; font-size: 13px; letter-spacing: .02em; color: #0f172a; }
-.pm-srpcard__ptr { margin-left: auto; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+/* Name is the only element allowed to shrink/truncate — flex items default to
+   min-width:auto (their full content width), which was forcing the row wider
+   than the card and clipping the price on the right. Badges and price stay
+   flex-shrink:0 + nowrap so they are always fully visible. */
+.pm-srpcard__abbr { font-weight: 800; font-size: 13px; letter-spacing: .02em; color: #0f172a; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-srpcard__ptr { margin-left: auto; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; flex-shrink: 0; white-space: nowrap; }
 .pm-srpcard__live { font-size: 9px; font-weight: 800; color: #16a34a; border: 1px solid #86efac; border-radius: 5px; padding: 0 3px; }
 .pm-srpcard__facts { display: flex; justify-content: space-between; gap: 6px; font-size: 10.5px; color: #64748b; margin: 3px 0 6px; }
 .pm-srpcard__assign { width: 100%; justify-content: center; }
@@ -345,6 +349,8 @@
 
 /* ---- Offer column -------------------------------------------------------- */
 .pm-offer { display: inline-block; padding: 1px 7px; border-radius: 6px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.pm-qty-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.pm-offer-warn { color: #d97706; font-size: 12px; cursor: help; }
 
 /* ---- Badges -------------------------------------------------------------- */
 .pm-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -377,7 +383,7 @@
 .pm-dsec--grow { flex: 1 1 0; }
 
 .pm-dsec { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; padding: 6px 10px; }
-.pm-dsec__title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #64748b; display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.pm-dsec__title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #64748b; display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
 .pm-dsec__titlebtn { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 11px; }
 .pm-dsec__hint { color: #94a3b8; font-size: 12px; padding: 4px 0; }
 .pm-dsec__cta { margin-top: 8px; }
@@ -413,11 +419,13 @@
 .pm-batchstrip__k { font-size: 9.5px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
 .pm-batchstrip__v { font-size: 12.5px; font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Compact purchase/sales grids inside the panel */
+/* Compact purchase/sales grids inside the panel — tightened header + row
+   padding so ~7-10 rows fit the SAME .pm-dsec--scroll height (150px / 84px on
+   the stock page) instead of ~5-6; panel height itself is unchanged. */
 .pm-minitable-wrap { overflow-x: auto; }
-.pm-minitable { width: 100%; border-collapse: collapse; font-size: 12px; }
-.pm-minitable thead th { text-align: left; font-weight: 600; color: #64748b; padding: 4px 8px; white-space: nowrap; border-bottom: 1px solid var(--bs-border-color, #e5e7eb); }
-.pm-minitable tbody td { padding: 4px 8px; border-bottom: 1px solid var(--bs-border-color, #f1f5f9); white-space: nowrap; }
+.pm-minitable { width: 100%; border-collapse: collapse; font-size: 11px; }
+.pm-minitable thead th { text-align: left; font-weight: 600; color: #64748b; padding: 1px 7px; line-height: 1.25; white-space: nowrap; border-bottom: 1px solid var(--bs-border-color, #e5e7eb); }
+.pm-minitable tbody td { padding: 1px 7px; line-height: 1.25; border-bottom: 1px solid var(--bs-border-color, #f1f5f9); white-space: nowrap; }
 .pm-minitable .sx-num { text-align: right; font-variant-numeric: tabular-nums; }
 .pm-minitable .sx-dim { color: #94a3b8; }
 .pm-minitable tbody tr:last-child td { border-bottom: 0; }
@@ -440,6 +448,7 @@
 .pm-dhead__assigned b { font-weight: 700; }
 .pm-dhead__changesup { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
 .pm-linkbtn--sm { font-size: 11px; padding: 1px 6px; }
+.pm-linkbtn--danger { color: #dc2626; }
 
 /* Decision Summary */
 .pm-dsum { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }

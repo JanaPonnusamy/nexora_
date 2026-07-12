@@ -45,7 +45,6 @@ export function ProductGrid({
   onSelect,
   onSkip,
   onRestore,
-  onDefer,
   onToggle,
   onToggleAll,
 }: {
@@ -72,10 +71,8 @@ export function ProductGrid({
   onSaveRow?: (item: WorkspaceItem) => void
   onSelect: (item: WorkspaceItem) => void
   onSkip: (item: WorkspaceItem, reason: string) => void
+  /** Restores a Skipped or (previously) Deferred row back to review. */
   onRestore: (item: WorkspaceItem) => void
-  /** Space Bar — Assignment Deferred: keeps Final Qty, excludes the row from
-   *  Auto/Bulk Assignment. Un-defer reuses `onRestore` (same as un-skip). */
-  onDefer?: (item: WorkspaceItem) => void
   onToggle?: (id: string) => void
   onToggleAll?: (ids: string[], on: boolean) => void
 }) {
@@ -103,7 +100,6 @@ export function ProductGrid({
   // re-quantified (which un-skips it), so "skipped" no longer blocks editing.
   const editable = (item: WorkspaceItem) => !lockedIds.has(item.order_item_id)
   const skippedOf = (item: WorkspaceItem) => item.item_status === 'skipped'
-  const deferredOf = (item: WorkspaceItem) => item.item_status === 'deferred'
 
   const qtyValue = (item: WorkspaceItem) =>
     edits[item.order_item_id] ?? String(item.final_qty ?? 0)
@@ -161,7 +157,13 @@ export function ProductGrid({
   // caret never interferes. This effect only moves DOM focus — it never calls
   // setState, so it cannot itself re-trigger the render-time reset above.
   useEffect(() => {
-    if (selectedIndex < 0) return
+    // Root cause of "Up/Down scrolls the page": with no row selected yet
+    // (index transiently -1 — e.g. right after a mode/supplier switch, before
+    // the selection-repair effect lands) NOTHING used to claim keyboard focus,
+    // so arrow keys fell through to the browser's native page-scroll. The
+    // container still owns onKeyDown once it holds focus, so park focus on it
+    // here whenever there's a list to navigate but no row focus target yet.
+    if (selectedIndex < 0) { if (items.length > 0) wrapRef.current?.focus(); return }
     if (zone === 'supplier') { wrapRef.current?.focus(); return }
     const cur = items[selectedIndex]
     // A just-Esc-skipped row parks focus on its Skip-Mode selector; otherwise the
@@ -205,9 +207,15 @@ export function ProductGrid({
   // Right from Final Qty → Supplier Recommendation, starting on the currently
   // selected supplier, else the Preferred (latest-purchased) one, else the
   // top-ranked (cheapest) card — pre-selects visually only, never assigns (§3).
+  // Any pending qty edit is saved first — otherwise a supplier committed right
+  // after typing would assign against the stale, unsaved remaining_qty.
   const enterSupplierZone = () => {
     const cur = items[selectedIndex]
     if (!cur || !editable(cur)) return
+    // Unconditional like Enter/Down's saveAndNext — the parent's saveRow already
+    // no-ops when nothing changed, and dirtyIds excludes skipped rows, which
+    // would otherwise drop a re-quantify-and-assign done straight from a skip.
+    onSaveRow?.(cur)
     const recs = recsFor(cur)
     if (recs.length === 0) return
     const selCode = selectedSupplier?.[cur.order_item_id] ?? preferredSupplier(recs)
@@ -218,16 +226,18 @@ export function ProductGrid({
     onSelectSupplier?.(cur.order_item_id, recs[idx].supplier_code)
   }
 
-  // Up/Down inside the (vertical) Supplier Recommendation panel. Up past the
-  // first supplier returns to Final Qty.
+  // Up/Down inside the (vertical) Supplier Recommendation panel. Clamps at the
+  // first/last card — focus stays inside the supplier panel until an explicit
+  // Left or Esc returns to Final Qty (previously Up at the first card silently
+  // kicked focus back to the grid, which read as "Up/Down don't move the
+  // cards" since the very first Up press after entering the zone always
+  // exited it immediately).
   const moveSupplier = (dir: 1 | -1) => {
     const cur = items[selectedIndex]
     if (!cur) return
     const recs = recsFor(cur)
-    if (recs.length === 0) { setZone('qty'); return }
-    const next = supIndex + dir
-    if (next < 0) { setZone('qty'); return }
-    const idx = Math.min(next, recs.length - 1)
+    if (recs.length === 0) return
+    const idx = Math.min(Math.max(supIndex + dir, 0), recs.length - 1)
     setSupIndex(idx)
     onSelectSupplier?.(cur.order_item_id, recs[idx].supplier_code)
   }
@@ -285,15 +295,18 @@ export function ProductGrid({
     setSkipFocusId(cur.order_item_id) // park focus on this row's Skip-Mode selector
   }
 
-  // Space Bar on the current row: toggle Assignment Deferred. A deferred row
-  // keeps its Final Qty (unlike Skip) — it just excludes itself from Auto
-  // Assign / Bulk / Assign Selected until either restored or manually
-  // assigned (which auto-clears the flag). No-op on a skipped or locked row.
-  const toggleDeferredCurrent = () => {
+  // Space Bar on the current row: toggle its "Included for export" checkbox
+  // (§ CHECKBOX RULE — never a selection state, never touches Final Qty or
+  // Planning State). Mirrors the checkbox cell's own disabled rule: a
+  // skipped or export-locked row has nothing to export, everything else
+  // (including an already-assigned/deferred row) stays toggleable. A no-op
+  // where there is no checkbox column (Review All, selectable=false).
+  const toggleCheckedCurrent = () => {
+    if (!selectable) return
     const cur = items[selectedIndex]
-    if (!cur || !editable(cur) || skippedOf(cur)) return
-    if (deferredOf(cur)) onRestore(cur)
-    else onDefer?.(cur)
+    if (!cur) return
+    if (skippedOf(cur) || lockedIds.has(cur.order_item_id)) return
+    onToggle?.(cur.order_item_id)
   }
 
   // Grid-level keys. Caret editing keys inside the number input are handed back
@@ -348,7 +361,7 @@ export function ProductGrid({
       skipCurrent()
     } else if (e.key === ' ' || e.key === 'Spacebar') {
       e.preventDefault()
-      toggleDeferredCurrent()
+      toggleCheckedCurrent()
     }
   }
 
@@ -408,17 +421,12 @@ export function ProductGrid({
                       aria-label="Select row"
                       checked={checked?.has(item.order_item_id) ?? false}
                       onChange={() => onToggle?.(item.order_item_id)}
-                      // A product already owned by a supplier can never be bulk
-                      // re-assigned from here (§1/§2) — reassignment is explicit
-                      // (Change Supplier). A deferred row (Space Bar) is excluded
-                      // from bulk/Assign-Selected too — it's only assignable
-                      // manually (Right-Arrow → Enter), which auto-clears defer.
-                      disabled={skipped || locked || assigned || deferred}
-                      title={
-                        assigned ? 'Already assigned — use Change Supplier to reassign'
-                          : deferred ? 'Assignment deferred — assign manually or press Space to restore'
-                            : undefined
-                      }
+                      // Included-for-export toggle (§ CHECKBOX RULE), not a
+                      // selection state — a skipped or export-locked row has
+                      // nothing to export; everything else (assigned or not)
+                      // stays toggleable, and is ON by default once finalized.
+                      disabled={skipped || locked}
+                      title={locked ? 'Already exported' : skipped ? 'Skipped — nothing to export' : 'Included for export — Space to toggle'}
                     />
                   </td>
                 )}
@@ -432,7 +440,7 @@ export function ProductGrid({
                 <td className="pm-grid__unit sx-dim">{item.unit_description || '—'}</td>
                 <td className="sx-num pm-col70">{num(item.current_stock_qty ?? 0)}</td>
                 <td className="sx-num pm-col70 sx-dim">{num(item.suggested_qty ?? 0)}</td>
-                <td className="sx-num pm-grid__final" onClick={(e) => e.stopPropagation()}>
+                <td className="sx-num pm-grid__final">
                   {locked ? (
                     <span className="fw-semibold">{num(item.final_qty ?? 0)}</span>
                   ) : (

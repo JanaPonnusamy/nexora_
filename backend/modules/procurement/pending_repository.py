@@ -181,18 +181,25 @@ def add_manual_item(tenant_id, refresh_id, cycle_id, store_id,
         conn.close()
 
 
-def product_already_in_refresh(tenant_id, refresh_id, product_code):
+def get_item_by_product(tenant_id, refresh_id, product_code):
+    """The existing working item for this product in this refresh, if any —
+    used to make manual-add idempotent (return the existing row instead of
+    inserting a duplicate / raising a conflict)."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT 1 FROM procurement.procurement_order_items
+            SELECT order_item_id, is_manual
+            FROM procurement.procurement_order_items
             WHERE tenant_id = ? AND refresh_id = ? AND product_code = ?
               AND is_deleted = 0
             """,
             (tenant_id, refresh_id, product_code),
         )
-        return cursor.fetchone() is not None
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {"order_item_id": str(row[0]), "is_manual": bool(row[1])}
     finally:
         conn.close()

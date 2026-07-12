@@ -180,6 +180,12 @@ export interface SupplierRow {
   last_grn_no: string | null
   last_purchase_rate: number | null
   avg_lead_days: number | null
+  /** Whether this supplier is eligible for Auto Assign Suppliers at all
+   *  (sync.Suppliers.auto_assign, defaults true). */
+  auto_assign?: boolean
+  /** Auto Assign only commits a batch to this supplier if it would include at
+   *  least this many products (sync.Suppliers.min_products, default 2). */
+  min_products?: number
 }
 
 export interface SupplierQueue {

@@ -240,7 +240,7 @@ export const procurementService = {
     api.blob(`/api/procurement/refreshes/${refreshId}/pending/report${qs({ tenant_id: tenantId })}`),
 
   addManualItem: (tenantId: string, refreshId: string, code: string, name: string, qty: number, by: string | null) =>
-    api.post(
+    api.post<{ order_item_id: string; product_code: string; is_manual: boolean; already_exists?: boolean }>(
       `/api/procurement/refreshes/${refreshId}/manual-items${qs({ tenant_id: tenantId })}`,
       { product_code: code, product_name: name, qty, created_by: by },
     ),

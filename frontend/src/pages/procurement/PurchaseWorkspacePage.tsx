@@ -30,12 +30,10 @@ import { ProductInfoDialog } from '../../components/procurement/ProductInfoDialo
 import { SupplierQueuePanel } from '../../components/procurement/SupplierQueuePanel'
 import type { SupplierQueueGroup } from '../../components/procurement/SupplierQueuePanel'
 import { SupplierOptimizationPanel } from '../../components/procurement/SupplierOptimizationPanel'
-import { SupplierReviewPanel } from '../../components/procurement/SupplierReviewPanel'
 import { downloadPurchaseOrderCsv } from '../../components/procurement/exportDocument'
 import { ManualProductModal } from '../../components/procurement/ManualProductModal'
 import { SupplierPicker } from '../../components/procurement/SupplierPicker'
-import { SupplierStockTable, stockRowKey } from '../../components/procurement/SupplierStockTable'
-import { SupplierStockDetail } from '../../components/procurement/SupplierStockDetail'
+import { SupplierStockTable, stockRowKey, formatOffer } from '../../components/procurement/SupplierStockTable'
 import { SupplierStockImportModal } from '../../components/procurement/SupplierStockImportModal'
 import { autoAssignSupplier, effectiveCost, sortSuppliersByCost } from '../../components/procurement/purchaseValue'
 import { money, num } from '../../components/stock/format'
@@ -135,7 +133,14 @@ export default function PurchaseWorkspacePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // True while the keyboard "supplier zone" holds focus (rings the side panel).
   const [supplierZoneActive, setSupplierZoneActive] = useState(false)
-  const [checked, setChecked] = useState<Set<string>>(new Set())
+  // The grid checkbox is NOT a selection state — it means "included for the
+  // current supplier's export". It is ON automatically the instant a product
+  // finalizes and OFF while not finalized; Space Bar only lets the buyer pull
+  // a specific product OUT of (or back INTO) an otherwise-automatic export
+  // set, it never sets the qty/status itself. Modeled as a sparse override
+  // map on top of the derived default (below) rather than raw boolean state,
+  // so re-finalizing a row always snaps it back to ON with no stale override.
+  const [checkOverrides, setCheckOverrides] = useState<Record<string, boolean>>({})
 
   // Staged Final Qty edits (saved immediately on Enter/blur) + export lock.
   const [edits, setEdits] = useState<Record<string, string>>({})
@@ -206,20 +211,6 @@ export default function PurchaseWorkspacePage() {
   const fail = useCallback(
     (e: unknown) => say('danger', e instanceof Error ? e.message : 'Request failed'),
     [say],
-  )
-  // Adding a manual product returns 409 (not a bug — the backend correctly
-  // rejects a duplicate) when that product is already a working item in this
-  // refresh. Surface it as guidance instead of the raw backend detail text, and
-  // never auto-retry: the operator decides the next step (search the grid).
-  const failManualAdd = useCallback(
-    (e: unknown) => {
-      if (e instanceof ApiError && e.status === 409) {
-        say('danger', 'Already in this refresh — search for it in the product grid instead of adding it again.')
-      } else {
-        fail(e)
-      }
-    },
-    [fail, say],
   )
   // A connectivity failure (server unreachable / proxy 502-504) — as opposed to a
   // real 4xx business rejection. When offline we must NOT auto-reload to reconcile:
@@ -385,13 +376,22 @@ export default function PurchaseWorkspacePage() {
     () => supplierStock.find((r) => stockRowKey(r) === stockSelectedKey) ?? null,
     [supplierStock, stockSelectedKey],
   )
+  // Every workspace item keyed by ProductCode — lets Supplier Live Stock drive
+  // the SAME Supplier Recommendation + Product Detail panels Review All uses
+  // for ANY row (not just the selected one, e.g. for keyboard Right/Enter),
+  // with no extra fetch (items are already loaded for this refresh).
+  const stockItemByCode = useMemo(() => {
+    const m = new Map<string, WorkspaceItem>()
+    items.forEach((i) => { if (i.product_code) m.set(i.product_code, i) })
+    return m
+  }, [items])
   // Match the selected supplier-stock row to its workspace item by ProductCode
   // (both share the store's ProductCode) — feeds the reused DetailColumn and the
   // inventory/decision fields with no extra fetch.
   const matchedStockItem = useMemo(() => {
     const code = selectedStockRow?.product_code
-    return code ? items.find((i) => i.product_code === code) ?? null : null
-  }, [selectedStockRow, items])
+    return code ? stockItemByCode.get(code) ?? null : null
+  }, [selectedStockRow, stockItemByCode])
   const stockSummary = useMemo(() => {
     const products = supplierStock.length
     const available = supplierStock.filter((r) => (r.available_stock ?? 0) > 0).length
@@ -410,6 +410,22 @@ export default function PurchaseWorkspacePage() {
     })
     return m
   }, [items])
+  // Order-item ids checkable in Supplier Live Stock, keyed by ProductCode — the
+  // checkbox means "included for export" (§ CHECKBOX RULE), not a selection
+  // state, so an already-assigned/finalized row stays checkable (it's the
+  // normal, default-ON case); only export-locked or skipped rows are excluded
+  // (nothing left to export / never finalized). Feeds the SAME derived
+  // `checked` set + `bulkAssign` path Supplier Purchasing already uses.
+  const stockCheckableByCode = useMemo(() => {
+    const m = new Map<string, string>()
+    items.forEach((i) => {
+      if (!i.product_code) return
+      if (lockedIds.has(i.order_item_id)) return
+      if (i.item_status === 'skipped') return
+      m.set(i.product_code, i.order_item_id)
+    })
+    return m
+  }, [items, lockedIds])
   const canWork = Boolean(tenantId && refreshId)
 
   const itemById = useMemo(() => {
@@ -433,6 +449,23 @@ export default function PurchaseWorkspacePage() {
     }
     return m
   }, [queueLines])
+
+  // Every order-item id genuinely tied to the picked supplier — LIVE or
+  // EXPORTED — used only by the Supplier Purchasing grid filter below.
+  // `assignedByItem` deliberately drops exported lines (they're locked/no
+  // longer reassignable — correct for the one-supplier guard), but that same
+  // exclusion was leaking into the grid filter: once a supplier's assigned
+  // products were exported, they vanished from its Supplier Purchasing view
+  // entirely (unless PurchaseTrans already had a synced-back receipt for the
+  // exact SKU) — the supplier's own badge/summary counts (sourced from the
+  // same queueLines) kept showing the real total, so the grid silently fell
+  // out of sync with the number right next to it ("117 assigned" / "No
+  // products"). This set restores the missing bridge.
+  const supplierAllItemIds = useMemo(() => {
+    if (mode !== 'supplier' || !supplier) return null
+    const g = queueLines.find((x) => x.supplier_code === supplier.supplier_code)
+    return new Set(g?.lines.map((l) => l.order_item_id) ?? [])
+  }, [mode, supplier, queueLines])
 
   // Staged Final Qty edits that differ from the server value (and are editable).
   const dirtyIds = useMemo(() => {
@@ -488,7 +521,7 @@ export default function PurchaseWorkspacePage() {
     (code: string) => {
       const g = queueLines.find((x) => x.supplier_code === code)
       const assignedProducts = g?.product_count ?? 0
-      const purchaseValue = g?.est_value ?? 0
+      const purchaseValue = g?.live_value ?? 0
       const min = minOrders[code] ?? 0
       const status = assignedProducts === 0 ? 'New' : min > 0 && purchaseValue < min ? 'Below Min' : 'Ready'
       return { assignedProducts, purchaseValue, status, creditActive: null }
@@ -506,11 +539,16 @@ export default function PurchaseWorkspacePage() {
       const raw = edits[item.order_item_id]
       const v = raw != null ? Number(raw) : item.final_qty ?? 0
       if (Number.isNaN(v) || v < 0) return
-      // Exactly one request per real change: with no pending edit and a value that
-      // already matches the server there is nothing to save. This is the main
-      // source of duplicate /final-qty calls — pressing Enter/Down to advance
-      // through already-finalised rows previously re-saved every row it passed.
-      if (raw == null && v === (item.final_qty ?? 0)) return
+      // Exactly one request per real change: with no pending edit and a value
+      // that already matches the server there is nothing to save — but ONLY
+      // once the row is already finalised. A still-"Not Reviewed" (draft) row
+      // must still hit the API even with an unchanged qty (e.g. the operator
+      // accepts the pre-filled suggested qty as-is via Enter/Down): otherwise
+      // item_status never flips to 'review' and the row stays stuck at Not
+      // Reviewed forever. This was the actual cause of Enter/Down appearing to
+      // "do nothing" — the finalize call itself was being skipped as a no-op.
+      const alreadyFinalized = ['review', 'assigned', 'partial'].includes(item.item_status)
+      if (raw == null && v === (item.final_qty ?? 0) && alreadyFinalized) return
       // Never let a second Enter (or an Enter immediately followed by the blur of
       // the same cell) fire a duplicate save while the first is still in flight.
       if (savingIds.current.has(item.order_item_id)) return
@@ -533,6 +571,15 @@ export default function PurchaseWorkspacePage() {
       )
       setEdits((d) => {
         const next = { ...d }
+        delete next[item.order_item_id]
+        return next
+      })
+      // A genuine finalize (or re-zero) transition always reverts the checkbox
+      // to the default rule — ON the instant it finalizes, no stale Space Bar
+      // override survives a real save (§ CHECKBOX RULE — "no user click required").
+      setCheckOverrides((prev) => {
+        if (!(item.order_item_id in prev)) return prev
+        const next = { ...prev }
         delete next[item.order_item_id]
         return next
       })
@@ -564,24 +611,39 @@ export default function PurchaseWorkspacePage() {
   }, [view, mode])
 
   // Supplier Purchasing mode: which products this supplier has purchase history
-  // for. Drives the grid filter (item 7 — "based on supplier purchase history").
+  // for. Drives the grid filter — VPL ∩ supplier purchase history. `null` means
+  // "not yet loaded" (no supplier picked, or the fetch is still in flight) and
+  // must NEVER be treated as "show everything" by the filter below — that was
+  // the bug (grid showed the full unfiltered VPL while this was null/loading).
+  const [supplierProductsLoading, setSupplierProductsLoading] = useState(false)
   useEffect(() => {
     if (mode !== 'supplier' || !supplier || !canWork) {
       setSupplierProductIds(null)
+      setSupplierProductsLoading(false)
       return
     }
     let live = true
+    setSupplierProductIds(null) // clear the previous supplier's ids immediately
+    setSupplierProductsLoading(true)
+    // ids come back as order_item_id strings (existing endpoint, scoped to this
+    // refresh + supplier's purchase history — reused as-is, no API change).
+    // SQL Server's CAST(uniqueidentifier AS VARCHAR) renders UPPERCASE here,
+    // matching the workspace items' own order_item_id casing exactly (verified
+    // live) — do NOT lowercase these: that silently broke every `.has()` check
+    // below against `i.order_item_id` and was the actual cause of "Showing 0 of
+    // N" for suppliers with real purchase history (e.g. supplier 94 / 51 real
+    // matches all silently rejected by the case mismatch).
     procurementService
       .supplierProducts(tenantId, refreshId, supplier.supplier_code)
       .then((ids) => live && setSupplierProductIds(new Set(ids)))
       .catch(() => live && setSupplierProductIds(new Set()))
+      .finally(() => live && setSupplierProductsLoading(false))
     return () => { live = false }
   }, [mode, supplier, tenantId, refreshId, canWork])
 
   // Client-side view toggles the server can't express. In Supplier Purchasing
   // mode, additionally show only the selected supplier's purchased products.
   const visibleItems = useMemo(() => {
-    const narrowToSupplier = mode === 'supplier' && Boolean(supplier)
     const planningState = (i: WorkspaceItem) => {
       if (i.item_status === 'skipped') return 'skipped'
       if ((i.assigned_qty ?? 0) > 0) return 'assigned'
@@ -599,20 +661,31 @@ export default function PurchaseWorkspacePage() {
       if (i.is_manual && !showManual) return false
       // Category filter — client-side only, never touches assignments (§5).
       if (productType && String(i.product_type ?? '') !== productType) return false
-      // Supplier filter (§4): once a supplier is picked, the grid shows only
-      // that supplier's own assignment plus still-unassigned candidates —
-      // never a product owned by a different supplier.
-      if (narrowToSupplier) {
-        const a = assignedByItem.get(i.order_item_id)
-        if (a) {
-          if (a.supplierCode !== supplier!.supplier_code) return false
-        } else if (supplierProductIds !== null && !supplierProductIds.has(i.order_item_id)) {
-          return false
+      // Supplier Purchasing filter: VPL ∩ this supplier's purchase history,
+      // plus anything already assigned to this exact supplier. No supplier
+      // picked, or the purchase-history fetch hasn't resolved yet, must HIDE
+      // every product — never fall back to showing the unfiltered VPL (that
+      // was the bug: supplierProductIds === null used to mean "no filter").
+      if (mode === 'supplier') {
+        if (!supplier || supplierProductIds === null) return false
+        // Already tied to this exact supplier (live OR exported) — always
+        // show it, regardless of whether it still matches the VPL ∩
+        // purchase-history set (an exported line's receipt may not have
+        // synced back into PurchaseTrans yet).
+        if (supplierAllItemIds?.has(i.order_item_id)) {
+          // no-op — falls through to the final `return true`
+        } else {
+          const a = assignedByItem.get(i.order_item_id)
+          if (a) {
+            if (a.supplierCode !== supplier.supplier_code) return false
+          } else if (!supplierProductIds.has(i.order_item_id)) {
+            return false
+          }
         }
       }
       return true
     })
-  }, [items, showPending, showFinalized, showAssigned, showDeferred, showSkipped, showManual, productType, mode, supplier, supplierProductIds, assignedByItem])
+  }, [items, showPending, showFinalized, showAssigned, showDeferred, showSkipped, showManual, productType, mode, supplier, supplierProductIds, assignedByItem, supplierAllItemIds])
 
   // Supplier codes with live stock for the active supplier (mode 3). Marks that
   // supplier's icon "live"; degrades to the normal recommendation otherwise.
@@ -641,6 +714,22 @@ export default function PurchaseWorkspacePage() {
     [visibleItems, selectedId],
   )
   const REVIEWED = new Set(['review', 'assigned', 'partial', 'skipped'])
+  const FINALIZED_STATES = new Set(['review', 'assigned', 'partial'])
+  const isFinalizedRow = (it: WorkspaceItem) => FINALIZED_STATES.has(it.item_status) && (it.final_qty ?? 0) > 0
+
+  // Effective checkbox state (§ CHECKBOX RULE): ON by default the instant a
+  // product is finalized, OFF while it isn't — `checkOverrides` only records a
+  // deliberate Space Bar deviation from that default, and finalizing (or
+  // skipping) a row clears its override so it snaps back to the rule.
+  const checked = useMemo(() => {
+    const s = new Set<string>()
+    items.forEach((it) => {
+      const on = checkOverrides[it.order_item_id] ?? isFinalizedRow(it)
+      if (on) s.add(it.order_item_id)
+    })
+    return s
+  }, [items, checkOverrides])
+
   const pendingReview = useMemo(
     () => items.filter((i) => !REVIEWED.has(i.item_status) && (i.final_qty ?? 0) === 0).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -687,6 +776,13 @@ export default function PurchaseWorkspacePage() {
       delete next[item.order_item_id]
       return next
     })
+    // No longer finalized — revert the checkbox to its default (OFF) too.
+    setCheckOverrides((prev) => {
+      if (!(item.order_item_id in prev)) return prev
+      const next = { ...prev }
+      delete next[item.order_item_id]
+      return next
+    })
     try {
       await procurementService.skip(tenantId, item.order_item_id, reason, actingUser || null)
     } catch (e) {
@@ -700,28 +796,6 @@ export default function PurchaseWorkspacePage() {
     )
     try {
       await procurementService.restore(tenantId, item.order_item_id, actingUser || null)
-    } catch (e) {
-      fail(e)
-      if (!isOffline(e)) loadWorkspace()
-    }
-  }
-
-  // Assignment Deferred (Space Bar, §5): optimistic, keeps Final Qty (unlike
-  // Skip) and un-checks the row — excludes it from Auto Assign / Bulk /
-  // Assign Selected until restored (or manually assigned, which auto-clears
-  // it — see assign()/onCommitSupplier, which never block a deferred row).
-  const deferItem = async (item: WorkspaceItem) => {
-    setItems((list) =>
-      list.map((it) => (it.order_item_id === item.order_item_id ? { ...it, item_status: 'deferred' } : it)),
-    )
-    setChecked((prev) => {
-      if (!prev.has(item.order_item_id)) return prev
-      const next = new Set(prev)
-      next.delete(item.order_item_id)
-      return next
-    })
-    try {
-      await procurementService.defer(tenantId, item.order_item_id, actingUser || null)
     } catch (e) {
       fail(e)
       if (!isOffline(e)) loadWorkspace()
@@ -796,17 +870,14 @@ export default function PurchaseWorkspacePage() {
     [tenantId, actingUser, assignedByItem, say],
   )
 
+  // Space Bar / header checkbox: record a deliberate deviation from the
+  // finalized-by-default rule. Never touches Final Qty or Planning State.
   const toggle = (id: string) =>
-    setChecked((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+    setCheckOverrides((prev) => ({ ...prev, [id]: !checked.has(id) }))
   const toggleAll = (ids: string[], on: boolean) =>
-    setChecked((prev) => {
-      const next = new Set(prev)
-      ids.forEach((id) => (on ? next.add(id) : next.delete(id)))
+    setCheckOverrides((prev) => {
+      const next = { ...prev }
+      ids.forEach((id) => { next[id] = on })
       return next
     })
 
@@ -846,15 +917,27 @@ export default function PurchaseWorkspacePage() {
             : it,
         ),
       )
-      setChecked(new Set())
+      // No checkbox reset needed here: these rows were already finalized
+      // (a prerequisite for being assign-eligible) and therefore already
+      // default-checked — assigning a supplier doesn't change that.
       await loadQueue() // assignment changes + supplier totals (§23 — no full workspace reload)
     } catch (e) {
       fail(e)
     }
   }
 
-  // Assign Selected — the checked products.
-  const bulkAssign = (supplierCode: string) => assignIds(supplierCode, [...checked])
+  // Assign Selected — the checked products, scoped to what's actually shown
+  // for the CURRENT supplier's view (Supplier Purchasing's already-filtered
+  // grid, or Supplier Live Stock's matched rows). `checked` now defaults to
+  // every finalized product refresh-wide (§ CHECKBOX RULE), so without this
+  // scope a click here would try to bulk-assign finalized products belonging
+  // to other suppliers' context too, not just the ones on screen.
+  const bulkAssign = (supplierCode: string) => {
+    const scopedIds = mode === 'supplier'
+      ? new Set(visibleItems.map((i) => i.order_item_id))
+      : new Set(stockCheckableByCode.values())
+    assignIds(supplierCode, [...checked].filter((id) => scopedIds.has(id)))
+  }
 
   // Assign Remaining — every currently UNASSIGNED, finalized product that the
   // selected supplier can supply (a candidate in its recommendations). Products
@@ -918,7 +1001,7 @@ export default function PurchaseWorkspacePage() {
           map.get(a.supplier_code) ??
           {
             supplier_code: a.supplier_code, supplier_name: null,
-            product_count: 0, total_qty: 0, est_value: 0, offer_count: 0,
+            product_count: 0, total_qty: 0, est_value: 0, live_value: 0, offer_count: 0,
             exported_count: 0, status: 'ready', exported_at: null,
             exported_by: null, export_batch_number: null,
             assignment_ids: [], lines: [],
@@ -939,6 +1022,12 @@ export default function PurchaseWorkspacePage() {
         g.product_count += 1
         g.total_qty += qty
         g.est_value += qty * ptr
+        // Purchase Value shown while a supplier is being actively worked
+        // (Assignment Summary bar, supplier search meta) must always reflect
+        // what's CURRENTLY pending — never include lines already exported in
+        // a prior batch, or the figure keeps growing stale as export history
+        // accumulates instead of resetting to the live working set.
+        if (!exported) g.live_value += qty * ptr
         if (it?.offer) g.offer_count += 1
         if (exported) {
           locked.add(a.order_item_id)
@@ -1134,7 +1223,12 @@ export default function PurchaseWorkspacePage() {
     const idx = list.findIndex((g) => g.supplier_code === group.supplier_code)
     const ordered = idx >= 0 ? [...list.slice(idx + 1), ...list.slice(0, idx)] : list
     const next = ordered.find((g) => g.supplier_code !== group.supplier_code) ?? null
-    const ok = await exportGroup(group, group.assignment_ids, false)
+    // Export only the lines still checked "Included for export" (§ CHECKBOX
+    // RULE) — a Space Bar uncheck holds a specific product back from this
+    // export run without touching its assignment or Final Qty.
+    const exportIds = group.lines.filter((l) => !l.exported && checked.has(l.order_item_id)).map((l) => l.assignment_id)
+    if (exportIds.length === 0) { say('danger', 'Nothing checked for export — press Space to include at least one product.'); return }
+    const ok = await exportGroup(group, exportIds, false)
     if (!ok) return
     downloadPurchaseOrderCsv(group)
     if (next) {
@@ -1169,23 +1263,50 @@ export default function PurchaseWorkspacePage() {
   // Status can't change — and the backend's one-supplier rule (assign_bulk)
   // is a second, authoritative guard against the narrow race where a manual
   // assignment lands while this bulk call is already in flight.
+  // "Pharma Only" scopes Auto Assign to Pharma-classified products
+  // (product_type === 1) — a buyer-facing opt-in, off by default (every
+  // product type is eligible unless explicitly narrowed).
+  const [pharmaOnly, setPharmaOnly] = useState(false)
+
   const autoAssign = async () => {
     const groups = new Map<string, string[]>()
+    // supplier_code -> its configured minimum product count for this run
+    // (sync.Suppliers.min_products, default 2 — carried on every recommendation
+    // row for that supplier, no extra query).
+    const minProductsByCode = new Map<string, number>()
     let skippedLocked = 0      // skipped / locked rows — not eligible
     let skippedDeferred = 0    // Assignment Deferred (§5/§9) — not eligible for Auto/Bulk
-    let skippedUnreviewed = 0  // Final Qty not set yet — not eligible
+    let skippedUnreviewed = 0  // not actually Reviewed yet — not eligible
     let skippedAssigned = 0    // already owns a supplier (manual or prior auto)
-    let skippedNoHistory = 0   // finalized + unassigned, but no supplier candidate
+    let skippedNoHistory = 0   // reviewed + unassigned, but no supplier candidate
+    let skippedNonPharma = 0   // Pharma Only is on and this product isn't Pharma
     items.forEach((it) => {
       if (it.item_status === 'skipped' || lockedIds.has(it.order_item_id)) { skippedLocked += 1; return }
       if (it.item_status === 'deferred') { skippedDeferred += 1; return }
-      if ((it.final_qty ?? 0) <= 0) { skippedUnreviewed += 1; return }
+      // A row can carry a nonzero Final Qty (pre-seeded from Suggested Qty at
+      // refresh generation) while item_status is still NOT in the Reviewed set
+      // — that row reads "Not Reviewed" in the grid and must stay out of Auto
+      // Assign even though its quantity looks finalized. Checking status (not
+      // just qty) is the actual fix for Auto Assign picking up unreviewed rows.
+      if (!REVIEWED.has(it.item_status) || (it.final_qty ?? 0) <= 0) { skippedUnreviewed += 1; return }
       if ((it.remaining_qty ?? 0) <= 0) { skippedAssigned += 1; return }
-      const top = autoAssignSupplier(recommendations[it.order_item_id])
+      if (pharmaOnly && it.product_type !== 1) { skippedNonPharma += 1; return }
+      const recs = recommendations[it.order_item_id]
+      const top = autoAssignSupplier(recs)
       if (!top) { skippedNoHistory += 1; return }
+      const supRow = recs?.find((r) => r.supplier_code === top)
+      if (supRow?.min_products != null) minProductsByCode.set(top, supRow.min_products)
       if (!groups.has(top)) groups.set(top, [])
       groups.get(top)!.push(it.order_item_id)
     })
+    // A supplier that would only receive a lonely handful of products (below
+    // its configured minimum, default 2) is dropped entirely — those products
+    // stay unassigned for manual review rather than trickling a single line.
+    let skippedBelowMin = 0
+    for (const [code, ids] of [...groups]) {
+      const min = minProductsByCode.get(code) ?? 2
+      if (ids.length < min) { groups.delete(code); skippedBelowMin += ids.length }
+    }
     if (groups.size === 0) return say('danger', 'Nothing to auto-assign — finalize quantities for unassigned products first')
     setAutoBusy(true)
     try {
@@ -1206,6 +1327,8 @@ export default function PurchaseWorkspacePage() {
       if (alreadyOwned > 0) parts.push(`Skipped ${alreadyOwned} (already assigned)`)
       if (skippedDeferred > 0) parts.push(`Skipped ${skippedDeferred} (deferred)`)
       if (skippedNoHistory > 0) parts.push(`Skipped ${skippedNoHistory} (no purchase history)`)
+      if (skippedNonPharma > 0) parts.push(`Skipped ${skippedNonPharma} (non-pharma)`)
+      if (skippedBelowMin > 0) parts.push(`Skipped ${skippedBelowMin} (below supplier minimum)`)
       if (failed > 0) parts.push(`Failed ${failed}`)
       say(failed > 0 ? 'danger' : 'success', `Auto Assign — ${parts.join(' · ')}`)
       loadWorkspace()
@@ -1256,16 +1379,17 @@ export default function PurchaseWorkspacePage() {
   /* ---- Manual product ---------------------------------------------------- */
 
   const addManual = async (product: ManualProduct, qty: number) => {
+    if (manualBusy) return // guard against a duplicate submit racing this one
     setManualBusy(true)
     try {
-      await procurementService.addManualItem(
+      const res = await procurementService.addManualItem(
         tenantId, refreshId, product.product_code, product.product_name ?? product.product_code, qty, actingUser || null,
       )
-      say('success', `Added ${product.product_code}`)
+      say('success', res.already_exists ? `${product.product_code} is already in this refresh` : `Added ${product.product_code}`)
       setManualOpen(false)
       loadWorkspace()
     } catch (e) {
-      failManualAdd(e)
+      fail(e)
     } finally {
       setManualBusy(false)
     }
@@ -1304,15 +1428,21 @@ export default function PurchaseWorkspacePage() {
 
   const orderSupplierStock = async (row: SupplierStockRow, qty: number) => {
     if (!row.product_code) return say('danger', 'Row has no mapped product code')
+    if (manualBusy) return // guard against a duplicate submit racing this one
     setManualBusy(true)
     try {
-      await procurementService.addManualItem(
+      const res = await procurementService.addManualItem(
         tenantId, refreshId, row.product_code, row.supplier_product_name ?? row.product_code, qty, actingUser || null,
       )
-      say('success', `Added ${qty} × ${row.product_code} — assign ${supplier?.supplier_code ?? 'a supplier'} in Review mode`)
+      say(
+        'success',
+        res.already_exists
+          ? `${row.product_code} is already in this refresh — assign ${supplier?.supplier_code ?? 'a supplier'} in Review mode`
+          : `Added ${qty} × ${row.product_code} — assign ${supplier?.supplier_code ?? 'a supplier'} in Review mode`,
+      )
       loadWorkspace()
     } catch (e) {
-      failManualAdd(e)
+      fail(e)
     } finally {
       setManualBusy(false)
     }
@@ -1598,17 +1728,25 @@ export default function PurchaseWorkspacePage() {
             </div>
           )}
 
-          {/* Assignment Summary — appears whenever Supplier Purchasing mode has a
-              supplier picked, in any stage (mode is now independent of stage —
-              §1). Assign Selected stays disabled until a supplier and at least
-              one product are selected. */}
-          {mode === 'supplier' && supplier && (() => {
+          {/* Assignment Summary — appears whenever Supplier Purchasing OR
+              Supplier Live Stock mode has a supplier picked, in any stage
+              (mode is now independent of stage — §1). Assign Selected stays
+              disabled until a supplier and at least one product are selected;
+              reused as-is for Supplier Live Stock's checkbox bulk-assign. */}
+          {(mode === 'supplier' || mode === 'supplier-stock') && supplier && (() => {
             const g = selectedGroup
             const alreadyAssigned = g?.product_count ?? 0
-            const purchaseValue = g?.est_value ?? 0
+            const purchaseValue = g?.live_value ?? 0
             const min = minOrders[supplier.supplier_code] ?? 0
             const ready = min > 0 ? purchaseValue >= min : alreadyAssigned > 0
             const readyLabel = min > 0 ? (ready ? 'Ready' : 'Below Min') : alreadyAssigned > 0 ? 'No minimum' : 'New'
+            // Included-for-export count scoped to what Assign Selected will
+            // actually act on for THIS supplier's view — `checked` itself
+            // defaults to every finalized product refresh-wide.
+            const scopedIds = mode === 'supplier'
+              ? new Set(visibleItems.map((i) => i.order_item_id))
+              : new Set(stockCheckableByCode.values())
+            const scopedCheckedCount = [...checked].filter((id) => scopedIds.has(id)).length
             return (
               <div className="pm-selbar">
                 <span className="pm-selbar__item">
@@ -1616,8 +1754,8 @@ export default function PurchaseWorkspacePage() {
                   <b className="pm-selbar__v">{supplier.supplier_name ?? supplier.supplier_code}</b>
                 </span>
                 <span className="pm-selbar__item">
-                  <span className="pm-selbar__k">Products Selected</span>
-                  <b className="pm-selbar__v">{num(checked.size)}</b>
+                  <span className="pm-selbar__k">Included for Export</span>
+                  <b className="pm-selbar__v">{num(scopedCheckedCount)}</b>
                 </span>
                 <span className="pm-selbar__item">
                   <span className="pm-selbar__k">Already Assigned</span>
@@ -1636,7 +1774,7 @@ export default function PurchaseWorkspacePage() {
                   <b className={`pm-optstat ${ready ? 'pm-optstat--ok' : 'pm-optstat--short'}`}>{readyLabel}</b>
                 </span>
                 <span className="pm-selbar__spacer" />
-                <button className="pm-btn pm-btn--ghost" disabled={checked.size === 0} onClick={() => setChecked(new Set())}>
+                <button className="pm-btn pm-btn--ghost" disabled={scopedCheckedCount === 0} onClick={() => toggleAll([...scopedIds].filter((id) => checked.has(id)), false)} title="Exclude every currently-included product from the next export">
                   Clear Selection
                 </button>
                 <button className="pm-btn pm-btn--ghost" onClick={assignRemaining}>
@@ -1644,10 +1782,25 @@ export default function PurchaseWorkspacePage() {
                 </button>
                 <button
                   className="pm-btn pm-btn--primary"
-                  disabled={checked.size === 0}
+                  disabled={scopedCheckedCount === 0}
                   onClick={() => bulkAssign(supplier.supplier_code)}
                 >
-                  <i className="bi bi-check2-square" /> Assign Selected ({num(checked.size)})
+                  <i className="bi bi-check2-square" /> Assign Selected ({num(scopedCheckedCount)})
+                </button>
+                {/* Export + Next Supplier — moved here from the old supplier
+                    statistics panel (now retired in favour of the shared
+                    Product Detail panel — the buyer reviews PRODUCTS here,
+                    these two stay as compact workflow shortcuts only). */}
+                <button
+                  className="pm-btn pm-btn--success"
+                  disabled={busySupplier === supplier.supplier_code || !g || g.assignment_ids.length === 0}
+                  onClick={() => g && exportAndAdvance(g)}
+                  title="Export this supplier's assigned products as a Purchase Order"
+                >
+                  <i className="bi bi-box-arrow-up" /> {busySupplier === supplier.supplier_code ? 'Exporting…' : 'Export'}
+                </button>
+                <button className="pm-btn pm-btn--ghost" onClick={advanceToNextSupplier} title="Move to the next supplier still needing review">
+                  Next Supplier <i className="bi bi-arrow-right" />
                 </button>
               </div>
             )
@@ -1685,10 +1838,13 @@ export default function PurchaseWorkspacePage() {
                 <EmptyState icon="bi-truck" title="Pick a supplier" description="Choose a supplier to see their live stock intersected with the current VPL." />
               </div>
             ) : (
-              <div className="pm-split pm-split--stock">
-                {/* Left column: dashboard summary strip (its own space) above a
-                    single scroll area that owns the grid — the sticky header now
-                    has nothing above it inside the scroller, so no overlap. */}
+              // SAME 3-column split as Review All / Supplier Purchasing (grid |
+              // Supplier Recommendation | Product Detail) — the old 2-column
+              // "supplier stock stats" layout (SupplierStockDetail) is retired;
+              // the per-row supply/discount/scheme facts it duplicated already
+              // live as grid columns, and the buyer reviews the PRODUCT here,
+              // not a supplier stat card.
+              <div className="pm-split pm-split--3">
                 <div className="pm-split__grid pm-stockgrid">
                   {supplierStock.length > 0 && (
                     <div className="pm-sxcards">
@@ -1712,47 +1868,63 @@ export default function PurchaseWorkspacePage() {
                       onSelect={(r) => setStockSelectedKey(stockRowKey(r))}
                       draft={stockDraft}
                       onDraftChange={(key, value) => setStockDraft((d) => ({ ...d, [key]: value }))}
+                      checkableByCode={stockCheckableByCode}
+                      checked={checked}
+                      onToggle={toggle}
+                      onToggleAll={toggleAll}
+                      itemByCode={stockItemByCode}
+                      recommendations={recommendations}
+                      selectedSupplier={selectedSupplier}
+                      onSelectSupplier={onSelectSupplier}
+                      onCommitSupplier={onCommitSupplier}
+                      onSupplierFocusChange={setSupplierZoneActive}
                     />
                   </div>
                 </div>
-                <div className="pm-split__detail pm-stockdetail">
-                  {selectedStockRow ? (
-                    <>
-                      <SupplierStockDetail
-                        row={selectedStockRow}
-                        item={matchedStockItem}
-                        storeStock={selectedStockRow.product_code != null ? storeStockByCode.get(selectedStockRow.product_code) ?? null : null}
-                        orderQty={Number(stockDraft[stockRowKey(selectedStockRow)]) || null}
-                        supplierName={supplier.supplier_name ?? null}
-                        onWhy={matchedStockItem ? () => openInfo(matchedStockItem, 'decision') : undefined}
-                        supplierCode={supplier.supplier_code}
-                        assignedSupplier={matchedStockItem ? assignedByItem.get(matchedStockItem.order_item_id) ?? null : null}
-                        onAssign={matchedStockItem ? () => assign(matchedStockItem, supplier.supplier_code) : undefined}
-                        onRemoveAssignment={
-                          matchedStockItem
-                            ? () => {
-                                const a = assignedByItem.get(matchedStockItem.order_item_id)
-                                if (a) reviewRemove(a.assignmentId, matchedStockItem.order_item_id)
-                              }
-                            : undefined
-                        }
-                        onDefer={matchedStockItem ? () => deferItem(matchedStockItem) : undefined}
-                        onRestore={matchedStockItem ? () => restore(matchedStockItem) : undefined}
-                        busy={manualBusy}
-                      />
-                      <div className="pm-stockdetail__hist">
-                        <DetailColumn
-                          tenantId={tenantId}
-                          item={matchedStockItem}
-                          onOpenInfo={openInfo}
-                          onOpenBill={setBill}
-                          onViewAll={(kind) => matchedStockItem && setViewAll({ kind, item: matchedStockItem })}
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <EmptyState icon="bi-hand-index" title="Select a product" description="Choose a row to see inventory, commercial terms, sales trend and history." />
-                  )}
+                <div className="pm-split__suppliers">
+                  <SupplierRecPanel
+                    item={matchedStockItem}
+                    suppliers={matchedStockItem ? recommendations[matchedStockItem.order_item_id] ?? [] : []}
+                    selectedCode={matchedStockItem ? selectedSupplier[matchedStockItem.order_item_id] ?? null : null}
+                    assignedCode={
+                      matchedStockItem && (matchedStockItem.assigned_qty ?? 0) > 0
+                        ? selectedSupplier[matchedStockItem.order_item_id] ??
+                          assignedByItem.get(matchedStockItem.order_item_id)?.supplierCode ??
+                          matchedStockItem.supplier_code ??
+                          null
+                        : null
+                    }
+                    assignedName={matchedStockItem ? assignedByItem.get(matchedStockItem.order_item_id)?.supplierName ?? null : null}
+                    liveCodes={liveCodes}
+                    active={supplierZoneActive}
+                    onSelect={(code) => matchedStockItem && onSelectSupplier(matchedStockItem.order_item_id, code)}
+                    onCommit={(it, code) => onCommitSupplier(it, code)}
+                    onOpenInfo={openInfo}
+                  />
+                </div>
+                <div className="pm-split__detail">
+                  <DetailColumn
+                    tenantId={tenantId}
+                    item={matchedStockItem}
+                    onOpenInfo={openInfo}
+                    onOpenBill={setBill}
+                    onViewAll={(kind) => matchedStockItem && setViewAll({ kind, item: matchedStockItem })}
+                    assignedSupplier={matchedStockItem ? assignedByItem.get(matchedStockItem.order_item_id) ?? null : null}
+                    onChangeSupplier={reviewChangeSupplier}
+                    offerInfo={
+                      selectedStockRow && formatOffer(selectedStockRow)
+                        ? { supplierName: supplier?.supplier_name ?? supplier?.supplier_code ?? null, label: formatOffer(selectedStockRow)!, discount: selectedStockRow.discount }
+                        : null
+                    }
+                    onRemoveAssignment={
+                      matchedStockItem
+                        ? () => {
+                            const a = assignedByItem.get(matchedStockItem.order_item_id)
+                            if (a) reviewRemove(a.assignmentId, matchedStockItem.order_item_id)
+                          }
+                        : undefined
+                    }
+                  />
                 </div>
               </div>
             )
@@ -1761,8 +1933,20 @@ export default function PurchaseWorkspacePage() {
           ) : (
             <div className="pm-split pm-split--3">
               <div className="pm-split__grid">
-                {visibleItems.length === 0 && !loading ? (
-                  <EmptyState icon="bi-inbox" title="No products" description="No working items match the current filters." />
+                {mode === 'supplier' && !supplier ? (
+                  <EmptyState icon="bi-truck" title="Select a supplier to review products." />
+                ) : mode === 'supplier' && supplierProductsLoading ? (
+                  <EmptyState icon="bi-hourglass-split" title="Loading purchase history…" />
+                ) : visibleItems.length === 0 && !loading ? (
+                  <EmptyState
+                    icon="bi-inbox"
+                    title="No products"
+                    description={
+                      mode === 'supplier'
+                        ? `${supplier?.supplier_name ?? supplier?.supplier_code} has no purchase history in this refresh.`
+                        : 'No working items match the current filters.'
+                    }
+                  />
                 ) : (
                   <ProductGrid
                     items={visibleItems}
@@ -1785,7 +1969,6 @@ export default function PurchaseWorkspacePage() {
                     onToggleAll={toggleAll}
                     onSkip={skip}
                     onRestore={restore}
-                    onDefer={deferItem}
                   />
                 )}
               </div>
@@ -1811,42 +1994,38 @@ export default function PurchaseWorkspacePage() {
                 />
               </div>
               <div className="pm-split__detail">
-                {mode === 'supplier' && supplier ? (
-                  <SupplierReviewPanel
-                    tenantId={tenantId}
-                    storeId={storeId}
-                    supplierCode={supplier.supplier_code}
-                    supplierName={supplier.supplier_name ?? supplier.supplier_code}
-                    group={selectedGroup}
-                    loading={queueLoading || queuePending}
-                    exporting={busySupplier === supplier.supplier_code}
-                    minOrder={minOrders[supplier.supplier_code] ?? 0}
-                    checkedCount={checked.size}
-                    onChangeSupplier={reviewChangeSupplier}
-                    onRemove={reviewRemove}
-                    onExport={exportAndAdvance}
-                    onReload={loadQueue}
-                    onAssignSelected={() => bulkAssign(supplier.supplier_code)}
-                    onNextSupplier={advanceToNextSupplier}
-                  />
-                ) : (
-                  <DetailColumn
-                    tenantId={tenantId}
-                    item={selectedItem}
-                    onOpenInfo={openInfo}
-                    onOpenBill={setBill}
-                    onViewAll={(kind) => selectedItem && setViewAll({ kind, item: selectedItem })}
-                    assignedSupplier={selectedItem ? assignedByItem.get(selectedItem.order_item_id) ?? null : null}
-                    onChangeSupplier={reviewChangeSupplier}
-                  />
-                )}
+                {/* One shared Product Detail panel for every mode (§ Supplier
+                    Purchasing / Supplier Live Stock parity) — the buyer is
+                    reviewing PRODUCTS here, not supplier statistics. Change /
+                    Remove assignment stay reachable per-product via the header. */}
+                <DetailColumn
+                  tenantId={tenantId}
+                  item={selectedItem}
+                  onOpenInfo={openInfo}
+                  onOpenBill={setBill}
+                  onViewAll={(kind) => selectedItem && setViewAll({ kind, item: selectedItem })}
+                  assignedSupplier={selectedItem ? assignedByItem.get(selectedItem.order_item_id) ?? null : null}
+                  onChangeSupplier={reviewChangeSupplier}
+                  onRemoveAssignment={
+                    selectedItem
+                      ? () => {
+                          const a = assignedByItem.get(selectedItem.order_item_id)
+                          if (a) reviewRemove(a.assignmentId, selectedItem.order_item_id)
+                        }
+                      : undefined
+                  }
+                />
               </div>
             </div>
           )}
 
           {(stage === 'review' || stage === 'assign') && mode !== 'supplier-stock' && (
             <div className="pm-totals">
-              <span className="pm-stat"><span className="pm-stat__k">Total Products</span><b className="pm-stat__v">{num(total || items.length)}</b></span>
+              {mode === 'supplier' ? (
+                <span className="pm-stat"><span className="pm-stat__k">Products</span><b className="pm-stat__v">Showing {num(visibleItems.length)} of {num(total || items.length)}</b></span>
+              ) : (
+                <span className="pm-stat"><span className="pm-stat__k">Total Products</span><b className="pm-stat__v">{num(total || items.length)}</b></span>
+              )}
               <span className="pm-stat"><span className="pm-stat__k">Current Row</span><b className="pm-stat__v">{currentRowNo > 0 ? `${currentRowNo} / ${num(visibleItems.length)}` : '—'}</b></span>
               <span className="pm-stat"><span className="pm-stat__k">Pending Review</span><b className={`pm-stat__v${pendingReview > 0 ? ' pm-stat__v--warn' : ''}`}>{num(pendingReview)}</b></span>
               <span className="pm-stat"><span className="pm-stat__k">Assigned</span><b className="pm-stat__v">{num(assignedCount)}</b></span>
@@ -1877,6 +2056,9 @@ export default function PurchaseWorkspacePage() {
                 <button className="pm-btn pm-btn--primary" onClick={autoAssign} disabled={autoBusy}>
                   <i className="bi bi-magic" /> {autoBusy ? 'Assigning…' : 'Auto Assign Suppliers'}
                 </button>
+                <label className="pm-chk" title="Only auto-assign Pharma-classified products">
+                  <input type="checkbox" checked={pharmaOnly} onChange={(e) => setPharmaOnly(e.target.checked)} /> Pharma Only
+                </label>
                 <span className="pm-stagebar__hint">{num(assignedCount)} assigned</span>
                 <span className="pm-stagebar__spacer" />
                 <button className="pm-btn pm-btn--ghost" onClick={() => goStage('optimize')}>

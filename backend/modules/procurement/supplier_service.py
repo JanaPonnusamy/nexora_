@@ -54,6 +54,8 @@ def get_queue_bulk(tenant_id, refresh_id, limit=5):
             "last_grn_no": r.get("last_grn_no"),
             "last_purchase_rate": r.get("last_purchase_rate"),
             "avg_lead_days": r.get("avg_lead_days"),
+            "auto_assign": bool(r.get("auto_assign", True)),
+            "min_products": r.get("min_products") or 2,
         })
     return {"items": list(by_item.values())}
 

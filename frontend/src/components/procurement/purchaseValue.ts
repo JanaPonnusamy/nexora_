@@ -66,7 +66,12 @@ export function autoAssignSupplier(
   recs: SupplierRow[] | undefined,
   signals?: AutoAssignSignals,
 ): string | null {
-  if (!recs || recs.length === 0) return null
+  // A supplier opted out of Auto Assign (sync.Suppliers.auto_assign = 0) is
+  // never a candidate here — manual assignment (Right-Arrow -> Enter) still
+  // reaches them, only the automatic path is gated.
+  const candidates = (recs ?? []).filter((r) => r.auto_assign !== false)
+  if (candidates.length === 0) return null
+  recs = candidates
 
   const maxFreq = Math.max(1, ...recs.map((r) => r.purchase_frequency ?? 0))
   const times = recs.map((r) => (r.last_grn_date ? Date.parse(r.last_grn_date) : NaN)).filter((t) => !Number.isNaN(t))

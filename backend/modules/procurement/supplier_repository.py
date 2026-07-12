@@ -82,7 +82,7 @@ def top_suppliers_bulk(tenant_id, refresh_id, limit):
                 JOIN sync.PurchaseTrans pt
                     ON pt.tenant_id = oi.tenant_id
                    AND pt.store_id = oi.store_id
-                   AND CAST(pt.ProductCode AS VARCHAR(100)) = CAST(oi.product_code AS VARCHAR(100))
+                   AND pt.ProductCode = TRY_CAST(oi.product_code AS INT)
                 WHERE oi.tenant_id = ? AND oi.refresh_id = ? AND oi.is_deleted = 0
                   AND pt.SupplierCode IS NOT NULL
                 GROUP BY oi.order_item_id, oi.product_code, oi.store_id, pt.SupplierCode
@@ -90,7 +90,9 @@ def top_suppliers_bulk(tenant_id, refresh_id, limit):
             SELECT r.order_item_id, r.product_code, r.supplier_code,
                    CAST(RTRIM(s.suppliername) AS VARCHAR(300)) AS supplier_name,
                    r.purchase_frequency, r.last_grn_date, r.last_grn_no,
-                   r.last_purchase_rate, r.avg_lead_days
+                   r.last_purchase_rate, r.avg_lead_days,
+                   ISNULL(s.auto_assign, 1)   AS auto_assign,
+                   ISNULL(s.min_products, 2)  AS min_products
             FROM ranked r
             LEFT JOIN sync.Suppliers s
                 ON s.tenant_id = ? AND s.store_id = r.store_id
@@ -152,15 +154,21 @@ def products_for_supplier(tenant_id, refresh_id, supplier_code):
     conn = get_connection()
     try:
         cursor = conn.cursor()
+        # Drive from PurchaseTrans by SupplierCode first (IX_PurchaseTrans_Supplier
+        # — tenant_id, store_id, SupplierCode, covering ProductCode), matched
+        # against the refresh's own (small, already-indexed) order items. Neither
+        # side casts pt.ProductCode/pt.SupplierCode — wrapping an indexed column
+        # in CAST(...) blocks an index seek regardless of what index exists,
+        # which is what made this a full 1M+ row scan (~25s measured) before.
         cursor.execute(
             """
             SELECT DISTINCT CAST(oi.order_item_id AS VARCHAR(100)) AS order_item_id
             FROM procurement.procurement_order_items oi
             JOIN sync.PurchaseTrans pt
                 ON pt.tenant_id = oi.tenant_id AND pt.store_id = oi.store_id
-               AND CAST(pt.ProductCode AS VARCHAR(100)) = CAST(oi.product_code AS VARCHAR(100))
+               AND pt.ProductCode = TRY_CAST(oi.product_code AS INT)
             WHERE oi.tenant_id = ? AND oi.refresh_id = ? AND oi.is_deleted = 0
-              AND CAST(pt.SupplierCode AS VARCHAR(100)) = ?
+              AND pt.SupplierCode = ?
             """,
             (tenant_id, refresh_id, str(supplier_code)),
         )

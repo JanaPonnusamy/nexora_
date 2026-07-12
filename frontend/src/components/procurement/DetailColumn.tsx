@@ -32,6 +32,16 @@ export type ViewAllKind = 'purchase' | 'sales'
  * sits at the bottom. Batch / Expiry / PTR / MRP detail belongs to GRN, not the
  * Purchase Manager, so it is intentionally absent here.
  */
+/** Real per-supplier offer facts (Supplier Live Stock only — sourced from
+ *  procurement.supplier_stock's scheme/free/discount, not the still-unpopulated
+ *  WorkspaceItem.offer field). Optional: absent in Review All / Supplier
+ *  Purchasing, which have no such per-supplier data source. */
+export interface OfferInfo {
+  supplierName: string | null
+  label: string
+  discount?: number | null
+}
+
 export function DetailColumn({
   tenantId,
   item,
@@ -40,6 +50,8 @@ export function DetailColumn({
   onViewAll,
   assignedSupplier,
   onChangeSupplier,
+  onRemoveAssignment,
+  offerInfo,
 }: {
   tenantId: string
   item: WorkspaceItem | null
@@ -52,6 +64,11 @@ export function DetailColumn({
    *  All mode offer Change Supplier without switching to Supplier Purchasing). */
   assignedSupplier?: AssignedSupplierInfo | null
   onChangeSupplier?: (assignmentId: string, newSupplier: SupplierRow) => void
+  /** Unassign the current supplier from this product (reverts to review/draft). */
+  onRemoveAssignment?: () => void
+  /** § OFFER SUPPORT — Supplier / Offer / Discount for the currently viewed
+   *  supplier-stock row, when available. */
+  offerInfo?: OfferInfo | null
 }) {
   const [viewMode, setViewMode] = useState<'summary' | 'history'>('summary')
   const [changingSupplier, setChangingSupplier] = useState(false)
@@ -114,6 +131,19 @@ export function DetailColumn({
             {item.unit_description && <span><b>Unit</b>{item.unit_description}</span>}
             {item.pack && <span><b>Pack</b>{item.pack}</span>}
           </div>
+          {/* § OFFER SUPPORT — Supplier / Offer / Discount, when the caller has
+              real per-supplier scheme data (Supplier Live Stock only). No
+              "Validity" line: supplier_stock carries no expiry/validity date,
+              so nothing is shown rather than fabricated. */}
+          {offerInfo && (
+            <div className="pm-dhead__meta pm-dhead__offer">
+              <span><b>Supplier</b>{offerInfo.supplierName ?? '—'}</span>
+              <span><b>Offer</b><span className="pm-offer">{offerInfo.label}</span></span>
+              {offerInfo.discount != null && offerInfo.discount > 0 && (
+                <span><b>Discount</b>{offerInfo.discount}%</span>
+              )}
+            </div>
+          )}
           {/* Inline Change Supplier (§4) — reassignment reachable from Review
               All mode too, not only Supplier Purchasing's own review panel. */}
           {assignedSupplier && onChangeSupplier && (
@@ -136,6 +166,9 @@ export function DetailColumn({
                 <i className="bi bi-truck" aria-hidden="true" />
                 Assigned to <b>{assignedSupplier.supplierName ?? assignedSupplier.supplierCode}</b>
                 <button className="pm-linkbtn pm-linkbtn--sm" onClick={() => setChangingSupplier(true)}>Change</button>
+                {onRemoveAssignment && (
+                  <button className="pm-linkbtn pm-linkbtn--sm pm-linkbtn--danger" onClick={onRemoveAssignment}>Remove</button>
+                )}
               </div>
             )
           )}

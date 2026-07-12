@@ -25,6 +25,9 @@ export interface SupplierQueueGroup {
   product_count: number
   total_qty: number
   est_value: number
+  /** est_value restricted to not-yet-exported lines — the CURRENT purchase
+   *  value still to be sent, as opposed to est_value's lifetime total. */
+  live_value: number
   offer_count: number
   exported_count: number
   status: 'ready' | 'partial' | 'exported'
