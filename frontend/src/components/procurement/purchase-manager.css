@@ -852,6 +852,34 @@
 .pm-input--sm { min-width: 92px; width: 92px; }
 .pm-badge--ok { background: #dcfce7; color: #166534; }
 
+/* ---- Cycle & Refresh Console -------------------------------------------- */
+.pm-console__opt { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; color: #475569; cursor: pointer; }
+.pm-console__opt input { accent-color: var(--bs-primary, #4f46e5); }
+.pm-console__legend { margin-top: 10px; font-size: 12px; color: #64748b; line-height: 1.5; }
+.pm-console__ck { width: 1%; text-align: center; white-space: nowrap; }
+.pm-console__ck input { accent-color: var(--bs-primary, #4f46e5); cursor: pointer; }
+.pm-console__nchdr { display: inline-flex; align-items: center; gap: 5px; }
+.pm-console__status { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+.pm-console__msg { font-size: 11.5px; color: #64748b; }
+.pm-console__note { font-size: 12px; color: #92400e; background: #fef3c7; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 12px; }
+.pm-console__note .bi { margin-right: 5px; }
+
+.pm-steps { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.pm-step {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; line-height: 1.6; border: 1px solid transparent; white-space: nowrap;
+}
+.pm-step .bi { font-size: 11px; }
+.pm-step--idle { background: #f1f5f9; color: #94a3b8; }
+.pm-step--running { background: #dbeafe; color: #1e40af; }
+.pm-step--done { background: #dcfce7; color: #166534; }
+.pm-step--failed { background: #fee2e2; color: #991b1b; }
+.pm-step--skipped { background: #f1f5f9; color: #64748b; }
+.pm-step--confirm { background: #fef3c7; color: #92400e; }
+
+.pm-spin { display: inline-block; animation: pm-spin 0.9s linear infinite; }
+@keyframes pm-spin { to { transform: rotate(360deg); } }
+
 /* ---- Supplier stock Excel import modal ---------------------------------- */
 .pm-import {
   width: min(920px, 94vw); max-height: 90vh; display: flex; flex-direction: column;
