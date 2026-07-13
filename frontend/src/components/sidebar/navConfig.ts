@@ -80,6 +80,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     children: [
       { label: 'Reports', to: '/reports', icon: 'bi-bar-chart', cap: 'REPORTS' },
       { label: 'Pass Gen', to: '/pass-gen', icon: 'bi-key', cap: 'PASS_GEN' },
+      { label: 'Legacy Order', to: '/legacy-order', icon: 'bi-database-gear', cap: 'LEGACY_ORDER' },
       { label: 'Settings', to: '/settings', icon: 'bi-gear', cap: 'SETTINGS' },
     ],
   },

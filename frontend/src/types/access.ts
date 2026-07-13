@@ -19,13 +19,14 @@ export type Capability =
   | 'PROCUREMENT_GRN'
   | 'DOCUMENT_EXTRACTION'
   | 'PASS_GEN'
+  | 'LEGACY_ORDER'
 
 export const ALL_CAPABILITIES: Capability[] = [
   'PLATFORM', 'INVENTORY', 'SYNC', 'ADMINISTRATION', 'REPORTS', 'SETTINGS',
   'PRODUCT_MAPPING',
   'PROCUREMENT_WORKSPACE', 'PROCUREMENT_ADMIN',
   'PROCUREMENT_EXPORT', 'PROCUREMENT_PENDING', 'PROCUREMENT_GRN',
-  'DOCUMENT_EXTRACTION', 'PASS_GEN',
+  'DOCUMENT_EXTRACTION', 'PASS_GEN', 'LEGACY_ORDER',
 ]
 
 const PROCUREMENT_CAPS: Capability[] = [
@@ -38,6 +39,9 @@ const PROCUREMENT_CAPS: Capability[] = [
 function capForCode(code: string | null | undefined): Capability | null {
   const c = (code ?? '').toUpperCase()
   if (!c) return null
+  // Checked before PROCUREMENT so a code like "LEGACY_PURCHASE_ORDER" still
+  // resolves to the legacy console rather than the new procurement workspace.
+  if (c.includes('LEGACY')) return 'LEGACY_ORDER'
   if (c.includes('PROCUREMENT') || c.includes('PURCHASE')) {
     // Lifecycle administration (Cycle / Refresh management) is a separate,
     // elevated grant from the Purchase Manager workspace.

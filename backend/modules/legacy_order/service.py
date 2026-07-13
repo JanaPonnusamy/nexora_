@@ -1,0 +1,209 @@
+"""Job orchestration for the legacy Order console.
+
+Sync and Order Process both take minutes, so they run on a worker thread and the
+UI polls a job record -- the web equivalent of the VB BackgroundWorker +
+ProgressBar + lblStatus.
+
+Jobs live in memory: a restart loses history, which is the same guarantee the
+desktop app gave. Nothing here is a source of truth; OrderNMC is.
+"""
+import datetime
+import logging
+import threading
+import uuid
+
+from modules.legacy_order import order_process, repository, sync_engine
+
+logger = logging.getLogger(__name__)
+
+_jobs = {}
+_lock = threading.Lock()
+
+DEFAULT_MIN_DAYS = 15
+DEFAULT_MAX_DAYS = 20
+
+
+def _new_job(kind, store_name, total_steps):
+    job_id = uuid.uuid4().hex
+    with _lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "kind": kind,
+            "store_name": store_name,
+            "status": "running",
+            "step": 0,
+            "total_steps": total_steps,
+            "message": "Starting...",
+            "log": [],
+            "result": None,
+            "error": None,
+            "started_at": datetime.datetime.now(),
+            "finished_at": None,
+        }
+    return job_id
+
+
+def _update(job_id, **fields):
+    with _lock:
+        job = _jobs.get(job_id)
+        if not job:
+            return
+        message = fields.get("message")
+        if message:
+            job["log"].append({
+                "at": datetime.datetime.now().isoformat(timespec="seconds"),
+                "message": message,
+            })
+        job.update(fields)
+
+
+def get_job(job_id):
+    with _lock:
+        job = _jobs.get(job_id)
+        return dict(job) if job else None
+
+
+def list_jobs(limit=20):
+    with _lock:
+        jobs = sorted(_jobs.values(), key=lambda j: j["started_at"], reverse=True)
+        return [dict(j) for j in jobs[:limit]]
+
+
+def _resolve_store(store_name):
+    store = repository.get_store(store_name)
+    if not store:
+        raise ValueError(f"Store '{store_name}' is not configured in OrderNMC.Stores.")
+    if not store["server_name"] or not store["database"]:
+        raise ValueError(
+            f"Store '{store_name}' has no source server/database configured."
+        )
+    return store
+
+
+# ----- Sync -------------------------------------------------------------------
+
+def start_sync(store_name, tables=None):
+    store = _resolve_store(store_name)
+
+    ok, error = repository.test_branch_connection(store)
+    if not ok:
+        raise ConnectionError(f"Failed to connect to {store['server_name']}: {error}")
+
+    plan = [(s, d) for s, d in sync_engine.TABLE_PLAN if not tables or s in tables]
+    if not plan:
+        raise ValueError("No known tables selected to sync.")
+
+    job_id = _new_job("sync", store_name, len(plan))
+    threading.Thread(
+        target=_run_sync, args=(job_id, store, plan), daemon=True
+    ).start()
+    return job_id
+
+
+def _run_sync(job_id, store, plan):
+    source_cs = order_process.database.branch_connection_string(
+        store["server_name"], store["database"], store["username"], store["password"]
+    )
+    dest_cs = order_process.database.central_connection_string()
+
+    tables, failed = [], []
+    for index, (src, dest) in enumerate(plan):
+        _update(job_id, step=index, message=f"Starting sync: {src}")
+        try:
+            rows, batch_errors = sync_engine.sync_table(
+                source_cs, dest_cs, src, dest, store["store_name"]
+            )
+            if batch_errors:
+                failed.append(src)
+                tables.append({"table": src, "destination": dest, "rows": rows,
+                               "status": "partial", "error": "; ".join(batch_errors)})
+                _update(job_id, step=index + 1,
+                        message=f"Partial: {src} -- {len(batch_errors)} batch(es) failed")
+            else:
+                tables.append({"table": src, "destination": dest, "rows": rows,
+                               "status": "ok", "error": None})
+                _update(job_id, step=index + 1,
+                        message=f"Completed: {src} ({rows} rows)")
+        except Exception as exc:
+            # VB logged and carried on to the next table, so one bad table did not
+            # abandon the rest. Same here -- but the job ends 'failed', because a
+            # partial sync that reports success is how stale orders get placed.
+            logger.exception("legacy sync failed for %s", src)
+            failed.append(src)
+            tables.append({"table": src, "destination": dest, "rows": 0,
+                           "status": "error", "error": str(exc)})
+            _update(job_id, step=index + 1, message=f"Error syncing {src}: {exc}")
+
+    status = "failed" if failed else "completed"
+    try:
+        repository.mark_sync_result(
+            store["store_name"], "SUCCESS" if not failed else "FAILED"
+        )
+    except Exception:
+        logger.exception("could not update Stores.LastSyncStatus")
+
+    _update(
+        job_id,
+        status=status,
+        result={"tables": tables},
+        error=(f"{len(failed)} table(s) failed: {', '.join(failed)}" if failed else None),
+        message=("Sync completed." if not failed
+                 else f"Sync finished with {len(failed)} failed table(s)."),
+        finished_at=datetime.datetime.now(),
+    )
+
+
+# ----- Order Process ----------------------------------------------------------
+
+def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
+    store = _resolve_store(store_name)
+
+    min_days = DEFAULT_MIN_DAYS if min_days is None else min_days
+    max_days = DEFAULT_MAX_DAYS if max_days is None else max_days
+    if min_days <= 0 or max_days <= 0:
+        raise ValueError("Min days and max days must be positive.")
+    if min_days > max_days:
+        raise ValueError("Min days cannot be greater than max days.")
+    if mode not in ("local", "remote"):
+        raise ValueError("Mode must be 'local' or 'remote'.")
+
+    if mode == "remote":
+        ok, error = repository.test_branch_connection(store)
+        if not ok:
+            raise ConnectionError(
+                f"Failed to connect to {store['server_name']}: {error}"
+            )
+
+    job_id = _new_job("order", store_name, 3)
+    threading.Thread(
+        target=_run_order, args=(job_id, store, min_days, max_days, mode), daemon=True
+    ).start()
+    return job_id
+
+
+def _run_order(job_id, store, min_days, max_days, mode):
+    step = {"n": 0}
+
+    def report(message):
+        step["n"] += 1
+        _update(job_id, step=min(step["n"], 3), message=message)
+
+    try:
+        result = order_process.run_order_process(store, min_days, max_days, mode, report)
+        _update(
+            job_id,
+            status="completed",
+            step=3,
+            result=result,
+            message=f"Order processing completed ({result['rows']} rows).",
+            finished_at=datetime.datetime.now(),
+        )
+    except Exception as exc:
+        logger.exception("legacy order process failed")
+        _update(
+            job_id,
+            status="failed",
+            error=str(exc),
+            message=f"Order processing failed: {exc}",
+            finished_at=datetime.datetime.now(),
+        )
