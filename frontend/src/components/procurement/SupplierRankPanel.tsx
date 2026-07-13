@@ -154,46 +154,41 @@ export function SupplierRankPanel({
         ) : visible.length === 0 ? (
           <div className="pm-sq__hint">No suppliers have purchase history for the currently eligible products.</div>
         ) : (
-          <table className="pm-opt__table pm-opt__settingstable">
-            <thead>
-              <tr>
-                <th className="sx-num">Rank</th>
-                <th>Supplier</th>
-                <th>Auto Assign</th>
-                <th className="sx-num">Min Products</th>
-                <th className="sx-num">Possible Products</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            <div className="pm-rank__head">
+              <span className="pm-rank__headcol pm-rank__headcol--rank">Rank</span>
+              <span className="pm-rank__headcol pm-rank__headcol--name">Supplier</span>
+              <span className="pm-rank__headcol">Auto Assign</span>
+              <span className="pm-rank__headcol">Min Products</span>
+              <span className="pm-rank__headcol">Possible</span>
+            </div>
+            <div className="pm-rank__list">
               {orderedVisible.map((s) => {
                 const code = s.supplier_code
                 const possible = rankResult.assignedItems[code]?.length ?? 0
+                const gap = possible < s.min_products
                 return (
-                  <tr key={code} className={s.auto_assign ? undefined : 'pm-rankpanel__row--off'}>
-                    <td className="sx-num">
-                      <input
-                        className="pm-qty pm-opt__mininp"
-                        value={rankEdits[code] ?? ''}
-                        inputMode="numeric"
-                        placeholder="—"
-                        disabled={savingCode === code}
-                        onChange={(e) => setRankEdits((d) => ({ ...d, [code]: e.target.value.replace(/[^\d]/g, '') }))}
-                        onKeyDown={(e) => e.key === 'Enter' && saveRank(code)}
-                        onBlur={() => { if (Number(rankEdits[code] || 0) !== (s.export_rank ?? 0)) saveRank(code) }}
-                        aria-label={`Export rank for ${nameOf(code)}`}
-                      />
-                    </td>
-                    <td>
+                  <div key={code} className={`pm-rankcard${s.auto_assign ? '' : ' pm-rankcard--off'}`}>
+                    <input
+                      className="pm-qty pm-opt__mininp pm-rankcard__rank"
+                      value={rankEdits[code] ?? ''}
+                      inputMode="numeric"
+                      placeholder="—"
+                      disabled={savingCode === code}
+                      onChange={(e) => setRankEdits((d) => ({ ...d, [code]: e.target.value.replace(/[^\d]/g, '') }))}
+                      onKeyDown={(e) => e.key === 'Enter' && saveRank(code)}
+                      onBlur={() => { if (Number(rankEdits[code] || 0) !== (s.export_rank ?? 0)) saveRank(code) }}
+                      aria-label={`Export rank for ${nameOf(code)}`}
+                    />
+                    <div className="pm-rankcard__name">
                       <div className="pm-prod__name">{nameOf(code)}</div>
                       <div className="pm-prod__meta">{code}</div>
-                    </td>
-                    <td>
-                      <label className="pm-chk">
-                        <input type="checkbox" checked={s.auto_assign} onChange={() => toggleAutoAssign(code, s.auto_assign)} />
-                        {s.auto_assign ? 'On' : 'Off'}
-                      </label>
-                    </td>
-                    <td className="sx-num">
+                    </div>
+                    <label className="pm-chk pm-rankcard__auto">
+                      <input type="checkbox" checked={s.auto_assign} onChange={() => toggleAutoAssign(code, s.auto_assign)} />
+                      {s.auto_assign ? 'On' : 'Off'}
+                    </label>
+                    <span className="pm-rankcard__stat">
                       <input
                         className="pm-qty pm-opt__mininp"
                         value={minEdits[code] ?? ''}
@@ -204,15 +199,15 @@ export function SupplierRankPanel({
                         onBlur={() => { if (Number(minEdits[code] || 0) !== s.min_products) saveMinProducts(code) }}
                         aria-label={`Minimum products for ${nameOf(code)}`}
                       />
-                    </td>
-                    <td className="sx-num">
-                      <b className={possible < s.min_products ? 'pm-opt__gap' : 'pm-opt__ok'}>{num(possible)}</b>
-                    </td>
-                  </tr>
+                    </span>
+                    <span className="pm-rankcard__stat">
+                      <b className={gap ? 'pm-opt__gap' : 'pm-opt__ok'}>{num(possible)}</b>
+                    </span>
+                  </div>
                 )
               })}
-            </tbody>
-          </table>
+            </div>
+          </>
         )
       )}
     </div>
