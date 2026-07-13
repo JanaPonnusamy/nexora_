@@ -91,41 +91,83 @@ def get_supplier_stock(tenant_id, refresh_id, supplier_code, store_id=None, sear
 
 
 def products_with_offers(tenant_id, refresh_id, store_id=None):
-    """Distinct store ProductCodes (mapped to this refresh's VPL) that ANY
-    supplier is currently offering a scheme/discount/free-qty for, per
-    procurement.supplier_stock — "Has Offer" filter source for Review All /
-    Supplier Purchasing (forward-looking: what can be bought on offer right
-    now, not historical purchase data). Read-only; degrades to [] if the
-    import target isn't provisioned."""
+    """Distinct product codes IN THIS REFRESH'S VPL that carry an offer —
+    the "Has Offer" filter source for Review All / Supplier Purchasing.
+
+    Two sources, unioned:
+      1. sync.PurchaseTrans — the product's most recent purchase from ANY
+         supplier came with free qty or a discount %. Same offer semantics
+         the Export Monitor shows in its Offer / Dis% columns
+         (assignment_repository.list_by_refresh), so what the buyer filters
+         on is exactly what the purchase history displays. This is the
+         source that always has data.
+      2. procurement.supplier_stock — a supplier's live-stock import is
+         currently advertising a scheme/free/discount. Fresher when it
+         exists, but it only exists for suppliers whose stock file has been
+         imported, so it can never be the only source (it was, and the
+         filter came back empty on every store without an import).
+    Read-only; each source degrades to nothing if its table isn't provisioned."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        if not _object_exists(cursor, "procurement.supplier_stock"):
-            return []
-        store_clause = "AND ss.store_id = ?" if store_id else ""
-        sql = f"""
-            SELECT DISTINCT CAST(vp.product_code AS VARCHAR(100)) AS product_code
-            FROM procurement.supplier_stock ss
-            INNER JOIN procurement.procurement_virtual_products vp
-                ON vp.tenant_id = ss.tenant_id
-               AND vp.refresh_id = ?
-               AND vp.is_active = 1
-               AND CAST(vp.product_code AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
-            WHERE ss.tenant_id = ?
-              {store_clause}
-              AND ss.is_active = 1
-              -- discount is VARCHAR and holds messy free-text in this dataset
-              -- (e.g. "16% MICRO CARSYON 1"), not a clean percentage — a
-              -- numeric compare on it crashes on the non-numeric rows, so any
-              -- present, non-empty value counts as an offer signal instead.
-              AND ( ss.scheme IS NOT NULL
-                    OR ISNULL(ss.free, 0) > 0
-                    OR (ss.discount IS NOT NULL AND ss.discount <> '') )
-        """
-        params = [refresh_id, tenant_id]
-        if store_id:
-            params.append(store_id)
-        cursor.execute(sql, tuple(params))
-        return [r[0] for r in cursor.fetchall()]
+        codes = set()
+
+        # 1. Offers evidenced by the product's own purchase history.
+        if store_id and _object_exists(cursor, "sync.PurchaseTrans"):
+            cursor.execute(
+                """
+                WITH vpl AS (
+                    SELECT DISTINCT CAST(vp.product_code AS VARCHAR(100)) AS product_code
+                    FROM procurement.procurement_virtual_products vp
+                    WHERE vp.tenant_id = ? AND vp.refresh_id = ? AND vp.is_active = 1
+                ),
+                latest AS (
+                    SELECT v.product_code, pt.FreeQty, pt.ProductDiscPercent,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY v.product_code
+                            ORDER BY pt.grndate DESC, pt.Grnnumber DESC
+                        ) AS rnk
+                    FROM vpl v
+                    JOIN sync.PurchaseTrans pt
+                        ON pt.tenant_id = ? AND pt.store_id = ?
+                       AND pt.ProductCode = TRY_CAST(v.product_code AS INT)
+                )
+                SELECT product_code FROM latest
+                WHERE rnk = 1
+                  AND ( ISNULL(FreeQty, 0) > 0 OR ISNULL(ProductDiscPercent, 0) > 0 )
+                """,
+                (tenant_id, refresh_id, tenant_id, store_id),
+            )
+            codes.update(r[0] for r in cursor.fetchall())
+
+        # 2. Offers a supplier is advertising right now in its live stock.
+        if _object_exists(cursor, "procurement.supplier_stock"):
+            store_clause = "AND ss.store_id = ?" if store_id else ""
+            sql = f"""
+                SELECT DISTINCT CAST(vp.product_code AS VARCHAR(100)) AS product_code
+                FROM procurement.supplier_stock ss
+                INNER JOIN procurement.procurement_virtual_products vp
+                    ON vp.tenant_id = ss.tenant_id
+                   AND vp.refresh_id = ?
+                   AND vp.is_active = 1
+                   AND CAST(vp.product_code AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+                WHERE ss.tenant_id = ?
+                  {store_clause}
+                  AND ss.is_active = 1
+                  -- discount is VARCHAR and holds messy free-text in this dataset
+                  -- (e.g. "16% MICRO CARSYON 1"), not a clean percentage — a
+                  -- numeric compare on it crashes on the non-numeric rows, so any
+                  -- present, non-empty value counts as an offer signal instead.
+                  AND ( ss.scheme IS NOT NULL
+                        OR ISNULL(ss.free, 0) > 0
+                        OR (ss.discount IS NOT NULL AND ss.discount <> '') )
+            """
+            params = [refresh_id, tenant_id]
+            if store_id:
+                params.append(store_id)
+            cursor.execute(sql, tuple(params))
+            codes.update(r[0] for r in cursor.fetchall())
+
+        return sorted(codes)
     finally:
         conn.close()

@@ -54,9 +54,10 @@ def list_supplier_stock(tenant_id, refresh_id, supplier_code, search=None, only_
 
 
 def products_with_offers(tenant_id, refresh_id):
-    """Product codes ANY supplier is currently offering a scheme/discount/free
-    on, scoped to this refresh's store — "Has Offer" filter (Review All /
-    Supplier Purchasing)."""
+    """Product codes in this refresh's VPL that carry an offer — free qty or a
+    discount % on the product's last purchase (sync.PurchaseTrans), or a live
+    supplier scheme — scoped to this refresh's store. "Has Offer" filter
+    (Review All / Supplier Purchasing)."""
     refresh = reconciliation_repository.get_refresh(tenant_id, refresh_id)
     if not refresh:
         from fastapi import HTTPException

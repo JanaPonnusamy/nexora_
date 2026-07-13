@@ -137,10 +137,12 @@ export default function PurchaseWorkspacePage() {
   // Product Type filter (Product Master ProductType): '' all, '1' Pharma,
   // '0' Non-Pharma, '2' Others. Client-side only — never recalculates the VPL.
   const [productType, setProductType] = useState('')
-  // "Has Offer" filter: only show products ANY supplier is currently offering
-  // a scheme/discount/free-qty on (procurement.supplier_stock). Fetched once
-  // per refresh (store-scoped, not supplier-scoped) — client-side filter only,
-  // never recalculates the VPL.
+  // "Has Offer" filter: only products in THIS refresh's VPL that carry an offer
+  // — the product's last purchase came with free qty or a discount % (
+  // sync.PurchaseTrans, the same offer the purchase history shows), or a
+  // supplier's live stock advertises a scheme/free/discount. Fetched once per
+  // refresh (store-scoped, not supplier-scoped) — client-side filter only, it
+  // never recalculates the VPL and it composes with every other filter.
   const [offerOnly, setOfferOnly] = useState(false)
   const [offerProductCodes, setOfferProductCodes] = useState<Set<string> | null>(null)
 
@@ -1785,6 +1787,19 @@ export default function PurchaseWorkspacePage() {
                     </select>
                   )}
                 </div>
+                {/* Has Offer belongs with the scope filters, not the planning
+                    states below: it narrows WHICH products are worth buying
+                    (the product's last purchase came with free qty or a
+                    discount, or a supplier's live stock advertises one), it
+                    says nothing about how far a product got through review. */}
+                <div className="pm-slot pm-slot--offer">
+                  {mode !== 'supplier-stock' && (
+                    <label className="pm-chk pm-chk--offer" title="Only products carrying an offer — free qty / discount on the last purchase (PurchaseTrans), or a live supplier scheme">
+                      <input type="checkbox" checked={offerOnly} onChange={(e) => setOfferOnly(e.target.checked)} />
+                      <i className="bi bi-tag" aria-hidden="true" /> Has Offer
+                    </label>
+                  )}
+                </div>
                 <div className="pm-slot pm-slot--supplier">
                   {mode !== 'review' && (
                     <SupplierPicker
@@ -1810,12 +1825,7 @@ export default function PurchaseWorkspacePage() {
               <div className="pm-toolbar__row pm-toolbar__row--filters">
                 {mode !== 'supplier-stock' && (
                   <>
-                    {/* Has Offer — any supplier currently offering a
-                        scheme/discount/free-qty on this product
-                        (procurement.supplier_stock). */}
-                    <label className="pm-chk" title="Only products a supplier currently has an offer on">
-                      <input type="checkbox" checked={offerOnly} onChange={(e) => setOfferOnly(e.target.checked)} /> Has Offer
-                    </label>
+                    <span className="pm-toolbar__label">Show</span>
                     {/* The supplier workspace is assignment-based, not
                         review-based (§18): default shows every state (all six
                         stay checked), these are opt-in narrower views, never an
@@ -1846,6 +1856,14 @@ export default function PurchaseWorkspacePage() {
                     </button>
                     <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" hidden onChange={(e) => onImportPick(e.target.files?.[0] ?? null)} />
                   </>
+                )}
+                {/* Makes every filter above accountable — a filter that hides
+                    everything now says so instead of leaving a blank grid. */}
+                {mode !== 'supplier-stock' && (
+                  <span className="pm-toolbar__count">
+                    Showing <b>{visibleItems.length}</b> of {items.length}
+                    {offerOnly && offerProductCodes && <> · <i className="bi bi-tag" /> {offerProductCodes.size} on offer</>}
+                  </span>
                 )}
               </div>
             </div>

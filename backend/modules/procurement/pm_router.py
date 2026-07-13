@@ -248,8 +248,9 @@ def supplier_stock(
 
 @router.get("/refreshes/{refresh_id}/products-with-offers")
 def products_with_offers(refresh_id: str, tenant_id: str = Query(...)):
-    """Product codes ANY supplier currently offers a scheme/discount/free-qty
-    on — powers the "Has Offer" filter in Review All / Supplier Purchasing."""
+    """Product codes in this refresh's VPL that carry an offer — free qty or a
+    discount % on the product's last purchase (sync.PurchaseTrans), or a live
+    supplier scheme. Powers "Has Offer" in Review All / Supplier Purchasing."""
     return supplier_stock_service.products_with_offers(tenant_id, refresh_id)
 
 
