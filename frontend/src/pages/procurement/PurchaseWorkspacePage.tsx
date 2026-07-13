@@ -137,12 +137,11 @@ export default function PurchaseWorkspacePage() {
   // Product Type filter (Product Master ProductType): '' all, '1' Pharma,
   // '0' Non-Pharma, '2' Others. Client-side only — never recalculates the VPL.
   const [productType, setProductType] = useState('')
-  // "Has Offer" filter: only products in THIS refresh's VPL that carry an offer
-  // — the product's last purchase came with free qty or a discount % (
-  // sync.PurchaseTrans, the same offer the purchase history shows), or a
-  // supplier's live stock advertises a scheme/free/discount. Fetched once per
-  // refresh (store-scoped, not supplier-scoped) — client-side filter only, it
-  // never recalculates the VPL and it composes with every other filter.
+  // "Has Offer" filter: only products in THIS refresh's VPL that the store has
+  // bought with free qty at least once (sync.PurchaseTrans, FreeQty > 0 on any
+  // past purchase — a flat discount % is a price, not an offer). Fetched once
+  // per refresh (store-scoped, not supplier-scoped) — client-side filter only,
+  // it never recalculates the VPL and it composes with every other filter.
   const [offerOnly, setOfferOnly] = useState(false)
   const [offerProductCodes, setOfferProductCodes] = useState<Set<string> | null>(null)
 
@@ -1789,12 +1788,11 @@ export default function PurchaseWorkspacePage() {
                 </div>
                 {/* Has Offer belongs with the scope filters, not the planning
                     states below: it narrows WHICH products are worth buying
-                    (the product's last purchase came with free qty or a
-                    discount, or a supplier's live stock advertises one), it
-                    says nothing about how far a product got through review. */}
+                    (ever purchased with free qty), it says nothing about how
+                    far a product got through review. */}
                 <div className="pm-slot pm-slot--offer">
                   {mode !== 'supplier-stock' && (
-                    <label className="pm-chk pm-chk--offer" title="Only products carrying an offer — free qty / discount on the last purchase (PurchaseTrans), or a live supplier scheme">
+                    <label className="pm-chk pm-chk--offer" title="Only products this store has bought with free qty at least once (purchase history)">
                       <input type="checkbox" checked={offerOnly} onChange={(e) => setOfferOnly(e.target.checked)} />
                       <i className="bi bi-tag" aria-hidden="true" /> Has Offer
                     </label>

@@ -329,10 +329,9 @@ export const procurementService = {
       )
       .then((r) => r.items),
 
-  // Product codes in this refresh's VPL that carry an offer — free qty /
-  // discount % on the product's last purchase (sync.PurchaseTrans), or a live
-  // supplier scheme (procurement.supplier_stock). "Has Offer" filter (Review
-  // All / Supplier Purchasing).
+  // Product codes in this refresh's VPL bought with free qty at least once
+  // (sync.PurchaseTrans, FreeQty > 0) — "Has Offer" filter (Review All /
+  // Supplier Purchasing).
   productsWithOffers: (tenantId: string, refreshId: string) =>
     api
       .get<{ product_codes: string[] }>(
