@@ -17,20 +17,16 @@ export const stockRowKey = (r: SupplierStockRow) => r.supplier_product_code ?? r
  *  for those rows rather than a false reading. */
 type OfferFields = { scheme?: number | string | null; free?: number | string | null; discount?: number | string | null }
 
-/** Compact offer badge from the row's real scheme/free/discount (parsed at
- *  import from the supplier's own Excel scheme text, e.g. "10 F 1" -> scheme=10,
- *  free=1) — not the still-unpopulated WorkspaceItem.offer field used
- *  elsewhere in the grid. Buy-X-Get-Y and a flat discount are independent
- *  facts about the same offer, so both show together (e.g. "9+1 18% dis")
- *  instead of one hiding the other. */
+/** Compact offer badge from the row's real scheme/free (parsed at import from
+ *  the supplier's own Excel scheme text, e.g. "10 F 1" -> scheme=10, free=1)
+ *  — not the still-unpopulated WorkspaceItem.offer field used elsewhere in
+ *  the grid. Discount % is its own separate column (see the Discount %
+ *  header) — kept independent since a buyer reads "buy-get" offers and a
+ *  flat discount as two different facts about a supplier's stock. */
 export function formatOffer(r: OfferFields): string | null {
   const buy = r.scheme != null ? Number(r.scheme) : 0
   const free = r.free != null ? Number(r.free) : 0
-  const disc = r.discount != null ? Number(r.discount) : 0
-  const parts: string[] = []
-  if (buy > 0 && free > 0) parts.push(`${buy}+${free}`)
-  if (disc > 0) parts.push(`${num(disc)}% dis`)
-  return parts.length > 0 ? parts.join(' ') : null
+  return buy > 0 && free > 0 ? `${buy}+${free}` : null
 }
 
 /** Non-blocking warning when a finalized Order Qty misses the Buy-X threshold
@@ -294,6 +290,7 @@ export function SupplierStockTable({
             <th>Supplier Product</th>
             <th>Mapped Product</th>
             <th>Offer</th>
+            <th className="sx-num">Discount %</th>
             <th className="sx-num">Supplier Stock</th>
             <th className="sx-num">Store Stock</th>
             <th className="sx-num">Sugg.</th>
@@ -335,6 +332,7 @@ export function SupplierStockTable({
                   <div className="pm-prod__meta">{r.product_code ?? '—'}</div>
                 </td>
                 <td>{formatOffer(r) ? <span className="pm-offer">{formatOffer(r)}</span> : <span className="sx-dim">—</span>}</td>
+                <td className="sx-num">{r.discount != null && Number(r.discount) > 0 ? `${num(Number(r.discount))}%` : <span className="sx-dim">—</span>}</td>
                 <td className="sx-num pm-sx__supp">{num(r.available_stock ?? 0)}</td>
                 <td className="sx-num pm-sx__store">{storeStock != null ? num(storeStock) : '—'}</td>
                 <td className="sx-num sx-dim">{num(r.suggested_qty ?? 0)}</td>
