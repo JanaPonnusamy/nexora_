@@ -119,6 +119,31 @@
 .pi-charts { height: 100%; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; background: var(--bs-body-bg, #fff); padding: 8px 10px; display: flex; flex-direction: column; min-height: 0; }
 .pi-charts__title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: #64748b; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
 .pi-charts__grid { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); gap: 8px; min-height: 0; }
+
+/* Store transaction charts — EVERY store visible at once, never scrolled. The
+   columns divide whatever width the panel has between however many stores exist,
+   so 5-6 stores read side by side as one comparison. */
+.pi-storecharts {
+  flex: 1; min-height: 0; display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-auto-rows: 1fr;
+  overflow: hidden;
+}
+.pi-storechart {
+  border: 1px solid var(--bs-border-color, #eef0f3); border-radius: 8px;
+  padding: 4px 6px; display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  background: var(--bs-body-bg, #fff);
+}
+.pi-storechart--wh { border-color: #c7d2fe; background: #f5f7ff; }
+.pi-storechart__h {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 4px;
+  font-size: 10px; margin-bottom: 2px;
+}
+.pi-storechart__h b { font-weight: 800; color: #0f172a; letter-spacing: .02em; }
+.pi-storechart__h b i { margin-left: 3px; color: #4338ca; font-size: 9px; }
+.pi-storechart__h em { font-style: normal; color: #64748b; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pi-storechart__svg { flex: 1; min-height: 0; width: 100%; display: block; }
+.pi-storechart__empty { flex: 1; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 10px; text-align: center; }
 .pi-chart { border: 1px solid var(--bs-border-color, #eef0f3); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; min-height: 0; background: var(--bs-body-bg, #fff); }
 .pi-chart__h { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; color: #64748b; display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 .pi-chart__h em { font-style: normal; font-weight: 700; color: #0f172a; font-variant-numeric: tabular-nums; }
@@ -127,6 +152,37 @@
 .pi-chart svg { width: 100%; height: 100%; display: block; }
 .pi-chart__axis { font-size: 9px; fill: #94a3b8; }
 .pi-chart__lbl { font-size: 8.5px; fill: #64748b; }
+
+/* ---- Priority / warehouse markers ---------------------------------------- */
+.pi-pri {
+  display: inline-block; font-size: 9px; font-weight: 800; letter-spacing: .02em;
+  border-radius: 5px; padding: 1px 5px;
+}
+.pi-pri--critical { color: #b91c1c; background: #fee2e2; }
+.pi-pri--high     { color: #b45309; background: #fef3c7; }
+.pi-pri--medium   { color: #1d4ed8; background: #dbeafe; }
+.pi-pri--none     { color: #64748b; background: #f1f5f9; }
+.pi-pri__out { margin-left: 4px; font-size: 9px; font-weight: 700; color: #b91c1c; }
+
+.pi-badge-nowh {
+  display: inline-block; margin-left: 5px; font-size: 9px; font-weight: 800;
+  color: #7c2d12; background: #ffedd5; border-radius: 5px; padding: 0 4px; vertical-align: middle;
+}
+.pi-th-wh { margin-left: 3px; color: #4338ca; font-size: 9px; }
+.pi-dist__code i { margin-left: 3px; color: #4338ca; font-size: 9px; }
+.pi-dist__out { color: #b91c1c; font-weight: 800; }
+
+/* How the purchase number was reached — shown under the KPIs, never recomputed */
+.pi-formula {
+  display: flex; flex-direction: column; gap: 1px; margin-top: 6px;
+  font-size: 11px; color: #64748b; font-variant-numeric: tabular-nums;
+  border-left: 2px solid #e0e7ff; padding-left: 8px;
+}
+.pi-formula b { color: #0f172a; }
+.pi-warn {
+  margin-top: 6px; font-size: 11px; color: #7c2d12; background: #ffedd5;
+  border-radius: 6px; padding: 4px 6px;
+}
 
 /* ---- Empty / hint -------------------------------------------------------- */
 .pi-empty { flex: 1; display: flex; align-items: center; justify-content: center; }

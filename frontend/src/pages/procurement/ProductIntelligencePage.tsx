@@ -2,16 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { tenantService } from '../../services/tenantService'
 import { storeService } from '../../services/storeService'
-import { procurementService } from '../../services/procurementService'
 import { intelligenceService } from '../../services/intelligenceService'
-import { stockService } from '../../services/stockService'
 import { ApiError } from '../../services/apiClient'
 import { useActingUser } from '../../hooks/useActingUser'
 import type { Tenant } from '../../types/tenant'
 import type { Store } from '../../types/store'
-import type { Refresh } from '../../types/procurement'
 import type { PiDetail, PiGrid, PiRow } from '../../types/intelligence'
-import type { MovementRow, PurchaseRow } from '../../types/stock'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { IntelligenceGrid } from '../../components/procurement/intelligence/IntelligenceGrid'
@@ -21,14 +17,26 @@ import { num } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
 import '../../components/procurement/intelligence/product-intelligence.css'
 
-type Coverage = 'all' | 'purchase' | 'transfer' | 'multi'
+/**
+ * Product Intelligence — the decision engine behind the warehouse's Purchase
+ * Manager, not an analytics dashboard. Every row answers ONE question: how much
+ * should the WAREHOUSE buy for the entire network?
+ *
+ * The build consolidates EVERY selected store's VPL (each store has its own
+ * ProductCodes, sales, stock and VPL) into canonical supplier products via the
+ * Common Product Mapping. The warehouse's own VPL is just one input.
+ */
+
+type Coverage = 'all' | 'purchase' | 'transfer' | 'critical' | 'multi' | 'nowh'
 type Banner = { kind: 'success' | 'danger'; text: string } | null
 
 const COVERAGE: { value: Coverage; label: string }[] = [
   { value: 'all', label: 'All products' },
   { value: 'purchase', label: 'Purchase needed' },
+  { value: 'critical', label: 'Critical (a store is out)' },
   { value: 'transfer', label: 'Transfer opportunities' },
   { value: 'multi', label: 'Multi-store only' },
+  { value: 'nowh', label: 'Not stocked by warehouse' },
 ]
 
 export default function ProductIntelligencePage() {
@@ -38,9 +46,8 @@ export default function ProductIntelligencePage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState(params.get('tenant') ?? '')
   const [stores, setStores] = useState<Store[]>([])
-  const [storeId, setStoreId] = useState('')
-  const [refreshes, setRefreshes] = useState<Refresh[]>([])
-  const [refreshId, setRefreshId] = useState(params.get('refresh') ?? '')
+  /** The purchasing warehouse — the store the purchase quantity is calculated FOR. */
+  const [warehouseId, setWarehouseId] = useState(params.get('warehouse') ?? '')
 
   const [grid, setGrid] = useState<PiGrid | null>(null)
   const [loading, setLoading] = useState(false)
@@ -55,14 +62,12 @@ export default function ProductIntelligencePage() {
 
   const [detail, setDetail] = useState<PiDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
-  const [movement, setMovement] = useState<MovementRow[] | null>(null)
-  const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null)
 
   const searchRef = useRef<HTMLInputElement>(null)
 
   const say = useCallback((kind: 'success' | 'danger', text: string) => {
     setBanner({ kind, text })
-    window.setTimeout(() => setBanner(null), 4000)
+    window.setTimeout(() => setBanner(null), 5000)
   }, [])
   const fail = useCallback(
     (e: unknown) => say('danger', e instanceof Error ? e.message : 'Request failed'),
@@ -85,26 +90,17 @@ export default function ProductIntelligencePage() {
     [stores, tenantId],
   )
   useEffect(() => {
-    setStoreId((cur) => (tenantStores.some((s) => s.store_id === cur) ? cur : (tenantStores[0]?.store_id ?? '')))
+    setWarehouseId((cur) =>
+      tenantStores.some((s) => s.store_id === cur) ? cur : (tenantStores[0]?.store_id ?? ''),
+    )
   }, [tenantStores])
 
-  useEffect(() => {
-    if (!tenantId || !storeId) { setRefreshes([]); setRefreshId(''); return }
-    procurementService.refreshes(tenantId, storeId)
-      .then((rows) => {
-        const ready = rows.filter((r) => r.snapshot_status === 'Ready')
-        setRefreshes(ready)
-        setRefreshId((c) => (c && ready.some((r) => r.refresh_id === c) ? c : (ready[0]?.refresh_id ?? '')))
-      })
-      .catch(fail)
-  }, [tenantId, storeId, fail])
-
   const loadGrid = useCallback(() => {
-    if (!tenantId || !refreshId) { setGrid(null); return }
+    if (!tenantId || !warehouseId) { setGrid(null); return }
     setLoading(true)
     setError(null)
     setNeedsBuild(false)
-    intelligenceService.grid(tenantId, refreshId)
+    intelligenceService.grid(tenantId, warehouseId)
       .then((g) => { setGrid(g); setSelectedId((c) => c ?? (g.rows[0]?.cache_id ?? null)) })
       .catch((e) => {
         setGrid(null)
@@ -112,16 +108,21 @@ export default function ProductIntelligencePage() {
         else setError(e instanceof Error ? e.message : 'Failed to load')
       })
       .finally(() => setLoading(false))
-  }, [tenantId, refreshId])
+  }, [tenantId, warehouseId])
 
   useEffect(() => { loadGrid() }, [loadGrid])
 
+  /** Consolidate every store's latest VPL into the network grid. */
   const rebuild = async () => {
-    if (!tenantId || !refreshId) return say('danger', 'Select a refresh first')
+    if (!tenantId || !warehouseId) return say('danger', 'Select a warehouse first')
     setBuilding(true)
     try {
-      const res = await intelligenceService.build(tenantId, refreshId, actingUser || null)
-      say('success', `Built ${num(res.product_count)} products across ${res.store_count} stores`)
+      const res = await intelligenceService.build(tenantId, warehouseId, undefined, actingUser || null)
+      say(
+        'success',
+        `Built ${num(res.product_count)} canonical products from ${res.store_count} store VPLs · ` +
+        `network need ${num(res.total_need_qty)} · warehouse buys ${num(res.total_purchase_qty)}`,
+      )
       setSelectedId(null)
       loadGrid()
     } catch (e) {
@@ -131,29 +132,18 @@ export default function ProductIntelligencePage() {
     }
   }
 
-  // Load per-product detail + trend sources when the selection changes.
+  // Per-product detail. The charts panel loads its own per-store data.
   useEffect(() => {
-    if (!selectedId) { setDetail(null); setMovement(null); setPurchases(null); return }
+    if (!selectedId) { setDetail(null); return }
     let live = true
     setDetailLoading(true)
-    setDetail(null); setMovement(null); setPurchases(null)
+    setDetail(null)
     intelligenceService.detail(selectedId)
-      .then((d) => {
-        if (!live) return
-        setDetail(d)
-        const anchor = grid?.build.anchor_store_id
-        const code = d.product.product_code
-        if (anchor && code) {
-          stockService.monthlyMovement(tenantId, anchor, code, 6).then((m) => live && setMovement(m)).catch(() => live && setMovement([]))
-          stockService.purchaseHistory(tenantId, anchor, code).then((p) => live && setPurchases(p)).catch(() => live && setPurchases([]))
-        } else {
-          setMovement([]); setPurchases([])
-        }
-      })
+      .then((d) => live && setDetail(d))
       .catch(() => live && setDetail(null))
       .finally(() => live && setDetailLoading(false))
     return () => { live = false }
-  }, [selectedId, grid, tenantId])
+  }, [selectedId])
 
   // Ctrl/⌘+F focuses search.
   useEffect(() => {
@@ -170,10 +160,15 @@ export default function ProductIntelligencePage() {
     if (!grid) return [] as PiRow[]
     const needle = search.trim().toLowerCase()
     return grid.rows.filter((r) => {
-      if (needle && !`${r.product_code ?? ''} ${r.product_name ?? ''}`.toLowerCase().includes(needle)) return false
+      if (needle) {
+        const hay = `${r.product_code ?? ''} ${r.product_name ?? ''} ${r.supplier_product_name ?? ''}`.toLowerCase()
+        if (!hay.includes(needle)) return false
+      }
       if (coverage === 'purchase' && r.consolidated_purchase_qty <= 0) return false
+      if (coverage === 'critical' && r.priority !== 'CRITICAL') return false
       if (coverage === 'transfer' && !(r.consolidated_purchase_qty === 0 && r.transfer_qty > 0)) return false
       if (coverage === 'multi' && r.mapped_store_count <= 1) return false
+      if (coverage === 'nowh' && r.warehouse_product_code) return false
       return true
     })
   }, [grid, search, coverage])
@@ -186,7 +181,11 @@ export default function ProductIntelligencePage() {
   const exportCsv = () => {
     if (!grid || visibleRows.length === 0) return say('danger', 'Nothing to export')
     const cols = grid.stores
-    const header = ['Product Code', 'Product Name', 'Consolidated Suggested', 'Consolidated Purchase', 'Total Stock', 'Transfer']
+    const header = [
+      'Product', 'Supplier Code', 'Supplier Product Code', 'Warehouse Code', 'Mapped Stores',
+      'Global Suggested', 'Warehouse Purchase', 'Transfer', 'Global Stock',
+      'Total Sales', 'Total Purchase', 'Priority', 'Confidence',
+    ]
     cols.forEach((s) => { header.push(`${s.store_code ?? s.store_id} Suggested`, `${s.store_code ?? s.store_id} Stock`) })
     const esc = (v: unknown) => {
       const str = v == null ? '' : String(v)
@@ -195,8 +194,10 @@ export default function ProductIntelligencePage() {
     const lines = [header.map(esc).join(',')]
     for (const r of visibleRows) {
       const row: (string | number)[] = [
-        r.product_code ?? '', r.product_name ?? '',
-        r.consolidated_suggest_qty, r.consolidated_purchase_qty, r.consolidated_stock_qty, r.transfer_qty,
+        r.product_name ?? '', r.supplier_code ?? '', r.supplier_product_code ?? '',
+        r.warehouse_product_code ?? '', r.mapped_store_count,
+        r.consolidated_suggest_qty, r.consolidated_purchase_qty, r.transfer_qty, r.consolidated_stock_qty,
+        r.total_sales_qty ?? 0, r.total_purchase_qty ?? 0, r.priority ?? '', r.confidence ?? '',
       ]
       for (const s of cols) {
         const cell = r.stores[s.store_id]
@@ -208,13 +209,14 @@ export default function ProductIntelligencePage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `product-intelligence-${refreshId.slice(0, 8)}.csv`
+    a.download = `network-intelligence-${(grid.build.build_id ?? '').slice(0, 8)}.csv`
     document.body.appendChild(a); a.click(); a.remove()
     URL.revokeObjectURL(url)
   }
 
-  const canWork = Boolean(tenantId && refreshId)
+  const canWork = Boolean(tenantId && warehouseId)
   const summary = grid?.summary
+  const warehouseName = tenantStores.find((s) => s.store_id === warehouseId)?.store_name ?? 'the warehouse'
 
   return (
     <div className="pm">
@@ -225,19 +227,25 @@ export default function ProductIntelligencePage() {
             {tenants.length === 0 && <option value="">Loading…</option>}
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
           </select>
-          <select className="sx-select" aria-label="Store" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
-            <option value="">Select store…</option>
-            {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-          </select>
-          <select className="sx-select" aria-label="Refresh" value={refreshId} onChange={(e) => setRefreshId(e.target.value)}>
-            <option value="">Select refresh…</option>
-            {refreshes.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
+          <select
+            className="sx-select"
+            aria-label="Purchasing warehouse"
+            title="The store the network purchase quantity is calculated FOR"
+            value={warehouseId}
+            onChange={(e) => setWarehouseId(e.target.value)}
+          >
+            <option value="">Select warehouse…</option>
+            {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>Buying for: {s.store_name}</option>)}
           </select>
         </div>
         <div className="pi-buildbar">
-          {grid && <span className="pm-top__views" style={{ padding: '4px 10px', fontSize: 12 }}>Snapshot: {grid.build.generated_on ? new Date(grid.build.generated_on).toLocaleString('en-IN') : '—'}</span>}
+          {grid && (
+            <span className="pm-top__views" style={{ padding: '4px 10px', fontSize: 12 }}>
+              {grid.stores.length} store VPLs · {grid.build.generated_on ? new Date(grid.build.generated_on).toLocaleString('en-IN') : '—'}
+            </span>
+          )}
           <button className="pm-btn pm-btn--import" disabled={!canWork || building} onClick={rebuild}>
-            <i className="bi bi-cpu" /> {building ? 'Building…' : grid ? 'Rebuild' : 'Build Intelligence'}
+            <i className="bi bi-cpu" /> {building ? 'Consolidating…' : grid ? 'Rebuild' : 'Build Intelligence'}
           </button>
         </div>
       </header>
@@ -245,12 +253,12 @@ export default function ProductIntelligencePage() {
       {banner && <div className={`pm-banner pm-banner--${banner.kind}`}>{banner.text}</div>}
 
       {!canWork ? (
-        <EmptyState icon="bi-cpu" title="Select a tenant, store and refresh" description="Product Intelligence consolidates a generated Refresh's VPL across every active store." />
+        <EmptyState icon="bi-cpu" title="Select a tenant and warehouse" description="Product Intelligence merges every store's VPL and calculates what the warehouse must buy for the whole network." />
       ) : needsBuild ? (
         <EmptyState
           icon="bi-cpu"
-          title="No intelligence cache yet"
-          description="Build the Product Intelligence cache from the selected Refresh + VPL to see the consolidated cross-store grid."
+          title="No network build yet"
+          description={`Build the intelligence to merge every store's latest VPL and calculate what ${warehouseName} must purchase for the network.`}
         />
       ) : error ? (
         <ErrorState description={error} onRetry={loadGrid} />
@@ -294,18 +302,23 @@ export default function ProductIntelligencePage() {
               <IntelligenceDetail detail={detail} loading={detailLoading} />
             </div>
             <div className="pi-chartswrap">
-              <IntelligenceCharts detail={detail} movement={movement} purchases={purchases} loading={detailLoading} />
+              <IntelligenceCharts
+                cacheId={selectedId}
+                productName={detail?.product.product_name ?? null}
+                months={4}
+              />
             </div>
           </div>
 
           {summary && (
             <div className="pm-totals">
-              <span className="pm-stat"><span className="pm-stat__k">Total Products</span><b className="pm-stat__v">{num(summary.total_products)}</b></span>
+              <span className="pm-stat"><span className="pm-stat__k">Canonical Products</span><b className="pm-stat__v">{num(summary.total_products)}</b></span>
               <span className="pm-stat"><span className="pm-stat__k">Filtered</span><b className="pm-stat__v">{num(visibleRows.length)}</b></span>
-              <span className="pm-stat"><span className="pm-stat__k">Suggested Qty</span><b className="pm-stat__v">{num(summary.suggest_quantity)}</b></span>
-              <span className="pm-stat"><span className="pm-stat__k">Purchase Qty</span><b className="pm-stat__v pm-stat__v--warn">{num(summary.purchase_quantity)}</b></span>
+              <span className="pm-stat"><span className="pm-stat__k">Store VPLs</span><b className="pm-stat__v">{num(summary.store_count)}</b></span>
+              <span className="pm-stat"><span className="pm-stat__k">Network Need</span><b className="pm-stat__v">{num(summary.need_quantity)}</b></span>
+              <span className="pm-stat"><span className="pm-stat__k">Warehouse Purchase</span><b className="pm-stat__v pm-stat__v--warn">{num(summary.purchase_quantity)}</b></span>
               <span className="pm-stat"><span className="pm-stat__k">Transfer Qty</span><b className="pm-stat__v">{num(summary.transfer_quantity)}</b></span>
-              <span className="pm-stat"><span className="pm-stat__k">Stock Qty</span><b className="pm-stat__v">{num(summary.stock_quantity)}</b></span>
+              <span className="pm-stat"><span className="pm-stat__k">Network Stock</span><b className="pm-stat__v">{num(summary.stock_quantity)}</b></span>
             </div>
           )}
         </>
