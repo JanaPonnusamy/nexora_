@@ -475,6 +475,35 @@ export const procurementService = {
       updates,
     ),
 
+  // Per-supplier Export Document memory (format/columns/header/sort/folder)
+  // — server-side so it's the same across every device/browser (§ Export
+  // Settings dialog).
+  supplierExportSettings: (tenantId: string, storeId: string, supplierCode: string) =>
+    api.get<{
+      format: 'excel' | 'pdf' | 'image'
+      columns: string[]
+      order_qty_header: string
+      sort_by: 'product_name' | 'sub_location' | 'unit_description'
+      export_folder_path: string | null
+    }>(`/api/procurement/suppliers/${supplierCode}/export-settings${qs({ tenant_id: tenantId, store_id: storeId })}`),
+
+  saveSupplierExportSettings: (
+    tenantId: string,
+    storeId: string,
+    supplierCode: string,
+    settings: {
+      format: string
+      columns: string[]
+      order_qty_header: string
+      sort_by: string
+      export_folder_path: string | null
+    },
+  ) =>
+    api.put(
+      `/api/procurement/suppliers/${supplierCode}/export-settings${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      settings,
+    ),
+
   setConsiderMinimumOrder: (
     tenantId: string,
     supplierCode: string,

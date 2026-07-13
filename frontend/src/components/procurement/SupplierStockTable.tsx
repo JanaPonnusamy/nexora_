@@ -20,14 +20,17 @@ type OfferFields = { scheme?: number | string | null; free?: number | string | n
 /** Compact offer badge from the row's real scheme/free/discount (parsed at
  *  import from the supplier's own Excel scheme text, e.g. "10 F 1" -> scheme=10,
  *  free=1) — not the still-unpopulated WorkspaceItem.offer field used
- *  elsewhere in the grid. Buy-X-Get-Y wins display priority over a flat
- *  discount when both are present. */
+ *  elsewhere in the grid. Buy-X-Get-Y and a flat discount are independent
+ *  facts about the same offer, so both show together (e.g. "9+1 18% dis")
+ *  instead of one hiding the other. */
 export function formatOffer(r: OfferFields): string | null {
   const buy = r.scheme != null ? Number(r.scheme) : 0
   const free = r.free != null ? Number(r.free) : 0
-  if (buy > 0 && free > 0) return `${buy}+${free}`
-  if (r.discount != null && Number(r.discount) > 0) return `${num(Number(r.discount))}% OFF`
-  return null
+  const disc = r.discount != null ? Number(r.discount) : 0
+  const parts: string[] = []
+  if (buy > 0 && free > 0) parts.push(`${buy}+${free}`)
+  if (disc > 0) parts.push(`${num(disc)}% dis`)
+  return parts.length > 0 ? parts.join(' ') : null
 }
 
 /** Non-blocking warning when a finalized Order Qty misses the Buy-X threshold
@@ -287,15 +290,13 @@ export function SupplierStockTable({
                 onChange={(e) => onToggleAll(checkableIds, e.target.checked)}
               />
             </th>
+            <th className="pm-grid__sno">#</th>
             <th>Supplier Product</th>
             <th>Mapped Product</th>
             <th>Offer</th>
             <th className="sx-num">Supplier Stock</th>
             <th className="sx-num">Store Stock</th>
             <th className="sx-num">Sugg.</th>
-            <th className="sx-num">Disc%</th>
-            <th className="sx-num">Free</th>
-            <th>Scheme</th>
             <th className="sx-num">Last Sync</th>
             <th>Status</th>
             <th className="sx-num pm-grid__final">Order Qty</th>
@@ -303,7 +304,7 @@ export function SupplierStockTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => {
+          {rows.map((r, i) => {
             const key = stockRowKey(r)
             const storeStock = r.product_code != null ? storeStockByCode.get(r.product_code) : undefined
             const status = r.product_code != null ? statusByCode.get(r.product_code) : undefined
@@ -324,6 +325,7 @@ export function SupplierStockTable({
                     title={!checkId ? 'Not eligible for bulk assign (unmapped, skipped, or already assigned)' : undefined}
                   />
                 </td>
+                <td className="pm-grid__sno sx-dim">{i + 1}</td>
                 <td>
                   <div className="pm-prod__name">{r.supplier_product_name ?? '—'}</div>
                   <div className="pm-prod__meta">{r.supplier_product_code}</div>
@@ -336,9 +338,6 @@ export function SupplierStockTable({
                 <td className="sx-num pm-sx__supp">{num(r.available_stock ?? 0)}</td>
                 <td className="sx-num pm-sx__store">{storeStock != null ? num(storeStock) : '—'}</td>
                 <td className="sx-num sx-dim">{num(r.suggested_qty ?? 0)}</td>
-                <td className="sx-num">{r.discount != null ? `${num(r.discount)}%` : '—'}</td>
-                <td className="sx-num">{num(r.free ?? 0)}</td>
-                <td className="sx-dim">{r.scheme ?? '—'}</td>
                 <td className="sx-num sx-dim">{date(r.transaction_date)}</td>
                 <td>
                   {status && (

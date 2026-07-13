@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SupplierQueueGroup, SupplierQueueProduct } from './SupplierQueuePanel'
 import { procurementService } from '../../services/procurementService'
 
@@ -19,24 +19,7 @@ const SORT_OPTIONS: { value: SortBy; label: string }[] = [
   { value: 'unit_description', label: 'Unit Description' },
 ]
 
-const STORAGE_KEY = 'pm-export-settings-v1'
-
-interface SavedSettings {
-  format: Format
-  columns: string[]
-  order_qty_header: string
-  sort_by: SortBy
-}
-
-function loadSaved(): SavedSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return { format: 'excel', columns: [], order_qty_header: 'Order Qty', sort_by: 'product_name', ...JSON.parse(raw) }
-  } catch {
-    // ignore corrupt/blocked storage — fall through to defaults
-  }
-  return { format: 'excel', columns: [], order_qty_header: 'Order Qty', sort_by: 'product_name' }
-}
+const DEFAULTS = { format: 'excel' as Format, columns: [] as string[], order_qty_header: 'Order Qty', sort_by: 'product_name' as SortBy, export_folder_path: null as string | null }
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -47,16 +30,24 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+async function blobToUint8Array(blob: Blob): Promise<Uint8Array> {
+  return new Uint8Array(await blob.arrayBuffer())
+}
+
 /**
  * Export Settings — format (Excel default / PDF / Image), which optional
  * columns to include (S.No / Product Name / Order Qty / MRP are always on),
- * a renameable Order Qty header, and a sort-by for the printed order. Excel
- * is generated server-side with a genuinely supplier-editable Status +
+ * a renameable Order Qty header, a sort-by, and (desktop app only) a folder
+ * to save straight into. Choices are remembered PER SUPPLIER, server-side
+ * (procurement.supplier_export_settings) — the dialog pre-fills with what
+ * was used last time for this exact supplier, no re-configuring every export.
+ * Excel is generated server-side with a genuinely supplier-editable Status +
  * Available Qty pair (sheet-protected) so the completed sheet can be sent
  * back and re-imported (see SupplierReplyImportDialog).
  */
 export function ExportSettingsDialog({
   tenantId,
+  storeId,
   refreshId,
   group,
   eq,
@@ -64,18 +55,42 @@ export function ExportSettingsDialog({
   notify,
 }: {
   tenantId: string
+  storeId: string
   refreshId: string
   group: SupplierQueueGroup
   eq: (l: SupplierQueueProduct) => number
   onClose: () => void
   notify: (kind: 'success' | 'danger', text: string) => void
 }) {
-  const saved = loadSaved()
-  const [format, setFormat] = useState<Format>(saved.format)
-  const [columns, setColumns] = useState<Set<string>>(new Set(saved.columns))
-  const [orderQtyHeader, setOrderQtyHeader] = useState(saved.order_qty_header)
-  const [sortBy, setSortBy] = useState<SortBy>(saved.sort_by)
+  const [loading, setLoading] = useState(true)
+  const [format, setFormat] = useState<Format>(DEFAULTS.format)
+  const [columns, setColumns] = useState<Set<string>>(new Set(DEFAULTS.columns))
+  const [orderQtyHeader, setOrderQtyHeader] = useState(DEFAULTS.order_qty_header)
+  const [sortBy, setSortBy] = useState<SortBy>(DEFAULTS.sort_by)
+  const [exportFolder, setExportFolder] = useState<string | null>(DEFAULTS.export_folder_path)
   const [busy, setBusy] = useState(false)
+
+  const isElectron = typeof window !== 'undefined' && window.uninex?.isElectron === true
+
+  useEffect(() => {
+    let live = true
+    setLoading(true)
+    procurementService
+      .supplierExportSettings(tenantId, storeId, group.supplier_code)
+      .then((s) => {
+        if (!live) return
+        setFormat(s.format)
+        setColumns(new Set(s.columns))
+        setOrderQtyHeader(s.order_qty_header)
+        setSortBy(s.sort_by)
+        setExportFolder(s.export_folder_path)
+      })
+      .catch(() => {
+        // Fall back to defaults — the supplier has never exported before.
+      })
+      .finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [tenantId, storeId, group.supplier_code])
 
   const toggleColumn = (key: string) =>
     setColumns((prev) => {
@@ -84,6 +99,11 @@ export function ExportSettingsDialog({
       else next.add(key)
       return next
     })
+
+  const pickFolder = async () => {
+    const picked = await window.uninex?.pickFolder()
+    if (picked) setExportFolder(picked)
+  }
 
   const liveLines = group.lines.filter((l) => l.exported || eq(l) > 0)
 
@@ -104,12 +124,27 @@ export function ExportSettingsDialog({
       }
       const blob = await procurementService.exportDocument(tenantId, refreshId, opts)
       const ext = format === 'excel' ? 'xlsx' : format === 'pdf' ? 'pdf' : 'png'
-      downloadBlob(blob, `PO_${group.supplier_code}_${new Date().toISOString().slice(0, 10)}.${ext}`)
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ format, columns: [...columns], order_qty_header: orderQtyHeader, sort_by: sortBy }),
-      )
-      notify('success', `Exported ${liveLines.length} line(s) as ${format.toUpperCase()}`)
+      const filename = `PO_${group.supplier_code}_${new Date().toISOString().slice(0, 10)}.${ext}`
+
+      let savedTo: string | null = null
+      if (isElectron && exportFolder) {
+        const data = await blobToUint8Array(blob)
+        const result = await window.uninex?.saveFile(exportFolder, filename, data)
+        if (result?.ok) savedTo = result.path ?? exportFolder
+        else notify('danger', result?.error ?? 'Could not save to the chosen folder — downloaded instead.')
+      }
+      if (!savedTo) downloadBlob(blob, filename)
+
+      // Remember this supplier's choices for next time — server-side, so any
+      // device/browser opening this supplier's export sees the same setup.
+      procurementService
+        .saveSupplierExportSettings(tenantId, storeId, group.supplier_code, {
+          format, columns: [...columns], order_qty_header: orderQtyHeader.trim() || 'Order Qty',
+          sort_by: sortBy, export_folder_path: exportFolder,
+        })
+        .catch(() => { /* best-effort — the export itself already succeeded */ })
+
+      notify('success', savedTo ? `Saved to ${savedTo}` : `Exported ${liveLines.length} line(s) as ${format.toUpperCase()}`)
       onClose()
     } catch (e) {
       notify('danger', e instanceof Error ? e.message : 'Export failed')
@@ -126,6 +161,9 @@ export function ExportSettingsDialog({
           <h5 className="mb-0"><i className="bi bi-file-earmark-arrow-down me-2" />Export Settings — {group.supplier_name ?? group.supplier_code}</h5>
           <button className="btn-close" aria-label="Close" onClick={onClose} />
         </header>
+        {loading ? (
+          <div className="pm-modal__body"><div className="pm-sq__hint">Loading this supplier's export settings…</div></div>
+        ) : (
         <div className="pm-modal__body">
           <div className="pm-expset__section">
             <div className="pm-expset__label">Format</div>
@@ -174,6 +212,28 @@ export function ExportSettingsDialog({
             </select>
           </div>
 
+          {isElectron && (
+            <div className="pm-expset__section">
+              <div className="pm-expset__label">Export Folder</div>
+              <div className="pm-expset__folder">
+                <input
+                  className="pm-input pm-expset__folderinput"
+                  value={exportFolder ?? ''}
+                  readOnly
+                  placeholder="Not set — falls back to the browser download"
+                />
+                <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={pickFolder}>
+                  <i className="bi bi-folder2-open" /> Browse…
+                </button>
+                {exportFolder && (
+                  <button className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => setExportFolder(null)} title="Clear folder">
+                    <i className="bi bi-x-lg" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {format === 'excel' && (
             <div className="pm-expset__hint">
               <i className="bi bi-info-circle" /> The Excel sheet adds Status (Available / Partial / Not Available)
@@ -181,10 +241,11 @@ export function ExportSettingsDialog({
             </div>
           )}
         </div>
+        )}
         <footer className="pm-modal__foot">
           <span className="sx-dim">{liveLines.length} product(s)</span>
           <button className="pm-btn pm-btn--ghost" onClick={onClose}>Cancel</button>
-          <button className="pm-btn pm-btn--primary" onClick={runExport} disabled={busy}>
+          <button className="pm-btn pm-btn--primary" onClick={runExport} disabled={busy || loading}>
             <i className="bi bi-box-arrow-up" /> {busy ? 'Exporting…' : 'Export'}
           </button>
         </footer>

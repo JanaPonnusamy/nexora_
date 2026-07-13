@@ -8,6 +8,7 @@ Resolves the product for a working item and returns its ranked supplier queue
 from fastapi import HTTPException
 
 from modules.procurement import supplier_repository as repo
+from modules.procurement import supplier_export_settings_repository as export_settings_repo
 from modules.procurement import workspace_repository as items_repo
 
 
@@ -85,4 +86,30 @@ def list_settings(tenant_id, store_id):
 
 def update_settings(tenant_id, store_id, supplier_code, auto_assign=None, min_products=None, export_rank=None):
     repo.update_supplier_settings(tenant_id, store_id, supplier_code, auto_assign, min_products, export_rank)
+    return {"ok": True}
+
+
+def get_export_settings(tenant_id, store_id, supplier_code):
+    """This supplier's remembered Export Document choices, or defaults when
+    they've never exported for this supplier before."""
+    row = export_settings_repo.get(tenant_id, store_id, supplier_code)
+    if not row:
+        return {
+            "format": "excel", "columns": [], "order_qty_header": "Order Qty",
+            "sort_by": "product_name", "export_folder_path": None,
+        }
+    return {
+        "format": row.get("format") or "excel",
+        "columns": [c for c in (row.get("columns") or "").split(",") if c],
+        "order_qty_header": row.get("order_qty_header") or "Order Qty",
+        "sort_by": row.get("sort_by") or "product_name",
+        "export_folder_path": row.get("export_folder_path"),
+    }
+
+
+def save_export_settings(tenant_id, store_id, supplier_code, format, columns, order_qty_header, sort_by, export_folder_path):
+    export_settings_repo.upsert(
+        tenant_id, store_id, supplier_code, format, ",".join(columns or []),
+        order_qty_header, sort_by, export_folder_path,
+    )
     return {"ok": True}

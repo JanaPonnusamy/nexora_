@@ -52,6 +52,17 @@ contextBridge.exposeInMainWorld('uninex', {
       ipcRenderer.send('log:write', { level: 'error', scope, message, data }),
   },
 
+  // Export Document "save straight to a folder" (Purchase Manager) — native
+  // OS folder picker + a direct filesystem write, so a desktop export never
+  // touches the browser Downloads folder or a Save-As prompt.
+  pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-folder'),
+  saveFile: (
+    folderPath: string,
+    filename: string,
+    data: Uint8Array,
+  ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('fs:save-file', folderPath, filename, data),
+
   // Placeholder for when real authentication lands (today the backend issues
   // no token to persist — see auth exploration). Keeps the host's contract
   // stable so a future auth implementation doesn't need a preload API change.

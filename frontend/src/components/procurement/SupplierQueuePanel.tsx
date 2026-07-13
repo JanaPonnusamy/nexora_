@@ -72,6 +72,7 @@ const STATUS_META: Record<SupplierQueueGroup['status'], { label: string; cls: st
  */
 export function SupplierQueuePanel({
   tenantId,
+  storeId,
   refreshId,
   actingUser,
   notify,
@@ -90,6 +91,7 @@ export function SupplierQueuePanel({
   exportingAll,
 }: {
   tenantId: string
+  storeId: string
   refreshId: string
   actingUser: string
   notify: (kind: 'success' | 'danger', text: string) => void
@@ -438,6 +440,7 @@ export function SupplierQueuePanel({
                       return (
                         <SupplierReview
                           tenantId={tenantId}
+                          storeId={storeId}
                           refreshId={refreshId}
                           notify={notify}
                           group={g}
@@ -478,6 +481,7 @@ export function SupplierQueuePanel({
 
 function SupplierReview({
   tenantId,
+  storeId,
   refreshId,
   notify,
   group,
@@ -490,6 +494,7 @@ function SupplierReview({
   onExport,
 }: {
   tenantId: string
+  storeId: string
   refreshId: string
   notify: (kind: 'success' | 'danger', text: string) => void
   group: SupplierQueueGroup
@@ -590,6 +595,7 @@ function SupplierReview({
       {showExportSettings && (
         <ExportSettingsDialog
           tenantId={tenantId}
+          storeId={storeId}
           refreshId={refreshId}
           group={group}
           eq={eq}

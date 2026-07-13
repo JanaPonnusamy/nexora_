@@ -24,6 +24,7 @@ from modules.procurement.pm_schemas import (
     AssignRequest, BulkAssignRequest, ChangeSupplierRequest, ExportRequest,
     ExportDocumentRequest, SupplierReplyImportRequest,
     GrnSubmit, PendingAdjust, ManualAdd, PendingBulk, SupplierSettingsUpdate,
+    SupplierExportSettingsUpdate,
 )
 
 router = APIRouter(tags=["Procurement Purchase Manager"])
@@ -202,6 +203,29 @@ def update_supplier_settings(
     return supplier_service.update_settings(
         tenant_id, store_id, supplier_code,
         auto_assign=body.auto_assign, min_products=body.min_products, export_rank=body.export_rank,
+    )
+
+
+@router.get("/suppliers/{supplier_code}/export-settings")
+def supplier_export_settings(
+    supplier_code: str, tenant_id: str = Query(...), store_id: str = Query(...),
+):
+    """This supplier's remembered Export Document choices (format, columns,
+    Order Qty header, sort, desktop export folder) — defaults when they've
+    never exported for this supplier before."""
+    return supplier_service.get_export_settings(tenant_id, store_id, supplier_code)
+
+
+@router.put("/suppliers/{supplier_code}/export-settings")
+def update_supplier_export_settings(
+    supplier_code: str,
+    body: SupplierExportSettingsUpdate,
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+):
+    return supplier_service.save_export_settings(
+        tenant_id, store_id, supplier_code,
+        body.format, body.columns, body.order_qty_header, body.sort_by, body.export_folder_path,
     )
 
 

@@ -138,3 +138,13 @@ class SupplierSettingsUpdate(BaseModel):
     auto_assign: Optional[bool] = None
     min_products: Optional[int] = Field(None, ge=1)
     export_rank: Optional[int] = Field(None, ge=0)
+
+
+# --- Per-supplier Export Settings memory ------------------------------------
+
+class SupplierExportSettingsUpdate(BaseModel):
+    format: str = Field("excel", pattern="^(excel|pdf|image)$")
+    columns: List[str] = Field(default_factory=list)
+    order_qty_header: str = Field("Order Qty", max_length=40)
+    sort_by: str = Field("product_name", pattern="^(product_name|sub_location|unit_description)$")
+    export_folder_path: Optional[str] = Field(None, max_length=500)
