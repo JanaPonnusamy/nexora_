@@ -38,17 +38,73 @@
 .pm-banner--success { background: #dcfce7; color: #166534; }
 .pm-banner--danger { background: #fee2e2; color: #991b1b; }
 
-/* ---- Toolbar (one compact row; wraps only if truly out of room) ---------- */
-.pm-toolbar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+/* ---- Toolbar (one compact row; wraps only if truly out of room) ----------
+   Every control carries its own affordance so filters never read as plain
+   labels: modes are a segmented track, search/selects are raised inputs,
+   the state filters are toggle chips that tint when checked. */
+.pm-toolbar {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 7px 9px; border-radius: 12px;
+  background: linear-gradient(180deg, #fbfcfe 0%, #f5f7fa 100%);
+  border: 1px solid #e6e9ef;
+}
 .pm-toolbar__modes, .pm-toolbar__right { display: inline-flex; gap: 6px; align-items: center; }
 .pm-toolbar__right { margin-left: auto; }
-.pm-toolbar .sx-search { min-width: 150px; }
-.pm-toolbar .sx-select { max-width: 140px; }
-.pm-mode {
-  border: 1px solid var(--bs-border-color, #d0d5dd); background: var(--bs-body-bg, #fff);
-  border-radius: 8px; padding: 6px 12px; font-weight: 600; font-size: 12.5px; cursor: pointer; color: inherit;
+.pm-toolbar .sx-search { min-width: 210px; }
+.pm-toolbar .sx-select { max-width: 150px; }
+
+/* Segmented mode switch */
+.pm-toolbar__modes {
+  gap: 2px; padding: 3px; border-radius: 10px;
+  background: rgba(100, 116, 139, .1); border: 1px solid #e2e6ec;
 }
-.pm-mode--on { background: var(--bs-primary, #4f46e5); border-color: var(--bs-primary, #4f46e5); color: #fff; }
+.pm-mode {
+  border: 0; background: transparent; border-radius: 7px; padding: 0 12px;
+  font-weight: 600; font-size: 12.5px; cursor: pointer; color: #52607a;
+  transition: background .15s, color .15s, box-shadow .15s;
+}
+.pm-mode:hover:not(.pm-mode--on) { color: #0f172a; background: rgba(255, 255, 255, .65); }
+.pm-mode--on {
+  background: var(--bs-body-bg, #fff); color: var(--bs-primary, #4f46e5);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .16);
+}
+
+/* Raised input skin shared by the product search, supplier search and selects */
+.pm-toolbar .sx-search input,
+.pm-toolbar .sx-select {
+  border: 1px solid #dfe3ea; border-radius: 9px;
+  background-color: var(--bs-body-bg, #fff); color: #0f172a;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+  font-size: 12.5px; font-weight: 500;
+  transition: border-color .15s, box-shadow .15s, background-color .15s;
+}
+.pm-toolbar .sx-search input::placeholder { color: #98a2b3; font-weight: 400; }
+.pm-toolbar .sx-search input:hover,
+.pm-toolbar .sx-select:hover { border-color: #c3cad6; }
+.pm-toolbar .sx-search input:focus,
+.pm-toolbar .sx-select:focus {
+  border-color: var(--bs-primary, #4f46e5);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, .14);
+}
+.pm-toolbar .sx-search i { color: #98a2b3; transition: color .15s; }
+.pm-toolbar .sx-search:focus-within i { color: var(--bs-primary, #4f46e5); }
+/* A select that is actually narrowing the grid announces itself */
+.pm-toolbar .sx-select--active {
+  border-color: #c7d2fe; background-color: #eef2ff;
+  color: #3730a3; font-weight: 600;
+}
+
+/* State filters as toggle chips */
+.pm-toolbar .pm-chk {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 0 10px; border-radius: 999px;
+  border: 1px solid #e4e7ec; background: var(--bs-body-bg, #fff);
+  font-size: 12px; font-weight: 600; color: #52607a; cursor: pointer;
+  user-select: none; transition: background .15s, border-color .15s, color .15s;
+}
+.pm-toolbar .pm-chk:hover { border-color: #c3cad6; }
+.pm-toolbar .pm-chk:has(input:checked) { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; }
+.pm-toolbar .pm-chk input { width: 13px; height: 13px; margin: 0; accent-color: var(--bs-primary, #4f46e5); cursor: pointer; }
 .pm-chk { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; white-space: nowrap; }
 
 /* ---- Buttons ------------------------------------------------------------- */
@@ -324,7 +380,10 @@
 .pm-toolbar .pm-btn,
 .pm-toolbar .pm-mode { display: inline-flex; align-items: center; }
 .pm-toolbar .sx-search input { min-width: 0; width: 100%; }
-.pm-toolbar .pm-chk { min-height: 34px; }
+/* Modes sit in a 3px-padded track, so the buttons themselves run shorter to
+   keep the track on the same 34px row as every other control. */
+.pm-toolbar .pm-mode { height: 26px; }
+.pm-toolbar .pm-chk { height: 34px; min-height: 34px; }
 
 /* ---- Status column ------------------------------------------------------- */
 .pm-status-wrap { display: inline-flex; align-items: center; gap: 6px; }
@@ -985,3 +1044,5 @@
 .pm-expset__ordercol { display: inline-flex; align-items: center; gap: 6px; }
 .pm-expset__headerinput { min-width: 120px; height: 28px; }
 .pm-expset__hint { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: #475569; background: var(--bs-tertiary-bg, #f8fafc); border-radius: 8px; padding: 8px 10px; }
+.pm-expset__folder { display: flex; align-items: center; gap: 8px; }
+.pm-expset__folderinput { flex: 1; min-width: 0; }

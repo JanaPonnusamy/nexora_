@@ -1760,7 +1760,7 @@ export default function PurchaseWorkspacePage() {
                     <i className="bi bi-search" aria-hidden="true" />
                     <input ref={searchRef} type="search" value={search} placeholder="Search product…" aria-label="Search product" onChange={(e) => setSearch(e.target.value)} />
                   </span>
-                  <select className="sx-select" aria-label="Movement filter" value={movement} onChange={(e) => setMovement(e.target.value)}>
+                  <select className={`sx-select${movement ? ' sx-select--active' : ''}`} aria-label="Movement filter" value={movement} onChange={(e) => setMovement(e.target.value)}>
                     {MOVEMENT.map((m) => <option key={m} value={m}>{m || 'Movement: all'}</option>)}
                   </select>
                 </>
@@ -1778,7 +1778,7 @@ export default function PurchaseWorkspacePage() {
               {/* Category filter is available in every mode/stage (§5) — it
                   only narrows the grid view, it never touches assignments. */}
               {mode !== 'supplier-stock' && (
-                <select className="sx-select" aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
+                <select className={`sx-select${productType ? ' sx-select--active' : ''}`} aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
                   <option value="">Product Type: all</option>
                   <option value="1">Pharma</option>
                   <option value="0">Non-Pharma</option>
@@ -1934,6 +1934,7 @@ export default function PurchaseWorkspacePage() {
           ) : stage === 'export' ? (
             <SupplierQueuePanel
               tenantId={tenantId}
+              storeId={storeId || selectedStoreId}
               refreshId={refreshId}
               actingUser={actingUser}
               notify={say}
