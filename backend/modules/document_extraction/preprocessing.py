@@ -41,6 +41,18 @@ def load_image_from_path(path: Path) -> np.ndarray:
     return image
 
 
+def is_readable_image(content: bytes) -> bool:
+    """Whether raw uploaded bytes decode to an image at all — the upload-time
+    integrity check (service._verify_upload_parts). Decoding is the only
+    honest test: a truncated JPEG still has a valid header and a plausible
+    file size."""
+    try:
+        image = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR)
+    except Exception:
+        return False
+    return image is not None and image.size > 0
+
+
 def pdf_to_images(pdf_path: Path, dpi: int = 200) -> List[np.ndarray]:
     """Renders every page of a PDF to a BGR numpy array. PyMuPDF is primary
     (no external binary dependency); pdf2image (poppler) is the documented

@@ -13,7 +13,14 @@ import re
 import uuid
 from datetime import date, datetime, timezone
 
-from modules.document_extraction import export_excel, preprocessing, product_resolution, repository, storage
+from modules.document_extraction import (
+    export_excel,
+    page_merge,
+    preprocessing,
+    product_resolution,
+    repository,
+    storage,
+)
 from modules.document_extraction.header_engine import HeaderExtractionEngine
 from modules.document_extraction.invoice_boundary import detect_invoice_groups
 from modules.document_extraction.json_contracts import (
@@ -34,10 +41,8 @@ from modules.document_extraction.ocr.models import BoundingBox, Confidence, OCRD
 from modules.document_extraction.ocr.models import OCRLine as EngineOCRLine
 from modules.document_extraction.ocr.models import OCRPage as EngineOCRPage
 from modules.document_extraction.ocr.models import OCRWord as EngineOCRWord
-from modules.document_extraction.parser.parser_factory import ParserFactory
 from modules.document_extraction.supplier_engine import SupplierIdentificationEngine
 from modules.document_extraction.supplier_engine import supplier_master_repository
-from modules.document_extraction.table_engine import TableUnderstandingEngine
 
 logger = logging.getLogger("document_extraction.service")
 
@@ -59,6 +64,8 @@ def upload(files, tenant_id, store_id, group_as_single_invoice, uploaded_by):
     if not files:
         raise ValueError("At least one file is required")
 
+    _verify_upload_parts(files)
+
     if group_as_single_invoice or len(files) == 1:
         return [_create_single_import(files, tenant_id, store_id, uploaded_by)]
 
@@ -66,6 +73,37 @@ def upload(files, tenant_id, store_id, group_as_single_invoice, uploaded_by):
         _create_single_import([f], tenant_id, store_id, uploaded_by)
         for f in files
     ]
+
+
+def _verify_upload_parts(files):
+    """Every part of a multi-part upload must be readable BEFORE any import
+    row exists. A page that arrived truncated (a common WhatsApp/phone-
+    transfer failure) is invisible until OCR reaches it, and by then the
+    invoice is already half-imported — the operator sees "extraction failed"
+    with no clue which of their 4 photos was the bad one. Rejecting the whole
+    batch up front, naming the file, means the fix is "re-upload that page".
+    """
+    bad_parts = []
+    for filename, content in files:
+        try:
+            source_type = storage.source_type_for_filename(filename)
+        except ValueError as exc:
+            bad_parts.append(str(exc))
+            continue
+        if not content:
+            bad_parts.append(f"'{filename}' is empty (0 bytes)")
+        elif source_type == "PDF":
+            if not content.lstrip()[:5].startswith(b"%PDF"):
+                bad_parts.append(f"'{filename}' is not a readable PDF")
+        elif not preprocessing.is_readable_image(content):
+            bad_parts.append(f"'{filename}' could not be decoded as an image (truncated or corrupt)")
+
+    if bad_parts:
+        raise ValueError(
+            f"{len(bad_parts)} of {len(files)} uploaded file(s) could not be read: "
+            + "; ".join(bad_parts)
+            + ". Re-upload the affected page(s)."
+        )
 
 
 def _create_single_import(files, tenant_id, store_id, uploaded_by):
@@ -84,6 +122,12 @@ def _create_single_import(files, tenant_id, store_id, uploaded_by):
     page_entries = []
     for page_no, (filename, content) in enumerate(files, start=1):
         storage_path = storage.save_original(import_id, filename, content)
+        written = storage.absolute_path(storage_path)
+        if not written.exists() or written.stat().st_size != len(content):
+            raise ValueError(
+                f"'{filename}' (page {page_no}) was not written to storage completely; "
+                "re-upload this page."
+            )
         page_entries.append(OriginalFileEntry(
             page_no=page_no, original_file_name=filename, storage_path=storage_path,
             display_order=page_no,
@@ -227,31 +271,53 @@ def run_ocr(import_id, actor=None):
         return repository.get_import(import_id)
 
     groups = detect_invoice_groups(ocr_document)
+    split_import_ids = []
     if len(groups) > 1:
         logger.info(
             "document_extraction.ocr import_id=%s: %d invoices bundled in one upload (pages %s), splitting",
-            import_id, len(groups), [g for g in groups],
+            import_id, len(groups), groups,
         )
         for extra_group in groups[1:]:
             new_import_id = _split_off_invoice_group(doc, ocr_document, extra_group, actor)
+            split_import_ids.append(new_import_id)
             logger.info(
                 "document_extraction.ocr import_id=%s: split page(s) %s into new import_id=%s",
                 import_id, extra_group, new_import_id,
             )
-        primary_pages = set(groups[0])
-        _trim_import_to_pages(import_id, doc, primary_pages)
-        ocr_document = ocr_document.model_copy(update={
-            "pages": [p for p in ocr_document.pages if p.page_no in primary_pages],
-        })
+        page_no_map = {old: new for new, old in enumerate(groups[0], start=1)}
+        _trim_import_to_pages(import_id, doc, page_no_map)
+        ocr_document = _renumber_pages(ocr_document, page_no_map)
 
     contract = _ocr_document_to_contract(ocr_document)
     repository.update_import_fields(import_id, {
         "ocr_json": contract.model_dump(),
         "ocr_confidence": round((contract.average_confidence or 0.0) * 100, 2),
         "is_ocr_completed": True,
+        "page_count": len(ocr_document.pages),
     })
     logger.info("document_extraction.ocr import_id=%s pages=%d", import_id, len(ocr_document.pages))
-    return repository.get_import(import_id)
+
+    # Each split-off invoice is carried through extraction + validation here,
+    # not left for a caller to notice and drive. The frontend pipeline only
+    # ever tracks the import it uploaded (the primary), so an invoice split
+    # out of that upload and left at UPLOADED would simply never be extracted
+    # by anyone — it would sit in History as an empty import forever.
+    for new_import_id in split_import_ids:
+        run_extraction(new_import_id, actor)
+        run_validation(new_import_id, actor)
+
+    result = repository.get_import(import_id)
+    result["split_import_ids"] = split_import_ids
+    return result
+
+
+def _renumber_pages(ocr_document, page_no_map):
+    return ocr_document.model_copy(update={
+        "pages": [
+            page.model_copy(update={"page_no": page_no_map[page.page_no]})
+            for page in ocr_document.pages if page.page_no in page_no_map
+        ],
+    })
 
 
 def _split_off_invoice_group(doc, ocr_document, page_nos, actor):
@@ -333,17 +399,28 @@ def _split_off_invoice_group(doc, ocr_document, page_nos, actor):
     return new_import_id
 
 
-def _trim_import_to_pages(import_id, doc, keep_page_nos):
-    """Rewrites `import_id`'s own original/processed file lists down to
-    just `keep_page_nos` after other pages were split off into new imports
-    (see _split_off_invoice_group). `keep_page_nos` is always the FIRST
-    detected invoice group, which invoice_boundary.detect_invoice_groups
-    guarantees starts at page 1 and is contiguous, so no renumbering is
-    needed here — only filtering."""
+def _trim_import_to_pages(import_id, doc, page_no_map):
+    """Rewrites `import_id`'s own original/processed file lists down to just
+    the pages in `page_no_map` (old page_no -> new page_no) after the other
+    pages were split off into new imports (see _split_off_invoice_group).
+
+    The kept group is the one containing page 1, but it is NOT necessarily
+    contiguous — a batch photographed out of order can leave this import
+    holding pages 1, 3 and 4 while page 2 belongs to a different invoice —
+    so the kept pages are renumbered 1..N here, exactly as the split-off
+    group is."""
     original_files = (doc.get("original_files_json") or {}).get("files", [])
-    kept_originals = [e for e in original_files if e["page_no"] in keep_page_nos]
+    kept_originals = [
+        {**e, "page_no": page_no_map[e["page_no"]], "display_order": page_no_map[e["page_no"]]}
+        for e in original_files if e["page_no"] in page_no_map
+    ]
+    kept_originals.sort(key=lambda e: e["page_no"])
     processed_files = (doc.get("processed_files_json") or {}).get("files", [])
-    kept_processed = [e for e in processed_files if e["page_no"] in keep_page_nos]
+    kept_processed = [
+        {**e, "page_no": page_no_map[e["page_no"]]}
+        for e in processed_files if e["page_no"] in page_no_map
+    ]
+    kept_processed.sort(key=lambda e: e["page_no"])
     preview_path = next(
         (e["processed_storage_path"] for e in kept_processed if e.get("processing_status") == "DONE"),
         None,
@@ -498,9 +575,15 @@ def run_extraction(import_id, actor=None):
     try:
         contract = OCRResultContract(**doc["ocr_json"])
         ocr_document = _contract_to_ocr_document(contract)
-        invoice_document = ParserFactory.create().parse(ocr_document)
 
-        table_result = TableUnderstandingEngine().understand(invoice_document)
+        # Page by page, then merged — never one parse across all pages. See
+        # page_merge.py for why (a multi-page invoice reprints its header and
+        # footer on every page, so a whole-document parse lets page 3's
+        # reprinted boilerplate win header fields over page 1's real values).
+        pages = page_merge.extract_pages(ocr_document)
+        invoice_document = page_merge.merge_document(pages, ocr_document)
+        merged_rows = page_merge.merge_rows(pages)
+
         header_result = HeaderExtractionEngine().extract(invoice_document)
         supplier_match = SupplierIdentificationEngine().identify(
             doc["tenant_id"], doc.get("store_id"), invoice_document.supplier_block, invoice_document.header,
@@ -514,7 +597,7 @@ def run_extraction(import_id, actor=None):
         # rather than a partial write followed by an unhandled 500.
         item_rows = [
             _resolve_and_build_item(row, doc["tenant_id"], doc.get("store_id"), supplier_match.matched_supplier_code)
-            for row in table_result.rows
+            for row in merged_rows
         ]
     except Exception as exc:
         repository.update_import_fields(import_id, {
@@ -523,9 +606,21 @@ def run_extraction(import_id, actor=None):
         logger.warning("document_extraction.extract import_id=%s failed: %s", import_id, exc)
         return repository.get_import(import_id)
 
-    repository.update_import_fields(import_id, header_fields)
-    repository.delete_items_for_import(import_id)
-    repository.insert_items(doc["tenant_id"], import_id, item_rows)
+    try:
+        repository.update_import_fields(import_id, header_fields)
+        repository.delete_items_for_import(import_id)
+        repository.insert_items(doc["tenant_id"], import_id, item_rows)
+    except Exception as exc:
+        # A bad OCR number that still slipped past _bounded() (e.g. a value
+        # that overflows its DECIMAL column) must fail this import the same
+        # graceful, reportable way as any other extraction error — the
+        # frontend pipeline shows a failed stage it can retry, instead of a
+        # raw 500 with the whole batch's progress lost.
+        repository.update_import_fields(import_id, {
+            "status": "FAILED", "failure_reason": f"Extraction failed while saving: {exc}",
+        })
+        logger.warning("document_extraction.extract import_id=%s save failed: %s", import_id, exc)
+        return repository.get_import(import_id)
 
     repository.update_import_fields(import_id, {
         "status": "EXTRACTED", "is_header_extracted": True, "is_items_extracted": True,
@@ -605,21 +700,34 @@ def _resolve_and_build_item(row, tenant_id, store_id, supplier_code):
         "batch_number": row.batch,
         "expiry_raw": row.expiry,
         "expiry_date": _parse_expiry_date(row.expiry),
-        "quantity": row.qty,
-        "free_quantity": row.free_qty,
-        "ptr": row.ptr,
-        "purchase_rate": row.purchase_rate,
-        "mrp": row.mrp,
-        "gst_percent": row.gst_percent,
-        "discount_percent": row.discount_percent,
+        "quantity": _bounded(row.qty, 10 ** 12),
+        "free_quantity": _bounded(row.free_qty, 10 ** 12),
+        "ptr": _bounded(row.ptr, 10 ** 12),
+        "purchase_rate": _bounded(row.purchase_rate, 10 ** 12),
+        "mrp": _bounded(row.mrp, 10 ** 12),
+        "gst_percent": _bounded(row.gst_percent, 100),
+        "discount_percent": _bounded(row.discount_percent, 100),
         # StructuredProductRow has no separate discount-AMOUNT field (only
         # discount_percent) — leaving this None rather than deriving it from
         # an unconfirmed formula (e.g. amount/(1-disc%) has rounding/order-
         # of-operations ambiguity the chunk brief doesn't resolve).
         "discount_amount": None,
-        "amount": row.amount,
+        "amount": _bounded(row.amount, 10 ** 14),
         "confidence": round(row.confidence.score * 100, 2) if row.confidence else None,
     }
+
+
+def _bounded(value, max_abs):
+    """Drops a numeric cell whose value can't be real for that column — an
+    HSN code or batch number that the column aligner landed in the GST%
+    column reads as e.g. 30049099, which is not a GST rate and, worse,
+    overflows its DECIMAL(5,2) column and takes the whole import down with a
+    SQL arithmetic-overflow error. A cell we know is wrong is worth less than
+    an empty cell the reviewer can fill in: the row itself is kept, with that
+    one field cleared and flagged for Review as a missing value."""
+    if value is None:
+        return None
+    return value if abs(value) <= max_abs else None
 
 
 def get_extraction(import_id):

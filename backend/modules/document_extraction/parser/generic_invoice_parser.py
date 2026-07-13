@@ -30,6 +30,7 @@ boxes rather than an approximated word split.
 
 import re
 from datetime import datetime, timezone
+from statistics import median
 from typing import Dict, List, Optional, Set, Tuple
 
 from modules.document_extraction.ocr.models import BoundingBox, Confidence, OCRDocument, OCRLine
@@ -640,31 +641,56 @@ def _row_tokens(row: List[OCRLine]) -> List[str]:
     return [l.text for l in row]
 
 
+# A line joins a row if its vertical centre sits within this fraction of a
+# median line-height of the row's centre. Big enough to hold a row together
+# across the tilt of a hand-held photo (the leftmost and rightmost cells of
+# one printed row can sit half a line apart), small enough that the NEXT
+# printed row — a full row-pitch away — never qualifies.
+_ROW_BAND_TOLERANCE = 0.6
+
+
 def _group_into_rows(lines: List[OCRLine]) -> List[List[OCRLine]]:
-    """Groups OCRLines into visual table rows by y-overlap — the same
-    technique ocr/paddle_engine.py uses to merge split words, applied here
-    to reconstruct rows instead. A candidate joins the current row if it
-    y-overlaps any existing member by >=50% of the shorter line's height;
-    members are then sorted left-to-right by x1."""
+    """Groups OCRLines into visual table rows by vertical centre.
+
+    Each line is one table CELL (PaddleOCR boxes each cell of a printed grid
+    separately), so a printed row has to be rebuilt from the cells that share
+    its band. Membership is decided against the row's own centre — the median
+    of its members' centres — and never against "does this overlap ANY member
+    already in the row". That any-member rule chains: one tall cell (a
+    two-line product name) overlaps the row below it, which pulls that row's
+    cells in, which reach further down again, and a dense invoice table
+    collapses into a single 48-cell "row" that no column aligner can make
+    sense of. A median centre cannot be dragged that way — it stays on the
+    printed row it started on.
+
+    Members are then sorted left-to-right by x1, which is the order the
+    column aligner (table_engine) expects."""
     if not lines:
         return []
-    sorted_lines = sorted(lines, key=lambda l: (l.bbox.y1, l.bbox.x1))
-    rows: List[List[OCRLine]] = [[sorted_lines[0]]]
-    for line in sorted_lines[1:]:
-        current_row = rows[-1]
-        if any(_y_overlaps(member.bbox, line.bbox) for member in current_row):
-            current_row.append(line)
+
+    median_height = median(max(line.bbox.y2 - line.bbox.y1, 1.0) for line in lines)
+    tolerance = _ROW_BAND_TOLERANCE * median_height
+
+    ordered = sorted(lines, key=lambda l: (_y_center(l.bbox), l.bbox.x1))
+    rows: List[List[OCRLine]] = [[ordered[0]]]
+    centers: List[float] = [_y_center(ordered[0].bbox)]
+
+    for line in ordered[1:]:
+        center = _y_center(line.bbox)
+        if abs(center - median(centers)) <= tolerance:
+            rows[-1].append(line)
+            centers.append(center)
         else:
             rows.append([line])
+            centers = [center]
+
     for row in rows:
         row.sort(key=lambda l: l.bbox.x1)
     return rows
 
 
-def _y_overlaps(a: BoundingBox, b: BoundingBox) -> bool:
-    shared_height = max(min(a.y2 - a.y1, b.y2 - b.y1), 1)
-    overlap = min(a.y2, b.y2) - max(a.y1, b.y1)
-    return overlap > shared_height * 0.5
+def _y_center(box: BoundingBox) -> float:
+    return (box.y1 + box.y2) / 2.0
 
 
 def _union_bbox(boxes: List[BoundingBox]) -> BoundingBox:
