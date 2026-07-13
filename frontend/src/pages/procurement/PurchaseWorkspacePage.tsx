@@ -1745,10 +1745,10 @@ export default function PurchaseWorkspacePage() {
               Movement stay Review-stage-only: they're server query params
               that only ever applied while `isReviewStage` (loadWorkspace),
               to avoid silently narrowing the Supplier Queue's assignment join. */}
+          {/* Fixed two-row layout: every control owns a permanent slot of a
+              fixed width, so switching mode/stage only empties a slot — it
+              never re-flows the row or moves the other controls. */}
           {(stage === 'review' || stage === 'assign') && (
-            {/* Fixed two-row layout: every control owns a permanent slot of a
-                fixed width, so switching mode/stage only empties a slot — it
-                never re-flows the row or moves the other controls. */}
             <div className="pm-toolbar">
               <div className="pm-toolbar__row">
                 <div className="pm-toolbar__modes">
