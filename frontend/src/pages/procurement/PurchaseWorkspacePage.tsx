@@ -1676,6 +1676,30 @@ export default function PurchaseWorkspacePage() {
             {refreshes.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
           </select>
         </div>
+        {/* Stage stepper rides the header row rather than owning a second full-
+            width row of its own — the row had ~60% empty space and the detail
+            panel below needs the height (Sales History was falling off-screen). */}
+        {canWork && view === 'purchase' && (
+          <nav className="pm-stages" aria-label="Purchase workflow stages">
+            {STAGES.map((st, i) => {
+              const active = stage === st.key
+              const locked = st.key === 'export' && !hasAssignments
+              return (
+                <button
+                  key={st.key}
+                  className={`pm-stage${active ? ' pm-stage--on' : ''}${locked ? ' pm-stage--locked' : ''}`}
+                  aria-current={active ? 'step' : undefined}
+                  disabled={locked}
+                  title={locked ? 'Assign suppliers first' : st.label}
+                  onClick={() => goStage(st.key)}
+                >
+                  <span className="pm-stage__no">{i + 1}</span>
+                  <span className="pm-stage__lbl"><i className={`bi ${st.icon}`} /> {st.label}</span>
+                </button>
+              )
+            })}
+          </nav>
+        )}
         <div className="pm-top__views">
           {(['purchase', 'pending', 'grn'] as View[]).map((v) => (
             <button key={v} className={`pm-vtab${view === v ? ' pm-vtab--on' : ''}`} onClick={() => setView(v)}>
@@ -1715,27 +1739,8 @@ export default function PurchaseWorkspacePage() {
         </div>
       ) : (
         <>
-          {/* Operational stage stepper — normalizes the previously-mixed screen
-              into Review → Assign → Optimize → Export. */}
-          <nav className="pm-stages" aria-label="Purchase workflow stages">
-            {STAGES.map((st, i) => {
-              const active = stage === st.key
-              const locked = st.key === 'export' && !hasAssignments
-              return (
-                <button
-                  key={st.key}
-                  className={`pm-stage${active ? ' pm-stage--on' : ''}${locked ? ' pm-stage--locked' : ''}`}
-                  aria-current={active ? 'step' : undefined}
-                  disabled={locked}
-                  title={locked ? 'Assign suppliers first' : st.label}
-                  onClick={() => goStage(st.key)}
-                >
-                  <span className="pm-stage__no">{i + 1}</span>
-                  <span className="pm-stage__lbl"><i className={`bi ${st.icon}`} /> {st.label}</span>
-                </button>
-              )
-            })}
-          </nav>
+          {/* The stage stepper (Review → Assign → Optimize → Export) lives in the
+              page header row above, not here. */}
 
           {/* Contextual toolbar — only for the grid stages (Review / Assign).
               Review Mode (Review All / Supplier Purchasing / Supplier Live
@@ -2174,6 +2179,9 @@ export default function PurchaseWorkspacePage() {
             </div>
           )}
 
+          {/* Totals + stage actions share one footer row: separately they cost two
+              near-empty rows of height the detail panel needed. */}
+          <div className="pm-footbar">
           {(stage === 'review' || stage === 'assign') && mode !== 'supplier-stock' && (
             <div className="pm-totals">
               {mode === 'supplier' ? (
@@ -2260,6 +2268,7 @@ export default function PurchaseWorkspacePage() {
                 </span>
               </>
             )}
+          </div>
           </div>
         </>
       )}

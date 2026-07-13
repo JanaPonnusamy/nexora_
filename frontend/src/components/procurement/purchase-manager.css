@@ -15,10 +15,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
-.pm-top__ctx { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The header carries the context selects, the stage stepper and the view tabs on
+   ONE row; each block keeps its natural width and the stepper takes the slack
+   that used to be dead space. */
+.pm-top__ctx { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 0 1 auto; min-width: 0; }
+.pm-top .sx-select { height: 30px; }
 .pm-top__brand { font-weight: 700; font-size: 15px; display: inline-flex; align-items: center; gap: 6px; }
 .pm-top__brand .bi { color: var(--bs-primary, #4f46e5); }
 .pm-top__user {
@@ -462,22 +466,27 @@
 /* ---- Decision Panel (right column) --------------------------------------- */
 /* One focused answer to "should I buy this, and how much?" — sits in the
    scrollable pm-split__detail; sections are compact to fit a 1080p screen. */
-.pm-dpanel { display: flex; flex-direction: column; gap: 8px; }
+.pm-dpanel { display: flex; flex-direction: column; gap: 6px; }
 .pm-dpanel--empty { height: 100%; display: grid; place-items: center; }
 /* Fit the whole panel inside the viewport: pinned header/chart/supplier +
    decision, with the two history sections flexing and scrolling internally so
    the page itself never scrolls because of the detail panel. */
-.pm-dpanel--fit { height: 100%; min-height: 0; }
+.pm-dpanel--fit { height: 100%; min-height: 0; overflow-y: auto; }
 .pm-dsec--fixed { flex: 0 0 auto; }
-/* At least ~5 rows visible before internal scroll kicks in. */
-.pm-dsec--scroll { flex: 1 1 0; min-height: 150px; display: flex; flex-direction: column; }
+/* Purchase and Sales History split the leftover height evenly and each scrolls
+   internally. The floor is one header + ~4 rows: any higher and the two floors
+   together exceeded the column, so Sales History was pushed out of the panel
+   and clipped away entirely (pm-split__detail is overflow:hidden). */
+.pm-dsec--scroll { flex: 1 1 0; min-height: 104px; display: flex; flex-direction: column; }
 .pm-dsec--scroll .pm-minitable-wrap { flex: 1; min-height: 0; overflow-y: auto; }
+/* Column header stays put while the rows scroll under it — opaque + a hairline
+   so rows never bleed through it. */
 .pm-dsec--scroll .pm-minitable thead th { position: sticky; top: 0; z-index: 1; }
-.pm-dsec--pur.pm-dsec--scroll .pm-minitable thead th { background: #f0fdf4; }
-.pm-dsec--sales.pm-dsec--scroll .pm-minitable thead th { background: #fff7ed; }
+.pm-dsec--pur.pm-dsec--scroll .pm-minitable thead th { background: #f0fdf4; box-shadow: inset 0 -1px 0 #bbf7d0; }
+.pm-dsec--sales.pm-dsec--scroll .pm-minitable thead th { background: #fff7ed; box-shadow: inset 0 -1px 0 #fed7aa; }
 .pm-dsec--grow { flex: 1 1 0; }
 
-.pm-dsec { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; padding: 6px 10px; }
+.pm-dsec { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; padding: 5px 9px; }
 .pm-dsec__title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #64748b; display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
 .pm-dsec__titlebtn { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 11px; }
 .pm-dsec__hint { color: #94a3b8; font-size: 12px; padding: 4px 0; }
@@ -566,8 +575,9 @@
 .pm-fact__k { font-size: 10px; text-transform: uppercase; letter-spacing: .02em; color: #94a3b8; }
 .pm-fact__v { font-size: 13px; font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Movement chart (reused component, kept compact) */
-.pm-chart-wrap { height: 188px; margin-top: 8px; }
+/* Movement chart (reused component, kept compact) — the trend is a glance, the
+   two history tables below it are the work; it gives up height to them. */
+.pm-chart-wrap { height: 152px; margin-top: 4px; }
 
 /* Supplier recommendation cards */
 .pm-supcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
@@ -639,11 +649,12 @@
 .pm-sqexp__totallbl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .03em; color: #6366f1; font-weight: 700; }
 .pm-sqexp__totalval b { font-size: 19px; font-weight: 800; color: #1e1b4b; font-variant-numeric: tabular-nums; }
 
-/* Operational stage stepper (Review → Assign → Optimize → Export) */
-.pm-stages { display: flex; gap: 6px; padding: 8px 12px 0; flex-wrap: wrap; }
-.pm-stage { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--bs-border-color, #e5e7eb); background: var(--bs-body-bg, #fff); color: #475569; border-radius: 999px; padding: 5px 14px 5px 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
+/* Operational stage stepper (Review → Assign → Optimize → Export) — sits inside
+   .pm-top, so it carries no row padding of its own. */
+.pm-stages { display: flex; gap: 5px; padding: 0; flex-wrap: wrap; flex: 1 1 auto; justify-content: center; min-width: 0; }
+.pm-stage { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--bs-border-color, #e5e7eb); background: var(--bs-body-bg, #fff); color: #475569; border-radius: 999px; padding: 3px 11px 3px 4px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .pm-stage:hover:not(:disabled) { border-color: #94a3b8; }
-.pm-stage__no { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 700; }
+.pm-stage__no { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: #e2e8f0; color: #475569; font-size: 10.5px; font-weight: 700; }
 .pm-stage--on { border-color: #4f46e5; color: #3730a3; background: #eef2ff; }
 .pm-stage--on .pm-stage__no { background: #4f46e5; color: #fff; }
 .pm-stage--locked { opacity: .5; cursor: not-allowed; }
@@ -668,8 +679,16 @@
 /* Keyboard-highlighted supplier search result */
 .pm-suppick__opt--active { background: #eef2ff; }
 
+/* Footer: totals strip + stage action bar on ONE row (they each used to own a
+   mostly-empty row). Both keep their own card chrome; the actions sit right. */
+.pm-footbar { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+.pm-footbar .pm-totals { flex: 1 1 340px; }
+.pm-footbar .pm-stagebar { flex: 0 1 auto; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; padding: 5px 10px; }
+/* Export stage renders no totals — let the (long) hint use the full width. */
+.pm-footbar > .pm-stagebar:only-child { flex: 1 1 auto; }
+
 /* Stage action bar (per-stage next steps) */
-.pm-stagebar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--bs-border-color, #e5e7eb); background: var(--bs-tertiary-bg, #f8fafc); }
+.pm-stagebar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bs-tertiary-bg, #f8fafc); }
 .pm-stagebar__spacer { flex: 1; }
 .pm-stagebar__hint { color: #64748b; font-size: 12px; }
 
