@@ -207,9 +207,15 @@
 .pm-srpcard--sel { border-color: var(--bs-primary, #4f46e5); background: rgba(79,70,229,.07); box-shadow: inset 3px 0 0 var(--bs-primary, #4f46e5); }
 .pm-srpcard--assigned { border-color: #16a34a; background: #f0fdf4; }
 /* Cheapest supplier (top of the cost-sorted list) — green "best price" accent. */
-.pm-srpcard--cheapest { border-color: #86efac; box-shadow: inset 3px 0 0 #16a34a; }
-.pm-srpcard--cheapest.pm-srpcard--sel { box-shadow: inset 3px 0 0 #16a34a, inset 0 0 0 1px var(--bs-primary, #4f46e5); }
-.pm-srpcard__best { font-size: 9px; font-weight: 800; color: #15803d; background: #dcfce7; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; flex-shrink: 0; }
+.pm-srpcard--cheapest { border-color: #86efac; background: #f6fefa; box-shadow: inset 3px 0 0 #16a34a; }
+/* BEST is the card Right-Arrow lands on, so it must NOT wear the same indigo
+   cursor tint as every other card — the keyboard cursor turns it green, and
+   only the green card is the cheapest one. */
+.pm-srpcard--cheapest.pm-srpcard--sel {
+  background: #dcfce7; border-color: #16a34a;
+  box-shadow: inset 4px 0 0 #15803d, 0 0 0 2px rgba(22, 163, 74, .25);
+}
+.pm-srpcard__best { font-size: 9px; font-weight: 800; color: #fff; background: #16a34a; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; flex-shrink: 0; }
 /* Latest-purchased supplier (own purchase history) — badge only, order unchanged. */
 .pm-srpcard__preferred { font-size: 9px; font-weight: 800; color: #a16207; background: #fef9c3; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; flex-shrink: 0; }
 /* A different supplier already owns this product (one-supplier rule) — the

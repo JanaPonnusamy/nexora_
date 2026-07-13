@@ -3,7 +3,7 @@ import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
 import type { DrawerTab } from './DetailColumn'
 import { money, num } from '../stock/format'
 import { supplierAbbrev } from './supplierAbbrev'
-import { preferredSupplier } from './purchaseValue'
+import { preferredSupplier, SUPPLIER_REC_LIMIT } from './purchaseValue'
 
 // Whole days since a date (for "90 Days" style relative Last Purchase labels).
 function daysSince(d?: string | null): number | null {
@@ -76,7 +76,7 @@ export function SupplierRecPanel({
 }) {
   const recommendedQty = item ? item.remaining_qty ?? item.final_qty ?? 0 : 0
   const canAssign = Boolean(item) && item!.item_status !== 'skipped' && recommendedQty > 0
-  const shown = suppliers.slice(0, 8)
+  const shown = suppliers.slice(0, SUPPLIER_REC_LIMIT)
   // Auto-scroll (§9): keep the focused/selected card visible during Up/Down
   // keyboard navigation — same pattern as SupplierPicker's result list.
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map())

@@ -4,7 +4,7 @@ import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
 import { num } from '../stock/format'
 import { DEFAULT_SKIP_MODE } from './skipModes'
 import { SkipModeCell } from './SkipModeCell'
-import { preferredSupplier } from './purchaseValue'
+import { SUPPLIER_REC_LIMIT } from './purchaseValue'
 
 const REVIEWED_STATES = ['review', 'assigned', 'partial']
 
@@ -36,7 +36,6 @@ export function ProductGrid({
   checked,
   recommendations,
   selectedSupplier,
-  collapseToSupplier,
   onSelectSupplier,
   onCommitSupplier,
   onSupplierFocusChange,
@@ -59,8 +58,6 @@ export function ProductGrid({
   recommendations?: Record<string, SupplierRow[]>
   /** Locally-selected supplier per row (not yet committed). */
   selectedSupplier?: Record<string, string>
-  /** In Supplier Purchasing mode, collapse recommendations to just this supplier. */
-  collapseToSupplier?: string | null
   onSelectSupplier?: (orderItemId: string, supplierCode: string) => void
   onCommitSupplier?: (item: WorkspaceItem, supplierCode: string) => void
   /** Fires when the keyboard enters/leaves the Supplier Recommendation zone, so
@@ -143,13 +140,13 @@ export function ProductGrid({
     setSkipFocusId(null)
   }
 
-  // Up to five ranked suppliers for a row, honouring the Supplier-Purchasing
-  // collapse. Same shape the row renders, so keyboard and mouse agree.
-  const recsFor = (item: WorkspaceItem): SupplierRow[] => {
-    const recs = recommendations?.[item.order_item_id] ?? []
-    const shown = collapseToSupplier ? recs.filter((s) => s.supplier_code === collapseToSupplier) : recs
-    return shown.slice(0, 5)
-  }
+  // The ranked suppliers the keyboard cursor can reach — EXACTLY the cards the
+  // Supplier Recommendation panel draws. Never collapsed to the Supplier-
+  // Purchasing supplier: that left the cursor a single card, so Up/Down did
+  // nothing and a product could not be moved to a different supplier from the
+  // panel.
+  const recsFor = (item: WorkspaceItem): SupplierRow[] =>
+    (recommendations?.[item.order_item_id] ?? []).slice(0, SUPPLIER_REC_LIMIT)
 
   // Land keyboard focus for the active row: the Final Qty cell in the qty zone
   // (editable rows) or the grid container otherwise — in the supplier zone the
@@ -218,8 +215,11 @@ export function ProductGrid({
     onSaveRow?.(cur)
     const recs = recsFor(cur)
     if (recs.length === 0) return
-    const selCode = selectedSupplier?.[cur.order_item_id] ?? preferredSupplier(recs)
-    const found = recs.findIndex((s) => s.supplier_code === selCode)
+    // Land on the supplier already chosen for this row, else the TOP card — the
+    // cheapest, i.e. the BEST supplier (the list is cost-sorted). Up/Down walk
+    // every other card from there.
+    const selCode = selectedSupplier?.[cur.order_item_id] ?? null
+    const found = selCode ? recs.findIndex((s) => s.supplier_code === selCode) : -1
     const idx = found < 0 ? 0 : found
     setSupIndex(idx)
     setZone('supplier')

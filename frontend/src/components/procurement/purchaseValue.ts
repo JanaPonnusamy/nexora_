@@ -1,5 +1,11 @@
 import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
 
+/** How many supplier cards the Supplier Recommendation panel shows — and
+ *  therefore exactly how many the keyboard cursor may reach. Both sides read
+ *  this: while the grid capped its cursor at 5 and the panel drew 8, the bottom
+ *  cards were unreachable by keyboard. */
+export const SUPPLIER_REC_LIMIT = 8
+
 /** Rank suppliers cheapest-first (owner-directed): ascending Last Purchase Rate
  *  (PTR), suppliers with no recorded rate last, ties broken by purchase
  *  frequency (desc). The cheapest supplier is always the top card. */

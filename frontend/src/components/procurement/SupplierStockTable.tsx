@@ -3,7 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { SupplierRow, SupplierStockRow, WorkspaceItem } from '../../types/procurement'
 import { num, date } from '../stock/format'
 import { EmptyState } from '../common/EmptyState'
-import { preferredSupplier } from './purchaseValue'
+import { preferredSupplier, SUPPLIER_REC_LIMIT } from './purchaseValue'
 
 /** Stable row key: supplier product code, falling back to the mapped code. */
 export const stockRowKey = (r: SupplierStockRow) => r.supplier_product_code ?? r.product_code ?? ''
@@ -184,7 +184,8 @@ export function SupplierStockTable({
   }
 
   const itemFor = (r: SupplierStockRow | undefined) => (r?.product_code ? itemByCode.get(r.product_code) ?? null : null)
-  const recsFor = (item: WorkspaceItem | null) => (item ? (recommendations[item.order_item_id] ?? []).slice(0, 8) : [])
+  const recsFor = (item: WorkspaceItem | null) =>
+    (item ? (recommendations[item.order_item_id] ?? []).slice(0, SUPPLIER_REC_LIMIT) : [])
 
   const moveSelection = (dir: 1 | -1) => {
     if (rows.length === 0) return

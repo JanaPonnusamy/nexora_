@@ -731,9 +731,6 @@ export default function PurchaseWorkspacePage() {
     return codes
   }, [mode, supplierStock])
 
-  // In Supplier Purchasing mode, collapse the row icons to just the active supplier.
-  const collapseToSupplier = mode === 'supplier' ? supplier?.supplier_code ?? null : null
-
   const selectedItem = useMemo(
     () => visibleItems.find((i) => i.order_item_id === selectedId) ?? null,
     [visibleItems, selectedId],
@@ -2118,7 +2115,6 @@ export default function PurchaseWorkspacePage() {
                     dirtyIds={dirtyIds}
                     recommendations={recommendations}
                     selectedSupplier={selectedSupplier}
-                    collapseToSupplier={collapseToSupplier}
                     onSelectSupplier={onSelectSupplier}
                     onCommitSupplier={onCommitSupplier}
                     onSupplierFocusChange={setSupplierZoneActive}
@@ -2133,6 +2129,10 @@ export default function PurchaseWorkspacePage() {
                 )}
               </div>
               <div className="pm-split__suppliers">
+                {/* onCommit always assigns to the supplier whose CARD was acted on.
+                    Supplier Purchasing used to force the toolbar's supplier here,
+                    so a product could never be moved to a different supplier from
+                    this panel. */}
                 <SupplierRecPanel
                   item={selectedItem}
                   suppliers={selectedId ? recommendations[selectedId] ?? [] : []}
@@ -2149,7 +2149,7 @@ export default function PurchaseWorkspacePage() {
                   liveCodes={liveCodes}
                   active={supplierZoneActive}
                   onSelect={(code) => selectedId && onSelectSupplier(selectedId, code)}
-                  onCommit={mode === 'supplier' && supplier ? (it) => assign(it, supplier.supplier_code) : (it, code) => onCommitSupplier(it, code)}
+                  onCommit={(it, code) => onCommitSupplier(it, code)}
                   onOpenInfo={openInfo}
                 />
               </div>
