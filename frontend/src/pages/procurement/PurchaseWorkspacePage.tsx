@@ -1746,88 +1746,107 @@ export default function PurchaseWorkspacePage() {
               that only ever applied while `isReviewStage` (loadWorkspace),
               to avoid silently narrowing the Supplier Queue's assignment join. */}
           {(stage === 'review' || stage === 'assign') && (
+            {/* Fixed two-row layout: every control owns a permanent slot of a
+                fixed width, so switching mode/stage only empties a slot — it
+                never re-flows the row or moves the other controls. */}
             <div className="pm-toolbar">
-              <div className="pm-toolbar__modes">
-                {MODE_OPTIONS.map((m) => (
-                  <button key={m.value} className={`pm-mode${mode === m.value ? ' pm-mode--on' : ''}`} onClick={() => setMode(m.value)}>
-                    {m.label}
-                  </button>
-                ))}
+              <div className="pm-toolbar__row">
+                <div className="pm-toolbar__modes">
+                  {MODE_OPTIONS.map((m) => (
+                    <button key={m.value} className={`pm-mode${mode === m.value ? ' pm-mode--on' : ''}`} onClick={() => setMode(m.value)}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="pm-slot pm-slot--search">
+                  {isReviewStage && (
+                    <span className="sx-search">
+                      <i className="bi bi-search" aria-hidden="true" />
+                      <input ref={searchRef} type="search" value={search} placeholder="Search product…" aria-label="Search product" onChange={(e) => setSearch(e.target.value)} />
+                    </span>
+                  )}
+                </div>
+                <div className="pm-slot pm-slot--select">
+                  {isReviewStage && (
+                    <select className={`sx-select${movement ? ' sx-select--active' : ''}`} aria-label="Movement filter" value={movement} onChange={(e) => setMovement(e.target.value)}>
+                      {MOVEMENT.map((m) => <option key={m} value={m}>{m || 'Movement: all'}</option>)}
+                    </select>
+                  )}
+                </div>
+                {/* Category filter is available in every mode/stage (§5) — it
+                    only narrows the grid view, it never touches assignments. */}
+                <div className="pm-slot pm-slot--select">
+                  {mode !== 'supplier-stock' && (
+                    <select className={`sx-select${productType ? ' sx-select--active' : ''}`} aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
+                      <option value="">Product Type: all</option>
+                      <option value="1">Pharma</option>
+                      <option value="0">Non-Pharma</option>
+                      <option value="2">Others</option>
+                    </select>
+                  )}
+                </div>
+                <div className="pm-slot pm-slot--supplier">
+                  {mode !== 'review' && (
+                    <SupplierPicker
+                      tenantId={tenantId}
+                      storeId={storeId}
+                      value={supplier}
+                      onPick={setSupplier}
+                      onReturnToGrid={() => (document.querySelector('.pm-grid-wrap') as HTMLElement | null)?.focus()}
+                      metaOf={supplierMetaOf}
+                    />
+                  )}
+                </div>
+                <div className="pm-toolbar__right">
+                  {isReviewStage && (
+                    <button className="pm-btn pm-btn--ghost" onClick={() => setManualOpen(true)}><i className="bi bi-plus-lg" /> Manual</button>
+                  )}
+                  <button className="pm-btn pm-btn--ghost" onClick={loadWorkspace} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
+                </div>
               </div>
-              {isReviewStage && (
-                <>
-                  <span className="sx-search">
-                    <i className="bi bi-search" aria-hidden="true" />
-                    <input ref={searchRef} type="search" value={search} placeholder="Search product…" aria-label="Search product" onChange={(e) => setSearch(e.target.value)} />
-                  </span>
-                  <select className={`sx-select${movement ? ' sx-select--active' : ''}`} aria-label="Movement filter" value={movement} onChange={(e) => setMovement(e.target.value)}>
-                    {MOVEMENT.map((m) => <option key={m} value={m}>{m || 'Movement: all'}</option>)}
-                  </select>
-                </>
-              )}
-              {mode !== 'review' && (
-                <SupplierPicker
-                  tenantId={tenantId}
-                  storeId={storeId}
-                  value={supplier}
-                  onPick={setSupplier}
-                  onReturnToGrid={() => (document.querySelector('.pm-grid-wrap') as HTMLElement | null)?.focus()}
-                  metaOf={supplierMetaOf}
-                />
-              )}
-              {/* Category filter is available in every mode/stage (§5) — it
-                  only narrows the grid view, it never touches assignments. */}
-              {mode !== 'supplier-stock' && (
-                <select className={`sx-select${productType ? ' sx-select--active' : ''}`} aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
-                  <option value="">Product Type: all</option>
-                  <option value="1">Pharma</option>
-                  <option value="0">Non-Pharma</option>
-                  <option value="2">Others</option>
-                </select>
-              )}
-              {/* Has Offer filter — any supplier currently offering a
-                  scheme/discount/free-qty on this product (procurement.supplier_stock),
-                  available in every mode/stage that shows the Product Type filter. */}
-              {mode !== 'supplier-stock' && (
-                <label className="pm-chk" title="Only products a supplier currently has an offer on">
-                  <input type="checkbox" checked={offerOnly} onChange={(e) => setOfferOnly(e.target.checked)} /> Has Offer
-                </label>
-              )}
-              {/* The supplier workspace is assignment-based, not review-based
-                  (§18): default shows every state (all six stay checked),
-                  these are opt-in narrower views, never an automatic hide. */}
-              {mode !== 'supplier-stock' && (
-                <>
-                  <label className="pm-chk"><input type="checkbox" checked={showPending} onChange={(e) => setShowPending(e.target.checked)} /> Pending Review</label>
-                  <label className="pm-chk"><input type="checkbox" checked={showFinalized} onChange={(e) => setShowFinalized(e.target.checked)} /> Finalized</label>
-                  <label className="pm-chk"><input type="checkbox" checked={showAssigned} onChange={(e) => setShowAssigned(e.target.checked)} /> Assigned</label>
-                  <label className="pm-chk"><input type="checkbox" checked={showDeferred} onChange={(e) => setShowDeferred(e.target.checked)} /> Deferred</label>
-                  <label className="pm-chk"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Skipped</label>
-                  <label className="pm-chk"><input type="checkbox" checked={showManual} onChange={(e) => setShowManual(e.target.checked)} /> Manual</label>
-                </>
-              )}
-              {mode === 'supplier-stock' && (
-                <>
-                  <span className="sx-search">
-                    <i className="bi bi-search" aria-hidden="true" />
-                    <input type="search" value={stockSearch} placeholder="Search live stock…" aria-label="Search live stock" onChange={(e) => setStockSearch(e.target.value)} />
-                  </span>
-                  <button
-                    className="pm-btn pm-btn--import"
-                    disabled={!supplier}
-                    title={supplier ? 'Import this supplier’s stock from Excel' : 'Select a supplier first'}
-                    onClick={() => importInputRef.current?.click()}
-                  >
-                    <i className="bi bi-upload" /> Import Stock
-                  </button>
-                  <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" hidden onChange={(e) => onImportPick(e.target.files?.[0] ?? null)} />
-                </>
-              )}
-              <div className="pm-toolbar__right">
-                {isReviewStage && (
-                  <button className="pm-btn pm-btn--ghost" onClick={() => setManualOpen(true)}><i className="bi bi-plus-lg" /> Manual</button>
+
+              {/* Second row keeps its height in every mode, so the grid below
+                  never jumps when the filters change. */}
+              <div className="pm-toolbar__row pm-toolbar__row--filters">
+                {mode !== 'supplier-stock' && (
+                  <>
+                    {/* Has Offer — any supplier currently offering a
+                        scheme/discount/free-qty on this product
+                        (procurement.supplier_stock). */}
+                    <label className="pm-chk" title="Only products a supplier currently has an offer on">
+                      <input type="checkbox" checked={offerOnly} onChange={(e) => setOfferOnly(e.target.checked)} /> Has Offer
+                    </label>
+                    {/* The supplier workspace is assignment-based, not
+                        review-based (§18): default shows every state (all six
+                        stay checked), these are opt-in narrower views, never an
+                        automatic hide. */}
+                    <label className="pm-chk"><input type="checkbox" checked={showPending} onChange={(e) => setShowPending(e.target.checked)} /> Pending Review</label>
+                    <label className="pm-chk"><input type="checkbox" checked={showFinalized} onChange={(e) => setShowFinalized(e.target.checked)} /> Finalized</label>
+                    <label className="pm-chk"><input type="checkbox" checked={showAssigned} onChange={(e) => setShowAssigned(e.target.checked)} /> Assigned</label>
+                    <label className="pm-chk"><input type="checkbox" checked={showDeferred} onChange={(e) => setShowDeferred(e.target.checked)} /> Deferred</label>
+                    <label className="pm-chk"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Skipped</label>
+                    <label className="pm-chk"><input type="checkbox" checked={showManual} onChange={(e) => setShowManual(e.target.checked)} /> Manual</label>
+                  </>
                 )}
-                <button className="pm-btn pm-btn--ghost" onClick={loadWorkspace} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
+                {mode === 'supplier-stock' && (
+                  <>
+                    <div className="pm-slot pm-slot--search">
+                      <span className="sx-search">
+                        <i className="bi bi-search" aria-hidden="true" />
+                        <input type="search" value={stockSearch} placeholder="Search live stock…" aria-label="Search live stock" onChange={(e) => setStockSearch(e.target.value)} />
+                      </span>
+                    </div>
+                    <button
+                      className="pm-btn pm-btn--import"
+                      disabled={!supplier}
+                      title={supplier ? 'Import this supplier’s stock from Excel' : 'Select a supplier first'}
+                      onClick={() => importInputRef.current?.click()}
+                    >
+                      <i className="bi bi-upload" /> Import Stock
+                    </button>
+                    <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" hidden onChange={(e) => onImportPick(e.target.files?.[0] ?? null)} />
+                  </>
+                )}
               </div>
             </div>
           )}

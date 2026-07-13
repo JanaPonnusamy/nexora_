@@ -43,15 +43,33 @@
    labels: modes are a segmented track, search/selects are raised inputs,
    the state filters are toggle chips that tint when checked. */
 .pm-toolbar {
-  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  display: flex; flex-direction: column; gap: 7px;
   padding: 7px 9px; border-radius: 12px;
   background: linear-gradient(180deg, #fbfcfe 0%, #f5f7fa 100%);
   border: 1px solid #e6e9ef;
 }
-.pm-toolbar__modes, .pm-toolbar__right { display: inline-flex; gap: 6px; align-items: center; }
+/* Rows never wrap and never change height, so the grid below stays put. */
+.pm-toolbar__row {
+  display: flex; align-items: center; gap: 7px;
+  flex-wrap: nowrap; min-height: 34px;
+}
+.pm-toolbar__row--filters {
+  border-top: 1px dashed #e2e6ec; padding-top: 7px;
+  overflow-x: auto; scrollbar-width: none;
+}
+.pm-toolbar__row--filters::-webkit-scrollbar { display: none; }
+/* Fixed-width slots: a hidden control leaves its slot empty instead of
+   collapsing and shuffling everything after it. */
+.pm-slot { flex: 0 0 auto; display: flex; align-items: center; }
+.pm-slot--search { width: 220px; }
+.pm-slot--select { width: 150px; }
+.pm-slot--supplier { width: 250px; }
+.pm-slot > * { width: 100%; }
+.pm-toolbar__modes, .pm-toolbar__right { display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto; }
 .pm-toolbar__right { margin-left: auto; }
-.pm-toolbar .sx-search { min-width: 210px; }
-.pm-toolbar .sx-select { max-width: 150px; }
+.pm-toolbar .sx-search { min-width: 0; width: 100%; }
+.pm-toolbar .sx-select { max-width: none; width: 100%; }
+.pm-toolbar .pm-chk, .pm-toolbar .pm-btn, .pm-toolbar .pm-mode { flex: 0 0 auto; }
 
 /* Segmented mode switch */
 .pm-toolbar__modes {
