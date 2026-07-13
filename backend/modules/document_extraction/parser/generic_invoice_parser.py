@@ -44,6 +44,7 @@ from modules.document_extraction.parser.models import (
     InvoiceTotals,
     PageRegion,
     RegionType,
+    RowCell,
     SupplierBlock,
 )
 
@@ -145,9 +146,11 @@ class GenericInvoiceParser(InvoiceParser):
 
         table_start = _find_table_header_end(document)
         products: List[InvoiceProduct] = []
+        table_header_cells: List[RowCell] = []
         if table_start is not None:
             products = self._extract_products(document, table_start, consumed)
             regions.extend(p.region for p in products if p.region)
+            table_header_cells = _table_header_cells(document, table_start)
 
         gst_summary, gst_regions = self._extract_gst_summary(document, consumed)
         regions.extend(gst_regions)
@@ -186,6 +189,7 @@ class GenericInvoiceParser(InvoiceParser):
             totals=totals,
             gst_summary=gst_summary,
             products=products,
+            table_header_cells=table_header_cells,
             footer_text=footer_text,
             unassigned_lines=unassigned_lines,
         )
@@ -315,6 +319,7 @@ class GenericInvoiceParser(InvoiceParser):
                     line_number=line_number,
                     ocr_row_text=text_joined,
                     tokens=tokens,
+                    cells=_row_cells(row),
                     product_name_guess=_guess_product_name(tokens),
                     confidence=confidence,
                     region=PageRegion(
@@ -639,6 +644,76 @@ def _row_tokens(row: List[OCRLine]) -> List[str]:
         if len(parts) > 1:
             return parts
     return [l.text for l in row]
+
+
+def _row_cells(row: List[OCRLine]) -> List[RowCell]:
+    """One RowCell per WORD of the row, left to right.
+
+    Not one cell per OCR box: a box routinely spans several printed columns
+    ("BPB26038301/28 145.26 ELVAS AM 40/5 TAB" arrives from PaddleOCR as a
+    single box holding Batch, MRP and Product Name), and a box is the
+    smallest thing that can be split back apart. Words are, and the table
+    engine regroups them by the column they physically sit under
+    (table_engine/geometry_columns.py), so a fused box costs nothing.
+
+    Word boxes are approximations — PaddleOCR has no word segmentation, so
+    ocr/paddle_engine.py distributes the box width across its words by
+    character count. That's accurate enough to place a word in the right
+    column band; it is not accurate enough to trust as a pixel measurement,
+    and nothing here does."""
+    cells = [
+        RowCell(text=word.text, bbox=word.bbox)
+        for line in row for word in line.words
+    ]
+    if not cells:  # an OCR provider that emits no per-word boxes at all
+        cells = [RowCell(text=line.text, bbox=line.bbox) for line in row]
+    cells.sort(key=lambda c: c.bbox.x1)
+    return cells
+
+
+def _table_header_cells(document: OCRDocument, table_start) -> List[RowCell]:
+    """The product table's header words, with geometry — the x anchors every
+    data row is then aligned against (table_engine/geometry_columns.py).
+
+    Words, not cells: OCR fuses the header exactly as it fuses the rows ("Pack
+    QTY FR Trade Price" comes back as one box), so there is no gap left to
+    split those four columns on. Grouping words back into header cells is the
+    table engine's job, and it has the one signal that survives fusion — the
+    header vocabulary itself.
+
+    A pharma header is also often printed on two stacked lines ("Exp." over
+    "Date"), so the whole header band is taken, not a single line."""
+    page_no, header_end_line_no = table_start
+    page = next((p for p in document.pages if p.page_no == page_no), None)
+    if page is None:
+        return []
+
+    band_lines = [
+        line for line in page.lines
+        if 0 <= header_end_line_no - line.line_no <= _TABLE_HEADER_MAX_GAP
+        and _tokenize(line.text) & _PRODUCT_HEADER_KEYWORDS
+    ]
+    if not band_lines:
+        return []
+
+    # Padded by half a line: a header cell that carries no keyword of its own
+    # ("Loc", "Free", "Value") sits a few pixels above or below the keyword
+    # lines that anchored the band, and dropping it would leave its column
+    # with no anchor — so the data printed under it would drift into the
+    # neighbouring real column.
+    padding = 0.5 * median(max(l.bbox.y2 - l.bbox.y1, 1.0) for l in band_lines)
+    y_top = min(l.bbox.y1 for l in band_lines) - padding
+    y_bottom = max(l.bbox.y2 for l in band_lines) + padding
+    in_band = [
+        line for line in page.lines
+        if y_top <= _y_center(line.bbox) <= y_bottom
+    ]
+
+    words = sorted(
+        (word for line in in_band for word in line.words),
+        key=lambda w: w.bbox.x1,
+    )
+    return [RowCell(text=word.text, bbox=word.bbox) for word in words]
 
 
 # A line joins a row if its vertical centre sits within this fraction of a

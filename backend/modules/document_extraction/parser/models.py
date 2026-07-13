@@ -125,6 +125,20 @@ class GSTSummary(BaseModel):
     total_amount: Optional[float] = None
 
 
+class RowCell(BaseModel):
+    """One piece of text on a table row, WITH where it physically sits.
+
+    `tokens` (plain strings, reading order) can only tell the table engine
+    that a row has N cells — not which printed column each one is under. That
+    is enough only while every row has every cell; the moment OCR fuses two
+    columns into one box or a row leaves a cell blank, an index-based mapping
+    silently shifts every value one column to the left. Carrying the bbox
+    lets the table engine put a cell in the column it is physically under
+    (table_engine/geometry_columns.py), which cannot shift."""
+    text: str
+    bbox: BoundingBox
+
+
 class InvoiceProduct(BaseModel):
     """One row of the product table. Only `tokens`/`ocr_row_text` are
     guaranteed populated by GenericInvoiceParser — they are the row's cells
@@ -140,6 +154,7 @@ class InvoiceProduct(BaseModel):
     line_number: int
     ocr_row_text: str
     tokens: List[str] = []
+    cells: List[RowCell] = []
     product_name_guess: Optional[str] = None
     pack: Optional[str] = None
     hsn_code: Optional[str] = None
@@ -170,5 +185,10 @@ class InvoiceDocument(BaseModel):
     totals: InvoiceTotals = InvoiceTotals()
     gst_summary: List[GSTSummary] = []
     products: List[InvoiceProduct] = []
+    # The product table's printed column-header cells, with their bboxes —
+    # the x positions of the real columns. Empty when no header row was
+    # found, which is what makes the table engine fall back to its
+    # index-based path (table_engine/table_understanding_engine.py).
+    table_header_cells: List[RowCell] = []
     footer_text: Optional[str] = None
     unassigned_lines: List[str] = []

@@ -140,15 +140,18 @@ def _score_columns_by_pattern(
     return column_scores
 
 
-_IGNORED = "IGNORED"
+# Sentinel for a header label we RECOGNIZE but deliberately have no column
+# for (a Taxable/GST-Base amount, a Loc/internal code, ...). Distinct from
+# None, which means "this header text means nothing to us".
+IGNORED = "IGNORED"
 
 
-def _best_header_match(header_text: str):
+def match_header_text(header_text: str):
     """Most-specific (longest) matching phrase wins — e.g. "gst base"
     (ignored: a taxable-amount column) must beat the generic "gst"
     substring it also contains (which would otherwise misroute it to
     ColumnType.GST_PERCENT), and "hsn code" must beat a bare "code" ignored
-    keyword. Returns a ColumnType, the _IGNORED sentinel, or None (no
+    keyword. Returns a ColumnType, the IGNORED sentinel, or None (no
     header vocabulary recognized this text at all)."""
     candidates: List[Tuple[int, object]] = []
     for ctype, synonyms in HEADER_SYNONYMS.items():
@@ -157,7 +160,7 @@ def _best_header_match(header_text: str):
                 candidates.append((len(synonym), ctype))
     for keyword in IGNORED_HEADER_KEYWORDS:
         if keyword in header_text:
-            candidates.append((len(keyword), _IGNORED))
+            candidates.append((len(keyword), IGNORED))
     if not candidates:
         return None
     candidates.sort(key=lambda c: c[0], reverse=True)
@@ -173,10 +176,10 @@ def _apply_header_hint(
         if idx >= len(header_hint):
             break
         header_text = header_hint[idx].lower()
-        match = _best_header_match(header_text)
+        match = match_header_text(header_text)
         if match is None:
             continue
-        if match == _IGNORED:
+        if match == IGNORED:
             # A recognized-but-unmapped column (Taxable/GST-Base amount, an
             # internal Loc/Code cell, ...) — clear any pattern-only
             # candidacy so it resolves to UNKNOWN instead of being forced

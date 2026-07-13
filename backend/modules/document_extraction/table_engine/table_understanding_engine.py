@@ -29,6 +29,8 @@ from typing import Dict, List, Optional, Tuple
 
 from modules.document_extraction.ocr.models import Confidence
 from modules.document_extraction.parser.models import InvoiceDocument, InvoiceProduct
+from modules.document_extraction.table_engine import geometry_columns
+from modules.document_extraction.table_engine.geometry_columns import ColumnBand
 from modules.document_extraction.table_engine.column_detector import (
     detect_columns,
     detect_expected_column_count,
@@ -71,6 +73,18 @@ class TableUnderstandingEngine:
                 rows=[],
             )
 
+        # Geometry first, always, when the page gives us the anchors for it:
+        # a cell placed under the column it is physically printed under can't
+        # be shifted by a fused OCR box or a blank cell, and both of those are
+        # routine on a photographed invoice (geometry_columns.py). The
+        # index-based path below is the fallback for a table whose header row
+        # was never found — it is a guess, and it degrades exactly as you'd
+        # expect when a row is ragged.
+        if geometry_columns.row_has_geometry(rows):
+            bands = geometry_columns.build_bands(document.table_header_cells)
+            if bands:
+                return self._understand_by_geometry(rows, geometry_columns.fit_bands(bands, rows))
+
         provisional_count = detect_expected_column_count(rows)
         rows = split_merged_rows(rows, provisional_count)
         expected_column_count = detect_expected_column_count(rows)
@@ -94,6 +108,70 @@ class TableUnderstandingEngine:
             row_count=len(structured_rows),
         )
         return TableUnderstandingResult(layout=layout, rows=structured_rows)
+
+    def _understand_by_geometry(
+        self, rows: List[InvoiceProduct], bands: List[ColumnBand],
+    ) -> TableUnderstandingResult:
+        bands = geometry_columns.ensure_name_band(bands, rows)
+        columns = [band.column for band in bands]
+        regrouped = geometry_columns.regroup_rows(
+            rows, bands, geometry_columns.name_band_index(bands),
+        )
+        structured = [
+            self._build_row_by_geometry(row, bands, line_number)
+            for line_number, row in enumerate(regrouped, start=1)
+        ]
+        structured = _fold_wrapped_name_rows(structured)
+
+        layout = TableLayout(
+            expected_column_count=len(columns),
+            columns=columns,
+            header_source="header_geometry",
+            row_count=len(structured),
+        )
+        return TableUnderstandingResult(layout=layout, rows=structured)
+
+    def _build_row_by_geometry(
+        self, row: geometry_columns.RegroupedRow, bands: List[ColumnBand], line_number: int,
+    ) -> StructuredProductRow:
+        structured = StructuredProductRow(
+            line_number=line_number,
+            ocr_row_text=row.ocr_row_text,
+        )
+
+        column_confidence: Dict[str, float] = {}
+        for band in bands:
+            text = row.cells.get(band.column.column_index, "").strip()
+            if not text or band.column.column_type not in OUTPUT_COLUMN_TYPES:
+                continue
+            _apply_field(structured, band.column.column_type, text)
+            # The cell is where it is; how much to trust it is a question about
+            # the column's own identification and how well the text matches the
+            # shape that column should hold (a name in a Qty column is still
+            # reported, at a confidence that says "look at me").
+            pattern_score = classify_token(text).get(band.column.column_type, 0.0)
+            column_confidence[band.column.column_type.value] = round(
+                min(1.0, 0.5 * band.column.confidence.score + 0.5 * pattern_score) + 0.25, 4,
+            )
+
+        output_types = {b.column.column_type for b in bands if b.column.column_type in OUTPUT_COLUMN_TYPES}
+        missing = sorted(t.value for t in output_types if t.value not in column_confidence)
+        structured.missing_columns = missing
+        structured.column_confidence = column_confidence
+
+        ocr_score = row.confidence
+        match_scores = list(column_confidence.values())
+        mean_match = sum(match_scores) / len(match_scores) if match_scores else 0.0
+        completeness = 1.0 - (len(missing) / len(output_types)) if output_types else 0.5
+        structured.confidence = Confidence(score=round(
+            max(0.0, min(1.0, 0.35 * ocr_score + 0.4 * mean_match + 0.25 * completeness)), 4,
+        ))
+
+        if missing:
+            structured.issues.append(RowIssue(
+                code="MISSING_COLUMN", detail=f"No cell aligned for: {', '.join(missing)}",
+            ))
+        return structured
 
     def _build_row(
         self, row: InvoiceProduct, columns: List[DetectedColumn], extra_name_text: Optional[str],
@@ -173,6 +251,35 @@ class TableUnderstandingEngine:
             ))
 
         return structured
+
+
+_DATA_FIELDS = ("batch", "expiry", "qty", "free_qty", "ptr", "purchase_rate", "mrp", "amount")
+
+
+def _fold_wrapped_name_rows(rows: List[StructuredProductRow]) -> List[StructuredProductRow]:
+    """Folds a name-only row into the row above it — the geometry counterpart
+    of row_reconstructor.merge_wrapped_rows. A long product name wraps onto a
+    second printed line with nothing else on it; that line groups into its own
+    visual row and would otherwise import as a product with no batch, no qty
+    and no price."""
+    folded: List[StructuredProductRow] = []
+    for row in rows:
+        is_name_only = row.product_name and all(
+            getattr(row, field) is None for field in _DATA_FIELDS
+        )
+        if is_name_only and folded:
+            previous = folded[-1]
+            previous.product_name = f"{previous.product_name or ''} {row.product_name}".strip()
+            previous.issues.append(RowIssue(
+                code="WRAPPED_NAME_MERGED",
+                detail="A following text-only continuation row was folded into this row's product name.",
+            ))
+            continue
+        folded.append(row)
+
+    for line_number, row in enumerate(folded, start=1):
+        row.line_number = line_number
+    return folded
 
 
 def _apply_field(structured: StructuredProductRow, ctype: ColumnType, raw_value: str) -> None:
