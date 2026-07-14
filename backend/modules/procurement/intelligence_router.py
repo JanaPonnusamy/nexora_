@@ -55,6 +55,98 @@ def summary(
     return service.get_summary(tenant_id, build_id, warehouse_store_id)
 
 
+class RefreshBuildRequest(BaseModel):
+    tenant_id: str
+    warehouse_store_id: str
+    # Every store to refresh + consolidate. The warehouse is always included.
+    store_ids: Optional[List[str]] = None
+    rolling_days: int = 90
+    min_days: int = 7
+    max_days: int = 30
+    created_by: Optional[str] = None
+
+
+@router.post("/refresh-build")
+def refresh_build(payload: RefreshBuildRequest):
+    """Refresh EVERY selected store (existing pipeline), regenerate each store's
+    VPL, then consolidate them into the network purchase recommendation."""
+    return service.refresh_and_build(
+        payload.tenant_id, payload.warehouse_store_id, payload.store_ids,
+        payload.rolling_days, payload.min_days, payload.max_days, payload.created_by,
+    )
+
+
+# ---- Mode 2: Supplier Offer Intelligence ---------------------------------
+# NOTE: these static paths MUST stay above /{cache_id}, or that route swallows them.
+
+@router.get("/suppliers")
+def offer_suppliers(
+    tenant_id: str = Query(...),
+    warehouse_store_id: str = Query(...),
+):
+    """Suppliers with live stock imported for the warehouse."""
+    return service.list_offer_suppliers(tenant_id, warehouse_store_id)
+
+
+@router.get("/supplier-offers")
+def supplier_offers(
+    tenant_id: str = Query(...),
+    warehouse_store_id: str = Query(...),
+    supplier_code: str = Query(...),
+    build_id: Optional[str] = Query(None),
+    only_available: bool = Query(True),
+    search: Optional[str] = Query(None),
+):
+    """A supplier's offered lines read against the network. Unmapped lines come
+    back with mapped=false so the grid can offer Assign inline."""
+    return service.supplier_offers(
+        tenant_id, warehouse_store_id, supplier_code, build_id, only_available, search,
+    )
+
+
+@router.get("/supplier-offers/resolve")
+def resolve_assignment(
+    tenant_id: str = Query(...),
+    warehouse_store_id: str = Query(...),
+    product_code: str = Query(...),
+    build_id: Optional[str] = Query(None),
+):
+    """Assign preview: which stores resolve automatically from the picked
+    warehouse product, and which still need a manual pick."""
+    return service.resolve_assignment(tenant_id, warehouse_store_id, product_code, build_id)
+
+
+class StoreAssignment(BaseModel):
+    store_id: str
+    product_code: Optional[str] = None
+
+
+class AssignRequest(BaseModel):
+    tenant_id: str
+    warehouse_store_id: str
+    supplier_code: str
+    supplier_product_code: str
+    supplier_product_name: Optional[str] = None
+    # The warehouse product the buyer picked.
+    product_code: str
+    # The other stores' codes — auto-resolved ones, plus any manual correction.
+    store_assignments: Optional[List[StoreAssignment]] = None
+    actor: Optional[str] = None
+
+
+@router.post("/supplier-offers/assign")
+def assign_supplier_product(payload: AssignRequest):
+    """Map a supplier line to the warehouse product (and the other stores) without
+    leaving Product Intelligence."""
+    return service.assign_supplier_product(
+        payload.tenant_id, payload.warehouse_store_id, payload.supplier_code,
+        payload.supplier_product_code, payload.supplier_product_name,
+        payload.product_code,
+        [a.dict() for a in (payload.store_assignments or [])],
+        payload.actor,
+    )
+
+
 @router.get("/{cache_id}")
 def detail(cache_id: str):
     """Per-product detail: the network decision + every store's position."""

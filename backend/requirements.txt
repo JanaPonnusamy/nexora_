@@ -6,6 +6,16 @@ pydantic
 python-dotenv
 rapidfuzz
 
+# auth stack (controllers/auth_controller.py, services/auth_service.py) — was
+# previously installed ad hoc and not tracked here
+bcrypt==4.1.2
+cryptography==46.0.7
+email-validator==2.3.0
+itsdangerous==2.2.0
+passlib==1.7.4
+PyJWT==2.12.0
+python-multipart==0.0.27
+
 # document_extraction module — Chunk 5 (Image Processing), installed and wired
 opencv-python
 numpy
@@ -13,11 +23,13 @@ Pillow
 pymupdf
 pdf2image
 
-# document_extraction module — Chunk 6 (OCR abstraction layer), code wired
-# via modules/document_extraction/ocr/ (PaddleOCRProvider); packages
-# themselves not yet pip-installed in this environment
-paddleocr
-paddlepaddle
+# document_extraction module — Chunk 6 (OCR abstraction layer), wired via
+# modules/document_extraction/ocr/ (PaddleOCRProvider). Pinned to the 2.x line
+# deliberately — PaddleOCRProvider._ensure_loaded() calls the 2.x
+# PaddleOCR(use_angle_cls=..., show_log=...) / .ocr(path, cls=True) API;
+# paddleocr>=3.0 replaced that signature and would break this provider.
+paddleocr==2.10.0
+paddlepaddle==2.6.2
 
 # document_extraction module — later chunks, listed but NOT installed/wired yet
 openpyxl

@@ -533,11 +533,9 @@ def get_store_charts(cache_id, months=4):
     store_ids = [s["store_id"] for s in stores]
 
     resolved = repo.resolve_by_product_name(tenant_id, store_ids, cache.get("product_name"))
-    rows = repo.monthly_transactions(
-        tenant_id,
-        [(sid, (resolved.get(sid) or {}).get("product_code")) for sid in store_ids],
-        months,
-    )
+    pairs = [(sid, (resolved.get(sid) or {}).get("product_code")) for sid in store_ids]
+    rows = repo.monthly_transactions(tenant_id, pairs, months)
+    transfers = repo.monthly_transfers(tenant_id, pairs, months)
 
     # A shared, gap-free month axis (a month with no transaction is a real zero —
     # it must still occupy its slot, or the charts cannot be compared).
@@ -550,12 +548,16 @@ def get_store_charts(cache_id, months=4):
     by_store = {}
     for r in rows:
         by_store.setdefault(r["store_id"], {})[r["period"]] = r
+    xfer_by_store = {}
+    for r in transfers:
+        xfer_by_store.setdefault(r["store_id"], {})[r["period"]] = r
 
     series = []
     for store in stores:
         sid = store["store_id"]
         hit = resolved.get(sid)
         points = by_store.get(sid, {})
+        xfers = xfer_by_store.get(sid, {})
         series.append({
             "store_id": sid,
             "store_code": store.get("store_code"),
@@ -564,10 +566,14 @@ def get_store_charts(cache_id, months=4):
             "product_code": (hit or {}).get("product_code"),
             "product_name": (hit or {}).get("product_name"),
             "found": hit is not None,
+            # Inventory ADDED = purchase + transfer in (the stacked bar);
+            # inventory REMOVED = sales (overlay) + transfer out (indicator).
             "points": [{
                 "period": p,
                 "sales_qty": float((points.get(p) or {}).get("sales_qty") or 0.0),
                 "purchase_qty": float((points.get(p) or {}).get("purchase_qty") or 0.0),
+                "transfer_in": float((xfers.get(p) or {}).get("transfer_in") or 0.0),
+                "transfer_out": float((xfers.get(p) or {}).get("transfer_out") or 0.0),
             } for p in axis],
         })
 
@@ -596,3 +602,241 @@ def _summary(build):
 
 def get_summary(tenant_id, build_id=None, warehouse_store_id=None):
     return _summary(_require_build(tenant_id, build_id, warehouse_store_id))
+
+
+# --------------------------------------------------------------------------
+# Refresh -> Store VPL (x N) -> Build, in one action
+# --------------------------------------------------------------------------
+
+def refresh_and_build(tenant_id, warehouse_store_id, store_ids, rolling_days=90,
+                      min_days=7, max_days=30, created_by=None):
+    """The whole procurement model in one call, exactly as the cockpit states it:
+
+        selected stores -> Refresh EVERY store -> Store VPL x N
+                        -> merge on the Common Product Mapping
+                        -> network purchase recommendation
+
+    Each store is refreshed through the EXISTING pipeline (sync -> business cycle
+    -> Refresh -> Decision Engine -> VPL); nothing about the engine is duplicated
+    here. A store whose refresh fails is reported and skipped — the build still
+    consolidates the stores that succeeded, so one bad store never blocks the
+    buyer's whole session.
+    """
+    from modules.procurement import pipeline_service
+
+    targets = list(dict.fromkeys([*(store_ids or []), str(warehouse_store_id)]))
+    refreshed, failed = [], []
+    for sid in targets:
+        try:
+            result = pipeline_service.run(
+                tenant_id, sid, rolling_days, min_days, max_days, created_by)
+            refreshed.append({
+                "store_id": sid,
+                "refresh_id": result["refresh_id"],
+                "vpl_product_count": result["generated_product_count"],
+            })
+        except Exception as exc:                      # one store must not sink the run
+            failed.append({"store_id": sid, "error": str(exc)})
+
+    build = build_intelligence(tenant_id, warehouse_store_id, targets, created_by)
+    build["refreshed"] = refreshed
+    build["failed"] = failed
+    return build
+
+
+# --------------------------------------------------------------------------
+# Mode 2 — Supplier Offer Intelligence
+# --------------------------------------------------------------------------
+
+def supplier_offers(tenant_id, warehouse_store_id, supplier_code, build_id=None,
+                    only_available=True, search=None):
+    """What the supplier is offering, read against the NETWORK.
+
+        supplier stock line -> the warehouse's ProductCode (SupplierProductMatch,
+        resolved at import; a manual inline link overrides it)
+                            -> the canonical product in the intelligence build
+                            -> network need / purchase / transfer + every store
+
+    An offered line that never resolved to a ProductCode is NOT hidden: it comes
+    back with mapped=false and the UI puts an Assign button in the row. That is
+    the whole point of the mode — the buyer maps it without leaving the screen.
+
+    Everything except the supplier's own file comes from the Intelligence cache;
+    no transaction table is touched.
+    """
+    build = _require_build(tenant_id, build_id, warehouse_store_id)
+    bid = build["build_id"]
+
+    stores = repo.build_stores(bid)
+    rows = repo.grid_rows(bid)
+    cells = repo.grid_store_cells(bid)
+
+    by_cache = {}
+    for c in cells:
+        by_cache.setdefault(c["cache_id"], {})[c["store_id"]] = c
+
+    # The build knows each canonical product by the WAREHOUSE's ProductCode —
+    # which is exactly the code the supplier line resolves to.
+    by_wh_code = {}
+    for r in rows:
+        code = r.get("warehouse_product_code")
+        if code is not None:
+            by_wh_code.setdefault(str(code), r)
+
+    lines = repo.supplier_stock_lines(
+        tenant_id, warehouse_store_id, supplier_code, only_available)
+
+    needle = (search or "").strip().lower()
+    out, mapped_count, unmapped_count = [], 0, 0
+    for line in lines:
+        if needle:
+            hay = (
+                f"{line.get('supplier_product_name') or ''} "
+                f"{line.get('supplier_product_code') or ''} "
+                f"{line.get('product_name') or ''} {line.get('product_code') or ''}"
+            ).lower()
+            if needle not in hay:
+                continue
+
+        code = line.get("product_code")
+        intel = by_wh_code.get(str(code)) if code is not None else None
+        mapped = code is not None
+        if mapped:
+            mapped_count += 1
+        else:
+            unmapped_count += 1
+
+        row = dict(line)
+        row["mapped"] = mapped
+        # in_network = mapped AND the network actually needs it (it is in a build
+        # row). Mapped-but-not-in-the-build = nobody has demand: offer, no need.
+        row["in_network"] = intel is not None
+        row["cache_id"] = (intel or {}).get("cache_id")
+        row["consolidated_suggest_qty"] = (intel or {}).get("consolidated_suggest_qty") or 0
+        row["consolidated_purchase_qty"] = (intel or {}).get("consolidated_purchase_qty") or 0
+        row["transfer_qty"] = (intel or {}).get("transfer_qty") or 0
+        row["consolidated_stock_qty"] = (intel or {}).get("consolidated_stock_qty") or 0
+        row["mapped_store_count"] = (intel or {}).get("mapped_store_count") or 0
+        row["priority"] = (intel or {}).get("priority")
+        row["priority_rank"] = (intel or {}).get("priority_rank") or 0
+        row["confidence"] = (intel or {}).get("confidence")
+        row["stores"] = by_cache.get((intel or {}).get("cache_id"), {}) if intel else {}
+        out.append(row)
+
+    # Unmapped lines float to the top under a needed line: they are the buyer's
+    # actionable backlog, and an offer nobody can see is an offer that is missed.
+    out.sort(key=lambda r: (
+        -(r["priority_rank"] or 0),
+        0 if not r["mapped"] else 1,
+        -(r["consolidated_purchase_qty"] or 0),
+        (r.get("supplier_product_name") or ""),
+    ))
+
+    return {
+        "build": build,
+        "stores": stores,
+        "supplier_code": supplier_code,
+        "rows": out,
+        "summary": {
+            "offered_lines": len(out),
+            "mapped_lines": mapped_count,
+            "unmapped_lines": unmapped_count,
+            "purchase_quantity": round(
+                sum(float(r["consolidated_purchase_qty"] or 0) for r in out), 3),
+        },
+    }
+
+
+def list_offer_suppliers(tenant_id, warehouse_store_id):
+    """Suppliers with imported live stock for the warehouse (the mode's picker)."""
+    return {"suppliers": repo.suppliers_with_stock(tenant_id, warehouse_store_id)}
+
+
+def resolve_assignment(tenant_id, warehouse_store_id, product_code, build_id=None):
+    """Preview the Assign: given the warehouse product the buyer picked, which of
+    the other stores already resolve automatically through the Common Product
+    Mapping, and which need a manual pick."""
+    build = _require_build(tenant_id, build_id, warehouse_store_id)
+    stores = repo.build_stores(build["build_id"])
+    others = [s["store_id"] for s in stores if s["store_id"] != str(warehouse_store_id)]
+    resolved = repo.resolve_mapped_stores(
+        tenant_id, str(warehouse_store_id), str(product_code), others)
+    return {
+        "product_code": str(product_code),
+        "stores": [{
+            "store_id": s["store_id"],
+            "store_code": s.get("store_code"),
+            "store_name": s.get("store_name"),
+            "is_warehouse": bool(s.get("is_warehouse")),
+            "product_code": (resolved.get(s["store_id"]) or {}).get("product_code"),
+            "product_name": (resolved.get(s["store_id"]) or {}).get("product_name"),
+            "auto": s["store_id"] in resolved,
+        } for s in stores if s["store_id"] != str(warehouse_store_id)],
+    }
+
+
+def assign_supplier_product(tenant_id, warehouse_store_id, supplier_code,
+                            supplier_product_code, supplier_product_name,
+                            product_code, store_assignments=None, actor=None):
+    """Map an unmapped supplier line, inline, in two persisted steps:
+
+      1. supplier line -> the WAREHOUSE ProductCode (procurement.supplier_product_link,
+         which also repoints the already-imported supplier_stock rows so the row
+         refreshes immediately and the link survives the next file import).
+      2. warehouse ProductCode -> each OTHER store's ProductCode, written as
+         MANUAL/APPROVED edges through the SAME dbo.product_mapping table the
+         mapping module owns. Stores the mapping already resolves are written
+         too — making the edge explicit costs nothing and the caller may have
+         corrected one.
+
+    The consolidated quantities only change on the next build (the grid is a
+    cache, by design), so the response says what the row now resolves to and the
+    UI refreshes just that row.
+    """
+    if not product_code:
+        raise HTTPException(status_code=400, detail="product_code is required")
+
+    warehouse = repo.get_store_product(tenant_id, warehouse_store_id, product_code)
+    if not warehouse:
+        raise HTTPException(
+            status_code=404,
+            detail="That ProductCode does not exist in the warehouse's catalogue",
+        )
+
+    repo.save_supplier_link(
+        tenant_id, warehouse_store_id, supplier_code, supplier_product_code,
+        supplier_product_name, warehouse["product_code"], warehouse.get("product_name"),
+        actor,
+    )
+
+    written = []
+    for a in (store_assignments or []):
+        target_store = str(a.get("store_id") or "")
+        target_code = a.get("product_code")
+        if not target_store or not target_code or target_store == str(warehouse_store_id):
+            continue
+        target = repo.get_store_product(tenant_id, target_store, target_code)
+        if not target:
+            continue
+        repo.save_manual_mapping(
+            tenant_id,
+            str(warehouse_store_id), warehouse["product_code"], warehouse.get("product_name"),
+            target_store, target["product_code"], target.get("product_name"),
+            actor,
+        )
+        written.append({
+            "store_id": target_store,
+            "product_code": target["product_code"],
+            "product_name": target.get("product_name"),
+        })
+
+    return {
+        "supplier_code": supplier_code,
+        "supplier_product_code": supplier_product_code,
+        "product_code": warehouse["product_code"],
+        "product_name": warehouse.get("product_name"),
+        "mapped_stores": written,
+        # Consolidation is a cached build: the network numbers for this product
+        # appear after the next build, not on this response.
+        "rebuild_required": True,
+    }

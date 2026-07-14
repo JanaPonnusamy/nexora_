@@ -18,6 +18,8 @@ Two responsibilities, cleanly separated:
 Targets NEXORA_PLATFORM only. Every read/write is tenant-scoped.
 """
 
+import os
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -27,6 +29,31 @@ from modules.procurement._dbutil import (
     rows_to_dicts as _rows_to_dicts,
     stringify as _stringify,
 )
+
+_SQL_DIR = os.path.join(os.path.dirname(__file__), "sql")
+_LINK_DDL = os.path.join(_SQL_DIR, "0019_supplier_product_link.sql")
+_link_schema_ready = False
+
+
+def ensure_link_schema():
+    """Provision procurement.supplier_product_link on first use (idempotent),
+    the same self-provisioning pattern the supplier-stock and optimization
+    repositories use — no manual migration step on a fresh environment."""
+    global _link_schema_ready
+    if _link_schema_ready:
+        return
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        with open(_LINK_DDL, "r", encoding="utf-8") as fh:
+            script = fh.read()
+        for batch in (b.strip() for b in script.split("\nGO")):
+            if batch:
+                cur.execute(batch)
+        conn.commit()
+    finally:
+        conn.close()
+    _link_schema_ready = True
 
 
 def _floatify(rows):
@@ -754,5 +781,316 @@ def monthly_transactions(tenant_id, pairs, months=4):
             (*params, tenant_id, int(months), tenant_id, int(months)),
         )
         return _floatify([_stringify(r) for r in _rows_to_dicts(cur)])
+    finally:
+        conn.close()
+
+
+def monthly_transfers(tenant_id, pairs, months=4):
+    """Monthly transfer IN / OUT quantities for many (store_id, product_code)
+    pairs in ONE read.
+
+    Transfers have no transaction table — sync.ProductTrans is the store's own
+    per-month statistics row (TransferInQuantity / TransferOutQuantity), which is
+    exactly what the 4-month movement chart needs and costs one indexed read.
+    Returns [] when the table is not provisioned.
+    """
+    pairs = [(s, c) for s, c in pairs if c is not None and str(c).strip().isdigit()]
+    if not pairs:
+        return []
+    values = ", ".join(["(CAST(? AS UNIQUEIDENTIFIER), CAST(? AS INT))"] * len(pairs))
+    params = []
+    for store_id, code in pairs:
+        params.extend([store_id, int(code)])
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT OBJECT_ID('sync.ProductTrans')")
+        if cur.fetchone()[0] is None:
+            return []
+        cur.execute(
+            f"""
+            WITH target(store_id, product_code) AS (
+                SELECT * FROM (VALUES {values}) v(store_id, product_code)
+            )
+            SELECT CAST(t.store_id AS VARCHAR(50))                       AS store_id,
+                   FORMAT(pt.MonthOfStatistics, 'yyyy-MM')               AS period,
+                   CAST(SUM(ISNULL(pt.TransferInQuantity, 0))  AS DECIMAL(18,3)) AS transfer_in,
+                   CAST(SUM(ISNULL(pt.TransferOutQuantity, 0)) AS DECIMAL(18,3)) AS transfer_out
+            FROM target t
+            JOIN sync.ProductTrans pt
+              ON pt.store_id = t.store_id AND pt.ProductCode = t.product_code
+            WHERE pt.tenant_id = ?
+              AND pt.MonthOfStatistics >= DATEADD(month, -?, GETDATE())
+            GROUP BY t.store_id, FORMAT(pt.MonthOfStatistics, 'yyyy-MM')
+            """,
+            (*params, tenant_id, int(months)),
+        )
+        return _floatify([_stringify(r) for r in _rows_to_dicts(cur)])
+    finally:
+        conn.close()
+
+
+# ==========================================================================
+# Mode 2 — Supplier Offer Intelligence
+# ==========================================================================
+#
+# The supplier's live-stock file (procurement.supplier_stock, imported by the
+# existing Supplier Live Stock importer) read against the NETWORK instead of
+# against one Refresh's VPL: every offered line is shown, mapped or not, and the
+# unmapped ones are assigned inline.
+
+def suppliers_with_stock(tenant_id, store_id):
+    """Suppliers that have live stock imported for this store, with their names
+    from sync.Suppliers (the Mode 2 supplier picker)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT OBJECT_ID('procurement.supplier_stock')")
+        if cur.fetchone()[0] is None:
+            return []
+        cur.execute(
+            """
+            SELECT CAST(ss.supplier_code AS VARCHAR(100)) AS supplier_code,
+                   MAX(s.SupplierName)                    AS supplier_name,
+                   COUNT(*)                               AS line_count,
+                   MAX(ss.imported_at)                    AS imported_at
+            FROM procurement.supplier_stock ss
+            LEFT JOIN sync.Suppliers s
+              ON s.tenant_id = ss.tenant_id AND s.store_id = ss.store_id
+             AND CAST(s.SupplierCode AS VARCHAR(100)) = CAST(ss.supplier_code AS VARCHAR(100))
+            WHERE ss.tenant_id = ? AND ss.store_id = ? AND ss.is_active = 1
+            GROUP BY CAST(ss.supplier_code AS VARCHAR(100))
+            ORDER BY supplier_name, supplier_code
+            """,
+            (tenant_id, store_id),
+        )
+        return _floatify([_stringify(r) for r in _rows_to_dicts(cur)])
+    finally:
+        conn.close()
+
+
+def supplier_stock_lines(tenant_id, store_id, supplier_code, only_available=True):
+    """EVERY line the supplier is offering this store — including the ones that
+    never resolved to a ProductCode (product_code IS NULL). Those are exactly the
+    rows the grid puts an Assign button on, so they must NOT be filtered out the
+    way the Purchase Manager's VPL-intersected view does.
+
+    A manual link (supplier_product_link) overrides the importer's resolution, so
+    an assignment made here survives the supplier's next file import."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT OBJECT_ID('procurement.supplier_stock')")
+        if cur.fetchone()[0] is None:
+            return []
+        has_link = _object_id(cur, "procurement.supplier_product_link")
+        link_join = """
+            LEFT JOIN procurement.supplier_product_link spl
+              ON spl.tenant_id = ss.tenant_id AND spl.store_id = ss.store_id
+             AND spl.supplier_code = ss.supplier_code
+             AND spl.supplier_product_code = ss.supplier_product_code
+             AND spl.is_deleted = 0
+        """ if has_link else ""
+        code_expr = (
+            "CAST(COALESCE(spl.product_code, ss.product_code) AS VARCHAR(100))"
+            if has_link else "CAST(ss.product_code AS VARCHAR(100))"
+        )
+        name_expr = (
+            "COALESCE(p.ProductName, spl.product_name)" if has_link else "p.ProductName"
+        )
+        cur.execute(
+            f"""
+            SELECT CAST(ss.supplier_code AS VARCHAR(100))         AS supplier_code,
+                   CAST(ss.supplier_product_code AS VARCHAR(100)) AS supplier_product_code,
+                   ss.supplier_product_name                       AS supplier_product_name,
+                   {code_expr}                                    AS product_code,
+                   {name_expr}                                    AS product_name,
+                   ss.available_stock, ss.ptr, ss.mrp, ss.discount,
+                   ss.packing, ss.free, ss.minimum_qty, ss.scheme,
+                   ss.transaction_date
+            FROM procurement.supplier_stock ss
+            {link_join}
+            LEFT JOIN sync.Products p
+              ON p.tenant_id = ss.tenant_id AND p.store_id = ss.store_id
+             AND CAST(p.ProductCode AS VARCHAR(100)) = {code_expr}
+            WHERE ss.tenant_id = ? AND ss.store_id = ? AND ss.supplier_code = ?
+              AND ss.is_active = 1
+              AND (? = 0 OR ISNULL(ss.available_stock, 0) > 0)
+            ORDER BY ss.supplier_product_name
+            """,
+            (tenant_id, store_id, supplier_code, 1 if only_available else 0),
+        )
+        return _floatify([_stringify(r) for r in _rows_to_dicts(cur)])
+    finally:
+        conn.close()
+
+
+def _object_id(cur, name):
+    cur.execute("SELECT OBJECT_ID(?)", (name,))
+    return cur.fetchone()[0] is not None
+
+
+def get_store_product(tenant_id, store_id, product_code):
+    """One store's product row (name check after an inline assignment)."""
+    if product_code is None or not str(product_code).strip().isdigit():
+        return None
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT CAST(ProductCode AS VARCHAR(100)) AS product_code,
+                   ProductName                       AS product_name
+            FROM sync.Products
+            WHERE tenant_id = ? AND store_id = ? AND ProductCode = ?
+            """,
+            (tenant_id, store_id, int(product_code)),
+        )
+        rows = _rows_to_dicts(cur)
+        return _stringify(rows[0]) if rows else None
+    finally:
+        conn.close()
+
+
+def resolve_mapped_stores(tenant_id, source_store_id, product_code, store_ids):
+    """{store_id: {product_code, product_name}} — the OTHER stores' own codes for
+    a warehouse ProductCode, read from the existing Common Product Mapping in
+    BOTH directions (an edge is undirected: NMC->NMW says as much as NMW->NMC).
+
+    This is the "automatically resolve mapped products for remaining stores" step
+    of the inline Assign flow. A store with no edge simply does not appear — the
+    UI then offers manual assignment for it."""
+    if not store_ids or product_code is None:
+        return {}
+    marks = ", ".join(["?"] * len(store_ids))
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT target_store_id AS store_id,
+                   CAST(target_product_code AS VARCHAR(100)) AS product_code,
+                   target_product_name AS product_name
+            FROM dbo.product_mapping
+            WHERE tenant_id = ? AND is_deleted = 0 AND status IN ('AUTO', 'APPROVED')
+              AND source_store_id = ? AND source_product_code = ?
+              AND target_product_code IS NOT NULL
+              AND target_store_id IN ({marks})
+            UNION
+            SELECT source_store_id AS store_id,
+                   CAST(source_product_code AS VARCHAR(100)) AS product_code,
+                   source_product_name AS product_name
+            FROM dbo.product_mapping
+            WHERE tenant_id = ? AND is_deleted = 0 AND status IN ('AUTO', 'APPROVED')
+              AND target_store_id = ? AND target_product_code = ?
+              AND source_store_id IN ({marks})
+            """,
+            (tenant_id, source_store_id, str(product_code), *store_ids,
+             tenant_id, source_store_id, str(product_code), *store_ids),
+        )
+        out = {}
+        for r in [_stringify(x) for x in _rows_to_dicts(cur)]:
+            out.setdefault(r["store_id"], {
+                "product_code": r["product_code"],
+                "product_name": r.get("product_name"),
+            })
+        return out
+    finally:
+        conn.close()
+
+
+def save_supplier_link(tenant_id, store_id, supplier_code, supplier_product_code,
+                       supplier_product_name, product_code, product_name, actor=None):
+    """Remember "this supplier line IS this warehouse product", and point the
+    already-imported supplier_stock rows at it so the grid row resolves on the
+    very next read (the UI refreshes the row immediately)."""
+    ensure_link_schema()
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE procurement.supplier_product_link
+            SET product_code = ?, product_name = ?, supplier_product_name = ?,
+                updated_at = GETDATE(), updated_by = ?
+            WHERE tenant_id = ? AND store_id = ? AND supplier_code = ?
+              AND supplier_product_code = ? AND is_deleted = 0
+            """,
+            (str(product_code), product_name, supplier_product_name, _as_uid(actor),
+             tenant_id, store_id, supplier_code, str(supplier_product_code)),
+        )
+        if cur.rowcount == 0:
+            cur.execute(
+                """
+                INSERT INTO procurement.supplier_product_link
+                    (link_id, tenant_id, store_id, supplier_code, supplier_product_code,
+                     supplier_product_name, product_code, product_name, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (str(uuid.uuid4()), tenant_id, store_id, supplier_code,
+                 str(supplier_product_code), supplier_product_name,
+                 str(product_code), product_name, _as_uid(actor)),
+            )
+        cur.execute(
+            """
+            UPDATE procurement.supplier_stock
+            SET product_code = ?
+            WHERE tenant_id = ? AND store_id = ? AND supplier_code = ?
+              AND supplier_product_code = ?
+            """,
+            (str(product_code), tenant_id, store_id, supplier_code,
+             str(supplier_product_code)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def save_manual_mapping(tenant_id, source_store_id, source_product_code, source_product_name,
+                        target_store_id, target_product_code, target_product_name, actor=None):
+    """Write a cross-store edge the buyer created inline, through the SAME table
+    and the same semantics the Product Mapping module's manual remap uses
+    (status APPROVED, match_method MANUAL, confidence 100) — so the next
+    Intelligence build groups the two stores' codes into one canonical product.
+    ProductCode is never treated as a shared key; this is an explicit human edge."""
+    if not target_product_code:
+        return
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE dbo.product_mapping
+            SET target_product_code = ?, target_product_name = ?,
+                status = 'APPROVED', match_method = 'MANUAL', confidence = 100,
+                updated_at = GETDATE(), updated_by = ?, is_deleted = 0
+            WHERE tenant_id = ? AND source_store_id = ? AND source_product_code = ?
+              AND target_store_id = ?
+            """,
+            (str(target_product_code), target_product_name, _as_uid(actor),
+             tenant_id, source_store_id, str(source_product_code), target_store_id),
+        )
+        if cur.rowcount == 0:
+            cur.execute(
+                """
+                INSERT INTO dbo.product_mapping
+                    (mapping_id, tenant_id, run_id,
+                     source_store_id, source_product_code, source_product_name,
+                     target_store_id, target_product_code, target_product_name,
+                     match_method, confidence, status, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 100, 'APPROVED', ?)
+                """,
+                (str(uuid.uuid4()), tenant_id, str(uuid.uuid4()),
+                 source_store_id, str(source_product_code), source_product_name or '',
+                 target_store_id, str(target_product_code), target_product_name,
+                 _as_uid(actor)),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
