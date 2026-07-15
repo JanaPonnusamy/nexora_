@@ -4,6 +4,10 @@ import type { SupplierRow, SupplierStockRow, WorkspaceItem } from '../../types/p
 import { num } from '../stock/format'
 import { EmptyState } from '../common/EmptyState'
 import { preferredSupplier, SUPPLIER_REC_LIMIT } from './purchaseValue'
+import { DEFAULT_SKIP_MODE } from './skipModes'
+import { SkipModeCell } from './SkipModeCell'
+
+const REVIEWED_STATES = ['review', 'assigned', 'partial']
 
 /** Stable row key: supplier product code, falling back to the mapped code. */
 export const stockRowKey = (r: SupplierStockRow) => r.supplier_product_code ?? r.product_code ?? ''
@@ -70,7 +74,6 @@ export function SupplierStockTable({
   onOrder,
   busy,
   storeStockByCode,
-  statusByCode,
   selectedKey,
   onSelect,
   draft,
@@ -85,6 +88,8 @@ export function SupplierStockTable({
   onSelectSupplier,
   onCommitSupplier,
   onSupplierFocusChange,
+  onSkip,
+  onRestore,
 }: {
   rows: SupplierStockRow[]
   loading: boolean
@@ -94,9 +99,6 @@ export function SupplierStockTable({
   /** Current store stock keyed by mapped store ProductCode (from the workspace
    *  items already loaded for this refresh — no extra fetch). */
   storeStockByCode: Map<string, number>
-  /** Assigned / Skipped state keyed by mapped ProductCode (nothing shown for
-   *  rows still in the Review workflow). */
-  statusByCode: Map<string, 'assigned' | 'skipped'>
   selectedKey: string | null
   onSelect: (row: SupplierStockRow) => void
   draft: Record<string, string>
@@ -121,6 +123,10 @@ export function SupplierStockTable({
   /** Fires when the keyboard enters/leaves the Supplier Recommendation zone, so
    *  the external supplier panel can show itself as active. */
   onSupplierFocusChange?: (active: boolean) => void
+  /** Skip / un-skip the matched order item (same paths Review All uses) — lets a
+   *  qty-0 Enter skip the row and the Status column pick a skip mode here too. */
+  onSkip: (item: WorkspaceItem, reason: string) => void
+  onRestore: (item: WorkspaceItem) => void
 }) {
   // Order-qty inputs, keyed by row, so keyboard nav can (re)focus a row's cell.
   const inputs = useRef<Record<string, HTMLInputElement | null>>({})
@@ -194,22 +200,28 @@ export function SupplierStockTable({
     if (next >= 0 && next < rows.length) onSelect(rows[next])
   }
 
-  // Esc on an Order Qty cell: restore the row's qty to its seeded default
-  // (final → suggested → minimum → 0), matching the page's own seeding rule —
-  // "cancel the current edit / restore previous value" for this grid, which has
-  // no skip/assign state of its own to clear (§3). A no-op when nothing is
-  // selected.
-  const revertDraft = () => {
+  // Esc on an Order Qty cell: zero the row's qty (buyer's rule — "Esc = 0"). A
+  // following Enter with qty 0 then skips the row (saveAndNext below).
+  const zeroDraft = () => {
     const cur = rows[selectedIndex]
     if (!cur) return
-    onDraftChange(stockRowKey(cur), String(cur.final_qty ?? cur.suggested_qty ?? cur.minimum_qty ?? 0))
+    onDraftChange(stockRowKey(cur), '0')
   }
 
-  // Enter / Down: finalize (save order qty), then move to the next row —
-  // same "save + advance" contract as the main grid's Final Qty cell.
+  // Enter / Down: qty > 0 finalizes the matched order item (save order qty);
+  // qty 0 (or empty) skips it with the default skip mode — same "finalize vs
+  // skip on Enter" contract as the main grid's Final Qty cell. Then advance.
   const saveAndNext = () => {
     const cur = rows[selectedIndex]
-    if (cur) add(cur)
+    if (cur) {
+      const n = Number(draft[stockRowKey(cur)])
+      const item = itemFor(cur)
+      if (!Number.isNaN(n) && n > 0) {
+        add(cur) // finalize (onOrder)
+      } else if (item && item.item_status !== 'skipped') {
+        onSkip(item, DEFAULT_SKIP_MODE) // qty 0 → skip
+      }
+    }
     moveSelection(1)
   }
 
@@ -284,8 +296,8 @@ export function SupplierStockTable({
     // Tab / Shift+Tab: move to the next / previous row (all rows are editable
     // here), mirroring ProductGrid so keyboard nav is consistent across screens.
     else if (e.key === 'Tab') { e.preventDefault(); moveSelection(e.shiftKey ? -1 : 1) }
-    // Esc: restore the current row's Order Qty to its seeded value (§3).
-    else if (e.key === 'Escape') { e.preventDefault(); revertDraft() }
+    // Esc: zero the current row's Order Qty (buyer's rule — Esc = 0).
+    else if (e.key === 'Escape') { e.preventDefault(); zeroDraft() }
     else if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleCheckedCurrent() }
   }
 
@@ -311,8 +323,8 @@ export function SupplierStockTable({
           <col style={{ width: 58 }} />{/* Sup. Stock */}
           <col style={{ width: 58 }} />{/* Store Stock */}
           <col style={{ width: 46 }} />{/* Sugg. */}
-          <col style={{ width: 58 }} />{/* Status */}
           <col style={{ width: 66 }} />{/* Order Qty */}
+          <col style={{ width: 92 }} />{/* Status (after Order Qty) */}
         </colgroup>
         <thead>
           <tr>
@@ -332,16 +344,22 @@ export function SupplierStockTable({
             <th className="sx-num" title="Supplier Stock">Sup. Stock</th>
             <th className="sx-num" title="Store Stock">Store Stock</th>
             <th className="sx-num">Sugg.</th>
-            <th>Status</th>
             <th className="sx-num pm-grid__final">Order Qty</th>
+            <th>Status</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => {
             const key = stockRowKey(r)
             const storeStock = r.product_code != null ? storeStockByCode.get(r.product_code) : undefined
-            const status = r.product_code != null ? statusByCode.get(r.product_code) : undefined
             const checkId = r.product_code ? checkableByCode.get(r.product_code) : undefined
+            // Status derives from the matched order item so this grid shows the
+            // same Skipped / Assigned / Finalized states as Review All (and a
+            // skip-mode picker for skipped rows).
+            const item = itemFor(r)
+            const skipped = item?.item_status === 'skipped'
+            const assigned = (item?.assigned_qty ?? 0) > 0 && !skipped
+            const finalized = !!item && REVIEWED_STATES.includes(item.item_status) && (item.final_qty ?? 0) > 0 && !assigned && !skipped
             return (
               <tr
                 key={key}
@@ -372,13 +390,6 @@ export function SupplierStockTable({
                 <td className="sx-num pm-sx__supp">{num(r.available_stock ?? 0)}</td>
                 <td className="sx-num pm-sx__store">{storeStock != null ? num(storeStock) : '—'}</td>
                 <td className="sx-num sx-dim">{num(r.suggested_qty ?? 0)}</td>
-                <td>
-                  {status && (
-                    <span className={`pm-sxchip pm-sxchip--${status}`}>
-                      {status === 'assigned' ? 'Assigned' : 'Skipped'}
-                    </span>
-                  )}
-                </td>
                 <td className="sx-num pm-grid__final">
                   <span className="pm-qty-wrap">
                     <input
@@ -396,6 +407,23 @@ export function SupplierStockTable({
                       return warn ? <i className="bi bi-exclamation-triangle-fill pm-offer-warn" title={warn} /> : null
                     })()}
                   </span>
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  {skipped && item ? (
+                    // Skip-mode picker (Current Refresh / Until Next Sales /
+                    // Until Next Demand) — same keyboard combobox Review All uses.
+                    <SkipModeCell
+                      id={`pm-sxskip-${i}`}
+                      value={item.skip_reason}
+                      onChange={(code) => onSkip(item, code)}
+                      onConfirm={() => { if (i + 1 < rows.length) onSelect(rows[i + 1]) }}
+                      onRestore={() => onRestore(item)}
+                    />
+                  ) : assigned ? (
+                    <span className="pm-sxchip pm-sxchip--assigned">Assigned</span>
+                  ) : finalized ? (
+                    <span className="pm-sxchip pm-sxchip--finalized">Finalized</span>
+                  ) : null}
                 </td>
               </tr>
             )

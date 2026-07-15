@@ -481,18 +481,6 @@ export default function PurchaseWorkspacePage() {
     const totalStock = supplierStock.reduce((s, r) => s + (r.available_stock ?? 0), 0)
     return { products, available, outOfStock: products - available, totalStock }
   }, [supplierStock])
-  // Supplier Live Stock shows only Assigned / Skipped states (never
-  // Pending/Finalized — those belong to the Review workflow). Derived from the
-  // matched workspace item by ProductCode; same skipped-first rule as the grid.
-  const stockStatusByCode = useMemo(() => {
-    const m = new Map<string, 'assigned' | 'skipped'>()
-    items.forEach((i) => {
-      if (!i.product_code) return
-      if (i.item_status === 'skipped') m.set(i.product_code, 'skipped')
-      else if ((i.assigned_qty ?? 0) > 0) m.set(i.product_code, 'assigned')
-    })
-    return m
-  }, [items])
   // Order-item ids checkable in Supplier Live Stock, keyed by ProductCode — the
   // checkbox means "included for export" (§ CHECKBOX RULE), not a selection
   // state, so an already-assigned/finalized row stays checkable (it's the
@@ -1593,18 +1581,46 @@ export default function PurchaseWorkspacePage() {
   const orderSupplierStock = async (row: SupplierStockRow, qty: number) => {
     if (!guardRW()) return
     if (!row.product_code) return say('danger', 'Row has no mapped product code')
+    // The common case: the product is already in this refresh's VPL (Supplier
+    // Live Stock is the supplier file ∩ the VPL). Finalize its Final Qty on the
+    // existing order item — same optimistic path as Review All's Save Row — so
+    // Enter/Add simply finalizes the row. It used to re-add it as a manual
+    // product, which only ever warned "already in this refresh".
+    const existing = stockItemByCode.get(row.product_code)
+    if (existing) {
+      if (savingIds.current.has(existing.order_item_id)) return
+      savingIds.current.add(existing.order_item_id)
+      setItems((list) =>
+        list.map((it) =>
+          it.order_item_id === existing.order_item_id
+            ? {
+                ...it,
+                final_qty: qty,
+                item_status: qty > 0 ? 'review' : it.item_status,
+                skip_reason: qty > 0 ? null : it.skip_reason,
+                remaining_qty: Math.max(0, qty - (it.assigned_qty ?? 0)),
+              }
+            : it,
+        ),
+      )
+      try {
+        await procurementService.setFinalQty(tenantId, existing.order_item_id, qty, null, actingUser || null)
+      } catch (e) {
+        fail(e)
+        if (!isOffline(e)) loadWorkspace()
+      } finally {
+        savingIds.current.delete(existing.order_item_id)
+      }
+      return
+    }
+    // Not in the refresh yet — genuinely add it as a new manual product.
     if (manualBusy) return // guard against a duplicate submit racing this one
     setManualBusy(true)
     try {
-      const res = await procurementService.addManualItem(
+      await procurementService.addManualItem(
         tenantId, refreshId, row.product_code, row.supplier_product_name ?? row.product_code, qty, actingUser || null,
       )
-      say(
-        'success',
-        res.already_exists
-          ? `${row.product_code} is already in this refresh — assign ${supplier?.supplier_code ?? 'a supplier'} in Review mode`
-          : `Added ${qty} × ${row.product_code} — assign ${supplier?.supplier_code ?? 'a supplier'} in Review mode`,
-      )
+      say('success', `Added ${qty} × ${row.product_code}`)
       loadWorkspace()
     } catch (e) {
       fail(e)
@@ -2112,7 +2128,6 @@ export default function PurchaseWorkspacePage() {
                       onOrder={orderSupplierStock}
                       busy={manualBusy}
                       storeStockByCode={storeStockByCode}
-                      statusByCode={stockStatusByCode}
                       selectedKey={stockSelectedKey}
                       onSelect={(r) => setStockSelectedKey(stockRowKey(r))}
                       draft={stockDraft}
@@ -2127,6 +2142,8 @@ export default function PurchaseWorkspacePage() {
                       onSelectSupplier={onSelectSupplier}
                       onCommitSupplier={onCommitSupplier}
                       onSupplierFocusChange={setSupplierZoneActive}
+                      onSkip={skip}
+                      onRestore={restore}
                     />
                   </div>
                 </div>
