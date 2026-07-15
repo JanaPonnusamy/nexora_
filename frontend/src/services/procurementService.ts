@@ -227,6 +227,30 @@ export const procurementService = {
         }
       }),
 
+  // Shelf Sorting from a disk Excel — upload the file; the server joins
+  // UnitDescription/SubLocation from the master, sorts by shelf category and
+  // splits into pick-sized files, preserving the file's own columns. Returns
+  // the file (single .xlsx or a .zip) plus the product / file counts.
+  shelfSortFile: (tenantId: string, storeId: string, storeName: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api
+      .uploadBlobMeta(
+        `/api/procurement/shelf-sort/upload${qs({ tenant_id: tenantId, store_id: storeId, store_name: storeName })}`,
+        form,
+      )
+      .then(({ blob, headers }) => {
+        const disposition = headers.get('Content-Disposition') ?? ''
+        const match = /filename="?([^"]+)"?/.exec(disposition)
+        return {
+          blob,
+          filename: match?.[1] ?? 'Sorted.xlsx',
+          totalProducts: Number(headers.get('X-Total-Products') ?? 0),
+          fileCount: Number(headers.get('X-File-Count') ?? 1),
+        }
+      })
+  },
+
   exportHistory: (tenantId: string, refreshId: string) =>
     api
       .get<{ batches: ExportBatch[] }>(

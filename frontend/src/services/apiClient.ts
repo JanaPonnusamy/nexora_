@@ -204,4 +204,28 @@ export const api = {
     }
     return { blob: await response.blob(), headers: response.headers }
   },
+  // Multipart upload that returns a binary body + response headers — for
+  // endpoints that take a file and stream a generated document back (with
+  // metadata in headers), e.g. Shelf Sorting from a disk Excel.
+  uploadBlobMeta: async (path: string, form: FormData): Promise<{ blob: Blob; headers: Headers }> => {
+    const token = tokenStorage.get()
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+    let response: Response
+    try {
+      response = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: form })
+    } catch {
+      throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Upload failed'
+      try {
+        const parsed = await response.json()
+        detail = parsed.detail ?? parsed.error ?? detail
+      } catch {
+        // response had no JSON body
+      }
+      throw new ApiError(detail, response.status)
+    }
+    return { blob: await response.blob(), headers: response.headers }
+  },
 }

@@ -953,6 +953,11 @@
 .pm-launch__field .sx-select { width: 100%; }
 .pm-launch__go { width: 100%; justify-content: center; margin-top: 6px; }
 
+.pm-shelf__source { display: flex; gap: 8px; }
+.pm-shelf__srcopt { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--pm-border, #d5dce6); border-radius: 8px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.pm-shelf__srcopt--on { border-color: var(--pm-primary, #2563eb); background: var(--pm-primary-soft, #eff4ff); color: var(--pm-primary, #2563eb); }
+.pm-shelf__srcopt input { margin: 0; }
+
 .pm-shelf__summary { margin: 18px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .pm-shelf__summary > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 8px 12px; background: var(--pm-surface-2, #f6f8fb); border-radius: 8px; }
 .pm-shelf__summary dt { margin: 0; font-size: 12px; font-weight: 600; color: var(--pm-muted, #64748b); }

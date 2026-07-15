@@ -39,6 +39,40 @@ def exportable_assignments(conn, tenant_id, refresh_id, assignment_ids=None, sup
     return _rows_to_dicts(cursor)
 
 
+def product_master(conn, tenant_id, store_id, codes):
+    """SubLocation + UnitDescription from sync.Products for a set of numeric
+    ProductCodes, keyed by the code as a string. Powers the Shelf Sorting
+    upload path, which joins these onto rows read from a disk Excel to decide
+    the category / shelf order. Chunked to stay under the SQL parameter cap."""
+    int_codes = []
+    for c in codes:
+        s = str(c).strip()
+        if s.lstrip("-").isdigit():
+            int_codes.append(int(s))
+    out = {}
+    if not int_codes:
+        return out
+    cursor = conn.cursor()
+    for i in range(0, len(int_codes), 1000):
+        chunk = int_codes[i:i + 1000]
+        placeholders = ", ".join("?" for _ in chunk)
+        cursor.execute(
+            f"""
+            SELECT ProductCode, RTRIM(SubLocation) AS sub_location,
+                   RTRIM(UnitDescription) AS unit_description
+            FROM sync.Products
+            WHERE tenant_id = ? AND store_id = ? AND ProductCode IN ({placeholders})
+            """,
+            (tenant_id, store_id, *chunk),
+        )
+        for row in _rows_to_dicts(cursor):
+            out[str(row["ProductCode"])] = {
+                "sub_location": row.get("sub_location"),
+                "unit_description": row.get("unit_description"),
+            }
+    return out
+
+
 def all_assignment_items(conn, tenant_id, refresh_id):
     """Every live, valid assignment for a Refresh (assignment_id + qty),
     regardless of export status — the complete picking order the Shelf Sorting

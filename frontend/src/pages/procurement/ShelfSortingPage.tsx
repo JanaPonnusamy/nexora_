@@ -26,6 +26,8 @@ function downloadBlob(blob: Blob, filename: string) {
  * split boundaries. Summary shows Store / Order / Total Products / Generated
  * Files, nothing else.
  */
+type Source = 'order' | 'file'
+
 export default function ShelfSortingPage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState('')
@@ -33,6 +35,8 @@ export default function ShelfSortingPage() {
   const [storeId, setStoreId] = useState('')
   const [refreshes, setRefreshes] = useState<Refresh[]>([])
   const [refreshId, setRefreshId] = useState('')
+  const [source, setSource] = useState<Source>('order')
+  const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{
@@ -73,15 +77,20 @@ export default function ShelfSortingPage() {
   const store = tenantStores.find((s) => s.store_id === storeId)
   const refresh = refreshes.find((r) => r.refresh_id === refreshId)
 
+  const canGenerate = !!store && (source === 'order' ? !!refreshId : !!file)
+
   const generate = async () => {
-    if (!tenantId || !refreshId || !store) return
+    if (!tenantId || !store || !canGenerate) return
     setBusy(true)
     try {
-      const out = await procurementService.shelfSort(tenantId, refreshId, { store_name: store.store_name })
+      const out =
+        source === 'order'
+          ? await procurementService.shelfSort(tenantId, refreshId, { store_name: store.store_name })
+          : await procurementService.shelfSortFile(tenantId, store.store_id, store.store_name, file!)
       downloadBlob(out.blob, out.filename)
       setResult({
         storeName: store.store_name,
-        orderName: refresh?.snapshot_name ?? refreshId,
+        orderName: source === 'order' ? (refresh?.snapshot_name ?? refreshId) : (file?.name ?? 'Excel file'),
         totalProducts: out.totalProducts,
         fileCount: out.fileCount,
       })
@@ -116,19 +125,50 @@ export default function ShelfSortingPage() {
           </select>
         </label>
 
-        <label className="pm-launch__field">
-          <span>Order</span>
-          <select className="sx-select" value={refreshId} onChange={(e) => setRefreshId(e.target.value)} disabled={loading}>
-            <option value="">{loading ? 'Loading…' : 'Select an order…'}</option>
-            {refreshes.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
-          </select>
-        </label>
+        <div className="pm-launch__field">
+          <span>Source</span>
+          <div className="pm-shelf__source">
+            {(['order', 'file'] as Source[]).map((s) => (
+              <label key={s} className={`pm-shelf__srcopt${source === s ? ' pm-shelf__srcopt--on' : ''}`}>
+                <input
+                  type="radio"
+                  name="pm-shelf-source"
+                  checked={source === s}
+                  onChange={() => { setSource(s); setResult(null) }}
+                />
+                {s === 'order' ? 'From Order' : 'From Excel File'}
+              </label>
+            ))}
+          </div>
+        </div>
 
-        {!loading && refreshes.length === 0 && tenantId && storeId && (
-          <EmptyState icon="bi-inbox" title="No orders" description="This store has no refreshes to sort yet." />
+        {source === 'order' ? (
+          <>
+            <label className="pm-launch__field">
+              <span>Order</span>
+              <select className="sx-select" value={refreshId} onChange={(e) => setRefreshId(e.target.value)} disabled={loading}>
+                <option value="">{loading ? 'Loading…' : 'Select an order…'}</option>
+                {refreshes.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
+              </select>
+            </label>
+
+            {!loading && refreshes.length === 0 && tenantId && storeId && (
+              <EmptyState icon="bi-inbox" title="No orders" description="This store has no refreshes to sort yet." />
+            )}
+          </>
+        ) : (
+          <label className="pm-launch__field">
+            <span>Excel File</span>
+            <input
+              className="pm-input"
+              type="file"
+              accept=".xlsx"
+              onChange={(e) => { setFile(e.target.files?.[0] ?? null); setResult(null) }}
+            />
+          </label>
         )}
 
-        <button className="pm-btn pm-btn--primary pm-launch__go" disabled={!refreshId || busy} onClick={generate}>
+        <button className="pm-btn pm-btn--primary pm-launch__go" disabled={!canGenerate || busy} onClick={generate}>
           <i className="bi bi-file-earmark-excel" /> {busy ? 'Generating…' : 'Generate Sorted Excel'}
         </button>
 

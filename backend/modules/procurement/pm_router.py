@@ -411,6 +411,36 @@ def shelf_sort(
     )
 
 
+@router.post("/shelf-sort/upload")
+async def shelf_sort_upload(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+    store_name: str = Query("Store"),
+    file: UploadFile = File(...),
+):
+    """Shelf Sorting & Excel Split from a disk file — read the uploaded .xlsx,
+    join UnitDescription/SubLocation from the master by Product Code, sort by
+    shelf category and split into pick-sized files (max 16 products each),
+    preserving the file's own columns and formatting. Single file downloads as
+    .xlsx; multiple as a .zip. Counts come back in the X-* headers."""
+    from fastapi.responses import Response
+
+    data = await file.read()
+    content, filename, media_type, total, file_count = shelf_sort_service.generate_from_file(
+        tenant_id, store_id, store_name, data,
+    )
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Total-Products": str(total),
+            "X-File-Count": str(file_count),
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Total-Products, X-File-Count",
+        },
+    )
+
+
 @router.post("/refreshes/{refresh_id}/supplier-reply/preview")
 async def supplier_reply_preview(
     refresh_id: str,
