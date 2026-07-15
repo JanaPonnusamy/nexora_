@@ -134,8 +134,16 @@ export function SupplierStockTable({
 
   const [zone, setZone] = useState<Zone>('qty')
   const [supIndex, setSupIndex] = useState(0)
+  // Row key whose Esc-skip should park focus on its Skip-Mode picker (mirrors
+  // ProductGrid's skipFocusId). Cleared on any selection change.
+  const [skipFocusKey, setSkipFocusKey] = useState<string | null>(null)
 
   const selectedIndex = rows.findIndex((r) => stockRowKey(r) === selectedKey)
+  // The matched order item + its status for the active row (drives the focus
+  // effect below so it re-runs the moment the row becomes skipped).
+  const selectedRow = selectedIndex >= 0 ? rows[selectedIndex] : undefined
+  const selectedItem = selectedRow?.product_code ? itemByCode.get(selectedRow.product_code) ?? null : null
+  const selectedItemStatus = selectedItem?.item_status
 
   // A new active row always starts in the Order Qty zone — same in-render
   // adjustment pattern ProductGrid uses (avoids an effect race between this
@@ -145,11 +153,13 @@ export function SupplierStockTable({
     setPrevSelectedKey(selectedKey)
     setZone('qty')
     setSupIndex(0)
+    setSkipFocusKey(null)
   }
 
   // Land keyboard focus: the Order Qty cell in the qty zone, or the wrapper
   // (so Up/Down/Enter/Left drive the supplier cursor) in the supplier zone —
-  // mirrors ProductGrid's own focus effect.
+  // mirrors ProductGrid's own focus effect. A row just Esc-skipped instead parks
+  // focus on its Skip-Mode picker so the buyer can pick a mode immediately.
   useEffect(() => {
     // Same fix as ProductGrid: with no row focus target yet (index transiently
     // -1), park focus on the container so it — not the native page — owns
@@ -157,9 +167,13 @@ export function SupplierStockTable({
     if (selectedIndex < 0) { if (rows.length > 0) wrapRef.current?.focus(); return }
     if (zone === 'supplier') { wrapRef.current?.focus(); return }
     const key = stockRowKey(rows[selectedIndex])
-    inputs.current[key]?.focus()
+    if (selectedItemStatus === 'skipped' && skipFocusKey === key) {
+      (document.getElementById(`pm-sxskip-${selectedIndex}`) as HTMLElement | null)?.focus()
+    } else {
+      inputs.current[key]?.focus()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedKey, rows.length, zone])
+  }, [selectedKey, rows.length, zone, selectedItemStatus, skipFocusKey])
 
   useEffect(() => {
     onSupplierFocusChange?.(zone === 'supplier')
@@ -200,12 +214,18 @@ export function SupplierStockTable({
     if (next >= 0 && next < rows.length) onSelect(rows[next])
   }
 
-  // Esc on an Order Qty cell: zero the row's qty (buyer's rule — "Esc = 0"). A
-  // following Enter with qty 0 then skips the row (saveAndNext below).
-  const zeroDraft = () => {
+  // Esc on an Order Qty cell: zero the qty (buyer's rule — "Esc = 0"), skip the
+  // row outright, and park focus on its Skip-Mode picker so a mode can be chosen
+  // straight away — the same one-key skip ProductGrid's Esc performs. Un-mapped
+  // rows (no order item) just get zeroed. A no-op on an already-skipped row.
+  const skipCurrent = () => {
     const cur = rows[selectedIndex]
     if (!cur) return
-    onDraftChange(stockRowKey(cur), '0')
+    const key = stockRowKey(cur)
+    onDraftChange(key, '0')
+    const item = itemFor(cur)
+    if (item && item.item_status !== 'skipped') onSkip(item, DEFAULT_SKIP_MODE)
+    setSkipFocusKey(key)
   }
 
   // Enter / Down: qty > 0 finalizes the matched order item (save order qty);
@@ -296,8 +316,8 @@ export function SupplierStockTable({
     // Tab / Shift+Tab: move to the next / previous row (all rows are editable
     // here), mirroring ProductGrid so keyboard nav is consistent across screens.
     else if (e.key === 'Tab') { e.preventDefault(); moveSelection(e.shiftKey ? -1 : 1) }
-    // Esc: zero the current row's Order Qty (buyer's rule — Esc = 0).
-    else if (e.key === 'Escape') { e.preventDefault(); zeroDraft() }
+    // Esc: zero the qty, skip the row, and focus its Skip-Mode picker.
+    else if (e.key === 'Escape') { e.preventDefault(); skipCurrent() }
     else if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleCheckedCurrent() }
   }
 
