@@ -551,6 +551,15 @@ export const procurementService = {
       )
       .then((r) => r.items),
 
+  // Lock a refresh as read-only ('Closed') without closing its cycle — the
+  // console pairs this with generateRefresh to roll to Refresh N+1 in the same
+  // open cycle.
+  closeRefresh: (tenantId: string, refreshId: string, by: string | null) =>
+    api.post<Refresh>(
+      `/api/procurement/refreshes/${refreshId}/close${qs({ tenant_id: tenantId })}`,
+      { closed_by: by },
+    ),
+
   generateRefresh: (
     tenantId: string,
     cycleId: string,

@@ -34,28 +34,33 @@ logger = logging.getLogger("procurement.orchestration")
 # --------------------------------------------------------------------------
 # Naming convention (server-authoritative — see Cycle/Refresh naming rules)
 #
-#   Cycle    : "<Store Name> - <YYYY-MM-DD> - Cycle"
-#   Refresh  : "<Store Name> - <YYYY-MM-DD> - Refresh <No>"
+#   Cycle    : "<Store Code> - <YYYY-MM-DD> - Cycle"
+#   Refresh  : "<Store Code> - <YYYY-MM-DD> - Refresh <No>"
 #
-# Generated here so EVERY entry point (console, launcher, auto-reopen on close)
-# yields identical, self-describing names — no generic "Refresh"/"Cycle" ever.
+# The short store CODE (e.g. NMA, NMW) is used — not the full store name — so
+# names stay compact in dropdowns and console columns. Generated here so EVERY
+# entry point (console, launcher, auto-reopen on close) yields identical,
+# self-describing names — no generic "Refresh"/"Cycle" ever.
 # --------------------------------------------------------------------------
 
-def _store_name(store_id) -> str:
-    """Display name for a store, falling back to the id when unavailable."""
+def _store_abbrev(store_id) -> str:
+    """Short store code (NMA, NMW, …) for names; falls back to name, then id."""
     if not store_id:
         return "Store"
     row = StoreRepository().get_by_id(store_id)
-    name = getattr(row, "store_name", None) if row is not None else None
-    return (name or str(store_id)).strip()
+    if row is None:
+        return str(store_id)
+    code = getattr(row, "store_code", None)
+    name = getattr(row, "store_name", None)
+    return (code or name or str(store_id)).strip()
 
 
 def cycle_name(store_id, on: date | None = None) -> str:
-    return f"{_store_name(store_id)} - {(on or date.today()):%Y-%m-%d} - Cycle"
+    return f"{_store_abbrev(store_id)} - {(on or date.today()):%Y-%m-%d} - Cycle"
 
 
 def refresh_name(store_id, refresh_no: int, on: date | None = None) -> str:
-    return f"{_store_name(store_id)} - {(on or date.today()):%Y-%m-%d} - Refresh {refresh_no}"
+    return f"{_store_abbrev(store_id)} - {(on or date.today()):%Y-%m-%d} - Refresh {refresh_no}"
 
 
 # --------------------------------------------------------------------------
@@ -193,11 +198,14 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
     finally:
         conn.close()
 
-    # 4) Archive the previous Refresh (previous CURRENT -> historical).
+    # 4) Archive the previous Refresh (previous CURRENT -> historical). A refresh
+    #    the user explicitly Closed keeps that status — never downgrade it.
     if previous_refresh_id and previous_refresh_id != refresh_id:
-        refresh_repo.set_status(
-            tenant_id, previous_refresh_id, "Archived", payload.get("created_by")
-        )
+        prev = refresh_repo.get_vpl(tenant_id, previous_refresh_id)
+        if (prev or {}).get("snapshot_status") != "Closed":
+            refresh_repo.set_status(
+                tenant_id, previous_refresh_id, "Archived", payload.get("created_by")
+            )
 
     logger.info(
         "Refresh created tenant=%s cycle=%s refresh=%s products=%s working_items=%s "
@@ -216,6 +224,23 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
         "carried_forward_count": carried,
         "parameters": engine["parameters"],
     }
+
+
+def close_refresh(tenant_id: str, refresh_id: str, closed_by=None):
+    """Lock a Refresh as 'Closed' (read-only) WITHOUT touching the cycle.
+
+    Used by the console's "Close Refresh" action: the current refresh is closed
+    and a fresh Refresh N+1 is generated in the SAME open cycle. Idempotent —
+    closing an already-closed refresh is a no-op.
+    """
+    refresh = refresh_repo.get_vpl(tenant_id, refresh_id)
+    if not refresh:
+        raise HTTPException(status_code=404, detail="Refresh not found")
+    if (refresh.get("snapshot_status") or "") != "Closed":
+        refresh_repo.set_status(tenant_id, refresh_id, "Closed", closed_by)
+        logger.info("Refresh closed tenant=%s refresh=%s by=%s",
+                    tenant_id, refresh_id, closed_by)
+    return refresh_repo.get_vpl(tenant_id, refresh_id)
 
 
 # --------------------------------------------------------------------------

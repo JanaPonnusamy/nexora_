@@ -309,7 +309,11 @@ export default function PurchaseWorkspacePage() {
   // search / filter / print / view only — no qty edit, assign, export,
   // finalize, skip or decision change.
   const selectedCycle = useMemo(() => cycles.find((c) => c.cycle_id === cycleId) ?? null, [cycles, cycleId])
-  const readOnly = (selectedCycle?.status ?? '').toUpperCase() === 'CLOSED'
+  const selectedRefresh = useMemo(() => refreshes.find((r) => r.refresh_id === refreshId) ?? null, [refreshes, refreshId])
+  const cycleClosed = (selectedCycle?.status ?? '').toUpperCase() === 'CLOSED'
+  const refreshClosed = (selectedRefresh?.snapshot_status ?? '').toLowerCase() === 'closed'
+  // A closed cycle OR a closed (locked) refresh is view-only.
+  const readOnly = cycleClosed || refreshClosed
 
   // Single gate every mutating action calls first — a closed cycle refuses the
   // write and tells the buyer why, so no edit can slip past a disabled control.
@@ -1756,8 +1760,8 @@ export default function PurchaseWorkspacePage() {
             {refreshesInCycle.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
           </select>
           {readOnly && (
-            <span className="pm-ro-badge" title="This cycle is closed — viewing only">
-              <i className="bi bi-lock-fill" /> Read Only · Closed Cycle
+            <span className="pm-ro-badge" title="Closed — viewing only">
+              <i className="bi bi-lock-fill" /> Read Only · {cycleClosed ? 'Closed Cycle' : 'Closed Refresh'}
             </span>
           )}
         </div>

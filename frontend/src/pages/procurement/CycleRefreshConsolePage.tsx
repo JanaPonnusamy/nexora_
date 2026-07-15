@@ -49,7 +49,9 @@ type StoreRun = {
 }
 
 type Params = { rolling?: number; min: number; max: number }
-type CycleAction = 'keep' | 'new'
+/** keep = refresh the active cycle · closeRefresh = lock the current refresh &
+ *  start a fresh one in the SAME cycle · new = close the cycle & open a fresh one. */
+type CycleAction = 'keep' | 'closeRefresh' | 'new'
 type RefreshInfo = { count: number; latestName: string | null; latestNo: number | null; latestAt: string | null }
 
 const POLL_MS = 2500
@@ -388,10 +390,13 @@ export default function CycleRefreshConsolePage() {
 
     // 2) Cycle — keep the ACTIVE one, or close it and open a fresh one.
     let cycleId = opts.cycleId
+    // The refresh to lock before generating the next one (Close Refresh action).
+    let refreshToClose: string | undefined
+    const action: CycleAction = cycleAction[id] ?? 'keep'
     if (startIdx <= STAGES.indexOf('cycle')) {
       update(id, (r) => beginStage(r, 'cycle', 'Resolving cycle…'))
       try {
-        const wantNew = (cycleAction[id] ?? 'keep') === 'new'
+        const wantNew = action === 'new'
         const cycles = await procurementService.cycles(tenantId, id)
         const active = cycles.find((c) => (c.status ?? '').toUpperCase() === 'ACTIVE') ?? null
 
@@ -402,6 +407,9 @@ export default function CycleRefreshConsolePage() {
             return
           }
           target = active
+          // Close Refresh: lock the cycle's current refresh; the refresh stage
+          // then generates Refresh N+1 in this same open cycle.
+          if (action === 'closeRefresh') refreshToClose = active.active_refresh_id ?? undefined
         } else if (!active) {
           update(id, (r) => addLog(r, 'No cycle yet — opening the first one'))
           target = await procurementService.openCycle({
@@ -444,6 +452,10 @@ export default function CycleRefreshConsolePage() {
     }
     update(id, (r) => beginStage(r, 'refresh', 'Running Decision Engine, building VPL…'))
     try {
+      if (refreshToClose) {
+        await procurementService.closeRefresh(tenantId, refreshToClose, actingUser)
+        update(id, (r) => addLog(r, 'Closed the current refresh (locked read-only)'))
+      }
       const res = await procurementService.generateRefresh(tenantId, cycleId, {
         rolling_days: params.rolling, min_days: params.min, max_days: params.max, created_by: actingUser,
       })
@@ -752,12 +764,15 @@ export default function CycleRefreshConsolePage() {
                       onChange={(e) => setCycleAction((cur) => ({ ...cur, [id]: e.target.value as CycleAction }))}
                     >
                       <option value="keep">Keep Active</option>
+                      <option value="closeRefresh">Close Refresh &amp; New</option>
                       <option value="new">Create New Cycle</option>
                     </select>
                     <div className="pm-console__cyclehint">
                       {action === 'new'
                         ? (active ? <>closes <b>{active.name}</b>, opens a fresh one</> : <>opens the first cycle</>)
-                        : (active ? <>refreshes <b>{active.name}</b></> : <span className="pm-console__warn">no active cycle</span>)}
+                        : action === 'closeRefresh'
+                          ? (active ? <>locks the current refresh, starts a new one in <b>{active.name}</b></> : <span className="pm-console__warn">no active cycle</span>)
+                          : (active ? <>refreshes <b>{active.name}</b></> : <span className="pm-console__warn">no active cycle</span>)}
                     </div>
                   </td>
                   <td>
