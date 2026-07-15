@@ -177,4 +177,31 @@ export const api = {
     }
     return response.blob()
   },
+  // Same as `postBlob`, but also surfaces the response headers — for downloads
+  // whose metadata (e.g. product / file counts, server-chosen filename) is
+  // returned alongside the binary body rather than in a JSON envelope.
+  postBlobMeta: async (path: string, body: unknown): Promise<{ blob: Blob; headers: Headers }> => {
+    const token = tokenStorage.get()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+    let response: Response
+    try {
+      response = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: JSON.stringify(body) })
+    } catch {
+      throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Download failed'
+      try {
+        const parsed = await response.json()
+        detail = parsed.detail ?? parsed.error ?? detail
+      } catch {
+        // response had no JSON body
+      }
+      throw new ApiError(detail, response.status)
+    }
+    return { blob: await response.blob(), headers: response.headers }
+  },
 }

@@ -15,6 +15,7 @@ from modules.procurement import supplier_stock_service
 from modules.procurement import assignment_service
 from modules.procurement import export_service
 from modules.procurement import export_document_service
+from modules.procurement import shelf_sort_service
 from modules.procurement import supplier_reply_service
 from modules.procurement import reconciliation_service
 from modules.procurement import reconciliation_repository
@@ -22,7 +23,7 @@ from modules.procurement import pending_service
 from modules.procurement.pm_schemas import (
     FinalQtyUpdate, SkipRequest, ReviewedBy,
     AssignRequest, BulkAssignRequest, ChangeSupplierRequest, ExportRequest,
-    ExportDocumentRequest, SupplierReplyImportRequest,
+    ExportDocumentRequest, ShelfSortRequest, SupplierReplyImportRequest,
     GrnSubmit, PendingAdjust, ManualAdd, PendingBulk, SupplierSettingsUpdate,
     SupplierExportSettingsUpdate,
 )
@@ -381,6 +382,32 @@ def export_document(
         content=content,
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/refreshes/{refresh_id}/shelf-sort")
+def shelf_sort(
+    refresh_id: str, payload: ShelfSortRequest, tenant_id: str = Query(...)
+):
+    """Shelf Sorting & Excel Split — sort the whole order by shelf category ->
+    SubLocation -> ProductName and split it into pick-sized .xlsx files (max 16
+    products each). A single file downloads as .xlsx; multiple files come back
+    as a .zip. X-Total-Products / X-File-Count headers carry the counts for the
+    UI summary."""
+    from fastapi.responses import Response
+
+    content, filename, media_type, total, file_count = shelf_sort_service.generate(
+        tenant_id, refresh_id, payload.store_name, payload.columns, payload.order_qty_header,
+    )
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Total-Products": str(total),
+            "X-File-Count": str(file_count),
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Total-Products, X-File-Count",
+        },
     )
 
 

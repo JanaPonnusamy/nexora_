@@ -39,6 +39,22 @@ def exportable_assignments(conn, tenant_id, refresh_id, assignment_ids=None, sup
     return _rows_to_dicts(cursor)
 
 
+def all_assignment_items(conn, tenant_id, refresh_id):
+    """Every live, valid assignment for a Refresh (assignment_id + qty),
+    regardless of export status — the complete picking order the Shelf Sorting
+    screen sorts and splits. Reads live so it always reflects the current set.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT assignment_id, assigned_qty "
+        "FROM procurement.procurement_order_item_assignments "
+        "WHERE tenant_id = ? AND refresh_id = ? AND is_deleted = 0 "
+        "AND supplier_code IS NOT NULL AND assigned_qty > 0",
+        (tenant_id, refresh_id),
+    )
+    return _rows_to_dicts(cursor)
+
+
 def mark_exported(conn, tenant_id, assignment_id, batch_no, split_no, uid, exported_by):
     exported_by = _as_uid(exported_by)  # NULL for a non-GUID display name
     cursor = conn.cursor()

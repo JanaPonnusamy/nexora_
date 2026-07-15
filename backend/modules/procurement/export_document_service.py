@@ -14,6 +14,7 @@ description) comes from assignment_repository.list_for_export — the same
 PurchaseTrans-backed enrichment the Export Monitor screen itself uses.
 """
 
+import re
 from io import BytesIO
 
 from modules.procurement import assignment_repository as repo
@@ -33,8 +34,74 @@ _LABELS = {
     "product_code": "Product Code",
 }
 
+# --- Shelf category detection (Shelf Sorting & Excel Split) -----------------
+# Category is derived purely for row ORDERING — it is never stored, never
+# added as a column, and never leaves this module. Primary signal is the
+# product's UnitDescription; when that is blank it is inferred from the
+# ProductName. See _detect_category.
+
+# The picking sort order the store follows down the shelves.
+_SHELF_ORDER = [
+    "Tablet", "Capsule", "Syrup", "Respule", "Rotacap", "Inhaler",
+    "Injection", "Drops", "Cream", "Ointment", "Gel", "Lotion", "Others",
+]
+_SHELF_RANK = {c: i for i, c in enumerate(_SHELF_ORDER)}
+
+# Keyword -> category, evaluated in order so the more specific form wins
+# (Rotacap before Capsule, Respule before the rest) even though word
+# boundaries already keep e.g. \bCAP\b from matching inside "ROTACAP".
+_CATEGORY_PATTERNS = [
+    ("Rotacap", re.compile(r"\bROTA(?:CAP)?\b", re.I)),
+    ("Respule", re.compile(r"\bRESP(?:ULE)?\b", re.I)),
+    ("Tablet", re.compile(r"\bTAB(?:S|LET|LETS)?\b", re.I)),
+    ("Capsule", re.compile(r"\bCAP(?:S|SULE|SULES)?\b", re.I)),
+    ("Syrup", re.compile(r"\b(?:SYP|SYR|SYRUP)\b", re.I)),
+    ("Inhaler", re.compile(r"\b(?:INH|INHALER)\b", re.I)),
+    ("Injection", re.compile(r"\b(?:INJ|INJECTION)\b", re.I)),
+    ("Drops", re.compile(r"\bDROPS?\b", re.I)),
+    ("Cream", re.compile(r"\bCREAM\b", re.I)),
+    ("Ointment", re.compile(r"\b(?:OINT|OINTMENT)\b", re.I)),
+    ("Gel", re.compile(r"\bGEL\b", re.I)),
+    ("Lotion", re.compile(r"\bLOTION\b", re.I)),
+]
+
+
+def _match_category(text):
+    if not text:
+        return None
+    for cat, pat in _CATEGORY_PATTERNS:
+        if pat.search(text):
+            return cat
+    return None
+
+
+def _detect_category(unit_description, product_name):
+    """UnitDescription is the primary source; only when it is NULL/blank (or
+    matches nothing) do we fall back to inferring from the ProductName.
+    Anything unrecognised sorts into 'Others'."""
+    ud = (unit_description or "").strip()
+    cat = _match_category(ud) if ud else None
+    if cat is None:
+        cat = _match_category(product_name or "")
+    return cat or "Others"
+
+
+def _safe_name(store_name):
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", (store_name or "Store").strip()).strip("_")
+    return base or "Store"
+
 
 def _sort_key(row, sort_by):
+    if sort_by == "shelf":
+        # Category order, then SubLocation (NULL/blank goes last), then name.
+        cat = row.get("_category") or "Others"
+        sub = (row.get("sub_location") or "").strip()
+        return (
+            _SHELF_RANK.get(cat, len(_SHELF_ORDER)),
+            1 if not sub else 0,
+            sub,
+            row.get("product_name") or "",
+        )
     if sort_by == "sub_location":
         return (row.get("sub_location") or "", row.get("product_name") or "")
     if sort_by == "unit_description":
@@ -71,6 +138,8 @@ def _build_rows(tenant_id, items, columns, order_qty_header, sort_by):
     ids = [i["assignment_id"] for i in items]
     qty_by_id = {i["assignment_id"]: i["qty"] for i in items}
     data = repo.list_for_export(tenant_id, ids)
+    for r in data:
+        r["_category"] = _detect_category(r.get("unit_description"), r.get("product_name"))
     data.sort(key=lambda r: _sort_key(r, sort_by))
 
     plan = []
@@ -91,12 +160,21 @@ def _build_rows(tenant_id, items, columns, order_qty_header, sort_by):
 
 
 def build_excel(tenant_id, items, columns, order_qty_header, sort_by):
+    plan, rows = _build_rows(tenant_id, items, columns, order_qty_header, sort_by)
+    return _excel_from_plan_rows(plan, rows)
+
+
+def _excel_from_plan_rows(plan, rows):
+    """The single source of the Purchase Order .xlsx layout — the exact same
+    workbook (columns, sheet protection, green Order Qty fill, hidden
+    assignment_id, data validation, autosize) whether it is a normal export or
+    one split of the Shelf Sorting output. Callers pass a pre-built (plan,
+    rows) so the format never diverges between the two paths."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Protection
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.datavalidation import DataValidation
 
-    plan, rows = _build_rows(tenant_id, items, columns, order_qty_header, sort_by)
     headers = [label for _, label in plan] + ["Status", "Available Qty"]
     order_qty_col = next(i for i, (key, _) in enumerate(plan) if key == "order_qty") + 1
     status_col = len(plan) + 1
@@ -246,3 +324,29 @@ def build_document(tenant_id, items, fmt, columns, order_qty_header, sort_by, su
     name_bits = ["PO", supplier_code or "export", date.today().isoformat()]
     filename = "_".join(str(b) for b in name_bits if b) + f".{_EXTENSIONS[fmt]}"
     return content, filename, _MEDIA_TYPES[fmt]
+
+
+def build_sorted_split(tenant_id, items, columns, order_qty_header, store_name, max_per_file=16):
+    """Shelf Sorting & Excel Split: take the existing export dataset, sort it
+    by shelf category -> SubLocation -> ProductName, then slice it into
+    consecutive .xlsx files of at most `max_per_file` products each. Every file
+    is the identical Purchase Order layout (same columns, header, formatting);
+    only row order and the split boundaries differ. S.No restarts at 1 in each
+    file. Returns ([(filename, bytes), ...], total_products)."""
+    plan, rows = _build_rows(tenant_id, items, columns, order_qty_header, "shelf")
+    sno_idx = next((i for i, (k, _) in enumerate(plan) if k == "sno"), None)
+    safe = _safe_name(store_name)
+
+    files = []
+    for start in range(0, len(rows), max_per_file):
+        chunk = rows[start:start + max_per_file]
+        renumbered = []
+        for n, r in enumerate(chunk, start=1):
+            values = list(r["values"])
+            if sno_idx is not None:
+                values[sno_idx] = n
+            renumbered.append({"assignment_id": r["assignment_id"], "values": values})
+        seq = start // max_per_file + 1
+        content = _excel_from_plan_rows(plan, renumbered)
+        files.append((f"{safe}_Sorted_{seq:02d}.xlsx", content))
+    return files, len(rows)

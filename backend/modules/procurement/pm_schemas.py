@@ -77,6 +77,17 @@ class ExportDocumentRequest(BaseModel):
     supplier_code: Optional[str] = None
 
 
+# --- Shelf Sorting & Excel Split -------------------------------------------
+
+class ShelfSortRequest(BaseModel):
+    # Used only to name the generated file(s): StoreName_Sorted_01.xlsx.
+    store_name: str = Field("Store", max_length=200)
+    # Same optional-column set as the normal export — the split keeps every
+    # existing column; this just carries through the buyer's column choice.
+    columns: List[str] = Field(default_factory=list)
+    order_qty_header: str = Field("Order Qty", max_length=40)
+
+
 # --- Supplier Reply import (pre-shipment confirmation round-trip) ---------
 
 class SupplierReplyRow(BaseModel):

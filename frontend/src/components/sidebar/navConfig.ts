@@ -34,6 +34,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Purchase Manager', to: '/procurement/workspace', icon: 'bi-cart-check', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Product Intelligence', to: '/procurement/intelligence', icon: 'bi-cpu', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Refresh Compare', to: '/procurement/compare', icon: 'bi-arrow-left-right', cap: 'PROCUREMENT_WORKSPACE' },
+      { label: 'Shelf Sorting & Excel Split', to: '/procurement/shelf-sort', icon: 'bi-signpost-split', cap: 'PROCUREMENT_WORKSPACE' },
     ],
   },
   {

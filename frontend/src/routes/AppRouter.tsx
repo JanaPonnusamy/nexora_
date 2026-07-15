@@ -24,6 +24,7 @@ import CycleManagementPage from '../pages/procurement/CycleManagementPage'
 import RefreshManagementPage from '../pages/procurement/RefreshManagementPage'
 import CycleRefreshConsolePage from '../pages/procurement/CycleRefreshConsolePage'
 import RefreshComparePage from '../pages/procurement/RefreshComparePage'
+import ShelfSortingPage from '../pages/procurement/ShelfSortingPage'
 import PermissionsPage from '../pages/administration/PermissionsPage'
 import ReportsPage from '../pages/ReportsPage'
 import PassGenPage from '../pages/pass-gen/PassGenPage'
@@ -84,6 +85,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/procurement/workspace" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><PurchaseWorkspacePage /></RequireCapability>} />
         <Route path="/procurement/intelligence" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><ProductIntelligencePage /></RequireCapability>} />
         <Route path="/procurement/compare" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><RefreshComparePage /></RequireCapability>} />
+        <Route path="/procurement/shelf-sort" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><ShelfSortingPage /></RequireCapability>} />
         <Route path="/document-extraction/review" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionReviewPage /></RequireCapability>} />
         <Route path="/document-extraction/review/:importId" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionReviewPage /></RequireCapability>} />
         <Route path="/document-extraction/history" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionHistoryPage /></RequireCapability>} />

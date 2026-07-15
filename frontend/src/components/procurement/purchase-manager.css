@@ -953,6 +953,11 @@
 .pm-launch__field .sx-select { width: 100%; }
 .pm-launch__go { width: 100%; justify-content: center; margin-top: 6px; }
 
+.pm-shelf__summary { margin: 18px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.pm-shelf__summary > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 8px 12px; background: var(--pm-surface-2, #f6f8fb); border-radius: 8px; }
+.pm-shelf__summary dt { margin: 0; font-size: 12px; font-weight: 600; color: var(--pm-muted, #64748b); }
+.pm-shelf__summary dd { margin: 0; font-size: 14px; font-weight: 700; text-align: right; word-break: break-word; }
+
 @media (max-width: 992px) {
   .pm-split { grid-template-columns: 1fr; }
   .pm { height: auto; }

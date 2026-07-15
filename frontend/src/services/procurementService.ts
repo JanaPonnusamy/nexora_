@@ -201,6 +201,32 @@ export const procurementService = {
       opts,
     ),
 
+  // Shelf Sorting & Excel Split — sort the whole order by shelf category and
+  // split it into pick-sized files (max 16 products each). Returns the file
+  // (single .xlsx or a .zip of several) plus the product / file counts the
+  // server reports in the X-Total-Products / X-File-Count headers.
+  shelfSort: (
+    tenantId: string,
+    refreshId: string,
+    opts: { store_name: string; columns?: string[]; order_qty_header?: string },
+  ) =>
+    api
+      .postBlobMeta(`/api/procurement/refreshes/${refreshId}/shelf-sort${qs({ tenant_id: tenantId })}`, {
+        store_name: opts.store_name,
+        columns: opts.columns ?? [],
+        order_qty_header: opts.order_qty_header ?? 'Order Qty',
+      })
+      .then(({ blob, headers }) => {
+        const disposition = headers.get('Content-Disposition') ?? ''
+        const match = /filename="?([^"]+)"?/.exec(disposition)
+        return {
+          blob,
+          filename: match?.[1] ?? 'Sorted.xlsx',
+          totalProducts: Number(headers.get('X-Total-Products') ?? 0),
+          fileCount: Number(headers.get('X-File-Count') ?? 1),
+        }
+      }),
+
   exportHistory: (tenantId: string, refreshId: string) =>
     api
       .get<{ batches: ExportBatch[] }>(
