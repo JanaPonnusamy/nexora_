@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { SupplierRow, SupplierStockRow, WorkspaceItem } from '../../types/procurement'
-import { num, date } from '../stock/format'
+import { num } from '../stock/format'
 import { EmptyState } from '../common/EmptyState'
 import { preferredSupplier, SUPPLIER_REC_LIMIT } from './purchaseValue'
 
@@ -302,18 +302,17 @@ export function SupplierStockTable({
             the two product-name columns, which share the leftover space and
             ellipsis-truncate their text. */}
         <colgroup>
-          <col style={{ width: 30 }} />{/* check */}
-          <col style={{ width: 32 }} />{/* # */}
-          <col />{/* Supplier Product (flex) */}
+          <col style={{ width: 28 }} />{/* check */}
+          <col style={{ width: 28 }} />{/* # */}
+          <col />{/* Supplier Product (flex — gets the bulk of the width) */}
           <col />{/* Mapped Product (flex) */}
-          <col style={{ width: 56 }} />{/* Offer */}
-          <col style={{ width: 66 }} />{/* Discount % */}
-          <col style={{ width: 76 }} />{/* Supplier Stock */}
-          <col style={{ width: 72 }} />{/* Store Stock */}
-          <col style={{ width: 52 }} />{/* Sugg. */}
-          <col style={{ width: 74 }} />{/* Last Sync */}
-          <col style={{ width: 68 }} />{/* Status */}
-          <col style={{ width: 72 }} />{/* Order Qty */}
+          <col style={{ width: 42 }} />{/* Offer */}
+          <col style={{ width: 46 }} />{/* Disc % */}
+          <col style={{ width: 58 }} />{/* Sup. Stock */}
+          <col style={{ width: 58 }} />{/* Store Stock */}
+          <col style={{ width: 46 }} />{/* Sugg. */}
+          <col style={{ width: 58 }} />{/* Status */}
+          <col style={{ width: 66 }} />{/* Order Qty */}
         </colgroup>
         <thead>
           <tr>
@@ -329,11 +328,10 @@ export function SupplierStockTable({
             <th>Supplier Product</th>
             <th>Mapped Product</th>
             <th>Offer</th>
-            <th className="sx-num">Discount %</th>
-            <th className="sx-num">Supplier Stock</th>
-            <th className="sx-num">Store Stock</th>
+            <th className="sx-num" title="Discount %">Disc %</th>
+            <th className="sx-num" title="Supplier Stock">Sup. Stock</th>
+            <th className="sx-num" title="Store Stock">Store Stock</th>
             <th className="sx-num">Sugg.</th>
-            <th className="sx-num">Last Sync</th>
             <th>Status</th>
             <th className="sx-num pm-grid__final">Order Qty</th>
           </tr>
@@ -374,7 +372,6 @@ export function SupplierStockTable({
                 <td className="sx-num pm-sx__supp">{num(r.available_stock ?? 0)}</td>
                 <td className="sx-num pm-sx__store">{storeStock != null ? num(storeStock) : '—'}</td>
                 <td className="sx-num sx-dim">{num(r.suggested_qty ?? 0)}</td>
-                <td className="sx-num sx-dim">{date(r.transaction_date)}</td>
                 <td>
                   {status && (
                     <span className={`pm-sxchip pm-sxchip--${status}`}>

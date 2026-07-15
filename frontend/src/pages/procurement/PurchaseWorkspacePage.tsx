@@ -2093,7 +2093,7 @@ export default function PurchaseWorkspacePage() {
               // the per-row supply/discount/scheme facts it duplicated already
               // live as grid columns, and the buyer reviews the PRODUCT here,
               // not a supplier stat card.
-              <div className="pm-split pm-split--3">
+              <div className="pm-split pm-split--3 pm-split--stock3">
                 <div className="pm-split__grid pm-stockgrid">
                   {supplierStock.length > 0 && (
                     <div className="pm-sxcards">
