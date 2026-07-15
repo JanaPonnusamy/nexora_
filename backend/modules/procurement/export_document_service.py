@@ -41,40 +41,51 @@ _LABELS = {
 # ProductName. See _detect_category.
 
 # The picking sort order the store follows down the shelves. Medicine forms
-# first, then the non-drug / general groups, then anything unrecognised.
+# first, then oral-care / topical, then nutrition / supplies, then anything
+# unrecognised.
 _SHELF_ORDER = [
     "Tablet", "Capsule", "Syrup", "Respule", "Rotacap", "Inhaler",
     "Injection", "Drops", "Cream", "Ointment", "Gel", "Lotion",
-    "Soap", "Bandage", "Cloth", "Veterinary", "Others",
+    "Spray", "Paste", "Powder", "Sachet", "Wash", "Soap", "Food",
+    "Bandage", "Cloth", "Veterinary", "Others",
 ]
 _SHELF_RANK = {c: i for i, c in enumerate(_SHELF_ORDER)}
 
-# Keyword -> category, evaluated in order so the more specific form wins
-# (Rotacap before Capsule, Respule before the rest) even though word
-# boundaries already keep e.g. \bCAP\b from matching inside "ROTACAP".
+# Keyword -> category. Order matters: name-strong / non-drug groups first (so a
+# toothpaste or nutrition product is not mis-filed by a drug-form word), then
+# the drug forms. Plurals are handled (RESPULES, ROTACAPS, TABS…). Word
+# boundaries keep e.g. \bCAP\b from matching inside "ROTACAP".
 _CATEGORY_PATTERNS = [
-    ("Rotacap", re.compile(r"\bROTA(?:CAP)?\b", re.I)),
-    ("Respule", re.compile(r"\bRESP(?:ULE)?\b", re.I)),
-    ("Tablet", re.compile(r"\bTAB(?:S|LET|LETS)?\b", re.I)),
-    ("Capsule", re.compile(r"\bCAP(?:S|SULE|SULES)?\b", re.I)),
-    ("Syrup", re.compile(r"\b(?:SYP|SYR|SYRUP)\b", re.I)),
-    ("Inhaler", re.compile(r"\b(?:INH|INHALER)\b", re.I)),
-    ("Injection", re.compile(r"\b(?:INJ|INJECTION)\b", re.I)),
-    ("Drops", re.compile(r"\bDROPS?\b", re.I)),
-    ("Cream", re.compile(r"\bCREAM\b", re.I)),
-    ("Ointment", re.compile(r"\b(?:OINT(?:MENT)?|OIN|OINTM)\b", re.I)),
-    ("Gel", re.compile(r"\bGEL\b", re.I)),
-    ("Lotion", re.compile(r"\bLOTION\b", re.I)),
+    ("Veterinary", re.compile(r"\b(?:VET|VETY|VETERINARY)\b", re.I)),
+    ("Food", re.compile(r"\b(?:ENSURE|PROTINEX|PEDIASURE|LACTARE|PROTEIN|NUTRITION|"
+                        r"GRANULES?|MALT|HORLICKS|BOURNVITA|COMPLAN|PRO\s?PL|PROPL)\b", re.I)),
     ("Soap", re.compile(r"\bSOAP\b", re.I)),
+    ("Wash", re.compile(r"\b(?:BODYWASH|FACEWASH|HANDWASH|WASH|SHAMPOO)\b", re.I)),
+    ("Paste", re.compile(r"\b(?:TOOTHPASTE|PASTE)\b", re.I)),
+    ("Spray", re.compile(r"\bSPRAYS?\b", re.I)),
+    ("Sachet", re.compile(r"\bSACHETS?\b", re.I)),
+    ("Powder", re.compile(r"\bPOWDERS?\b", re.I)),
     ("Bandage", re.compile(r"\b(?:BANDAGE|GAUZE|CREPE|BAND\s?AID|DRESSING)\b", re.I)),
     ("Cloth", re.compile(r"\bCLOTH\b", re.I)),
-    ("Veterinary", re.compile(r"\b(?:VET|VETY|VETERINARY)\b", re.I)),
+    ("Rotacap", re.compile(r"\bROTA(?:CAPS?)?\b", re.I)),
+    ("Respule", re.compile(r"\bRESP(?:ULES?)?\b", re.I)),
+    ("Tablet", re.compile(r"\bTAB(?:LETS?|S)?\b", re.I)),
+    ("Capsule", re.compile(r"\b(?:CAPS?(?:ULES?)?|TRANSCAPS?)\b", re.I)),
+    ("Syrup", re.compile(r"\b(?:SYRUPS?|SYP|SYR)\b", re.I)),
+    ("Inhaler", re.compile(r"\b(?:INHALERS?|INH)\b", re.I)),
+    ("Injection", re.compile(r"\b(?:INJECTIONS?|INJ)\b", re.I)),
+    ("Drops", re.compile(r"\bDROPS?\b", re.I)),
+    ("Cream", re.compile(r"\bCREAMS?\b", re.I)),
+    ("Ointment", re.compile(r"\b(?:OINTMENTS?|OINTM|OINT|OIN)\b", re.I)),
+    ("Gel", re.compile(r"\bGELS?\b", re.I)),
+    ("Lotion", re.compile(r"\bLOTIONS?\b", re.I)),
 ]
 
-# Non-drug / special groups identified from the NAME *first*: a vet or soap
-# item may still carry a drug-form UnitDescription (TAB/CAP), which would
-# otherwise mis-file it under Tablet/Capsule. These win over UnitDescription.
-_SPECIAL = {"Veterinary", "Soap", "Bandage", "Cloth"}
+# Name-strong groups identified from the NAME *first*: these items may still
+# carry a drug-form UnitDescription (TAB/CAP) that would otherwise mis-file
+# them, so a name match wins over UnitDescription.
+_SPECIAL = {"Veterinary", "Food", "Soap", "Wash", "Paste", "Spray",
+            "Sachet", "Powder", "Bandage", "Cloth"}
 _SPECIAL_PATTERNS = [(c, p) for c, p in _CATEGORY_PATTERNS if c in _SPECIAL]
 
 # Short code shown in the optional "Category" column (rightmost). Unrecognised
@@ -83,7 +94,9 @@ _CATEGORY_CODE = {
     "Tablet": "TAB", "Capsule": "CAP", "Syrup": "SYP", "Respule": "RESP",
     "Rotacap": "ROTA", "Inhaler": "INH", "Injection": "INJ", "Drops": "DROP",
     "Cream": "CREAM", "Ointment": "OIN", "Gel": "GEL", "Lotion": "LOTION",
-    "Soap": "SOAP", "Bandage": "BAND", "Cloth": "CLOTH", "Veterinary": "VET",
+    "Spray": "SPRAY", "Paste": "PASTE", "Powder": "PWD", "Sachet": "SACHET",
+    "Wash": "WASH", "Soap": "SOAP", "Food": "FOOD",
+    "Bandage": "BAND", "Cloth": "CLOTH", "Veterinary": "VET",
     "Others": "NULL",
 }
 
