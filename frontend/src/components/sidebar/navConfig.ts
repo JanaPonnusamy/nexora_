@@ -33,6 +33,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Cycle & Refresh', to: '/procurement/console', icon: 'bi-arrow-repeat', cap: 'PROCUREMENT_ADMIN' },
       { label: 'Purchase Manager', to: '/procurement/workspace', icon: 'bi-cart-check', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Product Intelligence', to: '/procurement/intelligence', icon: 'bi-cpu', cap: 'PROCUREMENT_WORKSPACE' },
+      { label: 'Refresh Compare', to: '/procurement/compare', icon: 'bi-arrow-left-right', cap: 'PROCUREMENT_WORKSPACE' },
     ],
   },
   {

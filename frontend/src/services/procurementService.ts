@@ -2,6 +2,7 @@ import { api } from './apiClient'
 import type {
   Assignment,
   CloseCycleResult,
+  CompareResult,
   Cycle,
   DecisionDetail,
   ExportBatch,
@@ -550,6 +551,27 @@ export const procurementService = {
         `/api/procurement/vpl${qs({ tenant_id: tenantId, cycle_id: cycleId, page_size: 200 })}`,
       )
       .then((r) => r.items),
+
+  // Compare two refreshes of the SAME cycle — Added / Removed / Increased /
+  // Decreased / NoChange per product. Read-only, never persisted.
+  compareVpls: (
+    tenantId: string,
+    sourceVplId: string,
+    targetVplId: string,
+    opts: { changedOnly?: boolean; action?: string; search?: string; page?: number; pageSize?: number } = {},
+  ) =>
+    api.get<CompareResult>(
+      `/api/procurement/vpl/compare${qs({
+        tenant_id: tenantId,
+        source_vpl_id: sourceVplId,
+        target_vpl_id: targetVplId,
+        changed_only: opts.changedOnly ? 'true' : undefined,
+        action_filter: opts.action,
+        search: opts.search,
+        page: opts.page,
+        page_size: opts.pageSize,
+      })}`,
+    ),
 
   // Lock a refresh as read-only ('Closed') without closing its cycle — the
   // console pairs this with generateRefresh to roll to Refresh N+1 in the same

@@ -16,6 +16,27 @@ export interface Refresh {
   store_id?: string | null
 }
 
+/** One product's diff between two refreshes of the same cycle. */
+export type CompareChange = 'Added' | 'Removed' | 'Increased' | 'Decreased' | 'NoChange'
+export interface CompareItem {
+  product_id: string | null
+  product_code: string | null
+  product_name: string | null
+  source_qty: number | null
+  target_qty: number | null
+  qty_difference: number | null
+  change_type: CompareChange
+}
+export interface CompareResult {
+  source_vpl_id: string
+  target_vpl_id: string
+  cycle_id: string
+  items: CompareItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
 /** A Procurement (Business) Cycle — Admin lifecycle screens. */
 export interface Cycle {
   cycle_id: string

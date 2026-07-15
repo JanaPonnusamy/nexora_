@@ -1172,3 +1172,26 @@
 .pm-expset__hint { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: #475569; background: var(--bs-tertiary-bg, #f8fafc); border-radius: 8px; padding: 8px 10px; }
 .pm-expset__folder { display: flex; align-items: center; gap: 8px; }
 .pm-expset__folderinput { flex: 1; min-width: 0; }
+
+/* ---- Refresh Compare -------------------------------------------------------- */
+.pm-cmp__bar { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.pm-cmp__arrow { color: #94a3b8; font-size: 16px; margin-bottom: 6px; }
+.pm-cmp__count { margin-left: auto; font-size: 12px; color: #64748b; font-weight: 600; }
+.pm-cmp__grid { font-size: 12.5px; }
+.pm-cmp__grid thead th { padding: 6px 10px; white-space: nowrap; }
+.pm-cmp__grid tbody td { padding: 5px 10px; vertical-align: middle; }
+.pm-cmp__numcol { width: 92px; text-align: right; }
+.pm-cmp__chgcol { width: 128px; }
+.pm-cmp__empty, .pm-cmp__pager { text-align: center; color: #94a3b8; padding: 14px; }
+.pm-cmp__pager { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.pm-cmp--up { color: #15803d; font-weight: 600; }
+.pm-cmp--down { color: #b91c1c; font-weight: 600; }
+.pm-cmp-badge {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px;
+  border-radius: 999px; font-size: 10.5px; font-weight: 700; white-space: nowrap;
+}
+.pm-cmp-badge.pm-cmp--added { background: #dcfce7; color: #15803d; }
+.pm-cmp-badge.pm-cmp--removed { background: #fee2e2; color: #b91c1c; }
+.pm-cmp-badge.pm-cmp--up { background: #dbeafe; color: #1d4ed8; }
+.pm-cmp-badge.pm-cmp--down { background: #ffedd5; color: #c2410c; }
+.pm-cmp-badge.pm-cmp--same { background: #f1f5f9; color: #64748b; }
