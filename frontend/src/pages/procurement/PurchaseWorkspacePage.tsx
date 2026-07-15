@@ -9,6 +9,7 @@ import { useActingUser } from '../../hooks/useActingUser'
 import type { Tenant } from '../../types/tenant'
 import type { Store } from '../../types/store'
 import type {
+  Cycle,
   ManualProduct,
   PendingItem,
   PurchaseMode,
@@ -95,6 +96,9 @@ export default function PurchaseWorkspacePage() {
   const [tenantId, setTenantId] = useState(urlTenant)
   const [stores, setStores] = useState<Store[]>([])
   const [selectedStoreId, setSelectedStoreId] = useState('')
+  // Cycles for the selected store (open + closed) drive the Cycle selector.
+  const [cycles, setCycles] = useState<Cycle[]>([])
+  const [cycleId, setCycleId] = useState('')
   const [refreshes, setRefreshes] = useState<Refresh[]>([])
   const [refreshId, setRefreshId] = useState(urlRefresh)
   const actingUser = useActingUser()
@@ -257,16 +261,65 @@ export default function PurchaseWorkspacePage() {
     setSelectedStoreId((cur) => (tenantStores.some((s) => s.store_id === cur) ? cur : (tenantStores[0]?.store_id ?? '')))
   }, [tenantStores])
 
+  // Load the store's cycles + refreshes together, then default-select the
+  // CURRENT OPEN cycle (else the latest CLOSED one, read-only) so the buyer
+  // never has to hunt for "which cycle is active".
   useEffect(() => {
-    if (!tenantId || !selectedStoreId) { setRefreshes([]); setRefreshId(''); return }
-    procurementService.refreshes(tenantId, selectedStoreId)
-      .then((rows) => {
-        setRefreshes(rows)
-        // Keep a URL-provided / already-selected refresh; else clear on change.
-        setRefreshId((c) => (c && rows.some((r) => r.refresh_id === c) ? c : ''))
+    if (!tenantId || !selectedStoreId) { setCycles([]); setRefreshes([]); setCycleId(''); setRefreshId(''); return }
+    let live = true
+    Promise.all([
+      procurementService.cycles(tenantId, selectedStoreId),
+      procurementService.refreshes(tenantId, selectedStoreId),
+    ])
+      .then(([cyc, refs]) => {
+        if (!live) return
+        setCycles(cyc)
+        setRefreshes(refs)
+        const open = cyc.find((c) => (c.status ?? '').toUpperCase() === 'ACTIVE')
+        const latest = [...cyc].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))[0]
+        // A URL-provided refresh pins its own cycle; otherwise open-first.
+        const urlCycle = urlRefresh ? refs.find((r) => r.refresh_id === urlRefresh)?.cycle_id : undefined
+        setCycleId((cur) =>
+          cur && cyc.some((c) => c.cycle_id === cur) ? cur : (urlCycle ?? open?.cycle_id ?? latest?.cycle_id ?? ''),
+        )
       })
       .catch(fail)
-  }, [tenantId, selectedStoreId, fail])
+    return () => { live = false }
+  }, [tenantId, selectedStoreId, fail, urlRefresh])
+
+  // Refreshes belonging to the selected cycle, latest first.
+  const refreshesInCycle = useMemo(
+    () => refreshes
+      .filter((r) => r.cycle_id === cycleId)
+      .sort((a, b) => (b.refresh_no ?? 0) - (a.refresh_no ?? 0)),
+    [refreshes, cycleId],
+  )
+
+  // Never auto-select an old refresh when a newer one exists — snap to the
+  // latest refresh in the selected cycle (keeps a valid manual pick / URL one).
+  useEffect(() => {
+    setRefreshId((cur) => {
+      if (cur && refreshesInCycle.some((r) => r.refresh_id === cur)) return cur
+      if (urlRefresh && refreshesInCycle.some((r) => r.refresh_id === urlRefresh)) return urlRefresh
+      return refreshesInCycle[0]?.refresh_id ?? ''
+    })
+  }, [refreshesInCycle, urlRefresh])
+
+  // The selected cycle + its read-only state. A CLOSED cycle is view-only:
+  // search / filter / print / view only — no qty edit, assign, export,
+  // finalize, skip or decision change.
+  const selectedCycle = useMemo(() => cycles.find((c) => c.cycle_id === cycleId) ?? null, [cycles, cycleId])
+  const readOnly = (selectedCycle?.status ?? '').toUpperCase() === 'CLOSED'
+
+  // Single gate every mutating action calls first — a closed cycle refuses the
+  // write and tells the buyer why, so no edit can slip past a disabled control.
+  const guardRW = useCallback((): boolean => {
+    if (readOnly) {
+      say('danger', 'This cycle is closed — read-only. Only viewing, search, filter and print are available.')
+      return false
+    }
+    return true
+  }, [readOnly, say])
 
   // A new refresh always starts at the first stage (Review Products) in Review
   // All mode and clears any picked supplier — a sensible default, not a hard
@@ -562,6 +615,7 @@ export default function PurchaseWorkspacePage() {
   // workspace reload, so focus and scroll position never jump for the operator.
   const saveRow = useCallback(
     async (item: WorkspaceItem) => {
+      if (!guardRW()) return
       const raw = edits[item.order_item_id]
       const v = raw != null ? Number(raw) : item.final_qty ?? 0
       if (Number.isNaN(v) || v < 0) return
@@ -618,7 +672,7 @@ export default function PurchaseWorkspacePage() {
         savingIds.current.delete(item.order_item_id)
       }
     },
-    [edits, tenantId, actingUser, fail, loadWorkspace],
+    [edits, tenantId, actingUser, fail, loadWorkspace, guardRW],
   )
 
   // Ctrl/⌘+F focuses the product search. (Everything saves immediately now —
@@ -792,6 +846,7 @@ export default function PurchaseWorkspacePage() {
   // Skip is optimistic (no full workspace reload): qty → 0, status → skipped,
   // row greys immediately; the network call reconciles in the background.
   const skip = async (item: WorkspaceItem, reason: string) => {
+    if (!guardRW()) return
     setItems((list) =>
       list.map((it) =>
         it.order_item_id === item.order_item_id
@@ -821,6 +876,7 @@ export default function PurchaseWorkspacePage() {
     }
   }
   const restore = async (item: WorkspaceItem) => {
+    if (!guardRW()) return
     setItems((list) =>
       list.map((it) => (it.order_item_id === item.order_item_id ? { ...it, item_status: 'review' } : it)),
     )
@@ -836,6 +892,7 @@ export default function PurchaseWorkspacePage() {
   // fast: remaining → 0, assigned bumps, the row's supplier is remembered so the
   // side panel shows it green. The network call reconciles in the background.
   const assign = async (item: WorkspaceItem, supplierCode: string) => {
+    if (!guardRW()) return
     const remaining = item.remaining_qty ?? 0
     if (remaining <= 0) return say('danger', 'No remaining quantity to assign')
     // §11 — a rapid double Enter/click must never fire two POSTs for the same row.
@@ -916,6 +973,7 @@ export default function PurchaseWorkspacePage() {
   // (loadQueue). The backend skips any product already actively assigned, so
   // manually-assigned products are never overwritten.
   const assignIds = async (supplierCode: string, ids: string[]) => {
+    if (!guardRW()) return
     const code = supplierCode.trim()
     if (!code) return say('danger', 'Pick a supplier')
     if (ids.length === 0) return say('danger', 'Nothing to assign')
@@ -1147,6 +1205,7 @@ export default function PurchaseWorkspacePage() {
   // `announce` is false when a caller wants to show its own combined message
   // instead of this one flashing first.
   const exportGroup = async (group: SupplierQueueGroup, assignmentIds: string[], announce = true) => {
+    if (!guardRW()) return
     if (assignmentIds.length === 0) { say('danger', 'Nothing to export for this supplier'); return false }
     setBusySupplier(group.supplier_code)
     try {
@@ -1171,6 +1230,7 @@ export default function PurchaseWorkspacePage() {
   // so it can never miss an assignment made after the last queue reload or
   // send an empty export while real assignments exist.
   const exportSupplierLive = async (supplierCode: string) => {
+    if (!guardRW()) return
     if (busySupplier) return // §11-style guard: no overlapping export requests
     setBusySupplier(supplierCode)
     try {
@@ -1185,6 +1245,7 @@ export default function PurchaseWorkspacePage() {
   }
 
   const exportAll = async () => {
+    if (!guardRW()) return
     if (exportingAll) return // §11-style guard: no overlapping export requests
     setExportingAll(true)
     try {
@@ -1202,6 +1263,7 @@ export default function PurchaseWorkspacePage() {
   // export call each (same live-resolve path exportSupplierLive already uses),
   // sequential so requests never race the shared busySupplier guard.
   const exportSelectedSuppliers = async (supplierCodes: string[]) => {
+    if (!guardRW()) return
     if (exportingSelected || supplierCodes.length === 0) return
     setExportingSelected(true)
     let total = 0
@@ -1403,6 +1465,7 @@ export default function PurchaseWorkspacePage() {
 
   // Step 2 — the buyer confirmed the preview; now actually assign.
   const commitAutoAssign = async () => {
+    if (!guardRW()) return
     if (!autoAssignPreview) return
     setAutoBusy(true)
     try {
@@ -1439,6 +1502,7 @@ export default function PurchaseWorkspacePage() {
   // alone keeps assignedByItem / the review panel / the grid's Assigned tag
   // correct, no full workspace reload needed (§23).
   const reviewChangeSupplier = async (assignmentId: string, newSupplier: SupplierRow) => {
+    if (!guardRW()) return
     try {
       await procurementService.changeSupplier(tenantId, assignmentId, newSupplier.supplier_code, actingUser || null)
       say('success', `Moved to ${newSupplier.supplier_name ?? newSupplier.supplier_code}`)
@@ -1451,6 +1515,7 @@ export default function PurchaseWorkspacePage() {
   // review/draft) — reconcile just that one row from the server instead of
   // reloading the whole workspace (§23).
   const reviewRemove = async (assignmentId: string, orderItemId: string) => {
+    if (!guardRW()) return
     try {
       await procurementService.removeAssignment(tenantId, assignmentId, actingUser || null)
       say('success', 'Removed from supplier')
@@ -1473,6 +1538,7 @@ export default function PurchaseWorkspacePage() {
   /* ---- Manual product ---------------------------------------------------- */
 
   const addManual = async (product: ManualProduct, qty: number) => {
+    if (!guardRW()) return
     if (manualBusy) return // guard against a duplicate submit racing this one
     setManualBusy(true)
     try {
@@ -1521,6 +1587,7 @@ export default function PurchaseWorkspacePage() {
   }, [mode, supplier, tenantId, refreshId, canWork, stockSearch, stockReloadKey])
 
   const orderSupplierStock = async (row: SupplierStockRow, qty: number) => {
+    if (!guardRW()) return
     if (!row.product_code) return say('danger', 'Row has no mapped product code')
     if (manualBusy) return // guard against a duplicate submit racing this one
     setManualBusy(true)
@@ -1576,6 +1643,7 @@ export default function PurchaseWorkspacePage() {
     el?.select()
   }
   const savePendingRow = async (item: PendingItem, index: number) => {
+    if (!guardRW()) return
     const value = Number(pendingDraft[item.order_item_id] ?? '0')
     if (Number.isNaN(value) || value < 0) return say('danger', 'Enter a non-negative number')
     try {
@@ -1593,6 +1661,7 @@ export default function PurchaseWorkspacePage() {
     else if (e.key === 'Escape') { e.preventDefault(); setPendingDraft((d) => ({ ...d, [item.order_item_id]: '0' })) }
   }
   const finalizePending = async () => {
+    if (!guardRW()) return
     try {
       const r = await procurementService.finalizePending(tenantId, refreshId, actingUser || null)
       say('success', `Finalized ${r.finalized} pending items`)
@@ -1602,6 +1671,7 @@ export default function PurchaseWorkspacePage() {
     }
   }
   const carryForwardPending = async (item: PendingItem) => {
+    if (!guardRW()) return
     try {
       await procurementService.carryForwardPending(tenantId, item.order_item_id, actingUser || null)
       say('success', 'Carried forward to next refresh')
@@ -1612,6 +1682,7 @@ export default function PurchaseWorkspacePage() {
   }
   // Bulk processing: apply one action to many pending items at once.
   const bulkPending = async (action: 'carry' | 'skip' | 'finalize', ids: string[]) => {
+    if (!guardRW()) return
     if (ids.length === 0) return say('danger', 'Select at least one pending item')
     setPendingBusy(true)
     try {
@@ -1646,6 +1717,7 @@ export default function PurchaseWorkspacePage() {
     }
   }
   const submitGrn = async () => {
+    if (!guardRW()) return
     if (!grnNumber.trim()) return say('danger', 'Enter the Last GRN number')
     try {
       const res = await procurementService.submitGrn(tenantId, refreshId, grnNumber.trim(), actingUser || null)
@@ -1668,10 +1740,26 @@ export default function PurchaseWorkspacePage() {
             <option value="">Select store…</option>
             {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
           </select>
-          <select className="sx-select" aria-label="Refresh" value={refreshId} onChange={(e) => setRefreshId(e.target.value)}>
-            <option value="">Select refresh…</option>
-            {refreshes.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
+          {/* Cycle selector — current OPEN cycle is auto-selected; previous
+              CLOSED cycles stay viewable (read-only). */}
+          <select className="sx-select" aria-label="Cycle" value={cycleId} onChange={(e) => setCycleId(e.target.value)}>
+            <option value="">Select cycle…</option>
+            {cycles.map((c) => (
+              <option key={c.cycle_id} value={c.cycle_id}>
+                {c.name}{(c.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' · Closed'}
+              </option>
+            ))}
           </select>
+          {/* Refresh selector — scoped to the selected cycle, latest first. */}
+          <select className="sx-select" aria-label="Refresh" value={refreshId} onChange={(e) => setRefreshId(e.target.value)}>
+            <option value="">{refreshesInCycle.length ? 'Select refresh…' : 'No refreshes'}</option>
+            {refreshesInCycle.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
+          </select>
+          {readOnly && (
+            <span className="pm-ro-badge" title="This cycle is closed — viewing only">
+              <i className="bi bi-lock-fill" /> Read Only · Closed Cycle
+            </span>
+          )}
         </div>
         {/* Stage stepper rides the header row rather than owning a second full-
             width row of its own — the row had ~60% empty space and the detail

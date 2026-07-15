@@ -50,6 +50,7 @@ type StoreRun = {
 
 type Params = { rolling?: number; min: number; max: number }
 type CycleAction = 'keep' | 'new'
+type RefreshInfo = { count: number; latestName: string | null; latestNo: number | null; latestAt: string | null }
 
 const POLL_MS = 2500
 const SYNC_TIMEOUT_MS = 240_000
@@ -112,10 +113,28 @@ function pollSync(
   })
 }
 
+// Mirrors the server-authoritative convention (orchestration_service.cycle_name).
+// The server overrides this on open, but keeping it aligned avoids a flash of a
+// different name in any optimistic UI.
 const autoCycleName = (storeName: string) => {
   const d = new Date()
-  const mon = d.toLocaleString('en-GB', { month: 'short' })
-  return `${storeName} · ${String(d.getDate()).padStart(2, '0')}-${mon}-${d.getFullYear()}`
+  const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return `${storeName} - ${ymd} - Cycle`
+}
+
+/** Compact relative day label for a refresh timestamp — "Today 10:30",
+ *  "Yesterday", or "12 Jul". */
+function refreshWhen(iso?: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const that = new Date(d); that.setHours(0, 0, 0, 0)
+  const days = Math.round((today.getTime() - that.getTime()) / 86_400_000)
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (days === 0) return `Today ${time}`
+  if (days === 1) return 'Yesterday'
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
 }
 
 // --- Pure run reducers ------------------------------------------------------
@@ -191,6 +210,9 @@ export default function CycleRefreshConsolePage() {
   const [cyclesByStore, setCyclesByStore] = useState<Record<string, Cycle[]>>({})
   /** Last refresh's product count per store — powers the pre-run estimate. */
   const [lastProducts, setLastProducts] = useState<Record<string, number | null>>({})
+  /** Latest-refresh visibility per store — refresh count + the latest refresh's
+   *  name / number / timestamp, so a buyer sees the active refresh at a glance. */
+  const [refreshInfo, setRefreshInfo] = useState<Record<string, RefreshInfo>>({})
   const actingUser = useActingUser()
   const [banner, setBanner] = useState<Banner>(null)
 
@@ -250,18 +272,29 @@ export default function CycleRefreshConsolePage() {
 
   /** One parallel round: each store's cycles + its last refresh size. */
   const reloadContext = useCallback(() => {
-    if (!tenantId) { setCyclesByStore({}); setLastProducts({}); return }
+    if (!tenantId) { setCyclesByStore({}); setLastProducts({}); setRefreshInfo({}); return }
     const list = stores.filter((s) => s.tenant_id === tenantId && s.is_active)
     Promise.all(list.map(async (s) => {
       const [cycles, refreshes] = await Promise.all([
         procurementService.cycles(tenantId, s.store_id).catch(() => [] as Cycle[]),
         procurementService.refreshes(tenantId, s.store_id).catch(() => []),
       ])
-      const latest = [...refreshes].sort((a, b) => (b.refresh_no ?? 0) - (a.refresh_no ?? 0))[0]
-      return [s.store_id, cycles, latest?.generated_product_count ?? null] as const
+      // Latest refresh IN THE ACTIVE CYCLE — the one a buyer is actually working;
+      // fall back to the store-wide latest when no cycle is active.
+      const active = cycles.find((c) => (c.status ?? '').toUpperCase() === 'ACTIVE')
+      const scoped = active ? refreshes.filter((r) => r.cycle_id === active.cycle_id) : refreshes
+      const latest = [...scoped].sort((a, b) => (b.refresh_no ?? 0) - (a.refresh_no ?? 0))[0]
+      const info: RefreshInfo = {
+        count: scoped.length,
+        latestName: latest?.snapshot_name ?? null,
+        latestNo: latest?.refresh_no ?? null,
+        latestAt: latest?.created_at ?? null,
+      }
+      return [s.store_id, cycles, latest?.generated_product_count ?? null, info] as const
     })).then((rows) => {
       setCyclesByStore(Object.fromEntries(rows.map((r) => [r[0], r[1]])))
       setLastProducts(Object.fromEntries(rows.map((r) => [r[0], r[2]])))
+      setRefreshInfo(Object.fromEntries(rows.map((r) => [r[0], r[3]])))
     }).catch(() => { /* keep last good context */ })
   }, [tenantId, stores])
 
@@ -630,6 +663,8 @@ export default function CycleRefreshConsolePage() {
                 />
               </th>
               <th>Store</th>
+              <th className="pm-console__cyclecol">Current Cycle</th>
+              <th className="pm-console__refreshcol">Latest Refresh</th>
               <th className="pm-console__actioncol">
                 Cycle Action
                 <button
@@ -662,6 +697,7 @@ export default function CycleRefreshConsolePage() {
               const id = s.store_id
               const run = runs[id]
               const active = activeCycleOf(id)
+              const info = refreshInfo[id]
               const action = cycleAction[id] ?? 'keep'
               const isOpen = expanded.has(id)
               return [
@@ -683,6 +719,29 @@ export default function CycleRefreshConsolePage() {
                   <td>
                     <div className="pm-prod__name">{s.store_name}</div>
                     <div className="pm-prod__meta">{s.store_code}</div>
+                  </td>
+                  <td className="pm-console__cyclecol">
+                    {active ? (
+                      <>
+                        <div className="pm-console__cyclename" title={active.name}>{active.name}</div>
+                        <span className="pm-badge pm-badge--active">Active</span>
+                      </>
+                    ) : (
+                      <span className="sx-dim">No open cycle</span>
+                    )}
+                  </td>
+                  <td className="pm-console__refreshcol">
+                    {info?.latestName ? (
+                      <>
+                        <div className="pm-console__refreshname">
+                          {info.latestNo != null ? `Refresh ${info.latestNo}` : info.latestName}
+                          <span className="pm-console__refreshcount">{info.count} total</span>
+                        </div>
+                        <div className="pm-prod__meta">{refreshWhen(info.latestAt)}</div>
+                      </>
+                    ) : (
+                      <span className="sx-dim">No refresh yet</span>
+                    )}
                   </td>
                   <td className="pm-console__actioncol">
                     <select
@@ -752,7 +811,7 @@ export default function CycleRefreshConsolePage() {
                 </tr>,
                 isOpen && run ? (
                   <tr key={`${id}-log`} className="pm-console__logrow">
-                    <td colSpan={7}>
+                    <td colSpan={9}>
                       <div className="pm-console__logwrap">
                         <div className="pm-console__log">
                           {run.log.map((l, i) => (

@@ -32,6 +32,33 @@ logger = logging.getLogger("procurement.orchestration")
 
 
 # --------------------------------------------------------------------------
+# Naming convention (server-authoritative — see Cycle/Refresh naming rules)
+#
+#   Cycle    : "<Store Name> - <YYYY-MM-DD> - Cycle"
+#   Refresh  : "<Store Name> - <YYYY-MM-DD> - Refresh <No>"
+#
+# Generated here so EVERY entry point (console, launcher, auto-reopen on close)
+# yields identical, self-describing names — no generic "Refresh"/"Cycle" ever.
+# --------------------------------------------------------------------------
+
+def _store_name(store_id) -> str:
+    """Display name for a store, falling back to the id when unavailable."""
+    if not store_id:
+        return "Store"
+    row = StoreRepository().get_by_id(store_id)
+    name = getattr(row, "store_name", None) if row is not None else None
+    return (name or str(store_id)).strip()
+
+
+def cycle_name(store_id, on: date | None = None) -> str:
+    return f"{_store_name(store_id)} - {(on or date.today()):%Y-%m-%d} - Cycle"
+
+
+def refresh_name(store_id, refresh_no: int, on: date | None = None) -> str:
+    return f"{_store_name(store_id)} - {(on or date.today()):%Y-%m-%d} - Refresh {refresh_no}"
+
+
+# --------------------------------------------------------------------------
 # Business Cycle
 # --------------------------------------------------------------------------
 
@@ -70,6 +97,8 @@ def create_business_cycle(payload: dict):
 
     data = dict(payload)
     data["status"] = "ACTIVE"
+    # Server-authoritative name — never trust a client-supplied/generic name.
+    data["name"] = cycle_name(store_id)
     cycle = cycle_repo.create_cycle(data)
     logger.info("Cycle opened tenant=%s cycle=%s store=%s by=%s",
                 tenant_id, cycle.get("cycle_id"), store_id, payload.get("created_by"))
@@ -116,12 +145,17 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
         or cycle_repo.get_active_refresh_id(tenant_id, cycle_id)
     )
 
-    # 1) Create the immutable Refresh header (reuses Phase 2).
+    # 1) Create the immutable Refresh header (reuses Phase 2). The name and
+    #    per-cycle sequence number are server-authoritative — the Refresh number
+    #    increments within the cycle and restarts at 1 for each new cycle.
+    store_id = cycle.get("store_id")
+    refresh_no = refresh_repo.next_refresh_no(tenant_id, cycle_id)
     refresh = refresh_repo.create_vpl({
         "tenant_id": tenant_id,
         "cycle_id": cycle_id,
-        "store_id": cycle.get("store_id"),
-        "snapshot_name": payload.get("snapshot_name") or "Refresh",
+        "store_id": store_id,
+        "snapshot_name": refresh_name(store_id, refresh_no),
+        "refresh_no": refresh_no,
         "rolling_days": payload.get("rolling_days"),
         "min_days": payload.get("min_days"),
         "max_days": payload.get("max_days"),
@@ -279,7 +313,7 @@ def close_cycle(tenant_id, cycle_id, closed_by, force=False):
     new_cycle = cycle_repo.create_cycle({
         "tenant_id": tenant_id,
         "store_id": store_id,
-        "name": _next_cycle_name(cycle.get("name")),
+        "name": cycle_name(store_id),
         "description": None,
         "status": "ACTIVE",
         "start_grn_number": end_grn,
@@ -297,14 +331,3 @@ def close_cycle(tenant_id, cycle_id, closed_by, force=False):
         "end_grn_number": end_grn,
         "end_sale_bill_number": end_bill,
     }
-
-
-def _next_cycle_name(previous_name):
-    """Name for the auto-opened cycle: reuse the base name and stamp the open
-    date so the sequence is readable in Cycle Management."""
-    base = (previous_name or "Cycle").strip()
-    # Drop a trailing " · <date>" if the base already carries one, so names do
-    # not stack on repeated closes.
-    if " · " in base:
-        base = base.rsplit(" · ", 1)[0].strip()
-    return f"{base} · {date.today():%d-%b-%Y}"
