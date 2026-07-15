@@ -77,6 +77,20 @@ _CATEGORY_PATTERNS = [
 _SPECIAL = {"Veterinary", "Soap", "Bandage", "Cloth"}
 _SPECIAL_PATTERNS = [(c, p) for c, p in _CATEGORY_PATTERNS if c in _SPECIAL]
 
+# Short code shown in the optional "Category" column (rightmost). Unrecognised
+# rows show NULL, matching the store's own wording.
+_CATEGORY_CODE = {
+    "Tablet": "TAB", "Capsule": "CAP", "Syrup": "SYP", "Respule": "RESP",
+    "Rotacap": "ROTA", "Inhaler": "INH", "Injection": "INJ", "Drops": "DROP",
+    "Cream": "CREAM", "Ointment": "OIN", "Gel": "GEL", "Lotion": "LOTION",
+    "Soap": "SOAP", "Bandage": "BAND", "Cloth": "CLOTH", "Veterinary": "VET",
+    "Others": "NULL",
+}
+
+
+def category_code(category):
+    return _CATEGORY_CODE.get(category or "Others", "NULL")
+
 
 def _match_category(text, patterns=_CATEGORY_PATTERNS):
     if not text:
@@ -173,6 +187,7 @@ def _build_rows(tenant_id, items, columns, order_qty_header, sort_by):
         out_rows.append({
             "assignment_id": row["assignment_id"],
             "values": [_cell(row, key, i, qty_by_id) for key, _ in plan],
+            "category": row.get("_category"),  # for the optional Category column
         })
     return plan, out_rows
 
@@ -350,8 +365,11 @@ def build_sorted_split(tenant_id, items, columns, order_qty_header, store_name, 
     consecutive .xlsx files of at most `max_per_file` products each. Every file
     is the identical Purchase Order layout (same columns, header, formatting);
     only row order and the split boundaries differ. S.No restarts at 1 in each
-    file. Returns ([(filename, bytes), ...], total_products)."""
+    file. A rightmost "Category" column shows the shelf group's short code
+    (TAB/OIN/RESP/…, NULL when unrecognised). Returns ([(filename, bytes),
+    ...], total_products)."""
     plan, rows = _build_rows(tenant_id, items, columns, order_qty_header, "shelf")
+    plan = plan + [("category", "Category")]  # rightmost order-value column
     sno_idx = next((i for i, (k, _) in enumerate(plan) if k == "sno"), None)
     safe = _safe_name(store_name)
 
@@ -360,7 +378,7 @@ def build_sorted_split(tenant_id, items, columns, order_qty_header, store_name, 
         chunk = rows[start:start + max_per_file]
         renumbered = []
         for n, r in enumerate(chunk, start=1):
-            values = list(r["values"])
+            values = list(r["values"]) + [category_code(r.get("category"))]
             if sno_idx is not None:
                 values[sno_idx] = n
             renumbered.append({"assignment_id": r["assignment_id"], "values": values})

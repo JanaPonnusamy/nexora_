@@ -272,10 +272,28 @@ def collect_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_P
                         pass
 
         copy_row(header_row, 1)  # detected header -> row 1
+        # Rightmost "Category" column: the shelf-group short code each row is
+        # ordered by (TAB/OIN/RESP/…, NULL when unrecognised). Added after all
+        # existing columns so nothing existing moves.
+        cat_col = max_col + 1
+        hdr_cat = ows.cell(row=1, column=cat_col)
+        hdr_cat.value = "Category"
+        hc = ws.cell(row=header_row, column=1)
+        if hc.has_style:
+            try:
+                hdr_cat.font = copy(hc.font)
+                hdr_cat.fill = copy(hc.fill)
+                hdr_cat.alignment = copy(hc.alignment)
+                hdr_cat.border = copy(hc.border)
+            except Exception:
+                pass
+        ows.column_dimensions[get_column_letter(cat_col)].width = 10
+
         for n, ri in enumerate(chunk, start=1):
             copy_row(ri, n + 1)
             if sno_col:
                 ows.cell(row=n + 1, column=sno_col).value = n
+            ows.cell(row=n + 1, column=cat_col).value = docs.category_code(metas[ri][0])
 
         try:
             ows.protection.sheet = bool(ws.protection.sheet)
