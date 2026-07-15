@@ -256,13 +256,20 @@ def collect_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_P
                 s = ws.cell(row=src_idx, column=ci)
                 d = ows.cell(row=dst_idx, column=ci)
                 d.value = s.value
-                # Style copy is best-effort — a value that survives must never
-                # be lost to a formatting quirk in the source cell.
-                try:
-                    if s.has_style:
-                        d._style = copy(s._style)
-                except Exception:
-                    pass
+                # Copy the real style OBJECTS, never s._style: the latter is an
+                # array of indices into the SOURCE workbook's style tables, and
+                # reusing those indices in a new workbook makes openpyxl raise
+                # IndexError on save. Assigning the objects re-registers them.
+                if s.has_style:
+                    try:
+                        d.font = copy(s.font)
+                        d.fill = copy(s.fill)
+                        d.border = copy(s.border)
+                        d.alignment = copy(s.alignment)
+                        d.number_format = s.number_format
+                        d.protection = copy(s.protection)
+                    except Exception:
+                        pass
 
         copy_row(header_row, 1)  # detected header -> row 1
         for n, ri in enumerate(chunk, start=1):
