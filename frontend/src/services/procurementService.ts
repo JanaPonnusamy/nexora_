@@ -19,6 +19,7 @@ import type {
   SupplierQueue,
   SupplierRecommendation,
   SupplierReplyPreview,
+  ShelfSortManifest,
   SupplierRow,
   SupplierSettingsRow,
   SupplierStockPreview,
@@ -249,6 +250,32 @@ export const procurementService = {
           fileCount: Number(headers.get('X-File-Count') ?? 1),
         }
       })
+  },
+
+  // Shelf Sorting manifests (as_files=true) — the split files as base64 so the
+  // desktop app can write each one INDIVIDUALLY into a chosen output folder
+  // (incl. a UNC/network path) instead of a single browser download.
+  shelfSortManifest: (
+    tenantId: string,
+    refreshId: string,
+    opts: { store_name: string; columns?: string[]; order_qty_header?: string },
+  ) =>
+    api.post<ShelfSortManifest>(
+      `/api/procurement/refreshes/${refreshId}/shelf-sort${qs({ tenant_id: tenantId, as_files: 'true' })}`,
+      {
+        store_name: opts.store_name,
+        columns: opts.columns ?? [],
+        order_qty_header: opts.order_qty_header ?? 'Order Qty',
+      },
+    ),
+
+  shelfSortFileManifest: (tenantId: string, storeId: string, storeName: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.upload<ShelfSortManifest>(
+      `/api/procurement/shelf-sort/upload${qs({ tenant_id: tenantId, store_id: storeId, store_name: storeName, as_files: 'true' })}`,
+      form,
+    )
   },
 
   exportHistory: (tenantId: string, refreshId: string) =>

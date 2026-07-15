@@ -17,6 +17,13 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+function b64ToUint8Array(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
 /**
  * Shelf Sorting & Excel Split — picks a Store + Order (Refresh) and generates
  * the existing Purchase Order export, re-sorted by shelf category ->
@@ -37,14 +44,19 @@ export default function ShelfSortingPage() {
   const [refreshId, setRefreshId] = useState('')
   const [source, setSource] = useState<Source>('order')
   const [file, setFile] = useState<File | null>(null)
+  const [outputFolder, setOutputFolder] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{
     storeName: string
     orderName: string
     totalProducts: number
     fileCount: number
+    savedTo: string | null
   } | null>(null)
+
+  const isElectron = typeof window !== 'undefined' && window.uninex?.isElectron === true
 
   useEffect(() => {
     tenantService.list().then((rows) => {
@@ -78,24 +90,50 @@ export default function ShelfSortingPage() {
   const refresh = refreshes.find((r) => r.refresh_id === refreshId)
 
   const canGenerate = !!store && (source === 'order' ? !!refreshId : !!file)
+  const folder = outputFolder.trim()
+  const saveToFolder = isElectron && !!folder
 
   const generate = async () => {
     if (!tenantId || !store || !canGenerate) return
     setBusy(true)
+    setError(null)
+    setResult(null)
+    const orderName = source === 'order' ? (refresh?.snapshot_name ?? refreshId) : (file?.name ?? 'Excel file')
     try {
-      const out =
-        source === 'order'
-          ? await procurementService.shelfSort(tenantId, refreshId, { store_name: store.store_name })
-          : await procurementService.shelfSortFile(tenantId, store.store_id, store.store_name, file!)
-      downloadBlob(out.blob, out.filename)
-      setResult({
-        storeName: store.store_name,
-        orderName: source === 'order' ? (refresh?.snapshot_name ?? refreshId) : (file?.name ?? 'Excel file'),
-        totalProducts: out.totalProducts,
-        fileCount: out.fileCount,
-      })
-    } catch {
-      setResult(null)
+      if (saveToFolder) {
+        // Desktop: write each split file straight into the chosen folder
+        // (supports UNC/network paths) instead of a browser download.
+        const manifest =
+          source === 'order'
+            ? await procurementService.shelfSortManifest(tenantId, refreshId, { store_name: store.store_name })
+            : await procurementService.shelfSortFileManifest(tenantId, store.store_id, store.store_name, file!)
+        for (const f of manifest.files) {
+          const res = await window.uninex?.saveFile(folder, f.name, b64ToUint8Array(f.content_b64))
+          if (!res?.ok) throw new Error(res?.error ?? `Could not write ${f.name} to ${folder}`)
+        }
+        setResult({
+          storeName: store.store_name,
+          orderName,
+          totalProducts: manifest.total_products,
+          fileCount: manifest.file_count,
+          savedTo: folder,
+        })
+      } else {
+        const out =
+          source === 'order'
+            ? await procurementService.shelfSort(tenantId, refreshId, { store_name: store.store_name })
+            : await procurementService.shelfSortFile(tenantId, store.store_id, store.store_name, file!)
+        downloadBlob(out.blob, out.filename)
+        setResult({
+          storeName: store.store_name,
+          orderName,
+          totalProducts: out.totalProducts,
+          fileCount: out.fileCount,
+          savedTo: null,
+        })
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not generate the sorted Excel.')
     } finally {
       setBusy(false)
     }
@@ -168,9 +206,45 @@ export default function ShelfSortingPage() {
           </label>
         )}
 
+        {isElectron && (
+          <label className="pm-launch__field">
+            <span>Output Folder <span className="sx-dim">(optional — supports network paths)</span></span>
+            <div className="pm-shelf__folder">
+              <input
+                className="pm-input"
+                value={outputFolder}
+                onChange={(e) => { setOutputFolder(e.target.value); setError(null) }}
+                placeholder="Leave empty to download · or \\server\share\folder"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="pm-btn pm-btn--ghost pm-btn--sm"
+                onClick={async () => {
+                  const picked = await window.uninex?.pickFolder()
+                  if (picked) { setOutputFolder(picked); setError(null) }
+                }}
+              >
+                <i className="bi bi-folder2-open" /> Browse…
+              </button>
+              {outputFolder && (
+                <button type="button" className="pm-btn pm-btn--ghost pm-btn--sm" onClick={() => setOutputFolder('')} title="Clear">
+                  <i className="bi bi-x-lg" />
+                </button>
+              )}
+            </div>
+          </label>
+        )}
+
         <button className="pm-btn pm-btn--primary pm-launch__go" disabled={!canGenerate || busy} onClick={generate}>
-          <i className="bi bi-file-earmark-excel" /> {busy ? 'Generating…' : 'Generate Sorted Excel'}
+          <i className="bi bi-file-earmark-excel" /> {busy ? 'Generating…' : saveToFolder ? 'Generate & Save to Folder' : 'Generate Sorted Excel'}
         </button>
+
+        {error && (
+          <div className="pm-shelf__error" role="alert">
+            <i className="bi bi-exclamation-triangle" /> {error}
+          </div>
+        )}
 
         {result && (
           <dl className="pm-shelf__summary">
@@ -178,6 +252,7 @@ export default function ShelfSortingPage() {
             <div><dt>Order</dt><dd>{result.orderName}</dd></div>
             <div><dt>Total Products</dt><dd>{result.totalProducts}</dd></div>
             <div><dt>Generated Files</dt><dd>{result.fileCount}</dd></div>
+            {result.savedTo && <div><dt>Saved To</dt><dd>{result.savedTo}</dd></div>}
           </dl>
         )}
       </div>

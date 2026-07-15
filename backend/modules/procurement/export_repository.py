@@ -44,11 +44,16 @@ def product_master(conn, tenant_id, store_id, codes):
     ProductCodes, keyed by the code as a string. Powers the Shelf Sorting
     upload path, which joins these onto rows read from a disk Excel to decide
     the category / shelf order. Chunked to stay under the SQL parameter cap."""
+    # sync.Products.ProductCode is a SQL INT — keep only codes that fit, so a
+    # barcode/EAN in the file's Product Code column can never overflow the
+    # comparison (it simply won't match a master row, which is correct).
     int_codes = []
     for c in codes:
         s = str(c).strip()
         if s.lstrip("-").isdigit():
-            int_codes.append(int(s))
+            v = int(s)
+            if -2147483648 <= v <= 2147483647:
+                int_codes.append(v)
     out = {}
     if not int_codes:
         return out

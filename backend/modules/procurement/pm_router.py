@@ -385,19 +385,16 @@ def export_document(
     )
 
 
-@router.post("/refreshes/{refresh_id}/shelf-sort")
-def shelf_sort(
-    refresh_id: str, payload: ShelfSortRequest, tenant_id: str = Query(...)
-):
-    """Shelf Sorting & Excel Split — sort the whole order by shelf category ->
-    SubLocation -> ProductName and split it into pick-sized .xlsx files (max 16
-    products each). A single file downloads as .xlsx; multiple files come back
-    as a .zip. X-Total-Products / X-File-Count headers carry the counts for the
-    UI summary."""
-    from fastapi.responses import Response
+def _shelf_sort_response(files, total, store_name, as_files):
+    """Return the split files either as a single download (Response) or, when
+    as_files is set, a JSON manifest the desktop app writes into a chosen
+    output folder (one file each — supports UNC/network paths)."""
+    from fastapi.responses import JSONResponse, Response
 
-    content, filename, media_type, total, file_count = shelf_sort_service.generate(
-        tenant_id, refresh_id, payload.store_name, payload.columns, payload.order_qty_header,
+    if as_files:
+        return JSONResponse(shelf_sort_service.json_payload(files, total))
+    content, filename, media_type, total, file_count = shelf_sort_service.bundle_response(
+        files, total, store_name,
     )
     return Response(
         content=content,
@@ -409,6 +406,23 @@ def shelf_sort(
             "Access-Control-Expose-Headers": "Content-Disposition, X-Total-Products, X-File-Count",
         },
     )
+
+
+@router.post("/refreshes/{refresh_id}/shelf-sort")
+def shelf_sort(
+    refresh_id: str,
+    payload: ShelfSortRequest,
+    tenant_id: str = Query(...),
+    as_files: bool = Query(False),
+):
+    """Shelf Sorting & Excel Split — sort the whole order by shelf category ->
+    SubLocation -> ProductName and split it into pick-sized .xlsx files (max 16
+    products each). Downloads as one .xlsx / .zip, or (as_files=true) returns a
+    JSON manifest for saving each file into an output folder."""
+    files, total = shelf_sort_service.collect_from_refresh(
+        tenant_id, refresh_id, payload.store_name, payload.columns, payload.order_qty_header,
+    )
+    return _shelf_sort_response(files, total, payload.store_name, as_files)
 
 
 @router.post("/shelf-sort/upload")
@@ -416,29 +430,27 @@ async def shelf_sort_upload(
     tenant_id: str = Query(...),
     store_id: str = Query(...),
     store_name: str = Query("Store"),
+    as_files: bool = Query(False),
     file: UploadFile = File(...),
 ):
     """Shelf Sorting & Excel Split from a disk file — read the uploaded .xlsx,
     join UnitDescription/SubLocation from the master by Product Code, sort by
     shelf category and split into pick-sized files (max 16 products each),
-    preserving the file's own columns and formatting. Single file downloads as
-    .xlsx; multiple as a .zip. Counts come back in the X-* headers."""
-    from fastapi.responses import Response
+    preserving the file's own columns and formatting. Downloads as one .xlsx /
+    .zip, or (as_files=true) returns a JSON manifest for an output folder."""
+    import logging
+    from fastapi import HTTPException
 
     data = await file.read()
-    content, filename, media_type, total, file_count = shelf_sort_service.generate_from_file(
-        tenant_id, store_id, store_name, data,
-    )
-    return Response(
-        content=content,
-        media_type=media_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Total-Products": str(total),
-            "X-File-Count": str(file_count),
-            "Access-Control-Expose-Headers": "Content-Disposition, X-Total-Products, X-File-Count",
-        },
-    )
+    try:
+        files, total = shelf_sort_service.collect_from_file(tenant_id, store_id, store_name, data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.getLogger("procurement.shelf_sort").exception(
+            "shelf-sort upload failed (file=%s size=%s)", file.filename, len(data or b""))
+        raise HTTPException(status_code=500, detail=f"Could not sort this Excel: {exc}")
+    return _shelf_sort_response(files, total, store_name, as_files)
 
 
 @router.post("/refreshes/{refresh_id}/supplier-reply/preview")

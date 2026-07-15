@@ -12,6 +12,7 @@ export_document_service (the one and only Excel engine) — no export logic is
 duplicated here.
 """
 
+import base64
 import logging
 import re
 import zipfile
@@ -31,10 +32,10 @@ _ZIP = "application/zip"
 _MAX_PER_FILE = 16
 
 
-def _bundle(files, total, store_name):
+def bundle_response(files, total, store_name):
     """([(name, bytes)], total) -> the (content, filename, media_type, total,
-    file_count) response tuple: a lone file downloads directly, several are
-    zipped."""
+    file_count) tuple for a single download: a lone file streams directly,
+    several are zipped."""
     if len(files) == 1:
         name, content = files[0]
         return content, name, _XLSX, total, 1
@@ -45,11 +46,20 @@ def _bundle(files, total, store_name):
     return buf.getvalue(), f"{docs._safe_name(store_name)}_Sorted.zip", _ZIP, total, len(files)
 
 
-def generate(tenant_id, refresh_id, store_name, columns=None, order_qty_header="Order Qty"):
-    """Returns (content_bytes, filename, media_type, total_products, file_count).
+def json_payload(files, total):
+    """The split files as a JSON-safe manifest (base64 content) so the desktop
+    app can write each one INDIVIDUALLY into a chosen output folder (including
+    a UNC/network path) rather than downloading a single zip."""
+    return {
+        "files": [{"name": name, "content_b64": base64.b64encode(content).decode("ascii")}
+                  for name, content in files],
+        "total_products": total,
+        "file_count": len(files),
+    }
 
-    One product-file -> that .xlsx directly; multiple -> a .zip of them all.
-    """
+
+def collect_from_refresh(tenant_id, refresh_id, store_name, columns=None, order_qty_header="Order Qty"):
+    """Build the sorted, split files for a whole Refresh -> ([(name, bytes)], total)."""
     conn = get_connection()
     try:
         assignments = export_repository.all_assignment_items(conn, tenant_id, refresh_id)
@@ -63,10 +73,9 @@ def generate(tenant_id, refresh_id, store_name, columns=None, order_qty_header="
     files, total = docs.build_sorted_split(
         tenant_id, items, columns or [], order_qty_header, store_name, _MAX_PER_FILE
     )
-
     logger.info("Shelf sort tenant=%s refresh=%s products=%s files=%s",
                 tenant_id, refresh_id, total, len(files))
-    return _bundle(files, total, store_name)
+    return files, total
 
 
 # --------------------------------------------------------------------------
@@ -86,22 +95,25 @@ def _code_of(v):
     return s or None
 
 
-def generate_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_PER_FILE):
+def collect_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_PER_FILE):
     """Sort a user-supplied Purchase Order .xlsx by shelf category and split it
     into pick-sized files, preserving the uploaded sheet's exact columns,
     values and cell formatting — only the row order and split boundaries
     change. UnitDescription/SubLocation are joined from sync.Products by the
     file's Product Code column (the sort keys are never written as columns).
+    Returns ([(name, bytes)], total).
     """
     from openpyxl import load_workbook, Workbook
     from openpyxl.utils import get_column_letter
 
     try:
-        wb = load_workbook(BytesIO(data))
+        wb = load_workbook(BytesIO(data), data_only=True)
     except Exception:
-        raise HTTPException(status_code=400, detail="Could not read the uploaded file as an Excel workbook.")
+        raise HTTPException(status_code=400, detail="Could not read the uploaded file as an Excel workbook (.xlsx).")
     ws = wb.active
-    max_col, max_row = ws.max_column, ws.max_row
+    if ws is None:
+        raise HTTPException(status_code=400, detail="The uploaded workbook has no active sheet.")
+    max_col, max_row = ws.max_column or 0, ws.max_row or 0
     if not max_col or max_row < 2:
         raise HTTPException(status_code=400, detail="The uploaded Excel has no product rows.")
 
@@ -122,7 +134,21 @@ def generate_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_
             detail="The Excel needs a Product Code (or Product Name) column to sort by shelf.",
         )
 
-    data_rows = list(range(2, max_row + 1))
+    # Only real product rows — skip blanks. An .xlsx edited/re-saved elsewhere
+    # often reports a wildly inflated max_row (stray formatting to row
+    # 1,048,576); without this the split would balloon into thousands of empty
+    # files and exhaust memory.
+    def _has_content(ri):
+        for col in (name_col, code_col):
+            if col:
+                v = ws.cell(row=ri, column=col).value
+                if v is not None and str(v).strip():
+                    return True
+        return False
+
+    data_rows = [ri for ri in range(2, max_row + 1) if _has_content(ri)]
+    if not data_rows:
+        raise HTTPException(status_code=400, detail="No product rows found in the uploaded Excel.")
 
     # Join the master by Product Code for UnitDescription + SubLocation.
     codes = set()
@@ -180,8 +206,13 @@ def generate_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_
                 s = ws.cell(row=src_idx, column=ci)
                 d = ows.cell(row=dst_idx, column=ci)
                 d.value = s.value
-                if s.has_style:
-                    d._style = copy(s._style)
+                # Style copy is best-effort — a value that survives must never
+                # be lost to a formatting quirk in the source cell.
+                try:
+                    if s.has_style:
+                        d._style = copy(s._style)
+                except Exception:
+                    pass
 
         copy_row(1, 1)  # header
         for n, ri in enumerate(chunk, start=1):
@@ -189,7 +220,10 @@ def generate_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_
             if sno_col:
                 ows.cell(row=n + 1, column=sno_col).value = n
 
-        ows.protection.sheet = ws.protection.sheet
+        try:
+            ows.protection.sheet = bool(ws.protection.sheet)
+        except Exception:
+            pass
         buf = BytesIO()
         out.save(buf)
         seq = start // max_per_file + 1
@@ -197,4 +231,4 @@ def generate_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_
 
     logger.info("Shelf sort (upload) tenant=%s store=%s products=%s files=%s",
                 tenant_id, store_id, len(ordered), len(files))
-    return _bundle(files, len(ordered), store_name)
+    return files, len(ordered)

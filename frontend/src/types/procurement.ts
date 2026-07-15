@@ -1,5 +1,13 @@
 // Purchase Manager (Procurement Sprint 2) types.
 
+/** Shelf Sorting split files as a base64 manifest — for writing each file into
+ *  a chosen output folder (desktop app, supports UNC/network paths). */
+export interface ShelfSortManifest {
+  files: { name: string; content_b64: string }[]
+  total_products: number
+  file_count: number
+}
+
 export interface Refresh {
   refresh_id: string
   cycle_id: string

@@ -958,6 +958,11 @@
 .pm-shelf__srcopt--on { border-color: var(--pm-primary, #2563eb); background: var(--pm-primary-soft, #eff4ff); color: var(--pm-primary, #2563eb); }
 .pm-shelf__srcopt input { margin: 0; }
 
+.pm-shelf__folder { display: flex; gap: 6px; align-items: center; }
+.pm-shelf__folder .pm-input { flex: 1; min-width: 0; font-family: var(--pm-mono, ui-monospace, monospace); font-size: 12px; }
+
+.pm-shelf__error { margin: 14px 0 0; padding: 9px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600; background: #fdecec; color: #b42318; border: 1px solid #f3b4ac; word-break: break-word; }
+
 .pm-shelf__summary { margin: 18px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .pm-shelf__summary > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 8px 12px; background: var(--pm-surface-2, #f6f8fb); border-radius: 8px; }
 .pm-shelf__summary dt { margin: 0; font-size: 12px; font-weight: 600; color: var(--pm-muted, #64748b); }
