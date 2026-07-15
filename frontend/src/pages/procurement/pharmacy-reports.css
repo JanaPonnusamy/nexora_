@@ -1,0 +1,262 @@
+.pr {
+  color: #172033;
+}
+
+.pr-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(170px, 220px) repeat(2, minmax(140px, 170px)) auto auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 10px;
+  border: 1px solid #dbe4ef;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.pr-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.pr-kpis--compact {
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+}
+
+.pr-kpi {
+  min-height: 74px;
+  padding: 12px;
+  border: 1px solid #dbe4ef;
+  border-left-width: 4px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.pr-kpi span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.pr-kpi strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.pr-kpi--sales { border-left-color: #2563eb; }
+.pr-kpi--purchase { border-left-color: #0d9488; }
+.pr-kpi--stock { border-left-color: #7c3aed; }
+.pr-kpi--pending { border-left-color: #dc2626; }
+.pr-kpi--invoice { border-left-color: #d97706; }
+.pr-kpi--gp { border-left-color: #059669; }
+
+.pr-gridwrap {
+  overflow: auto;
+  border: 1px solid #dbe4ef;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.pr-table {
+  width: 100%;
+  min-width: 1120px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pr-table th,
+.pr-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #e8eef5;
+  vertical-align: middle;
+}
+
+.pr-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #475569;
+  background: #f1f5f9;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.pr-table td span {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.pr-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pr-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pr-status--ok {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.pr-status--bad {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.pr-analysis {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #dbe4ef;
+}
+
+.pr-analysis__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.pr-analysis__head h2 {
+  margin: 0;
+  font-size: 21px;
+}
+
+.pr-analysis__head p {
+  margin: 4px 0 0;
+  color: #64748b;
+}
+
+.pr-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pr-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 9px 10px;
+  border: 1px solid #dbe4ef;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.pr-summary span {
+  color: #64748b;
+}
+
+.pr-summary strong {
+  color: #172033;
+}
+
+.pr-chart {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #dbe4ef;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.pr-chart h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.pr-bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(32px, 1fr);
+  align-items: end;
+  height: 180px;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.pr-bar {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  height: 100%;
+  min-width: 32px;
+  gap: 6px;
+  align-items: end;
+}
+
+.pr-bar span {
+  display: block;
+  width: 100%;
+  background: #2563eb;
+  border-radius: 4px 4px 0 0;
+}
+
+.pr-bar em {
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  text-align: center;
+}
+
+.pr-growth {
+  display: inline-flex;
+  justify-content: flex-end;
+  width: 100%;
+  font-weight: 700;
+}
+
+.pr-growth--up {
+  color: #15803d;
+}
+
+.pr-growth--down {
+  color: #b91c1c;
+}
+
+.pr-dim {
+  color: #94a3b8;
+}
+
+@media (max-width: 1100px) {
+  .pr-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pr-kpis,
+  .pr-kpis--compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media print {
+  .app-sidebar,
+  .app-header,
+  .pr-toolbar,
+  .pr-actions,
+  .btn {
+    display: none !important;
+  }
+
+  .pr-gridwrap,
+  .pr-chart,
+  .pr-kpi {
+    break-inside: avoid;
+  }
+}
