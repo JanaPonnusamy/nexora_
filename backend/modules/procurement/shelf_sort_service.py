@@ -31,6 +31,15 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _ZIP = "application/zip"
 _MAX_PER_FILE = 16
 
+# Accepted header labels (normalised to lowercase alphanumerics) for the upload
+# path — covers this app's own export plus common billing-software wording.
+_ALIAS_CODE = ("productcode", "itemcode", "prodcode", "code", "sku")
+_ALIAS_NAME = ("productname", "itemname", "productdescription", "itemdescription",
+               "description", "particulars", "product", "item", "name")
+_ALIAS_SUBLOC = ("sublocation", "subloc", "location", "rack", "shelf", "bin")
+_ALIAS_UNIT = ("unitdescription", "unit", "uom", "packing", "pack", "unitdesc")
+_ALIAS_SNO = ("sno", "slno", "srno", "serialno", "srlno", "slno")
+
 
 def bundle_response(files, total, store_name):
     """([(name, bytes)], total) -> the (content, filename, media_type, total,
@@ -136,22 +145,44 @@ def collect_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_P
     if not max_col or max_row < 2:
         raise HTTPException(status_code=400, detail="The uploaded Excel has no product rows.")
 
-    # Header row (row 1) -> column index, by normalised label.
-    label_to_col = {}
-    for cell in ws[1]:
-        key = _norm(cell.value)
-        if key and key not in label_to_col:
-            label_to_col[key] = cell.column
-    code_col = label_to_col.get("productcode")
-    name_col = label_to_col.get("productname")
-    subloc_col = label_to_col.get("sublocation")
-    unit_col = label_to_col.get("unitdescription")
-    sno_col = label_to_col.get("sno")
-    if not code_col and not name_col:
+    # Find the header row and its columns. Billing-software exports often put a
+    # title/date/blank rows above the header and use their own column names, so
+    # we scan the first rows for a header and accept common aliases rather than
+    # assuming row 1 with exact "Product Code"/"Product Name" labels.
+    def _resolve(header_cells):
+        labels = {}
+        for c in header_cells:
+            key = _norm(c.value)
+            if key and key not in labels:
+                labels[key] = c.column
+
+        def pick(aliases):
+            for a in aliases:
+                if a in labels:
+                    return labels[a]
+            return None
+
+        return {
+            "code": pick(_ALIAS_CODE),
+            "name": pick(_ALIAS_NAME),
+            "subloc": pick(_ALIAS_SUBLOC),
+            "unit": pick(_ALIAS_UNIT),
+            "sno": pick(_ALIAS_SNO),
+        }
+
+    header_row, cols = None, None
+    for hr in range(1, min(max_row, 20) + 1):
+        candidate = _resolve(list(ws[hr]))
+        if candidate["code"] or candidate["name"]:
+            header_row, cols = hr, candidate
+            break
+    if header_row is None:
         raise HTTPException(
             status_code=400,
-            detail="The Excel needs a Product Code (or Product Name) column to sort by shelf.",
+            detail="Couldn't find a Product/Item Code or Name column in the Excel to sort by shelf.",
         )
+    code_col, name_col = cols["code"], cols["name"]
+    subloc_col, unit_col, sno_col = cols["subloc"], cols["unit"], cols["sno"]
 
     # Only real product rows — skip blanks. An .xlsx edited/re-saved elsewhere
     # often reports a wildly inflated max_row (stray formatting to row
@@ -165,7 +196,7 @@ def collect_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_P
                     return True
         return False
 
-    data_rows = [ri for ri in range(2, max_row + 1) if _has_content(ri)]
+    data_rows = [ri for ri in range(header_row + 1, max_row + 1) if _has_content(ri)]
     if not data_rows:
         raise HTTPException(status_code=400, detail="No product rows found in the uploaded Excel.")
 
@@ -233,7 +264,7 @@ def collect_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_P
                 except Exception:
                     pass
 
-        copy_row(1, 1)  # header
+        copy_row(header_row, 1)  # detected header -> row 1
         for n, ri in enumerate(chunk, start=1):
             copy_row(ri, n + 1)
             if sno_col:
