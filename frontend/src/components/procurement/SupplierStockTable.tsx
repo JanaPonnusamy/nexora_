@@ -194,6 +194,17 @@ export function SupplierStockTable({
     if (next >= 0 && next < rows.length) onSelect(rows[next])
   }
 
+  // Esc on an Order Qty cell: restore the row's qty to its seeded default
+  // (final → suggested → minimum → 0), matching the page's own seeding rule —
+  // "cancel the current edit / restore previous value" for this grid, which has
+  // no skip/assign state of its own to clear (§3). A no-op when nothing is
+  // selected.
+  const revertDraft = () => {
+    const cur = rows[selectedIndex]
+    if (!cur) return
+    onDraftChange(stockRowKey(cur), String(cur.final_qty ?? cur.suggested_qty ?? cur.minimum_qty ?? 0))
+  }
+
   // Enter / Down: finalize (save order qty), then move to the next row —
   // same "save + advance" contract as the main grid's Final Qty cell.
   const saveAndNext = () => {
@@ -258,7 +269,11 @@ export function SupplierStockTable({
       else if (e.key === 'ArrowDown') { e.preventDefault(); moveSupplier(1) }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); setZone('qty') }
       else if (e.key === 'Enter') { e.preventDefault(); commitSupplier() }
+      // Esc cancels the (uncommitted) supplier highlight and returns to Order Qty.
       else if (e.key === 'Escape') { e.preventDefault(); setZone('qty') }
+      // Tab leaves the supplier zone and advances to the next/prev row's Order
+      // Qty, same as the qty zone — keeps Tab meaningful throughout the grid (§3).
+      else if (e.key === 'Tab') { e.preventDefault(); setZone('qty'); moveSelection(e.shiftKey ? -1 : 1) }
       return
     }
 
@@ -266,6 +281,11 @@ export function SupplierStockTable({
     else if (e.key === 'ArrowDown') { e.preventDefault(); saveAndNext() }
     else if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(-1) }
     else if (e.key === 'Enter') { e.preventDefault(); saveAndNext() }
+    // Tab / Shift+Tab: move to the next / previous row (all rows are editable
+    // here), mirroring ProductGrid so keyboard nav is consistent across screens.
+    else if (e.key === 'Tab') { e.preventDefault(); moveSelection(e.shiftKey ? -1 : 1) }
+    // Esc: restore the current row's Order Qty to its seeded value (§3).
+    else if (e.key === 'Escape') { e.preventDefault(); revertDraft() }
     else if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleCheckedCurrent() }
   }
 
@@ -277,6 +297,24 @@ export function SupplierStockTable({
   return (
     <div className="pm-grid-wrap" ref={wrapRef} tabIndex={-1} onKeyDown={onGridKey}>
       <table className="pm-grid pm-grid--stock">
+        {/* Fixed layout so the whole grid fits its column with no horizontal
+            scroll (§ NO H-SCROLL): every column below has a fixed width except
+            the two product-name columns, which share the leftover space and
+            ellipsis-truncate their text. */}
+        <colgroup>
+          <col style={{ width: 30 }} />{/* check */}
+          <col style={{ width: 32 }} />{/* # */}
+          <col />{/* Supplier Product (flex) */}
+          <col />{/* Mapped Product (flex) */}
+          <col style={{ width: 56 }} />{/* Offer */}
+          <col style={{ width: 66 }} />{/* Discount % */}
+          <col style={{ width: 76 }} />{/* Supplier Stock */}
+          <col style={{ width: 72 }} />{/* Store Stock */}
+          <col style={{ width: 52 }} />{/* Sugg. */}
+          <col style={{ width: 74 }} />{/* Last Sync */}
+          <col style={{ width: 68 }} />{/* Status */}
+          <col style={{ width: 72 }} />{/* Order Qty */}
+        </colgroup>
         <thead>
           <tr>
             <th className="pm-grid__check">
@@ -298,7 +336,6 @@ export function SupplierStockTable({
             <th className="sx-num">Last Sync</th>
             <th>Status</th>
             <th className="sx-num pm-grid__final">Order Qty</th>
-            <th className="pm-grid__act" />
           </tr>
         </thead>
         <tbody>
@@ -362,16 +399,6 @@ export function SupplierStockTable({
                       return warn ? <i className="bi bi-exclamation-triangle-fill pm-offer-warn" title={warn} /> : null
                     })()}
                   </span>
-                </td>
-                <td className="pm-grid__act">
-                  <button
-                    className="pm-btn pm-btn--add"
-                    disabled={busy}
-                    onClick={(e) => { e.stopPropagation(); add(r) }}
-                    title="Add to order"
-                  >
-                    <i className="bi bi-plus-lg" /> Add
-                  </button>
                 </td>
               </tr>
             )

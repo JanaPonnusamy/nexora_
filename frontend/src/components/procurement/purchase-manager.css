@@ -347,10 +347,20 @@
    itself never scrolls (overflow hidden); only pm-stockgrid__scroll does, so the
    summary strip keeps its own space and the sticky header sits below it. */
 .pm-split__grid.pm-stockgrid { display: flex; flex-direction: column; overflow: hidden; }
-.pm-stockgrid__scroll { flex: 1; min-height: 0; overflow: auto; }
+/* Only vertical scrolling — every column is sized to fit (colgroup + fixed
+   layout below), so a horizontal scrollbar must never appear (§ NO H-SCROLL). */
+.pm-stockgrid__scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+/* Fixed layout makes the colgroup widths authoritative: fixed-width columns
+   hold their size and the two flexible product-name columns absorb the rest and
+   ellipsis-truncate, so the table always equals its container width. */
+.pm-grid--stock { table-layout: fixed; }
 .pm-grid--stock tbody td { padding: 3px 8px; }
+/* Truncate long product / supplier names instead of widening the column. */
+.pm-grid--stock .pm-prod__name,
+.pm-grid--stock .pm-prod__meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-grid--stock .pm-prod__name { font-size: 12px; line-height: 1.2; }
 .pm-grid--stock .pm-prod__meta { font-size: 11px; }
+.pm-grid--stock thead th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-grid--stock tbody tr { cursor: pointer; }
 .pm-grid--stock tbody tr:hover { background: #f8fafc; }
 .pm-sx__supp { color: #1d4ed8; font-weight: 600; }

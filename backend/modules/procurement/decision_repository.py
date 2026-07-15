@@ -11,7 +11,10 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from config.database import get_connection
-from modules.procurement._dbutil import rows_to_dicts as _rows_to_dicts
+from modules.procurement._dbutil import (
+    rows_to_dicts as _rows_to_dicts,
+    store_stock_expr as _store_stock_expr,
+)
 
 
 def _floatify(rows):
@@ -57,8 +60,11 @@ def load_source(conn, tenant_id, store_id, params):
     Reads REAL synchronized platform data from NEXORA_PLATFORM.sync.* (the same
     tables the Stock Availability module uses), for one store:
 
-      * product master + current stock : sync.Products (ProductCode, ProductName,
-        UnitDescription, TotalStock, isActive)
+      * product master                 : sync.Products (ProductCode, ProductName,
+        UnitDescription, isActive)
+      * current stock                  : latest-month sync.ProductTrans.StockInHand
+        (the store's own running balance — see _dbutil.store_stock_expr; NOT
+        Products.TotalStock, which disagrees for ~26% of the catalogue)
       * rolling-window sales metrics    : sync.ProductSaleInformation, valid rows
         (TransactionValidity = 0) within the Refresh's Rolling Days window —
         WindowSalesQty (SUM), MaxDaySaleQty (MAX daily), MaxBillQty (MAX per
@@ -78,7 +84,7 @@ def load_source(conn, tenant_id, store_id, params):
 
     cursor = conn.cursor()
     cursor.execute(
-        """
+        f"""
         WITH sales AS (
             SELECT psi.ProductCode,
                    CAST(psi.TransactionDate AS DATE) AS d,
@@ -115,7 +121,7 @@ def load_source(conn, tenant_id, store_id, params):
             CAST(ISNULL(md.max_day_sale_qty, 0)  AS DECIMAL(18,3)) AS max_day_sale_qty,
             CAST(ISNULL(mb.max_bill_qty, 0)      AS DECIMAL(18,3)) AS max_bill_qty,
             CAST(ISNULL(agg.billing_frequency, 0) AS INT)          AS billing_frequency,
-            CAST(ISNULL(p.TotalStock, 0)         AS DECIMAL(18,3)) AS current_stock
+            CAST({_store_stock_expr("p")} AS DECIMAL(18,3)) AS current_stock
         FROM sync.Products p
         LEFT JOIN agg ON agg.ProductCode = p.ProductCode
         LEFT JOIN md  ON md.ProductCode  = p.ProductCode

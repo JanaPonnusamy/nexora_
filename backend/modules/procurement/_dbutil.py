@@ -7,6 +7,34 @@ Kept dependency-free so any repository can import them without cycles.
 import uuid
 
 
+# --------------------------------------------------------------------------
+# Authoritative store stock — one rule for the whole Procurement module
+# --------------------------------------------------------------------------
+# "Current store stock" = the store's own running per-product balance, taken
+# from the LATEST month of sync.ProductTrans.StockInHand. This is what the
+# store's back-office reports as stock on hand and is the number the buyer
+# reconciles against — it is NOT the same as sync.Products.TotalStock (the two
+# disagree for ~26% of a real store's catalogue, sometimes by hundreds of
+# units), so every procurement surface (decision engine input, workspace grid,
+# supplier live-stock, network intelligence, manual-add search) MUST derive
+# store stock from this single expression to stay consistent.
+#
+# sync.ProductTrans's clustered PK is (store_id, ProductCode, MonthOfStatistics),
+# so the correlated "TOP 1 ... ORDER BY MonthOfStatistics DESC" is a plain
+# clustered-index seek — no extra index required. Falls back to
+# Products.TotalStock then 0 for a product with no ProductTrans history, so no
+# product ever silently loses its stock. `products_alias` is the alias of the
+# sync.Products row in the caller's query (must expose store_id + ProductCode).
+def store_stock_expr(products_alias="p"):
+    return f"""COALESCE((
+        SELECT TOP (1) pt.StockInHand
+        FROM sync.ProductTrans pt
+        WHERE pt.store_id = {products_alias}.store_id
+          AND pt.ProductCode = {products_alias}.ProductCode
+        ORDER BY pt.MonthOfStatistics DESC
+    ), {products_alias}.TotalStock, 0)"""
+
+
 def as_uid(value):
     """Coerce an actor/user reference to a value safe for a UNIQUEIDENTIFIER
     column: a canonical GUID string when parseable, otherwise NULL.

@@ -27,6 +27,7 @@ from config.database import get_connection
 from modules.procurement._dbutil import (
     as_uid as _as_uid,
     rows_to_dicts as _rows_to_dicts,
+    store_stock_expr as _store_stock_expr,
     stringify as _stringify,
 )
 
@@ -255,7 +256,7 @@ def store_metrics(tenant_id, store_id, rolling_days):
     try:
         cur = conn.cursor()
         cur.execute(
-            """
+            f"""
             WITH sales AS (
                 SELECT psi.ProductCode,
                        CAST(psi.TransactionDate AS DATE) AS d,
@@ -285,7 +286,7 @@ def store_metrics(tenant_id, store_id, rolling_days):
             SELECT
                 CAST(p.ProductCode AS VARCHAR(100))       AS product_code,
                 p.ProductName                             AS product_name,
-                CAST(ISNULL(p.TotalStock, 0) AS DECIMAL(18,3))   AS stock,
+                CAST({_store_stock_expr("p")} AS DECIMAL(18,3))   AS stock,
                 CAST(ISNULL(p.MRP, 0) AS DECIMAL(18,4))          AS mrp,
                 CAST(ISNULL(p.PurchasePrice, 0) AS DECIMAL(18,4)) AS ptr,
                 CAST(ISNULL(p.Margin, 0) AS DECIMAL(18,4))       AS margin,
