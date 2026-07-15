@@ -40,10 +40,12 @@ _LABELS = {
 # product's UnitDescription; when that is blank it is inferred from the
 # ProductName. See _detect_category.
 
-# The picking sort order the store follows down the shelves.
+# The picking sort order the store follows down the shelves. Medicine forms
+# first, then the non-drug / general groups, then anything unrecognised.
 _SHELF_ORDER = [
     "Tablet", "Capsule", "Syrup", "Respule", "Rotacap", "Inhaler",
-    "Injection", "Drops", "Cream", "Ointment", "Gel", "Lotion", "Others",
+    "Injection", "Drops", "Cream", "Ointment", "Gel", "Lotion",
+    "Soap", "Bandage", "Cloth", "Veterinary", "Others",
 ]
 _SHELF_RANK = {c: i for i, c in enumerate(_SHELF_ORDER)}
 
@@ -60,29 +62,45 @@ _CATEGORY_PATTERNS = [
     ("Injection", re.compile(r"\b(?:INJ|INJECTION)\b", re.I)),
     ("Drops", re.compile(r"\bDROPS?\b", re.I)),
     ("Cream", re.compile(r"\bCREAM\b", re.I)),
-    ("Ointment", re.compile(r"\b(?:OINT|OINTMENT)\b", re.I)),
+    ("Ointment", re.compile(r"\b(?:OINT(?:MENT)?|OIN|OINTM)\b", re.I)),
     ("Gel", re.compile(r"\bGEL\b", re.I)),
     ("Lotion", re.compile(r"\bLOTION\b", re.I)),
+    ("Soap", re.compile(r"\bSOAP\b", re.I)),
+    ("Bandage", re.compile(r"\b(?:BANDAGE|GAUZE|CREPE|BAND\s?AID|DRESSING)\b", re.I)),
+    ("Cloth", re.compile(r"\bCLOTH\b", re.I)),
+    ("Veterinary", re.compile(r"\b(?:VET|VETY|VETERINARY)\b", re.I)),
 ]
 
+# Non-drug / special groups identified from the NAME *first*: a vet or soap
+# item may still carry a drug-form UnitDescription (TAB/CAP), which would
+# otherwise mis-file it under Tablet/Capsule. These win over UnitDescription.
+_SPECIAL = {"Veterinary", "Soap", "Bandage", "Cloth"}
+_SPECIAL_PATTERNS = [(c, p) for c, p in _CATEGORY_PATTERNS if c in _SPECIAL]
 
-def _match_category(text):
+
+def _match_category(text, patterns=_CATEGORY_PATTERNS):
     if not text:
         return None
-    for cat, pat in _CATEGORY_PATTERNS:
+    for cat, pat in patterns:
         if pat.search(text):
             return cat
     return None
 
 
 def _detect_category(unit_description, product_name):
-    """UnitDescription is the primary source; only when it is NULL/blank (or
-    matches nothing) do we fall back to inferring from the ProductName.
-    Anything unrecognised sorts into 'Others'."""
+    """Category used only for shelf ordering. Non-drug/general groups
+    (veterinary, soap, bandage, cloth) are recognised from the ProductName
+    first — they must not be scattered into Tablet/Capsule just because their
+    UnitDescription says TAB/CAP. Otherwise UnitDescription is the primary
+    signal, falling back to the ProductName; anything unrecognised -> 'Others'."""
+    name = product_name or ""
+    special = _match_category(name, _SPECIAL_PATTERNS)
+    if special:
+        return special
     ud = (unit_description or "").strip()
     cat = _match_category(ud) if ud else None
     if cat is None:
-        cat = _match_category(product_name or "")
+        cat = _match_category(name)
     return cat or "Others"
 
 
