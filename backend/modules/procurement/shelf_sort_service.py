@@ -95,6 +95,25 @@ def _code_of(v):
     return s or None
 
 
+def debug_peek(data):
+    """A safe textual summary of an uploaded workbook (sheet names, dimensions,
+    header row, first data row) for diagnostics — never raises."""
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
+        ws = wb.active
+        header = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))] if ws else []
+        first = None
+        for r in ws.iter_rows(min_row=2, max_row=2, values_only=True):
+            first = list(r)
+            break
+        return (f"sheets={wb.sheetnames} active={getattr(ws, 'title', None)} "
+                f"dims={getattr(ws, 'dimensions', None)} max_row={getattr(ws, 'max_row', None)} "
+                f"max_col={getattr(ws, 'max_column', None)}\nheader={header}\nfirst_row={first}")
+    except Exception as e:
+        return f"debug_peek failed: {e!r}"
+
+
 def collect_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_PER_FILE):
     """Sort a user-supplied Purchase Order .xlsx by shelf category and split it
     into pick-sized files, preserving the uploaded sheet's exact columns,

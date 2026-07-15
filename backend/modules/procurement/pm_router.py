@@ -447,8 +447,21 @@ async def shelf_sort_upload(
     except HTTPException:
         raise
     except Exception as exc:
+        import os
+        import traceback
+        tb = traceback.format_exc()
         logging.getLogger("procurement.shelf_sort").exception(
             "shelf-sort upload failed (file=%s size=%s)", file.filename, len(data or b""))
+        # Persist the full traceback + a peek at the uploaded workbook's shape
+        # so the exact failure can be inspected without the live console.
+        try:
+            log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            peek = shelf_sort_service.debug_peek(data)
+            with open(os.path.join(log_dir, "shelf_sort_last_error.log"), "w", encoding="utf-8") as fh:
+                fh.write(f"file={file.filename} size={len(data or b'')}\n{peek}\n\n{tb}")
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f"Could not sort this Excel: {exc}")
     return _shelf_sort_response(files, total, store_name, as_files)
 
