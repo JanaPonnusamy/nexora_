@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from config.database import get_connection
 from modules.procurement import export_repository
 from modules.procurement import export_document_service as docs
+from modules.procurement import product_category_repository as pcat
 
 logger = logging.getLogger("procurement.shelf_sort")
 
@@ -102,6 +103,38 @@ def _code_of(v):
         return str(int(v))
     s = str(v).strip()
     return s or None
+
+
+def resolve_categories(tenant_id, rows):
+    """rows: [{name, unit}] -> {name: category}. Resolution priority:
+      1. the learned table (a human/LLM/cross-store decision for this product),
+      2. the local UnitDescription + keyword rules,
+      3. another store's UnitDescription (cross-store, matched by name),
+      4. Others.
+    """
+    names = [r["name"] for r in rows if r["name"]]
+    learned = pcat.get_many(tenant_id, names)  # {norm_key: {category, ...}}
+
+    result = {}
+    need_cross = []
+    for r in rows:
+        name = r["name"]
+        key = pcat.normalize_name(name)
+        if key and key in learned:
+            result[name] = learned[key]["category"]
+            continue
+        cat = docs._detect_category(r.get("unit"), name)
+        if cat != "Others":
+            result[name] = cat
+            continue
+        need_cross.append(name)
+
+    if need_cross:
+        cross = pcat.cross_store_units(tenant_id, need_cross)  # {norm_key: unit}
+        for name in need_cross:
+            unit = cross.get(pcat.normalize_name(name))
+            result[name] = docs._detect_category(unit, name) if unit else "Others"
+    return result
 
 
 def debug_peek(data):
@@ -215,17 +248,21 @@ def collect_from_file(tenant_id, store_id, store_name, data, max_per_file=_MAX_P
         finally:
             conn.close()
 
-    def meta(ri):
+    # Pass 1: name / local UnitDescription / SubLocation per row.
+    rowinfo = {}
+    for ri in data_rows:
         code = _code_of(ws.cell(row=ri, column=code_col).value) if code_col else None
         name = ws.cell(row=ri, column=name_col).value if name_col else None
         name = "" if name is None else str(name)
         m = master.get(code, {}) if code else {}
         unit = (ws.cell(row=ri, column=unit_col).value if unit_col else None) or m.get("unit_description")
         sub = (ws.cell(row=ri, column=subloc_col).value if subloc_col else None) or m.get("sub_location")
-        cat = docs._detect_category(unit, name)
-        return cat, ("" if sub is None else str(sub).strip()), name
+        rowinfo[ri] = {"name": name, "unit": unit, "sub": "" if sub is None else str(sub).strip()}
 
-    metas = {ri: meta(ri) for ri in data_rows}
+    # Pass 2: resolve categories with the learned agent (learned table ->
+    # local rule/UnitDescription -> other stores' UnitDescription -> Others).
+    cat_by_name = resolve_categories(tenant_id, [{"name": i["name"], "unit": i["unit"]} for i in rowinfo.values()])
+    metas = {ri: (cat_by_name.get(info["name"], "Others"), info["sub"], info["name"]) for ri, info in rowinfo.items()}
 
     def sort_key(ri):
         cat, sub, name = metas[ri]
