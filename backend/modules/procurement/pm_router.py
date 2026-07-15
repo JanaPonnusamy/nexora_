@@ -23,7 +23,8 @@ from modules.procurement import pending_service
 from modules.procurement.pm_schemas import (
     FinalQtyUpdate, SkipRequest, ReviewedBy,
     AssignRequest, BulkAssignRequest, ChangeSupplierRequest, ExportRequest,
-    ExportDocumentRequest, ShelfSortRequest, SupplierReplyImportRequest,
+    ExportDocumentRequest, ShelfSortRequest, ShelfClassifyRequest, ShelfCategorySave,
+    SupplierReplyImportRequest,
     GrnSubmit, PendingAdjust, ManualAdd, PendingBulk, SupplierSettingsUpdate,
     SupplierExportSettingsUpdate,
 )
@@ -464,6 +465,37 @@ async def shelf_sort_upload(
             pass
         raise HTTPException(status_code=500, detail=f"Could not sort this Excel: {exc}")
     return _shelf_sort_response(files, total, store_name, as_files)
+
+
+@router.get("/refreshes/{refresh_id}/shelf-sort/review")
+def shelf_sort_review(refresh_id: str, tenant_id: str = Query(...)):
+    """Products in this order that still resolve to 'Others' — the training
+    targets for the category review screen."""
+    return {"products": shelf_sort_service.review_uncategorised(tenant_id, refresh_id)}
+
+
+@router.post("/shelf-sort/classify")
+def shelf_sort_classify(payload: ShelfClassifyRequest, tenant_id: str = Query(...)):
+    """Claude LLM auto-suggest categories for the given product names, saving
+    them as unconfirmed suggestions. Returns {suggestions, llm_available};
+    suggestions is empty (and llm_available false) when no API key is set."""
+    return shelf_sort_service.classify_and_store(tenant_id, payload.names)
+
+
+@router.post("/shelf-sort/categories")
+def shelf_sort_save_categories(payload: ShelfCategorySave, tenant_id: str = Query(...)):
+    """Save human-confirmed product -> category corrections (trains the agent)."""
+    return shelf_sort_service.save_categories(
+        tenant_id, [e.dict() for e in payload.entries], payload.saved_by,
+    )
+
+
+@router.get("/shelf-sort/categories")
+def shelf_sort_category_vocab():
+    """The fixed shelf-category vocabulary + short codes, for the review UI's
+    category dropdown."""
+    from modules.procurement import export_document_service as _docs
+    return {"categories": [{"category": c, "code": _docs.category_code(c)} for c in _docs._SHELF_ORDER]}
 
 
 @router.post("/refreshes/{refresh_id}/supplier-reply/preview")

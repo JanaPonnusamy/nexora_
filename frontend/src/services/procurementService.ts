@@ -278,6 +278,43 @@ export const procurementService = {
     )
   },
 
+  // --- Shelf category training (learned dictionary + Claude LLM suggest) ---
+
+  // Products in an order that still resolve to "Others" — the review targets.
+  shelfSortReview: (tenantId: string, refreshId: string) =>
+    api
+      .get<{ products: { name: string; product_code: string | null; category_code: string }[] }>(
+        `/api/procurement/refreshes/${refreshId}/shelf-sort/review${qs({ tenant_id: tenantId })}`,
+      )
+      .then((r) => r.products),
+
+  // Claude LLM auto-suggest categories for the given names (saved as unconfirmed
+  // suggestions). suggestions is empty + llm_available false when no API key.
+  shelfSortClassify: (tenantId: string, names: string[]) =>
+    api.post<{ suggestions: Record<string, string>; llm_available: boolean }>(
+      `/api/procurement/shelf-sort/classify${qs({ tenant_id: tenantId })}`,
+      { names },
+    ),
+
+  // Save human-confirmed product -> category corrections (trains the agent).
+  shelfSortSaveCategories: (
+    tenantId: string,
+    entries: { name: string; category: string }[],
+    by: string | null,
+  ) =>
+    api.post<{ saved: number }>(
+      `/api/procurement/shelf-sort/categories${qs({ tenant_id: tenantId })}`,
+      { entries, saved_by: by },
+    ),
+
+  // The fixed shelf-category vocabulary for the review dropdown.
+  shelfCategoryVocab: () =>
+    api
+      .get<{ categories: { category: string; code: string }[] }>(
+        `/api/procurement/shelf-sort/categories`,
+      )
+      .then((r) => r.categories),
+
   exportHistory: (tenantId: string, refreshId: string) =>
     api
       .get<{ batches: ExportBatch[] }>(

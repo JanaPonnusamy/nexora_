@@ -88,6 +88,25 @@ class ShelfSortRequest(BaseModel):
     order_qty_header: str = Field("Order Qty", max_length=40)
 
 
+# --- Shelf category training (learned dictionary + LLM auto-suggest) --------
+
+class ShelfClassifyRequest(BaseModel):
+    # Product names to auto-classify with the Claude LLM; suggestions are saved
+    # to the learned table (source='llm', unconfirmed) and returned.
+    names: List[str] = Field(..., min_length=1, max_length=2000)
+
+
+class ShelfCategoryEntry(BaseModel):
+    name: str = Field(..., min_length=1, max_length=300)
+    category: str = Field(..., min_length=1, max_length=40)
+
+
+class ShelfCategorySave(BaseModel):
+    # Human-confirmed product -> category corrections (the actual "training").
+    entries: List[ShelfCategoryEntry] = Field(..., min_length=1, max_length=2000)
+    saved_by: Optional[str] = None
+
+
 # --- Supplier Reply import (pre-shipment confirmation round-trip) ---------
 
 class SupplierReplyRow(BaseModel):

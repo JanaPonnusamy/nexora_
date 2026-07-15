@@ -25,6 +25,8 @@ from config.database import get_connection
 from modules.procurement import export_repository
 from modules.procurement import export_document_service as docs
 from modules.procurement import product_category_repository as pcat
+from modules.procurement import product_category_ai as pcat_ai
+from modules.procurement import assignment_repository
 
 logger = logging.getLogger("procurement.shelf_sort")
 
@@ -135,6 +137,60 @@ def resolve_categories(tenant_id, rows):
             unit = cross.get(pcat.normalize_name(name))
             result[name] = docs._detect_category(unit, name) if unit else "Others"
     return result
+
+
+def review_uncategorised(tenant_id, refresh_id):
+    """Products in a Refresh that still resolve to 'Others' (no learned entry,
+    no keyword/UnitDescription match, no cross-store match) — the training
+    targets for the review screen. Deduplicated by product name. Returns
+    [{name, product_code, category_code}] (category_code is always 'NULL' here,
+    included for a consistent shape)."""
+    conn = get_connection()
+    try:
+        assignments = export_repository.all_assignment_items(conn, tenant_id, refresh_id)
+    finally:
+        conn.close()
+    ids = [a["assignment_id"] for a in assignments]
+    data = assignment_repository.list_for_export(tenant_id, ids)
+
+    items, seen = [], set()
+    for r in data:
+        name = r.get("product_name") or r.get("product_code")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        items.append({"name": str(name), "unit": r.get("unit_description"),
+                      "product_code": r.get("product_code")})
+
+    resolved = resolve_categories(tenant_id, [{"name": i["name"], "unit": i["unit"]} for i in items])
+    out = []
+    for i in items:
+        if resolved.get(i["name"], "Others") == "Others":
+            out.append({"name": i["name"], "product_code": i["product_code"], "category_code": "NULL"})
+    return out
+
+
+def classify_and_store(tenant_id, names):
+    """Run the optional Claude LLM over uncategorised names, save the results as
+    unconfirmed 'llm' suggestions, and return {name: category}. Empty when the
+    LLM is unavailable (no API key / offline) — the caller degrades to rules."""
+    suggestions = pcat_ai.classify(names)
+    if suggestions:
+        pcat.upsert_many(
+            tenant_id,
+            [{"name": n, "category": c, "source": "llm", "confirmed": False}
+             for n, c in suggestions.items()],
+        )
+    return {"suggestions": suggestions, "llm_available": pcat_ai.is_available()}
+
+
+def save_categories(tenant_id, entries, saved_by=None):
+    """Persist human-confirmed product -> category corrections (the training)."""
+    valid = set(docs._SHELF_ORDER)
+    clean = [{"name": e["name"], "category": e["category"], "source": "manual", "confirmed": True}
+             for e in entries if e.get("category") in valid and e.get("name")]
+    pcat.upsert_many(tenant_id, clean, updated_by=saved_by)
+    return {"saved": len(clean)}
 
 
 def debug_peek(data):

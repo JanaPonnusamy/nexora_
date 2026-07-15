@@ -53,3 +53,9 @@ deploy/sharadha/ho.env.production
 
 # Database dumps (contain real supplier PII — names, mobile numbers, GST numbers)
 nexora_platform_dump.sql
+
+# Local runtime data + sample assets. Contain real supplier PII: scanned/uploaded
+# invoices (document extraction) and the local catalog cache. Never commit.
+data/
+assects/
+catalog.db

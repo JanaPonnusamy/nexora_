@@ -24,8 +24,16 @@ where python >nul 2>nul || (echo [ERROR] Python is not on PATH. Install Python 3
 where npm    >nul 2>nul || (echo [ERROR] npm is not on PATH. Install Node.js and retry.        & pause & exit /b 1)
 
 REM --- Backend: uvicorn on :8000 (start-in = backend\) -----------------------
+REM Runs from its own venv (backend\.venv) — keeps heavy/pinned deps like
+REM paddleocr/paddlepaddle isolated from the system Python and any other
+REM projects on this machine. Created on first run if missing.
 echo Starting backend...
-start "Nexora Backend" /d "%~dp0backend" cmd /k python -m uvicorn api.app:app --host 127.0.0.1 --port 8000
+if not exist "%~dp0backend\.venv\Scripts\python.exe" (
+    echo Creating backend virtual environment, please wait...
+    python -m venv "%~dp0backend\.venv"
+    "%~dp0backend\.venv\Scripts\python.exe" -m pip install -r "%~dp0backend\requirements.txt"
+)
+start "Nexora Backend" /d "%~dp0backend" cmd /k .venv\Scripts\python.exe -m uvicorn api.app:app --host 127.0.0.1 --port 8000
 
 REM --- Frontend: install deps on first run, then Vite dev on :5173 -----------
 echo Starting frontend...

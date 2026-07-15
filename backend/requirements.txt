@@ -33,3 +33,8 @@ paddlepaddle==2.6.2
 
 # document_extraction module — later chunks, listed but NOT installed/wired yet
 openpyxl
+
+# procurement Shelf Sorting — optional Claude LLM category auto-suggest
+# (product_category_ai.py). Only used when ANTHROPIC_API_KEY is set; the
+# feature degrades gracefully to keyword + cross-store rules when absent.
+anthropic

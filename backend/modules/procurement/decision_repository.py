@@ -37,7 +37,7 @@ def get_refresh_for_generation(tenant_id, refresh_id):
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT refresh_id, cycle_id, store_id,
+            SELECT refresh_id, cycle_id, store_id, previous_refresh_id,
                    rolling_days, min_days, max_days, snapshot_status
             FROM procurement.procurement_refreshes
             WHERE refresh_id = ? AND tenant_id = ? AND is_deleted = 0

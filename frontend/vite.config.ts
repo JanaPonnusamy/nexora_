@@ -28,6 +28,16 @@ export default defineConfig(({ mode }) => {
             electron({
               main: {
                 entry: 'electron/main.ts',
+                // Terminals hosted inside an Electron app (VS Code's integrated
+                // terminal, this one included) set ELECTRON_RUN_AS_NODE=1 for
+                // their own child processes. If that leaks into the spawned
+                // dev Electron process it runs as plain Node — no Chromium, no
+                // `app`/`BrowserWindow`, no window ever opens. Strip it here so
+                // the spawned Electron always boots as a real Electron app.
+                onstart({ startup }) {
+                  const { ELECTRON_RUN_AS_NODE: _unused, ...cleanEnv } = process.env
+                  startup(['.', '--no-sandbox'], { env: cleanEnv })
+                },
                 vite: {
                   build: {
                     outDir: 'dist-electron',
