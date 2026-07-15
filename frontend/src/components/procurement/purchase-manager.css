@@ -191,6 +191,11 @@
 /* Three-column workspace: narrowed grid · vertical Supplier Recommendation ·
    detail panel. */
 .pm-split--3 { grid-template-columns: minmax(0, 1fr) 205px minmax(300px, 0.8fr); }
+/* Supplier Live Stock: the central grid is the heart of the screen and its two
+   product-name columns need real width, so give it more of the row — a slimmer
+   supplier-recommendation rail and a narrower detail panel than the shared
+   3-column split. */
+.pm-split--stock3 { grid-template-columns: minmax(0, 1.6fr) 184px minmax(260px, 0.62fr); }
 .pm-split__grid { min-height: 0; overflow: auto; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; background: var(--bs-body-bg, #fff); }
 .pm-split__suppliers { min-height: 0; overflow: hidden; }
 .pm-split__detail { min-height: 0; overflow: hidden; }
@@ -354,7 +359,11 @@
    hold their size and the two flexible product-name columns absorb the rest and
    ellipsis-truncate, so the table always equals its container width. */
 .pm-grid--stock { table-layout: fixed; }
-.pm-grid--stock tbody td { padding: 3px 8px; }
+/* Tight padding on this dense grid so the two product-name columns keep as much
+   width as possible (the buyer must read the full "Dolo 650" / "Syp" strength,
+   not just "Dolo"). */
+.pm-grid--stock tbody td { padding: 3px 6px; }
+.pm-grid--stock thead th { padding-left: 6px; padding-right: 6px; }
 /* Truncate long product / supplier names instead of widening the column. */
 .pm-grid--stock .pm-prod__name,
 .pm-grid--stock .pm-prod__meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1049,6 +1058,8 @@
 .pm-console__ck { width: 30px; text-align: center; }
 .pm-console__ck input { accent-color: var(--bs-primary, #4f46e5); cursor: pointer; }
 .pm-console__actioncol { width: 190px; }
+.pm-console__newcol { width: 78px; text-align: center; }
+.pm-console__newhead { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
 .pm-console__cyclecol { width: 190px; }
 .pm-console__refreshcol { width: 140px; }
 .pm-console__cyclename {

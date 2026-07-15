@@ -219,6 +219,11 @@ export default function CycleRefreshConsolePage() {
   const [banner, setBanner] = useState<Banner>(null)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  /** Branches flagged to close their cycle & open a fresh one on run (the "New
+   *  Cycle" checkbox column). Overrides the per-branch Cycle Action dropdown. */
+  const [newCycle, setNewCycle] = useState<Set<string>>(new Set())
+  /** Dropdown value per branch — only 'keep' | 'closeRefresh'; 'new' is driven
+   *  by the New Cycle checkbox above. */
   const [cycleAction, setCycleAction] = useState<Record<string, CycleAction>>({})
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -305,6 +310,7 @@ export default function CycleRefreshConsolePage() {
   useEffect(() => {
     const ids = new Set(tenantStores.map((s) => s.store_id))
     setSelected((cur) => new Set([...cur].filter((id) => ids.has(id))))
+    setNewCycle((cur) => new Set([...cur].filter((id) => ids.has(id))))
     setRuns({})
     setBatch(null)
   }, [tenantStores])
@@ -392,7 +398,8 @@ export default function CycleRefreshConsolePage() {
     let cycleId = opts.cycleId
     // The refresh to lock before generating the next one (Close Refresh action).
     let refreshToClose: string | undefined
-    const action: CycleAction = cycleAction[id] ?? 'keep'
+    // New Cycle checkbox wins over the dropdown; otherwise keep / closeRefresh.
+    const action: CycleAction = newCycle.has(id) ? 'new' : (cycleAction[id] ?? 'keep')
     if (startIdx <= STAGES.indexOf('cycle')) {
       update(id, (r) => beginStage(r, 'cycle', 'Resolving cycle…'))
       try {
@@ -475,7 +482,7 @@ export default function CycleRefreshConsolePage() {
     } catch (e) {
       update(id, (r) => failStage(r, 'refresh', errMsg(e)))
     }
-  }, [tenantId, actingUser, cycleAction, useExistingData, update])
+  }, [tenantId, actingUser, cycleAction, newCycle, useExistingData, update])
 
   /** Consolidate every refreshed store's VPL into the network Product
    *  Intelligence grid. Runs once, after the whole batch, so the intelligence can
@@ -560,6 +567,7 @@ export default function CycleRefreshConsolePage() {
   // --- Derived --------------------------------------------------------------
 
   const allSelected = tenantStores.length > 0 && tenantStores.every((s) => selected.has(s.store_id))
+  const allNewCycle = tenantStores.length > 0 && tenantStores.every((s) => newCycle.has(s.store_id))
 
   /** Pre-run estimate, from each store's last refresh (when it has one). */
   const workload = useMemo(() => {
@@ -677,27 +685,19 @@ export default function CycleRefreshConsolePage() {
               <th>Store</th>
               <th className="pm-console__cyclecol">Current Cycle</th>
               <th className="pm-console__refreshcol">Latest Refresh</th>
-              <th className="pm-console__actioncol">
-                Cycle Action
-                <button
-                  type="button"
-                  className="pm-console__setall"
-                  disabled={running}
-                  title="Set every store to Create New Cycle"
-                  onClick={() => setCycleAction(Object.fromEntries(tenantStores.map((s) => [s.store_id, 'new' as CycleAction])))}
-                >
-                  all new
-                </button>
-                <button
-                  type="button"
-                  className="pm-console__setall"
-                  disabled={running}
-                  title="Set every store to Keep Active"
-                  onClick={() => setCycleAction({})}
-                >
-                  all keep
-                </button>
+              <th className="pm-console__newcol" title="Close each ticked branch's cycle and open a fresh one on run">
+                <label className="pm-console__newhead">
+                  <input
+                    type="checkbox"
+                    aria-label="New Cycle for all branches"
+                    checked={allNewCycle}
+                    disabled={running}
+                    onChange={() => setNewCycle(allNewCycle ? new Set() : new Set(tenantStores.map((s) => s.store_id)))}
+                  />
+                  New Cycle
+                </label>
               </th>
+              <th className="pm-console__actioncol">Cycle Action</th>
               <th>Pipeline</th>
               <th className="pm-console__rescol">Result</th>
               <th className="pm-console__timecol">Total</th>
@@ -710,7 +710,8 @@ export default function CycleRefreshConsolePage() {
               const run = runs[id]
               const active = activeCycleOf(id)
               const info = refreshInfo[id]
-              const action = cycleAction[id] ?? 'keep'
+              const wantsNewCycle = newCycle.has(id)
+              const action: CycleAction = wantsNewCycle ? 'new' : (cycleAction[id] ?? 'keep')
               const isOpen = expanded.has(id)
               return [
                 <tr key={id} className={run ? `pm-console__row pm-console__row--${run.status}` : 'pm-console__row'}>
@@ -755,17 +756,31 @@ export default function CycleRefreshConsolePage() {
                       <span className="sx-dim">No refresh yet</span>
                     )}
                   </td>
+                  <td className="pm-console__newcol">
+                    <input
+                      type="checkbox"
+                      aria-label={`Create new cycle for ${s.store_name}`}
+                      checked={wantsNewCycle}
+                      disabled={running}
+                      onChange={() => setNewCycle((cur) => {
+                        const next = new Set(cur)
+                        if (next.has(id)) next.delete(id)
+                        else next.add(id)
+                        return next
+                      })}
+                    />
+                  </td>
                   <td className="pm-console__actioncol">
                     <select
                       className="sx-select sx-select--sm"
                       aria-label={`Cycle action for ${s.store_name}`}
-                      value={action}
-                      disabled={running}
+                      value={wantsNewCycle ? 'keep' : action}
+                      disabled={running || wantsNewCycle}
+                      title={wantsNewCycle ? 'New Cycle is ticked — a fresh cycle will be opened' : undefined}
                       onChange={(e) => setCycleAction((cur) => ({ ...cur, [id]: e.target.value as CycleAction }))}
                     >
                       <option value="keep">Keep Active</option>
                       <option value="closeRefresh">Close Refresh &amp; New</option>
-                      <option value="new">Create New Cycle</option>
                     </select>
                     <div className="pm-console__cyclehint">
                       {action === 'new'
@@ -826,7 +841,7 @@ export default function CycleRefreshConsolePage() {
                 </tr>,
                 isOpen && run ? (
                   <tr key={`${id}-log`} className="pm-console__logrow">
-                    <td colSpan={9}>
+                    <td colSpan={10}>
                       <div className="pm-console__logwrap">
                         <div className="pm-console__log">
                           {run.log.map((l, i) => (
