@@ -763,8 +763,9 @@ th {
   min-height: 0;
   height: auto !important;
   max-height: none !important;
-  padding: 8px 10px;
+  padding: 8px 10px 8px 18px;
   overflow: visible !important;
+  border-left: 2px solid #cbd5e1;
   background: #f8fafc;
 }
 
