@@ -1250,13 +1250,13 @@ function NonMovingDetailPanel({ product, onSearch, nav }) {
       : null;
 
   return (
-    <div className="non-moving-block">
-      <div className="non-moving-block-label">
-        {'NON MOVING'.split('').map((char, index) => (
-          <span key={index}>{char === ' ' ? ' ' : char}</span>
-        ))}
-      </div>
-      <div className="non-moving-block-body">
+    <div className="non-moving-wrap">
+      <div className="non-moving-header-box">
+        <div className="non-moving-block-label">
+          {'NON MOVING'.split('').map((char, index) => (
+            <span key={index}>{char === ' ' ? ' ' : char}</span>
+          ))}
+        </div>
         <div className="non-moving-block-header">
           {nav && <span className="non-moving-block-position">({nav.index + 1}/{nav.total})</span>}
           <span className="non-moving-block-store">{nav?.storeName || ''}</span>
@@ -1273,29 +1273,29 @@ function NonMovingDetailPanel({ product, onSearch, nav }) {
             </span>
           )}
         </div>
-        <div
-          className={`non-moving-panel-row ${expired ? 'expired' : nearExpiry ? 'near-expiry' : ''} ${clickable ? 'clickable' : ''}`}
-          role={clickable ? 'button' : undefined}
-          tabIndex={clickable ? 0 : undefined}
-          title={clickable ? 'Search this product across all stores' : undefined}
-          onClick={clickable ? () => onSearch(product.ProductName) : undefined}
-          onKeyDown={clickable ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSearch(product.ProductName); } } : undefined}
-        >
-          <div><span>Stock Value</span><strong className="non-moving-value-highlight">{totalValue ? totalValue.toFixed(2) : '-'}</strong></div>
-          <div className={expired ? 'expiry-dead' : nearExpiry ? 'expiry-highlight' : ''}>
-            <span>Expiry</span>
-            <strong>
-              {formatDate(product.ExpiryDate)}
-              {expiryNote && <em className="non-moving-expiry-note">{expiryNote}</em>}
-            </strong>
-          </div>
-          <div><span>Stock Qty</span><strong>{stock}</strong></div>
-          <div><span>PTR (Cost)</span><strong>{product.PurchasePrice ?? '-'}</strong></div>
-          <div><span>MRP</span><strong>{mrp || '-'}</strong></div>
-          <div><span>Supplier</span><strong title={product.SupplierName || ''}>{product.SupplierName || '-'}</strong></div>
-          <div><span>Last Received</span><strong>{formatDate(product.LastGRNDate)}</strong></div>
-          <div><span>Last Sale</span><strong>{formatDate(product.LastBillDate)}</strong></div>
+      </div>
+      <div
+        className={`non-moving-panel-row ${expired ? 'expired' : nearExpiry ? 'near-expiry' : ''} ${clickable ? 'clickable' : ''}`}
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        title={clickable ? 'Search this product across all stores' : undefined}
+        onClick={clickable ? () => onSearch(product.ProductName) : undefined}
+        onKeyDown={clickable ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSearch(product.ProductName); } } : undefined}
+      >
+        <div><span>Stock Value</span><strong className="non-moving-value-highlight">{totalValue ? totalValue.toFixed(2) : '-'}</strong></div>
+        <div className={expired ? 'expiry-dead' : nearExpiry ? 'expiry-highlight' : ''}>
+          <span>Expiry</span>
+          <strong>
+            {formatDate(product.ExpiryDate)}
+            {expiryNote && <em className="non-moving-expiry-note">{expiryNote}</em>}
+          </strong>
         </div>
+        <div><span>Stock Qty</span><strong>{stock}</strong></div>
+        <div><span>PTR (Cost)</span><strong>{product.PurchasePrice ?? '-'}</strong></div>
+        <div><span>MRP</span><strong>{mrp || '-'}</strong></div>
+        <div><span>Supplier</span><strong title={product.SupplierName || ''}>{product.SupplierName || '-'}</strong></div>
+        <div><span>Last Received</span><strong>{formatDate(product.LastGRNDate)}</strong></div>
+        <div><span>Last Sale</span><strong>{formatDate(product.LastBillDate)}</strong></div>
       </div>
     </div>
   );
