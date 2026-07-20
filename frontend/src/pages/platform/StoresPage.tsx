@@ -16,7 +16,7 @@ import type { Store } from '../../types/store'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; store: Store } | null
 
-export default function StoresPage() {
+export default function StoresPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate()
   const { stores, isLoading, error, reload } = useStores()
   const { tenants } = useTenants()
@@ -102,7 +102,7 @@ export default function StoresPage() {
 
   return (
     <div className="container-fluid px-0">
-      <PageHeader title="Stores" breadcrumb={['Platform', 'Stores']} />
+      {!embedded && <PageHeader title="Stores" breadcrumb={['Platform', 'Stores']} />}
       {!isLoading && !error && stores.length > 0 && <StoreSummary stores={stores} />}
       <StoreToolbar
         search={search}

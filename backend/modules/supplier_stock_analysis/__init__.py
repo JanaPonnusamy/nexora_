@@ -1,0 +1,1 @@
+"""Supplier Stock Analysis module."""

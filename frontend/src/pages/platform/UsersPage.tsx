@@ -17,7 +17,7 @@ import type { User } from '../../types/user'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; user: User } | null
 
-export default function UsersPage() {
+export default function UsersPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate()
   const { tenants } = useTenants()
   const { stores } = useStores()
@@ -106,7 +106,7 @@ export default function UsersPage() {
 
   return (
     <div className="container-fluid px-0">
-      <PageHeader title="Users" breadcrumb={['Platform', 'Users']} />
+      {!embedded && <PageHeader title="Users" breadcrumb={['Platform', 'Users']} />}
       <UserToolbar
         search={search}
         onSearchChange={setSearch}

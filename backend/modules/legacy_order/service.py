@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 _jobs = {}
 _lock = threading.Lock()
 
-DEFAULT_MIN_DAYS = 15
-DEFAULT_MAX_DAYS = 20
+DEFAULT_MIN_DAYS = 13
+DEFAULT_MAX_DAYS = 18
 
 
 def _new_job(kind, store_name, total_steps):
@@ -167,18 +167,87 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
     if mode not in ("local", "remote"):
         raise ValueError("Mode must be 'local' or 'remote'.")
 
-    if mode == "remote":
-        ok, error = repository.test_branch_connection(store)
-        if not ok:
-            raise ConnectionError(
-                f"Failed to connect to {store['server_name']}: {error}"
-            )
+    # Order Process always begins with a fresh full branch sync.
+    ok, error = repository.test_branch_connection(store)
+    if not ok:
+        raise ConnectionError(f"Failed to connect to {store['server_name']}: {error}")
 
-    job_id = _new_job("order", store_name, 3)
+    plan = list(sync_engine.TABLE_PLAN)
+    job_id = _new_job("order", store_name, len(plan) + 3)
     threading.Thread(
-        target=_run_order, args=(job_id, store, min_days, max_days, mode), daemon=True
+        target=_run_sync_then_order,
+        args=(job_id, store, plan, min_days, max_days, mode),
+        daemon=True,
     ).start()
     return job_id
+
+
+def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode):
+    """One durable job: full sync must succeed before order generation."""
+    source_cs = order_process.database.branch_connection_string(
+        store["server_name"], store["database"], store["username"], store["password"]
+    )
+    dest_cs = order_process.database.central_connection_string()
+    tables, failed = [], []
+
+    for index, (src, dest) in enumerate(plan):
+        _update(job_id, step=index, message=f"Syncing {src} before order process...")
+        try:
+            rows, batch_errors = sync_engine.sync_table(
+                source_cs, dest_cs, src, dest, store["store_name"]
+            )
+            if batch_errors:
+                failed.append(src)
+                tables.append({"table": src, "destination": dest, "rows": rows,
+                               "status": "partial", "error": "; ".join(batch_errors)})
+            else:
+                tables.append({"table": src, "destination": dest, "rows": rows,
+                               "status": "ok", "error": None})
+            _update(job_id, step=index + 1, message=f"Synced {src} ({rows} rows).")
+        except Exception as exc:
+            logger.exception("pre-order sync failed for %s", src)
+            failed.append(src)
+            tables.append({"table": src, "destination": dest, "rows": 0,
+                           "status": "error", "error": str(exc)})
+            _update(job_id, step=index + 1, message=f"Error syncing {src}: {exc}")
+
+    try:
+        repository.mark_sync_result(store["store_name"], "FAILED" if failed else "SUCCESS")
+    except Exception:
+        logger.exception("could not update Stores.LastSyncStatus")
+
+    if failed:
+        _update(
+            job_id, status="failed", result={"tables": tables},
+            error=f"Order process stopped because sync failed: {', '.join(failed)}",
+            message="Pre-order sync failed. Order generation was not started.",
+            finished_at=datetime.datetime.now(),
+        )
+        return
+
+    base_step = len(plan)
+    step = {"n": 0}
+
+    def report(message):
+        step["n"] += 1
+        _update(job_id, step=min(base_step + step["n"], base_step + 3), message=message)
+
+    try:
+        _update(job_id, step=base_step, message="Sync completed. Starting order process...")
+        result = order_process.run_order_process(store, min_days, max_days, mode, report)
+        result["tables"] = tables
+        _update(
+            job_id, status="completed", step=base_step + 3, result=result,
+            message=f"Sync and order processing completed ({result['rows']} rows).",
+            finished_at=datetime.datetime.now(),
+        )
+    except Exception as exc:
+        logger.exception("legacy order process failed after sync")
+        _update(
+            job_id, status="failed", result={"tables": tables}, error=str(exc),
+            message=f"Sync completed, but order processing failed: {exc}",
+            finished_at=datetime.datetime.now(),
+        )
 
 
 def _run_order(job_id, store, min_days, max_days, mode):

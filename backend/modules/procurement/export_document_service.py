@@ -58,7 +58,8 @@ _SHELF_RANK = {c: i for i, c in enumerate(_SHELF_ORDER)}
 _CATEGORY_PATTERNS = [
     ("Veterinary", re.compile(r"\b(?:VET|VETY|VETERINARY)\b", re.I)),
     ("Food", re.compile(r"\b(?:ENSURE|PROTINEX|PEDIASURE|LACTARE|PROTEIN|NUTRITION|"
-                        r"GRANULES?|MALT|HORLICKS|BOURNVITA|COMPLAN|PRO\s?PL|PROPL)\b", re.I)),
+                        r"GRANULES?|MALT|HORLICKS|BOURNVITA|COMPLAN|PRO\s?PL|PROPL|"
+                        r"CERELAC|BOOST|GLUCON\s?D|NUTRAMUL|RESOURCE|A2\s?MILK)\b", re.I)),
     ("Soap", re.compile(r"\bSOAP\b", re.I)),
     ("Wash", re.compile(r"\b(?:BODYWASH|FACEWASH|HANDWASH|WASH|SHAMPOO)\b", re.I)),
     ("Paste", re.compile(r"\b(?:TOOTHPASTE|PASTE)\b", re.I)),

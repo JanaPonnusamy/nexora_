@@ -97,6 +97,46 @@ class ReportService:
             "stores": summary,
         }
 
+    def build_store_compare(self, store, month_a, month_b):
+        try:
+            rows_a = self.build_store_monthly_report(
+                store["tenant_id"], store["store_id"], month_a, month_a
+            )
+            rows_b = self.build_store_monthly_report(
+                store["tenant_id"], store["store_id"], month_b, month_b
+            )
+            totals_a = AggregationService.calculate_totals(rows_a)
+            totals_b = AggregationService.calculate_totals(rows_b)
+            compare = AggregationService.calculate_compare(totals_a, totals_b)
+            compare["Store"] = store["store_name"]
+            compare["StoreCode"] = store["store_code"]
+            compare["StoreId"] = store["store_id"]
+            compare["Status"] = "Success"
+            return compare
+        except Exception as exc:
+            logger.exception("Store compare failed")
+            return {
+                "Store": store.get("store_name"),
+                "StoreCode": store.get("store_code"),
+                "StoreId": store.get("store_id"),
+                "Status": "Failed",
+                "Error": str(exc),
+            }
+
+    def compare(self, tenant_id, month_a, month_b):
+        if not tenant_id:
+            raise HTTPException(status_code=400, detail="tenant_id is required")
+        if not month_a or not month_b:
+            raise HTTPException(status_code=400, detail="month_a and month_b are required")
+        stores = repository.active_stores(tenant_id)
+        rows = [self.build_store_compare(store, month_a, month_b) for store in stores]
+        return {
+            "success": True,
+            "month_a": month_a,
+            "month_b": month_b,
+            "stores": rows,
+        }
+
     def store_analysis(self, tenant_id, store_id, from_month, to_month):
         if not tenant_id or not store_id:
             raise HTTPException(status_code=400, detail="tenant_id and store_id are required")

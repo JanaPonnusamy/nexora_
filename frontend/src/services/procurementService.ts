@@ -283,17 +283,18 @@ export const procurementService = {
   // Products in an order that still resolve to "Others" — the review targets.
   shelfSortReview: (tenantId: string, refreshId: string) =>
     api
-      .get<{ products: { name: string; product_code: string | null; category_code: string }[] }>(
+      .get<{ products: { name: string; unit: string | null; product_code: string | null; category_code: string }[] }>(
         `/api/procurement/refreshes/${refreshId}/shelf-sort/review${qs({ tenant_id: tenantId })}`,
       )
       .then((r) => r.products),
 
   // Claude LLM auto-suggest categories for the given names (saved as unconfirmed
-  // suggestions). suggestions is empty + llm_available false when no API key.
-  shelfSortClassify: (tenantId: string, names: string[]) =>
+  // suggestions). `units` (optional, index-aligned with `names`) gives Claude the
+  // pack-type signal. suggestions is empty + llm_available false when no API key.
+  shelfSortClassify: (tenantId: string, names: string[], units?: (string | null)[]) =>
     api.post<{ suggestions: Record<string, string>; llm_available: boolean }>(
       `/api/procurement/shelf-sort/classify${qs({ tenant_id: tenantId })}`,
-      { names },
+      { names, units },
     ),
 
   // Save human-confirmed product -> category corrections (trains the agent).

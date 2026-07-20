@@ -8,7 +8,7 @@ import type { Refresh } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
 import '../../components/procurement/purchase-manager.css'
 
-type Row = { name: string; product_code: string | null; category: string }
+type Row = { name: string; unit: string | null; product_code: string | null; category: string }
 
 /**
  * Shelf Category Training — teaches the shelf-sort "agent" the categories it
@@ -62,7 +62,7 @@ export default function ShelfCategoryTrainingPage() {
     setBusy('load'); setNote(null)
     try {
       const products = await procurementService.shelfSortReview(tenantId, refreshId)
-      setRows(products.map((p) => ({ name: p.name, product_code: p.product_code, category: 'Others' })))
+      setRows(products.map((p) => ({ name: p.name, unit: p.unit, product_code: p.product_code, category: 'Others' })))
       if (products.length === 0) setNote('Nothing to train — every product in this order already has a category.')
     } catch {
       setNote('Could not load the order.')
@@ -76,7 +76,7 @@ export default function ShelfCategoryTrainingPage() {
     setBusy('ai'); setNote(null)
     try {
       const { suggestions, llm_available } = await procurementService.shelfSortClassify(
-        tenantId, rows.map((r) => r.name),
+        tenantId, rows.map((r) => r.name), rows.map((r) => r.unit),
       )
       if (!llm_available) {
         setNote('Claude auto-suggest is off on the server (no ANTHROPIC_API_KEY). Pick categories manually.')

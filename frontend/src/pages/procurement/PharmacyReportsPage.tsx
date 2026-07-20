@@ -6,12 +6,15 @@ import { tenantService } from '../../services/tenantService'
 import { procurementReportsService } from '../../services/procurementReportsService'
 import type { Tenant } from '../../types/tenant'
 import type {
+  PharmacyCompareResponse,
   PharmacyDashboardResponse,
   PharmacyMonthlyRow,
   PharmacyReportStoreSummary,
   PharmacyStoreAnalysisResponse,
 } from '../../types/procurementReports'
 import './pharmacy-reports.css'
+
+type ReportMode = 'TREND' | 'COMPARE'
 
 type Period = 'CURRENT_MONTH' | 'PREVIOUS_MONTH' | 'LAST_3_MONTHS' | 'LAST_6_MONTHS' | 'LAST_12_MONTHS' | 'FINANCIAL_YEAR' | 'CUSTOM'
 
@@ -123,10 +126,14 @@ export default function PharmacyReportsPage() {
   const today = useMemo(() => new Date(), [])
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState('')
+  const [mode, setMode] = useState<ReportMode>('TREND')
   const [period, setPeriod] = useState<Period>('LAST_12_MONTHS')
   const [customFrom, setCustomFrom] = useState(monthKey(new Date(today.getFullYear() - 1, today.getMonth(), 1)))
   const [customTo, setCustomTo] = useState(monthKey(today))
+  const [monthA, setMonthA] = useState(monthKey(new Date(today.getFullYear() - 1, today.getMonth(), 1)))
+  const [monthB, setMonthB] = useState(monthKey(today))
   const [dashboard, setDashboard] = useState<PharmacyDashboardResponse | null>(null)
+  const [compare, setCompare] = useState<PharmacyCompareResponse | null>(null)
   const [analysis, setAnalysis] = useState<PharmacyStoreAnalysisResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [analysisLoading, setAnalysisLoading] = useState(false)
@@ -158,10 +165,32 @@ export default function PharmacyReportsPage() {
       .finally(() => setLoading(false))
   }, [tenantId, range.fromMonth, range.toMonth])
 
+  const loadCompare = useCallback(() => {
+    if (!tenantId || !monthA || !monthB) return
+    setLoading(true)
+    setError(null)
+    procurementReportsService.compare(tenantId, monthA, monthB)
+      .then(setCompare)
+      .catch((e) => {
+        setCompare(null)
+        setError(e instanceof Error ? e.message : 'Failed to load month compare report.')
+      })
+      .finally(() => setLoading(false))
+  }, [tenantId, monthA, monthB])
+
+  const generate = mode === 'COMPARE' ? loadCompare : loadDashboard
+
   useEffect(() => {
+    if (mode !== 'TREND') return
     const timer = window.setTimeout(loadDashboard, 0)
     return () => window.clearTimeout(timer)
-  }, [loadDashboard])
+  }, [mode, loadDashboard])
+
+  useEffect(() => {
+    if (mode !== 'COMPARE') return
+    const timer = window.setTimeout(loadCompare, 0)
+    return () => window.clearTimeout(timer)
+  }, [mode, loadCompare])
 
   const sortedAnalysisRows = useMemo(
     () => [...(analysis?.rows ?? [])].sort((a, b) => new Date(a.MonthOfStatistics).getTime() - new Date(b.MonthOfStatistics).getTime()),
@@ -201,6 +230,11 @@ export default function PharmacyReportsPage() {
 
   const exportDashboard = async () => {
     if (!tenantId) return
+    if (mode === 'COMPARE') {
+      const blob = await procurementReportsService.compareExcel(tenantId, monthA, monthB)
+      downloadBlob(blob, `Month_Compare_${monthA}_vs_${monthB}.xlsx`)
+      return
+    }
     const blob = await procurementReportsService.dashboardExcel(tenantId, range.fromMonth, range.toMonth)
     downloadBlob(blob, `All_Store_Summary_${range.fromMonth}_${range.toMonth}.xlsx`)
   }
@@ -220,19 +254,37 @@ export default function PharmacyReportsPage() {
           {tenants.length === 0 && <option value="">Loading...</option>}
           {tenants.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name}</option>)}
         </select>
-        <select className="form-select form-select-sm" aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value as Period)}>
-          {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        <select className="form-select form-select-sm" aria-label="Report mode" value={mode} onChange={(e) => setMode(e.target.value as ReportMode)}>
+          <option value="TREND">Trend</option>
+          <option value="COMPARE">Month Compare</option>
         </select>
-        {period === 'CUSTOM' && (
+        {mode === 'TREND' ? (
           <>
-            <input type="month" className="form-control form-control-sm" aria-label="From month" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
-            <input type="month" className="form-control form-control-sm" aria-label="To month" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+            <select className="form-select form-select-sm" aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value as Period)}>
+              {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+            {period === 'CUSTOM' && (
+              <>
+                <input type="month" className="form-control form-control-sm" aria-label="From month" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+                <input type="month" className="form-control form-control-sm" aria-label="To month" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <input type="month" className="form-control form-control-sm" aria-label="Month A" value={monthA} onChange={(e) => setMonthA(e.target.value)} />
+            <span className="pr-vs">vs</span>
+            <input type="month" className="form-control form-control-sm" aria-label="Month B" value={monthB} onChange={(e) => setMonthB(e.target.value)} />
           </>
         )}
-        <button className="btn btn-primary btn-sm" disabled={!tenantId || loading} onClick={loadDashboard}>
+        <button className="btn btn-primary btn-sm" disabled={!tenantId || loading} onClick={generate}>
           <i className="bi bi-play-fill" /> {loading ? 'Loading...' : 'Generate'}
         </button>
-        <button className="btn btn-outline-secondary btn-sm" disabled={!dashboard?.stores.length} onClick={exportDashboard}>
+        <button
+          className="btn btn-outline-secondary btn-sm"
+          disabled={mode === 'COMPARE' ? !compare?.stores.length : !dashboard?.stores.length}
+          onClick={exportDashboard}
+        >
           <i className="bi bi-file-earmark-excel" /> Excel
         </button>
         <button className="btn btn-outline-secondary btn-sm" onClick={() => window.print()}>
@@ -240,9 +292,52 @@ export default function PharmacyReportsPage() {
         </button>
       </div>
 
-      {error && <ErrorState description={error} onRetry={loadDashboard} />}
+      {error && <ErrorState description={error} onRetry={generate} />}
 
-      {!dashboard && !error ? (
+      {mode === 'COMPARE' ? (
+        !compare && !error ? (
+          <EmptyState icon="bi-bar-chart" title="Loading comparison" description="The month compare report will appear here." />
+        ) : compare ? (
+          <section className="pr-gridwrap">
+            <table className="pr-table">
+              <thead>
+                <tr>
+                  <th>Store</th>
+                  <th className="pr-num">Sales ({formatMonth(`${compare.month_a}-01`)})</th>
+                  <th className="pr-num">Sales ({formatMonth(`${compare.month_b}-01`)})</th>
+                  <th className="pr-num">Sales Growth %</th>
+                  <th className="pr-num">Stock ({formatMonth(`${compare.month_a}-01`)})</th>
+                  <th className="pr-num">Stock ({formatMonth(`${compare.month_b}-01`)})</th>
+                  <th className="pr-num">Stock Growth %</th>
+                  <th className="pr-num">Paid-up Stock % ({formatMonth(`${compare.month_a}-01`)})</th>
+                  <th className="pr-num">Paid-up Stock % ({formatMonth(`${compare.month_b}-01`)})</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compare.stores.map((row) => (
+                  <tr key={row.StoreId}>
+                    <td><strong>{row.Store}</strong><span>{row.StoreCode}</span></td>
+                    <td className="pr-num">{money(row.SalesA)}</td>
+                    <td className="pr-num">{money(row.SalesB)}</td>
+                    <td className="pr-num">{growthBadge(row.SalesGrowthPercent)}</td>
+                    <td className="pr-num">{money(row.StockA)}</td>
+                    <td className="pr-num">{money(row.StockB)}</td>
+                    <td className="pr-num">{growthBadge(row.StockGrowthPercent)}</td>
+                    <td className="pr-num">{percent(row.PaidUpStockPercentA)}</td>
+                    <td className="pr-num">{percent(row.PaidUpStockPercentB)}</td>
+                    <td>
+                      <span className={`pr-status ${row.Status === 'Success' ? 'pr-status--ok' : 'pr-status--bad'}`}>
+                        {row.Status === 'Success' ? 'Connected' : 'Failed'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        ) : null
+      ) : !dashboard && !error ? (
         <EmptyState icon="bi-bar-chart" title="Loading reports" description="The pharmacy report dashboard will appear here." />
       ) : dashboard ? (
         <>

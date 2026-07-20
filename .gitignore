@@ -59,3 +59,10 @@ nexora_platform_dump.sql
 data/
 assects/
 catalog.db
+
+# Editor/IDE scratch profiles (cache, local storage, machine id) — not project code
+.antigravity-*/
+
+# Node deps / build output (desktop Electron client)
+node_modules/
+desktop/supplier-stock-client/dist/

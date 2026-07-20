@@ -51,6 +51,9 @@ from modules.sync.shared_table_builder_router import (
 from modules.stock_availability.router import (
     router as stock_availability_router
 )
+from modules.supplier_stock_analysis.router import (
+    router as supplier_stock_analysis_router
+)
 from modules.procurement.router import (
     router as procurement_router
 )
@@ -69,6 +72,9 @@ from modules.pass_gen.router import (
 from modules.legacy_order.router import (
     router as legacy_order_router
 )
+from modules.desktop_client.router import (
+    router as desktop_client_router
+)
 
 app = FastAPI(title='NEXORA API')
 
@@ -86,7 +92,7 @@ _allowed_origins = (
     if _cors_env else
     ['http://localhost:5173', 'http://127.0.0.1:5173']
 )
-_cors_regex = os.getenv('UNINEX_CORS_ORIGIN_REGEX') or None
+_cors_regex = os.getenv('UNINEX_CORS_ORIGIN_REGEX') or r'http://(localhost|127\.0\.0\.1)(:\d+)?'
 
 app.add_middleware(
     CORSMiddleware,
@@ -117,12 +123,14 @@ app.include_router(sync_runtime_router)
 app.include_router(sync_agent_router)
 app.include_router(sync_shared_table_router)
 app.include_router(stock_availability_router)
+app.include_router(supplier_stock_analysis_router)
 app.include_router(procurement_router)
 app.include_router(reports_router)
 app.include_router(product_mapping_router)
 app.include_router(document_extraction_router)
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
+app.include_router(desktop_client_router)
 
 @app.get('/health')
 def health():

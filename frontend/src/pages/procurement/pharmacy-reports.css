@@ -3,8 +3,8 @@
 }
 
 .pr-toolbar {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(170px, 220px) repeat(2, minmax(140px, 170px)) auto auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   margin-bottom: 14px;
@@ -12,6 +12,17 @@
   border: 1px solid #dbe4ef;
   background: #f8fafc;
   border-radius: 8px;
+}
+
+.pr-toolbar > select,
+.pr-toolbar > input {
+  flex: 0 0 auto;
+  min-width: 150px;
+}
+
+.pr-vs {
+  font-size: 0.8rem;
+  color: #64748b;
 }
 
 .pr-kpis {

@@ -28,6 +28,33 @@ def _run_sp(sql, params):
         conn.close()
 
 
+def _rows_from_cursor(cursor):
+    if not cursor.description:
+        return []
+    columns = [col[0] for col in cursor.description]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def _run_sp_multi(sql, params, result_count):
+    """Execute a multi-result-set stored procedure over ONE connection.
+
+    Used instead of N separate `_run_sp` calls when several detail panels
+    are needed together, to cut round trips per store from N to 1.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql, params)
+        results = [_rows_from_cursor(cursor)]
+        for _ in range(result_count - 1):
+            cursor.nextset()
+            results.append(_rows_from_cursor(cursor))
+        return results
+    finally:
+        cursor.close()
+        conn.close()
+
+
 # ----- Search (Tab 1: Product, Tab 2: Batch / MRP) ------------------------
 
 def search_products(tenant_id, search_text, only_stock):
@@ -62,6 +89,22 @@ def get_batch_details(tenant_id, store_id, product_code):
         "@TenantId=?, @StoreId=?, @ProductCode=?",
         (tenant_id, store_id, product_code),
     )
+
+
+def get_product_core(tenant_id, store_id, product_code, months=3):
+    """batches + purchases + sales + movement in one round trip (perf)."""
+    batches, purchases, sales, movement = _run_sp_multi(
+        "EXEC stock.usp_ProductCore "
+        "@TenantId=?, @StoreId=?, @ProductCode=?, @Months=?",
+        (tenant_id, store_id, product_code, months),
+        4,
+    )
+    return {
+        "batches": batches,
+        "purchases": purchases,
+        "sales": sales,
+        "movement": movement,
+    }
 
 
 def get_purchase_history(tenant_id, store_id, product_code):

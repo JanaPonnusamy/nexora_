@@ -479,7 +479,7 @@ def shelf_sort_classify(payload: ShelfClassifyRequest, tenant_id: str = Query(..
     """Claude LLM auto-suggest categories for the given product names, saving
     them as unconfirmed suggestions. Returns {suggestions, llm_available};
     suggestions is empty (and llm_available false) when no API key is set."""
-    return shelf_sort_service.classify_and_store(tenant_id, payload.names)
+    return shelf_sort_service.classify_and_store(tenant_id, payload.names, payload.units)
 
 
 @router.post("/shelf-sort/categories")

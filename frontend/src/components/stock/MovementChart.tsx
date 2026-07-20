@@ -120,7 +120,7 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
                   const top = baseY - h
                   const labelY = Math.max(barTopLimit - 2, top - 4)
                   return (
-                    <g key={s.key} opacity={flat || focused ? 1 : 0.55}>
+                    <g key={s.key} opacity={1}>
                       <rect x={x} y={top} width={Math.max(3, barW)} height={h} rx={3} fill={s.color}>
                         <title>{`${row.period ?? ''} · ${s.label}: ${num(value)}`}</title>
                       </rect>
@@ -135,7 +135,7 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
                   y={barTopLimit}
                   width={innerW + barGap * 2}
                   height={barAreaH}
-                  fill={focused && !flat ? 'rgba(79,70,229,0.05)' : 'transparent'}
+                  fill="transparent"
                   rx={8}
                   onMouseEnter={() => setHover(i)}
                   onMouseLeave={() => setHover(null)}
@@ -187,3 +187,4 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
     </div>
   )
 }
+

@@ -1,511 +1,268 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { legacyOrderService } from '../../services/legacyOrderService'
-import type {
-  LegacyJob,
-  LegacyStore,
-  LegacyTable,
-  OrderMode,
-  OrderRow,
-} from '../../types/legacyOrder'
+import type { LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
 
 const POLL_MS = 1500
 
+type StoreSettings = { minDays: number; maxDays: number; mode: OrderMode }
+
 function fmtDateTime(value: string | null): string {
   if (!value) return '—'
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
-}
-
-function num(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '—'
-  return Number.isInteger(value) ? String(value) : value.toFixed(2)
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
 }
 
 export default function LegacyOrderPage() {
   const [stores, setStores] = useState<LegacyStore[]>([])
-  const [tables, setTables] = useState<LegacyTable[]>([])
-  const [storeName, setStoreName] = useState('')
+  const [settings, setSettings] = useState<Record<string, StoreSettings>>({})
+  const [jobs, setJobs] = useState<Record<string, LegacyJob>>({})
   const [error, setError] = useState<string | null>(null)
-
-  // Sync panel
-  const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set())
-
-  // Order panel — the legacy defaults, overridden by /defaults once loaded.
-  const [minDays, setMinDays] = useState(15)
-  const [maxDays, setMaxDays] = useState(20)
-  const [mode, setMode] = useState<OrderMode>('local')
-
-  const [job, setJob] = useState<LegacyJob | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const [orders, setOrders] = useState<OrderRow[]>([])
-  const [ordersLoading, setOrdersLoading] = useState(false)
-  const [wantedType, setWantedType] = useState('All')
-  const [search, setSearch] = useState('')
-
-  const pollRef = useRef<number | null>(null)
-
-  const store = useMemo(
-    () => stores.find((s) => s.store_name === storeName) ?? null,
-    [stores, storeName],
-  )
+  const [compareStore, setCompareStore] = useState('')
+  const [previousOrders, setPreviousOrders] = useState<PreviousOrder[]>([])
+  const [selectedOrderId, setSelectedOrderId] = useState('')
+  const [suppliers, setSuppliers] = useState<PreviousOrderSupplier[]>([])
+  const [selectedSupplier, setSelectedSupplier] = useState('')
+  const [reviewProducts, setReviewProducts] = useState<SupplierComparisonProduct[]>([])
+  const [reviewLoading, setReviewLoading] = useState(false)
+  const [compareBusy, setCompareBusy] = useState(false)
+  const [compareMessage, setCompareMessage] = useState('')
+  const pollers = useRef(new Map<string, number>())
 
   useEffect(() => {
-    Promise.all([
-      legacyOrderService.listStores(),
-      legacyOrderService.listTables(),
-      legacyOrderService.defaults(),
-    ])
-      .then(([storeList, tableList, defaults]) => {
+    Promise.all([legacyOrderService.listStores(), legacyOrderService.defaults()])
+      .then(([storeList, defaults]) => {
         setStores(storeList)
-        setTables(tableList)
-        setSelectedTables(new Set(tableList.map((t) => t.source)))
-        setMinDays(defaults.min_days)
-        setMaxDays(defaults.max_days)
-        if (storeList.length) setStoreName(storeList[0].store_name)
+        setSettings(Object.fromEntries(storeList.map((store) => [
+          store.store_name,
+          { minDays: defaults.min_days, maxDays: defaults.max_days, mode: 'local' as const },
+        ])))
+        if (storeList.length) setCompareStore(storeList[0].store_name)
       })
       .catch((e: Error) => setError(e.message))
   }, [])
 
-  const loadOrders = useCallback((name: string) => {
-    if (!name) return
-    setOrdersLoading(true)
-    legacyOrderService
-      .orders(name)
-      .then(setOrders)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setOrdersLoading(false))
+  const updateJob = useCallback((job: LegacyJob) => {
+    setJobs((current) => ({ ...current, [job.job_id]: job }))
+    if (job.status !== 'running') {
+      const poller = pollers.current.get(job.job_id)
+      if (poller) window.clearInterval(poller)
+      pollers.current.delete(job.job_id)
+    }
   }, [])
 
-  useEffect(() => {
-    setOrders([])
-    setWantedType('All')
-    loadOrders(storeName)
-  }, [storeName, loadOrders])
+  const watch = useCallback((jobId: string) => {
+    const poll = () => legacyOrderService.getJob(jobId).then(updateJob).catch((e: Error) => {
+      const poller = pollers.current.get(jobId)
+      if (poller) window.clearInterval(poller)
+      pollers.current.delete(jobId)
+      setError(e.message)
+    })
+    void poll()
+    pollers.current.set(jobId, window.setInterval(poll, POLL_MS))
+  }, [updateJob])
 
-  // Poll the running job until it settles, then refresh the grid.
-  const watch = useCallback(
-    (jobId: string) => {
-      if (pollRef.current) window.clearInterval(pollRef.current)
-      pollRef.current = window.setInterval(() => {
-        legacyOrderService
-          .getJob(jobId)
-          .then((next) => {
-            setJob(next)
-            if (next.status !== 'running') {
-              if (pollRef.current) window.clearInterval(pollRef.current)
-              pollRef.current = null
-              setBusy(false)
-              if (next.kind === 'order') loadOrders(next.store_name)
-            }
-          })
-          .catch((e: Error) => {
-            if (pollRef.current) window.clearInterval(pollRef.current)
-            pollRef.current = null
-            setBusy(false)
-            setError(e.message)
-          })
-      }, POLL_MS)
-    },
-    [loadOrders],
-  )
-
-  useEffect(
-    () => () => {
-      if (pollRef.current) window.clearInterval(pollRef.current)
-    },
-    [],
-  )
+  useEffect(() => () => {
+    pollers.current.forEach((poller) => window.clearInterval(poller))
+    pollers.current.clear()
+  }, [])
 
   const start = (run: () => Promise<{ job_id: string }>) => {
     setError(null)
-    setJob(null)
-    setBusy(true)
-    run()
-      .then(({ job_id }) => watch(job_id))
-      .catch((e: Error) => {
-        setBusy(false)
-        setError(e.message)
+    run().then(({ job_id }) => watch(job_id)).catch((e: Error) => setError(e.message))
+  }
+
+  const runningFor = useCallback((storeName: string) =>
+    Object.values(jobs).find((job) => job.store_name === storeName && job.status === 'running'), [jobs])
+
+  const patchSettings = (storeName: string, patch: Partial<StoreSettings>) => {
+    setSettings((current) => ({
+      ...current,
+      [storeName]: { ...current[storeName], ...patch },
+    }))
+  }
+
+  useEffect(() => {
+    if (!compareStore) return
+    setPreviousOrders([])
+    setSelectedOrderId('')
+    setCompareMessage('')
+    legacyOrderService.previousOrders(compareStore)
+      .then((orders) => {
+        setPreviousOrders(orders)
+        if (orders.length) setSelectedOrderId(String(orders[0].order_id))
       })
+      .catch((e: Error) => setError(e.message))
+  }, [compareStore])
+
+  useEffect(() => {
+    if (!compareStore || !selectedOrderId) {
+      setSuppliers([])
+      setSelectedSupplier('')
+      setReviewProducts([])
+      return
+    }
+    legacyOrderService.previousOrderSuppliers(compareStore, Number(selectedOrderId))
+      .then((rows) => {
+        setSuppliers(rows)
+        setSelectedSupplier('')
+        setReviewProducts([])
+      })
+      .catch((e: Error) => setError(e.message))
+  }, [compareStore, selectedOrderId])
+
+  const compare = () => {
+    if (!compareStore || !selectedOrderId) return
+    setCompareBusy(true)
+    setCompareMessage('')
+    legacyOrderService.comparePreviousOrder(compareStore, Number(selectedOrderId))
+      .then((result) => setCompareMessage(
+        `Compared order ${result.order_id}. ${result.affected_rows} row updates applied.`,
+      ))
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setCompareBusy(false))
   }
 
-  const onSync = () =>
-    start(() =>
-      legacyOrderService.startSync(storeName, Array.from(selectedTables)),
+  const compareSupplier = (supplierCode: string) => {
+    if (!compareStore || !selectedOrderId) return
+    setCompareBusy(true)
+    setCompareMessage('')
+    legacyOrderService.comparePreviousOrderSupplier(
+      compareStore, Number(selectedOrderId), supplierCode,
     )
-
-  const onOrderProcess = () =>
-    start(() =>
-      legacyOrderService.startOrderProcess(storeName, minDays, maxDays, mode),
-    )
-
-  const toggleTable = (source: string) => {
-    setSelectedTables((prev) => {
-      const next = new Set(prev)
-      if (next.has(source)) next.delete(source)
-      else next.add(source)
-      return next
-    })
+      .then((result) => setCompareMessage(
+        `Compared supplier ${result.supplier_code}. ${result.affected_rows} row updates applied.`,
+      ))
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setCompareBusy(false))
   }
 
-  const wantedTypes = useMemo(() => {
-    const set = new Set(orders.map((o) => o.WantedType).filter(Boolean))
-    return ['All', ...Array.from(set).sort()]
-  }, [orders])
+  const reviewSupplier = (supplierCode: string) => {
+    setSelectedSupplier(supplierCode)
+    setReviewProducts([])
+    setReviewLoading(true)
+    legacyOrderService.previousOrderSupplierProducts(
+      compareStore, Number(selectedOrderId), supplierCode,
+    )
+      .then(setReviewProducts)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setReviewLoading(false))
+  }
 
-  const visibleOrders = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return orders.filter((o) => {
-      if (wantedType !== 'All' && o.WantedType !== wantedType) return false
-      if (!q) return true
-      return (
-        (o.ProductName ?? '').toLowerCase().includes(q) ||
-        String(o.ProductCode).includes(q)
-      )
-    })
-  }, [orders, wantedType, search])
-
-  const progressPct = job && job.total_steps
-    ? Math.round((job.step / job.total_steps) * 100)
-    : 0
-
-  const canRun = Boolean(storeName) && !busy
+  const sortedJobs = useMemo(() => Object.values(jobs).sort(
+    (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
+  ), [jobs])
 
   return (
     <div className="legacy-order">
       <header className="lo-header">
         <div>
           <h1>Legacy Order Console</h1>
-          <p className="lo-sub">
-            Web trigger for the VB.NET OrderManagement app. Reads and writes the
-            old <strong>OrderNMC</strong> database and the branch servers it points
-            at — not the Nexora platform tables.
-          </p>
+          <p className="lo-sub">Run branch sync and order processing independently across multiple stores.</p>
         </div>
         <span className="lo-badge">Legacy DB</span>
       </header>
 
-      {error && (
-        <div className="lo-error" role="alert">
-          {error}
-          <button type="button" onClick={() => setError(null)} aria-label="Dismiss">
-            ×
-          </button>
-        </div>
-      )}
+      {error && <div className="lo-error" role="alert">{error}<button type="button" onClick={() => setError(null)} aria-label="Dismiss">×</button></div>}
 
       <section className="lo-card">
-        <h2>Store</h2>
-        <div className="lo-row">
-          <label>
-            <span>Store name</span>
-            <select
-              value={storeName}
-              onChange={(e) => setStoreName(e.target.value)}
-              disabled={busy}
-            >
-              {stores.map((s) => (
-                <option key={s.store_name} value={s.store_name}>
-                  {s.store_name} ({s.store_code})
-                </option>
-              ))}
-            </select>
-          </label>
-          {store && (
-            <dl className="lo-meta">
-              <div>
-                <dt>Source server</dt>
-                <dd>{store.server_name || '—'}</dd>
-              </div>
-              <div>
-                <dt>Database</dt>
-                <dd>{store.database || '—'}</dd>
-              </div>
-              <div>
-                <dt>Last sync</dt>
-                <dd>
-                  {fmtDateTime(store.last_sync_time)}
-                  {store.last_sync_status && (
-                    <span
-                      className={`lo-chip lo-chip-${store.last_sync_status.toLowerCase()}`}
-                    >
-                      {store.last_sync_status}
-                    </span>
-                  )}
-                </dd>
-              </div>
-            </dl>
-          )}
+        <div className="lo-section-title">
+          <div><h2>Store operations</h2><p className="lo-note">Order Process always runs a full sync first. Defaults: 13 min days / 18 max days.</p></div>
+          <span className="lo-count">{stores.length} stores</span>
         </div>
-      </section>
-
-      <div className="lo-grid">
-        <section className="lo-card">
-          <h2>Sync</h2>
-          <p className="lo-note">
-            Pulls each table from the branch server into OrderNMC, stamped with the
-            store name. Incremental by max ID; staged and merged per table.
-          </p>
-          <ul className="lo-tables">
-            {tables.map((t) => (
-              <li key={t.source}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={selectedTables.has(t.source)}
-                    onChange={() => toggleTable(t.source)}
-                    disabled={busy}
-                  />
-                  <span>{t.source}</span>
-                  {t.source !== t.destination && (
-                    <em className="lo-dest">→ {t.destination}</em>
-                  )}
-                </label>
-              </li>
-            ))}
-          </ul>
-          <button
-            type="button"
-            className="lo-btn lo-btn-primary"
-            onClick={onSync}
-            disabled={!canRun || selectedTables.size === 0}
-          >
-            Sync {selectedTables.size} table{selectedTables.size === 1 ? '' : 's'}
-          </button>
-        </section>
-
-        <section className="lo-card">
-          <h2>Order Process</h2>
-          <p className="lo-note">
-            Runs the 90-day min/max order query, backs up the store&apos;s current
-            OrderManagement rows, then rewrites them and stamps an order header.
-          </p>
-          <div className="lo-row">
-            <label>
-              <span>Min days</span>
-              <input
-                type="number"
-                min={1}
-                value={minDays}
-                onChange={(e) => setMinDays(Number(e.target.value))}
-                disabled={busy}
-              />
-            </label>
-            <label>
-              <span>Max days</span>
-              <input
-                type="number"
-                min={1}
-                value={maxDays}
-                onChange={(e) => setMaxDays(Number(e.target.value))}
-                disabled={busy}
-              />
-            </label>
-          </div>
-          <fieldset className="lo-modes" disabled={busy}>
-            <legend>Source</legend>
-            <label>
-              <input
-                type="radio"
-                name="lo-mode"
-                checked={mode === 'local'}
-                onChange={() => setMode('local')}
-              />
-              <span>
-                Local <em>— OrderNMC&apos;s synced copy</em>
-              </span>
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="lo-mode"
-                checked={mode === 'remote'}
-                onChange={() => setMode('remote')}
-              />
-              <span>
-                Remote <em>— branch server, live</em>
-              </span>
-            </label>
-          </fieldset>
-          <button
-            type="button"
-            className="lo-btn lo-btn-primary"
-            onClick={onOrderProcess}
-            disabled={!canRun || minDays > maxDays}
-          >
-            Process Order
-          </button>
-          {minDays > maxDays && (
-            <p className="lo-warn">Min days cannot be greater than max days.</p>
-          )}
-        </section>
-      </div>
-
-      {job && (
-        <section className="lo-card">
-          <h2>
-            {job.kind === 'sync' ? 'Sync' : 'Order Process'} — {job.store_name}
-            <span className={`lo-chip lo-chip-${job.status}`}>{job.status}</span>
-          </h2>
-          <div className="lo-progress">
-            <div
-              className={`lo-progress-bar lo-progress-${job.status}`}
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-          <p className="lo-status">{job.message}</p>
-
-          {job.error && <p className="lo-warn">{job.error}</p>}
-
-          {job.result?.tables && (
-            <table className="lo-table">
-              <thead>
-                <tr>
-                  <th>Table</th>
-                  <th>Destination</th>
-                  <th className="lo-num">Rows</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {job.result.tables.map((t) => (
-                  <tr key={t.table}>
-                    <td>{t.table}</td>
-                    <td>{t.destination}</td>
-                    <td className="lo-num">{t.rows}</td>
-                    <td>
-                      <span className={`lo-chip lo-chip-${t.status}`}>{t.status}</span>
-                      {t.error && <span className="lo-errtext">{t.error}</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          {job.result?.header && (
-            <dl className="lo-meta">
-              <div>
-                <dt>Order ID</dt>
-                <dd>{job.result.header.order_id}</dd>
-              </div>
-              <div>
-                <dt>Order no.</dt>
-                <dd>{job.result.header.order_no}</dd>
-              </div>
-              <div>
-                <dt>Last GRN</dt>
-                <dd>{job.result.header.last_grn || '—'}</dd>
-              </div>
-              <div>
-                <dt>Last sale bill</dt>
-                <dd>{job.result.header.last_sale_bill_no || '—'}</dd>
-              </div>
-            </dl>
-          )}
-
-          <details className="lo-log">
-            <summary>Log ({job.log.length})</summary>
-            <ol>
-              {job.log.map((entry, i) => (
-                <li key={`${entry.at}-${i}`}>
-                  <time>{entry.at.split('T')[1] ?? entry.at}</time>
-                  {entry.message}
-                </li>
-              ))}
-            </ol>
-          </details>
-        </section>
-      )}
-
-      <section className="lo-card">
-        <h2>
-          Order Management — {storeName || '—'}
-          <span className="lo-count">
-            {visibleOrders.length}
-            {visibleOrders.length !== orders.length && ` of ${orders.length}`} rows
-          </span>
-        </h2>
-        <div className="lo-row">
-          <label>
-            <span>Wanted type</span>
-            <select
-              value={wantedType}
-              onChange={(e) => setWantedType(e.target.value)}
-            >
-              {wantedTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="lo-grow">
-            <span>Search</span>
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Product name or code"
-            />
-          </label>
-          <button
-            type="button"
-            className="lo-btn"
-            onClick={() => loadOrders(storeName)}
-            disabled={!storeName || ordersLoading}
-          >
-            Refresh
-          </button>
-        </div>
-
-        <div className="lo-scroll">
-          <table className="lo-table">
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Product</th>
-                <th className="lo-num">Stock</th>
-                <th className="lo-num">Sales (90d)</th>
-                <th className="lo-num">Min</th>
-                <th className="lo-num">Max</th>
-                <th className="lo-num">Order qty</th>
-                <th>Wanted type</th>
-                <th>Type</th>
-                <th className="lo-num">Freq</th>
-              </tr>
-            </thead>
+        <div className="lo-store-scroll">
+          <table className="lo-table lo-store-grid">
+            <thead><tr><th>Store</th><th>Connection</th><th>Last sync</th><th>Min / Max</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
-              {visibleOrders.map((o, i) => (
-                <tr key={`${o.ProductCode}-${i}`}>
-                  <td>{o.ProductCode}</td>
-                  <td>{o.ProductName}</td>
-                  <td className="lo-num">{num(o.TotalStock)}</td>
-                  <td className="lo-num">{num(o.SLSQty)}</td>
-                  <td className="lo-num">{num(o.MinQty)}</td>
-                  <td className="lo-num">{num(o.MaxQty)}</td>
-                  <td className="lo-num lo-strong">{num(o.OrderQty)}</td>
-                  <td>{o.WantedType}</td>
-                  <td>{o.ProductTypeName}</td>
-                  <td className="lo-num">{num(o.Frequence)}</td>
-                </tr>
-              ))}
-              {!visibleOrders.length && (
-                <tr>
-                  <td colSpan={10} className="lo-empty">
-                    {ordersLoading
-                      ? 'Loading…'
-                      : orders.length
-                        ? 'No rows match the current filter.'
-                        : 'No order rows for this store yet. Run Order Process.'}
-                  </td>
-                </tr>
-              )}
+              {stores.map((store) => {
+                const config = settings[store.store_name] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+                const running = runningFor(store.store_name)
+                const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays
+                return (
+                  <tr key={store.store_name}>
+                    <td><strong>{store.store_name}</strong><small className="lo-cell-sub">Code {store.store_code}</small></td>
+                    <td>{store.server_name || '—'}<small className="lo-cell-sub">{store.database || '—'}</small></td>
+                    <td>{fmtDateTime(store.last_sync_time)}{store.last_sync_status && <span className={`lo-chip lo-chip-${store.last_sync_status.toLowerCase()}`}>{store.last_sync_status}</span>}</td>
+                    <td><div className="lo-inline-inputs"><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /><span>/</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></div>{invalid && <small className="lo-invalid">Check range</small>}</td>
+                    <td><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option></select></td>
+                    <td>{running ? <><span className="lo-running-dot" />{running.kind === 'sync' ? 'Syncing' : 'Processing'}<small className="lo-cell-sub">{running.message}</small></> : <span className="text-body-secondary">Ready</span>}</td>
+                    <td><div className="lo-actions"><button type="button" className="lo-btn" disabled={Boolean(running)} onClick={() => start(() => legacyOrderService.startSync(store.store_name))}><i className="bi bi-arrow-repeat" /> Sync</button><button type="button" className="lo-btn lo-btn-primary" disabled={Boolean(running) || invalid} onClick={() => start(() => legacyOrderService.startOrderProcess(store.store_name, config.minDays, config.maxDays, config.mode))}><i className="bi bi-play-fill" /> Sync + Order</button></div></td>
+                  </tr>
+                )
+              })}
+              {!stores.length && <tr><td colSpan={7} className="lo-empty">No active stores found.</td></tr>}
             </tbody>
           </table>
         </div>
       </section>
+
+      <div className="lo-lower-grid">
+        <section className="lo-card">
+          <h2>Compare previous order</h2>
+          <p className="lo-note">Uses the original VB.NET comparison rules. Recent two-day orders are shown first, with the latest five as fallback.</p>
+          <div className="lo-compare-controls visually-hidden">
+            <label><span>Store</span><select value={compareStore} onChange={(e) => setCompareStore(e.target.value)}>{stores.map((store) => <option key={store.store_name}>{store.store_name}</option>)}</select></label>
+            <label className="lo-grow"><span>Previous order</span><select value={selectedOrderId} onChange={(e) => setSelectedOrderId(e.target.value)}><option value="">Select order</option>{previousOrders.map((order) => <option key={order.order_id} value={order.order_id}>#{order.order_id} — {fmtDateTime(order.wanted_date)}</option>)}</select></label>
+            <button type="button" className="lo-btn lo-btn-primary" disabled={!selectedOrderId || compareBusy || Boolean(runningFor(compareStore))} onClick={compare}>{compareBusy ? 'Comparing…' : 'Compare Order'}</button>
+          </div>
+          <div className="lo-modern-compare">
+            <label className="lo-store-picker"><span>Store</span><select value={compareStore} onChange={(e) => setCompareStore(e.target.value)}>{stores.map((store) => <option key={store.store_name}>{store.store_name}</option>)}</select></label>
+            <div className="lo-compare-grid" role="listbox" aria-label="Previous orders">
+              {previousOrders.map((order) => (
+                <button type="button" role="option" aria-selected={selectedOrderId === String(order.order_id)} className={`lo-order-tile${selectedOrderId === String(order.order_id) ? ' is-selected' : ''}`} key={order.order_id} onClick={() => setSelectedOrderId(String(order.order_id))}>
+                  <span className="lo-order-icon"><i className="bi bi-receipt" /></span>
+                  <span><strong>Order #{order.order_id}</strong><small>{fmtDateTime(order.wanted_date)}</small></span>
+                  <i className="bi bi-chevron-right" />
+                </button>
+              ))}
+              {!previousOrders.length && <div className="lo-empty">No previous orders for this store.</div>}
+            </div>
+            {selectedOrderId && (
+              <div className="lo-supplier-area">
+                <div className="lo-compare-toolbar"><div><strong>Order #{selectedOrderId}</strong><small>{suppliers.length} suppliers available</small></div><button type="button" className="lo-btn" disabled={compareBusy || Boolean(runningFor(compareStore))} onClick={compare}>{compareBusy ? 'Comparing…' : 'Compare Entire Order'}</button></div>
+                <div className="lo-supplier-grid">
+                  <div className="lo-supplier-head"><span>Supplier</span><span>Products</span><span>Action</span></div>
+                  {suppliers.map((supplier) => <button type="button" className={`lo-supplier-row${selectedSupplier === supplier.supplier_code ? ' is-selected' : ''}`} key={supplier.supplier_code} onClick={() => reviewSupplier(supplier.supplier_code)}><span><strong>{supplier.supplier_name}</strong><small>{supplier.supplier_code}</small></span><span className="lo-product-count">{supplier.product_count}</span><span className="lo-review-link">Review <i className="bi bi-arrow-right" /></span></button>)}
+                  {!suppliers.length && <div className="lo-empty">No assigned suppliers in this backup order.</div>}
+                </div>
+              </div>
+            )}
+          </div>
+          {compareMessage && <div className="lo-success"><i className="bi bi-check-circle" /> {compareMessage}</div>}
+        </section>
+
+        <section className="lo-card lo-activity">
+          <div className="lo-section-title"><div><h2>Task log</h2><p className="lo-note">Live progress from every store task.</p></div><span className="lo-count">{sortedJobs.filter((job) => job.status === 'running').length} running</span></div>
+          <div className="lo-job-list">
+            {sortedJobs.map((job) => {
+              const progress = job.total_steps ? Math.round((job.step / job.total_steps) * 100) : 0
+              return <article className="lo-job" key={job.job_id}><div className="lo-job-head"><strong>{job.store_name} · {job.kind === 'sync' ? 'Sync' : 'Order Process'}</strong><span className={`lo-chip lo-chip-${job.status}`}>{job.status}</span></div><div className="lo-progress"><div className={`lo-progress-bar lo-progress-${job.status}`} style={{ width: `${progress}%` }} /></div><p>{job.message}</p>{job.error && <small className="lo-invalid">{job.error}</small>}<details className="lo-log"><summary>{job.log.length} log entries</summary><ol>{job.log.map((entry, index) => <li key={`${entry.at}-${index}`}><time>{entry.at.split('T')[1] ?? entry.at}</time>{entry.message}</li>)}</ol></details></article>
+            })}
+            {!sortedJobs.length && <div className="lo-empty">Start Sync or Order Process to see live task activity.</div>}
+          </div>
+          {selectedSupplier && (
+            <div className="lo-product-review">
+              <div className="lo-review-header">
+                <div><span className="lo-eyebrow">Supplier comparison review</span><h3>{suppliers.find((supplier) => supplier.supplier_code === selectedSupplier)?.supplier_name ?? selectedSupplier}</h3><p>Order #{selectedOrderId} · {reviewProducts.length} products</p></div>
+                <span className="lo-chip lo-chip-running">Review required</span>
+              </div>
+              <div className="lo-review-scroll">
+                <table className="lo-table lo-review-table">
+                  <thead><tr><th>Product</th><th className="lo-num">Previous qty</th><th className="lo-num">Current qty</th><th className="lo-num">Previous stock</th><th className="lo-num">Current stock</th><th>Result</th></tr></thead>
+                  <tbody>
+                    {reviewProducts.map((product) => {
+                      const changed = product.PreviousOrderedQty !== product.CurrentOrderQty || product.PreviousStock !== product.CurrentStock
+                      return <tr key={product.PreviousProductCode}><td><strong>{product.CurrentProductName ?? product.PreviousProductName}</strong><small className="lo-cell-sub">{product.PreviousProductCode}</small></td><td className="lo-num">{product.PreviousOrderedQty ?? '—'}</td><td className="lo-num">{product.CurrentOrderQty ?? '—'}</td><td className="lo-num">{product.PreviousStock ?? '—'}</td><td className="lo-num">{product.CurrentStock ?? '—'}</td><td><span className={`lo-chip ${changed ? 'lo-chip-partial' : 'lo-chip-success'}`}>{changed ? 'Changed' : 'Same'}</span></td></tr>
+                    })}
+                    {!reviewProducts.length && <tr><td colSpan={6} className="lo-empty">{reviewLoading ? 'Loading product comparison…' : 'No products available for review.'}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              <div className="lo-review-footer"><div><strong>Review complete?</strong><small>This applies the VB.NET supplier comparison rules to these products.</small></div><button type="button" className="lo-btn lo-btn-primary" disabled={reviewLoading || !reviewProducts.length || compareBusy || Boolean(runningFor(compareStore))} onClick={() => compareSupplier(selectedSupplier)}>{compareBusy ? 'Comparing…' : `Compare ${reviewProducts.length} Products`}</button></div>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   )
 }

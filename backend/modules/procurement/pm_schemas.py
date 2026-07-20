@@ -94,6 +94,9 @@ class ShelfClassifyRequest(BaseModel):
     # Product names to auto-classify with the Claude LLM; suggestions are saved
     # to the learned table (source='llm', unconfirmed) and returned.
     names: List[str] = Field(..., min_length=1, max_length=2000)
+    # Optional UnitDescription per name (same length, index-aligned) — gives
+    # Claude the pack-type signal (e.g. "10 TAB", "VET BOLUS") alongside the name.
+    units: Optional[List[Optional[str]]] = None
 
 
 class ShelfCategoryEntry(BaseModel):

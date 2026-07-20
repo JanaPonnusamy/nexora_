@@ -5,6 +5,11 @@ import type {
   LegacyTable,
   OrderMode,
   OrderRow,
+  PreviousOrder,
+  PreviousOrderComparison,
+  PreviousOrderSupplier,
+  SupplierComparison,
+  SupplierComparisonProduct,
 } from '../types/legacyOrder'
 
 const BASE = '/api/legacy-order'
@@ -40,4 +45,31 @@ export const legacyOrderService = {
 
   orders: (storeName: string) =>
     api.get<OrderRow[]>(`${BASE}/orders/${encodeURIComponent(storeName)}`),
+
+  previousOrders: (storeName: string) =>
+    api.get<PreviousOrder[]>(`${BASE}/previous-orders/${encodeURIComponent(storeName)}`),
+
+  comparePreviousOrder: (storeName: string, orderId: number) =>
+    api.post<PreviousOrderComparison>(`${BASE}/compare-previous-order`, {
+      store_name: storeName,
+      order_id: orderId,
+    }),
+
+  previousOrderSuppliers: (storeName: string, orderId: number) =>
+    api.get<PreviousOrderSupplier[]>(
+      `${BASE}/previous-orders/${encodeURIComponent(storeName)}/${orderId}/suppliers`,
+    ),
+
+  previousOrderSupplierProducts: (
+    storeName: string, orderId: number, supplierCode: string,
+  ) => api.get<SupplierComparisonProduct[]>(
+    `${BASE}/previous-orders/${encodeURIComponent(storeName)}/${orderId}/suppliers/${encodeURIComponent(supplierCode)}/products`,
+  ),
+
+  comparePreviousOrderSupplier: (storeName: string, orderId: number, supplierCode: string) =>
+    api.post<SupplierComparison>(`${BASE}/compare-previous-order/supplier`, {
+      store_name: storeName,
+      order_id: orderId,
+      supplier_code: supplierCode,
+    }),
 }

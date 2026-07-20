@@ -9,10 +9,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     cap: 'PLATFORM',
     children: [
       { label: 'Overview', to: '/overview', icon: 'bi-speedometer2', cap: 'PLATFORM' },
-      { label: 'Tenants', to: '/platform/tenants', icon: 'bi-building', cap: 'PLATFORM' },
-      { label: 'Stores', to: '/platform/stores', icon: 'bi-shop', cap: 'PLATFORM' },
-      { label: 'Users', to: '/platform/users', icon: 'bi-people', cap: 'PLATFORM' },
-      { label: 'Roles', to: '/platform/roles', icon: 'bi-person-badge', cap: 'PLATFORM' },
+      { label: 'Platform Management', to: '/platform/manage', icon: 'bi-buildings', cap: 'PLATFORM' },
     ],
   },
   {

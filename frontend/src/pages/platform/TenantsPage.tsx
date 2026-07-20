@@ -15,7 +15,7 @@ import type { Tenant } from '../../types/tenant'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; tenant: Tenant } | null
 
-export default function TenantsPage() {
+export default function TenantsPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate()
   const { tenants, isLoading, error, reload } = useTenants()
   const [search, setSearch] = useState('')
@@ -81,7 +81,7 @@ export default function TenantsPage() {
 
   return (
     <div className="container-fluid px-0">
-      <PageHeader title="Tenants" breadcrumb={['Platform', 'Tenants']} />
+      {!embedded && <PageHeader title="Tenants" breadcrumb={['Platform', 'Tenants']} />}
       <TenantToolbar
         search={search}
         onSearchChange={setSearch}

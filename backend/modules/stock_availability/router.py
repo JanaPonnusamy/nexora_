@@ -40,6 +40,12 @@ def product_details(tenant_id: str, store_id: str, product: str):
     return service.product_details(tenant_id, store_id, product)
 
 
+@router.get("/products/core")
+def product_core(tenant_id: str, store_id: str, product: str, months: int = 3):
+    """batches + purchases + sales + movement in one round trip (perf)."""
+    return service.product_core(tenant_id, store_id, product, months)
+
+
 @router.get("/products/batches")
 def batch_details(tenant_id: str, store_id: str, product: str):
     return service.batch_details(tenant_id, store_id, product)

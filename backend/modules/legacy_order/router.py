@@ -6,8 +6,8 @@ and the branch DBs it points at -- NOT NEXORA_PLATFORM's sync.* tables.
 """
 from fastapi import APIRouter, HTTPException
 
-from modules.legacy_order import repository, service, sync_engine
-from modules.legacy_order.schemas import JobStarted, OrderProcessRequest, SyncRequest
+from modules.legacy_order import database, repository, service, sync_engine
+from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, JobStarted, OrderProcessRequest, SyncRequest
 
 router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"])
 
@@ -15,7 +15,10 @@ router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"])
 @router.get("/stores")
 def list_stores(active_only: bool = True):
     """Branches from OrderNMC.Stores. Credentials are never returned."""
-    stores = repository.list_stores(active_only)
+    try:
+        stores = repository.list_stores(active_only)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return [
         {
             "store_code": s["store_code"],
@@ -81,4 +84,55 @@ def get_job(job_id: str):
 @router.get("/orders/{store_name}")
 def order_summary(store_name: str):
     """The current OrderManagement rows for a store -- the VB main grid."""
-    return repository.order_summary(store_name)
+    try:
+        return repository.order_summary(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/previous-orders/{store_name}")
+def previous_orders(store_name: str):
+    try:
+        return repository.previous_orders(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/compare-previous-order")
+def compare_previous_order(payload: ComparePreviousOrderRequest):
+    try:
+        if not repository.get_store(payload.store_name):
+            raise HTTPException(status_code=404, detail="Store not found")
+        return repository.compare_previous_order(payload.store_name, payload.order_id)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/previous-orders/{store_name}/{order_id}/suppliers")
+def previous_order_suppliers(store_name: str, order_id: int):
+    try:
+        return repository.previous_order_suppliers(store_name, order_id)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/previous-orders/{store_name}/{order_id}/suppliers/{supplier_code}/products")
+def previous_order_supplier_products(
+    store_name: str, order_id: int, supplier_code: str
+):
+    try:
+        return repository.previous_order_supplier_products(
+            store_name, order_id, supplier_code
+        )
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/compare-previous-order/supplier")
+def compare_previous_order_supplier(payload: CompareSupplierRequest):
+    try:
+        return repository.compare_previous_order_supplier(
+            payload.store_name, payload.order_id, payload.supplier_code
+        )
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

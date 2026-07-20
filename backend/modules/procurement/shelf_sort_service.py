@@ -166,15 +166,17 @@ def review_uncategorised(tenant_id, refresh_id):
     out = []
     for i in items:
         if resolved.get(i["name"], "Others") == "Others":
-            out.append({"name": i["name"], "product_code": i["product_code"], "category_code": "NULL"})
+            out.append({"name": i["name"], "unit": i["unit"],
+                        "product_code": i["product_code"], "category_code": "NULL"})
     return out
 
 
-def classify_and_store(tenant_id, names):
-    """Run the optional Claude LLM over uncategorised names, save the results as
+def classify_and_store(tenant_id, names, units=None):
+    """Run the optional Claude LLM over uncategorised names (with, when given,
+    their UnitDescription for a stronger signal), save the results as
     unconfirmed 'llm' suggestions, and return {name: category}. Empty when the
     LLM is unavailable (no API key / offline) — the caller degrades to rules."""
-    suggestions = pcat_ai.classify(names)
+    suggestions = pcat_ai.classify(names, units)
     if suggestions:
         pcat.upsert_many(
             tenant_id,

@@ -83,5 +83,41 @@ export interface OrderRow {
   Remarks: string | null
 }
 
+export interface PreviousOrder {
+  store_name: string
+  order_id: number
+  wanted_date: string
+}
+
+export interface PreviousOrderComparison {
+  store_name: string
+  order_id: number
+  affected_rows: number
+}
+
+export interface PreviousOrderSupplier {
+  supplier_code: string
+  supplier_name: string
+  product_count: number
+}
+
+export interface SupplierComparison extends PreviousOrderComparison {
+  supplier_code: string
+}
+
+export interface SupplierComparisonProduct {
+  CurrentProductCode: number | null
+  CurrentProductName: string | null
+  CurrentOrderQty: number | null
+  CurrentWantedType: string | null
+  PreviousProductCode: number
+  PreviousProductName: string
+  PreviousOrderedQty: number | null
+  PreviousStock: number | null
+  CurrentStock: number | null
+  PreviousRemarks: string | null
+  PreviousStatus: number | null
+}
+
 /** 'local' reads OrderNMC's own synced copy; 'remote' hits the branch DB live. */
 export type OrderMode = 'local' | 'remote'

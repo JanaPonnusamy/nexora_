@@ -59,3 +59,30 @@ export interface PharmacyStoreAnalysisResponse {
   store_id: string
   rows: PharmacyMonthlyRow[]
 }
+
+export interface PharmacyCompareStoreRow {
+  Store: string
+  StoreCode: string
+  StoreId: string
+  Status: string
+  Error?: string
+  SalesA: number
+  SalesB: number
+  SalesGrowthPercent: number
+  StockA: number
+  StockB: number
+  StockGrowthPercent: number
+  PendingA: number
+  PendingB: number
+  PaidUpStockA: number
+  PaidUpStockPercentA: number
+  PaidUpStockB: number
+  PaidUpStockPercentB: number
+}
+
+export interface PharmacyCompareResponse {
+  success: boolean
+  month_a: string
+  month_b: string
+  stores: PharmacyCompareStoreRow[]
+}

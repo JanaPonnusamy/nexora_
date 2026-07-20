@@ -35,15 +35,21 @@ def _valid_categories():
     return list(docs._SHELF_ORDER)  # Tablet..Others
 
 
-def _classify_batch(client, names):
+def _classify_batch(client, items):
+    """items: [(name, unit_description_or_None)]."""
     categories = _valid_categories()
     system = (
         "You are a pharmacy shelf-classification assistant. Classify each product "
-        "name into exactly one of these shelf categories: "
+        "into exactly one of these shelf categories: "
         + ", ".join(categories)
-        + ". Use 'Veterinary' for animal/vet products, 'Food' for nutritional "
-        "supplements/health drinks/granules, 'Paste' for toothpaste, 'Soap'/'Wash' "
-        "for cleansers, 'Bandage'/'Cloth' for surgical supplies. If genuinely "
+        + ". Each product is given as its name and, when known, its pack/unit "
+        "description (e.g. '10 TAB', '100 ML SYP', 'VET BOLUS') — the unit "
+        "description is the strongest signal for drug-form categories (Tablet, "
+        "Capsule, Syrup, Injection, Inhaler, Drops, etc.) when it conflicts with "
+        "the name. Use 'Veterinary' for animal/vet products, 'Food' for "
+        "nutritional supplements/health drinks/granules (e.g. Cerelac, Horlicks, "
+        "Boost, Complan, Ensure), 'Paste' for toothpaste, 'Soap'/'Wash' for "
+        "cleansers, 'Bandage'/'Cloth' for surgical supplies. If genuinely "
         "unclear, use 'Others'. Return only the JSON object."
     )
     schema = {
@@ -65,7 +71,11 @@ def _classify_batch(client, names):
         "required": ["items"],
         "additionalProperties": False,
     }
-    payload = "\n".join(f"- {n}" for n in names)
+    lines = []
+    for name, unit in items:
+        unit = (unit or "").strip()
+        lines.append(f"- {name} | unit: {unit}" if unit else f"- {name}")
+    payload = "\n".join(lines)
     resp = client.messages.create(
         model=_MODEL,
         max_tokens=8000,
@@ -85,9 +95,17 @@ def _classify_batch(client, names):
     return out
 
 
-def classify(names):
-    """names -> {name: category}. Returns {} if unavailable or on any failure."""
-    names = [n for n in dict.fromkeys(n for n in names if n and str(n).strip())]
+def classify(names, units=None):
+    """names -> {name: category}. `units` (optional) is a same-length list of
+    UnitDescription strings (or None) aligned by index with `names`, giving
+    Claude the pack-type signal alongside the name. Returns {} if unavailable
+    or on any failure."""
+    units = units or []
+    unit_by_name = {}
+    for i, n in enumerate(names):
+        if n and str(n).strip() and n not in unit_by_name:
+            unit_by_name[n] = units[i] if i < len(units) else None
+    names = list(unit_by_name.keys())
     if not names or not is_available():
         return {}
     try:
@@ -99,7 +117,8 @@ def classify(names):
         client = anthropic.Anthropic()
         result = {}
         for i in range(0, len(names), _BATCH):
-            result.update(_classify_batch(client, names[i:i + _BATCH]))
+            batch = [(n, unit_by_name[n]) for n in names[i:i + _BATCH]]
+            result.update(_classify_batch(client, batch))
         logger.info("LLM classified %s/%s product names", len(result), len(names))
         return result
     except Exception as exc:

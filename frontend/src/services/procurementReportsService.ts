@@ -1,5 +1,6 @@
 import { api } from './apiClient'
 import type {
+  PharmacyCompareResponse,
   PharmacyDashboardResponse,
   PharmacyStoreAnalysisResponse,
 } from '../types/procurementReports'
@@ -47,6 +48,24 @@ export const procurementReportsService = {
         store_id: storeId,
         from_month: fromMonth,
         to_month: toMonth,
+      })}`,
+    ),
+
+  compare: (tenantId: string, monthA: string, monthB: string) =>
+    api.get<PharmacyCompareResponse>(
+      `/api/procurement/reports/compare${qs({
+        tenant_id: tenantId,
+        month_a: monthA,
+        month_b: monthB,
+      })}`,
+    ),
+
+  compareExcel: (tenantId: string, monthA: string, monthB: string) =>
+    api.blob(
+      `/api/procurement/reports/compare/export.xlsx${qs({
+        tenant_id: tenantId,
+        month_a: monthA,
+        month_b: monthB,
       })}`,
     ),
 }

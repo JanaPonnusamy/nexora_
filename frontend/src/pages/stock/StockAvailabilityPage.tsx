@@ -18,6 +18,7 @@ import {
 } from '../../components/stock/DetailPanels'
 import type { SelectedBill } from '../../components/stock/DetailPanels'
 import { STOCK_LEGEND } from '../../components/stock/format'
+import { SxCard, SxCardBody, SxCardHead } from '../../components/sync/ui'
 import '../../components/stock/stock-ui.css'
 
 type SearchMode = 'product' | 'batch'
@@ -25,6 +26,17 @@ type SearchMode = 'product' | 'batch'
 const EMPTY_RESULT: StockSearchResult = {
   stores: [],
   summary: { total_stores: 0, total_products_found: 0, stores_with_stock: 0, total_stock_all_stores: 0 },
+}
+
+function WaitingPanel({ title, icon, description }: { title: string; icon: string; description: string }) {
+  return (
+    <SxCard>
+      <SxCardHead title={title} icon={icon} />
+      <SxCardBody>
+        <EmptyState icon={icon} title="Waiting for data" description={description} />
+      </SxCardBody>
+    </SxCard>
+  )
 }
 
 export default function StockAvailabilityPage() {
@@ -225,37 +237,28 @@ export default function StockAvailabilityPage() {
       <div className="sa-body">
         {error ? (
           <ErrorState description={error} onRetry={() => requestRef.current++} />
-        ) : !hasSearched && !isLoading ? (
-          <EmptyState
-            icon="bi-search"
-            title="Search to begin"
-            description={
-              mode === 'product'
-                ? 'Type a product name to see availability across every branch.'
-                : 'Enter a batch number, MRP or product name to search.'
-            }
-          />
         ) : (
           <>
             <div className="sa-branches">
-              {isLoading && result.stores.length === 0
-                ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="sa-branch sa-branch--skeleton" />)
-                : result.stores.length === 0
-                  ? (
-                    <EmptyState icon="bi-shop" title="No matches" description="No products matched your search in any branch." />
-                  )
-                  : result.stores.map((card) => (
-                      <BranchCard
-                        key={card.store_id}
-                        card={card}
-                        activeStoreId={active?.storeId ?? null}
-                        activeProductCode={active?.productCode ?? null}
-                        onSelect={onSelectProduct}
-                      />
-                    ))}
+              {!hasSearched && !isLoading
+                ? Array.from({ length: 5 }).map((_, i) => <div key={i} className="sa-branch sa-branch--skeleton" />)
+                : isLoading && result.stores.length === 0
+                  ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="sa-branch sa-branch--skeleton" />)
+                  : result.stores.length === 0
+                    ? (
+                      <EmptyState icon="bi-shop" title="No matches" description="No products matched your search in any branch." />
+                    )
+                    : result.stores.map((card) => (
+                        <BranchCard
+                          key={card.store_id}
+                          card={card}
+                          activeStoreId={active?.storeId ?? null}
+                          activeProductCode={active?.productCode ?? null}
+                          onSelect={onSelectProduct}
+                        />
+                      ))}
             </div>
 
-            {/* Detail panels — active product context */}
             {active ? (
               <div className="sa-detail">
                 <ProductContextBar ctx={active} />
@@ -273,12 +276,37 @@ export default function StockAvailabilityPage() {
                   <div className="sa-area sa-area--chart"><MovementPanel ctx={active} /></div>
                 </div>
               </div>
+            ) : hasSearched && result.stores.length > 0 ? (
+              <div className="sa-detail__hint">
+                <i className="bi bi-hand-index" aria-hidden="true" /> Select a product to view batch, sales, purchase and movement details.
+              </div>
             ) : (
-              hasSearched && result.stores.length > 0 && (
-                <div className="sa-detail__hint">
-                  <i className="bi bi-hand-index" aria-hidden="true" /> Select a product to view batch, sales, purchase and movement details.
+              <div className="sa-detail">
+                <div className="sa-ctx">
+                  <div className="sa-ctx__lead">
+                    <i className="bi bi-hourglass-split" aria-hidden="true" />
+                    <strong>Waiting for data</strong>
+                    <span className="sa-tag">Search product or batch</span>
+                  </div>
                 </div>
-              )
+                <div className="sa-detail__layout">
+                  <div className="sa-area sa-area--batch">
+                    <WaitingPanel title="Batch Details" icon="bi-layers" description="Batch rows will appear here as soon as a product is selected." />
+                  </div>
+                  <div className="sa-area sa-area--sales">
+                    <WaitingPanel title="Recent Sales" icon="bi-cart-check" description="Sales history will appear here after the first result is selected." />
+                  </div>
+                  <div className="sa-area sa-area--purch">
+                    <WaitingPanel title="Recent Purchases" icon="bi-truck" description="Purchase history will appear here after the first result is selected." />
+                  </div>
+                  <div className="sa-area sa-area--bill">
+                    <WaitingPanel title="Bill Details" icon="bi-receipt" description="Bill line items will appear here after a sale is chosen." />
+                  </div>
+                  <div className="sa-area sa-area--chart">
+                    <WaitingPanel title="Monthly Movement" icon="bi-bar-chart-line" description="Monthly movement will appear here once a product is loaded." />
+                  </div>
+                </div>
+              </div>
             )}
           </>
         )}

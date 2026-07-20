@@ -83,6 +83,10 @@ def product_details(tenant_id, store_id, product_code):
     return repository.get_product_details(tenant_id, store_id, product_code)
 
 
+def product_core(tenant_id, store_id, product_code, months=3):
+    return repository.get_product_core(tenant_id, store_id, product_code, months)
+
+
 def batch_details(tenant_id, store_id, product_code):
     return repository.get_batch_details(tenant_id, store_id, product_code)
 

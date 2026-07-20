@@ -4,14 +4,11 @@ import { ProtectedRoute } from './ProtectedRoute'
 import { RequireCapability } from './RequireCapability'
 import { useAccess } from '../hooks/useAccess'
 import PlatformOverviewPage from '../pages/PlatformOverviewPage'
-import TenantsPage from '../pages/platform/TenantsPage'
 import TenantWorkspacePage from '../pages/platform/TenantWorkspacePage'
-import StoresPage from '../pages/platform/StoresPage'
 import StoreWorkspacePage from '../pages/platform/StoreWorkspacePage'
-import UsersPage from '../pages/platform/UsersPage'
 import UserWorkspacePage from '../pages/platform/UserWorkspacePage'
-import RolesPage from '../pages/platform/RolesPage'
 import RoleWorkspacePage from '../pages/platform/RoleWorkspacePage'
+import PlatformManagementPage from '../pages/platform/PlatformManagementPage'
 import ModulesPage from '../pages/administration/ModulesPage'
 import ModuleWorkspacePage from '../pages/administration/ModuleWorkspacePage'
 import SyncAdministrationPage from '../pages/sync/SyncAdministrationPage'
@@ -67,13 +64,14 @@ export const appRouter = createBrowserRouter(
       >
         <Route index element={<RoleLanding />} />
         <Route path="/overview" element={<RequireCapability cap="PLATFORM"><PlatformOverviewPage /></RequireCapability>} />
-        <Route path="/platform/tenants" element={<RequireCapability cap="PLATFORM"><TenantsPage /></RequireCapability>} />
+        <Route path="/platform/manage" element={<RequireCapability cap="PLATFORM"><PlatformManagementPage /></RequireCapability>} />
+        <Route path="/platform/tenants" element={<Navigate to="/platform/manage" replace />} />
         <Route path="/platform/tenants/:tenantId" element={<RequireCapability cap="PLATFORM"><TenantWorkspacePage /></RequireCapability>} />
-        <Route path="/platform/stores" element={<RequireCapability cap="PLATFORM"><StoresPage /></RequireCapability>} />
+        <Route path="/platform/stores" element={<Navigate to="/platform/manage?tab=stores" replace />} />
         <Route path="/platform/stores/:storeId" element={<RequireCapability cap="PLATFORM"><StoreWorkspacePage /></RequireCapability>} />
-        <Route path="/platform/users" element={<RequireCapability cap="PLATFORM"><UsersPage /></RequireCapability>} />
+        <Route path="/platform/users" element={<Navigate to="/platform/manage?tab=users" replace />} />
         <Route path="/platform/users/:userId" element={<RequireCapability cap="PLATFORM"><UserWorkspacePage /></RequireCapability>} />
-        <Route path="/platform/roles" element={<RequireCapability cap="PLATFORM"><RolesPage /></RequireCapability>} />
+        <Route path="/platform/roles" element={<Navigate to="/platform/manage?tab=roles" replace />} />
         <Route path="/platform/roles/:roleId" element={<RequireCapability cap="PLATFORM"><RoleWorkspacePage /></RequireCapability>} />
         <Route path="/administration/modules" element={<RequireCapability cap="ADMINISTRATION"><ModulesPage /></RequireCapability>} />
         <Route path="/administration/modules/:moduleId" element={<RequireCapability cap="ADMINISTRATION"><ModuleWorkspacePage /></RequireCapability>} />
