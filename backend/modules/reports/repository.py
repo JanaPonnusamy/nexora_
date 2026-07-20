@@ -267,6 +267,21 @@ def purchased_not_sold(tenant_id, store_id, dwell_days, supplier_code=None):
     )
 
 
+def non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age=10, limit=50):
+    """Lean variant of non_moving(): pushes the PurAge filter and a TOP N cap
+    into SQL so callers that only need a handful of high-value rows (e.g. a
+    rotating highlight panel) don't pay for the full unfiltered report."""
+    sql = _NM_SELECT.replace("SELECT", "SELECT TOP (%d)" % int(limit), 1)
+    sql += _NM_GROUP
+    sql += """
+        HAVING (DATEDIFF(DAY, MAX(pt.LastBillDate), GETDATE()) > ? OR MAX(pt.LastBillDate) IS NULL)
+           AND DATEDIFF(DAY, MAX(pt.LastGrnDate), GETDATE()) >= ?
+        ORDER BY (p.TotalStock * ISNULL(MAX(p.MRP), 0)) DESC
+    """
+    params = (tenant_id, store_id, int(dwell_days), int(min_pur_age))
+    return _run(sql, params)
+
+
 # ---------------------------------------------------------------------------
 # 8. EYRUS — 7-day sales summary  (legacy Generate7DaySalesSummaryReport)
 #    Dynamic day columns for the trailing 7 days (server-generated dates → safe

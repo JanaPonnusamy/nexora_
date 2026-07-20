@@ -537,9 +537,8 @@ function StockAvailability({ session, settings, onOpenSettings }) {
 
   useEffect(() => {
     if (!allStores.length) return;
-    Promise.all(allStores.map((store) => api.getNonMovingStock(store.store_id, session, { dwellDays: 120 })
+    Promise.all(allStores.map((store) => api.getNonMovingStock(store.store_id, session, { dwellDays: 120, minPurAge: 10, limit: 50 })
       .then((result) => asArray(result?.rows)
-        .filter((row) => Number(row.PurAge ?? 0) >= 10)
         .map((row) => ({ ...row, __storeName: store.store_name || store.store_code })))
       .catch(() => [])))
       .then((lists) => {

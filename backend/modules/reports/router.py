@@ -31,6 +31,18 @@ def report_suppliers(
     return service.suppliers(tenant_id, store_id, q, limit)
 
 
+@router.get("/non-moving/highlights", response_model=ReportResult)
+def non_moving_highlights(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+    dwell_days: int = Query(120),
+    min_pur_age: int = Query(10),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Lean, TOP-N variant of the Non Moving report for rotating highlight panels."""
+    return service.non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age, limit)
+
+
 @router.get("/{report_key}", response_model=ReportResult)
 def run_report(
     report_key: str,

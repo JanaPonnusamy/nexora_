@@ -103,6 +103,11 @@ def suppliers(tenant_id, store_id, query, limit=30):
     return {"suppliers": repo.search_suppliers(tenant_id, store_id, query, limit)}
 
 
+def non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age, limit):
+    cols, rows = repo.non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age, limit)
+    return _result("non-moving", cols, rows, None)
+
+
 # --- Helpers --------------------------------------------------------------
 
 def _num(v):

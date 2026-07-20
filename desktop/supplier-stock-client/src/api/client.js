@@ -14,15 +14,27 @@ function authHeaders(session) {
 async function request(path, options = {}) {
   const settings = loadSettings();
   const session = options.session;
-  const response = await fetch(joinUrl(settings.apiBaseUrl, path), {
-    ...options,
-    headers: {
-      Accept: 'application/json',
-      ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-      ...authHeaders(session),
-      ...(options.headers || {})
-    }
-  });
+  const timeoutMs = options.timeoutMs ?? 45000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(joinUrl(settings.apiBaseUrl, path), {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+        ...authHeaders(session),
+        ...(options.headers || {})
+      }
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const text = await response.text();
   const data = text ? safeJson(text) : null;
@@ -238,10 +250,12 @@ export const api = {
 
   getNonMovingStock(storeId, session, filters = {}) {
     const settings = loadSettings();
-    return request(`/api/reports/non-moving${toQuery({
+    return request(`/api/reports/non-moving/highlights${toQuery({
       tenant_id: filters.tenantId || settings.tenantId,
       store_id: storeId,
-      dwell_days: filters.dwellDays || 60
+      dwell_days: filters.dwellDays || 60,
+      min_pur_age: filters.minPurAge || 10,
+      limit: filters.limit || 50
     })}`, { session });
   },
 
