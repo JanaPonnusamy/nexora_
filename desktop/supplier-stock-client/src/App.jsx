@@ -761,6 +761,8 @@ function StockAvailability({ session, settings, onOpenSettings }) {
   const searchProductsByStore = new Map(searchStores.map((store) => [store.store_id, store.products || []]));
   const visibleStores = allStores.length ? allStores : Array.from({ length: 5 }, (_, index) => ({ store_id: 'pending-' + index, store_name: 'Loading store...' }));
   const stores = orderStores(visibleStores, loginStoreId, settings?.storeOrder || []);
+  const warehouseStore = stores.find(isWarehouseStore);
+  const otherStores = stores.filter((store) => !isWarehouseStore(store));
 
   return (
     <section className="store-workbench">
@@ -786,26 +788,51 @@ function StockAvailability({ session, settings, onOpenSettings }) {
         </div>
       </div>
 
-      <NonMovingHighlightCard
-        nonMovingProducts={nonMovingProducts}
-        nonMovingLoading={nonMovingLoading}
-        nonMovingIndex={nonMovingIndex}
-        onPrev={() => nonMovingStep(-1)}
-        onNext={() => nonMovingStep(1)}
-        onSearch={(productName) => {
-          if (!productName) return;
-          setIsAutoQuery(false);
-          setQuery(productName);
-        }}
-      />
+      <div className="top-summary-row">
+        {warehouseStore && (
+          <div className="store-row-workspace no-side-search warehouse-only top-summary-nmw">
+            <section className="store-row-grid">
+              <StoreDataRow
+                key={warehouseStore.store_id || warehouseStore.store_code}
+                store={warehouseStore}
+                colorIndex={stores.indexOf(warehouseStore)}
+                hasSearched={hasSearched}
+                searchProducts={searchProductsByStore.get(warehouseStore.store_id) || []}
+                detail={storeDetails[warehouseStore.store_id]}
+                onProductSelect={(product) => handleProductSelect(warehouseStore.store_id, product)}
+                onSaleSelect={selectSale}
+                onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store: warehouseStore, row }) : undefined}
+                hideSupplierColumn={hideSupplierColumn}
+                restrictWarehouse
+                selected={selectedStoreId === warehouseStore.store_id}
+                onSelect={() => setSelectedStoreId(warehouseStore.store_id)}
+              />
+            </section>
+          </div>
+        )}
+
+        <NonMovingHighlightCard
+          nonMovingProducts={nonMovingProducts}
+          nonMovingLoading={nonMovingLoading}
+          nonMovingIndex={nonMovingIndex}
+          onPrev={() => nonMovingStep(-1)}
+          onNext={() => nonMovingStep(1)}
+          onSearch={(productName) => {
+            if (!productName) return;
+            setIsAutoQuery(false);
+            setQuery(productName);
+          }}
+        />
+      </div>
 
       <div className="store-row-workspace no-side-search">
         <section className="store-row-grid">
-          {stores.map((store, index) => (
+          <StoreColumnHeaders hideSupplierColumn={hideSupplierColumn} sticky />
+          {otherStores.map((store) => (
             <StoreDataRow
               key={store.store_id || store.store_code}
               store={store}
-              colorIndex={index}
+              colorIndex={stores.indexOf(store)}
               hasSearched={hasSearched}
               searchProducts={searchProductsByStore.get(store.store_id) || []}
               detail={storeDetails[store.store_id]}
@@ -813,7 +840,7 @@ function StockAvailability({ session, settings, onOpenSettings }) {
               onSaleSelect={selectSale}
               onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store, row }) : undefined}
               hideSupplierColumn={hideSupplierColumn}
-              restrictWarehouse={isWarehouseStore(store) && !isSuperAdmin(session)}
+              restrictWarehouse={false}
               selected={selectedStoreId === store.store_id}
               onSelect={() => setSelectedStoreId(store.store_id)}
             />
@@ -837,13 +864,13 @@ const PURCHASE_COLS_NO_SUPPLIER = '40px 38px 70px 1fr';
 const SALES_COLS = '36px 62px 80px 42px 1fr 52px';
 const BILL_COLS = '1fr 36px 42px 52px 52px 62px';
 
-function StoreColumnHeaders({ hideSupplierColumn = false, restrictWarehouse = false }) {
+function StoreColumnHeaders({ hideSupplierColumn = false, restrictWarehouse = false, sticky = false }) {
   const purchaseCols = hideSupplierColumn ? PURCHASE_COLS_NO_SUPPLIER : PURCHASE_COLS;
   const purchaseHeaders = hideSupplierColumn ? ['Qty', 'Free', 'GRN Date', 'GRN No'] : ['Qty', 'Free', 'GRN Date', 'GRN No', 'Supplier'];
 
   if (restrictWarehouse) {
     return (
-      <div className="store-column-headers">
+      <div className={`store-column-headers ${sticky ? 'sticky' : ''}`}>
         <span className="store-header-cell" />
         <div className="header-cell warehouse-only-header-cell">
           <div className="header-cell-title">Stock</div>
@@ -854,7 +881,7 @@ function StoreColumnHeaders({ hideSupplierColumn = false, restrictWarehouse = fa
   }
 
   return (
-    <div className="store-column-headers">
+    <div className={`store-column-headers ${sticky ? 'sticky' : ''}`}>
       <span className="store-header-cell" />
       <div className="header-cell">
         <div className="header-cell-title">Stock</div>
@@ -904,32 +931,34 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
   const currentProduct = detail?.product?.product_name;
   const pending = hasSearched && searchProducts.length > 0 && detail === undefined;
 
+  const statusText = currentProduct
+    ? `${restrictWarehouse ? '' : 'Showing: '}${currentProduct}`
+    : pending ? 'Loading...' : hasSearched ? 'No product selected' : 'Waiting for search...';
+
   return (
     <article
       className={`store-data-row ${selected ? 'selected' : ''} ${pending ? 'pending' : ''}`}
       style={{ '--store-color': storeColor }}
     >
-      <div className="store-row-header-bar" onClick={onSelect}>
-        <span className="store-row-header-name">{store.store_name || 'Loading store...'}</span>
-        <span className="store-row-header-product">
-          {restrictWarehouse ? 'Stock search: ' : ''}
-          {currentProduct ? `${restrictWarehouse ? '' : 'Showing: '}${currentProduct}` : pending ? 'Loading...' : hasSearched ? 'No product selected' : 'Waiting for search...'}
-        </span>
-      </div>
-
-      <StoreColumnHeaders
-        hideSupplierColumn={hideSupplierColumn}
-        restrictWarehouse={restrictWarehouse}
-      />
+      {restrictWarehouse && (
+        <StoreColumnHeaders
+          hideSupplierColumn={hideSupplierColumn}
+          restrictWarehouse={restrictWarehouse}
+        />
+      )}
 
       <div className="store-row-grid-body" onClick={onSelect}>
-        <div className="store-row-label">
+        <div className="store-row-label" title={store.store_name || 'Loading store...'}>
           {(store.store_code || shortStoreName(store.store_name)).split('').map((char, index) => (
             <strong key={index}>{char}</strong>
           ))}
         </div>
 
         <section className={`row-cell stock-cell ${restrictWarehouse ? 'stock-cell-full' : ''}`}>
+          <div className="stock-cell-status">
+            {restrictWarehouse ? 'Stock search: ' : ''}
+            {statusText}
+          </div>
           <StoreProductGrid
             products={searchProducts}
             hasSearched={hasSearched}
@@ -1234,6 +1263,7 @@ function NonMovingHighlightCard({ nonMovingProducts, nonMovingLoading, nonMoving
     <section className="non-moving-global-card">
       <NonMovingDetailPanel
         product={product}
+        allProducts={nonMovingProducts}
         onSearch={onSearch}
         nav={{
           index,
@@ -1247,7 +1277,9 @@ function NonMovingHighlightCard({ nonMovingProducts, nonMovingLoading, nonMoving
   );
 }
 
-function NonMovingDetailPanel({ product, onSearch, nav }) {
+const OVERVIEW_COLS = '70px 1fr 70px 60px 70px 90px 90px';
+
+function NonMovingDetailPanel({ product, allProducts, onSearch, nav }) {
   const stock = Number(product.TotalStock ?? product.Batch_Stock ?? 0);
   const mrp = Number(product.MRP ?? 0);
   const totalValue = stock * mrp;
@@ -1260,6 +1292,10 @@ function NonMovingDetailPanel({ product, onSearch, nav }) {
     : nearExpiry
       ? `expires in ${daysLeft}d`
       : null;
+
+  const overviewRows = (allProducts || [])
+    .filter((row) => row.ProductName === product.ProductName)
+    .sort((a, b) => String(a.__storeName || '').localeCompare(String(b.__storeName || '')));
 
   return (
     <div className="non-moving-wrap">
@@ -1308,6 +1344,35 @@ function NonMovingDetailPanel({ product, onSearch, nav }) {
         <div><span>Supplier</span><strong title={product.SupplierName || ''}>{product.SupplierName || '-'}</strong></div>
         <div><span>Last Received</span><strong>{formatDate(product.LastGRNDate)}</strong></div>
         <div><span>Last Sale</span><strong>{formatDate(product.LastBillDate)}</strong></div>
+      </div>
+
+      <div className="non-moving-overview">
+        <GridRow
+          cols={OVERVIEW_COLS}
+          tag="span"
+          className="non-moving-overview-header"
+          cells={['Store', 'Supplier', 'Cost', 'MRP', 'Stock', 'Last Received', 'Last Sale']}
+        />
+        <div className="non-moving-overview-body">
+          {overviewRows.length ? overviewRows.map((row, index) => (
+            <GridRow
+              key={`${row.__storeName}-${index}`}
+              cols={OVERVIEW_COLS}
+              tag="span"
+              cells={[
+                row.__storeName || '-',
+                row.SupplierName || '-',
+                row.PurchasePrice ?? '-',
+                row.MRP ?? '-',
+                row.TotalStock ?? row.Batch_Stock ?? '-',
+                formatDate(row.LastGRNDate),
+                formatDate(row.LastBillDate)
+              ]}
+            />
+          )) : (
+            <div className="row-empty-state">No store overview available.</div>
+          )}
+        </div>
       </div>
     </div>
   );
