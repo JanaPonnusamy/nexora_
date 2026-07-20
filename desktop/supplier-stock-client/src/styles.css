@@ -791,8 +791,11 @@ th {
   width: 100%;
   height: auto !important;
   max-height: none !important;
-  overflow: visible !important;
-  gap: 6px;
+  overflow: hidden;
+  gap: 0;
+  border-radius: 8px;
+  border: 1px solid #5eead4;
+  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.2);
 }
 
 .non-moving-header-box {
@@ -802,10 +805,7 @@ th {
   height: 30px;
   min-height: 30px;
   max-height: 30px;
-  border-radius: 8px;
-  border: 1px solid #5eead4;
   background: #0d9488;
-  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.28);
   overflow: hidden;
 }
 
@@ -902,10 +902,7 @@ th {
   width: 100%;
   padding: 10px 14px;
   gap: 0;
-  border-radius: 8px;
-  border: 1px solid #99f6e4;
   background: #f0fdfa;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
 }
 
 .non-moving-panel-row.clickable {
