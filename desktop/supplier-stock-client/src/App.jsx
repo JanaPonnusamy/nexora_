@@ -929,7 +929,7 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
           ))}
         </div>
 
-        <section className="row-cell stock-cell">
+        <section className={`row-cell stock-cell ${restrictWarehouse ? 'stock-cell-panel' : ''}`}>
           <StoreProductGrid
             products={searchProducts}
             hasSearched={hasSearched}
