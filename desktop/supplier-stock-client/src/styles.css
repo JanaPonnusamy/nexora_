@@ -754,35 +754,17 @@ th {
   align-items: center;
 }
 
-.row-cell.stock-cell-panel {
-  margin: 6px 8px 6px 6px;
-  padding: 6px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+.row-cell.stock-cell-full {
+  grid-column: 2 / -1;
 }
 
-.row-cell.warehouse-restricted-cell {
-  grid-column: 3 / -1;
-  display: flex !important;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: stretch;
-  min-height: 0;
-  height: auto !important;
-  max-height: none !important;
-  margin: 6px 8px;
-  padding: 8px;
-  overflow: visible !important;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #f8fafc;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+.warehouse-only-header-cell {
+  grid-column: 2 / -1;
 }
 
-.warehouse-header-cell {
-  grid-column: 3 / -1;
+.non-moving-global-card {
+  margin: 0 0 14px;
+  padding: 0;
 }
 
 .non-moving-wrap {

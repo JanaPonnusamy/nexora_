@@ -786,6 +786,19 @@ function StockAvailability({ session, settings, onOpenSettings }) {
         </div>
       </div>
 
+      <NonMovingHighlightCard
+        nonMovingProducts={nonMovingProducts}
+        nonMovingLoading={nonMovingLoading}
+        nonMovingIndex={nonMovingIndex}
+        onPrev={() => nonMovingStep(-1)}
+        onNext={() => nonMovingStep(1)}
+        onSearch={(productName) => {
+          if (!productName) return;
+          setIsAutoQuery(false);
+          setQuery(productName);
+        }}
+      />
+
       <div className="store-row-workspace no-side-search">
         <section className="store-row-grid">
           {stores.map((store, index) => (
@@ -801,16 +814,6 @@ function StockAvailability({ session, settings, onOpenSettings }) {
               onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store, row }) : undefined}
               hideSupplierColumn={hideSupplierColumn}
               restrictWarehouse={isWarehouseStore(store) && !isSuperAdmin(session)}
-              nonMovingProducts={nonMovingProducts}
-              nonMovingLoading={nonMovingLoading}
-              nonMovingIndex={nonMovingIndex}
-              onNonMovingPrev={() => nonMovingStep(-1)}
-              onNonMovingNext={() => nonMovingStep(1)}
-              onNonMovingSearch={(productName) => {
-                if (!productName) return;
-                setIsAutoQuery(false);
-                setQuery(productName);
-              }}
               selected={selectedStoreId === store.store_id}
               onSelect={() => setSelectedStoreId(store.store_id)}
             />
@@ -842,12 +845,9 @@ function StoreColumnHeaders({ hideSupplierColumn = false, restrictWarehouse = fa
     return (
       <div className="store-column-headers">
         <span className="store-header-cell" />
-        <div className="header-cell">
+        <div className="header-cell warehouse-only-header-cell">
           <div className="header-cell-title">Stock</div>
           <GridRow cols={STOCK_COLS} cells={['Product', 'Unit', 'Stock']} tag="span" />
-        </div>
-        <div className="header-cell warehouse-header-cell">
-          <div className="header-cell-title">Non-Moving Stock</div>
         </div>
       </div>
     );
@@ -891,7 +891,7 @@ function GridRow({ cols, cells, tag: Tag = 'div', className = '', onClick }) {
   );
 }
 
-function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, onProductSelect, onSaleSelect, onPurchaseSelect, hideSupplierColumn, restrictWarehouse, nonMovingProducts, nonMovingLoading, nonMovingIndex, onNonMovingPrev, onNonMovingNext, onNonMovingSearch, selected, onSelect }) {
+function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, onProductSelect, onSaleSelect, onPurchaseSelect, hideSupplierColumn, restrictWarehouse, selected, onSelect }) {
   const batches = detail?.batches || [];
   const purchases = detail?.purchases || [];
   const sales = detail?.sales || [];
@@ -929,7 +929,7 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
           ))}
         </div>
 
-        <section className={`row-cell stock-cell ${restrictWarehouse ? 'stock-cell-panel' : ''}`}>
+        <section className={`row-cell stock-cell ${restrictWarehouse ? 'stock-cell-full' : ''}`}>
           <StoreProductGrid
             products={searchProducts}
             hasSearched={hasSearched}
@@ -938,27 +938,7 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
           />
         </section>
 
-        {restrictWarehouse ? (
-          <section className="row-cell warehouse-restricted-cell">
-            {nonMovingProducts?.length > 0 ? (
-              <NonMovingDetailPanel
-                product={nonMovingProducts[nonMovingIndex % nonMovingProducts.length]}
-                onSearch={onNonMovingSearch}
-                nav={{
-                  index: nonMovingIndex % nonMovingProducts.length,
-                  total: nonMovingProducts.length,
-                  storeName: nonMovingProducts[nonMovingIndex % nonMovingProducts.length]?.__storeName,
-                  onPrev: onNonMovingPrev,
-                  onNext: onNonMovingNext
-                }}
-              />
-            ) : (
-              <div className="row-empty-state">
-                {nonMovingLoading ? 'Loading non-moving stock…' : 'No non-moving stock found.'}
-              </div>
-            )}
-          </section>
-        ) : (
+        {restrictWarehouse ? null : (
           <>
             <section className="row-cell trend-cell">
               {pending ? <SkeletonBlock lines={1} /> : <MonthlyMovementChart rows={movement} />}
@@ -1234,6 +1214,37 @@ function daysUntil(dateValue) {
   const target = new Date(String(dateValue).slice(0, 10));
   if (Number.isNaN(target.getTime())) return null;
   return Math.round((target.getTime() - Date.now()) / 86400000);
+}
+
+function NonMovingHighlightCard({ nonMovingProducts, nonMovingLoading, nonMovingIndex, onPrev, onNext, onSearch }) {
+  if (!nonMovingProducts?.length) {
+    return (
+      <section className="non-moving-global-card">
+        <div className="row-empty-state">
+          {nonMovingLoading ? 'Loading non-moving stock…' : 'No non-moving stock found.'}
+        </div>
+      </section>
+    );
+  }
+
+  const index = nonMovingIndex % nonMovingProducts.length;
+  const product = nonMovingProducts[index];
+
+  return (
+    <section className="non-moving-global-card">
+      <NonMovingDetailPanel
+        product={product}
+        onSearch={onSearch}
+        nav={{
+          index,
+          total: nonMovingProducts.length,
+          storeName: product?.__storeName,
+          onPrev,
+          onNext
+        }}
+      />
+    </section>
+  );
 }
 
 function NonMovingDetailPanel({ product, onSearch, nav }) {
