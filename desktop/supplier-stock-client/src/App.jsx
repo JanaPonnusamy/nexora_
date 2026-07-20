@@ -912,7 +912,8 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
       <div className="store-row-header-bar" onClick={onSelect}>
         <span className="store-row-header-name">{store.store_name || 'Loading store...'}</span>
         <span className="store-row-header-product">
-          {currentProduct ? `Showing: ${currentProduct}` : pending ? 'Loading...' : hasSearched ? 'No product selected' : 'Waiting for search...'}
+          {restrictWarehouse ? 'Stock search: ' : ''}
+          {currentProduct ? `${restrictWarehouse ? '' : 'Showing: '}${currentProduct}` : pending ? 'Loading...' : hasSearched ? 'No product selected' : 'Waiting for search...'}
         </span>
       </div>
 

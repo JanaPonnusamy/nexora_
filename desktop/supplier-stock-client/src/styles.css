@@ -758,7 +758,7 @@ th {
   grid-column: 3 / -1;
   display: flex !important;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: stretch;
   min-height: 0;
   height: auto !important;
