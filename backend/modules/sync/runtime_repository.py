@@ -311,8 +311,19 @@ def _accumulate_details(cursor, execution_id, table_name, sync_type,
 
 
 def report_table_metrics(execution_id, table_name, sync_type, rows_examined,
-                         rows_changed, rows_uploaded, rows_skipped, source_total):
-    """Agent-reported per-table delta metrics (examined/changed/skipped)."""
+                         rows_changed, rows_uploaded, rows_skipped, source_total,
+                         status="COMPLETED", error_message=None):
+    """Agent-reported per-table delta metrics (examined/changed/skipped).
+
+    This is the only signal HO gets that a table's sync actually finished.
+    Before status/error_message existed here, a per-table exception on the
+    agent (run_table_safe's except branch) reported the exact same all-zero
+    shape as a table with nothing to change, so a table that silently died
+    mid-run (e.g. ProductTrans's 600-day rescan hanging/crashing) was
+    indistinguishable in this table from a healthy empty sync — the summary
+    row was stamped 'RUNNING' once and never revisited. Recording the real
+    terminal status + error text makes a stalled table observable instead of
+    looking identical to "nothing changed"."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -321,11 +332,12 @@ def report_table_metrics(execution_id, table_name, sync_type, rows_examined,
             UPDATE dbo.sync_execution_details
             SET rows_examined = ?, rows_changed = ?, rows_skipped = ?,
                 source_total = ?, sync_type = COALESCE(?, sync_type),
+                status = ?, error_message = ?,
                 completed_at = GETDATE()
             WHERE execution_id = ? AND table_name = ? AND chunk_no = 0
             """,
             (rows_examined, rows_changed, rows_skipped, source_total,
-             sync_type, execution_id, table_name)
+             sync_type, status, error_message, execution_id, table_name)
         )
         if cursor.rowcount == 0:
             cursor.execute(
@@ -341,16 +353,17 @@ def report_table_metrics(execution_id, table_name, sync_type, rows_examined,
                 (execution_id, tenant_id, store_id, table_name, chunk_no, chunk_size,
                  rows_processed, rows_failed, rows_examined, rows_changed,
                  rows_uploaded, rows_skipped, source_total, sync_type, status,
-                 started_at, created_at)
-                VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 0, ?, ?, ?, 'RUNNING', GETDATE(), GETDATE())
+                 error_message, started_at, created_at, completed_at)
+                VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 0, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), GETDATE())
                 """,
                 (execution_id, tenant_id, store_id, table_name, rows_examined,
-                 rows_changed, rows_skipped, source_total, sync_type)
+                 rows_changed, rows_skipped, source_total, sync_type, status,
+                 error_message)
             )
         conn.commit()
         return {"execution_id": execution_id, "table_name": table_name,
                 "rows_examined": rows_examined, "rows_changed": rows_changed,
-                "rows_skipped": rows_skipped}
+                "rows_skipped": rows_skipped, "status": status}
     except Exception:
         conn.rollback()
         raise

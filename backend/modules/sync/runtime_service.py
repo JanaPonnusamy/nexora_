@@ -71,6 +71,8 @@ def report_table_metrics(payload):
         payload.get("rows_uploaded", 0),
         payload.get("rows_skipped", 0),
         payload.get("source_total", 0),
+        payload.get("status") or ("FAILED" if payload.get("error_message") else "COMPLETED"),
+        payload.get("error_message"),
     )
 
 

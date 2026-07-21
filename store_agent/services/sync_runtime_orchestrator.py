@@ -134,9 +134,12 @@ class SyncRuntimeOrchestrator:
             )
             # Record the per-table failure at HO so history never shows a silent
             # gap (best-effort; a reporting error must not abort the sequence).
+            # Without status/error_message this looked identical to a healthy
+            # empty sync in HO's dashboard, so a table that kept crashing every
+            # cycle (e.g. ProductTrans) went stale for days with no visible sign.
             try:
                 self._report(task_id, name, table.get("sync_mode"),
-                             0, 0, 0, 0, 0)
+                             0, 0, 0, 0, 0, status="FAILED", error_message=reason)
             except Exception:
                 pass
             try:
@@ -278,11 +281,13 @@ class SyncRuntimeOrchestrator:
                 break  # HO still unreachable; retry next cycle
 
     def _report(self, execution_id, table_name, sync_type, examined, changed,
-                uploaded, skipped, source_total):
+                uploaded, skipped, source_total, status="COMPLETED",
+                error_message=None):
         try:
             self.sender.report_table_metrics(
                 execution_id, table_name, sync_type, examined, changed,
                 uploaded, skipped, source_total,
+                status=status, error_message=error_message,
             )
         except Exception:
             pass  # metrics are best-effort, never fail a sync

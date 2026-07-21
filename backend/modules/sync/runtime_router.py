@@ -44,6 +44,8 @@ class TableMetricsRequest(BaseModel):
     rows_uploaded: int = 0
     rows_skipped: int = 0
     source_total: int = 0
+    status: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 class ChunkAckRequest(BaseModel):
