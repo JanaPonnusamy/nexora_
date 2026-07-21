@@ -1,7 +1,7 @@
 ﻿"""Platform-only data access for Supplier Stock Analysis."""
 
 from config.database import get_connection
-from modules.procurement._dbutil import rows_to_dicts
+from modules.procurement._dbutil import rows_to_dicts, store_stock_expr
 
 
 def _object_exists(cur, name):
@@ -213,7 +213,7 @@ def suggestions(tenant_id, supplier_product_name, store_id=None, limit=25):
             st.store_name,
             CAST(p.productcode AS VARCHAR(100)) AS product_code,
             p.productname AS product_name,
-            p.totalstock AS stock,
+            {store_stock_expr("p")} AS stock,
             p.mrp,
             ({' + '.join(score)}) AS match_score
         FROM sync.Products p
@@ -227,14 +227,14 @@ def suggestions(tenant_id, supplier_product_name, store_id=None, limit=25):
 
 def all_store_stock(tenant_id, product_code):
     return _fetch(
-        """
+        f"""
         SELECT
             CAST(st.store_id AS VARCHAR(36)) AS store_id,
             st.store_code,
             st.store_name,
             CAST(p.productcode AS VARCHAR(100)) AS product_code,
             p.productname AS product_name,
-            ISNULL(p.totalstock, 0) AS total_stock,
+            {store_stock_expr("p")} AS total_stock,
             p.saleunit AS sale_unit,
             p.unitdescription AS unit_description,
             p.mrp,
@@ -254,8 +254,8 @@ def all_store_stock(tenant_id, product_code):
         WHERE st.tenant_id = ?
           AND ISNULL(st.is_active, 1) = 1
         GROUP BY st.store_id, st.store_code, st.store_name, p.productcode,
-                 p.productname, p.totalstock, p.saleunit, p.unitdescription,
-                 p.mrp, p.purchaseprice
+                 p.productname, p.store_id, p.totalstock, p.saleunit,
+                 p.unitdescription, p.mrp, p.purchaseprice
         ORDER BY st.store_name
         """,
         (product_code, product_code, tenant_id),
