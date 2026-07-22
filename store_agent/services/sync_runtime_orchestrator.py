@@ -46,6 +46,17 @@ class SyncRuntimeOrchestrator:
             config = self.catalog.download_configuration(task_id)
             # 028B: persist HO configuration into SQLite (single source = HO).
             tables = config.get("tables", [])
+            if not tables:
+                # An active production sync should never legitimately have zero
+                # tables configured. Treating this the same as "synced 0 tables
+                # successfully" hid a real problem: three stores each silently
+                # completed a task without processing anything, and it looked
+                # identical in HO's history to a normal quiet cycle. Fail loudly
+                # instead so a bad HO route / stale config surfaces immediately.
+                raise RuntimeError(
+                    "EMPTY_TABLE_CONFIG: HO returned zero active tables for this "
+                    "task; refusing to report a false COMPLETED"
+                )
             self.cache.save_sync_config(tables)
         except Exception as ex:
             # Only a failure to obtain the configuration aborts the whole task —
