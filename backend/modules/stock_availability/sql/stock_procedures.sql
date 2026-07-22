@@ -53,21 +53,13 @@ BEGIN
 
     DECLARE @Search NVARCHAR(100) = NULLIF(LTRIM(RTRIM(@SearchText)), '');
 
-    ;WITH ranked AS
+    ;WITH filtered AS
     (
         SELECT
             s.store_id, s.store_code, s.store_name, s.store_order,
             p.ProductCode, p.ProductName, p.UnitDescription,
-            ISNULL(p.TotalStock, 0) AS TotalStock,
-            ISNULL(p.MRP, 0)        AS MRP,
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY s.store_id
-                ORDER BY
-                    CASE WHEN @Search IS NULL THEN p.ProductName END,
-                    CASE WHEN @Search IS NOT NULL THEN ISNULL(p.TotalStock, 0) END DESC,
-                    p.ProductName
-            ) AS rn
+            p.TotalStock AS RawTotalStock,
+            ISNULL(p.MRP, 0) AS MRP
         FROM sync.Products p
         INNER JOIN dbo.stores s
                 ON s.store_id  = p.store_id
@@ -79,7 +71,37 @@ BEGIN
                 OR p.ProductName LIKE @Search + '%'
                 OR CAST(p.ProductCode AS NVARCHAR(50)) LIKE @Search + '%'
               )
-          AND (@OnlyStock = 0 OR ISNULL(p.TotalStock, 0) > 0)
+    ),
+    stocked AS
+    (
+        SELECT
+            f.store_id, f.store_code, f.store_name, f.store_order,
+            f.ProductCode, f.ProductName, f.UnitDescription, f.MRP,
+            COALESCE(pt.StockInHand, f.RawTotalStock, 0) AS TotalStock
+        FROM filtered f
+        OUTER APPLY (
+            SELECT TOP (1) pt.StockInHand
+            FROM sync.ProductTrans pt
+            WHERE pt.store_id = f.store_id
+              AND pt.ProductCode = f.ProductCode
+            ORDER BY pt.MonthOfStatistics DESC
+        ) pt
+    ),
+    ranked AS
+    (
+        SELECT
+            store_id, store_code, store_name, store_order,
+            ProductCode, ProductName, UnitDescription, TotalStock, MRP,
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY store_id
+                ORDER BY
+                    CASE WHEN @Search IS NULL THEN ProductName END,
+                    CASE WHEN @Search IS NOT NULL THEN TotalStock END DESC,
+                    ProductName
+            ) AS rn
+        FROM stocked
+        WHERE @OnlyStock = 0 OR TotalStock > 0
     )
     SELECT
         store_id,
