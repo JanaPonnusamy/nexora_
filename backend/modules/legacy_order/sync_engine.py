@@ -215,6 +215,39 @@ def _watermark(dest_cur, table_name, dest_table, store_name):
     return None
 
 
+def _ensure_ho_supplier_code_column(dest_cur, dest_conn):
+    """SupplierProductMatch predates the ho_supplier_code column; add it once."""
+    exists = dest_cur.execute(
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_NAME = 'SupplierProductMatch' AND COLUMN_NAME = 'ho_supplier_code'"
+    ).fetchone()[0]
+    if not exists:
+        dest_cur.execute(
+            "ALTER TABLE SupplierProductMatch ADD ho_supplier_code VARCHAR(50) NULL"
+        )
+        dest_conn.commit()
+
+
+def _stamp_ho_supplier_code(dest_cur, dest_conn, store_name):
+    """Resolve each match row's branch-local SupplierCode to the canonical
+    HO-side code via OrderSuppliers.CommonSupplierCode, falling back to the
+    branch code itself when no HO mapping exists. OrderSuppliers is synced
+    earlier in the same TABLE_PLAN run, so the lookup is always fresh.
+    """
+    dest_cur.execute(
+        "UPDATE SPM SET SPM.ho_supplier_code = "
+        "COALESCE(NULLIF(LTRIM(RTRIM(OS.CommonSupplierCode)), ''), SPM.SupplierCode) "
+        "FROM SupplierProductMatch SPM "
+        "LEFT JOIN OrderSuppliers OS "
+        "  ON OS.suppliercode COLLATE SQL_Latin1_General_CP1_CI_AS "
+        "     = SPM.SupplierCode COLLATE SQL_Latin1_General_CP1_CI_AS "
+        " AND OS.StoreName = SPM.StoreName "
+        "WHERE SPM.StoreName = ?",
+        store_name,
+    )
+    dest_conn.commit()
+
+
 def sync_table(source_cs, dest_cs, table_name, dest_table, store_name, on_progress=None):
     """Port of CentralSyncHelper.SyncTable.
 
@@ -223,6 +256,9 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name, on_progre
     with pyodbc.connect(dest_cs, timeout=30) as dest_conn:
         dest_conn.timeout = 0
         dest_cur = dest_conn.cursor()
+
+        if dest_table.lower() == "supplierproductmatch":
+            _ensure_ho_supplier_code_column(dest_cur, dest_conn)
 
         # STEP 1 -- watermark
         param = _watermark(dest_cur, table_name, dest_table, store_name)
@@ -311,6 +347,13 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name, on_progre
 
             if on_progress:
                 on_progress(min(start + BATCH_SIZE, total_rows), total_rows)
+
+        if dest_table.lower() == "supplierproductmatch" and not errors:
+            try:
+                _stamp_ho_supplier_code(dest_cur, dest_conn, store_name)
+            except Exception as exc:
+                dest_conn.rollback()
+                errors.append(f"ho_supplier_code stamping: {exc}")
 
         return total_rows, errors
 
