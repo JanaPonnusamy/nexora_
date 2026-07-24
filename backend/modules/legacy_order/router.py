@@ -52,7 +52,8 @@ def start_sync(payload: SyncRequest):
     except ConnectionError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        status = 409 if "already running" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc))
 
 
 @router.post("/order-process", response_model=JobStarted)
@@ -65,7 +66,8 @@ def start_order_process(payload: OrderProcessRequest):
     except ConnectionError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        status = 409 if "already running" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc))
 
 
 @router.get("/jobs")

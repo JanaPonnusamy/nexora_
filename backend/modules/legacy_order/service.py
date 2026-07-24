@@ -69,6 +69,15 @@ def list_jobs(limit=20):
         return [dict(j) for j in jobs[:limit]]
 
 
+def _running_job_kind(store_name):
+    """Kind of job already running for this store, if any."""
+    with _lock:
+        for job in _jobs.values():
+            if job["store_name"] == store_name and job["status"] == "running":
+                return job["kind"]
+    return None
+
+
 def _resolve_store(store_name):
     store = repository.get_store(store_name)
     if not store:
@@ -84,6 +93,12 @@ def _resolve_store(store_name):
 
 def start_sync(store_name, tables=None):
     store = _resolve_store(store_name)
+
+    running = _running_job_kind(store_name)
+    if running:
+        raise ValueError(
+            f"A {running} job is already running for '{store_name}'. Wait for it to finish."
+        )
 
     ok, error = repository.test_branch_connection(store)
     if not ok:
@@ -166,6 +181,12 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
         raise ValueError("Min days cannot be greater than max days.")
     if mode not in ("local", "remote"):
         raise ValueError("Mode must be 'local' or 'remote'.")
+
+    running = _running_job_kind(store_name)
+    if running:
+        raise ValueError(
+            f"A {running} job is already running for '{store_name}'. Wait for it to finish."
+        )
 
     # Order Process always begins with a fresh full branch sync.
     ok, error = repository.test_branch_connection(store)
