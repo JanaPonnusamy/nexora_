@@ -26,9 +26,51 @@ class SyncAdminRepository:
 
     # ===== Control Center (read-only) =====
 
+    def _reap_stale_executions(self, cur):
+        """Fail-close orphaned RUNNING executions.
+
+        The Store Agent is the only writer that can move an execution out of
+        RUNNING (complete_task/fail_task in modules/sync/runtime_repository.py).
+        If the agent process dies or the service restarts mid-sync, nothing
+        ever calls those, so the row stays RUNNING forever and the dashboard
+        shows a permanently "stuck" job even after later syncs for the same
+        store complete fine. Two independent signals catch this:
+          1. The agent heartbeat (dbo.store_agent_registry) is written
+             independently of any in-progress sync, so an agent gone silent
+             for 90s+ while an execution is still RUNNING means the agent
+             itself died mid-sync.
+          2. A Store Agent service restart can come back up and resume
+             heartbeating fine while the specific in-flight execution it lost
+             track of never gets revisited (heartbeat alone misses this case
+             -- confirmed against a real stuck row whose agent was ONLINE the
+             whole time). The slowest table/full sync observed in history is
+             ~5 minutes, so any RUNNING execution older than 2 hours is safe
+             to treat as orphaned regardless of agent health.
+        """
+        cur.execute("""
+            UPDATE e
+            SET e.execution_status = 'FAILED', e.completed_at = GETDATE()
+            FROM dbo.sync_execution e
+            LEFT JOIN dbo.store_agent_registry reg
+                ON reg.store_id = e.store_id AND reg.is_active = 1
+            WHERE e.execution_status = 'RUNNING'
+              AND (reg.last_heartbeat IS NULL
+                   OR reg.last_heartbeat < DATEADD(SECOND, -90, GETDATE())
+                   OR e.started_at < DATEADD(HOUR, -2, GETDATE()))
+        """)
+        if cur.rowcount:
+            cur.execute("""
+                INSERT INTO dbo.sync_execution_audit (execution_id, action_name, message)
+                SELECT e.execution_id, 'FAILED', 'Marked failed: execution orphaned (agent offline or stuck past max runtime)'
+                FROM dbo.sync_execution e
+                WHERE e.execution_status = 'FAILED' AND e.completed_at >= DATEADD(SECOND, -5, GETDATE())
+            """)
+        cur.connection.commit()
+
     def control_center(self):
         conn = get_connection()
         cur = conn.cursor()
+        self._reap_stale_executions(cur)
 
         cur.execute("SELECT COUNT(*) FROM dbo.stores WHERE is_active = 1")
         total = cur.fetchone()[0]
@@ -318,6 +360,7 @@ class SyncAdminRepository:
                     sync_mode=None, search=None, limit=200):
         conn = get_connection()
         cur = conn.cursor()
+        self._reap_stale_executions(cur)
         where, params = [], []
         if store_id:
             where.append("e.store_id = ?"); params.append(store_id)
