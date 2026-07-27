@@ -34,6 +34,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Shelf Sorting & Excel Split', to: '/procurement/shelf-sort', icon: 'bi-signpost-split', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Shelf Category Training', to: '/procurement/shelf-categories', icon: 'bi-mortarboard', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Pharmacy Reports', to: '/procurement/reports', icon: 'bi-bar-chart', cap: 'REPORTS' },
+      { label: 'Supplier Stock Distribution', to: '/procurement/distribution', icon: 'bi-broadcast', cap: 'PROCUREMENT_ADMIN' },
     ],
   },
   {
@@ -80,6 +81,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-gear',
     children: [
       { label: 'Reports', to: '/reports', icon: 'bi-bar-chart', cap: 'REPORTS' },
+      { label: 'Time Report', to: '/time-report', icon: 'bi-clock-history', cap: 'TIME_REPORT' },
       { label: 'Pass Gen', to: '/pass-gen', icon: 'bi-key', cap: 'PASS_GEN' },
       { label: 'Legacy Order', to: '/legacy-order', icon: 'bi-database-gear', cap: 'LEGACY_ORDER' },
       { label: 'Settings', to: '/settings', icon: 'bi-gear', cap: 'SETTINGS' },

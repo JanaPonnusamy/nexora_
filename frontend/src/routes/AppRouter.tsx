@@ -24,14 +24,17 @@ import RefreshComparePage from '../pages/procurement/RefreshComparePage'
 import ShelfSortingPage from '../pages/procurement/ShelfSortingPage'
 import ShelfCategoryTrainingPage from '../pages/procurement/ShelfCategoryTrainingPage'
 import PharmacyReportsPage from '../pages/procurement/PharmacyReportsPage'
+import SupplierStockDistributionPage from '../pages/procurement/SupplierStockDistributionPage'
 import PermissionsPage from '../pages/administration/PermissionsPage'
 import ReportsPage from '../pages/ReportsPage'
+import TimeReportPage from '../pages/TimeReportPage'
 import PassGenPage from '../pages/pass-gen/PassGenPage'
 import LegacyOrderPage from '../pages/legacy-order/LegacyOrderPage'
 import SettingsPage from '../pages/SettingsPage'
 import PlatformShellPreviewPage from '../pages/PlatformShellPreviewPage'
 import DocumentExtractionReviewPage from '../pages/document-extraction/ReviewPage'
 import DocumentExtractionHistoryPage from '../pages/document-extraction/HistoryPage'
+import LoginPage from '../pages/LoginPage'
 
 /** Sends the user to their role's landing page (Purchase Managers open directly
  *  into the Purchase Manager workspace). */
@@ -44,6 +47,7 @@ function RoleLanding() {
 export const appRouter = createBrowserRouter(
   createRoutesFromElements(
     <>
+      <Route path="/login" element={<LoginPage />} />
       {/* Desktop Platform shell preview — a separate top-level route (not
           nested under AppShell) so the new shell can be built and compared
           side-by-side without touching the existing app. */}
@@ -89,10 +93,12 @@ export const appRouter = createBrowserRouter(
         <Route path="/procurement/shelf-sort" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><ShelfSortingPage /></RequireCapability>} />
         <Route path="/procurement/shelf-categories" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><ShelfCategoryTrainingPage /></RequireCapability>} />
         <Route path="/procurement/reports" element={<RequireCapability cap="REPORTS"><PharmacyReportsPage /></RequireCapability>} />
+        <Route path="/procurement/distribution" element={<RequireCapability cap="PROCUREMENT_ADMIN"><SupplierStockDistributionPage /></RequireCapability>} />
         <Route path="/document-extraction/review" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionReviewPage /></RequireCapability>} />
         <Route path="/document-extraction/review/:importId" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionReviewPage /></RequireCapability>} />
         <Route path="/document-extraction/history" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionHistoryPage /></RequireCapability>} />
         <Route path="/reports" element={<RequireCapability cap="REPORTS"><ReportsPage /></RequireCapability>} />
+        <Route path="/time-report" element={<RequireCapability cap="TIME_REPORT"><TimeReportPage /></RequireCapability>} />
         <Route path="/pass-gen" element={<RequireCapability cap="PASS_GEN"><PassGenPage /></RequireCapability>} />
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />

@@ -1,10 +1,14 @@
 import mimetypes
 import os
+import re
 
-from fastapi import FastAPI
+import jwt
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from config.database import get_connection
+from config.security import decode_access_token
 
 # Force correct static MIME types at startup. StaticFiles resolves Content-Type
 # via mimetypes.guess_type, which on Windows reads the registry where .js is
@@ -48,6 +52,10 @@ from modules.sync.runtime_router import (
 from modules.sync.shared_table_builder_router import (
     router as sync_shared_table_router,
 )
+from modules.agent_ops.router import (
+    router as agent_ops_router,
+    agent_router as agent_ops_agent_router,
+)
 from modules.stock_availability.router import (
     router as stock_availability_router
 )
@@ -59,6 +67,9 @@ from modules.procurement.router import (
 )
 from modules.reports.router import (
     router as reports_router
+)
+from modules.time_report.router import (
+    router as time_report_router
 )
 from modules.product_mapping.router import (
     router as product_mapping_router
@@ -93,7 +104,98 @@ _allowed_origins = (
     ['http://localhost:5173', 'http://127.0.0.1:5173']
 )
 _cors_regex = os.getenv('UNINEX_CORS_ORIGIN_REGEX') or r'http://(localhost|127\.0\.0\.1)(:\d+)?'
+_cors_regex_compiled = re.compile(_cors_regex)
 
+# Every /api/* route requires a valid JWT except /api/auth/login itself.
+# Previously nothing enforced auth at all past the login screen - any client
+# that could reach the port could call every endpoint. This is the gate that
+# has to exist before the API is reachable from outside the LAN.
+_PUBLIC_API_PATHS = {'/api/auth/login', '/api/auth/setup-login'}
+
+# Read-only provisioning lookups used by the store-agent setup/settings tool,
+# which runs unattended on store PCs with no user session to hold a JWT.
+# Scoped to GET only and to these exact patterns so tenant/store CRUD
+# (POST/PUT/PATCH on the same routers) stays behind auth.
+_SETUP_READ_PATTERNS = (
+    re.compile(r'^/api/tenants$'),
+    re.compile(r'^/api/stores$'),
+    re.compile(r'^/api/stores/tenant/[^/]+$'),
+    re.compile(r'^/api/stores/[^/]+/agent-config$'),
+)
+
+def _is_setup_read(request: Request) -> bool:
+    return request.method == 'GET' and any(
+        p.match(request.url.path) for p in _SETUP_READ_PATTERNS
+    )
+
+# The store-agent sync protocol (unattended service on each store PC - no
+# user, no JWT) predates this auth gate and still talks to these /api/sync
+# and /api/desktop-client paths (only /tasks/poll, /register and /heartbeat
+# were ever moved under the already-exempt /agent/* prefix). Without this
+# exemption every store agent's task polling, chunk upload and first-contact
+# device activation started failing with 401 the moment the gate went in -
+# sync silently stopped making progress on every pending task, network-wide.
+_PUBLIC_AGENT_PATTERNS = (
+    re.compile(r'^/api/sync/tasks/pending/[^/]+$'),
+    re.compile(r'^/api/sync/tasks/[^/]+/(start|complete|fail)$'),
+    re.compile(r'^/api/sync/configuration/[^/]+$'),
+    re.compile(r'^/api/sync/chunks/(upload|ack)$'),
+    re.compile(r'^/api/sync/chunks/status/[^/]+$'),
+    re.compile(r'^/api/sync/tables/report$'),
+    re.compile(r'^/api/desktop-client/activate/request$'),
+    re.compile(r'^/api/stores/[^/]+/agent-config$'),
+)
+
+def _is_public_agent_call(request: Request) -> bool:
+    return any(p.match(request.url.path) for p in _PUBLIC_AGENT_PATTERNS)
+
+def _with_cors(response, request: Request):
+    # require_auth's early returns bypass CORSMiddleware (regardless of
+    # registration order they can end up wrapping outside it), so a rejected
+    # request would reach the browser with no Access-Control-Allow-Origin
+    # header - which browsers report as a misleading CORS error instead of
+    # surfacing the real 401. Stamp the same headers CORSMiddleware would.
+    origin = request.headers.get('origin')
+    if origin and (origin in _allowed_origins or _cors_regex_compiled.fullmatch(origin)):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Vary'] = 'Origin'
+    return response
+
+@app.middleware('http')
+async def require_auth(request: Request, call_next):
+    path = request.url.path
+    if (request.method != 'OPTIONS' and path.startswith('/api/')
+            and path not in _PUBLIC_API_PATHS
+            and not _is_public_agent_call(request)):
+        setup_token = request.headers.get('x-nexora-setup-token', '').strip()
+        if setup_token:
+            try:
+                claims = decode_access_token(setup_token)
+            except jwt.ExpiredSignatureError:
+                return _with_cors(JSONResponse(status_code=401, content={'detail': 'Setup token expired'}), request)
+            except jwt.InvalidTokenError:
+                return _with_cors(JSONResponse(status_code=401, content={'detail': 'Invalid setup token'}), request)
+            if claims.get('scope') != 'setup_readonly' or not _is_setup_read(request):
+                return _with_cors(JSONResponse(status_code=403, content={'detail': 'Setup token is not allowed for this endpoint'}), request)
+        else:
+            header = request.headers.get('authorization', '')
+            if not header.lower().startswith('bearer '):
+                return _with_cors(JSONResponse(status_code=401, content={'detail': 'Not authenticated'}), request)
+            token = header[7:].strip()
+            try:
+                decode_access_token(token)
+            except jwt.ExpiredSignatureError:
+                return _with_cors(JSONResponse(status_code=401, content={'detail': 'Token expired'}), request)
+            except jwt.InvalidTokenError:
+                return _with_cors(JSONResponse(status_code=401, content={'detail': 'Invalid token'}), request)
+    return await call_next(request)
+
+# Added after require_auth so it wraps as the OUTERMOST middleware (Starlette
+# builds the stack in reverse registration order) - otherwise require_auth's
+# early 401 returns bypass this middleware entirely and reach the browser
+# without CORS headers, which shows up as a misleading CORS error instead
+# of the real 401.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -126,11 +228,14 @@ app.include_router(stock_availability_router)
 app.include_router(supplier_stock_analysis_router)
 app.include_router(procurement_router)
 app.include_router(reports_router)
+app.include_router(time_report_router)
 app.include_router(product_mapping_router)
 app.include_router(document_extraction_router)
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
 app.include_router(desktop_client_router)
+app.include_router(agent_ops_router)
+app.include_router(agent_ops_agent_router)
 
 @app.get('/health')
 def health():

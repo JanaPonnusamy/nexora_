@@ -226,6 +226,26 @@ BEGIN
     );
 END;
 
+IF NOT EXISTS (SELECT 1 FROM modules WHERE module_code = 'TIME_REPORT')
+BEGIN
+    INSERT INTO modules
+    (
+        module_id,
+        module_code,
+        module_name,
+        description,
+        is_active
+    )
+    VALUES
+    (
+        NEWID(),
+        'TIME_REPORT',
+        'Time Report',
+        'COSEC Attendance Reporting',
+        1
+    );
+END;
+
 IF NOT EXISTS (SELECT 1 FROM modules WHERE module_code = 'SETTINGS')
 BEGIN
     INSERT INTO modules

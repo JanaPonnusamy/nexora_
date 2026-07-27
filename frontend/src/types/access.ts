@@ -10,6 +10,7 @@ export type Capability =
   | 'SYNC'
   | 'ADMINISTRATION'
   | 'REPORTS'
+  | 'TIME_REPORT'
   | 'SETTINGS'
   | 'PRODUCT_MAPPING'
   | 'PROCUREMENT_WORKSPACE'
@@ -22,7 +23,7 @@ export type Capability =
   | 'LEGACY_ORDER'
 
 export const ALL_CAPABILITIES: Capability[] = [
-  'PLATFORM', 'INVENTORY', 'SYNC', 'ADMINISTRATION', 'REPORTS', 'SETTINGS',
+  'PLATFORM', 'INVENTORY', 'SYNC', 'ADMINISTRATION', 'REPORTS', 'TIME_REPORT', 'SETTINGS',
   'PRODUCT_MAPPING',
   'PROCUREMENT_WORKSPACE', 'PROCUREMENT_ADMIN',
   'PROCUREMENT_EXPORT', 'PROCUREMENT_PENDING', 'PROCUREMENT_GRN',
@@ -56,6 +57,9 @@ function capForCode(code: string | null | undefined): Capability | null {
   if (c.includes('MAPPING')) return 'PRODUCT_MAPPING'
   if (c.includes('SYNC')) return 'SYNC'
   if (c.includes('STOCK') || c.includes('INVENTORY')) return 'INVENTORY'
+  // Checked before the generic REPORT branch — a "TIME_REPORT" module code
+  // contains "REPORT" and would otherwise collapse into the pharmacy Reports.
+  if (c.includes('TIME') || c.includes('ATTENDANCE') || c.includes('COSEC')) return 'TIME_REPORT'
   if (c.includes('REPORT')) return 'REPORTS'
   if (c.includes('SETTING')) return 'SETTINGS'
   if (c.includes('MODULE') || c.includes('PERMISSION') || c.includes('ADMIN')) return 'ADMINISTRATION'
