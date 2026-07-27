@@ -210,12 +210,24 @@ _NM_SELECT = """
         p.SubLocation,
         p.ProductCode,
         p.ProductName,
-        p.TotalStock,
+        COALESCE((
+            SELECT TOP (1) pt4.StockInHand
+            FROM sync.ProductTrans pt4
+            WHERE pt4.tenant_id = p.tenant_id AND pt4.store_id = p.store_id AND pt4.ProductCode = p.ProductCode
+            ORDER BY pt4.MonthOfStatistics DESC
+        ), p.TotalStock, 0)                   AS TotalStock,
         b.Stock                               AS Batch_Stock,
-        ROUND(p.TotalStock / NULLIF(p.SaleUnit, 0), 0) AS StripQty,
+        ROUND(COALESCE((
+            SELECT TOP (1) pt5.StockInHand
+            FROM sync.ProductTrans pt5
+            WHERE pt5.tenant_id = p.tenant_id AND pt5.store_id = p.store_id AND pt5.ProductCode = p.ProductCode
+            ORDER BY pt5.MonthOfStatistics DESC
+        ), p.TotalStock, 0) / NULLIF(p.SaleUnit, 0), 0) AS StripQty,
         b.ExpiryDate,
+        b.BatchCode                           AS BatchNo,
         p.SaleUnit                            AS SaleUnit,
         p.PurchasePrice                       AS PurchasePrice,
+        b.ItemCost                            AS PTR,
         p.MRP                                 AS MRP,
         p.UnitDescription                     AS UnitDesc,
         pt.LastBillDate                       AS LastBillDate,
@@ -240,7 +252,13 @@ _NM_SELECT = """
     INNER JOIN sync.Suppliers s
         ON s.tenant_id = b.tenant_id AND s.store_id = b.store_id AND s.suppliercode = b.SupplierCode
     WHERE p.tenant_id = ? AND p.store_id = ?
-      AND p.TotalStock > 0 AND p.isActive = 1 AND b.Stock > 0
+      AND COALESCE((
+            SELECT TOP (1) pt6.StockInHand
+            FROM sync.ProductTrans pt6
+            WHERE pt6.tenant_id = p.tenant_id AND pt6.store_id = p.store_id AND pt6.ProductCode = p.ProductCode
+            ORDER BY pt6.MonthOfStatistics DESC
+          ), p.TotalStock, 0) > 0
+      AND p.isActive = 1 AND b.Stock > 0
 """
 
 
@@ -279,7 +297,7 @@ def non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age=10, limit
     sql += """
         AND (DATEDIFF(DAY, pt.LastBillDate, GETDATE()) > ? OR pt.LastBillDate IS NULL)
         AND DATEDIFF(DAY, pt.LastGrnDate, GETDATE()) >= ?
-        ORDER BY (p.TotalStock * ISNULL(p.MRP, 0)) DESC
+        ORDER BY (ISNULL(StripQty, 0) * ISNULL(PurchasePrice, 0)) DESC, p.ProductName
     """
     params = (tenant_id, store_id, tenant_id, store_id, int(dwell_days), int(min_pur_age))
     return _run(sql, params)

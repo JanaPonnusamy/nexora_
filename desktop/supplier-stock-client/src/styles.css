@@ -4,6 +4,11 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  /* Single source of truth for the fixed store-row height — NMW
+     (.store-data-row) and the NON MOVING panel (.non-moving-wrap) must
+     always be exactly this tall, on purpose (see both rules' comments). */
+  --store-row-height: 86px;
+  --warehouse-panel-height: 214px;
 }
 
 * {
@@ -31,44 +36,17 @@ button:disabled {
   opacity: 0.55;
 }
 
-.dev-viewport-switcher {
-  position: fixed;
-  top: 10px;
-  right: 14px;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: #172033;
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.35);
-}
-
-.dev-viewport-switcher select {
-  min-height: 28px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  background: #0f172a;
-  color: #ffffff;
-  font-size: 11px;
-}
-
 .app-shell {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-rows: auto 1fr;
   min-height: 100vh;
 }
 
-.sidebar {
+.menubar {
   display: flex;
-  flex-direction: column;
-  gap: 22px;
-  padding: 28px 20px;
+  align-items: center;
+  gap: 28px;
+  padding: 10px 20px;
   background: #172033;
   color: #ffffff;
 }
@@ -109,52 +87,59 @@ button:disabled {
   color: #657186;
 }
 
-.sidebar .brand-block p,
-.sidebar .muted {
+.menubar .brand-block p,
+.menubar .muted {
   color: #aab4c5;
 }
 
 .user-panel {
   display: grid;
-  gap: 4px;
-  padding: 14px;
+  gap: 2px;
+  padding: 6px 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
   color: #ffffff;
+  font-size: 12px;
 }
 
 .user-panel strong {
   color: #35c0a4;
-  font-size: 13px;
+  font-size: 12px;
   text-transform: uppercase;
 }
 
-.nav-list {
-  display: grid;
-  gap: 8px;
+.menubar-nav {
+  display: flex;
+  gap: 6px;
+  flex: 1;
 }
 
-.nav-list button,
+.menubar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menubar-nav button,
 .ghost-button {
-  width: 100%;
   border: 0;
   border-radius: 8px;
-  padding: 11px 12px;
+  padding: 9px 14px;
   text-align: left;
   color: #dce4f2;
   background: transparent;
+  white-space: nowrap;
 }
 
-.nav-list button.active,
-.nav-list button:hover,
+.menubar-nav button.active,
+.menubar-nav button:hover,
 .ghost-button:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
 }
 
 .ghost-button {
-  margin-top: auto;
   border: 1px solid rgba(255, 255, 255, 0.14);
   text-align: center;
 }
@@ -374,10 +359,6 @@ th {
 }
 
 @media (max-width: 1060px) {
-  .app-shell {
-    grid-template-columns: 240px 1fr;
-  }
-
   .login-layout,
   .form-grid,
   .metric-grid {
@@ -696,52 +677,16 @@ th {
   min-height: 120px;
 }
 
-.app-shell.sidebar-collapsed {
-  grid-template-columns: 74px 1fr;
-}
-
-.sidebar {
-  position: relative;
-}
-
-.collapse-button {
-  width: 28px;
-  height: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
-  color: #dce4f2;
-  background: rgba(255, 255, 255, 0.08);
-  text-align: center;
-}
-
-.sidebar-collapsed .sidebar {
-  align-items: center;
-  padding: 28px 10px;
-}
-
-.sidebar-collapsed .brand-block > div:last-child,
-.sidebar-collapsed .user-panel,
-.sidebar-collapsed .ghost-button {
-  display: none;
-}
-
-.sidebar-collapsed .nav-list button {
-  width: 46px;
-  height: 46px;
-  overflow: hidden;
-  padding: 0;
-  text-align: center;
-  white-space: nowrap;
-  font-size: 0;
-}
-
-.sidebar-collapsed .nav-list button::first-letter {
-  font-size: 16px;
-}
-
 .store-workbench {
   display: grid;
-  grid-template-rows: auto 1fr;
+  /* 3 row-level children: search row, NM summary row, main store grid.
+     Both summary rows must stay content-sized (auto) - only the last row
+     (the scrollable data grid) should claim the leftover space (1fr).
+     Previously this only declared 2 tracks, so the undeclared 3rd row fell
+     back to implicit auto-sizing and all the leftover viewport height was
+     dumped into the summary row's track instead, stretching it far past its
+     fixed-height cards and leaving a dead gap above the grid. */
+  grid-template-rows: auto auto 1fr;
   gap: 10px;
   height: calc(100vh - 38px);
   min-height: 680px;
@@ -749,9 +694,13 @@ th {
 
 .global-search-row {
   display: grid;
-  grid-template-columns: minmax(360px, 520px) auto minmax(140px, 1fr) auto auto;
-  gap: 10px;
+  grid-template-columns: minmax(320px, 480px) auto minmax(120px, 1fr) auto auto;
+  gap: 8px;
   align-items: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
 .row-cell.stock-cell-full {
@@ -764,9 +713,12 @@ th {
 
 .top-summary-row {
   display: flex;
-  align-items: stretch;
-  gap: 12px;
-  margin-bottom: 14px;
+  /* Non-moving is intentionally a bit taller than NMW (see .non-moving-wrap)
+     - stretch would otherwise force NMW's wrapper to match it and leave a
+     blank gap under the pinned-height NMW box. */
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 0;
 }
 
 .top-summary-row .top-summary-nmw {
@@ -800,9 +752,11 @@ th {
   display: flex !important;
   flex-direction: column;
   width: 100%;
-  height: 100%;
+  /* Exactly one store-row tall so the NMW panel and the Non Moving panel
+     align on the same horizontal line — no oversized white area. */
+  height: var(--store-row-height);
   min-height: 0;
-  max-height: none !important;
+  max-height: var(--store-row-height) !important;
   overflow: hidden;
   gap: 0;
   border-radius: 8px;
@@ -810,45 +764,6 @@ th {
   box-shadow: 0 2px 8px rgba(13, 148, 136, 0.2);
 }
 
-.non-moving-overview {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-  border-top: 1px solid rgba(13, 148, 136, 0.25);
-  background: #ffffff;
-}
-
-.non-moving-overview-header {
-  flex: 0 0 auto;
-  border-bottom: 1px solid rgba(13, 148, 136, 0.25);
-  background: rgba(13, 148, 136, 0.08);
-  color: #0f766e;
-  font-size: 9.5px;
-  font-weight: 800;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  padding: 4px 10px;
-}
-
-.non-moving-overview-body {
-  flex: 1 1 auto;
-  min-height: 90px;
-  overflow-y: auto;
-  padding: 0 10px;
-}
-
-.non-moving-overview-body .grid-row {
-  border-bottom: 1px solid rgba(100,116,139,0.18);
-  padding: 3px 0;
-  font-size: 11px;
-}
-
-.non-moving-overview-body .grid-row span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .non-moving-header-box {
   display: flex !important;
@@ -869,12 +784,12 @@ th {
   gap: 2px;
   flex: 0 0 auto;
   width: auto;
-  padding: 0 8px;
+  padding: 0 10px;
   background: #0f766e;
   color: #ffffff;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.05em;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   line-height: 1;
   white-space: nowrap;
 }
@@ -948,12 +863,31 @@ th {
   cursor: pointer;
 }
 
+.non-moving-store-filter {
+  flex: 0 0 auto;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 0 4px;
+  max-width: 140px;
+}
+
+.non-moving-store-filter option {
+  color: #0f172a;
+}
+
 .non-moving-panel-row {
   display: flex !important;
   align-items: stretch;
   width: 100%;
-  padding: 10px 14px;
-  gap: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px;
+  gap: 4px;
   background: #f0fdfa;
 }
 
@@ -995,15 +929,21 @@ th {
   color: #7f1d1d;
 }
 
+/* Each field is now its own equal-width KPI card instead of a column
+   separated by a divider line — cards fill the row edge-to-edge with no
+   leftover gutter. */
 .non-moving-panel-row > div {
   display: flex !important;
   flex-direction: column;
   justify-content: center;
-  gap: 3px;
+  gap: 1px;
   flex: 1 1 0;
   min-width: 0;
-  padding: 0 14px;
-  border-right: 1px solid rgba(100, 116, 139, 0.16);
+  padding: 3px 8px;
+  border-right: 0;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 .non-moving-panel-row > div:last-child {
@@ -1011,7 +951,7 @@ th {
 }
 
 .non-moving-panel-row > div:first-child {
-  padding-left: 0;
+  padding-left: 8px;
 }
 
 .non-moving-panel-row span {
@@ -1028,7 +968,7 @@ th {
   display: flex !important;
   align-items: baseline;
   gap: 6px;
-  font-size: 13.5px;
+  font-size: 14px;
   color: #172033;
   font-weight: 700;
   white-space: nowrap;
@@ -1037,7 +977,7 @@ th {
 }
 
 .non-moving-value-highlight {
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 800;
   color: #15803d;
 }
@@ -1069,11 +1009,11 @@ th {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border-radius: 6px;
-  background: #eef2f7;
+  background: #f4f6f9;
   color: #334155;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1083,25 +1023,29 @@ th {
   align-items: center;
   gap: 6px;
   color: #344154;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .stock-only-filter input {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   min-height: 0;
   cursor: pointer;
 }
 
+.global-search-row .status-line {
+  font-size: 12px;
+}
+
 .global-search-row input {
-  height: 46px;
-  border: 1px solid #b9c7d9;
+  height: 34px;
+  border: 1px solid #dbe2ec;
   border-radius: 8px;
-  padding: 0 14px;
-  font-size: 20px;
+  padding: 0 12px;
+  font-size: 14px;
   background: #ffffff;
 }
 
@@ -1111,12 +1055,13 @@ th {
 }
 
 .global-search-row button {
-  height: 46px;
+  height: 34px;
   border: 0;
   border-radius: 8px;
   color: #ffffff;
   background: #2357d6;
   font-weight: 700;
+  font-size: 12px;
 }
 
 .store-columns-wrap {
@@ -1233,7 +1178,7 @@ th {
 }
 
 .store-column .movement-chart {
-  height: 96px;
+  height: 66px;
   min-height: 0;
   padding: 4px 6px 6px;
   gap: 6px;
@@ -1520,9 +1465,25 @@ th {
 
 .store-product-grid-wrap,
 .store-product-card-list {
-  height: 118px;
+  height: 78px;
   overflow-y: auto;
   padding: 0 6px 6px;
+  scrollbar-width: none;
+}
+
+/* Stock cell's product list sits inside the now-flexible store row, so it
+   should fill whatever height that row has instead of a fixed 78px. */
+.stock-cell .store-product-grid-wrap {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.store-product-grid-wrap::-webkit-scrollbar,
+.store-product-card-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .store-product-grid {
@@ -1603,58 +1564,211 @@ th {
   grid-template-columns: 260px minmax(980px, 1fr);
   gap: 10px;
   min-height: 0;
+  height: 100%;
 }
 
 .store-row-grid {
   display: grid;
-  align-content: start;
-  gap: 10px;
+  /* The first (explicit) row track holds the sticky column-header strip and
+     must stay content-sized - grid-auto-rows below only governs the
+     *implicit* rows (the actual store rows) that follow it. Without this,
+     grid-auto-rows also stretched the header's row track to a full store
+     row's height, leaving a tall blank gap under the pinned sticky header
+     while it scrolled. */
+  grid-template-rows: auto;
+  /* Rows stretch to fill whatever vertical space is available (min 5 fit
+     the viewport without scrolling); once more rows than fit are present,
+     they hold their minimum height and the grid scrolls instead of the
+     page growing past the viewport. */
+  grid-auto-rows: minmax(72px, 1fr);
+  /* 6px gap gives each store's top separator rule (below) room to breathe
+     instead of sitting flush against the previous row's content. */
+  gap: 6px;
   min-width: 0;
-  overflow: auto;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
   padding-top: 4px;
 }
 
 .store-column-headers {
   display: grid;
-  grid-template-columns: 40px minmax(210px, 1fr) minmax(260px, 1.5fr) minmax(150px, 0.7fr) minmax(260px, 1.05fr) minmax(280px, 0.95fr) minmax(280px, 0.95fr);
-  border: 1px solid #cbd8e8;
+  /* 5 content tracks (label + Product/Trend/Batches/Purchase/Billing) — must
+     match the 5 header-cells actually rendered below (Sales History was
+     folded into Billing History). A stale 6th track here left a full empty
+     grid column on the right of every row - the page's "unused whitespace"
+     bug. The freed weight went to Batches/Purchase/Billing so they grow to
+     fill the space instead of leaving it blank. */
+  grid-template-columns: 30px minmax(210px, 1fr) minmax(260px, 1.5fr) minmax(360px, 1.1fr) minmax(280px, 1.3fr) minmax(300px, 1.2fr);
+  border: 0;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--store-color, #334155) 9%, white);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+}
+
+.store-column-headers.no-bill-column {
+  /* 4 content tracks (Product/Trend/Batches/Purchase only - Billing hidden). */
+  grid-template-columns: 30px minmax(270px, 1.25fr) minmax(260px, 1.35fr) minmax(360px, 1.2fr) minmax(320px, 1.25fr);
 }
 
 .store-column-headers.sticky {
+  /* .store-row-grid's grid-auto-rows: minmax(72px, 1fr) treats every direct
+     child (this header included) as a row track and stretches it to fill an
+     equal share of the leftover space. Without align-self: start the header
+     box balloons to a full row's height while sticky pins it at the top —
+     the empty stretched area then visually overlaps the first store row as
+     the list scrolls beneath it. Pinning to its own content height fixes it. */
+  align-self: start;
   position: sticky;
   top: 0;
   z-index: 3;
-  box-shadow: 0 1px 3px rgba(15,23,42,0.06);
 }
 
+/* Modern bright section header — each column group gets its own vivid
+   gradient accent instead of one flat grey bar, so Stock/Trend/Batch/
+   Purchase/Sales/Billing read as distinct sections at a glance. */
 .header-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   min-width: 0;
+  height: 27px;
+  min-height: 27px;
+  max-height: 27px;
   overflow: hidden;
-  border-right: 1px solid color-mix(in srgb, var(--store-color, #334155) 18%, white);
-  padding: 4px 10px;
-  color: color-mix(in srgb, var(--store-color, #334155) 75%, #1e293b);
+  border-right: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 0 10px;
+  color: #1e293b;
   font-size: 9.5px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
+  background: #ffffff;
 }
 
 .header-cell-title {
   overflow: hidden;
-  margin-bottom: 2px;
-  color: color-mix(in srgb, var(--store-color, #334155) 92%, #0f172a);
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 0.03em;
+  margin-bottom: 0;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sales-table .grid-row {
+.store-header-cell {
+  background: #1e293b;
+}
+
+/* Requirement: only Batch/Purchase/Sales/Billing sections carry color —
+   Product and Sales Trend stay neutral (white) so color reads as meaning,
+   not decoration. */
+.header-cell:nth-of-type(1),
+.header-cell:nth-of-type(2) {
+  color: #1e293b;
+  background: #ffffff;
+}
+
+.header-cell:nth-of-type(3) { background-color: #d97706; color: #ffffff; border-right-color: rgba(255,255,255,0.22); } /* Batch = orange */
+.header-cell:nth-of-type(4) { background-color: #2563eb; color: #ffffff; border-right-color: rgba(255,255,255,0.22); } /* Purchase = blue */
+.header-cell:nth-of-type(5) { background-color: #db2777; color: #ffffff; border-right-color: rgba(255,255,255,0.22); } /* Billing History = pink */
+
+.bill-table .grid-row {
   cursor: pointer;
 }
+
+/* Right-align numeric columns app-wide: Stock/MRP in Batches, Qty/Free in
+   Purchase History, Qty/MRP/Dis%/Amount in Billing History. Money values
+   render with 2 decimals via formatMoney/formatQty in App.jsx. */
+.batch-table .grid-row span:nth-child(2),
+.batch-table .grid-row span:nth-child(3),
+.purchase-table .grid-row span:nth-child(1),
+.purchase-table .grid-row span:nth-child(2),
+.purchase-table .grid-row span:nth-child(3),
+.purchase-table .grid-row span:nth-child(4),
+.bill-table .grid-row span:nth-child(1),
+.bill-table .grid-row span:nth-child(2),
+.bill-table .grid-row span:nth-child(6),
+.bill-table .grid-row span:nth-child(7),
+.sales-table .grid-row span:nth-child(1),
+.sales-table .grid-row span:nth-child(4),
+.sales-table .grid-row span:nth-child(6) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.purchase-table.summary-cols .grid-row span:nth-child(5),
+.purchase-table.summary-cols .grid-row span:nth-child(6),
+.purchase-table.summary-cols .grid-row span:nth-child(7) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* §2/§3: Batch grid rows - subtle status tint (never a strong color) plus
+   the two-line expiry cell (date + days-remaining) and the Status/Priority
+   columns. Batch grid's own .grid-row (not the shared .row-cell .grid-row
+   rule) so the background can vary per row instead of the generic hover
+   tint. */
+.batch-row {
+  gap: 5px;
+  border-bottom: 1px solid rgba(148,163,184,0.2);
+  padding: 2px 4px;
+  background: #ffffff;
+}
+
+.batch-row--expired { background: #fee2e2; }
+.batch-row--near-expiry { background: #ffedd5; }
+.batch-row--non-moving { background: #fef9c3; }
+
+.batch-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.batch-cell-expiry {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.batch-cell-days {
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.batch-row--expired .batch-cell-days { color: #b91c1c; }
+.batch-row--near-expiry .batch-cell-days { color: #c2410c; }
+
+.batch-cell-status {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.batch-row--expired .batch-cell-status { color: #b91c1c; }
+.batch-row--near-expiry .batch-cell-status { color: #c2410c; }
+.batch-row--non-moving .batch-cell-status { color: #a16207; }
+.batch-row--healthy .batch-cell-status { color: #15803d; }
+
+.batch-cell-priority {
+  text-align: center;
+  font-size: 11px;
+}
+
+.batch-age {
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.batch-age--purchase { color: #2563eb; }
+.batch-age--sales { color: #15803d; }
 
 .header-cell:last-child {
   border-right: 0;
@@ -1664,6 +1778,10 @@ th {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.1;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: none;
 }
 
 .store-header-cell {
@@ -1677,14 +1795,33 @@ th {
 }
 
 .store-data-row {
-  height: auto !important;
-  max-height: none !important;
-  border: 1px solid #cbd8e8;
-  border-left: 6px solid var(--store-color, #334155);
-  border-radius: 10px;
+  /* Fills whatever height the parent grid row (.store-row-grid's
+     grid-auto-rows: minmax(72px, 1fr)) gives it, so rows stretch to use
+     all remaining viewport space when there are few stores and hold their
+     minimum + scroll when there are many. Content areas below
+     (row-table-wrap, store-product-grid-wrap, the movement chart) already
+     scroll/clip internally, so they adapt to whatever height lands here.
+     Flex column so the (optional, warehouse-only) header row keeps its
+     natural size and the grid body takes whatever's left. */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  /* Bold full-width store-color rule ABOVE each row (8px gap above it, see
+     .store-row-grid) groups that row visually as one store section instead
+     of blending into the one before it. The store-color accent on the left
+     border-box of .store-row-label carries the same color so the two read
+     as one marker. */
+  border: 0;
+  border-top: 3px solid var(--store-color, #334155);
+  border-radius: 0;
   overflow: hidden;
   background: #ffffff;
-  box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.store-data-row > .store-column-headers {
+  flex: 0 0 auto;
 }
 
 .store-data-row.selected {
@@ -1692,14 +1829,29 @@ th {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--store-color, #2357d6) 35%, transparent);
 }
 
+/* NMW (product panel) keeps its current fixed panel size — only the
+   scrollable "other stores" list below stretches/scrolls with viewport
+   height. */
+.warehouse-only .store-data-row {
+  height: var(--warehouse-panel-height);
+  min-height: var(--warehouse-panel-height);
+  max-height: var(--warehouse-panel-height);
+}
+
 .store-row-grid-body {
   display: grid;
-  grid-template-columns: 40px minmax(210px, 1fr) minmax(260px, 1.5fr) minmax(150px, 0.7fr) minmax(260px, 1.05fr) minmax(280px, 0.95fr) minmax(280px, 0.95fr);
-  min-height: 130px;
-  height: auto !important;
-  max-height: none !important;
-  overflow: visible !important;
+  /* Must mirror .store-column-headers' 5 content tracks exactly (see its
+     comment) - a mismatched extra track here reproduces the same
+     right-side whitespace bug independently of the header row. */
+  grid-template-columns: 30px minmax(210px, 1fr) minmax(260px, 1.5fr) minmax(360px, 1.1fr) minmax(280px, 1.3fr) minmax(300px, 1.2fr);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   cursor: pointer;
+}
+
+.store-row-grid-body.no-bill-column {
+  grid-template-columns: 30px minmax(270px, 1.25fr) minmax(260px, 1.35fr) minmax(360px, 1.2fr) minmax(320px, 1.25fr);
 }
 
 .store-row-label {
@@ -1708,18 +1860,53 @@ th {
   align-items: center;
   justify-content: center;
   gap: 1px;
-  padding: 4px 2px;
-  border-right: 1px solid #e2e8f0;
-  background: var(--store-color, #111827);
+  padding: 2px 0;
+  border-right: 3px solid var(--store-color, #334155);
+  background: #1e293b;
   color: #ffffff;
 }
 
 .store-row-label strong {
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1.1;
-  letter-spacing: 0.02em;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
   text-transform: uppercase;
+}
+
+.non-moving-empty-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #f0fdfa;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.non-moving-empty-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(13, 148, 136, 0.25);
+  border-top-color: #0d9488;
+  animation: store-row-label-spin 0.7s linear infinite;
+}
+
+.store-row-label-spinner {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  animation: store-row-label-spin 0.7s linear infinite;
+}
+
+@keyframes store-row-label-spin {
+  to { transform: rotate(360deg); }
 }
 
 .stock-cell-status {
@@ -1732,11 +1919,44 @@ th {
   white-space: nowrap;
 }
 
+/* NMW's status line doubles as the "selected product" heading - give it the
+   full product-name treatment instead of a small caption. */
+.warehouse-only .stock-cell-status {
+  margin-bottom: 2px;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.warehouse-only .store-product-grid-wrap {
+  min-height: 146px;
+}
+
+/* §6: compact procurement-decision line ("Near Expiry: 2 · Non Moving: Yes")
+   appended to the active product's status line - subtle by default, tinted
+   only when there's something to flag. */
+.stock-cell-batch-info {
+  font-weight: 700;
+}
+
+.stock-cell-batch-info--healthy { color: #15803d; }
+.stock-cell-batch-info--non-moving { color: #a16207; }
+.stock-cell-batch-info--near-expiry { color: #c2410c; }
+.stock-cell-batch-info--expired { color: #b91c1c; }
+
+.stock-cell.stock-cell-full {
+  padding-top: 4px;
+}
+
 .row-cell {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   border-right: 1px solid rgba(100,116,139,0.24);
-  padding: 7px 10px;
+  padding: 3px 5px;
 }
 
 .row-cell:last-child {
@@ -1757,18 +1977,26 @@ th {
 
 .movement-chart {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 22px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
   height: 100%;
-  padding: 0 4px;
+  padding: 0 2px;
 }
 
+.trend-cell .movement-chart {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+/* Compact micro-bar / sparkline cluster — replaces the old thick bar chart
+   so the trend column fits inside the shrunk row height. */
 .movement-month {
   display: grid;
   grid-template-rows: 1fr auto;
-  gap: 5px;
+  gap: 2px;
   min-width: 0;
-  border-right: 1px dashed rgba(100,116,139,0.25);
+  border-right: 1px dashed rgba(100,116,139,0.2);
 }
 
 .movement-month:last-child {
@@ -1777,34 +2005,39 @@ th {
 
 .movement-month > strong {
   text-align: center;
-  color: #172033;
-  font-size: 10.5px;
-  font-weight: 800;
+  color: #94a3b8;
+  font-size: 7px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 .movement-bars {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   align-items: end;
-  gap: 8px;
-  height: 92px;
-  border-bottom: 2px solid #94a3b8;
-  padding-bottom: 2px;
+  gap: 0;
+  height: 100%;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0;
 }
 
 .movement-bar-set {
   display: grid;
-  grid-template-rows: 14px 1fr;
-  gap: 3px;
+  /* Bars themselves get ~80% of the available height; the value line above
+     takes the rest. */
+  grid-template-rows: minmax(9px, auto) 1fr;
+  gap: 1px;
   height: 100%;
   text-align: center;
 }
 
 .movement-bar-set em {
-  color: #0f172a;
-  font-size: 10px;
+  color: #1e293b;
+  font-size: 8px;
   font-style: normal;
-  font-weight: 800;
+  font-weight: 700;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .movement-bar-track {
@@ -1815,20 +2048,30 @@ th {
   height: 100%;
 }
 
+/* ~40% wider than the previous 6px, with a rounded top, a soft glossy
+   highlight, and a slight drop shadow so bars carry real visual weight
+   instead of reading as thin sparkline ticks. */
 .movement-bar-fill {
   display: flex;
   flex-direction: column-reverse;
-  width: 18px;
+  width: 17px;
   min-height: 0;
   border-radius: 3px 3px 0 0;
   overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
 }
 
-.movement-bar-segment.pur { background: #1d4ed8; }
+.movement-bar-segment.pur {
+  background: linear-gradient(180deg, #3b82f6 0%, #1d4ed8 60%, #1e40af 100%);
+}
 .movement-bar-segment.tin { background: #93c5fd; }
-.movement-bar-segment.sale { background: #15803d; }
+.movement-bar-segment.sale {
+  background: linear-gradient(180deg, #22c55e 0%, #15803d 60%, #14532d 100%);
+}
 .movement-bar-segment.tout { background: #86efac; }
-.movement-bar-segment.stk { background: #dc0000; }
+.movement-bar-segment.stk {
+  background: linear-gradient(180deg, #ef4444 0%, #dc2626 60%, #991b1b 100%);
+}
 
 .movement-legend i.pur { background: #1d4ed8; }
 .movement-legend i.tin { background: #93c5fd; }
@@ -1860,28 +2103,45 @@ th {
 
 
 .row-table-wrap {
-  height: 130px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  /* Scrolling stays fully functional (drag/shift-wheel/trackpad); only the
+     visible scrollbar chrome (and its arrow buttons, which is what was
+     showing under Batch/Sales/Billing once overflow-y:auto silently forced
+     overflow-x to auto too, per the CSS overflow spec) is hidden. */
+  scrollbar-width: none;
 }
 
-.purchase-table .row-table-wrap {
+.row-table-wrap::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.purchase-table .row-table-wrap,
+.batch-table .row-table-wrap {
   overflow-x: auto;
 }
 
+.batch-row {
+  min-width: 440px;
+}
+
 .purchase-table .grid-row {
-  min-width: 320px;
+  min-width: 460px;
 }
 
 .row-cell .grid-row,
 .store-product-grid-wrap .grid-row {
   gap: 5px;
-  border-bottom: 1px solid rgba(148,163,184,0.35);
-  padding: 3px 2px;
+  border-bottom: 1px solid rgba(148,163,184,0.2);
+  padding: 2px 4px;
 }
 
 .purchase-table .grid-row {
   gap: 3px;
-  padding: 2px 1px;
+  padding: 4px 1px;
 }
 
 .row-cell .grid-row:hover,
@@ -1894,7 +2154,8 @@ th {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 400;
   text-align: left;
 }
 
@@ -1907,19 +2168,6 @@ th {
 .store-product-grid-wrap .grid-row.active-row {
   background: color-mix(in srgb, var(--store-color, #2563eb) 22%, white);
   font-weight: 700;
-}
-
-.bill-meta {
-  overflow: hidden;
-  margin-bottom: 4px;
-  padding: 2px 6px;
-  color: #ffffff;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  font-weight: 700;
-  border-radius: 4px;
-  background: var(--store-color, #a21caf);
 }
 
 .purchase-table.clickable .grid-row {
@@ -1981,6 +2229,49 @@ th {
   color: #172033;
 }
 
+.num-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.bill-detail-card {
+  width: min(560px, 92vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.bill-detail-products {
+  overflow: auto;
+  padding: 0 16px 16px;
+}
+
+.bill-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.bill-detail-table th,
+.bill-detail-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.bill-detail-table th {
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.bill-detail-table .num-col {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .row-empty-state {
   border: 1px dashed #cbd8e8;
   border-radius: 5px;
@@ -1993,7 +2284,7 @@ th {
 
 .stock-cell .store-product-grid-wrap,
 .stock-cell .store-product-card-list {
-  height: 130px;
+  height: 82px;
   padding: 0;
 }
 
@@ -2007,6 +2298,16 @@ th {
 
 .no-side-search .store-row-grid {
   grid-column: 1;
+}
+
+/* Shorter viewports (1366x768-class laptops) get a smaller row floor and
+   tighter grid gap so at least 5 stores still fit without clipping or
+   forcing the whole page to scroll past the viewport. */
+@media (max-height: 800px) {
+  .store-row-grid {
+    grid-auto-rows: minmax(58px, 1fr);
+    gap: 6px;
+  }
 }
 
 .skeleton-block {
@@ -2043,7 +2344,7 @@ th {
 
 .warehouse-only .store-row-grid-body,
 .warehouse-only .store-column-headers {
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr);
 }
 
 .warehouse-only .store-row-grid-body {
@@ -2051,7 +2352,7 @@ th {
 }
 
 .warehouse-only .store-row-label {
-  padding: 8px 6px;
+  padding: 2px 0;
 }
 
 .supplier-analysis-workbench {
@@ -2060,226 +2361,489 @@ th {
   max-width: none;
   height: calc(100vh - 64px);
   overflow: hidden;
-  gap: 8px;
+  gap: 10px;
 }
 
 .supplier-analysis-workbench > * {
   flex: 0 0 auto;
 }
 
-.supplier-analysis-workbench .screen-header {
-  margin: 0;
+.supplier-analysis-workbench > .analysis-body {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-.supplier-analysis-workbench .screen-header h2 {
-  font-size: 18px;
+/* Req 1: one compact sticky toolbar row replaces the old title + action-row +
+   separate product-search row - no large title area, everything reachable
+   without scrolling. */
+.supplier-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(20, 34, 56, 0.05);
 }
 
-.supplier-analysis-workbench .screen-header p {
-  display: none;
+.toolbar-import-btn {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 12px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
-.supplier-analysis-workbench .action-row {
-  margin: 0;
+.toolbar-supplier-select {
+  flex: 0 1 240px;
+  min-height: 34px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
-.supplier-analysis-workbench .action-row .primary-button {
-  min-height: 32px;
-  padding: 5px 12px;
+.toolbar-search {
+  flex: 0 1 280px;
+  min-width: 120px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 12px;
   font-size: 13px;
 }
 
-.analysis-layout {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 14px;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.analysis-layout.supplier-collapsed {
-  grid-template-columns: 1fr;
-}
-
-.supplier-rail {
-  display: grid;
-  grid-template-rows: auto auto 1fr;
-  gap: 8px;
-  min-height: 0;
-  padding: 12px;
-  border: 1px solid #dde3ee;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.supplier-list {
-  display: grid;
-  gap: 6px;
-  overflow: auto;
-}
-
-.supplier-list button {
-  display: grid;
-  gap: 3px;
-  width: 100%;
-  border: 1px solid #e1e7f0;
-  border-radius: 8px;
-  padding: 9px;
-  text-align: left;
-  background: #ffffff;
-}
-
-.supplier-list button.selected,
-.supplier-list button:hover {
-  border-color: #2357d6;
-  background: #eef4ff;
-}
-
-.supplier-list button span {
-  color: #657186;
-  font-size: 12px;
-}
-
-.analysis-main {
-  display: grid;
-  grid-template-rows: auto auto 1fr;
-  gap: 10px;
-  min-height: 0;
-}
-
-.product-search-input {
-  max-width: 380px;
-}
-
-.supplier-change-button {
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.analysis-top-row {
-  display: grid;
-  grid-template-columns: minmax(240px, 270px) 1fr;
-  gap: 12px;
-  height: min(48vh, 520px);
-  min-height: 0;
-}
-
-.product-list-panel {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 6px;
-  height: 100%;
-  min-height: 0;
-}
-
-.supplier-product-table {
-  height: 100%;
-  max-height: none;
-}
-
-.product-list-header {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.product-list-header .status-line {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.match-legend {
+.similar-search-slider {
   display: flex;
   flex: 0 0 auto;
+  align-items: center;
   gap: 8px;
-  color: #334155;
-  font-size: 10px;
+  padding: 0 4px;
+  color: #344154;
+  font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
 }
 
-.match-legend span {
+.similar-search-slider span {
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.similar-search-slider input[type="range"] {
+  width: 120px;
+  min-height: 0;
+  padding: 0;
+  accent-color: #2357d6;
+}
+
+.similar-search-slider strong {
+  min-width: 22px;
+  color: #172033;
+  font-size: 12px;
+  text-align: right;
+}
+
+.supplier-toolbar .stock-only-filter {
+  flex: 0 0 auto;
+}
+
+.mapping-badge {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mapping-badge strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.mapping-badge-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
-.match-legend .dot {
+.mapping-badge-chip i {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
 }
 
-.match-legend .dot.matched { background: #16a34a; }
-.match-legend .dot.unmatched { background: #dc2626; }
+.mapping-badge-chip.matched i { background: #16a34a; }
+.mapping-badge-chip.unmatched i { background: #dc2626; }
 
-.supplier-product-table {
-  padding: 0;
-  overflow: auto;
-}
-
-.supplier-product-table table {
-  width: 100%;
-  table-layout: fixed;
-}
-
-.supplier-product-table th:nth-child(2),
-.supplier-product-table td:nth-child(2) {
-  width: 56px;
-}
-
-.supplier-product-table th:nth-child(3),
-.supplier-product-table td:nth-child(3) {
-  width: 36px;
-}
-
-.supplier-product-table th,
-.supplier-product-table td {
-  padding: 5px 8px;
-  font-size: 11.5px;
-  text-align: left;
-  white-space: nowrap;
+/* Req 8: 3-column body - compact sticky supplier list, the supplier's
+   product list, then the (much wider) product-detail area. */
+.analysis-body {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 0;
 }
 
-.supplier-product-table th {
+/* Req 2: supplier list capped to 7 rows tall (scrolls for the rest), larger
+   row height, stronger selected highlight, narrow so its width is handed
+   back to the product detail column. */
+.supplier-rail-compact {
+  flex: 0 0 204px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(20, 34, 56, 0.05);
   position: sticky;
   top: 0;
-  z-index: 1;
+  align-self: flex-start;
+}
+
+.supplier-rail-search {
+  height: 34px;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.supplier-list-compact {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  max-height: 416px;
+  overflow-y: auto;
+}
+
+.supplier-row {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 56px;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
   background: #ffffff;
 }
 
-.supplier-product-table td:nth-child(2) {
-  text-align: right;
+.supplier-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
 }
 
-.supplier-product-table td:nth-child(3) {
-  text-align: center;
+.supplier-row span {
+  color: #657186;
+  font-size: 11px;
 }
 
-.supplier-product-table tbody tr {
+.supplier-row:hover {
+  border-color: #b9c7e3;
+  background: #f7f9fd;
+}
+
+.supplier-row.selected {
+  border-color: #2357d6;
+  border-left-color: #2357d6;
+  background: #eef4ff;
+  box-shadow: 0 0 0 1px rgba(35, 87, 214, 0.25);
+}
+
+.supplier-row.selected strong {
+  color: #1d4ed8;
+}
+
+/* Widened from a fixed 228px to ~30% of the workspace (min-width floor so it
+   doesn't collapse on narrow windows) so product names almost never
+   truncate. */
+.product-list-panel-v2 {
+  flex: 0 0 25%;
+  min-width: 320px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(20, 34, 56, 0.05);
+}
+
+.product-list-panel-v2 .status-line {
+  font-size: 11.5px;
+}
+
+/* Req 1: once the supplier rail auto-hides, the product list gets its width
+   back instead of staying pinned at 30%. */
+.product-list-panel-v2.expanded {
+  flex: 0 0 27%;
+  max-width: 520px;
+}
+
+.change-supplier-btn {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border: 1px solid #d8dee9;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.change-supplier-btn:hover {
+  border-color: #2357d6;
+  color: #1d4ed8;
+  background: #eef4ff;
+}
+
+/* Scroll container for the virtualized list (req 7) - only visible rows are
+   mounted as absolutely-positioned children of the getTotalSize() spacer
+   div rendered inside this element (see App.jsx). */
+.supplier-product-rows {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.supplier-product-rows .empty-state,
+.analysis-detail > .empty-state:only-child {
+  flex: 1 1 auto;
+}
+
+.procurement-grid-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.procurement-grid-count {
+  color: #526173;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.procurement-grid-scroll {
+  overflow: auto;
+}
+
+.procurement-grid {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.procurement-grid th:nth-child(1),
+.procurement-grid td:nth-child(1) {
+  width: auto;
+}
+
+.procurement-grid th:nth-child(2),
+.procurement-grid td:nth-child(2) {
+  width: 52px;
+}
+
+.procurement-grid th:nth-child(3),
+.procurement-grid td:nth-child(3) {
+  width: 42px;
+}
+
+.procurement-grid th:nth-child(4),
+.procurement-grid td:nth-child(4) {
+  width: 88px;
+}
+
+.procurement-grid th,
+.procurement-grid td {
+  padding: 8px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: middle;
+}
+
+.procurement-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.procurement-grid tbody tr {
   cursor: pointer;
 }
 
-.supplier-product-table tbody tr:hover {
+.procurement-grid tbody tr:hover {
+  background: #f8fafc;
+}
+
+.procurement-grid tbody tr.selected {
+  background: #eef4ff;
+  box-shadow: inset 3px 0 0 #2357d6;
+}
+
+.procurement-grid tbody tr.edited {
+  background: #f0fdf4;
+}
+
+.procurement-grid tbody tr.selected.edited {
+  background: linear-gradient(90deg, #eefbf2 0%, #eef4ff 100%);
+}
+
+.procurement-product-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.procurement-product-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.procurement-product-text strong,
+.procurement-product-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.procurement-product-text strong {
+  color: #172033;
+  font-size: 12.5px;
+  display: -webkit-box;
+  line-height: 1.18;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.procurement-product-text span {
+  color: #64748b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.procurement-offer-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  max-width: 36px;
+  overflow: hidden;
+  padding: 2px 2px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.procurement-empty {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.procurement-qty-input,
+.procurement-remarks-input {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: #ffffff;
+}
+
+.procurement-qty-input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  width: 78px;
+  max-width: 78px;
+  justify-self: end;
+  padding: 5px 6px;
+}
+
+.procurement-qty-input:focus,
+.procurement-remarks-input:focus {
+  border-color: #2357d6;
+  outline: 2px solid rgba(37, 99, 235, 0.15);
+  outline-offset: 0;
+}
+
+.supplier-product-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-bottom: 1px solid #eef1f6;
+  border-radius: 6px;
+  padding: 7px 8px;
+  text-align: left;
+  background: #ffffff;
+}
+
+.supplier-product-row:hover {
   background: #f4f7fc;
 }
 
-.supplier-product-table tbody tr.selected {
+.supplier-product-row.selected {
   background: #eef4ff;
+  box-shadow: inset 3px 0 0 #2357d6;
+}
+
+.supplier-product-row.highlighted:not(.selected) {
+  background: #f8fafc;
+  box-shadow: inset 3px 0 0 #94a3b8;
+}
+
+/* Req 1: names wrap instead of truncating - the wider panel (30%) means
+   wrapping is rare and only kicks in for genuinely long names. */
+.supplier-product-name {
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.25;
+  font-size: 12px;
+}
+
+.supplier-product-stock {
+  color: #526173;
+  font-size: 11.5px;
+  font-weight: 700;
 }
 
 .match-dot {
   display: inline-block;
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
 }
 
@@ -2291,49 +2855,201 @@ th {
   background: #dc2626;
 }
 
-.match-summary-panel {
-  display: grid;
+/* Session-visited-only 3rd/4th state (see rowMatchStates in App.jsx): a row
+   only turns amber/grey after its Similar Search has actually run once this
+   session - unvisited unmapped rows stay .unmatched (unchanged above). */
+.match-dot.similar {
+  background: #d97706;
+}
+
+.match-dot.nomatch {
+  background: #94a3b8;
+}
+
+/* Req 1/3/4/5: the wide remainder of the viewport - matched banner or
+   suggestion picker, then KPI strip, store overview row, store tabs+detail. */
+.analysis-detail {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-content: start;
-  height: 100%;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
 }
 
-.store-detail-scroll {
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.product-match-grid {
-  display: grid;
-  padding: 6px 10px;
-  border: 1px solid #dde3ee;
+/* Single-line compact info bar (40-48px) replacing the old green "Matched to
+   X" banner + 8-card KPI strip - the product is already highlighted in the
+   left panel and Code/Name/Unit/Stock are already shown per-store in the
+   grid below, so this only surfaces what nothing else on screen shows. */
+.product-info-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 40px;
+  max-height: 48px;
+  padding: 0 14px;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #ffffff;
+  box-shadow: 0 4px 12px rgba(20, 34, 56, 0.05);
+  overflow: hidden;
+  white-space: nowrap;
 }
 
-.product-match-grid .store-product-grid-wrap {
-  height: auto;
-  max-height: 220px;
-  max-width: 520px;
-  padding: 0;
+.product-info-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 32%;
+  font-size: 13px;
+  color: #0f172a;
 }
 
-.product-match-grid .grid-row {
-  padding: 5px 2px;
+.product-info-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 8px 0;
+  background: #e2e8f0;
+}
+
+.product-info-item {
+  color: #526173;
   font-size: 12px;
   font-weight: 650;
 }
 
-.product-match-grid .grid-row.suggestion-row {
-  cursor: pointer;
+/* Req 9: Similar Search result header - Supplier Product / Search Mode /
+   Search Key / Matches Found / Stores, plus the "Use this match" confirm
+   action (wired to the existing confirmMapping - see App.jsx). */
+.similar-search-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(20, 34, 56, 0.05);
 }
 
-.product-match-grid .no-suggestions {
-  padding: 6px 2px;
-  color: #657186;
+.similar-search-field {
+  display: grid;
+  gap: 2px;
+}
+
+.similar-search-field span {
+  color: #64748b;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.similar-search-field strong {
+  font-size: 12.5px;
+  color: #172033;
+}
+
+.similar-use-match-btn {
+  margin-left: auto;
+}
+
+/* Req 6/7: per-candidate badge rendered inline in the shared StoreProductGrid
+   (App.jsx) - optional field, so StockAvailability's own usage of that grid
+   (which never sets matchBadge) renders unaffected. */
+/* req 5: Code shown as a subtitle under the product name inside the Product
+   column, instead of duplicating it in a separate summary card. Selector
+   specificity has to beat ".store-product-grid-wrap .grid-row span" above,
+   which otherwise forces white-space:nowrap on every span in the cell. */
+.store-product-grid-wrap .grid-row span.product-cell-main,
+.grid-row span.product-cell-main {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #172033;
   font-size: 12px;
+  font-weight: 600;
+}
+
+/* Top match gets a light highlight so it reads first without hunting. */
+.store-product-grid-wrap .grid-row:first-child {
+  background: #eff6ff;
+  border-radius: 4px;
+}
+
+/* §5: compact status badge in front of the product name - only known for
+   the currently selected/active row (its batches are already loaded). */
+.product-status-badge {
+  margin-right: 4px;
+  font-size: 10px;
+}
+
+/* §7: one legend row below all store grids, shown once for the whole page. */
+.product-status-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 4px 0 6px;
+  padding: 4px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.product-cell-unit {
+  text-align: right;
+}
+
+.product-cell-stock {
+  text-align: right;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.product-name-with-badge {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.product-name-with-badge > span:first-child {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: unset;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.15;
+}
+
+.match-badge {
+  justify-self: start;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.match-badge--exact {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.match-badge--similar {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .import-panel {
@@ -2353,68 +3069,213 @@ th {
   font-size: 13px;
 }
 
-.product-summary {
+/* Req 4: store overview cards - one row, all stores, no scrolling. */
+.store-overview-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.exact-store-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.exact-store-workspace .store-row-grid {
+  padding-top: 0;
+}
+
+.store-overview-card {
+  flex: 1 1 0;
+  min-width: 0;
   display: grid;
-  gap: 8px;
+  gap: 4px;
+  border: 1px solid #e2e8f0;
+  border-top: 3px solid var(--store-color, #334155);
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(20, 34, 56, 0.05);
 }
 
-.product-summary .metric-grid {
-  grid-template-columns: repeat(4, minmax(100px, 1fr));
-  gap: 8px;
+.store-overview-card.active {
+  border-color: var(--store-color, #2357d6);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--store-color, #2357d6) 30%, transparent);
 }
 
-.product-summary .metric-card {
-  min-height: 52px;
-  padding: 6px 10px;
+.store-overview-label {
+  margin-bottom: 2px;
+  color: var(--store-color, #172033);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
 }
 
-.product-summary .metric-card span {
+.store-overview-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
   font-size: 10.5px;
 }
 
-.product-summary .metric-card strong {
-  font-size: 16px;
+.store-overview-metric span {
+  color: #64748b;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
-.product-store-rows {
-  display: grid;
-  gap: 8px;
+.store-overview-metric strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #172033;
+  font-size: 11.5px;
 }
 
-.product-store-columns {
-  grid-template-columns: 22px minmax(190px, 1fr) minmax(230px, 1.3fr) minmax(150px, 0.75fr) minmax(280px, 1.1fr) minmax(300px, 1.1fr);
+.expiry-warn {
+  color: #b91c1c !important;
 }
 
-.product-store-rows .stock-cell {
+/* Req 5: one store's Stock/Trend/Batch/Purchase/Sales at a time, switched
+   via tabs, instead of stacking every store's full grid vertically. */
+.store-detail-panel {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-.product-store-rows .store-product-grid-wrap {
+.store-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.store-tab {
+  border: 1px solid #e2e8f0;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px;
+  padding: 6px 14px;
+  background: #ffffff;
+  color: #526173;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.store-tab:hover {
+  border-color: var(--store-color, #2357d6);
+}
+
+.store-tab.active {
+  border-color: var(--store-color, #2357d6);
+  border-bottom-color: var(--store-color, #2357d6);
+  background: color-mix(in srgb, var(--store-color, #2357d6) 10%, white);
+  color: var(--store-color, #172033);
+}
+
+.store-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.store-detail-top {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.4fr);
+  gap: 10px;
+}
+
+.store-detail-bottom {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(20, 34, 56, 0.05);
+}
+
+.detail-block h4 {
+  margin: 0;
+  color: #64748b;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.store-detail-top .store-product-grid-wrap {
   height: auto;
-  width: 100%;
   padding: 0;
 }
 
-.product-store-rows .row-cell {
-  padding: 6px 10px;
+.trend-block .movement-chart {
+  height: 150px;
 }
 
-.product-store-rows .movement-chart {
-  height: 88px;
+.store-detail-bottom .row-table-wrap,
+.store-detail-bottom .row-empty-state {
+  height: 230px;
 }
 
-.product-store-rows th,
-.product-store-rows td {
-  font-size: 11px;
+.detail-block--compact-empty {
+  flex: 0 0 auto;
+}
+
+.detail-compact-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+@media (max-width: 1400px) {
+  .product-info-bar {
+    flex-wrap: wrap;
+    min-height: unset;
+    max-height: unset;
+    padding: 8px 14px;
+    white-space: normal;
+  }
 }
 
 @media (max-width: 1200px) {
-  .analysis-layout {
-    grid-template-columns: 1fr;
+  .analysis-body {
+    flex-wrap: wrap;
+    overflow: visible;
   }
 
-  .analysis-top-row {
+  .supplier-rail-compact,
+  .product-list-panel-v2 {
+    flex: 1 1 260px;
+  }
+
+  .store-detail-top,
+  .store-detail-bottom {
     grid-template-columns: 1fr;
   }
 }

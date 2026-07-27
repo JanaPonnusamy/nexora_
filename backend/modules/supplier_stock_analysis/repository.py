@@ -76,7 +76,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
         params.extend([1 if only_available else 0, term, term, term, term])
         cur.execute(
             f"""
-            SELECT TOP 500
+            SELECT TOP 3000
                 CAST(ss.supplier_stock_id AS VARCHAR(36)) AS supplier_stock_id,
                 CAST(ss.tenant_id AS VARCHAR(36)) AS tenant_id,
                 CAST(ss.store_id AS VARCHAR(36)) AS store_id,
@@ -91,6 +91,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                 ss.ptr,
                 ss.mrp,
                 ss.discount,
+                p.TaxId AS gst,
                 ss.packing,
                 ss.free,
                 ss.minimum_qty,
@@ -179,60 +180,67 @@ def exact_mapping(tenant_id, store_id, supplier_code, supplier_product_code):
     return rows[0] if rows else None
 
 
-def suggestions(tenant_id, supplier_product_name, store_id=None, limit=25):
-    tokens = [
-        t.strip("'\"").strip()
-        for t in (supplier_product_name or "").replace("@", " ").replace("/", " ").split()
-    ]
-    tokens = [t for t in tokens if len(t) >= 3][:4]
-    if not tokens:
-        return []
-    where = ["p.tenant_id = ?", "p.isactive = 1"]
-    params = [tenant_id]
-    if store_id:
-        where.append("p.store_id = ?")
-        params.append(store_id)
-    score = []
-    score_params = []
-    match_clauses = []
-    match_params = []
-    for token in tokens:
-        score.append("CASE WHEN p.productname LIKE '%' + ? + '%' THEN 1 ELSE 0 END")
-        score_params.append(token)
-        match_clauses.append("p.productname LIKE '%' + ? + '%'")
-        match_params.append(token)
-    # A product only needs to match at least one token (OR) to surface as a candidate;
-    # match_score then ranks by how many tokens it actually matched.
-    where.append("(" + " OR ".join(match_clauses) + ")")
-    params = [limit] + score_params + params + match_params
-    return _fetch(
-        f"""
-        SELECT TOP (?)
+def mapped_product(tenant_id, store_id, product_code):
+    rows = _fetch(
+        """
+        SELECT TOP 1
+            CAST(p.tenant_id AS VARCHAR(36)) AS tenant_id,
             CAST(p.store_id AS VARCHAR(36)) AS store_id,
-            st.store_code,
-            st.store_name,
             CAST(p.productcode AS VARCHAR(100)) AS product_code,
-            p.productname AS product_name,
-            ISNULL(p.totalstock, 0) AS stock,
-            p.mrp,
-            ({' + '.join(score)}) AS match_score
+            p.productname AS product_name
         FROM sync.Products p
-        LEFT JOIN dbo.stores st ON st.tenant_id = p.tenant_id AND st.store_id = p.store_id
-        WHERE {' AND '.join(where)}
-        ORDER BY match_score DESC, p.productname
+        WHERE p.tenant_id = ?
+          AND p.store_id = ?
+          AND CAST(p.productcode AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
+          AND ISNULL(p.isactive, 1) = 1
         """,
-        tuple(params),
+        (tenant_id, store_id, product_code),
+    )
+    return rows[0] if rows else None
+
+
+def list_active_stores(tenant_id):
+    return _fetch(
+        """
+        SELECT
+            CAST(store_id AS VARCHAR(36)) AS store_id,
+            store_code,
+            store_name
+        FROM dbo.stores
+        WHERE tenant_id = ?
+          AND ISNULL(is_active, 1) = 1
+        ORDER BY store_name
+        """,
+        (tenant_id,),
     )
 
 
-def all_store_stock(tenant_id, product_code):
+def _resolved_pairs(pairs):
+    return [
+        (row["store_id"], row["product_code"])
+        for row in pairs
+        if row.get("product_code") is not None and str(row.get("product_code")).strip().isdigit()
+    ]
+
+
+def all_store_stock(tenant_id, pairs):
+    pairs = _resolved_pairs(pairs)
+    if not pairs:
+        return []
+    values = ", ".join(["(CAST(? AS UNIQUEIDENTIFIER), CAST(? AS INT))"] * len(pairs))
+    params = []
+    for store_id, code in pairs:
+        params.extend([store_id, int(code)])
     return _fetch(
         f"""
+        WITH target(store_id, product_code) AS (
+            SELECT * FROM (VALUES {values}) v(store_id, product_code)
+        )
         SELECT
             CAST(st.store_id AS VARCHAR(36)) AS store_id,
             st.store_code,
             st.store_name,
-            CAST(p.productcode AS VARCHAR(100)) AS product_code,
+            COALESCE(CAST(p.productcode AS VARCHAR(100)), CAST(t.product_code AS VARCHAR(100))) AS product_code,
             p.productname AS product_name,
             ISNULL(p.totalstock, 0) AS total_stock,
             p.saleunit AS sale_unit,
@@ -241,119 +249,232 @@ def all_store_stock(tenant_id, product_code):
             p.purchaseprice AS ptr,
             MAX(b.grndate) AS last_grn_date,
             MAX(b.lastsaledate) AS last_sale_date
-        FROM dbo.stores st
+        FROM target t
+        JOIN dbo.stores st
+          ON st.tenant_id = ? AND st.store_id = t.store_id
         LEFT JOIN sync.Products p
-            ON p.tenant_id = st.tenant_id
-           AND p.store_id = st.store_id
-           AND CAST(p.productcode AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
-           AND p.isactive = 1
+          ON p.tenant_id = ? AND p.store_id = t.store_id
+         AND p.ProductCode = t.product_code
+         AND ISNULL(p.isactive, 1) = 1
         LEFT JOIN sync.Batches b
-            ON b.tenant_id = st.tenant_id
-           AND b.store_id = st.store_id
-           AND CAST(b.productcode AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
-        WHERE st.tenant_id = ?
-          AND ISNULL(st.is_active, 1) = 1
-        GROUP BY st.store_id, st.store_code, st.store_name, p.productcode,
+          ON b.tenant_id = ? AND b.store_id = t.store_id
+         AND b.ProductCode = t.product_code
+        GROUP BY st.store_id, st.store_code, st.store_name, p.productcode, t.product_code,
                  p.productname, p.totalstock, p.saleunit, p.unitdescription,
                  p.mrp, p.purchaseprice
         ORDER BY st.store_name
         """,
-        (product_code, product_code, tenant_id),
+        (*params, tenant_id, tenant_id, tenant_id),
     )
 
 
-def batches_all_stores(tenant_id, product_code):
+def batches_all_stores(tenant_id, pairs):
+    pairs = _resolved_pairs(pairs)
+    if not pairs:
+        return []
+    values = ", ".join(["(CAST(? AS UNIQUEIDENTIFIER), CAST(? AS INT))"] * len(pairs))
+    params = []
+    for store_id, code in pairs:
+        params.extend([store_id, int(code)])
     return _fetch(
-        """
-        SELECT TOP 100
-            CAST(b.store_id AS VARCHAR(36)) AS store_id,
-            st.store_code,
-            st.store_name,
-            CAST(b.productcode AS VARCHAR(100)) AS product_code,
-            b.batchcode,
-            b.stock,
-            b.mrp,
-            b.expirydate,
-            b.itemcost,
-            b.purchaseprice AS ptr,
-            b.grndate,
-            b.lastsaledate
-        FROM sync.Batches b
-        LEFT JOIN dbo.stores st ON st.tenant_id = b.tenant_id AND st.store_id = b.store_id
-        WHERE b.tenant_id = ?
-          AND CAST(b.productcode AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
-          AND ISNULL(b.stock, 0) >= 0
-        ORDER BY st.store_name, b.grndate DESC
+        f"""
+        WITH target(store_id, product_code) AS (
+            SELECT * FROM (VALUES {values}) v(store_id, product_code)
+        ),
+        ranked_batches AS (
+            SELECT
+                CAST(b.store_id AS VARCHAR(36)) AS store_id,
+                st.store_code,
+                st.store_name,
+                CAST(b.productcode AS VARCHAR(100)) AS product_code,
+                b.batchcode,
+                b.stock,
+                b.mrp,
+                b.expirydate,
+                b.itemcost,
+                b.purchaseprice AS ptr,
+                b.grndate,
+                b.lastsaledate,
+                ROW_NUMBER() OVER (
+                    PARTITION BY b.store_id
+                    ORDER BY
+                        CASE WHEN ISNULL(b.stock, 0) > 0 THEN 0 ELSE 1 END,
+                        b.grndate DESC,
+                        b.expirydate DESC,
+                        b.batchcode DESC
+                ) AS rn
+            FROM target t
+            JOIN sync.Batches b
+              ON b.store_id = t.store_id AND b.ProductCode = t.product_code
+            LEFT JOIN dbo.stores st ON st.tenant_id = b.tenant_id AND st.store_id = b.store_id
+            WHERE b.tenant_id = ?
+              AND ISNULL(b.stock, 0) >= 0
+        )
+        SELECT
+            store_id,
+            store_code,
+            store_name,
+            product_code,
+            batchcode,
+            stock,
+            mrp,
+            expirydate,
+            itemcost,
+            ptr,
+            grndate,
+            lastsaledate
+        FROM ranked_batches
+        WHERE rn <= 50
+        ORDER BY store_name, rn
         """,
-        (tenant_id, product_code),
+        (*params, tenant_id),
     )
 
 
-def purchase_history_all_stores(tenant_id, product_code):
+def purchase_history_all_stores(tenant_id, pairs):
+    pairs = _resolved_pairs(pairs)
+    if not pairs:
+        return []
+    values = ", ".join(["(CAST(? AS UNIQUEIDENTIFIER), CAST(? AS INT))"] * len(pairs))
+    params = []
+    for store_id, code in pairs:
+        params.extend([store_id, int(code)])
     return _fetch(
-        """
-        SELECT TOP 100
-            CAST(pt.store_id AS VARCHAR(36)) AS store_id,
-            st.store_code,
-            st.store_name,
-            pt.Grnnumber AS grn_no,
-            pt.stockreceived AS qty,
-            pt.FreeQty AS free,
-            pt.ProductDiscPercent AS discount,
-            pt.itemcost,
-            pt.purchaseprice AS ptr,
-            pt.mrp,
-            pt.grndate,
-            COALESCE(s.suppliername, CAST(pt.SupplierCode AS NVARCHAR(100))) AS supplier
-        FROM sync.PurchaseTrans pt
-        LEFT JOIN dbo.stores st ON st.tenant_id = pt.tenant_id AND st.store_id = pt.store_id
-        LEFT JOIN sync.Suppliers s
-            ON s.tenant_id = pt.tenant_id
-           AND s.store_id = pt.store_id
-           AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(pt.SupplierCode AS VARCHAR(100))
-        WHERE pt.tenant_id = ?
-          AND CAST(pt.ProductCode AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
-        ORDER BY pt.grndate DESC
+        f"""
+        WITH target(store_id, product_code) AS (
+            SELECT * FROM (VALUES {values}) v(store_id, product_code)
+        ),
+        ranked_purchases AS (
+            SELECT
+                CAST(pt.store_id AS VARCHAR(36)) AS store_id,
+                st.store_code,
+                st.store_name,
+                pt.Grnnumber AS grn_no,
+                pt.stockreceived AS qty,
+                pt.FreeQty AS free,
+                pt.DiscountAmount AS overall_discount,
+                pt.ProductDiscPercent AS discount,
+                pt.itemcost,
+                pt.purchaseprice AS ptr,
+                pt.mrp,
+                pt.grndate,
+                COALESCE(s.suppliername, CAST(pt.SupplierCode AS NVARCHAR(100))) AS supplier,
+                ROW_NUMBER() OVER (
+                    PARTITION BY pt.store_id
+                    ORDER BY pt.grndate DESC, pt.Grnnumber DESC
+                ) AS rn
+            FROM target t
+            JOIN sync.PurchaseTrans pt
+              ON pt.store_id = t.store_id AND pt.ProductCode = t.product_code
+            LEFT JOIN dbo.stores st ON st.tenant_id = pt.tenant_id AND st.store_id = pt.store_id
+            LEFT JOIN sync.Suppliers s
+                ON s.tenant_id = pt.tenant_id
+               AND s.store_id = pt.store_id
+               AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(pt.SupplierCode AS VARCHAR(100))
+            WHERE pt.tenant_id = ?
+        )
+        SELECT
+            store_id,
+            store_code,
+            store_name,
+            grn_no,
+            qty,
+            free,
+            overall_discount,
+            discount,
+            itemcost,
+            ptr,
+            mrp,
+            grndate,
+            supplier
+        FROM ranked_purchases
+        WHERE rn <= 50
+        ORDER BY grndate DESC
         """,
-        (tenant_id, product_code),
+        (*params, tenant_id),
     )
 
 
-def sales_history_all_stores(tenant_id, product_code):
+def sales_history_all_stores(tenant_id, pairs):
+    pairs = _resolved_pairs(pairs)
+    if not pairs:
+        return []
+    values = ", ".join(["(CAST(? AS UNIQUEIDENTIFIER), CAST(? AS INT))"] * len(pairs))
+    params = []
+    for store_id, code in pairs:
+        params.extend([store_id, int(code)])
     return _fetch(
-        """
-        SELECT TOP 100
-            CAST(psi.store_id AS VARCHAR(36)) AS store_id,
-            st.store_code,
-            st.store_name,
-            psi.BillNumber AS bill_no,
-            si.BillDate AS bill_date,
-            SUM(psi.quantity) AS qty,
-            MAX(psi.DiscountPercentage) AS discount,
-            psi.Seriesname AS bill_type,
-            psi.mrp,
-            psi.purchaseprice AS ptr,
-            si.CUSTOMERNAME AS customer_name
-        FROM sync.ProductSaleInformation psi
-        LEFT JOIN dbo.stores st ON st.tenant_id = psi.tenant_id AND st.store_id = psi.store_id
-        LEFT JOIN sync.SaleInformation si
-            ON si.tenant_id = psi.tenant_id
-           AND si.store_id = psi.store_id
-           AND si.billnumber = psi.BillNumber
-        WHERE psi.tenant_id = ?
-          AND CAST(psi.ProductCode AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
-          AND ISNULL(psi.transactionvalidity, 0) = 0
-        GROUP BY psi.store_id, st.store_code, st.store_name, psi.BillNumber,
-                 si.BillDate, psi.Seriesname, psi.mrp, psi.purchaseprice, si.CUSTOMERNAME
-        ORDER BY si.BillDate DESC
+        f"""
+        WITH target(store_id, product_code) AS (
+            SELECT * FROM (VALUES {values}) v(store_id, product_code)
+        ),
+        sales_grouped AS (
+            SELECT
+                CAST(psi.store_id AS VARCHAR(36)) AS store_id,
+                st.store_code,
+                st.store_name,
+                psi.BillNumber AS bill_no,
+                si.BillDate AS bill_date,
+                SUM(psi.quantity) AS qty,
+                MAX(psi.DiscountPercentage) AS discount,
+                psi.Seriesname AS bill_type,
+                psi.mrp,
+                psi.purchaseprice AS ptr,
+                si.CUSTOMERNAME AS customer_name
+            FROM target t
+            JOIN sync.ProductSaleInformation psi
+              ON psi.store_id = t.store_id AND psi.ProductCode = t.product_code
+            LEFT JOIN dbo.stores st ON st.tenant_id = psi.tenant_id AND st.store_id = psi.store_id
+            LEFT JOIN sync.SaleInformation si
+                ON si.tenant_id = psi.tenant_id
+               AND si.store_id = psi.store_id
+               AND si.billnumber = psi.BillNumber
+            WHERE psi.tenant_id = ?
+              AND ISNULL(psi.transactionvalidity, 0) = 0
+            GROUP BY psi.store_id, st.store_code, st.store_name, psi.BillNumber,
+                     si.BillDate, psi.Seriesname, psi.mrp, psi.purchaseprice, si.CUSTOMERNAME
+        ),
+        ranked_sales AS (
+            SELECT *,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY store_id
+                       ORDER BY bill_date DESC, bill_no DESC
+                   ) AS rn
+            FROM sales_grouped
+        )
+        SELECT
+            store_id,
+            store_code,
+            store_name,
+            bill_no,
+            bill_date,
+            qty,
+            discount,
+            bill_type,
+            mrp,
+            ptr,
+            customer_name
+        FROM ranked_sales
+        WHERE rn <= 50
+        ORDER BY bill_date DESC
         """,
-        (tenant_id, product_code),
+        (*params, tenant_id),
     )
 
 
-def monthly_movement_all_stores(tenant_id, product_code, months=6):
+def monthly_movement_all_stores(tenant_id, pairs, months=6):
+    pairs = _resolved_pairs(pairs)
+    if not pairs:
+        return []
+    values = ", ".join(["(CAST(? AS UNIQUEIDENTIFIER), CAST(? AS INT))"] * len(pairs))
+    params = []
+    for store_id, code in pairs:
+        params.extend([store_id, int(code)])
     return _fetch(
-        """
+        f"""
+        WITH target(store_id, product_code) AS (
+            SELECT * FROM (VALUES {values}) v(store_id, product_code)
+        )
         SELECT
             CAST(pt.store_id AS VARCHAR(36)) AS store_id,
             st.store_code,
@@ -365,15 +486,16 @@ def monthly_movement_all_stores(tenant_id, product_code, months=6):
             SUM(ISNULL(pt.SaleQuantity, 0)) AS sale_qty,
             SUM(ISNULL(pt.TransferOutQuantity, 0)) AS transfer_out_qty,
             SUM(ISNULL(pt.AdjustmentQuantity, 0)) AS adjustment_qty
-        FROM sync.ProductTrans pt
+        FROM target t
+        JOIN sync.ProductTrans pt
+          ON pt.store_id = t.store_id AND pt.ProductCode = t.product_code
         LEFT JOIN dbo.stores st ON st.tenant_id = pt.tenant_id AND st.store_id = pt.store_id
         WHERE pt.tenant_id = ?
-          AND CAST(pt.ProductCode AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
           AND pt.MonthOfStatistics >= DATEADD(MONTH, -?, GETDATE())
         GROUP BY pt.store_id, st.store_code, st.store_name, CONVERT(VARCHAR(7), pt.MonthOfStatistics, 120)
         ORDER BY st.store_name, month
         """,
-        (tenant_id, product_code, months),
+        (*params, tenant_id, months),
     )
 
 
