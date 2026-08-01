@@ -35,6 +35,7 @@ export default function LegacyOrderPage() {
   const [gridLoading, setGridLoading] = useState(false)
   const [gridEdits, setGridEdits] = useState<Record<number, number>>({})
   const [gridSaving, setGridSaving] = useState<number | null>(null)
+  const [selectedProductCode, setSelectedProductCode] = useState<number | null>(null)
   const pollers = useRef(new Map<string, number>())
 
   useEffect(() => {
@@ -164,6 +165,7 @@ export default function LegacyOrderPage() {
     if (!storeName) return
     setGridLoading(true)
     setGridEdits({})
+    setSelectedProductCode(null)
     legacyOrderService.orders(storeName)
       .then(setGridRows)
       .catch((e: Error) => setError(e.message))
@@ -239,25 +241,58 @@ export default function LegacyOrderPage() {
         </div>
       </section>
 
-      <section className="lo-card">
-        <div className="lo-section-title">
-          <div><h2>Order grid</h2><p className="lo-note">Current OrderManagement rows for review. Set a product's Order Qty to 0 to mark it "no need" — it will be closed out on the next compare instead of reappearing.</p></div>
-          <label className="lo-store-picker"><span>Store</span><select value={gridStore} onChange={(e) => setGridStore(e.target.value)}>{stores.map((store) => <option key={store.store_name} value={store.store_name}>{store.store_name}</option>)}</select></label>
-        </div>
-        <div className="lo-review-scroll">
-          <table className="lo-table lo-review-table">
-            <thead><tr><th>Product</th><th className="lo-num">Stock</th><th className="lo-num">Min / Max</th><th className="lo-num">Order Qty</th><th>Status</th><th>Remarks</th><th>Action</th></tr></thead>
-            <tbody>
-              {gridRows.map((row) => {
-                const edited = gridEdits[row.ProductCode]
-                const value = edited ?? row.OrderQty
-                const dirty = edited !== undefined && edited !== row.OrderQty
-                return (
-                  <tr key={row.ProductCode}>
+      <div className="lo-lower-grid">
+        <section className="lo-card">
+          <div className="lo-section-title">
+            <div><h2>Order grid</h2><p className="lo-note">Current OrderManagement rows for review. Set a product's Order Qty to 0 to mark it "no need" — it will be closed out on the next compare instead of reappearing.</p></div>
+            <label className="lo-store-picker"><span>Store</span><select value={gridStore} onChange={(e) => setGridStore(e.target.value)}>{stores.map((store) => <option key={store.store_name} value={store.store_name}>{store.store_name}</option>)}</select></label>
+          </div>
+          <div className="lo-review-scroll">
+            <table className="lo-table lo-review-table">
+              <thead><tr><th>Product</th><th className="lo-num">Stock</th><th className="lo-num">Order Qty</th><th>Status</th></tr></thead>
+              <tbody>
+                {gridRows.map((row) => (
+                  <tr
+                    key={row.ProductCode}
+                    className={selectedProductCode === row.ProductCode ? 'lo-supplier-row is-selected' : undefined}
+                    onClick={() => setSelectedProductCode(row.ProductCode)}
+                    style={{ cursor: 'pointer' }}
+                  >
                     <td><strong>{row.ProductName}</strong><small className="lo-cell-sub">{row.ProductCode}</small></td>
                     <td className="lo-num">{row.TotalStock}</td>
-                    <td className="lo-num">{row.MinQty} / {row.MaxQty}</td>
-                    <td className="lo-num">
+                    <td className="lo-num">{gridEdits[row.ProductCode] ?? row.OrderQty}</td>
+                    <td><span className={`lo-chip ${row.Status === 2 ? 'lo-chip-success' : 'lo-chip-running'}`}>{row.Status === 2 ? 'Closed' : 'Pending'}</span></td>
+                  </tr>
+                ))}
+                {!gridRows.length && <tr><td colSpan={4} className="lo-empty">{gridLoading ? 'Loading order grid…' : 'No order rows for this store.'}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="lo-card lo-activity">
+          <div className="lo-section-title"><div><h2>Product detail</h2><p className="lo-note">Select a product from the grid to review and edit it.</p></div></div>
+          {selectedProductCode !== null && (() => {
+            const row = gridRows.find((r) => r.ProductCode === selectedProductCode)
+            if (!row) return null
+            const edited = gridEdits[row.ProductCode]
+            const value = edited ?? row.OrderQty
+            const dirty = edited !== undefined && edited !== row.OrderQty
+            return (
+              <div className="lo-product-review">
+                <div className="lo-review-header">
+                  <div><span className="lo-eyebrow">Order grid review</span><h3>{row.ProductName}</h3><p>{row.ProductCode} · {gridStore}</p></div>
+                  <span className={`lo-chip ${row.Status === 2 ? 'lo-chip-success' : 'lo-chip-running'}`}>{row.Status === 2 ? 'Closed' : 'Pending'}</span>
+                </div>
+                <dl className="lo-meta" style={{ padding: '0.75rem' }}>
+                  <div><dt>Stock</dt><dd>{row.TotalStock}</dd></div>
+                  <div><dt>Min / Max</dt><dd>{row.MinQty} / {row.MaxQty}</dd></div>
+                  <div><dt>Sale Unit</dt><dd>{row.SaleUnit}</dd></div>
+                  <div><dt>Wanted Type</dt><dd>{row.WantedType || '—'}</dd></div>
+                  <div><dt>Remarks</dt><dd>{row.Remarks ?? '—'}</dd></div>
+                  <div>
+                    <dt>Order Qty</dt>
+                    <dd>
                       <input
                         type="number"
                         min={0}
@@ -266,27 +301,26 @@ export default function LegacyOrderPage() {
                         onChange={(e) => setGridEdits((edits) => ({ ...edits, [row.ProductCode]: Number(e.target.value) }))}
                         style={{ width: '5rem' }}
                       />
-                    </td>
-                    <td><span className={`lo-chip ${row.Status === 2 ? 'lo-chip-success' : 'lo-chip-running'}`}>{row.Status === 2 ? 'Closed' : 'Pending'}</span></td>
-                    <td>{row.Remarks ?? '—'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="lo-btn lo-btn-primary"
-                        disabled={!dirty || gridSaving === row.ProductCode}
-                        onClick={() => saveOrderQty(row.ProductCode, value)}
-                      >
-                        {gridSaving === row.ProductCode ? 'Saving…' : 'Save'}
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-              {!gridRows.length && <tr><td colSpan={7} className="lo-empty">{gridLoading ? 'Loading order grid…' : 'No order rows for this store.'}</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                    </dd>
+                  </div>
+                </dl>
+                <div className="lo-review-footer">
+                  <div><strong>No need for this cycle?</strong><small>Set Order Qty to 0 and save to close it out without a supplier order.</small></div>
+                  <button
+                    type="button"
+                    className="lo-btn lo-btn-primary"
+                    disabled={!dirty || gridSaving === row.ProductCode}
+                    onClick={() => saveOrderQty(row.ProductCode, value)}
+                  >
+                    {gridSaving === row.ProductCode ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            )
+          })()}
+          {selectedProductCode === null && <div className="lo-empty">No product selected.</div>}
+        </section>
+      </div>
 
       <div className="lo-lower-grid">
         <section className="lo-card">
