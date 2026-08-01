@@ -3,11 +3,17 @@ import type {
   LegacyJob,
   LegacyStore,
   LegacyTable,
+  MonthlyStatRow,
+  OrderHistoryRow,
   OrderMode,
   OrderRow,
   PreviousOrder,
   PreviousOrderComparison,
   PreviousOrderSupplier,
+  PurchaseDetailRow,
+  QtyCheckRow,
+  QtyCheckUpdateResult,
+  SalesDetailRow,
   SupplierComparison,
   SupplierComparisonProduct,
 } from '../types/legacyOrder'
@@ -84,4 +90,33 @@ export const legacyOrderService = {
       order_id: orderId,
       supplier_code: supplierCode,
     }),
+
+  qtyCheckRows: (storeName: string) =>
+    api.get<QtyCheckRow[]>(`${BASE}/qty-check/${encodeURIComponent(storeName)}`),
+
+  updateQtyCheck: (storeName: string, productCode: number, orderQty: number) =>
+    api.patch<QtyCheckUpdateResult>(
+      `${BASE}/qty-check/${encodeURIComponent(storeName)}/${productCode}`,
+      { order_qty: orderQty },
+    ),
+
+  qtyCheckPurchaseDetails: (storeName: string, productCode: number, mode: OrderMode) =>
+    api.get<PurchaseDetailRow[]>(
+      `${BASE}/qty-check/${encodeURIComponent(storeName)}/${productCode}/purchase-details?mode=${mode}`,
+    ),
+
+  qtyCheckSalesDetails: (storeName: string, productCode: number, mode: OrderMode) =>
+    api.get<SalesDetailRow[]>(
+      `${BASE}/qty-check/${encodeURIComponent(storeName)}/${productCode}/sales-details?mode=${mode}`,
+    ),
+
+  qtyCheckMonthlyStats: (storeName: string, productCode: number, mode: OrderMode) =>
+    api.get<MonthlyStatRow[]>(
+      `${BASE}/qty-check/${encodeURIComponent(storeName)}/${productCode}/monthly-stats?mode=${mode}`,
+    ),
+
+  qtyCheckOrderHistory: (storeName: string, productCode: number) =>
+    api.get<OrderHistoryRow[]>(
+      `${BASE}/qty-check/${encodeURIComponent(storeName)}/${productCode}/order-history`,
+    ),
 }

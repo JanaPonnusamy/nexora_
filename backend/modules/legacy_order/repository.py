@@ -199,6 +199,182 @@ def update_order_qty(store_name, product_code, order_qty):
         return updated
 
 
+def qty_check_rows(store_name):
+    """Port of Form1.GetQtyCheckQuery('All', 'All') -- the Qty Check screen's
+    main grid: only rows not yet reviewed (qtycheck = 0, status = 0)."""
+    sql = (
+        "SELECT productcode, productname, orderqty, totalstock, saleunit, unitdescription, "
+        "slsqty, mrp, lastreceiveddate, lastsaledate, maxsaleqty, Transactiondate, wantedtype "
+        "FROM ordermanagement WHERE qtycheck = 0 AND status = 0 AND storename = ? "
+        "ORDER BY productname"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, store_name)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def update_qty_check(store_name, product_code, order_qty):
+    """Port of dgvMain_CellEndEdit -> UpdateDatabase(productCode, newQty, remark)
+    -> UpdateValues. The remark mirrors the VB diff message; qtycheck flips to
+    1 so the row drops off the Qty Check grid the moment it's reviewed --
+    whether zeroed (Escape, "Don't Want to Order") or committed with a value
+    (Enter)."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        row = cur.execute(
+            "SELECT orderqty FROM ordermanagement WHERE productcode = ? AND storename = ? AND status = 0",
+            product_code, store_name,
+        ).fetchone()
+        if not row:
+            return None
+        old_qty = int(row[0]) if row[0] is not None else 0
+        diff = order_qty - old_qty
+        if order_qty == 0:
+            remark = "Don't Want to Order"
+        elif diff == 0:
+            remark = "No Changes in OrderQty"
+        elif diff > 0:
+            remark = f"OrderQty Changed {diff} Add"
+        else:
+            remark = f"OrderQty Changed {abs(diff)} Less"
+
+        cur.execute(
+            "UPDATE ordermanagement SET orderqty = ?, remarks = ?, qtycheck = 1 "
+            "WHERE productcode = ? AND storename = ? AND status = 0",
+            order_qty, remark, product_code, store_name,
+        )
+        conn.commit()
+        return {"order_qty": order_qty, "remarks": remark}
+
+
+def qty_check_purchase_details(store, product_code, mode):
+    """Port of RetrieveDataForPurchaseDetailsAsync -- last 10 GRN/purchase
+    lines for a product, from PurchaseTrans on either the central OrderNMC
+    copy (mode='local') or the live branch DB (mode='remote')."""
+    is_local = mode != "remote"
+    supplier_table = "OrderSuppliers" if is_local else "Suppliers"
+    supplier_store_filter = " AND sup.StoreName = ?" if is_local else ""
+    store_filter = " AND pt.StoreName = ?" if is_local else ""
+
+    sql = (
+        "SELECT TOP 10 pt.StockReceived AS RStock, pt.FreeQty, "
+        "pt.ProductDiscPercent AS DIS, pt.ItemCost, pt.PurchasePrice AS PTR, "
+        "pt.MRP, pt.GRNDate, "
+        "CASE WHEN pt.InvoiceSeries = 'TI' THEN src.StoreName ELSE sup.SupplierName END AS SupplierName "
+        f"FROM PurchaseTrans pt WITH (NOLOCK) "
+        f"LEFT JOIN {supplier_table} sup WITH (NOLOCK) "
+        f"ON pt.InvoiceSeries <> 'TI' AND pt.SupplierCode = sup.SupplierCode{supplier_store_filter} "
+        "OUTER APPLY ("
+        "  SELECT TOP 1 s.StoreName FROM Stores s WITH (NOLOCK) "
+        "  WHERE pt.InvoiceSeries = 'TI' AND CAST(s.StoreCode AS varchar(50)) = pt.SupplierCode"
+        ") src "
+        f"WHERE pt.ProductCode = ?{store_filter} "
+        "ORDER BY pt.GRNDate DESC"
+    )
+    params = []
+    if is_local:
+        params.append(store["store_name"])
+    params.append(product_code)
+    if is_local:
+        params.append(store["store_name"])
+
+    conn = database.get_central_connection() if is_local else database.get_branch_connection(
+        store["server_name"], store["database"], store["username"], store["password"]
+    )
+    with conn:
+        cur = conn.cursor().execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def qty_check_sales_details(store, product_code, mode):
+    """Port of RetrieveDataForSalesDetailsAsync -- last 10 sale lines for a
+    product, from ProductSaleInformation/SaleInformation/SalesRep."""
+    is_local = mode != "remote"
+    store_filter = " AND {alias}.StoreName = ?"
+
+    sql = (
+        "SELECT TOP 10 SUM(PS.quantity) AS TotalQuantity, s.Billtime AS Bill_Time, "
+        "sr.Salesmanname, s.CUSTOMERNAME, PS.DiscountPercentage AS dis, "
+        "PS.Seriesname AS type, PS.mrp, PS.purchaseprice AS ptr, PS.Bnumber "
+        "FROM ProductSaleInformation PS "
+        "INNER JOIN saleinformation s ON PS.BillNumber = s.BillNumber AND PS.TransactionDate = s.BillDate"
+        + (store_filter.format(alias="s") if is_local else "") + " "
+        "INNER JOIN SalesRep sr ON s.DeliverySalesRep = sr.Salesmancode"
+        + (store_filter.format(alias="sr") if is_local else "") + " "
+        "WHERE PS.ProductCode = ? AND PS.TransactionValidity = 0"
+        + (store_filter.format(alias="PS") if is_local else "") + " "
+        "GROUP BY PS.Bnumber, s.BillTime, s.CUSTOMERNAME, PS.Seriesname, PS.mrp, "
+        "PS.purchaseprice, PS.Lastadjustmentdate, PS.DiscountPercentage, sr.Salesmanname "
+        "ORDER BY s.BillTime DESC"
+    )
+    params = []
+    if is_local:
+        params.append(store["store_name"])
+    if is_local:
+        params.append(store["store_name"])
+    params.append(product_code)
+    if is_local:
+        params.append(store["store_name"])
+
+    conn = database.get_central_connection() if is_local else database.get_branch_connection(
+        store["server_name"], store["database"], store["username"], store["password"]
+    )
+    with conn:
+        cur = conn.cursor().execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def qty_check_monthly_stats(store, product_code, mode):
+    """Port of RetrieveDataForChartAsync -- last 3 months of ProductTrans
+    stats, the source for the "Monthly Statistics" chart."""
+    is_local = mode != "remote"
+    store_filter = " AND pt.StoreName = ?" if is_local else ""
+
+    sql = (
+        "SELECT pt.ProductCode, CONVERT(VARCHAR(7), pt.MonthOfStatistics, 120) AS MonthOfStatistics, "
+        "ISNULL(pt.SaleQuantity, 0) AS SaleQuantity, ISNULL(pt.StockInHand, 0) AS StockInHand, "
+        "ISNULL(pt.PurchaseQuantity, 0) AS PurchaseQuantity, "
+        "ISNULL(pt.AdjustmentQuantity, 0) AS AdjustmentQuantity, "
+        "ISNULL(pt.TransferInQuantity, 0) AS TransferInQuantity, "
+        "ISNULL(pt.TransferOutQuantity, 0) AS TransferOutQuantity "
+        "FROM ProductTrans pt WITH (NOLOCK) "
+        "WHERE pt.ProductCode = ? "
+        "AND pt.MonthOfStatistics >= DATEADD(MONTH, DATEDIFF(MONTH, 0, GETDATE()) - 3, 0)"
+        f"{store_filter} "
+        "ORDER BY pt.MonthOfStatistics ASC"
+    )
+    params = [product_code]
+    if is_local:
+        params.append(store["store_name"])
+
+    conn = database.get_central_connection() if is_local else database.get_branch_connection(
+        store["server_name"], store["database"], store["username"], store["password"]
+    )
+    with conn:
+        cur = conn.cursor().execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def qty_check_order_history(store_name, product_code):
+    """Port of RetrieveDataForOrderDetailsAsync -- last 25 OrderManagementBackup
+    rows for this product, always from the central OrderNMC copy regardless
+    of local/remote mode (matches the VB call site)."""
+    sql = (
+        "SELECT TOP 25 Productcode, ProductName, Orqty, OrgOrderQty, saleunit, MRP, "
+        "remarks, Wanteddate, WantedType, Orsupplier "
+        "FROM OrderManagementBackup WHERE Productcode = ? AND StoreName = ? "
+        "ORDER BY Wanteddate DESC"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, product_code, store_name)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
 def previous_orders(store_name):
     """Match Form1.LoadOrderID: recent two days, otherwise latest five."""
     recent_sql = (

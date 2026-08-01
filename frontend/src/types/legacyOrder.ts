@@ -15,7 +15,7 @@ export interface LegacyTable {
   destination: string
 }
 
-export type JobKind = 'sync' | 'order'
+export type JobKind = 'sync' | 'order' | 'stock'
 export type JobStatus = 'running' | 'completed' | 'failed'
 
 export interface JobLogEntry {
@@ -52,6 +52,8 @@ export interface LegacyJob {
     rows?: number
     odata?: string
     header?: OrderHeaderResult | null
+    source_store?: string
+    supplier_code?: string
   } | null
   error: string | null
   started_at: string
@@ -81,6 +83,74 @@ export interface OrderRow {
   WantedDate: string | null
   Status: number
   Remarks: string | null
+}
+
+export interface QtyCheckRow {
+  productcode: number
+  productname: string
+  orderqty: number
+  totalstock: number
+  saleunit: number
+  unitdescription: string
+  slsqty: number
+  mrp: number
+  lastreceiveddate: string | null
+  lastsaledate: string | null
+  maxsaleqty: number
+  Transactiondate: string | null
+  wantedtype: string | null
+}
+
+export interface QtyCheckUpdateResult {
+  order_qty: number
+  remarks: string
+}
+
+export interface PurchaseDetailRow {
+  RStock: number | null
+  FreeQty: number | null
+  DIS: number | null
+  ItemCost: number | null
+  PTR: number | null
+  MRP: number | null
+  GRNDate: string | null
+  SupplierName: string | null
+}
+
+export interface SalesDetailRow {
+  TotalQuantity: number | null
+  Bill_Time: string | null
+  Salesmanname: string | null
+  CUSTOMERNAME: string | null
+  dis: number | null
+  type: string | null
+  mrp: number | null
+  ptr: number | null
+  Bnumber: string | null
+}
+
+export interface MonthlyStatRow {
+  ProductCode: number
+  MonthOfStatistics: string
+  SaleQuantity: number
+  StockInHand: number
+  PurchaseQuantity: number
+  AdjustmentQuantity: number
+  TransferInQuantity: number
+  TransferOutQuantity: number
+}
+
+export interface OrderHistoryRow {
+  Productcode: number
+  ProductName: string
+  Orqty: number | null
+  OrgOrderQty: number | null
+  saleunit: number | null
+  MRP: number | null
+  remarks: string | null
+  Wanteddate: string | null
+  WantedType: string | null
+  Orsupplier: string | null
 }
 
 export interface PreviousOrder {

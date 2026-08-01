@@ -35,3 +35,7 @@ class CompareSupplierRequest(ComparePreviousOrderRequest):
 
 class UpdateOrderQtyRequest(BaseModel):
     order_qty: int
+
+
+class UpdateQtyCheckRequest(BaseModel):
+    order_qty: int

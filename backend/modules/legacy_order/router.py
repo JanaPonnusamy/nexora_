@@ -7,7 +7,7 @@ and the branch DBs it points at -- NOT NEXORA_PLATFORM's sync.* tables.
 from fastapi import APIRouter, HTTPException
 
 from modules.legacy_order import database, repository, service, sync_engine
-from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest
+from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest
 
 router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"])
 
@@ -164,5 +164,67 @@ def compare_previous_order_supplier(payload: CompareSupplierRequest):
         return repository.compare_previous_order_supplier(
             payload.store_name, payload.order_id, payload.supplier_code
         )
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# ---- Qty Check screen (port of Form1's "Qty Check" process) ----
+
+@router.get("/qty-check/{store_name}")
+def qty_check_rows(store_name: str):
+    try:
+        return repository.qty_check_rows(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.patch("/qty-check/{store_name}/{product_code}")
+def update_qty_check(store_name: str, product_code: int, payload: UpdateQtyCheckRequest):
+    try:
+        result = repository.update_qty_check(store_name, product_code, payload.order_qty)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Order row not found")
+        return result
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/qty-check/{store_name}/{product_code}/purchase-details")
+def qty_check_purchase_details(store_name: str, product_code: int, mode: str = "local"):
+    try:
+        store = repository.get_store(store_name)
+        if not store:
+            raise HTTPException(status_code=404, detail="Store not found")
+        return repository.qty_check_purchase_details(store, product_code, mode)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/qty-check/{store_name}/{product_code}/sales-details")
+def qty_check_sales_details(store_name: str, product_code: int, mode: str = "local"):
+    try:
+        store = repository.get_store(store_name)
+        if not store:
+            raise HTTPException(status_code=404, detail="Store not found")
+        return repository.qty_check_sales_details(store, product_code, mode)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/qty-check/{store_name}/{product_code}/monthly-stats")
+def qty_check_monthly_stats(store_name: str, product_code: int, mode: str = "local"):
+    try:
+        store = repository.get_store(store_name)
+        if not store:
+            raise HTTPException(status_code=404, detail="Store not found")
+        return repository.qty_check_monthly_stats(store, product_code, mode)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/qty-check/{store_name}/{product_code}/order-history")
+def qty_check_order_history(store_name: str, product_code: int):
+    try:
+        return repository.qty_check_order_history(store_name, product_code)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

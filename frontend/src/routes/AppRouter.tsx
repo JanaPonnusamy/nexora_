@@ -14,6 +14,7 @@ import ModuleWorkspacePage from '../pages/administration/ModuleWorkspacePage'
 import SyncAdministrationPage from '../pages/sync/SyncAdministrationPage'
 import ProductMappingPage from '../pages/mapping/ProductMappingPage'
 import StockAvailabilityPage from '../pages/stock/StockAvailabilityPage'
+import StockCheckReportPage from '../pages/stock-check/StockCheckReportPage'
 import PurchaseWorkspacePage from '../pages/procurement/PurchaseWorkspacePage'
 import ProductIntelligencePage from '../pages/procurement/ProductIntelligencePage'
 import RefreshLauncherPage from '../pages/procurement/RefreshLauncherPage'
@@ -30,6 +31,7 @@ import ReportsPage from '../pages/ReportsPage'
 import TimeReportPage from '../pages/TimeReportPage'
 import PassGenPage from '../pages/pass-gen/PassGenPage'
 import LegacyOrderPage from '../pages/legacy-order/LegacyOrderPage'
+import QtyCheckPage from '../pages/legacy-order/QtyCheckPage'
 import SettingsPage from '../pages/SettingsPage'
 import PlatformShellPreviewPage from '../pages/PlatformShellPreviewPage'
 import DocumentExtractionReviewPage from '../pages/document-extraction/ReviewPage'
@@ -83,6 +85,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/sync-administration" element={<RequireCapability cap="SYNC"><SyncAdministrationPage /></RequireCapability>} />
         <Route path="/product-mapping" element={<RequireCapability cap="PRODUCT_MAPPING"><ProductMappingPage /></RequireCapability>} />
         <Route path="/stock-availability" element={<RequireCapability cap="INVENTORY"><StockAvailabilityPage /></RequireCapability>} />
+        <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />
         <Route path="/procurement/console" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleRefreshConsolePage /></RequireCapability>} />
         <Route path="/procurement/cycles" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleManagementPage /></RequireCapability>} />
         <Route path="/procurement/refreshes" element={<RequireCapability cap="PROCUREMENT_ADMIN"><RefreshManagementPage /></RequireCapability>} />
@@ -101,6 +104,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/time-report" element={<RequireCapability cap="TIME_REPORT"><TimeReportPage /></RequireCapability>} />
         <Route path="/pass-gen" element={<RequireCapability cap="PASS_GEN"><PassGenPage /></RequireCapability>} />
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />
+        <Route path="/legacy-order/qty-check" element={<RequireCapability cap="LEGACY_ORDER"><QtyCheckPage /></RequireCapability>} />
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />
         <Route path="*" element={<RoleLanding />} />
       </Route>

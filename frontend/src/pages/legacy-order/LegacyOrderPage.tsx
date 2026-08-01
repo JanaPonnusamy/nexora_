@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { legacyOrderService } from '../../services/legacyOrderService'
 import type { LegacyJob, LegacyStore, OrderMode, OrderRow, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
@@ -205,7 +206,10 @@ export default function LegacyOrderPage() {
           <h1>Legacy Order Console</h1>
           <p className="lo-sub">Run branch sync and order processing independently across multiple stores.</p>
         </div>
-        <span className="lo-badge">Legacy DB</span>
+        <div className="lo-actions">
+          <Link to="/legacy-order/qty-check" className="lo-btn"><i className="bi bi-table" /> Qty Check Grid</Link>
+          <span className="lo-badge">Legacy DB</span>
+        </div>
       </header>
 
       {error && <div className="lo-error" role="alert">{error}<button type="button" onClick={() => setError(null)} aria-label="Dismiss">×</button></div>}
