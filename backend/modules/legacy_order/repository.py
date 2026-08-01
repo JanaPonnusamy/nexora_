@@ -179,6 +179,26 @@ def order_summary(store_name):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
+def update_order_qty(store_name, product_code, order_qty):
+    """Manual review edit to the live grid (Form1's editable OrderQty cell).
+
+    Setting order_qty = 0 is how a user marks a product "no need" -- it stays
+    Status 0 here but is what compare_previous_order's OrderQty = 0 rule looks
+    for on the next cycle to close the row out without a supplier order.
+    """
+    sql = (
+        "UPDATE OrderManagement SET OrderQty = ?, Remarks = CASE WHEN ? = 0 "
+        "THEN 'No Need - Reviewed' ELSE Remarks END "
+        "WHERE StoreName = ? AND ProductCode = ?"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, order_qty, order_qty, store_name, product_code)
+        updated = cur.rowcount
+        conn.commit()
+        return updated
+
+
 def previous_orders(store_name):
     """Match Form1.LoadOrderID: recent two days, otherwise latest five."""
     recent_sql = (

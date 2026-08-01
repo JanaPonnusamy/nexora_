@@ -41,10 +41,22 @@ export const legacyOrderService = {
       mode,
     }),
 
+  startStockUpdate: (storeName: string, sourceStoreName = 'NMW') =>
+    api.post<{ job_id: string }>(`${BASE}/stock-update`, {
+      store_name: storeName,
+      source_store_name: sourceStoreName,
+    }),
+
   getJob: (jobId: string) => api.get<LegacyJob>(`${BASE}/jobs/${jobId}`),
 
   orders: (storeName: string) =>
     api.get<OrderRow[]>(`${BASE}/orders/${encodeURIComponent(storeName)}`),
+
+  updateOrderQty: (storeName: string, productCode: number, orderQty: number) =>
+    api.patch<{ store_name: string; product_code: number; order_qty: number }>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/${productCode}`,
+      { order_qty: orderQty },
+    ),
 
   previousOrders: (storeName: string) =>
     api.get<PreviousOrder[]>(`${BASE}/previous-orders/${encodeURIComponent(storeName)}`),

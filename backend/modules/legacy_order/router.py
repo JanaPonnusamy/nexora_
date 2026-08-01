@@ -7,7 +7,7 @@ and the branch DBs it points at -- NOT NEXORA_PLATFORM's sync.* tables.
 from fastapi import APIRouter, HTTPException
 
 from modules.legacy_order import database, repository, service, sync_engine
-from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, JobStarted, OrderProcessRequest, SyncRequest
+from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest
 
 router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"])
 
@@ -70,6 +70,21 @@ def start_order_process(payload: OrderProcessRequest):
         raise HTTPException(status_code=status, detail=str(exc))
 
 
+@router.post("/stock-update", response_model=JobStarted)
+def start_stock_update(payload: StockUpdateRequest):
+    """Push the source ("HO") store's own branch stock into this store's
+    central SupplierStock rows -- the web trigger for the Universal Supplier
+    Stock Distribution feature, scoped to one store."""
+    try:
+        job_id = service.start_stock_update(payload.store_name, payload.source_store_name)
+        return JobStarted(job_id=job_id)
+    except ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except ValueError as exc:
+        status = 409 if "already running" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc))
+
+
 @router.get("/jobs")
 def list_jobs(limit: int = 20):
     return service.list_jobs(limit)
@@ -88,6 +103,19 @@ def order_summary(store_name: str):
     """The current OrderManagement rows for a store -- the VB main grid."""
     try:
         return repository.order_summary(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.patch("/orders/{store_name}/{product_code}")
+def update_order_qty(store_name: str, product_code: int, payload: UpdateOrderQtyRequest):
+    """Manual review edit -- the VB grid's editable OrderQty cell. Setting 0
+    marks a product 'no need' without requiring a supplier order."""
+    try:
+        updated = repository.update_order_qty(store_name, product_code, payload.order_qty)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Order row not found")
+        return {"store_name": store_name, "product_code": product_code, "order_qty": payload.order_qty}
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

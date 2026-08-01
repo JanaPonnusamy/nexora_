@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { legacyOrderService } from '../../services/legacyOrderService'
-import type { LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
+import type { LegacyJob, LegacyStore, OrderMode, OrderRow, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
 
 const POLL_MS = 1500
+// The internal "HO" branch whose own stock feeds every other store's
+// SupplierStock rows (Stock Update button). Matches dbo.Stores.StoreName.
+const HO_STORE_NAME = 'NMW'
 
 type StoreSettings = { minDays: number; maxDays: number; mode: OrderMode }
 
@@ -27,6 +30,11 @@ export default function LegacyOrderPage() {
   const [reviewLoading, setReviewLoading] = useState(false)
   const [compareBusy, setCompareBusy] = useState(false)
   const [compareMessage, setCompareMessage] = useState('')
+  const [gridStore, setGridStore] = useState('')
+  const [gridRows, setGridRows] = useState<OrderRow[]>([])
+  const [gridLoading, setGridLoading] = useState(false)
+  const [gridEdits, setGridEdits] = useState<Record<number, number>>({})
+  const [gridSaving, setGridSaving] = useState<number | null>(null)
   const pollers = useRef(new Map<string, number>())
 
   useEffect(() => {
@@ -37,7 +45,10 @@ export default function LegacyOrderPage() {
           store.store_name,
           { minDays: defaults.min_days, maxDays: defaults.max_days, mode: 'local' as const },
         ])))
-        if (storeList.length) setCompareStore(storeList[0].store_name)
+        if (storeList.length) {
+          setCompareStore(storeList[0].store_name)
+          setGridStore(storeList[0].store_name)
+        }
       })
       .catch((e: Error) => setError(e.message))
   }, [])
@@ -149,6 +160,38 @@ export default function LegacyOrderPage() {
       .finally(() => setReviewLoading(false))
   }
 
+  const loadGrid = useCallback((storeName: string) => {
+    if (!storeName) return
+    setGridLoading(true)
+    setGridEdits({})
+    legacyOrderService.orders(storeName)
+      .then(setGridRows)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setGridLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadGrid(gridStore)
+  }, [gridStore, loadGrid])
+
+  const saveOrderQty = (productCode: number, orderQty: number) => {
+    if (!gridStore) return
+    setGridSaving(productCode)
+    legacyOrderService.updateOrderQty(gridStore, productCode, orderQty)
+      .then(() => {
+        setGridRows((rows) => rows.map((row) => (
+          row.ProductCode === productCode ? { ...row, OrderQty: orderQty } : row
+        )))
+        setGridEdits((edits) => {
+          const next = { ...edits }
+          delete next[productCode]
+          return next
+        })
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setGridSaving(null))
+  }
+
   const sortedJobs = useMemo(() => Object.values(jobs).sort(
     (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
   ), [jobs])
@@ -185,12 +228,61 @@ export default function LegacyOrderPage() {
                     <td>{fmtDateTime(store.last_sync_time)}{store.last_sync_status && <span className={`lo-chip lo-chip-${store.last_sync_status.toLowerCase()}`}>{store.last_sync_status}</span>}</td>
                     <td><div className="lo-inline-inputs"><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /><span>/</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></div>{invalid && <small className="lo-invalid">Check range</small>}</td>
                     <td><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option></select></td>
-                    <td>{running ? <><span className="lo-running-dot" />{running.kind === 'sync' ? 'Syncing' : 'Processing'}<small className="lo-cell-sub">{running.message}</small></> : <span className="text-body-secondary">Ready</span>}</td>
-                    <td><div className="lo-actions"><button type="button" className="lo-btn" disabled={Boolean(running)} onClick={() => start(() => legacyOrderService.startSync(store.store_name))}><i className="bi bi-arrow-repeat" /> Sync</button><button type="button" className="lo-btn lo-btn-primary" disabled={Boolean(running) || invalid} onClick={() => start(() => legacyOrderService.startOrderProcess(store.store_name, config.minDays, config.maxDays, config.mode))}><i className="bi bi-play-fill" /> Sync + Order</button></div></td>
+                    <td>{running ? <><span className="lo-running-dot" />{running.kind === 'sync' ? 'Syncing' : running.kind === 'order' ? 'Processing' : 'Updating stock'}<small className="lo-cell-sub">{running.message}</small></> : <span className="text-body-secondary">Ready</span>}</td>
+                    <td><div className="lo-actions"><button type="button" className="lo-btn" disabled={Boolean(running)} onClick={() => start(() => legacyOrderService.startSync(store.store_name))}><i className="bi bi-arrow-repeat" /> Sync</button><button type="button" className="lo-btn lo-btn-primary" disabled={Boolean(running) || invalid} onClick={() => start(() => legacyOrderService.startOrderProcess(store.store_name, config.minDays, config.maxDays, config.mode))}><i className="bi bi-play-fill" /> Sync + Order</button>{store.store_name !== HO_STORE_NAME && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${HO_STORE_NAME}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, HO_STORE_NAME))}><i className="bi bi-cloud-arrow-up" /> Stock Update</button>}</div></td>
                   </tr>
                 )
               })}
               {!stores.length && <tr><td colSpan={7} className="lo-empty">No active stores found.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="lo-card">
+        <div className="lo-section-title">
+          <div><h2>Order grid</h2><p className="lo-note">Current OrderManagement rows for review. Set a product's Order Qty to 0 to mark it "no need" — it will be closed out on the next compare instead of reappearing.</p></div>
+          <label className="lo-store-picker"><span>Store</span><select value={gridStore} onChange={(e) => setGridStore(e.target.value)}>{stores.map((store) => <option key={store.store_name} value={store.store_name}>{store.store_name}</option>)}</select></label>
+        </div>
+        <div className="lo-review-scroll">
+          <table className="lo-table lo-review-table">
+            <thead><tr><th>Product</th><th className="lo-num">Stock</th><th className="lo-num">Min / Max</th><th className="lo-num">Order Qty</th><th>Status</th><th>Remarks</th><th>Action</th></tr></thead>
+            <tbody>
+              {gridRows.map((row) => {
+                const edited = gridEdits[row.ProductCode]
+                const value = edited ?? row.OrderQty
+                const dirty = edited !== undefined && edited !== row.OrderQty
+                return (
+                  <tr key={row.ProductCode}>
+                    <td><strong>{row.ProductName}</strong><small className="lo-cell-sub">{row.ProductCode}</small></td>
+                    <td className="lo-num">{row.TotalStock}</td>
+                    <td className="lo-num">{row.MinQty} / {row.MaxQty}</td>
+                    <td className="lo-num">
+                      <input
+                        type="number"
+                        min={0}
+                        aria-label={`${row.ProductName} order quantity`}
+                        value={value}
+                        onChange={(e) => setGridEdits((edits) => ({ ...edits, [row.ProductCode]: Number(e.target.value) }))}
+                        style={{ width: '5rem' }}
+                      />
+                    </td>
+                    <td><span className={`lo-chip ${row.Status === 2 ? 'lo-chip-success' : 'lo-chip-running'}`}>{row.Status === 2 ? 'Closed' : 'Pending'}</span></td>
+                    <td>{row.Remarks ?? '—'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="lo-btn lo-btn-primary"
+                        disabled={!dirty || gridSaving === row.ProductCode}
+                        onClick={() => saveOrderQty(row.ProductCode, value)}
+                      >
+                        {gridSaving === row.ProductCode ? 'Saving…' : 'Save'}
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+              {!gridRows.length && <tr><td colSpan={7} className="lo-empty">{gridLoading ? 'Loading order grid…' : 'No order rows for this store.'}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -236,7 +328,7 @@ export default function LegacyOrderPage() {
           <div className="lo-job-list">
             {sortedJobs.map((job) => {
               const progress = job.total_steps ? Math.round((job.step / job.total_steps) * 100) : 0
-              return <article className="lo-job" key={job.job_id}><div className="lo-job-head"><strong>{job.store_name} · {job.kind === 'sync' ? 'Sync' : 'Order Process'}</strong><span className={`lo-chip lo-chip-${job.status}`}>{job.status}</span></div><div className="lo-progress"><div className={`lo-progress-bar lo-progress-${job.status}`} style={{ width: `${progress}%` }} /></div><p>{job.message}</p>{job.error && <small className="lo-invalid">{job.error}</small>}<details className="lo-log"><summary>{job.log.length} log entries</summary><ol>{job.log.map((entry, index) => <li key={`${entry.at}-${index}`}><time>{entry.at.split('T')[1] ?? entry.at}</time>{entry.message}</li>)}</ol></details></article>
+              return <article className="lo-job" key={job.job_id}><div className="lo-job-head"><strong>{job.store_name} · {job.kind === 'sync' ? 'Sync' : job.kind === 'order' ? 'Order Process' : 'Stock Update'}</strong><span className={`lo-chip lo-chip-${job.status}`}>{job.status}</span></div><div className="lo-progress"><div className={`lo-progress-bar lo-progress-${job.status}`} style={{ width: `${progress}%` }} /></div><p>{job.message}</p>{job.error && <small className="lo-invalid">{job.error}</small>}<details className="lo-log"><summary>{job.log.length} log entries</summary><ol>{job.log.map((entry, index) => <li key={`${entry.at}-${index}`}><time>{entry.at.split('T')[1] ?? entry.at}</time>{entry.message}</li>)}</ol></details></article>
             })}
             {!sortedJobs.length && <div className="lo-empty">Start Sync or Order Process to see live task activity.</div>}
           </div>

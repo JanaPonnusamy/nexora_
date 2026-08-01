@@ -15,6 +15,11 @@ class OrderProcessRequest(BaseModel):
     mode: str = "local"  # 'local' = OrderNMC's synced copy, 'remote' = branch DB
 
 
+class StockUpdateRequest(BaseModel):
+    store_name: str
+    source_store_name: str = "NMW"
+
+
 class JobStarted(BaseModel):
     job_id: str
 
@@ -26,3 +31,7 @@ class ComparePreviousOrderRequest(BaseModel):
 
 class CompareSupplierRequest(ComparePreviousOrderRequest):
     supplier_code: str
+
+
+class UpdateOrderQtyRequest(BaseModel):
+    order_qty: int
