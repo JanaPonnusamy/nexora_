@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import 'package:nexora_mobile/core/agent/agent_status.dart';
+import 'package:nexora_mobile/core/di/agent_providers.dart';
+import 'package:nexora_mobile/core/router/app_routes.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
+import 'package:nexora_mobile/features/agent/presentation/widgets/status_widgets.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 
 /// Phase 1 landing surface after login + store selection.
@@ -74,8 +79,9 @@ class DashboardScreen extends ConsumerWidget {
                   _InfoRow(
                     icon: Icons.badge_outlined,
                     label: 'Account type',
-                    value:
-                        (user?.isPlatformUser ?? false) ? 'Platform' : 'Store user',
+                    value: (user?.isPlatformUser ?? false)
+                        ? 'Platform'
+                        : 'Store user',
                   ),
                   _InfoRow(
                     icon: Icons.grid_view_rounded,
@@ -86,8 +92,98 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ),
           ),
+          const SizedBox(height: 16),
+          const _SystemCard(),
         ],
       ),
+    );
+  }
+}
+
+/// Entry points to the Phase 2/3 store-agent + sync system screens.
+class _SystemCard extends ConsumerWidget {
+  const _SystemCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final agentAsync = ref.watch(agentStateProvider);
+    return Card(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'System',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                agentAsync.maybeWhen(
+                  data: (s) => StatusPill(
+                    label: s.status.label,
+                    color: switch (s.status) {
+                      AgentStatus.ready => AppColors.success,
+                      AgentStatus.degraded => AppColors.warning,
+                      AgentStatus.error => AppColors.error,
+                      AgentStatus.offline => AppColors.slate,
+                      _ => AppColors.primary,
+                    },
+                  ),
+                  orElse: () => const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
+          const _SystemTile(
+            icon: Icons.sync_rounded,
+            label: 'Sync Status',
+            route: AppRoutes.syncStatus,
+          ),
+          const _SystemTile(
+            icon: Icons.smartphone_outlined,
+            label: 'Device Status',
+            route: AppRoutes.deviceStatus,
+          ),
+          const _SystemTile(
+            icon: Icons.settings_ethernet_rounded,
+            label: 'Configuration Status',
+            route: AppRoutes.configurationStatus,
+          ),
+          const _SystemTile(
+            icon: Icons.tune_rounded,
+            label: 'Agent Settings',
+            route: AppRoutes.agentSettings,
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _SystemTile extends StatelessWidget {
+  const _SystemTile({
+    required this.icon,
+    required this.label,
+    required this.route,
+  });
+
+  final IconData icon;
+  final String label;
+  final String route;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: AppColors.primary),
+      title: Text(label),
+      trailing: const Icon(Icons.chevron_right, color: AppColors.slate),
+      onTap: () => context.pushNamed(route),
     );
   }
 }

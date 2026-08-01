@@ -1,4 +1,4 @@
-# API Contract — Phase 1
+# API Contract — Phases 1–3
 
 The mobile app consumes the **existing** FastAPI backend. No endpoint below was
 invented; each maps to a real route. Nothing here modifies the backend.
@@ -73,6 +73,44 @@ fallback for platform users who have no store roles.
 
 ---
 
+## Consumed in Phase 2 (Legacy Store Agent) + Phase 3 (Sync)
+
+No new endpoint was invented. The store agent + sync engine reuse endpoints that
+already exist:
+
+### `GET /api/stores/{store_id}` — bearer
+Used for **store configuration download**. The plain store record is cached
+locally (`sync_configuration`, key `store.config`) so configuration survives
+restarts and is available fully offline. Note: an unknown id returns
+`{"error":"Store Not Found"}` with HTTP 200 (not a 404); the client treats that
+shape as "not found".
+
+### `GET /api/auth/me` — bearer
+Reused as the **metadata synchronization** entity (`user_profile`): the signed-in
+user's profile + module permissions are cached locally so entitlements are
+readable offline. A 401 is treated as a benign auth expiry (no dead-letter); the
+global interceptor tears the session down.
+
+### `GET /health` — public
+Used for **backend connectivity monitoring**. Probed on a timer; latency is
+measured for the Device Status screen.
+
+## Design decisions (confirmed with the product owner)
+
+- **Device registration is local-only.** The only backend registration
+  endpoints — `POST /agent/register` and `POST /agent/heartbeat` — represent the
+  **desktop** sync agent: they write to `dbo.store_agent_registry` and flip the
+  **store** to `ONLINE`. Pointing a phone at them would corrupt HO's
+  store-online dashboards and the `sweep-offline` logic, so the mobile client
+  does **not** call them. The device identity (a generated UUID + platform/app
+  metadata) is minted and persisted on-device (`device_information` table +
+  secure storage).
+- **`GET /api/stores/{id}/agent-config` is intentionally NOT consumed.** It
+  exists and returns the store's **encrypted DB credentials** (server, database,
+  username, password) for the desktop agent that reads the legacy SQL Server. A
+  phone must never hold store DB credentials, so the mobile client caches only
+  the plain store record from `GET /api/stores/{id}`.
+
 ## Missing / not-yet-available endpoints (documented, NOT invented)
 
 These are needed by later phases and are **not** assumed to exist. They must be
@@ -87,6 +125,9 @@ feature is built:
 | CRM endpoints | **Missing** | No backend routes exist yet. |
 | Education endpoints | **Missing** | No backend routes exist yet. |
 | Mobile-optimised dashboard summary | **Missing** | Phase 1 dashboard is a thin shell; a future aggregated endpoint would reduce round-trips. |
+| Mobile device registry | **Missing** | No phone-facing registration endpoint. The agent endpoints are desktop-agent only (see Design decisions). Device identity is kept locally. |
+| Versioned health / handshake | **Missing** | `GET /health` returns only `{"status":"healthy"}` — no version field or `X-API-Version` header. API-version compatibility is therefore best-effort: a reachable, healthy backend is treated as compatible; the client already reads a `version`/`api_version` body key or `X-API-Version` header if one is ever added. |
+| Business-data delta pull | **Missing** | The `/api/sync/*` routes are the desktop agent's **upload** pipeline (store → HO). There is no mobile-facing incremental **download** for business tables yet; the Phase-3 engine is entity-driven and ready to register such processors once endpoints exist. |
 
 Existing endpoints that later phases will reuse (already in the backend, not
 touched in Phase 1): `/api/stock-availability/*`, `/api/supplier-stock-analysis/*`,

@@ -1,9 +1,21 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:nexora_mobile/core/agent/agent_settings_repository.dart';
+import 'package:nexora_mobile/core/agent/backend_health_service.dart';
+import 'package:nexora_mobile/core/agent/device_info_service.dart';
+import 'package:nexora_mobile/core/agent/store_config_service.dart';
 import 'package:nexora_mobile/core/config/app_config.dart';
+import 'package:nexora_mobile/core/database/app_database.dart';
 import 'package:nexora_mobile/core/network/dio_client.dart';
 import 'package:nexora_mobile/core/services/secure_storage_service.dart';
+import 'package:nexora_mobile/core/sync/conflict_handler.dart';
+import 'package:nexora_mobile/core/sync/connectivity_service.dart';
+import 'package:nexora_mobile/core/sync/delta_processor.dart';
+import 'package:nexora_mobile/core/sync/retry_policy.dart';
+import 'package:nexora_mobile/core/sync/sync_logger.dart';
+import 'package:nexora_mobile/core/sync/sync_queue.dart';
+import 'package:nexora_mobile/core/sync/sync_repository.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 import 'package:nexora_mobile/features/auth/data/auth_repository.dart';
 import 'package:nexora_mobile/features/store_selection/data/store_repository.dart';
@@ -43,4 +55,82 @@ final authRepositoryProvider = Provider<AuthRepository>(
 
 final storeRepositoryProvider = Provider<StoreRepository>(
   (ref) => StoreRepository(ref.watch(dioProvider)),
+);
+
+// --- Local persistence -------------------------------------------------------
+
+/// The single shared Drift database instance for the whole app.
+final appDatabaseProvider = Provider<AppDatabase>((ref) {
+  final db = AppDatabase();
+  ref.onDispose(db.close);
+  return db;
+});
+
+/// Narrow persistence gateway for all sync/agent tables.
+final syncRepositoryProvider = Provider<SyncRepository>(
+  (ref) => SyncRepository(ref.watch(appDatabaseProvider)),
+);
+
+// --- Sync engine primitives (Phase 3) ---------------------------------------
+
+/// Backoff policy shared by the queue and network retries.
+final retryPolicyProvider = Provider<RetryPolicy>(
+  (ref) => const RetryPolicy(),
+);
+
+final conflictHandlerProvider = Provider<ConflictHandler>(
+  (ref) => const ConflictHandler(),
+);
+
+final syncLoggerProvider = Provider<SyncLogger>(
+  (ref) => SyncLogger(ref.watch(syncRepositoryProvider)),
+);
+
+final syncQueueProvider = Provider<SyncQueue>(
+  (ref) => SyncQueue(
+    ref.watch(syncRepositoryProvider),
+    ref.watch(syncLoggerProvider),
+    retryPolicy: ref.watch(retryPolicyProvider),
+  ),
+);
+
+/// Connectivity monitor (OS network state). Started by the sync manager.
+final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
+  final service = ConnectivityService();
+  ref.onDispose(service.dispose);
+  return service;
+});
+
+/// Delta dispatch coordinator; concrete entity processors are registered by the
+/// agent manager at bootstrap.
+final deltaProcessorProvider = Provider<DeltaProcessor>(
+  (ref) => DeltaProcessor(
+    ref.watch(syncRepositoryProvider),
+    ref.watch(syncLoggerProvider),
+  ),
+);
+
+// --- Store agent services (Phase 2) -----------------------------------------
+
+final deviceInfoServiceProvider = Provider<DeviceInfoService>(
+  (ref) => DeviceInfoService(
+    ref.watch(syncRepositoryProvider),
+    ref.watch(secureStorageProvider),
+  ),
+);
+
+final backendHealthServiceProvider = Provider<BackendHealthService>(
+  (ref) => BackendHealthService(ref.watch(dioProvider)),
+);
+
+final storeConfigServiceProvider = Provider<StoreConfigService>(
+  (ref) => StoreConfigService(
+    ref.watch(storeRepositoryProvider),
+    ref.watch(syncRepositoryProvider),
+    conflictHandler: ref.watch(conflictHandlerProvider),
+  ),
+);
+
+final agentSettingsRepositoryProvider = Provider<AgentSettingsRepository>(
+  (ref) => AgentSettingsRepository(ref.watch(syncRepositoryProvider)),
 );

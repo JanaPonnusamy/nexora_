@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:nexora_mobile/core/di/agent_providers.dart';
 import 'package:nexora_mobile/core/router/app_router.dart';
 import 'package:nexora_mobile/core/theme/app_theme.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
@@ -27,6 +28,15 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Boot the Legacy Store Agent (device registration, config download, health
+    // monitoring, sync engine) the moment the session becomes ready. Idempotent.
+    ref.listen(authControllerProvider, (prev, next) {
+      final becameReady = next.isReady && !(prev?.isReady ?? false);
+      if (becameReady) {
+        ref.read(agentManagerProvider).initialize();
+      }
+    });
+
     final router = ref.watch(routerProvider);
     return MaterialApp.router(
       title: 'Nexora',

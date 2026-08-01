@@ -14,4 +14,18 @@ class AppRoutes {
 
   static const String dashboard = 'dashboard';
   static const String dashboardPath = '/dashboard';
+
+  // Store agent / sync system screens (Phase 2 + 3). Reachable once the session
+  // is ready; no business modules live here.
+  static const String syncStatus = 'sync-status';
+  static const String syncStatusPath = '/sync-status';
+
+  static const String deviceStatus = 'device-status';
+  static const String deviceStatusPath = '/device-status';
+
+  static const String agentSettings = 'agent-settings';
+  static const String agentSettingsPath = '/agent-settings';
+
+  static const String configurationStatus = 'configuration-status';
+  static const String configurationStatusPath = '/configuration-status';
 }

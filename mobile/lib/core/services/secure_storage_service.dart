@@ -19,6 +19,7 @@ class SecureStorageService {
 
   static const _kToken = 'nexora.auth.token';
   static const _kStoreId = 'nexora.session.store_id';
+  static const _kDeviceId = 'nexora.device.id';
 
   Future<String?> readToken() => _storage.read(key: _kToken);
   Future<void> writeToken(String token) =>
@@ -30,7 +31,13 @@ class SecureStorageService {
       _storage.write(key: _kStoreId, value: storeId);
   Future<void> deleteSelectedStoreId() => _storage.delete(key: _kStoreId);
 
-  /// Full wipe on logout.
+  /// Stable per-installation device identity. Survives logout (only cleared on
+  /// uninstall) so the agent keeps the same device id across sessions.
+  Future<String?> readDeviceId() => _storage.read(key: _kDeviceId);
+  Future<void> writeDeviceId(String id) =>
+      _storage.write(key: _kDeviceId, value: id);
+
+  /// Wipe on logout. The device id is intentionally preserved.
   Future<void> clear() async {
     await deleteToken();
     await deleteSelectedStoreId();

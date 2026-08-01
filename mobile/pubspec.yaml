@@ -37,6 +37,11 @@ dependencies:
   # Logging
   logging: ^1.2.0
 
+  # Connectivity / device identity (Phase 2 agent + Phase 3 sync)
+  connectivity_plus: ^7.3.1
+  device_info_plus: ^12.4.0
+  package_info_plus: ^9.0.1
+
   # Misc
   collection: ^1.18.0
 

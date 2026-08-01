@@ -6,8 +6,12 @@ import 'package:nexora_mobile/core/router/app_routes.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 import 'package:nexora_mobile/features/auth/application/auth_state.dart';
 import 'package:nexora_mobile/features/auth/presentation/login_screen.dart';
+import 'package:nexora_mobile/features/agent/presentation/agent_settings_screen.dart';
+import 'package:nexora_mobile/features/agent/presentation/configuration_status_screen.dart';
+import 'package:nexora_mobile/features/agent/presentation/device_status_screen.dart';
 import 'package:nexora_mobile/features/dashboard/presentation/dashboard_screen.dart';
 import 'package:nexora_mobile/features/store_selection/presentation/store_selection_screen.dart';
+import 'package:nexora_mobile/features/sync/presentation/sync_status_screen.dart';
 import 'package:nexora_mobile/shared/presentation/splash_screen.dart';
 
 /// Bridges Riverpod's [AuthState] into a [Listenable] GoRouter can refresh on,
@@ -84,6 +88,26 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.dashboardPath,
         name: AppRoutes.dashboard,
         builder: (_, __) => const DashboardScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.syncStatusPath,
+        name: AppRoutes.syncStatus,
+        builder: (_, __) => const SyncStatusScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.deviceStatusPath,
+        name: AppRoutes.deviceStatus,
+        builder: (_, __) => const DeviceStatusScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.agentSettingsPath,
+        name: AppRoutes.agentSettings,
+        builder: (_, __) => const AgentSettingsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.configurationStatusPath,
+        name: AppRoutes.configurationStatus,
+        builder: (_, __) => const ConfigurationStatusScreen(),
       ),
     ],
   );
