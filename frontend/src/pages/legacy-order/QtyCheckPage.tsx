@@ -191,7 +191,7 @@ export default function QtyCheckPage() {
   const totalProducts = rows.length
 
   return (
-    <div className="legacy-order">
+    <div className="legacy-order qc-shell">
       <header className="lo-header">
         <div>
           <h1>Order Management · Qty Check</h1>
@@ -235,7 +235,7 @@ export default function QtyCheckPage() {
                       onClick={() => focusRow(index)}
                     >
                       <td>{index + 1}</td>
-                      <td>{row.productname}</td>
+                      <td><span className="qc-product-name" title={row.productname}>{row.productname}</span></td>
                       <td className="lo-num">
                         <input
                           ref={(el) => { inputRefs.current[index] = el }}
@@ -273,11 +273,11 @@ export default function QtyCheckPage() {
           <h2>Product detail</h2>
           {!selectedRow && <div className="lo-empty">Select a product to see stock, sales and chart detail.</div>}
           {selectedRow && (
-            <>
+            <div className="qc-detail-scroll">
               <p className="lo-note">{selectedRow.productname} · {selectedRow.productcode}{detailLoading ? ' · loading…' : ''}</p>
 
               <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Purchase / GRN history</h3>
-              <div className="lo-scroll" style={{ maxHeight: '10rem' }}>
+              <div className="lo-scroll" style={{ maxHeight: '9rem' }}>
                 <table className="lo-table">
                   <thead><tr><th className="lo-num">Stock</th><th className="lo-num">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
                   <tbody>
@@ -290,7 +290,7 @@ export default function QtyCheckPage() {
               </div>
 
               <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Bill / sales history</h3>
-              <div className="lo-scroll" style={{ maxHeight: '10rem' }}>
+              <div className="lo-scroll" style={{ maxHeight: '9rem' }}>
                 <table className="lo-table">
                   <thead><tr><th className="lo-num">Qty</th><th>Bill Time</th><th>Salesman</th><th>Customer</th><th className="lo-num">Dis</th><th>Type</th><th className="lo-num">MRP</th></tr></thead>
                   <tbody>
@@ -304,12 +304,12 @@ export default function QtyCheckPage() {
 
               <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Monthly statistics</h3>
               <MonthlyStatsChart rows={monthlyStats} />
-            </>
+            </div>
           )}
         </section>
       </div>
 
-      <section className="lo-card">
+      <section className="lo-card qc-history">
         <h2>Order history</h2>
         <p className="lo-note">Last 25 previous-order entries for the selected product (OrderManagementBackup).</p>
         <div className="lo-scroll">
@@ -317,7 +317,7 @@ export default function QtyCheckPage() {
             <thead><tr><th>Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Org Order</th><th className="lo-num">Pack</th><th className="lo-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
             <tbody>
               {orderHistory.map((row, i) => (
-                <tr key={i}><td>{row.ProductName}</td><td className="lo-num">{row.Orqty ?? '—'}</td><td className="lo-num">{row.OrgOrderQty ?? '—'}</td><td className="lo-num">{row.saleunit ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{row.remarks ?? '—'}</td><td>{fmtDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
+                <tr key={i}><td><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td><td className="lo-num">{row.Orqty ?? '—'}</td><td className="lo-num">{row.OrgOrderQty ?? '—'}</td><td className="lo-num">{row.saleunit ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{row.remarks ?? '—'}</td><td>{fmtDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
               ))}
               {!orderHistory.length && <tr><td colSpan={9} className="lo-empty">{selectedRow ? 'No previous-order history for this product.' : 'Select a product above to see its history.'}</td></tr>}
             </tbody>
