@@ -13,6 +13,11 @@ def _row_to_store(row):
         "is_active": bool(row.IsActive),
         "last_sync_time": row.LastSyncTime,
         "last_sync_status": row.LastSyncStatus,
+        # This store's OWN code for the HO/NMW supplier (dbo.Stores.Ho_code) --
+        # e.g. NMS/NMA use '94', NMC uses 'ST_2', NMG uses '99'. NOT the same
+        # string across stores, so distribution must look this up per target
+        # rather than writing the literal source store name as suppliercode.
+        "ho_code": getattr(row, "Ho_code", None),
     }
 
 
@@ -20,7 +25,7 @@ def list_stores(active_only=True):
     """Branches configured in dbo.Stores -- the source DBs the legacy app synced."""
     sql = (
         "SELECT StoreCode, StoreName, ServerName, UserName, Password, [Database], "
-        "IsActive, LastSyncTime, LastSyncStatus FROM Stores"
+        "IsActive, LastSyncTime, LastSyncStatus, Ho_code FROM Stores"
     )
     if active_only:
         sql += " WHERE IsActive = 1"
@@ -34,7 +39,7 @@ def get_store(store_name):
     with database.get_central_connection() as conn:
         row = conn.cursor().execute(
             "SELECT StoreCode, StoreName, ServerName, UserName, Password, [Database], "
-            "IsActive, LastSyncTime, LastSyncStatus FROM Stores WHERE StoreName = ?",
+            "IsActive, LastSyncTime, LastSyncStatus, Ho_code FROM Stores WHERE StoreName = ?",
             store_name,
         ).fetchone()
     return _row_to_store(row) if row else None
@@ -61,6 +66,102 @@ def test_branch_connection(store):
         return True, None
     except Exception as exc:
         return False, str(exc)
+
+
+# --------------------------------------------------------------------------
+# Internal Supplier Stock Distribution -- one branch's own stock (the HO
+# store, e.g. NMW) pushed into the central SupplierStock table for every
+# other branch, exactly the shape the old VB app read for supplier ordering.
+# --------------------------------------------------------------------------
+
+_MASTER_STOCK_SQL = """
+WITH LatestPT AS (
+    SELECT
+        pt.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY pt.ProductCode
+            ORDER BY pt.ID DESC
+        ) AS rn
+    FROM PURCHASETRANS pt
+),
+TotalStockPerProduct AS (
+    SELECT
+        b.ProductCode,
+        SUM(b.Stock) AS TotalStock
+    FROM BATCHES b
+    GROUP BY b.ProductCode
+)
+SELECT
+    p.ProductCode,
+    p.ProductName,
+    tsp.TotalStock AS stock,
+    ROUND(
+        CASE
+            WHEN pt.PurchasePrice > 0
+            THEN ((pt.PurchasePrice - pt.ItemCost) * 100.0 / pt.PurchasePrice)
+            ELSE 0
+        END,
+        2
+    ) AS ProductDiscPercent
+FROM PRODUCTS p
+INNER JOIN TotalStockPerProduct tsp
+    ON tsp.ProductCode = p.ProductCode
+LEFT JOIN LatestPT pt
+    ON pt.ProductCode = p.ProductCode
+   AND pt.rn = 1
+WHERE tsp.TotalStock > 0
+ORDER BY p.ProductName
+"""
+
+
+def branch_stock(store):
+    """Run the master export query directly against a branch's own DB
+    (PRODUCTS/BATCHES/PURCHASETRANS) -- the store's real, current stock."""
+    conn = database.get_branch_connection(
+        store["server_name"], store["database"], store["username"], store["password"],
+    )
+    try:
+        cur = conn.cursor()
+        cur.execute(_MASTER_STOCK_SQL)
+        return [
+            {
+                "code": r.ProductCode,
+                "name": r.ProductName,
+                "stock": float(r.stock or 0),
+                "disc_percent": float(r.ProductDiscPercent or 0),
+            }
+            for r in cur.fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def replace_supplier_stock(target_store_name, supplier_code, rows):
+    """REPLACE this supplier's rows for one branch in the central
+    OrderNMC.SupplierStock table -- the same table/shape the legacy Excel
+    import wrote, storename-scoped, so the branch's own order screen sees it
+    exactly like any other supplier upload."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM SupplierStock WHERE storename = ? AND suppliercode = ?",
+            (target_store_name, supplier_code),
+        )
+        if rows:
+            cur.fast_executemany = True
+            cur.executemany(
+                "INSERT INTO SupplierStock "
+                "(suppliercode, supplierproductcode, supplierproductname, mrp, ptr, "
+                "stock, discound, packing, storename, sch, free, transactiondate, minqty) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?)",
+                [
+                    (supplier_code, r["code"], r["name"], None, None,
+                     r["stock"], str(r["disc_percent"]), None, target_store_name, 0, 0, None)
+                    for r in rows
+                ],
+            )
+        conn.commit()
+        return len(rows)
 
 
 def order_summary(store_name):
@@ -113,8 +214,8 @@ def compare_previous_order(store_name, order_id):
     UPDATE om SET om.Status = 2, om.Remarks = ?
     FROM OrderManagement om INNER JOIN OrderManagementBackup omb
         ON om.ProductCode = omb.ProductCode AND om.StoreName = omb.StoreName
-    WHERE omb.OrderId = ? AND omb.Status = 0 AND omb.OrSupplier IS NOT NULL
-        AND omb.OrQty IS NOT NULL AND om.StoreName = ?;
+    WHERE omb.OrderId = ? AND omb.Status = 0 AND om.StoreName = ?
+        AND ((omb.OrSupplier IS NOT NULL AND omb.OrQty IS NOT NULL) OR omb.OrderQty = 0);
     UPDATE om SET om.OrderQty = (om.OrgOrderQty - omb.OrQty), om.Status = 0,
         om.Remarks = 'After Order Sold', om.WantedType = 'After Order Sold'
     FROM OrderManagement om INNER JOIN OrderManagementBackup omb
