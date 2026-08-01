@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { legacyOrderService } from '../../services/legacyOrderService'
-import type { LegacyJob, LegacyStore, OrderMode, OrderRow, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
+import type { LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
 
 const POLL_MS = 1500
@@ -31,12 +31,6 @@ export default function LegacyOrderPage() {
   const [reviewLoading, setReviewLoading] = useState(false)
   const [compareBusy, setCompareBusy] = useState(false)
   const [compareMessage, setCompareMessage] = useState('')
-  const [gridStore, setGridStore] = useState('')
-  const [gridRows, setGridRows] = useState<OrderRow[]>([])
-  const [gridLoading, setGridLoading] = useState(false)
-  const [gridEdits, setGridEdits] = useState<Record<number, number>>({})
-  const [gridSaving, setGridSaving] = useState<number | null>(null)
-  const [selectedProductCode, setSelectedProductCode] = useState<number | null>(null)
   const pollers = useRef(new Map<string, number>())
 
   useEffect(() => {
@@ -49,7 +43,6 @@ export default function LegacyOrderPage() {
         ])))
         if (storeList.length) {
           setCompareStore(storeList[0].store_name)
-          setGridStore(storeList[0].store_name)
         }
       })
       .catch((e: Error) => setError(e.message))
@@ -162,39 +155,6 @@ export default function LegacyOrderPage() {
       .finally(() => setReviewLoading(false))
   }
 
-  const loadGrid = useCallback((storeName: string) => {
-    if (!storeName) return
-    setGridLoading(true)
-    setGridEdits({})
-    setSelectedProductCode(null)
-    legacyOrderService.orders(storeName)
-      .then(setGridRows)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setGridLoading(false))
-  }, [])
-
-  useEffect(() => {
-    loadGrid(gridStore)
-  }, [gridStore, loadGrid])
-
-  const saveOrderQty = (productCode: number, orderQty: number) => {
-    if (!gridStore) return
-    setGridSaving(productCode)
-    legacyOrderService.updateOrderQty(gridStore, productCode, orderQty)
-      .then(() => {
-        setGridRows((rows) => rows.map((row) => (
-          row.ProductCode === productCode ? { ...row, OrderQty: orderQty } : row
-        )))
-        setGridEdits((edits) => {
-          const next = { ...edits }
-          delete next[productCode]
-          return next
-        })
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setGridSaving(null))
-  }
-
   const sortedJobs = useMemo(() => Object.values(jobs).sort(
     (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
   ), [jobs])
@@ -244,87 +204,6 @@ export default function LegacyOrderPage() {
           </table>
         </div>
       </section>
-
-      <div className="lo-lower-grid">
-        <section className="lo-card">
-          <div className="lo-section-title">
-            <div><h2>Order grid</h2><p className="lo-note">Current OrderManagement rows for review. Set a product's Order Qty to 0 to mark it "no need" — it will be closed out on the next compare instead of reappearing.</p></div>
-            <label className="lo-store-picker"><span>Store</span><select value={gridStore} onChange={(e) => setGridStore(e.target.value)}>{stores.map((store) => <option key={store.store_name} value={store.store_name}>{store.store_name}</option>)}</select></label>
-          </div>
-          <div className="lo-review-scroll">
-            <table className="lo-table lo-review-table">
-              <thead><tr><th>Product</th><th className="lo-num">Stock</th><th className="lo-num">Order Qty</th><th>Status</th></tr></thead>
-              <tbody>
-                {gridRows.map((row) => (
-                  <tr
-                    key={row.ProductCode}
-                    className={selectedProductCode === row.ProductCode ? 'lo-supplier-row is-selected' : undefined}
-                    onClick={() => setSelectedProductCode(row.ProductCode)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <td><strong>{row.ProductName}</strong><small className="lo-cell-sub">{row.ProductCode}</small></td>
-                    <td className="lo-num">{row.TotalStock}</td>
-                    <td className="lo-num">{gridEdits[row.ProductCode] ?? row.OrderQty}</td>
-                    <td><span className={`lo-chip ${row.Status === 2 ? 'lo-chip-success' : 'lo-chip-running'}`}>{row.Status === 2 ? 'Closed' : 'Pending'}</span></td>
-                  </tr>
-                ))}
-                {!gridRows.length && <tr><td colSpan={4} className="lo-empty">{gridLoading ? 'Loading order grid…' : 'No order rows for this store.'}</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="lo-card lo-activity">
-          <div className="lo-section-title"><div><h2>Product detail</h2><p className="lo-note">Select a product from the grid to review and edit it.</p></div></div>
-          {selectedProductCode !== null && (() => {
-            const row = gridRows.find((r) => r.ProductCode === selectedProductCode)
-            if (!row) return null
-            const edited = gridEdits[row.ProductCode]
-            const value = edited ?? row.OrderQty
-            const dirty = edited !== undefined && edited !== row.OrderQty
-            return (
-              <div className="lo-product-review">
-                <div className="lo-review-header">
-                  <div><span className="lo-eyebrow">Order grid review</span><h3>{row.ProductName}</h3><p>{row.ProductCode} · {gridStore}</p></div>
-                  <span className={`lo-chip ${row.Status === 2 ? 'lo-chip-success' : 'lo-chip-running'}`}>{row.Status === 2 ? 'Closed' : 'Pending'}</span>
-                </div>
-                <dl className="lo-meta" style={{ padding: '0.75rem' }}>
-                  <div><dt>Stock</dt><dd>{row.TotalStock}</dd></div>
-                  <div><dt>Min / Max</dt><dd>{row.MinQty} / {row.MaxQty}</dd></div>
-                  <div><dt>Sale Unit</dt><dd>{row.SaleUnit}</dd></div>
-                  <div><dt>Wanted Type</dt><dd>{row.WantedType || '—'}</dd></div>
-                  <div><dt>Remarks</dt><dd>{row.Remarks ?? '—'}</dd></div>
-                  <div>
-                    <dt>Order Qty</dt>
-                    <dd>
-                      <input
-                        type="number"
-                        min={0}
-                        aria-label={`${row.ProductName} order quantity`}
-                        value={value}
-                        onChange={(e) => setGridEdits((edits) => ({ ...edits, [row.ProductCode]: Number(e.target.value) }))}
-                        style={{ width: '5rem' }}
-                      />
-                    </dd>
-                  </div>
-                </dl>
-                <div className="lo-review-footer">
-                  <div><strong>No need for this cycle?</strong><small>Set Order Qty to 0 and save to close it out without a supplier order.</small></div>
-                  <button
-                    type="button"
-                    className="lo-btn lo-btn-primary"
-                    disabled={!dirty || gridSaving === row.ProductCode}
-                    onClick={() => saveOrderQty(row.ProductCode, value)}
-                  >
-                    {gridSaving === row.ProductCode ? 'Saving…' : 'Save'}
-                  </button>
-                </div>
-              </div>
-            )
-          })()}
-          {selectedProductCode === null && <div className="lo-empty">No product selected.</div>}
-        </section>
-      </div>
 
       <div className="lo-lower-grid">
         <section className="lo-card">
