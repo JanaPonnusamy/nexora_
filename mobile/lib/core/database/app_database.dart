@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import 'package:nexora_mobile/core/database/connection/connection.dart';
+import 'package:nexora_mobile/core/database/master_data_tables.dart';
 import 'package:nexora_mobile/core/database/tables.dart';
 
 part 'app_database.g.dart';
@@ -18,8 +19,9 @@ class AppKeyValue extends Table {
 /// The application's local database.
 ///
 /// Schema v2 adds the synchronization-infrastructure tables (see `tables.dart`)
-/// for the Phase 2 store agent and Phase 3 sync engine. No business tables are
-/// present yet.
+/// for the Phase 2 store agent and Phase 3 sync engine. Schema v3 (Phase 4) adds
+/// the offline business **master-data** tables (see `master_data_tables.dart`) —
+/// reference data only, no transactional tables.
 @DriftDatabase(
   tables: [
     AppKeyValue,
@@ -29,6 +31,13 @@ class AppKeyValue extends Table {
     SyncState,
     SyncQueue,
     SyncHistory,
+    // Phase 4 — business master data.
+    Departments,
+    Categories,
+    Manufacturers,
+    Units,
+    TaxMaster,
+    Suppliers,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -38,7 +47,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.withExecutor(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -55,6 +64,15 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(syncState);
             await m.createTable(syncQueue);
             await m.createTable(syncHistory);
+          }
+          if (from < 3) {
+            // v2 → v3: add Phase 4 master-data tables.
+            await m.createTable(departments);
+            await m.createTable(categories);
+            await m.createTable(manufacturers);
+            await m.createTable(units);
+            await m.createTable(taxMaster);
+            await m.createTable(suppliers);
           }
         },
         beforeOpen: (details) async {

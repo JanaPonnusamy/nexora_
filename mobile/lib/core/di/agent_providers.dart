@@ -12,18 +12,38 @@ import 'package:nexora_mobile/core/sync/delta_processor.dart';
 import 'package:nexora_mobile/core/sync/sync_manager.dart';
 import 'package:nexora_mobile/core/sync/sync_state.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
+import 'package:nexora_mobile/features/master_data/domain/master_scope.dart';
+import 'package:nexora_mobile/features/master_data/sync/entity_delta_processors.dart';
 
 /// Providers that compose the sync engine + store agent and that depend on the
 /// authenticated session. Kept separate from `providers.dart` so the base
 /// dependency graph does not need to know about the auth controller.
+
+/// Resolves the current tenant/store/user scope from the auth session. Nothing
+/// global is assumed — master-data sync and reads are always scoped to this.
+final masterScopeProvider = Provider<MasterScope Function()>((ref) {
+  return () {
+    final auth = ref.read(authControllerProvider);
+    final store = auth.selectedStore;
+    final tenantId = store?.tenantId ?? auth.user?.tenantId ?? '';
+    return MasterScope(
+      tenantId: tenantId,
+      storeId: store?.storeId,
+      userId: auth.user?.userId,
+    );
+  };
+});
 
 /// Concrete entity processors registered with the sync engine.
 final deltaProcessorsProvider = Provider<List<EntityDeltaProcessor>>((ref) {
   String? currentStoreId() =>
       ref.read(authControllerProvider).selectedStore?.storeId;
   bool isAuthenticated() => ref.read(authControllerProvider).isAuthenticated;
+  final scope = ref.watch(masterScopeProvider);
+  final logger = ref.watch(syncLoggerProvider);
 
   return [
+    // Phase 2/3 entities.
     StoreConfigDeltaProcessor(
       ref.watch(storeConfigServiceProvider),
       currentStoreId,
@@ -32,6 +52,38 @@ final deltaProcessorsProvider = Provider<List<EntityDeltaProcessor>>((ref) {
       ref.watch(authRepositoryProvider),
       ref.watch(syncRepositoryProvider),
       isAuthenticated,
+    ),
+    // Phase 4 business master data.
+    SupplierDeltaProcessor(
+      repository: ref.watch(supplierRepositoryProvider),
+      api: ref.watch(masterDataApiServiceProvider),
+      scope: scope,
+      logger: logger,
+    ),
+    DepartmentDeltaProcessor(
+      repository: ref.watch(departmentRepositoryProvider),
+      scope: scope,
+      logger: logger,
+    ),
+    CategoryDeltaProcessor(
+      repository: ref.watch(categoryRepositoryProvider),
+      scope: scope,
+      logger: logger,
+    ),
+    ManufacturerDeltaProcessor(
+      repository: ref.watch(manufacturerRepositoryProvider),
+      scope: scope,
+      logger: logger,
+    ),
+    UnitDeltaProcessor(
+      repository: ref.watch(unitRepositoryProvider),
+      scope: scope,
+      logger: logger,
+    ),
+    TaxRateDeltaProcessor(
+      repository: ref.watch(taxRateRepositoryProvider),
+      scope: scope,
+      logger: logger,
     ),
   ];
 });

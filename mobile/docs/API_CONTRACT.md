@@ -1,4 +1,4 @@
-# API Contract — Phases 1–3
+# API Contract — Phases 1–4
 
 The mobile app consumes the **existing** FastAPI backend. No endpoint below was
 invented; each maps to a real route. Nothing here modifies the backend.
@@ -110,6 +110,68 @@ measured for the Device Status screen.
   username, password) for the desktop agent that reads the legacy SQL Server. A
   phone must never hold store DB credentials, so the mobile client caches only
   the plain store record from `GET /api/stores/{id}`.
+
+## Consumed in Phase 4 (Business Master Data)
+
+Phase 4 wires the first business-data entities into the sync engine —
+non-transactional master/reference data only (Store, User Profile,
+Permissions/Entitlements, Departments, Categories, Manufacturers, Suppliers, Tax
+Master, Units, Configuration). A repo-wide search of every FastAPI router
+(`backend/**/router.py`, `backend/api/app.py`) found **exactly one** endpoint
+among these that is genuinely mobile-consumable read data. Nothing was invented
+to fill the rest — those entities ship with full offline infrastructure (Drift
+table, model, DTO, mapper, repository, `EntityDeltaProcessor`) but their
+processor cleanly no-ops on `pull()` instead of calling a URL that doesn't
+exist, so the app still works fully offline on whatever is cached (empty, for
+now, until a real endpoint is added).
+
+### `GET /api/supplier-stock-analysis/suppliers?tenant_id=&store_id=` — bearer, tenant+store scoped
+The only entity with a real download. **Consumed with a documented caveat**:
+this is a *procurement-analysis* endpoint, not a supplier master route — it
+returns suppliers that have **imported stock** for the store (via
+`procurement.supplier_stock` joined to `sync.Suppliers`), each with
+`product_count` / `available_count` / `total_available_stock` /
+`last_imported_at`. A supplier with no imported stock will not appear, so this
+is **not** the complete supplier master. Response shape:
+```json
+{ "suppliers": [
+  { "supplier_code": "...", "supplier_name": "...", "product_count": 12,
+    "available_count": 9, "total_available_stock": 341.0,
+    "last_imported_at": "2026-.." }
+] }
+```
+The endpoint returns **no version/etag and no delta/watermark support** — every
+pull is a full snapshot. The mobile `SupplierRepository` reconciles this
+locally: any previously-cached supplier absent from the latest snapshot is
+soft-deleted (`is_deleted = true`), which is how "deleted records" are detected
+for this entity in the absence of server-side deletion signals.
+
+### Entities with NO backend read endpoint (documented gap, not invented)
+
+| Entity | Status | Notes |
+|---|---|---|
+| Departments | **Missing** | No `/api/departments` (or equivalent) route exists anywhere in the backend. `sync.*` department data is populated by the desktop upload agent only; there is no mobile-facing read. |
+| Categories | **Missing** | Same as Departments. The only "categories" route found is `POST/GET /shelf-sort/categories` under Procurement (`pm_router.py`) — a shelf-sort feature, unrelated to a category master, and not consumed. |
+| Manufacturers | **Missing** | No manufacturer/brand master route exists. |
+| Tax Master | **Missing** | No tax-master route exists. |
+| Units | **Missing** | No unit-of-measure route exists. |
+| Full Supplier master | **Missing** | Only the imported-stock-derived list above exists (see caveat); there is no `GET /api/suppliers` covering the full `sync.Suppliers` table. |
+
+For all six rows above, the corresponding `EntityDeltaProcessor.pull()` is
+constructed with no fetch function and reports `changed: 0` against whatever is
+already cached (nothing, until a real endpoint exists) — it never calls an
+invented URL. Once a real read endpoint is confirmed for any of them, only the
+`MasterDataApiService`/processor wiring for that one entity needs to change;
+the Drift table, model, DTO, mapper, repository and tests are already in place
+and require no changes.
+
+### Version tracking / delta support summary
+
+| Entity | Backend versioning | Delta strategy used |
+|---|---|---|
+| Suppliers | None (no version/etag/updated_at) | Full snapshot each pull; local reconciliation treats absent rows as deleted |
+| Departments/Categories/Manufacturers/Units/Tax Master | N/A — no endpoint | Repositories accept both `version`/`updated_at` fields and an explicit `deletedIds` list (via `MasterDelta`) so they are ready for either an incremental or snapshot backend once one exists |
+| Store config, User profile (Phase 2/3) | None | Unchanged from Phase 2/3 — see above |
 
 ## Missing / not-yet-available endpoints (documented, NOT invented)
 

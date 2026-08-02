@@ -18,6 +18,13 @@ import 'package:nexora_mobile/core/sync/sync_queue.dart';
 import 'package:nexora_mobile/core/sync/sync_repository.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 import 'package:nexora_mobile/features/auth/data/auth_repository.dart';
+import 'package:nexora_mobile/features/master_data/data/category_repository.dart';
+import 'package:nexora_mobile/features/master_data/data/department_repository.dart';
+import 'package:nexora_mobile/features/master_data/data/manufacturer_repository.dart';
+import 'package:nexora_mobile/features/master_data/data/master_data_api_service.dart';
+import 'package:nexora_mobile/features/master_data/data/supplier_repository.dart';
+import 'package:nexora_mobile/features/master_data/data/tax_rate_repository.dart';
+import 'package:nexora_mobile/features/master_data/data/unit_repository.dart';
 import 'package:nexora_mobile/features/store_selection/data/store_repository.dart';
 
 /// Root dependency-injection graph for the app. Everything is wired through
@@ -133,4 +140,56 @@ final storeConfigServiceProvider = Provider<StoreConfigService>(
 
 final agentSettingsRepositoryProvider = Provider<AgentSettingsRepository>(
   (ref) => AgentSettingsRepository(ref.watch(syncRepositoryProvider)),
+);
+
+// --- Master data (Phase 4) ---------------------------------------------------
+
+/// Shared network access for master-data entities (only Suppliers is wired to a
+/// real endpoint; see docs/API_CONTRACT.md).
+final masterDataApiServiceProvider = Provider<MasterDataApiService>(
+  (ref) => MasterDataApiService(ref.watch(dioProvider)),
+);
+
+/// Offline, Drift-only master-data repositories. UI reads these; sync writes
+/// these. None require the network.
+final departmentRepositoryProvider = Provider<DepartmentRepository>(
+  (ref) => DepartmentRepository(
+    ref.watch(appDatabaseProvider),
+    ref.watch(conflictHandlerProvider),
+  ),
+);
+
+final categoryRepositoryProvider = Provider<CategoryRepository>(
+  (ref) => CategoryRepository(
+    ref.watch(appDatabaseProvider),
+    ref.watch(conflictHandlerProvider),
+  ),
+);
+
+final manufacturerRepositoryProvider = Provider<ManufacturerRepository>(
+  (ref) => ManufacturerRepository(
+    ref.watch(appDatabaseProvider),
+    ref.watch(conflictHandlerProvider),
+  ),
+);
+
+final unitRepositoryProvider = Provider<UnitRepository>(
+  (ref) => UnitRepository(
+    ref.watch(appDatabaseProvider),
+    ref.watch(conflictHandlerProvider),
+  ),
+);
+
+final taxRateRepositoryProvider = Provider<TaxRateRepository>(
+  (ref) => TaxRateRepository(
+    ref.watch(appDatabaseProvider),
+    ref.watch(conflictHandlerProvider),
+  ),
+);
+
+final supplierRepositoryProvider = Provider<SupplierRepository>(
+  (ref) => SupplierRepository(
+    ref.watch(appDatabaseProvider),
+    ref.watch(conflictHandlerProvider),
+  ),
 );

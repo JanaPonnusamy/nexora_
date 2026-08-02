@@ -17,4 +17,8 @@ class ApiEndpoints {
   static const String stores = '/api/stores';
   static String storesByTenant(String tenantId) => '/api/stores/tenant/$tenantId';
   static String store(String storeId) => '/api/stores/$storeId';
+
+  // Master data (Phase 4). Only Suppliers has a real, mobile-consumable read
+  // endpoint today; see docs/API_CONTRACT.md for the gaps on the others.
+  static const String suppliersList = '/api/supplier-stock-analysis/suppliers';
 }

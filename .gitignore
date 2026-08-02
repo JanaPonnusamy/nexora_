@@ -56,7 +56,9 @@ nexora_platform_dump.sql
 
 # Local runtime data + sample assets. Contain real supplier PII: scanned/uploaded
 # invoices (document extraction) and the local catalog cache. Never commit.
-data/
+# Anchored to repo root so it doesn't also match source folders named `data/`
+# (e.g. mobile/lib/features/*/data/) elsewhere in the tree.
+/data/
 assects/
 catalog.db
 
