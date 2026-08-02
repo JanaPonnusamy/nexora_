@@ -26,6 +26,7 @@ import 'package:nexora_mobile/features/master_data/data/supplier_repository.dart
 import 'package:nexora_mobile/features/master_data/data/tax_rate_repository.dart';
 import 'package:nexora_mobile/features/master_data/data/unit_repository.dart';
 import 'package:nexora_mobile/features/store_selection/data/store_repository.dart';
+import 'package:nexora_mobile/features/sync/data/sync_admin_service.dart';
 
 /// Root dependency-injection graph for the app. Everything is wired through
 /// Riverpod providers so construction stays lazy, single-instance and testable
@@ -192,4 +193,10 @@ final supplierRepositoryProvider = Provider<SupplierRepository>(
     ref.watch(appDatabaseProvider),
     ref.watch(conflictHandlerProvider),
   ),
+);
+
+// --- Sync administration (network-wide, read-only) --------------------------
+
+final syncAdminServiceProvider = Provider<SyncAdminService>(
+  (ref) => SyncAdminService(ref.watch(dioProvider)),
 );

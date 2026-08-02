@@ -14,6 +14,7 @@ import 'package:nexora_mobile/core/sync/sync_state.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 import 'package:nexora_mobile/features/master_data/domain/master_scope.dart';
 import 'package:nexora_mobile/features/master_data/sync/entity_delta_processors.dart';
+import 'package:nexora_mobile/features/sync/data/sync_control_center.dart';
 
 /// Providers that compose the sync engine + store agent and that depend on the
 /// authenticated session. Kept separate from `providers.dart` so the base
@@ -165,6 +166,22 @@ final cachedDeviceProvider = FutureProvider<DeviceIdentity?>(
 /// All cached configuration entries (for the Configuration Status screen).
 final allConfigProvider = FutureProvider<List<SyncConfigurationData>>(
   (ref) => ref.watch(syncRepositoryProvider).allConfig(),
+);
+
+/// Network-wide Sync Control Center data (KPIs + every store's live status).
+///
+/// `GET /api/sync/control-center` is not tenant-scoped server-side, so this is
+/// only ever watched from a spot gated on `isPlatformUser` — see
+/// `isPlatformUserProvider` and the Sync Status screen. `autoDispose` keeps it
+/// from polling while nobody is looking at the screen.
+final syncControlCenterProvider =
+    FutureProvider.autoDispose<SyncControlCenter>((ref) {
+  return ref.watch(syncAdminServiceProvider).fetchControlCenter();
+});
+
+/// Whether the current session may see network-wide (cross-store) sync data.
+final isPlatformUserProvider = Provider<bool>(
+  (ref) => ref.watch(authControllerProvider).user?.isPlatformUser ?? false,
 );
 
 extension<T> on Stream<T> {

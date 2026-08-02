@@ -30,6 +30,11 @@ business modules are included.
   `sync_queue`, `sync_history`). No business tables.
 - UI: `features/sync/presentation/sync_status_screen.dart` and
   `features/agent/presentation/` (Device / Configuration / Agent Settings).
+- `features/sync/data/` — read-only **network** sync overview: `GET
+  /api/sync/control-center` (the same endpoint the HO web console's Sync
+  Control Center uses), gated to platform users on the client since it isn't
+  tenant-scoped server-side. Entirely separate from the device-local engine
+  above — it doesn't touch the queue, Drift, or `core/sync` at all.
 
 ## Key decisions
 

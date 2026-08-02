@@ -21,4 +21,9 @@ class ApiEndpoints {
   // Master data (Phase 4). Only Suppliers has a real, mobile-consumable read
   // endpoint today; see docs/API_CONTRACT.md for the gaps on the others.
   static const String suppliersList = '/api/supplier-stock-analysis/suppliers';
+
+  // Sync administration (read-only). Same endpoint the HO web console's Sync
+  // Control Center uses; not tenant-scoped server-side, so the client only
+  // surfaces it to platform users. See docs/API_CONTRACT.md.
+  static const String syncControlCenter = '/api/sync/control-center';
 }

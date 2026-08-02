@@ -1,4 +1,4 @@
-# API Contract — Phases 1–4
+# API Contract — Phases 1–4 (+ Network Sync Overview)
 
 The mobile app consumes the **existing** FastAPI backend. No endpoint below was
 invented; each maps to a real route. Nothing here modifies the backend.
@@ -172,6 +172,44 @@ and require no changes.
 | Suppliers | None (no version/etag/updated_at) | Full snapshot each pull; local reconciliation treats absent rows as deleted |
 | Departments/Categories/Manufacturers/Units/Tax Master | N/A — no endpoint | Repositories accept both `version`/`updated_at` fields and an explicit `deletedIds` list (via `MasterDelta`) so they are ready for either an incremental or snapshot backend once one exists |
 | Store config, User profile (Phase 2/3) | None | Unchanged from Phase 2/3 — see above |
+
+## Consumed: Network Sync Overview (Sync Status screen, platform users only)
+
+### `GET /api/sync/control-center` — bearer
+**The same endpoint the HO web console's "Sync Control Center" page uses** —
+confirmed by reading `backend/controllers/sync_admin_controller.py` →
+`SyncAdminService.control_center()` →
+`SyncAdminRepository.control_center()`. Not invented; reused as-is.
+
+Response:
+```json
+{
+  "kpis": {
+    "stores_online": 6, "stores_offline": 0, "sync_running": 0,
+    "queued": 0, "completed_today": 6, "failed_today": 0
+  },
+  "stores": [
+    { "store_id": "...", "store_code": "NMA", "store_name": "Nathan Medicals A",
+      "connection_type": "LAN", "agent_status": "Online",
+      "last_sync": "2026-08-02T18:37:00", "current_activity": "Idle",
+      "is_syncing": false, "status": "Online" }
+  ]
+}
+```
+`agent_status` is derived server-side from `store_agent_registry` heartbeats
+(online if seen within the last 90s); `status`/`current_activity` fold in
+whether a `sync_execution` row for that store is `RUNNING`.
+
+**Important caveat — not tenant-scoped server-side.** The underlying query is
+`WHERE s.is_active = 1` with no tenant filter, so any authenticated bearer
+token can see every active store across the whole platform, not just their
+own tenant. The desktop web console presumably restricts this page to
+admin/platform roles at the UI layer; the mobile client does the same:
+`isPlatformUserProvider` gates the "Network" section to `is_platform_user ==
+true` sessions only (`core/di/agent_providers.dart`). A store-scoped session
+never fetches this endpoint. If per-tenant filtering is ever added
+server-side, this client-side gate can be relaxed accordingly — flagged here
+so a future reviewer knows the restriction is currently client-only.
 
 ## Missing / not-yet-available endpoints (documented, NOT invented)
 

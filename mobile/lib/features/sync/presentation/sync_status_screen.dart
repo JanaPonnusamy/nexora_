@@ -7,9 +7,13 @@ import 'package:nexora_mobile/core/sync/sync_state.dart';
 import 'package:nexora_mobile/core/sync/sync_status.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
 import 'package:nexora_mobile/features/agent/presentation/widgets/status_widgets.dart';
+import 'package:nexora_mobile/features/sync/data/sync_control_center.dart';
 
-/// Phase 3 — live view of the offline sync engine: status, progress, the
-/// operation queue, per-entity metadata and the recent activity log.
+/// Live view of the sync engine. For every user this shows the device's own
+/// offline sync (status, progress, operation queue, entities, activity log).
+/// Platform users additionally see a **Network** overview — every store's live
+/// sync status — sourced from the same read-only endpoint the HO web console's
+/// Sync Control Center uses (`GET /api/sync/control-center`).
 class SyncStatusScreen extends ConsumerWidget {
   const SyncStatusScreen({super.key});
 
@@ -17,6 +21,7 @@ class SyncStatusScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final syncAsync = ref.watch(syncStateProvider);
     final agent = ref.watch(agentManagerProvider);
+    final isPlatformUser = ref.watch(isPlatformUserProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Sync Status')),
@@ -24,10 +29,21 @@ class SyncStatusScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Sync unavailable: $e')),
         data: (state) => RefreshIndicator(
-          onRefresh: () => agent.triggerSync(),
+          onRefresh: () async {
+            final futures = <Future<void>>[agent.triggerSync()];
+            if (isPlatformUser) {
+              ref.invalidate(syncControlCenterProvider);
+              futures.add(ref.read(syncControlCenterProvider.future));
+            }
+            await Future.wait(futures);
+          },
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (isPlatformUser) ...[
+                const _NetworkOverviewCard(),
+                const SizedBox(height: 12),
+              ],
               _OverviewCard(state: state),
               const SizedBox(height: 12),
               _MetadataCard(),
@@ -47,6 +63,214 @@ class SyncStatusScreen extends ConsumerWidget {
           label: Text(state.status.isBusy ? 'Syncing…' : 'Sync now'),
         ),
         orElse: () => null,
+      ),
+    );
+  }
+}
+
+/// Platform-only: KPI strip + per-store status grid from the Sync Control
+/// Center endpoint. This is network-wide, cross-store data — never shown to a
+/// store-scoped session.
+class _NetworkOverviewCard extends ConsumerWidget {
+  const _NetworkOverviewCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(syncControlCenterProvider);
+    return SectionCard(
+      title: 'Network',
+      icon: Icons.hub_outlined,
+      trailing: IconButton(
+        tooltip: 'Refresh',
+        visualDensity: VisualDensity.compact,
+        icon: const Icon(Icons.refresh_rounded, size: 20),
+        onPressed: () => ref.invalidate(syncControlCenterProvider),
+      ),
+      children: [
+        async.when(
+          loading: () => const _Loading(),
+          error: (e, _) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline, size: 18, color: AppColors.error),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('Network data unavailable: $e',
+                      style: const TextStyle(color: AppColors.slate),),
+                ),
+                TextButton(
+                  onPressed: () => ref.invalidate(syncControlCenterProvider),
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+          data: (cc) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _KpiRow(kpis: cc.kpis),
+              const SizedBox(height: 4),
+              const Divider(height: 24),
+              for (final store in cc.stores) _StoreSyncRow(store: store),
+              if (cc.stores.isEmpty)
+                const _Empty('No active stores on this platform.'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _KpiRow extends StatelessWidget {
+  const _KpiRow({required this.kpis});
+  final SyncKpis kpis;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      (
+        'Online',
+        '${kpis.storesOnline}/${kpis.totalStores}',
+        Icons.wifi_rounded,
+        AppColors.success,
+      ),
+      ('Running', '${kpis.syncRunning}', Icons.sync_rounded, AppColors.primary),
+      ('Queued', '${kpis.queued}', Icons.hourglass_empty_rounded, AppColors.warning),
+      (
+        'Done today',
+        '${kpis.completedToday}',
+        Icons.check_circle_outline_rounded,
+        AppColors.accent,
+      ),
+      (
+        'Failed today',
+        '${kpis.failedToday}',
+        Icons.error_outline_rounded,
+        kpis.failedToday > 0 ? AppColors.error : AppColors.slate,
+      ),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final item in items) ...[
+            _KpiChip(
+              label: item.$1,
+              value: item.$2,
+              icon: item.$3,
+              color: item.$4,
+            ),
+            const SizedBox(width: 10),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _KpiChip extends StatelessWidget {
+  const _KpiChip({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 96,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 11.5, color: AppColors.slate),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StoreSyncRow extends StatelessWidget {
+  const _StoreSyncRow({required this.store});
+  final StoreSyncStatus store;
+
+  Color get _statusColor => switch (store.status) {
+        'Syncing' => AppColors.primary,
+        'Online' => AppColors.success,
+        _ => AppColors.slate,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _statusColor;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      store.storeName,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      '${store.storeCode} · ${formatRelative(store.lastSync)}',
+                      style: const TextStyle(
+                          fontSize: 11.5, color: AppColors.slate,),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              StatusPill(label: store.status, color: color),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              // Syncing → animated/indeterminate. Online+idle → full ("up to
+              // date"). Offline → empty ("stalled").
+              value: store.isSyncing ? null : (store.isOnline ? 1.0 : 0.0),
+              minHeight: 5,
+              backgroundColor: color.withValues(alpha: 0.12),
+              valueColor: AlwaysStoppedAnimation(color),
+            ),
+          ),
+        ],
       ),
     );
   }

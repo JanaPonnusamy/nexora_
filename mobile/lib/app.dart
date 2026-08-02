@@ -43,7 +43,10 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
-      themeMode: ThemeMode.system,
+      // Default to the light theme regardless of the OS/browser preference —
+      // the product's primary, polished surface is light (matches the HO web
+      // console). Dark remains available/defined for a future in-app toggle.
+      themeMode: ThemeMode.light,
       routerConfig: router,
     );
   }
