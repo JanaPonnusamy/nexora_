@@ -8,6 +8,7 @@ import 'package:nexora_mobile/features/auth/application/auth_state.dart';
 import 'package:nexora_mobile/features/auth/data/auth_repository.dart';
 import 'package:nexora_mobile/features/auth/data/models/app_user.dart';
 import 'package:nexora_mobile/features/auth/data/models/user_role.dart';
+import 'package:nexora_mobile/features/store_selection/data/store_repository.dart';
 
 /// Owns the authentication session for the whole app: bootstrap on launch,
 /// login, store selection, and logout. The router redirects off [AuthState].
@@ -19,6 +20,7 @@ class AuthController extends Notifier<AuthState> {
 
   AuthRepository get _repo => ref.read(authRepositoryProvider);
   SecureStorageService get _storage => ref.read(secureStorageProvider);
+  StoreRepository get _stores => ref.read(storeRepositoryProvider);
 
   @override
   AuthState build() => const AuthState();
@@ -103,22 +105,47 @@ class AuthController extends Notifier<AuthState> {
   void clearError() => state = state.copyWith(errorMessage: null);
 
   /// Re-hydrate the previously selected store from storage, but only if it is
-  /// still a store the user is entitled to (guards against stale selections).
+  /// still valid for this user (guards against stale selections).
+  ///
+  /// Store-scoped users are validated against their role entitlements (no
+  /// extra request needed — same source `storeOptionsProvider` uses). A
+  /// **platform user** has no store roles by definition (that's why they fell
+  /// back to `/api/stores` to pick one in the first place), so a role-only
+  /// check would always fail and silently drop their selection on every
+  /// restart. For that case, validate directly against `GET /api/stores/{id}`
+  /// instead — the same backend truth the picker itself relied on.
   Future<SelectedStore?> _restoreSelectedStore(AppUser user) async {
     final storedId = await _storage.readSelectedStoreId();
     if (storedId == null || storedId.isEmpty) return null;
-    final match = _findRoleStore(user, storedId);
-    if (match == null) {
-      // Selection no longer valid for this user; drop it.
-      await _storage.deleteSelectedStoreId();
+
+    if (user.storeRoles.isNotEmpty) {
+      final match = _findRoleStore(user, storedId);
+      if (match == null) {
+        await _storage.deleteSelectedStoreId();
+        return null;
+      }
+      return SelectedStore(
+        storeId: match.storeId!,
+        storeName: match.storeName ?? match.storeCode ?? match.storeId!,
+        storeCode: match.storeCode,
+        tenantId: user.tenantId,
+      );
+    }
+
+    try {
+      final store = await _stores.getById(storedId);
+      if (store == null || !store.isActive) {
+        await _storage.deleteSelectedStoreId();
+        return null;
+      }
+      return SelectedStore.fromStore(store);
+    } on ApiException catch (e) {
+      // Backend unreachable / transient error: keep the stored id rather than
+      // wiping a possibly-still-valid selection, but don't block startup on
+      // it — the store config sync will retry once the agent initializes.
+      _log.warning('Could not verify stored store $storedId: ${e.message}');
       return null;
     }
-    return SelectedStore(
-      storeId: match.storeId!,
-      storeName: match.storeName ?? match.storeCode ?? match.storeId!,
-      storeCode: match.storeCode,
-      tenantId: user.tenantId,
-    );
   }
 
   UserRole? _findRoleStore(AppUser user, String storeId) {
