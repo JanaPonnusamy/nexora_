@@ -39,3 +39,23 @@ business modules are included.
 - The engine is transport-agnostic: what syncs is decided by the registered
   `EntityDeltaProcessor`s, so business entities can be added later without
   touching `core/sync`.
+
+## Web build requirement: Drift WASM runtime assets
+
+`core/database/connection/web.dart` opens the local database via
+`WasmDatabase.open`, which needs two files served from the web root:
+`web/sqlite3.wasm` (prebuilt sqlite3 binary) and `web/drift_worker.js`
+(compiled from `web/drift_worker.dart`). Both are committed to the repo, so a
+normal `flutter build web` / `flutter run -d chrome` picks them up
+automatically — no extra step needed.
+
+If `drift_worker.js` ever needs regenerating (e.g. after a `drift`/`sqlite3`
+package upgrade), recompile it from the project root:
+```
+dart compile js web/drift_worker.dart -o web/drift_worker.js -O2
+```
+Without these two files, web builds still compile and the UI still renders,
+but the local database fails to open — the Sync Status / Device Status /
+Configuration Status screens show an `Error` state and nothing persists,
+since (per this module's design) repositories are Drift-only and never fall
+back to direct network reads.
