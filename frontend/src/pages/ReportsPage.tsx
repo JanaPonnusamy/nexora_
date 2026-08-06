@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/common/PageHeader'
 import { EmptyState } from '../components/common/EmptyState'
 import { ErrorState } from '../components/common/ErrorState'
+import { WhatsAppSendCard } from '../components/common/WhatsAppSendCard'
 import { tenantService } from '../services/tenantService'
 import { storeService } from '../services/storeService'
 import { reportsService } from '../services/reportsService'
@@ -57,12 +58,12 @@ export default function ReportsPage() {
     tenantService.list().then((rows) => {
       const active = rows.filter((t) => t.is_active)
       setTenants(active)
-      if (active.length) setTenantId((c) => c || active[0].tenant_id)
+      if (active.length) setTenantId((current) => current || active[0].tenant_id)
     }).catch(() => setTenants([]))
     storeService.list().then(setStores).catch(() => setStores([]))
     reportsService.catalog().then((rows) => {
       setDefs(rows)
-      if (rows.length) setReportKey((c) => c || rows[0].key)
+      if (rows.length) setReportKey((current) => current || rows[0].key)
     }).catch(() => setDefs([]))
   }, [])
 
@@ -70,26 +71,28 @@ export default function ReportsPage() {
     () => stores.filter((s) => s.tenant_id === tenantId && s.is_active),
     [stores, tenantId],
   )
+
   useEffect(() => {
-    // Keep a valid store selected as the tenant changes.
-    setStoreId((c) => (tenantStores.some((s) => s.store_id === c) ? c : tenantStores[0]?.store_id ?? ''))
+    setStoreId((current) => (tenantStores.some((s) => s.store_id === current) ? current : tenantStores[0]?.store_id ?? ''))
   }, [tenantStores])
 
   const def = useMemo(() => defs.find((d) => d.key === reportKey) ?? null, [defs, reportKey])
 
-  // Supplier lookup for the Non-Moving / Purchased-Not-Sold filters.
   useEffect(() => {
     if (!def?.needs_supplier || !tenantId || !storeId) {
       setSupplierOptions([])
       return
     }
     let live = true
-    const t = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       reportsService.suppliers(tenantId, storeId, supplierQuery, 50)
         .then((rows) => live && setSupplierOptions(rows))
         .catch(() => live && setSupplierOptions([]))
     }, 250)
-    return () => { live = false; window.clearTimeout(t) }
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+    }
   }, [def, tenantId, storeId, supplierQuery])
 
   const run = useCallback(() => {
@@ -104,7 +107,10 @@ export default function ReportsPage() {
       division_code: def.needs_division ? division || undefined : undefined,
     })
       .then(setResult)
-      .catch((e) => { setResult(null); setError(e instanceof Error ? e.message : 'Failed to run report') })
+      .catch((err) => {
+        setResult(null)
+        setError(err instanceof Error ? err.message : 'Failed to run report')
+      })
       .finally(() => setLoading(false))
   }, [def, tenantId, storeId, from, to, dwellDays, supplierCode, division])
 
@@ -118,6 +124,15 @@ export default function ReportsPage() {
     a.download = `${storeCode}_${result.report}_${iso(today)}.csv`
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  const buildCsvFile = async () => {
+    if (!result) {
+      throw new Error('Run a report before sending it to WhatsApp.')
+    }
+    const storeCode = tenantStores.find((s) => s.store_id === storeId)?.store_code ?? 'store'
+    const fileName = `${storeCode}_${result.report}_${iso(today)}.csv`
+    return new File([toCsv(result)], fileName, { type: 'text/csv;charset=utf-8;' })
   }
 
   const canRun = Boolean(def && tenantId && storeId)
@@ -167,6 +182,12 @@ export default function ReportsPage() {
         <button className="btn btn-outline-secondary btn-sm" disabled={!result || result.rows.length === 0} onClick={exportCsv}>
           <i className="bi bi-download" /> Export CSV
         </button>
+        <WhatsAppSendCard
+          disabled={!result || result.rows.length === 0}
+          title="Send report to WhatsApp"
+          defaultCaption={`Nexora ${def?.label ?? 'Report'} | ${from}${to ? ` to ${to}` : ''}`}
+          buildFile={buildCsvFile}
+        />
       </div>
 
       {error ? (

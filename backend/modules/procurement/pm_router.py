@@ -20,6 +20,7 @@ from modules.procurement import supplier_reply_service
 from modules.procurement import reconciliation_service
 from modules.procurement import reconciliation_repository
 from modules.procurement import pending_service
+from modules.procurement import distribution_service
 from modules.procurement.pm_schemas import (
     FinalQtyUpdate, SkipRequest, ReviewedBy,
     AssignRequest, BulkAssignRequest, ChangeSupplierRequest, ExportRequest,
@@ -296,6 +297,82 @@ async def supplier_stock_import(
         tenant_id, store_id, supplier_code, data, file.filename,
         json.loads(mapping), created_by,
     )
+
+
+# --------------------------------------------------------------------------
+# Internal Supplier Stock Distribution (HO store's own stock -> every other
+# store, as a supplier feed; see distribution_service.py)
+# --------------------------------------------------------------------------
+
+@router.get("/distribution/config")
+def distribution_config(tenant_id: str = Query(...), source_store_code: str = Query("NMW")):
+    return distribution_service.list_config(tenant_id, source_store_code)
+
+
+@router.put("/distribution/config/{store_id}")
+def distribution_config_save(
+    store_id: str,
+    tenant_id: str = Query(...),
+    whatsapp_group: Optional[str] = Query(None),
+    phone_number: Optional[str] = Query(None),
+    enabled: bool = Query(True),
+):
+    return distribution_service.save_config(tenant_id, store_id, whatsapp_group, phone_number, enabled)
+
+
+@router.put("/distribution/supplier-map/{store_id}")
+def distribution_supplier_map_save(
+    store_id: str,
+    tenant_id: str = Query(...),
+    source_store_code: str = Query(...),
+    local_supplier_code: str = Query(...),
+):
+    """This store's OWN code for the source store as a supplier (mirrors
+    legacy dbo.Stores.Ho_code — NMS/NMA='94', NMC='ST_2', NMG='99')."""
+    return distribution_service.save_supplier_map(tenant_id, store_id, source_store_code, local_supplier_code)
+
+
+@router.post("/distribution/supplier-map/import-legacy")
+def distribution_supplier_map_import_legacy(
+    tenant_id: str = Query(...),
+    source_store_code: str = Query("NMW"),
+):
+    """One-shot copy of legacy dbo.Stores.Ho_code into the platform mapping."""
+    return distribution_service.import_legacy_supplier_map(tenant_id, source_store_code)
+
+
+@router.post("/distribution/generate")
+def distribution_generate(
+    tenant_id: str = Query(...),
+    source_store_code: str = Query(...),
+    provider: str = Query("legacy"),
+    store_ids: Optional[str] = Query(None, description="Comma-separated store_ids; omit for all enabled stores"),
+    excel_only: bool = Query(False),
+    supplier_update_only: bool = Query(False),
+    started_by: Optional[str] = Query(None),
+):
+    """'Generate All' / 'Generate Selected' / 'Generate Excel Only' /
+    'Update Supplier Stock Only' all route through here."""
+    only_ids = [s for s in store_ids.split(",") if s] if store_ids else None
+    return distribution_service.generate(
+        tenant_id, source_store_code, provider, only_ids,
+        started_by, excel_only, supplier_update_only,
+    )
+
+
+@router.get("/distribution/runs")
+def distribution_runs(tenant_id: str = Query(...), limit: int = Query(20)):
+    return distribution_service.list_runs(tenant_id, limit)
+
+
+@router.get("/distribution/runs/{run_id}")
+def distribution_run_detail(run_id: str):
+    return distribution_service.run_detail(run_id)
+
+
+@router.post("/distribution/runs/{run_id}/retry")
+def distribution_retry(run_id: str, provider: Optional[str] = Query(None), started_by: Optional[str] = Query(None)):
+    return distribution_service.retry_failed(run_id, provider, started_by)
 
 
 # --------------------------------------------------------------------------

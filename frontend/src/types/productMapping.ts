@@ -151,3 +151,16 @@ export interface ReviewProgress {
   remaining: number
   approved_today: number
 }
+
+/** Keyset cursor for Manual Review continuous batches — pass back verbatim to
+ *  fetch the next batch. */
+export interface ReviewCursor {
+  confidence: number
+  mapping_id: string
+}
+
+export interface ReviewBatch {
+  items: Mapping[]
+  has_more: boolean
+  next_cursor: ReviewCursor | null
+}

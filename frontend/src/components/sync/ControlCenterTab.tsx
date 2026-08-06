@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ControlCenter, LiveStore, SyncHistoryRow } from '../../types/sync'
 import { useAsyncData } from '../../hooks/useAsyncData'
 import { syncService } from '../../services/syncService'
@@ -6,21 +6,19 @@ import { storeService } from '../../services/storeService'
 import { tenantService } from '../../services/tenantService'
 import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
-import { ConnectionType, SyncStatusBadge, SyncTypeBadge } from './SyncBadges'
-import { DonutChart } from '../dashboard/DonutChart'
-import { formatDateTime } from '../../utils/format'
-import {
-  SxCard, SxCardHead, SxCardBody, SxStat, SxChip, SxButton, SxSegmented,
-  SxSearch, SxSelect, SxPager, SxProgress, SxLive, SxLegend, SxTable,
-} from './ui'
+import { SyncStatusBadge } from './SyncBadges'
+import { SxButton, SxCard, SxCardBody, SxCardHead, SxProgress } from './ui'
 
-const PAGE_SIZE = 10
-const CONNECTIONS = ['All', 'LAN', 'WiFi', 'Internet']
-const SYNC_TYPES = [
-  { label: 'All', value: 'All' },
-  { label: 'Upsert', value: 'UPSERT' },
-  { label: 'Rolling', value: 'ROLLING_WINDOW' },
-]
+type DashboardStore = ControlCenter['stores'][number] & {
+  tenant_id?: string
+  tenant_name: string
+  live?: LiveStore
+}
+
+type ActionNotice = {
+  tone: 'info' | 'danger' | 'success' | 'warning'
+  text: string
+}
 
 async function fetchControlCenter() {
   const [cc, storeList, tenantList, schedules, history] = await Promise.all([
@@ -33,443 +31,499 @@ async function fetchControlCenter() {
   return { cc, storeList, tenantList, schedules, history }
 }
 
-function pct(part: number, total: number): string {
-  if (!total) return '0%'
-  return `${((part / total) * 100).toFixed(0)}%`
-}
-function fmtNum(n: number | null | undefined): string {
-  return n == null ? '—' : n.toLocaleString()
-}
-function fmtEta(seconds: number | null): string {
-  if (seconds == null || seconds <= 0) return '—'
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  if (m >= 60) return `${Math.floor(m / 60)}h ${m % 60}m`
-  return m > 0 ? `${m}m ${s}s` : `${s}s`
-}
 function timeOnly(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  if (!iso) return '-'
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-function DonutPanel({ title, segments }: { title: string; segments: { label: string; value: number; color: string }[] }) {
-  return (
-    <SxCard className="h-100">
-      <SxCardHead title={title} />
-      <SxCardBody>
-        <div className="sx-donut">
-          <DonutChart segments={segments.map((s) => ({ ...s }))} size={108} thickness={14} />
-          <SxLegend segments={segments} />
-        </div>
-      </SxCardBody>
-    </SxCard>
-  )
+function shortDateTime(iso: string | null): string {
+  if (!iso) return '-'
+  const parsed = new Date(iso)
+  if (Number.isNaN(parsed.getTime())) return iso
+  return parsed.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function compactRows(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 100_000_000 ? 0 : 1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 100_000 ? 0 : 1)}K`
+  return n.toLocaleString()
+}
+
+function storePriority(row: DashboardStore): number {
+  if (row.live) return 0
+  if ((row.status ?? '').toUpperCase() === 'FAILED') return 1
+  if ((row.agent_status ?? '').toLowerCase() !== 'online') return 2
+  return 3
+}
+
+function storeStatus(row: DashboardStore): string {
+  if (row.live?.status === 'PAUSED') return 'PAUSED'
+  if (row.live) return 'RUNNING'
+  if ((row.status ?? '').toUpperCase() === 'FAILED') return 'FAILED'
+  return row.agent_status || row.status || 'Offline'
+}
+
+function activityTone(status: string | null): 'success' | 'danger' | 'indigo' | 'warning' | 'muted' {
+  const value = (status ?? '').toUpperCase()
+  if (value === 'COMPLETED') return 'success'
+  if (value === 'FAILED') return 'danger'
+  if (value === 'RUNNING') return 'indigo'
+  if (value === 'PENDING' || value === 'QUEUED') return 'warning'
+  return 'muted'
+}
+
+function activityAbbr(status: string | null): string {
+  const value = (status ?? '').toUpperCase()
+  if (value === 'COMPLETED') return 'OK'
+  if (value === 'FAILED') return 'FLD'
+  if (value === 'RUNNING') return 'RUN'
+  if (value === 'PENDING') return 'PND'
+  if (value === 'QUEUED') return 'Q'
+  if (value === 'PAUSED') return 'PAU'
+  return value.slice(0, 3) || '---'
 }
 
 export function ControlCenterTab() {
   const { data, isLoading, error, reload } = useAsyncData(fetchControlCenter)
-  const [tenantFilter, setTenantFilter] = useState('all')
-  const [connectionFilter, setConnectionFilter] = useState('All')
-  const [syncTypeFilter, setSyncTypeFilter] = useState('All')
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(0)
-  const [view, setView] = useState<'table' | 'card'>('table')
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [busy, setBusy] = useState(false)
-  const [dynamic, setDynamic] = useState<{ cc: ControlCenter; history: SyncHistoryRow[] } | null>(null)
-  const [liveMap, setLiveMap] = useState<Record<string, LiveStore>>({})
+  const [dynamic, setDynamic] = useState<{ cc: ControlCenter; history: SyncHistoryRow[]; liveRows: LiveStore[]; refreshedAt: number } | null>(null)
+  const [busyAction, setBusyAction] = useState<string | null>(null)
+  const [notice, setNotice] = useState<ActionNotice | null>(null)
+
+  const refreshLiveState = useCallback(async () => {
+    const [cc, history, liveRows] = await Promise.all([
+      syncService.controlCenter(),
+      syncService.history(),
+      syncService.live(),
+    ])
+    setDynamic({ cc, history, liveRows, refreshedAt: Date.now() })
+  }, [])
 
   useEffect(() => {
     let active = true
     const tick = async () => {
       try {
-        const [cc, hist, liveRows] = await Promise.all([
+        const [cc, history, liveRows] = await Promise.all([
           syncService.controlCenter(),
           syncService.history(),
           syncService.live(),
         ])
         if (!active) return
-        setDynamic({ cc, history: hist })
-        setLiveMap(Object.fromEntries(liveRows.map((r) => [r.store_id, r])))
+        setDynamic({ cc, history, liveRows, refreshedAt: Date.now() })
       } catch {
-        /* keep last good state */
+        /* keep last good snapshot */
       }
     }
     void tick()
-    const id = setInterval(tick, 2000)
-    return () => { active = false; clearInterval(id) }
+    const id = setInterval(tick, 3000)
+    return () => {
+      active = false
+      clearInterval(id)
+    }
   }, [])
 
-  const tenantNames = useMemo(
-    () => new Map((data?.tenantList ?? []).map((t) => [t.tenant_id, t.tenant_name])),
-    [data],
-  )
-  const storeTenant = useMemo(
-    () => new Map((data?.storeList ?? []).map((s) => [s.store_id, s.tenant_id])),
-    [data],
-  )
-
-  const rows = useMemo(() => {
-    const stores = (dynamic?.cc ?? data?.cc)?.stores ?? []
-    return stores.map((store) => {
-      const tenantId = storeTenant.get(store.store_id)
-      const live = liveMap[store.store_id]
-      return {
-        ...store,
-        tenant_name: (tenantId && tenantNames.get(tenantId)) || '—',
-        tenant_id: tenantId,
-        live,
-        is_syncing: store.is_syncing || Boolean(live),
-      }
-    })
-  }, [data, dynamic, liveMap, storeTenant, tenantNames])
-
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    return rows.filter((row) => {
-      if (tenantFilter !== 'all' && row.tenant_id !== tenantFilter) return false
-      if (connectionFilter !== 'All' && row.connection_type !== connectionFilter) return false
-      if (syncTypeFilter !== 'All') {
-        const t = (row.live?.sync_type ?? '').toUpperCase()
-        if (syncTypeFilter === 'ROLLING_WINDOW' ? !t.includes('ROLL') : t !== 'UPSERT') return false
-      }
-      if (query && !`${row.store_code} ${row.store_name}`.toLowerCase().includes(query)) return false
-      return true
-    })
-  }, [rows, tenantFilter, connectionFilter, syncTypeFilter, search])
-
-  async function runSyncSelected() {
-    const targets = rows.filter((r) => selected.has(r.store_id) && r.tenant_id)
-    if (targets.length === 0) return
-    setBusy(true)
-    try {
-      await Promise.all(targets.map((r) =>
-        syncService.createTask({ tenant_id: r.tenant_id as string, store_id: r.store_id, execution_type: 'FULL', sync_mode: 'FULL' })))
-    } finally { setBusy(false) }
-  }
-
-  async function control(action: 'PAUSE' | 'STOP') {
-    if (selected.size === 0) return
-    setBusy(true)
-    try { await syncService.control([...selected], action) } finally { setBusy(false) }
-  }
-
-  async function runOne(storeId: string, tenantId?: string) {
-    if (!tenantId) return
-    setBusy(true)
-    try {
-      await syncService.createTask({ tenant_id: tenantId, store_id: storeId, execution_type: 'FULL', sync_mode: 'FULL' })
-    } finally { setBusy(false) }
-  }
-
-  if (isLoading) return <TableSkeleton rows={8} columns={12} />
+  if (isLoading) return <TableSkeleton rows={8} columns={8} />
   if (error || !data) return <ErrorState description={error ?? 'Failed to load control center'} onRetry={reload} />
 
-  const { storeList, tenantList, schedules } = data
   const cc = dynamic?.cc ?? data.cc
   const history = dynamic?.history ?? data.history
-  const { kpis } = cc
-  const totalStores = storeList.length
-  const liveList = Object.values(liveMap)
+  const liveRows = dynamic?.liveRows ?? []
+  const schedules = data.schedules
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const clampedPage = Math.min(page, totalPages - 1)
-  const pageRows = filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE)
-  const rangeStart = filtered.length === 0 ? 0 : clampedPage * PAGE_SIZE + 1
-  const rangeEnd = Math.min(filtered.length, clampedPage * PAGE_SIZE + PAGE_SIZE)
+  const tenantNames = new Map(data.tenantList.map((tenant) => [tenant.tenant_id, tenant.tenant_name]))
+  const storeTenant = new Map(data.storeList.map((store) => [store.store_id, store.tenant_id]))
+  const liveMap = Object.fromEntries(liveRows.map((row) => [row.store_id, row]))
 
-  const online = kpis.stores_online
-  const offline = kpis.stores_offline
-  const syncing = Math.max(kpis.sync_running, liveList.length)
-  const connCounts = CONNECTIONS.slice(1).map((c) => ({ type: c, count: rows.filter((r) => r.connection_type === c).length }))
+  const stores: DashboardStore[] = (
+    cc.stores
+      .map((store) => {
+        const tenantId = storeTenant.get(store.store_id)
+        return {
+          ...store,
+          tenant_id: tenantId,
+          tenant_name: (tenantId && tenantNames.get(tenantId)) || '-',
+          live: liveMap[store.store_id],
+        }
+      })
+      .sort((a, b) => {
+        const diff = storePriority(a) - storePriority(b)
+        if (diff !== 0) return diff
+        return (a.store_code || '').localeCompare(b.store_code || '')
+      })
+  )
 
-  const success = history.filter((h) => h.status === 'COMPLETED').length
-  const failure = history.filter((h) => h.status === 'FAILED').length
-  const totalRecords = history.reduce((a, h) => a + (h.rows ?? 0), 0)
-  const successRate = success + failure ? ((success / (success + failure)) * 100).toFixed(0) : '100'
-  const avgSpeed = liveList.length ? Math.round(liveList.reduce((a, l) => a + l.speed_rows_sec, 0) / liveList.length) : 0
-  const upcoming = schedules.filter((s) => s.is_enabled)
+  const actionableStores = stores.filter((store) => store.tenant_id)
+  const failedToday = cc.kpis.failed_today
+  const runningNow = Math.max(cc.kpis.sync_running, liveRows.length)
+  const totalRowsToday = history.reduce((sum, row) => sum + (row.rows || 0), 0)
+  const latestFailedStores = Array.from(new Map(
+    history
+      .filter((row) => row.status === 'FAILED' && row.store_id)
+      .map((row) => [row.store_id as string, row]),
+  ).values())
+  const recentActivity = history.slice(0, 5)
+  const runningJobs = [...liveRows]
+    .sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
+    .slice(0, 5)
+  const upcomingSchedules = schedules
+    .filter((schedule) => schedule.is_enabled)
+    .sort((a, b) => (a.start_time ?? '').localeCompare(b.start_time ?? ''))
+    .slice(0, 5)
+  const lastCompleted = history.find((row) => row.status === 'COMPLETED')
+  const latestSyncAt = stores
+    .map((store) => store.last_sync)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => b.localeCompare(a))[0] ?? null
+  const healthLabel = failedToday > 0 ? 'Attention needed' : 'Healthy'
+  const pausedCount = stores.filter((store) => store.live?.status === 'PAUSED').length
+  const retryCount = latestFailedStores
+    .map((row) => stores.find((store) => store.store_id === row.store_id))
+    .filter((store): store is DashboardStore => Boolean(store?.tenant_id))
+    .length
 
-  const upsertSyncs = liveList.filter((l) => (l.sync_type ?? '').toUpperCase() === 'UPSERT').length
-  const rollingSyncs = liveList.filter((l) => (l.sync_type ?? '').toUpperCase().includes('ROLL')).length
-  const notSyncing = totalStores - liveList.length
-
-  const allVisibleSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.store_id))
-  const toggleAll = () => {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (allVisibleSelected) pageRows.forEach((r) => next.delete(r.store_id))
-      else pageRows.forEach((r) => next.add(r.store_id))
-      return next
-    })
+  const runAction = async (key: string, work: () => Promise<number>, done: (count: number) => ActionNotice) => {
+    setBusyAction(key)
+    setNotice(null)
+    try {
+      const count = await work()
+      const nextNotice = done(count)
+      setNotice(nextNotice.tone === 'danger' ? nextNotice : null)
+      await Promise.all([reload(), refreshLiveState()])
+    } catch (err) {
+      setNotice({
+        tone: 'danger',
+        text: err instanceof Error ? err.message : 'Action failed.',
+      })
+    } finally {
+      setBusyAction(null)
+    }
   }
-  const toggleOne = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
-    })
+
+  const syncAll = () => runAction(
+    'sync-all',
+    async () => {
+      await Promise.all(actionableStores.map((store) =>
+        syncService.createTask({
+          tenant_id: store.tenant_id as string,
+          store_id: store.store_id,
+          execution_type: 'FULL',
+          sync_mode: 'FULL',
+        })))
+      return actionableStores.length
+    },
+    (count) => ({ tone: 'success', text: `Queued full sync for ${count} store${count === 1 ? '' : 's'}.` }),
+  )
+
+  const pauseAll = () => runAction(
+    'pause',
+    async () => {
+      const ids = liveRows.map((row) => row.store_id)
+      if (ids.length === 0) return 0
+      await syncService.control(ids, 'PAUSE')
+      return ids.length
+    },
+    (count) => ({ tone: 'info', text: count > 0 ? `Pause sent to ${count} running store${count === 1 ? '' : 's'}.` : 'No running syncs to pause.' }),
+  )
+
+  const stopAll = () => runAction(
+    'stop',
+    async () => {
+      const ids = liveRows.map((row) => row.store_id)
+      if (ids.length === 0) return 0
+      await syncService.control(ids, 'STOP')
+      return ids.length
+    },
+    (count) => ({ tone: 'warning', text: count > 0 ? `Stop sent to ${count} running store${count === 1 ? '' : 's'}.` : 'No running syncs to stop.' }),
+  )
+
+  const resumeAll = () => runAction(
+    'resume',
+    async () => {
+      const resumable = stores.filter((store) => (store.live?.status === 'PAUSED' || (store.status ?? '').toUpperCase() === 'QUEUED') && store.tenant_id)
+      if (resumable.length === 0) return 0
+      await Promise.all(resumable.map((store) =>
+        syncService.createTask({
+          tenant_id: store.tenant_id as string,
+          store_id: store.store_id,
+          execution_type: 'FULL',
+          sync_mode: 'FULL',
+        })))
+      return resumable.length
+    },
+    (count) => ({ tone: 'success', text: count > 0 ? `Queued restart for ${count} paused or queued store${count === 1 ? '' : 's'}.` : 'No paused or queued stores to resume.' }),
+  )
+
+  const retryFailed = () => runAction(
+    'retry',
+    async () => {
+      const retryTargets = latestFailedStores
+        .map((row) => stores.find((store) => store.store_id === row.store_id))
+        .filter((store): store is DashboardStore => Boolean(store?.tenant_id))
+      if (retryTargets.length === 0) return 0
+      await Promise.all(retryTargets.map((store) =>
+        syncService.createTask({
+          tenant_id: store.tenant_id as string,
+          store_id: store.store_id,
+          execution_type: 'FULL',
+          sync_mode: 'FULL',
+        })))
+      return retryTargets.length
+    },
+    (count) => ({ tone: count > 0 ? 'success' : 'info', text: count > 0 ? `Queued retry for ${count} failed store${count === 1 ? '' : 's'}.` : 'No failed stores available to retry.' }),
+  )
+
+  const syncOne = (store: DashboardStore) => runAction(
+    `sync-${store.store_id}`,
+    async () => {
+      if (!store.tenant_id) return 0
+      await syncService.createTask({
+        tenant_id: store.tenant_id,
+        store_id: store.store_id,
+        execution_type: 'FULL',
+        sync_mode: 'FULL',
+      })
+      return 1
+    },
+    (count) => ({
+      tone: count > 0 ? 'success' : 'info',
+      text: count > 0
+        ? `Queued full sync for ${store.store_name || store.store_code || 'store'}.`
+        : `Unable to queue sync for ${store.store_name || store.store_code || 'store'}.`,
+    }),
+  )
 
   return (
-    <div className="sx-stack">
-      {/* KPI row */}
-      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-3">
-        <div className="col"><SxStat icon="bi-building" tone="indigo" value={tenantList.length} label="Total Tenants" sub="Active" /></div>
-        <div className="col"><SxStat icon="bi-shop" tone="teal" value={totalStores} label="Total Stores" sub="Registered" /></div>
-        <div className="col"><SxStat icon="bi-wifi" tone="info" value={online} label="Stores Online" sub={pct(online, totalStores)} /></div>
-        <div className="col"><SxStat icon="bi-arrow-repeat" tone="violet" value={syncing} label="Stores Syncing" sub={pct(syncing, totalStores)} /></div>
-        <div className="col"><SxStat icon="bi-check-circle" tone="success" value={kpis.completed_today} label="Completed Today" sub="Success" /></div>
-        <div className="col"><SxStat icon="bi-exclamation-triangle" tone={kpis.failed_today ? 'danger' : 'muted'} value={kpis.failed_today} label="Failed Today" sub={kpis.failed_today ? pct(kpis.failed_today, kpis.completed_today + kpis.failed_today) : '0%'} /></div>
-      </div>
+    <div className="sx-command">
+      {notice && <div className={`sx-alert sx-alert--${notice.tone}`}>{notice.text}</div>}
 
-      {/* Active Sync Details */}
-      <SxCard>
-        <SxCardHead title="Active Sync Details" icon="bi-activity"
-          sub={<SxChip tone="indigo">{liveList.length} active</SxChip>}
-          action={<SxLive label="live · 2s" />} />
-        <SxCardBody flush>
-          <SxTable>
-            <thead>
-              <tr>
-                <th>Store</th><th>Current Table</th><th>Chunk</th>
-                <th className="sx-num">Processed</th><th className="sx-num">Remaining</th>
-                <th className="sx-num">Speed</th><th>ETA</th><th>Last Update</th>
-              </tr>
-            </thead>
-            <tbody>
-              {liveList.length === 0 ? (
-                <tr><td colSpan={8} className="sx-table__empty">No active syncs right now.</td></tr>
-              ) : liveList.map((l) => (
-                <tr key={l.execution_id}>
-                  <td>
-                    <span className={`sx-sdot sx-sdot--${l.status === 'PAUSED' ? 'paused' : 'running'}`} />
-                    <span className="sx-strong">{l.store_code}</span>
-                    <span className="sx-dim"> — {l.store_name}</span>
-                  </td>
-                  <td><div className="sx-rowlabel"><span className="sx-rowlabel__main">{l.current_table ?? '—'}</span><SyncTypeBadge value={l.sync_type} /></div></td>
-                  <td className="sx-strong">{l.chunk_no ?? '—'}{l.total_chunks ? ` / ${l.total_chunks}` : ''}</td>
-                  <td className="sx-num">{fmtNum(l.rows_processed)}</td>
-                  <td className="sx-num">{fmtNum(l.rows_remaining)}</td>
-                  <td className="sx-num" style={{ color: 'var(--sx-success)', fontWeight: 650 }}>{l.speed_rows_sec > 0 ? `${l.speed_rows_sec.toLocaleString()}/s` : '—'}</td>
-                  <td>{fmtEta(l.eta_seconds)}</td>
-                  <td className="sx-dim">{timeOnly(l.updated_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </SxTable>
-        </SxCardBody>
-      </SxCard>
-
-      {/* Toolbar */}
-      <SxCard>
-        <SxCardBody>
-          <div className="sx-toolbar">
-            <label className="d-inline-flex align-items-center gap-2 small fw-semibold mb-0">
-              <input type="checkbox" className="form-check-input mt-0" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select all" />
-              Select ({selected.size})
-            </label>
-            <SxSelect value={tenantFilter} ariaLabel="Tenant" onChange={(v) => { setTenantFilter(v); setPage(0) }}>
-              <option value="all">All Tenants</option>
-              {tenantList.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-            </SxSelect>
-            <SxSegmented ariaLabel="Connection" value={connectionFilter}
-              onChange={(v) => { setConnectionFilter(v); setPage(0) }}
-              options={CONNECTIONS.map((c) => ({ label: c, value: c }))} />
-            <SxSegmented ariaLabel="Sync type" value={syncTypeFilter}
-              onChange={(v) => { setSyncTypeFilter(v); setPage(0) }} options={SYNC_TYPES} />
-            <div className="ms-auto d-flex gap-2">
-              <SxButton variant="primary" icon="bi-play-fill" busy={busy} disabled={selected.size === 0} onClick={runSyncSelected}>Sync</SxButton>
-              <SxButton variant="warning" icon="bi-pause-fill" disabled={busy || selected.size === 0} onClick={() => control('PAUSE')}>Pause</SxButton>
-              <SxButton variant="danger" icon="bi-stop-fill" disabled={busy || selected.size === 0} onClick={() => control('STOP')}>Stop</SxButton>
-            </div>
+      <section className="sx-command__kpis">
+        <div className={`sx-kpi ${failedToday > 0 ? 'sx-tone-warning' : 'sx-tone-success'}`}>
+          <span className="sx-kpi__icon"><i className="bi bi-arrow-repeat" aria-hidden="true" /></span>
+          <div className="sx-kpi__body">
+            <div className="sx-kpi__label">Running</div>
+            <div className="sx-kpi__value">{runningNow}</div>
+            <div className="sx-kpi__sub">{healthLabel}</div>
           </div>
-        </SxCardBody>
-      </SxCard>
+        </div>
+        <div className="sx-kpi sx-tone-success">
+          <span className="sx-kpi__icon"><i className="bi bi-building-check" aria-hidden="true" /></span>
+          <div className="sx-kpi__body">
+            <div className="sx-kpi__label">Online</div>
+            <div className="sx-kpi__value">{cc.kpis.stores_online}/{stores.length}</div>
+            <div className="sx-kpi__sub">stores healthy</div>
+          </div>
+        </div>
+        <div className="sx-kpi sx-tone-muted">
+          <span className="sx-kpi__icon"><i className="bi bi-stack" aria-hidden="true" /></span>
+          <div className="sx-kpi__body">
+            <div className="sx-kpi__label">Queue</div>
+            <div className="sx-kpi__value">{cc.kpis.queued}</div>
+            <div className="sx-kpi__sub">awaiting agent</div>
+          </div>
+        </div>
+        <div className={`sx-kpi ${failedToday > 0 ? 'sx-tone-danger' : 'sx-tone-muted'}`}>
+          <span className="sx-kpi__icon"><i className="bi bi-exclamation-octagon" aria-hidden="true" /></span>
+          <div className="sx-kpi__body">
+            <div className="sx-kpi__label">Failed</div>
+            <div className="sx-kpi__value">{failedToday}</div>
+            <div className="sx-kpi__sub">today</div>
+          </div>
+        </div>
+        <div className="sx-kpi sx-tone-muted">
+          <span className="sx-kpi__icon"><i className="bi bi-graph-up-arrow" aria-hidden="true" /></span>
+          <div className="sx-kpi__body">
+            <div className="sx-kpi__label">Processed</div>
+            <div className="sx-kpi__value">{compactRows(totalRowsToday)}</div>
+            <div className="sx-kpi__sub">rows processed</div>
+          </div>
+        </div>
+        <div className="sx-kpi sx-tone-muted">
+          <span className="sx-kpi__icon"><i className="bi bi-clock-history" aria-hidden="true" /></span>
+          <div className="sx-kpi__body">
+            <div className="sx-kpi__label">Last Sync</div>
+            <div className="sx-kpi__value">{latestSyncAt ? timeOnly(latestSyncAt) : '-'}</div>
+            <div className="sx-kpi__sub">{latestSyncAt ? shortDateTime(latestSyncAt).split(',')[0] : 'no completed run'}</div>
+          </div>
+        </div>
+        <div className="sx-kpi sx-tone-violet">
+          <span className="sx-kpi__icon"><i className="bi bi-pause-circle" aria-hidden="true" /></span>
+          <div className="sx-kpi__body">
+            <div className="sx-kpi__label">Paused</div>
+            <div className="sx-kpi__value">{pausedCount}</div>
+            <div className="sx-kpi__sub">jobs waiting</div>
+          </div>
+        </div>
+      </section>
 
-      {/* Store sync status */}
-      <SxCard>
-        <SxCardHead title={`Store Sync Status`} icon="bi-hdd-network"
-          sub={`${filtered.length} stores`}
-          action={
-            <div className="d-flex align-items-center gap-2">
-              <SxSegmented ariaLabel="View" value={view} onChange={setView}
-                options={[{ label: 'Table', value: 'table' }, { label: 'Cards', value: 'card' }]} />
-              <SxSearch value={search} onChange={(v) => { setSearch(v); setPage(0) }} placeholder="Search store…" ariaLabel="Search store" />
-            </div>
-          } />
-        <SxCardBody flush>
-          {view === 'table' ? (
-            <SxTable>
-              <thead>
-                <tr>
-                  <th><input type="checkbox" className="form-check-input" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select page" /></th>
-                  <th>Store</th><th>Connection</th><th>Sync Type</th><th>Current Table</th>
-                  <th className="sx-num">Rows</th><th>Progress</th><th className="sx-num">Speed</th>
-                  <th>Last Sync</th><th>Status</th><th className="sx-num">Run</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.length === 0 ? (
-                  <tr><td colSpan={11} className="sx-table__empty">No stores match the current filters.</td></tr>
-                ) : pageRows.map((row) => {
-                  const live = row.live
-                  return (
-                    <tr key={row.store_id}>
-                      <td><input type="checkbox" className="form-check-input" checked={selected.has(row.store_id)} onChange={() => toggleOne(row.store_id)} aria-label={`Select ${row.store_name}`} /></td>
-                      <td><div className="sx-rowlabel"><span className="sx-rowlabel__main">{row.store_code}</span><span className="sx-rowlabel__sub">{row.store_name}</span></div></td>
-                      <td><ConnectionType value={row.connection_type} /></td>
-                      <td><SyncTypeBadge value={live?.sync_type ?? null} /></td>
-                      <td>{live?.current_table ? <span className="sx-strong">{live.current_table}</span> : <span className="sx-dim">—</span>}</td>
-                      <td className="sx-num">
-                        {live && live.total_rows ? <span>{live.rows_processed.toLocaleString()} <span className="sx-dim">/ {live.total_rows.toLocaleString()}</span></span>
-                          : live ? live.rows_processed.toLocaleString() : <span className="sx-dim">—</span>}
-                      </td>
-                      <td style={{ minWidth: 120 }}>
-                        {live ? <><SxProgress value={live.progress_pct} /><div className="sx-dim" style={{ fontSize: '0.72rem', marginTop: 2 }}>{live.progress_pct}%</div></>
-                          : <span className="sx-dim" style={{ fontSize: '0.78rem' }}>0%</span>}
-                      </td>
-                      <td className="sx-num">{live && live.speed_rows_sec > 0 ? <span style={{ color: 'var(--sx-success)', fontWeight: 650 }}>{live.speed_rows_sec.toLocaleString()}</span> : <span className="sx-dim">—</span>}</td>
-                      <td className="sx-dim" style={{ fontSize: '0.8rem' }}>{formatDateTime(row.last_sync)}</td>
-                      <td><SyncStatusBadge status={live ? (live.status === 'PAUSED' ? 'QUEUED' : 'Syncing') : row.status} /></td>
-                      <td className="sx-num">
-                        <SxButton variant="primary" sm icon="bi-play-fill" disabled={!row.tenant_id || busy} title={row.tenant_id ? 'Queue full sync' : 'Tenant unknown'} onClick={() => runOne(row.store_id, row.tenant_id)} />
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </SxTable>
-          ) : (
-            <div className="p-3">
-              <div className="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">
-                {pageRows.length === 0 ? (
-                  <p className="sx-dim small mb-0">No stores match the current filters.</p>
-                ) : pageRows.map((row) => {
-                  const live = row.live
-                  return (
-                    <div className="col" key={row.store_id}>
-                      <div className="sx-card" style={{ padding: '0.9rem' }}>
-                        <div className="d-flex align-items-start justify-content-between mb-2">
-                          <div className="sx-rowlabel"><span className="sx-rowlabel__main">{row.store_code}</span><span className="sx-rowlabel__sub">{row.store_name}</span></div>
-                          <SyncStatusBadge status={live ? 'Syncing' : row.status} />
-                        </div>
-                        <div className="d-flex align-items-center gap-2 mb-2">
-                          <ConnectionType value={row.connection_type} />
-                          <SyncTypeBadge value={live?.sync_type ?? null} />
-                        </div>
-                        {live ? (
-                          <>
-                            <div className="d-flex justify-content-between small mb-1">
-                              <span className="sx-strong">{live.current_table}</span>
-                              <span className="sx-dim">{live.progress_pct}%</span>
-                            </div>
-                            <SxProgress value={live.progress_pct} />
-                            <div className="d-flex justify-content-between small sx-dim mt-1">
-                              <span>{live.rows_processed.toLocaleString()} rows</span>
-                              <span>{live.speed_rows_sec > 0 ? `${live.speed_rows_sec.toLocaleString()}/s · ETA ${fmtEta(live.eta_seconds)}` : '—'}</span>
-                            </div>
-                          </>
-                        ) : <div className="sx-dim small">Idle · last sync {formatDateTime(row.last_sync)}</div>}
-                      </div>
+      <section className="sx-command__main">
+        <SxCard className="sx-pane sx-pane--stores">
+          <SxCardHead title="Live Store Grid" icon="bi-hdd-stack" sub={`${stores.length} stores`} />
+          <SxCardBody flush>
+            <div className="sx-storegrid">
+              <div className="sx-storegrid__head">
+                <span>Store</span>
+                <span>Status</span>
+                <span>Current Table</span>
+                <span>Progress</span>
+                <span>Speed</span>
+                <span>Last Sync</span>
+                <span>Action</span>
+              </div>
+              <div className="sx-storegrid__body">
+                {stores.length === 0 ? (
+                  <div className="sx-storegrid__empty">No stores available.</div>
+                ) : stores.map((store) => (
+                  <div className="sx-storegrid__row" key={store.store_id}>
+                    <div className="sx-storegrid__store">
+                      <span className="sx-storegrid__line">
+                        <span className="sx-storegrid__code">{store.store_code}</span>
+                        <span className="sx-storegrid__name" title={store.store_name}>{store.store_name}</span>
+                      </span>
                     </div>
-                  )
-                })}
+                    <div><SyncStatusBadge status={storeStatus(store)} compact /></div>
+                    <div className="sx-storegrid__table">{store.live?.current_table ?? store.current_activity ?? '-'}</div>
+                    <div className="sx-storegrid__progress">
+                      {store.live ? (
+                        <>
+                          <SxProgress value={store.live.progress_pct} />
+                          <span className="sx-storegrid__pct">{store.live.progress_pct}%</span>
+                        </>
+                      ) : <span className="sx-dim">Idle</span>}
+                    </div>
+                    <div className="sx-storegrid__speed">
+                      {store.live?.speed_rows_sec ? `${store.live.speed_rows_sec.toLocaleString()}/s` : '-'}
+                    </div>
+                    <div className="sx-storegrid__sync">{shortDateTime(store.last_sync)}</div>
+                    <div className="sx-storegrid__action">
+                      <SxButton
+                        sm
+                        variant="ghost"
+                        icon="bi-play-fill"
+                        busy={busyAction === `sync-${store.store_id}`}
+                        disabled={!store.tenant_id}
+                        title={store.tenant_id ? `Sync ${store.store_name || store.store_code}` : 'Tenant not available'}
+                        onClick={() => syncOne(store)}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          )}
-          <SxPager rangeStart={rangeStart} rangeEnd={rangeEnd} total={filtered.length} page={clampedPage} totalPages={totalPages} onPage={setPage} noun="stores" />
-        </SxCardBody>
-      </SxCard>
+          </SxCardBody>
+        </SxCard>
 
-      {/* Insight panels */}
-      <div className="row row-cols-1 row-cols-md-2 row-cols-xl-4 g-3">
-        <div className="col">
-          <DonutPanel title="Sync Overview" segments={[
-            { label: 'Syncing', value: syncing, color: '#6366f1' },
-            { label: 'Online', value: Math.max(online - syncing, 0), color: '#15a34a' },
-            { label: 'Offline', value: offline, color: '#f59e0b' },
-          ]} />
-        </div>
-        <div className="col">
-          <DonutPanel title="Agent Connection" segments={[
-            { label: 'Online', value: online, color: '#15a34a' },
-            { label: 'Offline', value: offline, color: '#dc2626' },
-          ]} />
-        </div>
-        <div className="col">
-          <SxCard className="h-100">
-            <SxCardHead title="Recent Activity" icon="bi-clock-history" />
-            <SxCardBody>
-              {history.length === 0 ? <p className="sx-dim small mb-0">No activity yet.</p> : (
-                <ul className="sx-log">
-                  {history.slice(0, 6).map((row) => (
-                    <li key={row.sync_id} className="sx-log__row">
-                      <span className={`sx-sdot sx-sdot--${(row.status ?? '').toLowerCase()}`} />
-                      <span className="sx-log__msg">{row.store_name ?? row.store_code ?? 'Store'} — {row.status?.toLowerCase()}</span>
-                      <span className="sx-log__time">{timeOnly(row.started_at)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </SxCardBody>
-          </SxCard>
-        </div>
-        <div className="col">
-          <SxCard className="h-100">
-            <SxCardHead title="Sync Health" icon="bi-heart-pulse" />
-            <SxCardBody>
-              <div className="sx-meters">
-                <div className="sx-meter"><div className="sx-meter__value" style={{ color: 'var(--sx-success)' }}>{successRate}%</div><div className="sx-meter__label">Success Rate</div></div>
-                <div className="sx-meter"><div className="sx-meter__value" style={{ color: 'var(--sx-accent)' }}>{avgSpeed.toLocaleString()}</div><div className="sx-meter__label">Avg Speed</div></div>
-                <div className="sx-meter"><div className="sx-meter__value" style={{ color: 'var(--sx-violet)' }}>{(totalRecords / 1_000_000).toFixed(2)}M</div><div className="sx-meter__label">Rows Today</div></div>
-                <div className="sx-meter"><div className="sx-meter__value" style={{ color: failure ? 'var(--sx-danger)' : 'var(--sx-faint)' }}>{failure}</div><div className="sx-meter__label">Failures</div></div>
+        <SxCard className="sx-pane sx-pane--actions">
+          <SxCardHead title="Quick Actions" icon="bi-lightning-charge" sub="Immediate control" />
+          <SxCardBody>
+            <div className="sx-command__actions">
+              <div className="sx-command__actions-bar">
+                <div className="sx-command__action-stat">
+                  <span>Ready</span>
+                  <strong>{actionableStores.length}</strong>
+                </div>
+                <div className="sx-command__action-stat">
+                  <span>Running</span>
+                  <strong>{runningNow}</strong>
+                </div>
+                <div className="sx-command__action-stat">
+                  <span>Retry</span>
+                  <strong>{retryCount}</strong>
+                </div>
+                <div className="sx-command__action-stat">
+                  <span>Pause</span>
+                  <strong>{pausedCount}</strong>
+                </div>
               </div>
-            </SxCardBody>
-          </SxCard>
-        </div>
-      </div>
+              <div className="sx-command__actions-grid">
+                <SxButton variant="primary" icon="bi-play-fill" busy={busyAction === 'sync-all'} onClick={syncAll}>Full Sync</SxButton>
+                <SxButton variant="warning" icon="bi-pause-fill" busy={busyAction === 'pause'} onClick={pauseAll}>Pause Jobs</SxButton>
+                <SxButton variant="success" icon="bi-play-circle" busy={busyAction === 'resume'} onClick={resumeAll}>Resume Queue</SxButton>
+                <SxButton variant="ghost" icon="bi-arrow-repeat" busy={busyAction === 'retry'} onClick={retryFailed}>Retry Failed</SxButton>
+              </div>
+              <div className="sx-command__danger">
+                <div className="sx-command__danger-label">Danger Zone</div>
+                <SxButton variant="danger" icon="bi-stop-fill" busy={busyAction === 'stop'} onClick={stopAll}>Stop All</SxButton>
+              </div>
+            </div>
+          </SxCardBody>
+        </SxCard>
+      </section>
 
-      {/* Bottom summary */}
-      <div className="row row-cols-1 row-cols-md-3 g-3">
-        <div className="col">
-          <SxCard className="h-100">
-            <SxCardHead title="Connection Summary" icon="bi-diagram-2" />
-            <SxCardBody>
-              <SxLegend segments={connCounts.map((c, i) => ({ label: c.type, value: c.count, color: ['#6366f1', '#0ea5e9', '#0d9488'][i] }))} />
-            </SxCardBody>
-          </SxCard>
-        </div>
-        <div className="col">
-          <SxCard className="h-100">
-            <SxCardHead title="Sync Type Distribution" icon="bi-pie-chart" />
-            <SxCardBody>
-              <SxLegend segments={[
-                { label: 'Upsert (Master)', value: upsertSyncs, color: '#0d9488' },
-                { label: 'Rolling Window', value: rollingSyncs, color: '#7c3aed' },
-                { label: 'Not Syncing', value: notSyncing, color: '#cbd5e1' },
-              ]} />
-            </SxCardBody>
-          </SxCard>
-        </div>
-        <div className="col">
-          <SxCard className="h-100">
-            <SxCardHead title="Schedules" icon="bi-calendar-event" sub={`${upcoming.length} enabled`} />
-            <SxCardBody>
-              {upcoming.length === 0 ? <p className="sx-dim small mb-0">No schedules configured.</p> : (
-                <ul className="sx-log">
-                  {upcoming.slice(0, 6).map((s) => (
-                    <li key={s.schedule_id} className="sx-log__row">
-                      <i className="bi bi-calendar-event" style={{ color: 'var(--sx-warning)' }} aria-hidden="true" />
-                      <span className="sx-log__msg">{s.schedule_name}</span>
-                      <span className="sx-log__time">{formatDateTime(s.start_time)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </SxCardBody>
-          </SxCard>
-        </div>
-      </div>
+      <section className="sx-command__feeds">
+        <SxCard className="sx-pane sx-pane--jobs">
+          <SxCardHead title="Running Jobs" icon="bi-broadcast" sub={`${runningJobs.length} live`} />
+          <SxCardBody>
+            <div className="sx-feed">
+              {runningJobs.length === 0 ? (
+                <div className="sx-feed__summary">
+                  <div className="sx-feed__summary-row">
+                    <span className="sx-feed__summary-label">Queue</span>
+                    <strong>{cc.kpis.queued}</strong>
+                  </div>
+                  <div className="sx-feed__summary-row">
+                    <span className="sx-feed__summary-label">Workers</span>
+                    <strong>{cc.kpis.stores_online}</strong>
+                  </div>
+                  <div className="sx-feed__summary-row">
+                    <span className="sx-feed__summary-label">Last Run</span>
+                    <strong>{lastCompleted ? timeOnly(lastCompleted.started_at) : '-'}</strong>
+                  </div>
+                  <div className="sx-feed__summary-row">
+                    <span className="sx-feed__summary-label">Failed</span>
+                    <strong>{failedToday}</strong>
+                  </div>
+                </div>
+              ) : runningJobs.map((row) => (
+                <div className="sx-feed__row" key={row.execution_id}>
+                  <div className="sx-feed__main">
+                    <span className="sx-feed__title">{row.store_code ?? 'Store'} / {row.current_table ?? '-'}</span>
+                    <span className="sx-feed__meta">{row.progress_pct}% / {row.speed_rows_sec > 0 ? `${row.speed_rows_sec.toLocaleString()}/s` : '-'}</span>
+                  </div>
+                  <span className="sx-feed__time">{timeOnly(row.updated_at)}</span>
+                </div>
+              ))}
+            </div>
+          </SxCardBody>
+        </SxCard>
+
+        <SxCard className="sx-pane">
+          <SxCardHead title="Recent Activity" icon="bi-clock-history" sub="Last 5 events" />
+          <SxCardBody>
+            <div className="sx-feed">
+              {recentActivity.length === 0 ? (
+                <div className="sx-feed__empty">No activity yet.</div>
+              ) : recentActivity.map((row) => (
+                <div className="sx-feed__row" key={row.sync_id}>
+                  <div className="sx-feed__inline">
+                    <span className="sx-feed__title">{row.store_name ?? row.store_code ?? 'Store'}</span>
+                    <span className={`sx-feed__status sx-feed__status--${activityTone(row.status)}`}>{activityAbbr(row.status)}</span>
+                    <span className="sx-feed__op">{row.sync_mode === 'FULL' ? 'Full' : row.sync_mode === 'UPSERT' ? 'Upsert' : (row.sync_mode ?? '-')}</span>
+                  </div>
+                  <span className="sx-feed__time">{timeOnly(row.started_at)}</span>
+                </div>
+              ))}
+            </div>
+          </SxCardBody>
+        </SxCard>
+
+        <SxCard className="sx-pane">
+          <SxCardHead title="Upcoming Schedules" icon="bi-calendar-event" sub={`${upcomingSchedules.length} shown`} />
+          <SxCardBody>
+            <div className="sx-feed">
+              {upcomingSchedules.length === 0 ? (
+                <div className="sx-feed__empty">No schedules configured.</div>
+              ) : upcomingSchedules.map((schedule) => (
+                <div className="sx-feed__row" key={schedule.schedule_id}>
+                  <div className="sx-feed__inline">
+                    <span className="sx-feed__title">{schedule.store_code ?? 'ALL'}</span>
+                    <span className="sx-feed__op">{schedule.sync_mode === 'FULL' ? 'Full' : (schedule.sync_mode ?? '-')}</span>
+                  </div>
+                  <span className="sx-feed__time">{timeOnly(schedule.start_time)}</span>
+                </div>
+              ))}
+            </div>
+          </SxCardBody>
+        </SxCard>
+      </section>
     </div>
   )
 }

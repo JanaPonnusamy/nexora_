@@ -1599,7 +1599,7 @@ th {
      grid column on the right of every row - the page's "unused whitespace"
      bug. The freed weight went to Batches/Purchase/Billing so they grow to
      fill the space instead of leaving it blank. */
-  grid-template-columns: 30px minmax(210px, 1fr) minmax(260px, 1.5fr) minmax(360px, 1.1fr) minmax(280px, 1.3fr) minmax(300px, 1.2fr);
+  grid-template-columns: 30px minmax(210px, 1fr) minmax(260px, 1.45fr) minmax(360px, 1.1fr) minmax(360px, 1.55fr) minmax(280px, 1.05fr);
   border: 0;
   border-radius: 10px;
   overflow: hidden;
@@ -1843,7 +1843,7 @@ th {
   /* Must mirror .store-column-headers' 5 content tracks exactly (see its
      comment) - a mismatched extra track here reproduces the same
      right-side whitespace bug independently of the header row. */
-  grid-template-columns: 30px minmax(210px, 1fr) minmax(260px, 1.5fr) minmax(360px, 1.1fr) minmax(280px, 1.3fr) minmax(300px, 1.2fr);
+  grid-template-columns: 30px minmax(210px, 1fr) minmax(260px, 1.45fr) minmax(360px, 1.1fr) minmax(360px, 1.55fr) minmax(280px, 1.05fr);
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -2129,7 +2129,7 @@ th {
 }
 
 .purchase-table .grid-row {
-  min-width: 460px;
+  min-width: 560px;
 }
 
 .row-cell .grid-row,
@@ -2406,6 +2406,10 @@ th {
   padding: 0 10px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.toolbar-mapping-filter {
+  flex-basis: 180px;
 }
 
 .toolbar-search {

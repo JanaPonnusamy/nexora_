@@ -56,6 +56,53 @@ def generate_working_items(conn, tenant_id, refresh_id, store_id, created_by):
     return cursor.rowcount
 
 
+def carry_forward_skips(conn, tenant_id, previous_refresh_id, refresh_id, store_id):
+    """Re-apply a still-active skip from the previous Refresh onto the new one.
+
+    Only 'until_next_sales' and 'until_next_demand' persist across refreshes;
+    'current_refresh' is intentionally refresh-scoped and never carried. A skip
+    stops applying the moment a real sale is recorded for the product after the
+    skip was made (reviewed_at) — that's the "next sale" / "next demand" signal
+    for both modes (manual un-skip on the new row covers the PM-re-adds case).
+    Returns the number of new-refresh rows re-suppressed.
+    """
+    if not previous_refresh_id:
+        return 0
+
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE noi
+        SET item_status = 'skipped',
+            skip_reason = poi.skip_reason,
+            final_qty = 0,
+            remaining_qty = 0,
+            updated_at = GETDATE()
+        FROM procurement.procurement_order_items noi
+        INNER JOIN procurement.procurement_order_items poi
+            ON poi.tenant_id = noi.tenant_id
+           AND poi.refresh_id = ?
+           AND poi.product_code = noi.product_code
+           AND poi.is_deleted = 0
+        WHERE noi.tenant_id = ?
+          AND noi.refresh_id = ?
+          AND noi.is_deleted = 0
+          AND poi.item_status = 'skipped'
+          AND poi.skip_reason IN ('until_next_sales', 'until_next_demand')
+          AND NOT EXISTS (
+              SELECT 1 FROM sync.ProductSaleInformation s
+              WHERE s.store_id = ?
+                AND CAST(s.ProductCode AS NVARCHAR(50)) = noi.product_code
+                AND s.SeriesTransID = 1
+                AND s.TransactionValidity = 0
+                AND s.TransactionDate > poi.reviewed_at
+          )
+        """,
+        (previous_refresh_id, tenant_id, refresh_id, store_id),
+    )
+    return cursor.rowcount
+
+
 def count_working_items(conn, tenant_id, refresh_id):
     cursor = conn.cursor()
     cursor.execute(

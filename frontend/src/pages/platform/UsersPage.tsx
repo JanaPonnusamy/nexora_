@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { WorkspaceContainer } from '../../design-system/components/WorkspaceContainer'
 import { UserToolbar } from '../../components/users/UserToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { UserTable } from '../../components/users/UserTable'
@@ -105,7 +106,7 @@ export default function UsersPage({ embedded = false }: { embedded?: boolean }) 
   }
 
   return (
-    <div className="container-fluid px-0">
+    <WorkspaceContainer>
       {!embedded && <PageHeader title="Users" breadcrumb={['Platform', 'Users']} />}
       <UserToolbar
         search={search}
@@ -135,6 +136,6 @@ export default function UsersPage({ embedded = false }: { embedded?: boolean }) 
           }}
         />
       )}
-    </div>
+    </WorkspaceContainer>
   )
 }

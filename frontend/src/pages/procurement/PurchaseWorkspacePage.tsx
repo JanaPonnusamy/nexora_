@@ -35,6 +35,7 @@ import { downloadPurchaseOrderCsv } from '../../components/procurement/exportDoc
 import { ManualProductModal } from '../../components/procurement/ManualProductModal'
 import { SupplierPicker } from '../../components/procurement/SupplierPicker'
 import { SupplierStockTable, stockRowKey, formatOffer } from '../../components/procurement/SupplierStockTable'
+import { exportSupplierStockExcel } from '../../components/procurement/exportSupplierStockExcel'
 import { SupplierStockImportModal } from '../../components/procurement/SupplierStockImportModal'
 import {
   autoAssignSupplier,
@@ -45,7 +46,11 @@ import {
 } from '../../components/procurement/purchaseValue'
 import { SupplierRankPanel } from '../../components/procurement/SupplierRankPanel'
 import { AutoAssignPreviewModal } from '../../components/procurement/AutoAssignPreviewModal'
+import { PageHeader } from '../../components/common/PageHeader'
 import { money, num, date } from '../../components/stock/format'
+import { SegmentedTabs } from '../../design-system/components/SegmentedTabs'
+import { KpiBar, StatCard } from '../../design-system/components/StatCard'
+import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
 import '../../components/procurement/purchase-manager.css'
 
 type View = 'purchase' | 'pending' | 'grn'
@@ -198,6 +203,16 @@ export default function PurchaseWorkspacePage() {
   // persistent Product Details panel tracks the focused row.
   const [stockSelectedKey, setStockSelectedKey] = useState<string | null>(null)
   const [stockDraft, setStockDraft] = useState<Record<string, string>>({})
+  // Per-row Remarks (Supplier Live Stock), keyed like stockDraft — kept for
+  // the life of the page so it survives search/sort/quick-filter and is still
+  // there when the buyer exports (§ REMARKS, § PERSISTENCE).
+  const [stockRemarks, setStockRemarks] = useState<Record<string, string>>({})
+  const [stockExporting, setStockExporting] = useState(false)
+  // Remarks for the Supplier Purchasing grid (ProductGrid), keyed by
+  // order_item_id — same "page owns it so it survives re-render" pattern as
+  // stockRemarks, just a different key space since ProductGrid rows are
+  // WorkspaceItems, not supplier_stock rows.
+  const [productRemarks, setProductRemarks] = useState<Record<string, string>>({})
 
   // Pending + GRN
   const [pending, setPending] = useState<PendingItem[]>([])
@@ -443,6 +458,18 @@ export default function PurchaseWorkspacePage() {
     })
     return m
   }, [items])
+
+  // Real per-product offer (scheme/free/discount) keyed by ProductGrid's own
+  // mapped ProductCode — sourced from the same supplierStock rows Supplier
+  // Live Stock uses, so Supplier Purchasing's Offer badge is backed by real
+  // data instead of the unpopulated WorkspaceItem.offer field.
+  const supplierStockByProductCode = useMemo(() => {
+    const m = new Map<string, SupplierStockRow>()
+    supplierStock.forEach((r) => {
+      if (r.product_code) m.set(r.product_code, r)
+    })
+    return m
+  }, [supplierStock])
 
   // Seed order-qty draft + select the first row whenever the live-stock set
   // changes (supplier switch / search / import).
@@ -1550,8 +1577,14 @@ export default function PurchaseWorkspacePage() {
   /* ---- Supplier Live Stock ----------------------------------------------- */
 
   useEffect(() => {
-    if (mode !== 'supplier-stock' || !supplier || !canWork) {
+    // Also loaded for Supplier Purchasing (mode==='supplier'), not just
+    // Supplier Live Stock — its real scheme/free/discount is the only source
+    // of a genuine Offer badge in ProductGrid too (item.offer is otherwise
+    // unpopulated). Same endpoint, same rows — no new backend call shape.
+    if ((mode !== 'supplier-stock' && mode !== 'supplier') || !supplier || !canWork) {
       setSupplierStock([])
+      setSupplierStockLoading(false)
+      setSupplierStockError(null)
       return
     }
     let live = true
@@ -1747,9 +1780,108 @@ export default function PurchaseWorkspacePage() {
     }
   }
 
+  const header = (
+    <div className="d-flex flex-column gap-3">
+      <PageHeader
+        title="Purchase Workspace"
+        breadcrumb={['Operations', 'Procurement', 'Purchase Workspace']}
+        description="Review refreshes, assign suppliers, optimize procurement value, and monitor downstream export work from one shared workspace."
+      />
+      <div className="ds-toolbar">
+        <label className="d-flex flex-column gap-1">
+          <span className="small text-muted">Tenant</span>
+          <select className="form-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+            {tenants.length === 0 && <option value="">Loading...</option>}
+            {tenants.map((tenant) => (
+              <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                {tenant.tenant_name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="d-flex flex-column gap-1">
+          <span className="small text-muted">Store</span>
+          <select className="form-select" aria-label="Store" value={selectedStoreId} onChange={(e) => setSelectedStoreId(e.target.value)}>
+            <option value="">Select store</option>
+            {tenantStores.map((store) => (
+              <option key={store.store_id} value={store.store_id}>
+                {store.store_name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="d-flex flex-column gap-1">
+          <span className="small text-muted">Cycle</span>
+          <select className="form-select" aria-label="Cycle" value={cycleId} onChange={(e) => setCycleId(e.target.value)}>
+            <option value="">Select cycle</option>
+            {cycles.map((cycle) => (
+              <option key={cycle.cycle_id} value={cycle.cycle_id}>
+                {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' - Closed'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="d-flex flex-column gap-1">
+          <span className="small text-muted">Refresh</span>
+          <select className="form-select" aria-label="Refresh" value={refreshId} onChange={(e) => setRefreshId(e.target.value)}>
+            <option value="">{refreshesInCycle.length ? 'Select refresh' : 'No refreshes'}</option>
+            {refreshesInCycle.map((refresh) => (
+              <option key={refresh.refresh_id} value={refresh.refresh_id}>
+                {refresh.snapshot_name} - {refresh.snapshot_status}
+              </option>
+            ))}
+          </select>
+        </label>
+        {readOnly && (
+          <span className="badge text-bg-secondary align-self-end">
+            <i className="bi bi-lock-fill me-1" aria-hidden="true" />
+            Read Only · {cycleClosed ? 'Closed Cycle' : 'Closed Refresh'}
+          </span>
+        )}
+      </div>
+      <SegmentedTabs
+        items={[
+          { value: 'purchase', label: 'Purchase', description: 'Review and assign products', icon: 'bi-cart-check' },
+          { value: 'pending', label: 'Pending', description: 'Carry-forward and finalize pending rows', icon: 'bi-hourglass-split' },
+          { value: 'grn', label: 'GRN', description: 'Reconcile store receipts', icon: 'bi-receipt' },
+        ]}
+        activeValue={view}
+        ariaLabel="Procurement workspace views"
+        onChange={setView}
+      />
+      {canWork && view === 'purchase' && (
+        <SegmentedTabs
+          items={STAGES.map((stageItem) => ({
+            value: stageItem.key,
+            label: stageItem.label,
+            description: stageItem.key === 'export' && !hasAssignments ? 'Assign suppliers first' : 'Workflow stage',
+            icon: stageItem.icon,
+          }))}
+          activeValue={stage}
+          ariaLabel="Purchase workflow stages"
+          onChange={(value) => {
+            if (value === 'export' && !hasAssignments) return
+            goStage(value)
+          }}
+        />
+      )}
+    </div>
+  )
+
+  const kpis = (
+    <KpiBar>
+      <StatCard label="Working Items" value={num(total || items.length)} icon="bi-box-seam" tone="primary" loading={loading} />
+      <StatCard label="Pending Review" value={num(pendingReview)} icon="bi-hourglass-split" tone={pendingReview > 0 ? 'warning' : 'success'} loading={loading} />
+      <StatCard label="Assigned" value={num(assignedCount)} icon="bi-diagram-3" tone="success" loading={loading} />
+      <StatCard label="Purchase Value" value={money(totalPurchaseValue)} icon="bi-currency-rupee" loading={loading} />
+    </KpiBar>
+  )
+
+  const statusBar = banner ? <div className={`pm-banner pm-banner--${banner.kind}`}>{banner.text}</div> : undefined
+
   return (
-    <div className="pm">
-      <header className="pm-top">
+    <WorkspaceShell header={header} kpis={kpis} statusBar={statusBar} className="pm" fullWidth>
+      <header className="pm-top d-none" aria-hidden="true">
         <div className="pm-top__ctx">
           <span className="pm-top__brand"><i className="bi bi-cart-check" /> Purchase Manager</span>
           <select className="sx-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
@@ -1814,7 +1946,7 @@ export default function PurchaseWorkspacePage() {
         </div>
       </header>
 
-      {banner && <div className={`pm-banner pm-banner--${banner.kind}`}>{banner.text}</div>}
+      {null}
 
       {!canWork ? (
         <EmptyState icon="bi-clipboard-check" title="Select a tenant and refresh" description="Choose a generated refresh to open the Purchase Manager workspace." />
@@ -2118,6 +2250,26 @@ export default function PurchaseWorkspacePage() {
                       <span className="pm-sxcard"><span className="pm-sxcard__k">Available</span><b className="pm-sxcard__v pm-sxcard__v--ok">{num(stockSummary.available)}</b></span>
                       <span className="pm-sxcard"><span className="pm-sxcard__k">Out of Stock</span><b className={`pm-sxcard__v${stockSummary.outOfStock > 0 ? ' pm-sxcard__v--warn' : ''}`}>{num(stockSummary.outOfStock)}</b></span>
                       <span className="pm-sxcard"><span className="pm-sxcard__k">Total Stock</span><b className="pm-sxcard__v">{num(stockSummary.totalStock)}</b></span>
+                      <button
+                        type="button"
+                        className="pm-btn pm-btn--ghost pm-btn--sm"
+                        style={{ marginLeft: 'auto' }}
+                        disabled={stockExporting}
+                        onClick={() =>
+                          exportSupplierStockExcel({
+                            supplierName: supplier.supplier_name ?? supplier.supplier_code,
+                            supplierCode: supplier.supplier_code,
+                            rows: supplierStock,
+                            draft: stockDraft,
+                            remarks: stockRemarks,
+                            setBusy: setStockExporting,
+                            notify: say,
+                          })
+                        }
+                        title="Export products with Order Qty > 0 to Excel"
+                      >
+                        <i className="bi bi-file-earmark-excel" /> {stockExporting ? 'Exporting…' : 'Export Excel'}
+                      </button>
                     </div>
                   )}
                   <div className="pm-stockgrid__scroll">
@@ -2144,6 +2296,8 @@ export default function PurchaseWorkspacePage() {
                       onSupplierFocusChange={setSupplierZoneActive}
                       onSkip={skip}
                       onRestore={restore}
+                      remarks={stockRemarks}
+                      onRemarksChange={(key, value) => setStockRemarks((r) => ({ ...r, [key]: value }))}
                     />
                   </div>
                 </div>
@@ -2182,6 +2336,7 @@ export default function PurchaseWorkspacePage() {
                         ? { supplierName: supplier?.supplier_name ?? supplier?.supplier_code ?? null, label: formatOffer(selectedStockRow)!, discount: selectedStockRow.discount }
                         : null
                     }
+                    supplierRemarks={stockSelectedKey ? stockRemarks[stockSelectedKey] : undefined}
                     onRemoveAssignment={
                       matchedStockItem
                         ? () => {
@@ -2234,6 +2389,9 @@ export default function PurchaseWorkspacePage() {
                     onToggleAll={toggleAll}
                     onSkip={skip}
                     onRestore={restore}
+                    offerByProductCode={mode === 'supplier' ? supplierStockByProductCode : undefined}
+                    remarks={mode === 'supplier' ? productRemarks : undefined}
+                    onRemarksChange={mode === 'supplier' ? (id, value) => setProductRemarks((r) => ({ ...r, [id]: value })) : undefined}
                   />
                 )}
               </div>
@@ -2437,7 +2595,7 @@ export default function PurchaseWorkspacePage() {
         />
       )}
 
-    </div>
+    </WorkspaceShell>
   )
 }
 

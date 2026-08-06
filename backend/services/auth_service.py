@@ -18,6 +18,20 @@ class AuthService:
             return None
 
         repo.update_last_login(user[0])
+        return self._serialize(user)
+
+    def get_by_id(self, user_id):
+        repo = UserRepository()
+        user = repo.get_user_core_by_id(user_id)
+
+        if not user or not bool(user[5]):
+            return None
+
+        return self._serialize(user)
+
+    @staticmethod
+    def _serialize(user):
+        repo = UserRepository()
         modules = repo.get_user_modules(user[0])
         roles = repo.get_user_roles(user[0])
 

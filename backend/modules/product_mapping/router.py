@@ -103,6 +103,24 @@ def manual_review_progress(
     return service.review_progress(tenant_id, source_store_id, target_store_id)
 
 
+@router.get("/manual-review/batch")
+def manual_review_batch(
+    tenant_id: str = Query(...),
+    source_store_id: str = Query(...),
+    target_store_id: str = Query(...),
+    search: Optional[str] = Query(None),
+    after_confidence: Optional[float] = Query(None),
+    after_mapping_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=200),
+):
+    """Keyset-paginated PENDING batch for continuous Manual Review — pass back
+    the previous batch's ``next_cursor`` fields to fetch the next one. Cost
+    stays flat regardless of how deep into the queue the reviewer is."""
+    return service.review_batch(
+        tenant_id, source_store_id, target_store_id, search=search,
+        after_confidence=after_confidence, after_mapping_id=after_mapping_id, limit=limit)
+
+
 @router.post("/manual-review/bulk")
 def manual_review_bulk(payload: BulkReviewRequest, tenant_id: str = Query(...)):
     try:

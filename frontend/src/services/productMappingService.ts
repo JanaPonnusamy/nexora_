@@ -12,6 +12,7 @@ import type {
   MappingPage,
   MappingStatistics,
   ProductSearchResult,
+  ReviewBatch,
   ReviewProgress,
   RunSummary,
 } from '../types/productMapping'
@@ -56,6 +57,24 @@ export const productMappingService = {
   reviewProgress: (tenantId: string, sourceStoreId: string, targetStoreId: string) =>
     api.get<ReviewProgress>(
       `${BASE}/manual-review/progress${qs({ tenant_id: tenantId, source_store_id: sourceStoreId, target_store_id: targetStoreId })}`,
+    ),
+
+  reviewBatch: (
+    tenantId: string,
+    sourceStoreId: string,
+    targetStoreId: string,
+    opts?: { search?: string; afterConfidence?: number; afterMappingId?: string; limit?: number },
+  ) =>
+    api.get<ReviewBatch>(
+      `${BASE}/manual-review/batch${qs({
+        tenant_id: tenantId,
+        source_store_id: sourceStoreId,
+        target_store_id: targetStoreId,
+        search: opts?.search || undefined,
+        after_confidence: opts?.afterConfidence,
+        after_mapping_id: opts?.afterMappingId,
+        limit: opts?.limit ?? 100,
+      })}`,
     ),
 
   bulkReview: (

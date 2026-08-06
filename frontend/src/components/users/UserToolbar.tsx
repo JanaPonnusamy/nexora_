@@ -1,8 +1,8 @@
-import type { ChangeEvent } from 'react'
 import type { StatusFilter } from '../tenants/TenantToolbar'
 import type { Tenant } from '../../types/tenant'
 import type { Store } from '../../types/store'
 import type { Role } from '../../types/role'
+import { FilterToolbar } from '../../design-system/components/FilterToolbar'
 
 interface UserToolbarProps {
   search: string
@@ -38,76 +38,56 @@ export function UserToolbar({
   onAdd,
 }: UserToolbarProps) {
   return (
-    <div className="list-toolbar">
-      <div className="list-toolbar__search">
-        <i className="bi bi-search" aria-hidden="true" />
-        <input
-          type="search"
-          className="form-control"
-          placeholder="Search users"
-          aria-label="Search users"
-          value={search}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => onSearchChange(event.target.value)}
-        />
-      </div>
-
-      <select
-        className="form-select list-toolbar__filter"
-        aria-label="Filter by tenant"
-        value={tenantFilter}
-        onChange={(event: ChangeEvent<HTMLSelectElement>) => onTenantFilterChange(event.target.value)}
-      >
-        <option value="all">All tenants</option>
-        {tenants.map((tenant) => (
-          <option key={tenant.tenant_id} value={tenant.tenant_id}>
-            {tenant.tenant_name}
-          </option>
-        ))}
-      </select>
-
-      <select
-        className="form-select list-toolbar__filter"
-        aria-label="Filter by store"
-        value={storeFilter}
-        onChange={(event: ChangeEvent<HTMLSelectElement>) => onStoreFilterChange(event.target.value)}
-      >
-        <option value="all">All stores</option>
-        {stores.map((store) => (
-          <option key={store.store_id} value={store.store_id}>
-            {store.store_name}
-          </option>
-        ))}
-      </select>
-
-      <select
-        className="form-select list-toolbar__filter"
-        aria-label="Filter by role"
-        value={roleFilter}
-        onChange={(event: ChangeEvent<HTMLSelectElement>) => onRoleFilterChange(event.target.value)}
-      >
-        <option value="all">All roles</option>
-        {roles.map((role) => (
-          <option key={role.role_id} value={role.role_id}>
-            {role.role_name}
-          </option>
-        ))}
-      </select>
-
-      <select
-        className="form-select list-toolbar__filter"
-        aria-label="Filter by status"
-        value={status}
-        onChange={(event: ChangeEvent<HTMLSelectElement>) => onStatusChange(event.target.value as StatusFilter)}
-      >
-        <option value="all">All statuses</option>
-        <option value="active">Active</option>
-        <option value="inactive">Inactive</option>
-      </select>
-
-      <button type="button" className="btn btn-primary ms-auto" onClick={onAdd}>
-        <i className="bi bi-plus-lg me-1" aria-hidden="true" />
-        Add User
-      </button>
-    </div>
+    <FilterToolbar
+      searchPlaceholder="Search users"
+      searchAriaLabel="Search users"
+      searchValue={search}
+      onSearchChange={onSearchChange}
+      filters={[
+        {
+          key: 'tenant',
+          ariaLabel: 'Filter by tenant',
+          value: tenantFilter,
+          onChange: onTenantFilterChange,
+          options: [
+            { value: 'all', label: 'All tenants' },
+            ...tenants.map((tenant) => ({ value: tenant.tenant_id, label: tenant.tenant_name })),
+          ],
+        },
+        {
+          key: 'store',
+          ariaLabel: 'Filter by store',
+          value: storeFilter,
+          onChange: onStoreFilterChange,
+          options: [
+            { value: 'all', label: 'All stores' },
+            ...stores.map((store) => ({ value: store.store_id, label: store.store_name })),
+          ],
+        },
+        {
+          key: 'role',
+          ariaLabel: 'Filter by role',
+          value: roleFilter,
+          onChange: onRoleFilterChange,
+          options: [
+            { value: 'all', label: 'All roles' },
+            ...roles.map((role) => ({ value: role.role_id, label: role.role_name })),
+          ],
+        },
+        {
+          key: 'status',
+          ariaLabel: 'Filter by status',
+          value: status,
+          onChange: (value) => onStatusChange(value as StatusFilter),
+          options: [
+            { value: 'all', label: 'All statuses' },
+            { value: 'active', label: 'Active' },
+            { value: 'inactive', label: 'Inactive' },
+          ],
+        },
+      ]}
+      actionLabel="Add User"
+      onAction={onAdd}
+    />
   )
 }

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
-import { UniGrid, type UniGridColumn } from '../../platform/ui'
 import { HistoryDetailPanel } from '../../components/document-extraction/HistoryDetailPanel'
 import { documentExtractionService } from '../../services/documentExtractionService'
 import { storeService } from '../../services/storeService'
 import type { ImportListRow } from '../../types/documentExtraction'
 import type { Store } from '../../types/store'
+import { AppDataGrid, type AppDataGridColumn } from '../../design-system/components/AppDataGrid'
+import { InspectorPanel } from '../../design-system/components/InspectorPanel'
+import { SplitView } from '../../design-system/components/SplitView'
+import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
 
 export default function DocumentExtractionHistoryPage() {
   const [stores, setStores] = useState<Store[]>([])
@@ -19,7 +22,7 @@ export default function DocumentExtractionHistoryPage() {
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
-    storeService.list().then((all) => setStores(all.filter((s) => s.is_active))).catch(() => setStores([]))
+    storeService.list().then((all) => setStores(all.filter((store) => store.is_active))).catch(() => setStores([]))
   }, [])
 
   useEffect(() => {
@@ -27,7 +30,7 @@ export default function DocumentExtractionHistoryPage() {
   }, [stores, storeId])
 
   const tenantId = useMemo(
-    () => stores.find((s) => s.store_id === storeId)?.tenant_id ?? '',
+    () => stores.find((store) => store.store_id === storeId)?.tenant_id ?? '',
     [stores, storeId],
   )
 
@@ -36,13 +39,10 @@ export default function DocumentExtractionHistoryPage() {
     setIsLoading(true)
     documentExtractionService.listImports(tenantId, storeId)
       .then((page) => {
-        // Client-side filter — the module's own filter set (status/supplier/invoice)
-        // is already server-side on GET /imports; kept simple here since History's
-        // job is showing what's already there, not a new search feature.
         let rows = page.items
-        if (status) rows = rows.filter((r) => r.status === status)
-        if (invoiceNumber) rows = rows.filter((r) => (r.invoice_number ?? '').toLowerCase().includes(invoiceNumber.toLowerCase()))
-        if (supplierName) rows = rows.filter((r) => (r.supplier_name ?? '').toLowerCase().includes(supplierName.toLowerCase()))
+        if (status) rows = rows.filter((row) => row.status === status)
+        if (invoiceNumber) rows = rows.filter((row) => (row.invoice_number ?? '').toLowerCase().includes(invoiceNumber.toLowerCase()))
+        if (supplierName) rows = rows.filter((row) => (row.supplier_name ?? '').toLowerCase().includes(supplierName.toLowerCase()))
         setImports(rows)
         setTotal(page.total)
       })
@@ -50,58 +50,78 @@ export default function DocumentExtractionHistoryPage() {
       .finally(() => setIsLoading(false))
   }, [tenantId, storeId, status, invoiceNumber, supplierName])
 
-  useEffect(() => { loadImports() }, [loadImports])
+  useEffect(() => {
+    loadImports()
+  }, [loadImports])
 
-  const columns: UniGridColumn<ImportListRow>[] = [
+  const columns: AppDataGridColumn<ImportListRow>[] = [
     { key: 'import_id', header: 'ID', width: '4rem' },
-    { key: 'invoice_number', header: 'Invoice #', render: (r) => r.invoice_number ?? '—' },
+    { key: 'invoice_number', header: 'Invoice #', sticky: true, render: (row) => row.invoice_number ?? '-' },
     {
-      key: 'supplier_name', header: 'Supplier',
-      render: (r) => (
+      key: 'supplier_name',
+      header: 'Supplier',
+      render: (row) => (
         <>
-          {r.supplier_name ?? '—'}
-          {r.is_supplier_unknown && <span className="badge text-bg-warning ms-1">Unknown</span>}
+          {row.supplier_name ?? '-'}
+          {row.is_supplier_unknown && <span className="badge text-bg-warning ms-1">Unknown</span>}
         </>
       ),
     },
     { key: 'status', header: 'Status' },
     {
-      key: 'validation_status', header: 'Validation',
-      render: (r) => (
-        <span className={`badge ${r.validation_status === 'FAILED' ? 'text-bg-danger' : r.validation_status === 'WARNING' ? 'text-bg-warning' : 'text-bg-secondary'}`}>
-          {r.validation_status}
+      key: 'validation_status',
+      header: 'Validation',
+      render: (row) => (
+        <span className={`badge ${row.validation_status === 'FAILED' ? 'text-bg-danger' : row.validation_status === 'WARNING' ? 'text-bg-warning' : 'text-bg-secondary'}`}>
+          {row.validation_status}
         </span>
       ),
     },
-    { key: 'net_amount', header: 'Net Amount', align: 'end', render: (r) => r.net_amount ?? '—' },
-    { key: 'uploaded_at', header: 'Uploaded', render: (r) => new Date(r.uploaded_at).toLocaleString() },
+    { key: 'net_amount', header: 'Net Amount', align: 'end', render: (row) => row.net_amount ?? '-' },
+    { key: 'uploaded_at', header: 'Uploaded', render: (row) => new Date(row.uploaded_at).toLocaleString() },
   ]
 
   return (
-    <div className="container-fluid px-0">
-      <PageHeader title="Document Extraction — History" breadcrumb={['Document Extraction', 'History']} />
-
-      <div className="row g-2 mb-3">
-        <div className="col-auto">
-          <label className="form-label small mb-0">Store</label>
-          <select className="form-select form-select-sm" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
-            {stores.map((s) => (
-              <option key={s.store_id} value={s.store_id}>{s.store_code} — {s.store_name}</option>
+    <WorkspaceShell
+      fullWidth
+      header={
+        <PageHeader
+          title="Document Extraction History"
+          breadcrumb={['Operations', 'Document Extraction', 'History']}
+          description="Review processed invoices, filter by store or supplier, and inspect saved document details without leaving the workspace."
+        />
+      }
+      filters={
+        <div className="ds-toolbar">
+          <select className="form-select list-toolbar__filter ds-toolbar__filter" value={storeId} onChange={(event) => setStoreId(event.target.value)} aria-label="Store">
+            {stores.map((store) => (
+              <option key={store.store_id} value={store.store_id}>{store.store_code} - {store.store_name}</option>
             ))}
           </select>
-        </div>
-        <div className="col-auto">
-          <label className="form-label small mb-0">Invoice #</label>
-          <input className="form-control form-control-sm" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} />
-        </div>
-        <div className="col-auto">
-          <label className="form-label small mb-0">Supplier</label>
-          <input className="form-control form-control-sm" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} />
-        </div>
-        <div className="col-auto">
-          <label className="form-label small mb-0">Status</label>
-          <select className="form-select form-select-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All</option>
+          <label className="ds-search-field list-toolbar__search">
+            <i className="bi bi-receipt" aria-hidden="true" />
+            <input
+              type="search"
+              className="form-control"
+              value={invoiceNumber}
+              placeholder="Search invoice number"
+              aria-label="Search invoice number"
+              onChange={(event) => setInvoiceNumber(event.target.value)}
+            />
+          </label>
+          <label className="ds-search-field list-toolbar__search">
+            <i className="bi bi-building" aria-hidden="true" />
+            <input
+              type="search"
+              className="form-control"
+              value={supplierName}
+              placeholder="Search supplier"
+              aria-label="Search supplier"
+              onChange={(event) => setSupplierName(event.target.value)}
+            />
+          </label>
+          <select className="form-select list-toolbar__filter ds-toolbar__filter" value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Status">
+            <option value="">All statuses</option>
             <option value="UPLOADED">Uploaded</option>
             <option value="EXTRACTED">Extracted</option>
             <option value="REVIEW_PENDING">Review Pending</option>
@@ -110,26 +130,41 @@ export default function DocumentExtractionHistoryPage() {
             <option value="FAILED">Failed</option>
           </select>
         </div>
-      </div>
-
-      <p className="text-muted small">{total} invoice(s)</p>
-
-      <UniGrid
-        columns={columns}
-        rows={imports}
-        getRowId={(r) => String(r.import_id)}
-        isLoading={isLoading}
-        onRowClick={(r) => setSelectedId(r.import_id)}
-        activeRowId={selectedId != null ? String(selectedId) : undefined}
-        emptyTitle="No invoices"
-        emptyDescription="No invoices match the current filters for this store."
+      }
+      statusBar={
+        <>
+          <span>{total.toLocaleString()} invoice(s)</span>
+          <span>{imports.length.toLocaleString()} loaded</span>
+          <span>{selectedId != null ? `Inspecting #${selectedId}` : 'Select an invoice to inspect details'}</span>
+        </>
+      }
+    >
+      <SplitView
+        primary={
+          <AppDataGrid
+            title="Invoice History"
+            storageKey="document-extraction-history"
+            columns={columns}
+            rows={imports}
+            getRowId={(row) => String(row.import_id)}
+            isLoading={isLoading}
+            onRowClick={(row) => setSelectedId(row.import_id)}
+            activeRowId={selectedId != null ? String(selectedId) : undefined}
+            emptyTitle="No invoices"
+            emptyDescription="No invoices match the current filters for this store."
+            pageSize={20}
+          />
+        }
+        secondary={
+          <InspectorPanel
+            title="Invoice Inspector"
+            summary={selectedId != null ? `Import #${selectedId}` : 'Choose an invoice from the grid'}
+            empty={selectedId == null}
+          >
+            {selectedId != null && <HistoryDetailPanel importId={selectedId} onChanged={loadImports} />}
+          </InspectorPanel>
+        }
       />
-
-      {selectedId != null && (
-        <div className="mt-3">
-          <HistoryDetailPanel importId={selectedId} onChanged={loadImports} />
-        </div>
-      )}
-    </div>
+    </WorkspaceShell>
   )
 }

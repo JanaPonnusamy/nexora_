@@ -52,6 +52,7 @@ export function DetailColumn({
   onChangeSupplier,
   onRemoveAssignment,
   offerInfo,
+  supplierRemarks,
 }: {
   tenantId: string
   item: WorkspaceItem | null
@@ -69,6 +70,9 @@ export function DetailColumn({
   /** § OFFER SUPPORT — Supplier / Offer / Discount for the currently viewed
    *  supplier-stock row, when available. */
   offerInfo?: OfferInfo | null
+  /** Free-text remarks entered against this product in Supplier Live Stock's
+   *  Remarks column, when available (§ PRODUCT DETAILS). */
+  supplierRemarks?: string | null
 }) {
   const [viewMode, setViewMode] = useState<'summary' | 'history'>('summary')
   const [changingSupplier, setChangingSupplier] = useState(false)
@@ -105,6 +109,15 @@ export function DetailColumn({
     [tenantId, storeId, productCode],
   )
   const movement = useStockResource(movementFetch, ctxKey, 'movement')
+
+  // Store Count / cross-store stock — reuses the same Availability data the
+  // Bill Drawer's own tab already fetches (§ PRODUCT DETAILS), just surfaced
+  // inline here so the buyer never has to open a bill to see it.
+  const availabilityFetch = useCallback(
+    () => stockService.availability(tenantId, storeId, productCode),
+    [tenantId, storeId, productCode],
+  )
+  const availability = useStockResource(availabilityFetch, ctxKey, 'availability')
 
   if (!item || !hasProduct) {
     return (
@@ -144,6 +157,20 @@ export function DetailColumn({
               )}
             </div>
           )}
+          {/* § PRODUCT DETAILS — Store Count (from Availability, same source
+              the Bill Drawer's own tab uses), Last Purchase Rate (top Purchase
+              History row) and Supplier Remarks, all inline — no popup. */}
+          <div className="pm-dhead__meta">
+            <span>
+              <b>Store Count</b>
+              {availability.isLoading ? '…' : availability.data ? `${availability.data.filter((a) => (a.stock ?? 0) > 0).length} / ${availability.data.length} stores` : '—'}
+            </span>
+            <span>
+              <b>Last Purchase Rate</b>
+              {purchases.isLoading ? '…' : purchases.data && purchases.data.length > 0 ? money(purchases.data[0].ptr) : '—'}
+            </span>
+            {supplierRemarks && <span><b>Remarks</b>{supplierRemarks}</span>}
+          </div>
           {/* Inline Change Supplier (§4) — reassignment reachable from Review
               All mode too, not only Supplier Purchasing's own review panel. */}
           {assignedSupplier && onChangeSupplier && (
@@ -215,7 +242,7 @@ export function DetailColumn({
 
           {/* Purchase History — fixed height, internal scroll. Click a row to
               open its Purchase Bill Drawer. */}
-          <section className="pm-dsec pm-dsec--pur pm-dsec--scroll">
+          <section className={`pm-dsec pm-dsec--pur pm-dsec--scroll${!purchases.isLoading && (purchases.data?.length ?? 0) === 0 ? ' pm-dsec--empty' : ''}`}>
             <div className="pm-dsec__title">
               <i className="bi bi-truck" /> Purchase History
               {onViewAll && (
@@ -229,7 +256,7 @@ export function DetailColumn({
 
           {/* Sales History — fixed height, internal scroll. Click a row to open
               its Sales Bill Drawer. */}
-          <section className="pm-dsec pm-dsec--sales pm-dsec--scroll">
+          <section className={`pm-dsec pm-dsec--sales pm-dsec--scroll${!sales.isLoading && (sales.data?.length ?? 0) === 0 ? ' pm-dsec--empty' : ''}`}>
             <div className="pm-dsec__title">
               <i className="bi bi-cart-check" /> Sales History
               {onViewAll && (

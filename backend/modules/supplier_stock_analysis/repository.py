@@ -69,13 +69,19 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
         if not _object_exists(cur, "procurement.supplier_stock"):
             return []
         store_clause = "AND ss.store_id = ?" if store_id else ""
-        params = [tenant_id, supplier_code]
+        params = [tenant_id, tenant_id, supplier_code]
         if store_id:
             params.append(store_id)
         term = (search or "").strip()
         params.extend([1 if only_available else 0, term, term, term, term])
         cur.execute(
             f"""
+            WITH active_store_count AS (
+                SELECT COUNT(1) AS total_store_count
+                FROM dbo.stores
+                WHERE tenant_id = ?
+                  AND ISNULL(is_active, 1) = 1
+            )
             SELECT TOP 3000
                 CAST(ss.supplier_stock_id AS VARCHAR(36)) AS supplier_stock_id,
                 CAST(ss.tenant_id AS VARCHAR(36)) AS tenant_id,
@@ -99,13 +105,50 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                 ss.transaction_date,
                 ss.source,
                 ss.imported_at,
-                CASE WHEN ss.product_code IS NULL THEN 0 ELSE 1 END AS has_mapping
+                CASE WHEN ss.product_code IS NULL THEN 0 ELSE 1 END AS has_mapping,
+                ascnt.total_store_count,
+                CASE
+                    WHEN ss.product_code IS NULL THEN 0
+                    ELSE 1 + ISNULL(mapstats.mapped_other_store_count, 0)
+                END AS mapped_store_count,
+                CASE
+                    WHEN ss.product_code IS NULL THEN ascnt.total_store_count
+                    ELSE ascnt.total_store_count - (1 + ISNULL(mapstats.mapped_other_store_count, 0))
+                END AS unmapped_store_count,
+                CASE
+                    WHEN ss.product_code IS NULL THEN 'not_mapped'
+                    WHEN ascnt.total_store_count - (1 + ISNULL(mapstats.mapped_other_store_count, 0)) > 0 THEN 'partially_matched'
+                    ELSE 'fully_matched'
+                END AS mapping_scope_status
             FROM procurement.supplier_stock ss
+            CROSS JOIN active_store_count ascnt
             LEFT JOIN dbo.stores st ON st.tenant_id = ss.tenant_id AND st.store_id = ss.store_id
             LEFT JOIN sync.Products p
                 ON p.tenant_id = ss.tenant_id
                AND p.store_id = ss.store_id
                AND CAST(p.productcode AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+            OUTER APPLY (
+                SELECT COUNT(DISTINCT resolved.store_id) AS mapped_other_store_count
+                FROM (
+                    SELECT CAST(pm.target_store_id AS VARCHAR(36)) AS store_id
+                    FROM dbo.product_mapping pm
+                    WHERE pm.tenant_id = ss.tenant_id
+                      AND pm.is_deleted = 0
+                      AND pm.status IN ('APPROVED', 'AUTO')
+                      AND pm.source_store_id = ss.store_id
+                      AND CAST(pm.source_product_code AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+                      AND pm.target_store_id <> ss.store_id
+                    UNION
+                    SELECT CAST(pm.source_store_id AS VARCHAR(36)) AS store_id
+                    FROM dbo.product_mapping pm
+                    WHERE pm.tenant_id = ss.tenant_id
+                      AND pm.is_deleted = 0
+                      AND pm.status IN ('APPROVED', 'AUTO')
+                      AND pm.target_store_id = ss.store_id
+                      AND CAST(pm.target_product_code AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+                      AND pm.source_store_id <> ss.store_id
+                ) resolved
+            ) mapstats
             WHERE ss.tenant_id = ?
               AND CAST(ss.supplier_code AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
               {store_clause}
@@ -118,6 +161,202 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
             ORDER BY ss.supplier_product_name
             """,
             tuple(params),
+        )
+        return rows_to_dicts(cur)
+    finally:
+        conn.close()
+
+
+def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_available=False):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        if not _object_exists(cur, "procurement.supplier_stock"):
+            return []
+        store_clause = "AND ss.store_id = ?" if store_id else ""
+        params = [tenant_id, tenant_id, supplier_code]
+        if store_id:
+            params.append(store_id)
+        params.append(1 if only_available else 0)
+        cur.execute(
+            f"""
+            WITH active_store_count AS (
+                SELECT COUNT(1) AS total_store_count
+                FROM dbo.stores
+                WHERE tenant_id = ?
+                  AND ISNULL(is_active, 1) = 1
+            ),
+            supplier_rows AS (
+                SELECT
+                    CAST(ss.supplier_stock_id AS VARCHAR(36)) AS supplier_stock_id,
+                    CAST(ss.tenant_id AS VARCHAR(36)) AS tenant_id,
+                    CAST(ss.store_id AS VARCHAR(36)) AS source_store_id,
+                    st.store_code AS source_store_code,
+                    st.store_name AS source_store_name,
+                    CAST(ss.supplier_code AS VARCHAR(100)) AS supplier_code,
+                    CAST(ss.supplier_product_code AS VARCHAR(100)) AS supplier_product_code,
+                    ss.supplier_product_name,
+                    CAST(ss.product_code AS VARCHAR(100)) AS product_code,
+                    p.productname AS mapped_product_name,
+                    ISNULL(ss.available_stock, 0) AS supplier_available_stock,
+                    ss.ptr,
+                    ss.mrp,
+                    ascnt.total_store_count
+                FROM procurement.supplier_stock ss
+                CROSS JOIN active_store_count ascnt
+                LEFT JOIN dbo.stores st
+                  ON st.tenant_id = ss.tenant_id AND st.store_id = ss.store_id
+                LEFT JOIN sync.Products p
+                  ON p.tenant_id = ss.tenant_id
+                 AND p.store_id = ss.store_id
+                 AND CAST(p.productcode AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+                WHERE ss.tenant_id = ?
+                  AND CAST(ss.supplier_code AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
+                  {store_clause}
+                  AND ss.is_active = 1
+                  AND (? = 0 OR ISNULL(ss.available_stock, 0) > 0)
+            ),
+            resolved_stores AS (
+                SELECT
+                    sr.supplier_stock_id,
+                    sr.source_store_id AS store_id,
+                    sr.product_code,
+                    'source' AS store_match_status
+                FROM supplier_rows sr
+                WHERE sr.product_code IS NOT NULL
+
+                UNION
+
+                SELECT
+                    sr.supplier_stock_id,
+                    CAST(pm.target_store_id AS VARCHAR(36)) AS store_id,
+                    CAST(pm.target_product_code AS VARCHAR(100)) AS product_code,
+                    'mapped' AS store_match_status
+                FROM supplier_rows sr
+                JOIN dbo.product_mapping pm
+                  ON pm.tenant_id = sr.tenant_id
+                 AND pm.is_deleted = 0
+                 AND pm.status IN ('APPROVED', 'AUTO')
+                 AND pm.source_store_id = sr.source_store_id
+                 AND CAST(pm.source_product_code AS VARCHAR(100)) = CAST(sr.product_code AS VARCHAR(100))
+                 AND pm.target_product_code IS NOT NULL
+                WHERE sr.product_code IS NOT NULL
+
+                UNION
+
+                SELECT
+                    sr.supplier_stock_id,
+                    CAST(pm.source_store_id AS VARCHAR(36)) AS store_id,
+                    CAST(pm.source_product_code AS VARCHAR(100)) AS product_code,
+                    'mapped' AS store_match_status
+                FROM supplier_rows sr
+                JOIN dbo.product_mapping pm
+                  ON pm.tenant_id = sr.tenant_id
+                 AND pm.is_deleted = 0
+                 AND pm.status IN ('APPROVED', 'AUTO')
+                 AND pm.target_store_id = sr.source_store_id
+                 AND CAST(pm.target_product_code AS VARCHAR(100)) = CAST(sr.product_code AS VARCHAR(100))
+                 AND pm.source_product_code IS NOT NULL
+                WHERE sr.product_code IS NOT NULL
+            ),
+            resolved_stock AS (
+                SELECT
+                    rs.supplier_stock_id,
+                    rs.store_id,
+                    rs.product_code,
+                    rs.store_match_status,
+                    st.store_code,
+                    st.store_name,
+                    ISNULL(p.totalstock, 0) AS current_stock
+                FROM resolved_stores rs
+                LEFT JOIN dbo.stores st
+                  ON st.tenant_id = ? AND st.store_id = rs.store_id
+                LEFT JOIN sync.Products p
+                  ON p.tenant_id = ?
+                 AND p.store_id = rs.store_id
+                 AND p.ProductCode = TRY_CONVERT(INT, rs.product_code)
+                 AND ISNULL(p.isactive, 1) = 1
+            ),
+            recent_movement AS (
+                SELECT
+                    rs.supplier_stock_id,
+                    rs.store_id,
+                    SUM(ISNULL(pt.SaleQuantity, 0)) AS recent_sale_qty
+                FROM resolved_stores rs
+                LEFT JOIN sync.ProductTrans pt
+                  ON pt.tenant_id = ?
+                 AND pt.store_id = rs.store_id
+                 AND pt.ProductCode = TRY_CONVERT(INT, rs.product_code)
+                 AND pt.MonthOfStatistics >= DATEADD(MONTH, -3, GETDATE())
+                GROUP BY rs.supplier_stock_id, rs.store_id
+            )
+            SELECT
+                sr.supplier_stock_id,
+                sr.supplier_code,
+                sr.supplier_product_code,
+                sr.supplier_product_name,
+                sr.product_code,
+                sr.mapped_product_name,
+                sr.source_store_id,
+                sr.source_store_code,
+                sr.source_store_name,
+                sr.supplier_available_stock,
+                sr.ptr,
+                sr.mrp,
+                sr.total_store_count,
+                COUNT(DISTINCT rs.store_id) AS mapped_store_count,
+                sr.total_store_count - COUNT(DISTINCT rs.store_id) AS unmapped_store_count,
+                COUNT(DISTINCT CASE WHEN ISNULL(stk.current_stock, 0) > 0 THEN rs.store_id END) AS stores_with_stock_count,
+                COUNT(DISTINCT CASE WHEN rs.store_id IS NOT NULL AND ISNULL(stk.current_stock, 0) <= 0 THEN rs.store_id END) AS stores_without_stock_count,
+                SUM(ISNULL(stk.current_stock, 0)) AS network_stock_qty,
+                MAX(CASE WHEN rs.store_id = sr.source_store_id THEN ISNULL(stk.current_stock, 0) ELSE 0 END) AS source_store_stock_qty,
+                SUM(ISNULL(mv.recent_sale_qty, 0)) AS recent_3m_sale_qty,
+                CAST(SUM(ISNULL(mv.recent_sale_qty, 0)) / 3.0 AS DECIMAL(18, 2)) AS avg_monthly_sale_qty,
+                CASE
+                    WHEN sr.product_code IS NULL THEN 'not_mapped'
+                    WHEN sr.total_store_count - COUNT(DISTINCT rs.store_id) > 0 THEN 'partially_matched'
+                    ELSE 'fully_matched'
+                END AS mapping_scope_status,
+                CASE
+                    WHEN sr.product_code IS NULL THEN 'not_mapped_products'
+                    WHEN sr.total_store_count - COUNT(DISTINCT rs.store_id) > 0 THEN 'stores_not_mapped'
+                    WHEN MAX(CASE WHEN rs.store_id = sr.source_store_id THEN ISNULL(stk.current_stock, 0) ELSE 0 END) <= 0
+                         AND SUM(ISNULL(mv.recent_sale_qty, 0)) > 0 THEN 'home_store_no_stock_prediction'
+                    WHEN COUNT(DISTINCT CASE WHEN rs.store_id IS NOT NULL AND ISNULL(stk.current_stock, 0) <= 0 THEN rs.store_id END) > 0 THEN 'mapped_store_no_stock'
+                    ELSE 'already_mapped'
+                END AS analysis_bucket,
+                CASE
+                    WHEN sr.product_code IS NULL THEN 0
+                    WHEN MAX(CASE WHEN rs.store_id = sr.source_store_id THEN ISNULL(stk.current_stock, 0) ELSE 0 END) > 0 THEN 0
+                    ELSE CEILING(SUM(ISNULL(mv.recent_sale_qty, 0)) / 3.0)
+                END AS predicted_required_qty
+            FROM supplier_rows sr
+            LEFT JOIN resolved_stores rs
+              ON rs.supplier_stock_id = sr.supplier_stock_id
+            LEFT JOIN resolved_stock stk
+              ON stk.supplier_stock_id = rs.supplier_stock_id
+             AND stk.store_id = rs.store_id
+             AND stk.product_code = rs.product_code
+            LEFT JOIN recent_movement mv
+              ON mv.supplier_stock_id = rs.supplier_stock_id
+             AND mv.store_id = rs.store_id
+            GROUP BY
+                sr.supplier_stock_id,
+                sr.supplier_code,
+                sr.supplier_product_code,
+                sr.supplier_product_name,
+                sr.product_code,
+                sr.mapped_product_name,
+                sr.source_store_id,
+                sr.source_store_code,
+                sr.source_store_name,
+                sr.supplier_available_stock,
+                sr.ptr,
+                sr.mrp,
+                sr.total_store_count
+            ORDER BY sr.supplier_product_name
+            """,
+            (*params, tenant_id, tenant_id, tenant_id),
         )
         return rows_to_dicts(cur)
     finally:

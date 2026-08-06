@@ -10,15 +10,50 @@ interface Series {
 }
 
 const SERIES: Series[] = [
-  { key: 'pur', label: 'Purchase', short: 'PUR', color: '#2563eb' },     // blue
-  { key: 'sal', label: 'Sales', short: 'SAL', color: '#16a34a' },        // green
-  { key: 'tin', label: 'Transfer In', short: 'TIN', color: '#eab308' },  // yellow
-  { key: 'tout', label: 'Transfer Out', short: 'TOUT', color: '#be185d' },// dark pink
-  { key: 'adj', label: 'Adjustment', short: 'ADJ', color: '#7c3aed' },   // purple
-  { key: 'stk', label: 'Stock', short: 'STK', color: '#dc2626' },        // red
+  { key: 'pur', label: 'Purchase', short: 'PUR', color: '#1d4ed8' },
+  { key: 'sal', label: 'Sales', short: 'SAL', color: '#15803d' },
+  { key: 'tin', label: 'Transfer In', short: 'TIN', color: '#93c5fd' },
+  { key: 'tout', label: 'Transfer Out', short: 'TOUT', color: '#86efac' },
+  { key: 'adj', label: 'Adjustment', short: 'ADJ', color: '#7c3aed' },
+  { key: 'stk', label: 'Stock', short: 'STK', color: '#dc2626' },
 ]
 
-/** Measures a container and reports its pixel size, updating on resize. */
+type FlatBar = {
+  key: string
+  label: string
+  short: string
+  color: string
+  value: (row: MovementRow) => number
+  parts?: { key: string; color: string; value: (row: MovementRow) => number }[]
+}
+
+const FLAT_BARS: FlatBar[] = [
+  {
+    key: 'inbound',
+    label: 'Inbound',
+    short: 'IN',
+    color: '#1d4ed8',
+    value: (row) => (Number(row.tin) || 0) + (Number(row.pur) || 0),
+    parts: [
+      { key: 'tin', color: '#93c5fd', value: (row) => Number(row.tin) || 0 },
+      { key: 'pur', color: '#1d4ed8', value: (row) => Number(row.pur) || 0 },
+    ],
+  },
+  {
+    key: 'outbound',
+    label: 'Outbound',
+    short: 'OUT',
+    color: '#15803d',
+    value: (row) => (Number(row.tout) || 0) + (Number(row.sal) || 0),
+    parts: [
+      { key: 'tout', color: '#86efac', value: (row) => Number(row.tout) || 0 },
+      { key: 'sal', color: '#15803d', value: (row) => Number(row.sal) || 0 },
+    ],
+  },
+  { key: 'adj', label: 'Adjustment', short: 'ADJ', color: '#7c3aed', value: (row) => Number(row.adj) || 0 },
+  { key: 'stk', label: 'Stock', short: 'STK', color: '#dc2626', value: (row) => Number(row.stk) || 0 },
+]
+
 function useElementSize() {
   const ref = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 640, h: 240 })
@@ -35,23 +70,14 @@ function useElementSize() {
   return [ref, size] as const
 }
 
-/** Responsive grouped bar chart. Always shows the last 4 months returned by the
- *  API (months with no data render as blank), fills 100% of the panel, reserves
- *  the top 10% for value labels, and keeps the hover-month label as an overlay
- *  so no vertical space is wasted. */
-/** `flat` (Purchase Manager only): render every month at equal brightness with no
- *  "current month" highlight, and drop the top overlay tag — the readout row below
- *  the chart is the single-row legend. The Stock module keeps the default look. */
 export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; flat?: boolean }) {
   const [hover, setHover] = useState<number | null>(null)
   const [tip, setTip] = useState({ x: 0, y: 0 })
   const [plotRef, { w: W, h: H }] = useElementSize()
 
-  // Show every month the API returns (the last 4 months, empty ones included).
   const data = rows
   const n = data.length || 1
   const focus = hover ?? data.length - 1
-
   const padL = 46
   const padR = 14
   const padT = 6
@@ -63,19 +89,19 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
   const barAreaH = plotH - labelBand
   const barTopLimit = padT + labelBand
 
-  const max = Math.max(
-    1,
-    ...data.flatMap((row) => SERIES.map((s) => Math.abs(Number(row[s.key]) || 0))),
-  )
+  const max = flat
+    ? Math.max(1, ...data.flatMap((row) => FLAT_BARS.map((bar) => Math.abs(bar.value(row)))))
+    : Math.max(1, ...data.flatMap((row) => SERIES.map((series) => Math.abs(Number(row[series.key]) || 0))))
 
   const groupW = plotW / n
+  const chartBars = flat ? FLAT_BARS.length : SERIES.length
   const groupGap = Math.min(groupW * 0.3, 80)
-  const innerW = Math.max(SERIES.length * 5, groupW - groupGap)
-  const barGap = Math.max(2, innerW * 0.03)
-  const barW = (innerW - barGap * (SERIES.length - 1)) / SERIES.length
+  const innerW = Math.max(chartBars * 8, groupW - groupGap)
+  const barGap = Math.max(2, innerW * 0.04)
+  const barW = (innerW - barGap * (chartBars - 1)) / chartBars
 
   return (
-    <div className="sa-chart">
+    <div className={`sa-chart${flat ? ' sa-chart--flat' : ''}`}>
       <div
         className="sa-chart__plot"
         ref={plotRef}
@@ -112,24 +138,64 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
             const focused = i === focus
             return (
               <g key={row.period ?? i}>
-                {SERIES.map((s, j) => {
-                  const value = Number(row[s.key]) || 0
-                  const h = (Math.abs(value) / max) * barAreaH
-                  const x = groupX + j * (barW + barGap)
-                  const cx = x + barW / 2
-                  const top = baseY - h
-                  const labelY = Math.max(barTopLimit - 2, top - 4)
-                  return (
-                    <g key={s.key} opacity={1}>
-                      <rect x={x} y={top} width={Math.max(3, barW)} height={h} rx={3} fill={s.color}>
-                        <title>{`${row.period ?? ''} · ${s.label}: ${num(value)}`}</title>
-                      </rect>
-                      <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={s.color}>
-                        {num(value)}
-                      </text>
-                    </g>
-                  )
-                })}
+                {flat
+                  ? FLAT_BARS.map((bar, j) => {
+                      const value = bar.value(row)
+                      const x = groupX + j * (barW + barGap)
+                      const cx = x + barW / 2
+                      const h = (Math.abs(value) / max) * barAreaH
+                      const top = baseY - h
+                      const labelY = Math.max(barTopLimit - 2, top - 4)
+                      if (!bar.parts) {
+                        return (
+                          <g key={bar.key}>
+                            <rect x={x} y={top} width={Math.max(4, barW)} height={h} rx={4} fill={bar.color}>
+                              <title>{`${row.period ?? ''} · ${bar.label}: ${num(value)}`}</title>
+                            </rect>
+                            <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={bar.color}>
+                              {num(value)}
+                            </text>
+                          </g>
+                        )
+                      }
+                      let offset = 0
+                      return (
+                        <g key={bar.key}>
+                          {bar.parts.map((part) => {
+                            const partValue = part.value(row)
+                            const partH = (Math.abs(partValue) / max) * barAreaH
+                            const partY = baseY - offset - partH
+                            offset += partH
+                            return (
+                              <rect key={part.key} x={x} y={partY} width={Math.max(4, barW)} height={partH} rx={4} fill={part.color}>
+                                <title>{`${row.period ?? ''} · ${bar.label}: ${num(value)}`}</title>
+                              </rect>
+                            )
+                          })}
+                          <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={bar.color}>
+                            {num(value)}
+                          </text>
+                        </g>
+                      )
+                    })
+                  : SERIES.map((series, j) => {
+                      const value = Number(row[series.key]) || 0
+                      const h = (Math.abs(value) / max) * barAreaH
+                      const x = groupX + j * (barW + barGap)
+                      const cx = x + barW / 2
+                      const top = baseY - h
+                      const labelY = Math.max(barTopLimit - 2, top - 4)
+                      return (
+                        <g key={series.key}>
+                          <rect x={x} y={top} width={Math.max(3, barW)} height={h} rx={3} fill={series.color}>
+                            <title>{`${row.period ?? ''} · ${series.label}: ${num(value)}`}</title>
+                          </rect>
+                          <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={series.color}>
+                            {num(value)}
+                          </text>
+                        </g>
+                      )
+                    })}
                 <rect
                   x={groupX - barGap}
                   y={barTopLimit}
@@ -148,8 +214,6 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
           })}
         </svg>
 
-        {/* Hover tooltip — the month + every series value (Purchase, Sales,
-            Transfer In/Out, Adjustment, Stock). Follows the cursor. */}
         {hover != null && data[hover] && (
           <div
             className="sa-chart__tip"
@@ -160,13 +224,13 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
             role="tooltip"
           >
             <div className="sa-chart__tip-head">{data[hover].period ?? ''}</div>
-            {SERIES.map((s) => (
-              <div className="sa-chart__tip-row" key={s.key}>
+            {SERIES.map((series) => (
+              <div className="sa-chart__tip-row" key={series.key}>
                 <span className="sa-chart__tip-key">
-                  <span className="sa-chart__swatch" style={{ background: s.color }} />
-                  {s.label}
+                  <span className="sa-chart__swatch" style={{ background: series.color }} />
+                  {series.label}
                 </span>
-                <span className="sa-chart__tip-val">{num(Number(data[hover][s.key]) || 0)}</span>
+                <span className="sa-chart__tip-val">{num(Number(data[hover][series.key]) || 0)}</span>
               </div>
             ))}
           </div>
@@ -174,12 +238,12 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
       </div>
 
       <div className="sa-chart__readout">
-        {SERIES.map((s) => (
-          <div className="sa-chart__metric" key={s.key} title={s.label}>
-            <span className="sa-chart__metric-val" style={{ color: s.color }}>{num(Number(data[focus]?.[s.key]) || 0)}</span>
+        {SERIES.map((series) => (
+          <div className="sa-chart__metric" key={series.key} title={series.label}>
+            <span className="sa-chart__metric-val" style={{ color: series.color }}>{num(Number(data[focus]?.[series.key]) || 0)}</span>
             <span className="sa-chart__metric-label">
-              <span className="sa-chart__swatch" style={{ background: s.color }} />
-              {s.short}
+              <span className="sa-chart__swatch" style={{ background: series.color }} />
+              {series.short}
             </span>
           </div>
         ))}
@@ -187,4 +251,3 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
     </div>
   )
 }
-

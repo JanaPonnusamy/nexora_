@@ -74,11 +74,32 @@ BEGIN
     ),
     stocked AS
     (
+        -- Product Grid stock MUST equal SUM(batch stock WHERE Stock > 0) for
+        -- any product that is batch-tracked (has rows in sync.Batches) -
+        -- ProductTrans.StockInHand/Products.TotalStock are periodic
+        -- (monthly) snapshots that drift from the live batch ledger and
+        -- caused Product Grid vs Batch Grid to disagree (e.g. "13" vs "20+"
+        -- for the same product). Only products with NO batch rows at all
+        -- (not batch-tracked) fall back to the old snapshot chain.
         SELECT
             f.store_id, f.store_code, f.store_name, f.store_order,
             f.ProductCode, f.ProductName, f.UnitDescription, f.MRP,
-            COALESCE(pt.StockInHand, f.RawTotalStock, 0) AS TotalStock
+            COALESCE(
+                CASE WHEN bs.BatchRowCount > 0 THEN ISNULL(bs.BatchStock, 0) END,
+                pt.StockInHand,
+                f.RawTotalStock,
+                0
+            ) AS TotalStock
         FROM filtered f
+        OUTER APPLY (
+            SELECT
+                SUM(CASE WHEN b.Stock > 0 THEN b.Stock ELSE 0 END) AS BatchStock,
+                COUNT(*) AS BatchRowCount
+            FROM sync.Batches b
+            WHERE b.store_id    = f.store_id
+              AND b.tenant_id   = @TenantId
+              AND b.ProductCode = f.ProductCode
+        ) bs
         OUTER APPLY (
             SELECT TOP (1) pt.StockInHand
             FROM sync.ProductTrans pt
@@ -214,12 +235,24 @@ BEGIN
         fb.SaleUnit                         AS packing,
         COALESCE(NULLIF(LTRIM(RTRIM(fb.SubLocation)), ''),
                  NULLIF(LTRIM(RTRIM(p.SubLocation)), '')) AS sublocation,
-        ISNULL((
-            SELECT SUM(ISNULL(b2.Stock, 0))
-            FROM sync.Batches b2
+        -- total_stock = SUM(batch stock WHERE Stock > 0) whenever the product
+        -- is batch-tracked (has any row in sync.Batches, even if all are
+        -- currently zero/negative) - a handful of batches carry negative
+        -- Stock (POS correction rows) which must not net against real
+        -- positive stock, and none of them may fall back to the stale
+        -- Products.TotalStock snapshot just because the positive sum is 0.
+        -- Only products with NO batch rows at all use that snapshot.
+        (CASE WHEN EXISTS (
+            SELECT 1 FROM sync.Batches b2
             WHERE b2.tenant_id = @TenantId AND b2.store_id = @StoreId
               AND b2.ProductCode = @ProductCode
-        ), ISNULL(p.TotalStock, 0))         AS total_stock,
+        ) THEN (
+            SELECT ISNULL(SUM(b3.Stock), 0)
+            FROM sync.Batches b3
+            WHERE b3.tenant_id = @TenantId AND b3.store_id = @StoreId
+              AND b3.ProductCode = @ProductCode
+              AND b3.Stock > 0
+        ) ELSE ISNULL(p.TotalStock, 0) END)  AS total_stock,
         (
             SELECT MAX(t.LastBillDate)
             FROM sync.ProductTrans t
@@ -242,9 +275,15 @@ GO
 
 /* ===========================================================================
    4) stock.usp_BatchDetails   (Batch Details panel)
-   Faithful to sp_BatchDetails: in-stock batches first (by expiry), back-filled
-   with zero-stock batches up to 5 rows. OUTPUT: batch_no, stock, expiry_date,
-   age, ptr, mrp
+   Returns EVERY batch for the product/store (zero-stock included - the old
+   5-row cap with zero-stock backfill hid real batches and made "Display all
+   batches, don't hide zero-stock ones" impossible). Purchase Age / Sales Age
+   are returned as raw day counts + source dates; status/priority/sort math
+   (which needs "today", stock>0 filtering, and the near-expiry threshold) is
+   business logic and lives in one place - the frontend - rather than being
+   duplicated here and risking SQL/UI drift.
+   OUTPUT: batch_no, stock, expiry_date, ptr, mrp, last_purchase_date,
+   last_sale_date, purchase_age_days, sales_age_days
    =========================================================================== */
 IF OBJECT_ID(N'stock.usp_BatchDetails', N'P') IS NOT NULL DROP PROCEDURE stock.usp_BatchDetails;
 GO
@@ -256,54 +295,23 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    ;WITH BaseData AS
-    (
-        SELECT
-            CAST(b.BatchCode AS VARCHAR(50))    AS batch_no,
-            ISNULL(b.Stock, 0)                  AS stock,
-            CAST(b.ExpiryDate AS DATE)          AS expiry_date,
-            ISNULL(b.PurchasePrice, 0)          AS ptr,
-            ISNULL(b.MRP, 0)                    AS mrp,
-            DATEDIFF(DAY, b.GrnDate, GETDATE()) AS age_days,
-            CASE WHEN ISNULL(b.Stock, 0) > 0 THEN 1 ELSE 0 END AS HasStock
-        FROM sync.Batches b
-        WHERE b.tenant_id = @TenantId
-          AND b.store_id  = @StoreId
-          AND b.ProductCode = @ProductCode
-    ),
-    StockRows AS
-    (
-        SELECT *, 1 AS SortGroup FROM BaseData WHERE HasStock = 1
-    ),
-    ZeroStockRanked AS
-    (
-        SELECT *, 2 AS SortGroup,
-               ROW_NUMBER() OVER (ORDER BY expiry_date) AS RN
-        FROM BaseData WHERE HasStock = 0
-    ),
-    FinalRows AS
-    (
-        SELECT batch_no, stock, expiry_date, ptr, mrp, age_days, SortGroup, expiry_date AS SortExpiry
-        FROM StockRows
-        UNION ALL
-        SELECT batch_no, stock, expiry_date, ptr, mrp, age_days, SortGroup, expiry_date
-        FROM ZeroStockRanked
-        WHERE (SELECT COUNT(*) FROM StockRows) < 5
-          AND RN <= (5 - (SELECT COUNT(*) FROM StockRows))
-    )
     SELECT
-        batch_no,
-        stock,
-        expiry_date,
-        CASE
-            WHEN age_days >= 365 THEN CAST(CAST(age_days / 365.0 AS DECIMAL(4, 1)) AS VARCHAR(10)) + ' Y'
-            WHEN age_days >= 30  THEN CAST(age_days / 30 AS VARCHAR(10)) + ' M'
-            ELSE CAST(age_days AS VARCHAR(10)) + ' D'
-        END AS age,
-        ptr,
-        mrp
-    FROM FinalRows
-    ORDER BY SortGroup, SortExpiry;
+        CAST(b.BatchCode AS VARCHAR(50))         AS batch_no,
+        ISNULL(b.Stock, 0)                       AS stock,
+        CAST(b.ExpiryDate AS DATE)                AS expiry_date,
+        ISNULL(b.PurchasePrice, 0)               AS ptr,
+        ISNULL(b.MRP, 0)                         AS mrp,
+        CAST(b.GrnDate AS DATE)                   AS last_purchase_date,
+        CAST(b.LastSaleDate AS DATE)              AS last_sale_date,
+        DATEDIFF(DAY, b.GrnDate, GETDATE())      AS purchase_age_days,
+        DATEDIFF(DAY, b.LastSaleDate, GETDATE()) AS sales_age_days
+    FROM sync.Batches b
+    WHERE b.tenant_id = @TenantId
+      AND b.store_id  = @StoreId
+      AND b.ProductCode = @ProductCode
+    ORDER BY
+        CASE WHEN ISNULL(b.Stock, 0) > 0 THEN 0 ELSE 1 END,
+        b.ExpiryDate;
 END
 GO
 
@@ -462,55 +470,25 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    -- Result set 1: batches (== stock.usp_BatchDetails)
-    ;WITH BaseData AS
-    (
-        SELECT
-            CAST(b.BatchCode AS VARCHAR(50))    AS batch_no,
-            ISNULL(b.Stock, 0)                  AS stock,
-            CAST(b.ExpiryDate AS DATE)          AS expiry_date,
-            ISNULL(b.PurchasePrice, 0)          AS ptr,
-            ISNULL(b.MRP, 0)                    AS mrp,
-            DATEDIFF(DAY, b.GrnDate, GETDATE()) AS age_days,
-            CASE WHEN ISNULL(b.Stock, 0) > 0 THEN 1 ELSE 0 END AS HasStock
-        FROM sync.Batches b
-        WHERE b.tenant_id = @TenantId
-          AND b.store_id  = @StoreId
-          AND b.ProductCode = @ProductCode
-    ),
-    StockRows AS
-    (
-        SELECT *, 1 AS SortGroup FROM BaseData WHERE HasStock = 1
-    ),
-    ZeroStockRanked AS
-    (
-        SELECT *, 2 AS SortGroup,
-               ROW_NUMBER() OVER (ORDER BY expiry_date) AS RN
-        FROM BaseData WHERE HasStock = 0
-    ),
-    FinalRows AS
-    (
-        SELECT batch_no, stock, expiry_date, ptr, mrp, age_days, SortGroup, expiry_date AS SortExpiry
-        FROM StockRows
-        UNION ALL
-        SELECT batch_no, stock, expiry_date, ptr, mrp, age_days, SortGroup, expiry_date
-        FROM ZeroStockRanked
-        WHERE (SELECT COUNT(*) FROM StockRows) < 5
-          AND RN <= (5 - (SELECT COUNT(*) FROM StockRows))
-    )
+    -- Result set 1: batches (== stock.usp_BatchDetails) - every batch,
+    -- zero-stock included; status/sort math lives in the frontend only.
     SELECT
-        batch_no,
-        stock,
-        expiry_date,
-        CASE
-            WHEN age_days >= 365 THEN CAST(CAST(age_days / 365.0 AS DECIMAL(4, 1)) AS VARCHAR(10)) + ' Y'
-            WHEN age_days >= 30  THEN CAST(age_days / 30 AS VARCHAR(10)) + ' M'
-            ELSE CAST(age_days AS VARCHAR(10)) + ' D'
-        END AS age,
-        ptr,
-        mrp
-    FROM FinalRows
-    ORDER BY SortGroup, SortExpiry;
+        CAST(b.BatchCode AS VARCHAR(50))         AS batch_no,
+        ISNULL(b.Stock, 0)                       AS stock,
+        CAST(b.ExpiryDate AS DATE)                AS expiry_date,
+        ISNULL(b.PurchasePrice, 0)               AS ptr,
+        ISNULL(b.MRP, 0)                         AS mrp,
+        CAST(b.GrnDate AS DATE)                   AS last_purchase_date,
+        CAST(b.LastSaleDate AS DATE)              AS last_sale_date,
+        DATEDIFF(DAY, b.GrnDate, GETDATE())      AS purchase_age_days,
+        DATEDIFF(DAY, b.LastSaleDate, GETDATE()) AS sales_age_days
+    FROM sync.Batches b
+    WHERE b.tenant_id = @TenantId
+      AND b.store_id  = @StoreId
+      AND b.ProductCode = @ProductCode
+    ORDER BY
+        CASE WHEN ISNULL(b.Stock, 0) > 0 THEN 0 ELSE 1 END,
+        b.ExpiryDate;
 
     -- Result set 2: purchases (== stock.usp_PurchaseHistory)
     SELECT TOP (15)

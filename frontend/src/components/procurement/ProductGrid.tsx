@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
+import type { SupplierRow, SupplierStockRow, WorkspaceItem } from '../../types/procurement'
 import { num } from '../stock/format'
 import { DEFAULT_SKIP_MODE } from './skipModes'
 import { SkipModeCell } from './SkipModeCell'
 import { SUPPLIER_REC_LIMIT } from './purchaseValue'
+import { formatOffer, offerTooltip } from './SupplierStockTable'
 
 const REVIEWED_STATES = ['review', 'assigned', 'partial']
 
@@ -46,6 +47,9 @@ export function ProductGrid({
   onRestore,
   onToggle,
   onToggleAll,
+  offerByProductCode,
+  remarks,
+  onRemarksChange,
 }: {
   items: WorkspaceItem[]
   selectedId: string | null
@@ -72,6 +76,14 @@ export function ProductGrid({
   onRestore: (item: WorkspaceItem) => void
   onToggle?: (id: string) => void
   onToggleAll?: (ids: string[], on: boolean) => void
+  /** Real per-supplier offer facts keyed by mapped ProductCode, sourced from
+   *  supplier_stock (same rows Supplier Live Stock shows) — replaces the
+   *  unpopulated WorkspaceItem.offer field this grid used to read. */
+  offerByProductCode?: Map<string, SupplierStockRow>
+  /** Free-text Remarks per row (keyed by order_item_id), owned by the page so
+   *  values survive re-renders / row navigation. */
+  remarks?: Record<string, string>
+  onRemarksChange?: (orderItemId: string, value: string) => void
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -365,10 +377,22 @@ export function ProductGrid({
     }
   }
 
+  // Real offer label for a row — supplier_stock (offerByProductCode) first,
+  // falling back to WorkspaceItem.offer if the caller passed neither (Review
+  // All, which has no per-supplier stock context).
+  const offerFor = (item: WorkspaceItem): { label: string; tooltip?: string } | null => {
+    const row = item.product_code ? offerByProductCode?.get(item.product_code) : undefined
+    if (row) {
+      const label = formatOffer(row) ?? (row.discount != null && Number(row.discount) > 0 ? `${num(Number(row.discount))}%` : null)
+      return label ? { label, tooltip: offerTooltip(row) } : null
+    }
+    return item.offer ? { label: item.offer } : null
+  }
+
   // Auto-hide columns that carry no data for the whole list (§13 — never show a
   // column of only "—"). Unit/Pack now live in the detail panel; the grid keeps
   // Offer only when at least one row carries it.
-  const hasOffer = items.some((i) => i.offer != null && i.offer !== '')
+  const hasOffer = items.some((i) => offerFor(i) != null)
 
   return (
     <div className="pm-grid-wrap" ref={wrapRef} tabIndex={-1} onKeyDown={onGridKey}>
@@ -391,9 +415,10 @@ export function ProductGrid({
             <th className="pm-grid__unit">Unit</th>
             <th className="sx-num pm-col70">Stock</th>
             <th className="sx-num pm-col70">Sugg.</th>
-            <th className="sx-num pm-grid__final">Final Qty</th>
+            <th className="sx-num pm-grid__final">Order Qty</th>
             <th className="pm-grid__status">Planning State</th>
             {hasOffer && <th className="pm-grid__offer">Offer</th>}
+            {onRemarksChange && <th>Remarks</th>}
           </tr>
         </thead>
         <tbody>
@@ -509,7 +534,20 @@ export function ProductGrid({
                 </td>
                 {hasOffer && (
                   <td className="pm-grid__offer">
-                    {item.offer ? <span className="pm-offer">{item.offer}</span> : null}
+                    {(() => {
+                      const offer = offerFor(item)
+                      return offer ? <span className="pm-offer" title={offer.tooltip}>{offer.label}</span> : null
+                    })()}
+                  </td>
+                )}
+                {onRemarksChange && (
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      className="pm-remarks-input"
+                      placeholder="—"
+                      value={remarks?.[item.order_item_id] ?? ''}
+                      onChange={(e) => onRemarksChange(item.order_item_id, e.target.value)}
+                    />
                   </td>
                 )}
               </tr>

@@ -28,6 +28,11 @@ import type {
   WorkspaceItem,
   WorkspacePage,
   WorkspaceSummary,
+  DistributionConfigRow,
+  DistributionRunResult,
+  DistributionRunSummary,
+  DistributionRunDetail,
+  DistributionSupplierMapImportResult,
 } from '../types/procurement'
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -711,5 +716,82 @@ export const procurementService = {
     api.post<RefreshRunResult>(
       `/api/procurement/cycles/${cycleId}/refreshes${qs({ tenant_id: tenantId })}`,
       payload,
+    ),
+
+  // Internal Supplier Stock Distribution — one store's own stock (HO, e.g.
+  // NMW) generated out to every other store's supplier_stock feed.
+  distributionConfig: (tenantId: string, sourceStoreCode = 'NMW') =>
+    api.get<DistributionConfigRow[]>(
+      `/api/procurement/distribution/config${qs({ tenant_id: tenantId, source_store_code: sourceStoreCode })}`,
+    ),
+
+  saveDistributionSupplierMap: (
+    tenantId: string,
+    storeId: string,
+    sourceStoreCode: string,
+    localSupplierCode: string,
+  ) =>
+    api.put<{ saved: boolean }>(
+      `/api/procurement/distribution/supplier-map/${storeId}${qs({
+        tenant_id: tenantId,
+        source_store_code: sourceStoreCode,
+        local_supplier_code: localSupplierCode,
+      })}`,
+      {},
+    ),
+
+  importLegacySupplierMap: (tenantId: string, sourceStoreCode = 'NMW') =>
+    api.post<DistributionSupplierMapImportResult>(
+      `/api/procurement/distribution/supplier-map/import-legacy${qs({
+        tenant_id: tenantId,
+        source_store_code: sourceStoreCode,
+      })}`,
+      {},
+    ),
+
+  saveDistributionConfig: (
+    tenantId: string,
+    storeId: string,
+    payload: { whatsapp_group?: string; phone_number?: string; enabled: boolean },
+  ) =>
+    api.put<{ saved: boolean }>(
+      `/api/procurement/distribution/config/${storeId}${qs({
+        tenant_id: tenantId,
+        whatsapp_group: payload.whatsapp_group,
+        phone_number: payload.phone_number,
+        enabled: String(payload.enabled),
+      })}`,
+      {},
+    ),
+
+  generateDistribution: (
+    tenantId: string,
+    sourceStoreCode: string,
+    provider: 'legacy' | 'nexora',
+    opts?: { storeIds?: string[]; excelOnly?: boolean; supplierUpdateOnly?: boolean; startedBy?: string | null },
+  ) =>
+    api.post<DistributionRunResult>(
+      `/api/procurement/distribution/generate${qs({
+        tenant_id: tenantId,
+        source_store_code: sourceStoreCode,
+        provider,
+        store_ids: opts?.storeIds?.join(','),
+        excel_only: opts?.excelOnly ? 'true' : undefined,
+        supplier_update_only: opts?.supplierUpdateOnly ? 'true' : undefined,
+        started_by: opts?.startedBy ?? undefined,
+      })}`,
+      {},
+    ),
+
+  distributionRuns: (tenantId: string, limit = 20) =>
+    api.get<DistributionRunSummary[]>(`/api/procurement/distribution/runs${qs({ tenant_id: tenantId, limit })}`),
+
+  distributionRunDetail: (runId: string) =>
+    api.get<DistributionRunDetail>(`/api/procurement/distribution/runs/${runId}`),
+
+  retryDistribution: (runId: string, provider?: 'legacy' | 'nexora', startedBy?: string | null) =>
+    api.post<DistributionRunResult>(
+      `/api/procurement/distribution/runs/${runId}/retry${qs({ provider, started_by: startedBy ?? undefined })}`,
+      {},
     ),
 }

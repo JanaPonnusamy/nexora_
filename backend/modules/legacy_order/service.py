@@ -271,6 +271,63 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode):
         )
 
 
+# ----- Stock Update (internal supplier distribution) --------------------------
+
+def start_stock_update(store_name, source_store_name="NMW"):
+    """Push ``source_store_name``'s own branch stock into this store's
+    SupplierStock rows (central OrderNMC.SupplierStock), same as running the
+    Excel import but sourced live from the HO branch instead of a file."""
+    store = _resolve_store(store_name)
+    if store_name == source_store_name:
+        raise ValueError(f"'{store_name}' is the source store; nothing to update.")
+    source_store = _resolve_store(source_store_name)
+    if not store["ho_code"]:
+        raise ValueError(
+            f"'{store_name}' has no Ho_code configured in dbo.Stores -- "
+            f"don't know what supplier code its own order screen uses for {source_store_name}."
+        )
+
+    running = _running_job_kind(store_name)
+    if running:
+        raise ValueError(
+            f"A {running} job is already running for '{store_name}'. Wait for it to finish."
+        )
+
+    ok, error = repository.test_branch_connection(source_store)
+    if not ok:
+        raise ConnectionError(f"Failed to connect to source store '{source_store_name}': {error}")
+
+    job_id = _new_job("stock", store_name, 2)
+    threading.Thread(
+        target=_run_stock_update, args=(job_id, store, source_store), daemon=True
+    ).start()
+    return job_id
+
+
+def _run_stock_update(job_id, store, source_store):
+    try:
+        _update(job_id, step=0, message=f"Reading stock from {source_store['store_name']}...")
+        rows = repository.branch_stock(source_store)
+        _update(job_id, step=1, message=f"Read {len(rows)} products. Updating {store['store_name']}'s supplier stock...")
+        # suppliercode is THIS store's own code for the source ("HO") supplier
+        # (dbo.Stores.Ho_code), not the source store's name -- NMS/NMA file it
+        # under '94', NMC under 'ST_2', NMG under '99', etc.
+        inserted = repository.replace_supplier_stock(store["store_name"], store["ho_code"], rows)
+        _update(
+            job_id, status="completed", step=2,
+            result={"rows": inserted, "source_store": source_store["store_name"], "supplier_code": store["ho_code"]},
+            message=f"Supplier stock updated ({inserted} rows from {source_store['store_name']}, filed as supplier '{store['ho_code']}').",
+            finished_at=datetime.datetime.now(),
+        )
+    except Exception as exc:
+        logger.exception("legacy stock update failed")
+        _update(
+            job_id, status="failed", error=str(exc),
+            message=f"Stock update failed: {exc}",
+            finished_at=datetime.datetime.now(),
+        )
+
+
 def _run_order(job_id, store, min_days, max_days, mode):
     step = {"n": 0}
 

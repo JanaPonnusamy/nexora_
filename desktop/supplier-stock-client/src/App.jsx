@@ -9,7 +9,7 @@ import {
   saveSession,
   saveSettings
 } from './state/session.js';
-import { buildBrandKey, buildPrefixSearchKey, normalizeForBadge } from './lib/similarSearch.js';
+import { buildBrandKey, buildPrefixSearchKey, normalizeForBadge, normalizeForLooseExact } from './lib/similarSearch.js';
 import { getCachedProducts, syncCachedProducts } from './lib/productCache.js';
 
 const screens = [
@@ -48,6 +48,18 @@ function isSuperAdmin(session) {
   const roles = session?.user?.roles || [];
   const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase());
   return roleNames.some((name) => name.includes('super admin') || name.includes('superadmin'));
+}
+
+function canUnlockDeviceSetup(userOrSession) {
+  const roles = userOrSession?.user?.roles || userOrSession?.roles || [];
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase());
+  return roleNames.some((name) => (
+    name.includes('admin')
+    || name.includes('purchase_manager')
+    || name.includes('purchase manager')
+    || name.includes('platform_owner')
+    || name.includes('platform owner')
+  ));
 }
 
 function isWarehouseStore(store) {
@@ -92,6 +104,11 @@ const queryClient = new QueryClient({
   }
 });
 
+const PREFETCH_PREVIOUS_ROWS = 20;
+const PREFETCH_NEXT_ROWS = 20;
+const PREFETCH_CONCURRENCY = 4;
+const RECENT_ANALYSIS_ROWS = 20;
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -105,7 +122,17 @@ function AppShell() {
   const [session, setSession] = useState(loadSession);
   const [activeScreen, setActiveScreen] = useState('stock');
 
-  const isConfigured = Boolean(settings.tenantId && settings.storeId);
+  const sessionStore = session?.user?.roles?.[0] || null;
+  const effectiveTenantId = settings.tenantId || session?.user?.tenant_id || '';
+  const effectiveStoreId = settings.storeId || sessionStore?.store_id || '';
+  const effectiveStoreName = settings.storeName || sessionStore?.store_name || '';
+  const runtimeSettings = {
+    ...settings,
+    tenantId: effectiveTenantId,
+    storeId: effectiveStoreId,
+    storeName: effectiveStoreName
+  };
+  const isConfigured = Boolean(effectiveTenantId && effectiveStoreId);
 
   const navItems = useMemo(() => {
     const modules = userModules(session?.user);
@@ -114,14 +141,14 @@ function AppShell() {
   }, [session]);
 
   useEffect(() => {
-    if (!isConfigured) {
+    if (!session && !isConfigured) {
       setActiveScreen('settings');
       return;
     }
     if (!navItems.some((item) => item.id === activeScreen)) {
       setActiveScreen(navItems[0]?.id || 'settings');
     }
-  }, [activeScreen, navItems, isConfigured]);
+  }, [activeScreen, navItems, isConfigured, session]);
 
   useEffect(() => {
     const storeName = session?.user?.roles?.[0]?.store_name || settings.storeName;
@@ -133,7 +160,18 @@ function AppShell() {
   }
 
   function handleLogin(loginPayload) {
-    setSession(saveSession(loginPayload));
+    const savedSession = saveSession(loginPayload);
+    const user = savedSession?.user || {};
+    const primaryRole = user?.roles?.[0] || {};
+    const nextSettings = saveSettings({
+      ...loadSettings(),
+      tenantId: loadSettings().tenantId || user?.tenant_id || '',
+      storeId: loadSettings().storeId || primaryRole?.store_id || '',
+      storeName: loadSettings().storeName || primaryRole?.store_name || ''
+    });
+    setSettings(nextSettings);
+    setSession(savedSession);
+    setActiveScreen('stock');
   }
 
   function handleLogout() {
@@ -146,6 +184,20 @@ function AppShell() {
     window.addEventListener('nexora:unauthorized', onUnauthorized);
     return () => window.removeEventListener('nexora:unauthorized', onUnauthorized);
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    if (settings.tenantId && settings.storeId && settings.storeName) return;
+    const user = session.user || {};
+    const primaryRole = user?.roles?.[0] || {};
+    const nextSettings = saveSettings({
+      ...settings,
+      tenantId: settings.tenantId || user?.tenant_id || '',
+      storeId: settings.storeId || primaryRole?.store_id || '',
+      storeName: settings.storeName || primaryRole?.store_name || ''
+    });
+    setSettings(nextSettings);
+  }, [session, settings]);
 
   return (
     <div className="app-shell">
@@ -187,16 +239,21 @@ function AppShell() {
       </header>
 
       <main className="workspace">
-        {!isConfigured ? (
-          <SettingsScreen settings={settings} onSave={persistSettings} requireAdminGate session={session} />
-        ) : !session && activeScreen !== 'settings' ? (
+        {!session ? (
           <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
+        ) : !isConfigured && activeScreen === 'settings' ? (
+          <SettingsScreen
+            settings={runtimeSettings}
+            onSave={persistSettings}
+            requireAdminGate={!canUnlockDeviceSetup(session)}
+            session={session}
+          />
         ) : activeScreen === 'settings' ? (
-          <SettingsScreen settings={settings} onSave={persistSettings} session={session} />
+          <SettingsScreen settings={runtimeSettings} onSave={persistSettings} session={session} />
         ) : activeScreen === 'analysis' ? (
           <SupplierStockAnalysis session={session} />
         ) : (
-          <StockAvailability session={session} settings={settings} onOpenSettings={() => setActiveScreen('settings')} />
+          <StockAvailability session={session} settings={runtimeSettings} onOpenSettings={() => setActiveScreen('settings')} />
         )}
       </main>
     </div>
@@ -210,6 +267,20 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
   const [tenants, setTenants] = useState([]);
   const [stores, setStores] = useState([]);
   const [devices, setDevices] = useState([]);
+  const [waState, setWaState] = useState(null);
+  const [waStatus, setWaStatus] = useState({ state: 'idle', message: '' });
+  const [waDraft, setWaDraft] = useState({ browser_command: '', delivery_mode: 'manual_browser', launch_wait_seconds: 15 });
+  const [waProfileDraft, setWaProfileDraft] = useState({
+    profile_id: '',
+    profile_name: '',
+    owner_type: 'store',
+    owner_name: '',
+    tenant_id: '',
+    store_id: '',
+    default_phone: '',
+    notes: '',
+    is_default: false
+  });
   const [adminUnlocked, setAdminUnlocked] = useState(!requireAdminGate);
   const [adminForm, setAdminForm] = useState({ username: '', password: '' });
   const [adminStatus, setAdminStatus] = useState({ state: 'idle', message: '' });
@@ -217,6 +288,10 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
   const effectiveSession = session || adminSession;
 
   useEffect(() => setDraft(settings), [settings]);
+  useEffect(() => {
+    if (!effectiveSession) return;
+    loadWhatsApp();
+  }, [effectiveSession]);
 
   async function unlockAdmin(event) {
     event.preventDefault();
@@ -224,9 +299,8 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
     try {
       const response = await api.login(adminForm);
       const user = response.user || response.data?.user || response;
-      const roleNames = (user?.roles || []).map((role) => String(role?.role_name || role?.role || '').toLowerCase());
-      if (!roleNames.some((name) => name.includes('admin'))) {
-        setAdminStatus({ state: 'error', message: 'This account does not have admin access.' });
+      if (!canUnlockDeviceSetup(user)) {
+        setAdminStatus({ state: 'error', message: 'This account is authenticated, but it does not have setup access.' });
         return;
       }
       setAdminSession(response);
@@ -351,6 +425,92 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
     }
   }
 
+  function hydrateWhatsApp(payload) {
+    setWaState(payload);
+    setWaDraft({
+      browser_command: payload.settings?.browser_command || '',
+      delivery_mode: payload.settings?.delivery_mode || 'manual_browser',
+      launch_wait_seconds: payload.settings?.launch_wait_seconds || 15
+    });
+  }
+
+  async function loadWhatsApp() {
+    setWaStatus({ state: 'loading', message: 'Loading WhatsApp settings...' });
+    try {
+      const payload = await api.getWhatsAppState(effectiveSession);
+      hydrateWhatsApp(payload);
+      setWaStatus({ state: 'ok', message: 'WhatsApp settings loaded.' });
+    } catch (error) {
+      setWaStatus({ state: 'error', message: error.message });
+    }
+  }
+
+  async function saveWhatsAppRuntime() {
+    setWaStatus({ state: 'loading', message: 'Saving WhatsApp runtime...' });
+    try {
+      const payload = await api.saveWhatsAppSettings(waDraft, effectiveSession);
+      hydrateWhatsApp(payload);
+      setWaStatus({ state: 'ok', message: 'WhatsApp runtime settings saved.' });
+    } catch (error) {
+      setWaStatus({ state: 'error', message: error.message });
+    }
+  }
+
+  async function saveWhatsAppProfile() {
+    setWaStatus({ state: 'loading', message: 'Saving WhatsApp profile...' });
+    try {
+      const payload = await api.saveWhatsAppProfile(waProfileDraft, effectiveSession);
+      setWaState((current) => current ? { ...current, profiles: payload.profiles, capabilities: payload.capabilities } : current);
+      const profile = payload.profile || {};
+      setWaProfileDraft({
+        profile_id: profile.profile_id || '',
+        profile_name: profile.profile_name || '',
+        owner_type: profile.owner_type || 'store',
+        owner_name: profile.owner_name || '',
+        tenant_id: profile.tenant_id || '',
+        store_id: profile.store_id || '',
+        default_phone: profile.default_phone || '',
+        notes: profile.notes || '',
+        is_default: Boolean(profile.is_default)
+      });
+      setWaStatus({ state: 'ok', message: 'WhatsApp profile saved.' });
+    } catch (error) {
+      setWaStatus({ state: 'error', message: error.message });
+    }
+  }
+
+  async function launchWhatsAppProfile(profileId) {
+    setWaStatus({ state: 'loading', message: 'Opening WhatsApp Web...' });
+    try {
+      const payload = await api.launchWhatsAppProfile(profileId, effectiveSession);
+      setWaStatus({ state: 'ok', message: payload.message || 'WhatsApp Web opened.' });
+    } catch (error) {
+      setWaStatus({ state: 'error', message: error.message });
+    }
+  }
+
+  async function deleteWhatsAppProfile(profileId) {
+    setWaStatus({ state: 'loading', message: 'Deleting WhatsApp profile...' });
+    try {
+      const payload = await api.deleteWhatsAppProfile(profileId, effectiveSession);
+      setWaState((current) => current ? { ...current, profiles: payload.profiles, capabilities: payload.capabilities } : current);
+      setWaProfileDraft({
+        profile_id: '',
+        profile_name: '',
+        owner_type: 'store',
+        owner_name: '',
+        tenant_id: '',
+        store_id: '',
+        default_phone: '',
+        notes: '',
+        is_default: false
+      });
+      setWaStatus({ state: 'ok', message: 'WhatsApp profile deleted.' });
+    } catch (error) {
+      setWaStatus({ state: 'error', message: error.message });
+    }
+  }
+
   return (
     <section className="screen-panel">
       <ScreenHeader title="Settings" subtitle="Choose how this desktop client reaches the Nexora API." />
@@ -468,6 +628,88 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
             </tbody>
           </table>
         ) : <div className="empty-state">No devices loaded.</div>}
+      </div>
+
+      <div className="table-wrap">
+        <div className={`status-line ${waStatus.state}`}>{waStatus.message || 'WhatsApp settings and QR profiles.'}</div>
+        <div className="form-grid">
+          <label>
+            WhatsApp browser
+            <input value={waDraft.browser_command} onChange={(event) => setWaDraft({ ...waDraft, browser_command: event.target.value })} placeholder="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" />
+          </label>
+          <label>
+            Delivery mode
+            <select value={waDraft.delivery_mode} onChange={(event) => setWaDraft({ ...waDraft, delivery_mode: event.target.value })}>
+              <option value="manual_browser">Manual browser</option>
+              <option value="selenium">Selenium automation</option>
+            </select>
+          </label>
+          <label>
+            Launch wait seconds
+            <input type="number" min="10" value={waDraft.launch_wait_seconds} onChange={(event) => setWaDraft({ ...waDraft, launch_wait_seconds: Number(event.target.value || 15) })} />
+          </label>
+        </div>
+        <div className="action-row">
+          <button className="secondary-button" onClick={loadWhatsApp}>Refresh WhatsApp</button>
+          <button className="primary-button" onClick={saveWhatsAppRuntime}>Save WhatsApp runtime</button>
+        </div>
+
+        <div className="form-grid">
+          <label>
+            Profile name
+            <input value={waProfileDraft.profile_name} onChange={(event) => setWaProfileDraft({ ...waProfileDraft, profile_name: event.target.value })} />
+          </label>
+          <label>
+            Owner type
+            <select value={waProfileDraft.owner_type} onChange={(event) => setWaProfileDraft({ ...waProfileDraft, owner_type: event.target.value })}>
+              <option value="store">Store</option>
+              <option value="user">User</option>
+              <option value="system">System</option>
+            </select>
+          </label>
+          <label>
+            Owner name
+            <input value={waProfileDraft.owner_name} onChange={(event) => setWaProfileDraft({ ...waProfileDraft, owner_name: event.target.value })} />
+          </label>
+          <label>
+            Default phone
+            <input value={waProfileDraft.default_phone} onChange={(event) => setWaProfileDraft({ ...waProfileDraft, default_phone: event.target.value })} />
+          </label>
+        </div>
+        <div className="action-row">
+          <button className="primary-button" onClick={saveWhatsAppProfile}>{waProfileDraft.profile_id ? 'Update profile' : 'Create profile'}</button>
+          <button className="secondary-button" onClick={() => setWaProfileDraft({ profile_id: '', profile_name: '', owner_type: 'store', owner_name: '', tenant_id: '', store_id: '', default_phone: '', notes: '', is_default: false })}>New profile</button>
+        </div>
+
+        {waState?.profiles?.length ? (
+          <table>
+            <thead><tr><th>Profile</th><th>Owner</th><th>Phone</th><th>Actions</th></tr></thead>
+            <tbody>
+              {waState.profiles.map((profile) => (
+                <tr key={profile.profile_id}>
+                  <td>{profile.profile_name}{profile.is_default ? ' (Default)' : ''}</td>
+                  <td>{profile.owner_type}{profile.owner_name ? ` / ${profile.owner_name}` : ''}</td>
+                  <td>{profile.default_phone || '-'}</td>
+                  <td>
+                    <button className="secondary-button" onClick={() => setWaProfileDraft({
+                      profile_id: profile.profile_id,
+                      profile_name: profile.profile_name,
+                      owner_type: profile.owner_type,
+                      owner_name: profile.owner_name,
+                      tenant_id: profile.tenant_id,
+                      store_id: profile.store_id,
+                      default_phone: profile.default_phone,
+                      notes: profile.notes,
+                      is_default: Boolean(profile.is_default)
+                    })}>Edit</button>
+                    <button className="secondary-button" onClick={() => launchWhatsAppProfile(profile.profile_id)}>Launch QR</button>
+                    <button className="secondary-button" onClick={() => deleteWhatsAppProfile(profile.profile_id)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <div className="empty-state">No WhatsApp profiles created yet.</div>}
       </div>
     </section>
   );
@@ -921,7 +1163,7 @@ const BATCH_COLS = '68px 46px 58px 78px';
 const BATCH_DETAIL_COLS = '78px 40px 52px 62px 62px 62px 84px 22px';
 // Supplier gets the freed-up width (Qty/Free/GRN Date/GRN No trimmed) so
 // long supplier names stop truncating.
-const PURCHASE_COLS = '24px 22px 48px 56px 62px 50px 1fr';
+const PURCHASE_COLS = '24px 22px 52px 56px 64px 52px minmax(132px, 1fr)';
 const PURCHASE_COLS_NO_SUPPLIER = '32px 32px 64px 58px 54px 54px 58px';
 // Merged Billing History summary grid: Qty | Dis% | Date | Bill No | Product | MRP | Amount | ▶
 const BILLING_COLS = '34px 44px 58px 64px 1fr 56px 64px 16px';
@@ -1049,7 +1291,7 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
         {restrictWarehouse ? null : (
           <>
             <section className="row-cell trend-cell">
-              {pending ? <SkeletonBlock lines={1} /> : <MonthlyMovementChart rows={movement} />}
+              {pending ? <SkeletonBlock lines={1} /> : <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} />}
             </section>
 
             <BatchTable rows={batches} pending={pending} />
@@ -1422,6 +1664,36 @@ function storeLabel(store) {
   return name ? `NM${name.toUpperCase()}` : 'STORE';
 }
 
+function candidateMatchMeta(sourceName, targetName, score = 0) {
+  const strictSource = normalizeForBadge(sourceName);
+  const strictTarget = normalizeForBadge(targetName);
+  if (strictSource && strictSource === strictTarget) {
+    return { priority: 2, badge: { label: 'EXACT MATCH', className: 'exact' } };
+  }
+
+  const compactSource = normalizeForLooseExact(sourceName);
+  const compactTarget = normalizeForLooseExact(targetName);
+  if (compactSource && compactSource === compactTarget) {
+    return {
+      priority: 1,
+      badge: {
+        label: 'NORMALIZED EXACT',
+        className: 'exact',
+        title: 'Matched after compact normalization of units and dosage words'
+      }
+    };
+  }
+
+  return {
+    priority: 0,
+    badge: {
+      label: `${Math.round(score || 0)}%`,
+      className: 'similar',
+      title: `Similar match ${Math.round(score || 0)}%`
+    }
+  };
+}
+
 function productTooltip(row) {
   const parts = [];
   if (row.mrp !== undefined && row.mrp !== null && row.mrp !== '') parts.push(`MRP: ${row.mrp}`);
@@ -1533,8 +1805,83 @@ function orderStores(rows, loginStoreId, storeOrder = []) {
   });
 }
 
-function MonthlyMovementChart({ rows }) {
-  const months = rows.slice(-4);
+function monthKey(value) {
+  if (!value) return '';
+  const raw = String(value).trim();
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
+  const slashMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slashMatch) {
+    const year = slashMatch[3].length === 2 ? `20${slashMatch[3]}` : slashMatch[3];
+    return `${year}-${slashMatch[2].padStart(2, '0')}`;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function buildChartRows(rows, purchases = [], sales = []) {
+  const movementRows = Array.isArray(rows) ? rows : [];
+  const orderedKeys = [];
+  const byMonth = new Map();
+  const ensureMonth = (key) => {
+    if (!key) return null;
+    if (!byMonth.has(key)) {
+      orderedKeys.push(key);
+      byMonth.set(key, { period: key, pur: 0, tin: 0, sal: 0, tout: 0, stk: 0 });
+    }
+    return byMonth.get(key);
+  };
+
+  movementRows.forEach((row) => {
+    const key = monthKey(row.period || row.month);
+    if (!key) return;
+    ensureMonth(key);
+    byMonth.set(key, {
+      period: key,
+      pur: Number(row.pur || 0),
+      tin: Number(row.tin || 0),
+      sal: Number(row.sal || 0),
+      tout: Number(row.tout || 0),
+      stk: Number(row.stk || 0)
+    });
+  });
+
+  if (!orderedKeys.length) {
+    const base = new Date();
+    base.setDate(1);
+    for (let offset = 3; offset >= 0; offset -= 1) {
+      const point = new Date(base.getFullYear(), base.getMonth() - offset, 1);
+      const key = `${point.getFullYear()}-${String(point.getMonth() + 1).padStart(2, '0')}`;
+      orderedKeys.push(key);
+      byMonth.set(key, { period: key, pur: 0, tin: 0, sal: 0, tout: 0, stk: 0 });
+    }
+  }
+
+  purchases.forEach((row) => {
+    const key = monthKey(row.grndate || row.date);
+    const target = ensureMonth(key);
+    if (!target) return;
+    if (!target.pur && !target.tin) {
+      target.pur += Number(row.qty || 0) + Number(row.free || 0);
+    }
+  });
+
+  sales.forEach((row) => {
+    const key = monthKey(row.bill_date || row.date);
+    const target = ensureMonth(key);
+    if (!target) return;
+    if (!target.sal && !target.tout) {
+      target.sal += Number(row.qty || 0);
+    }
+  });
+
+  orderedKeys.sort((a, b) => a.localeCompare(b));
+  return orderedKeys.slice(-4).map((key) => byMonth.get(key));
+}
+
+function MonthlyMovementChart({ rows, purchases = [], sales = [] }) {
+  const months = buildChartRows(rows, purchases, sales);
   if (!months.length) return <div className="empty-state">No chart data yet.</div>;
 
   const maxValue = Math.max(1, ...months.flatMap((row) => [
@@ -1840,6 +2187,58 @@ function formatDate(value) {
   if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0].slice(2)}`;
   return raw;
 }
+
+const SUPPLIER_MAPPING_FILTERS = [
+  { value: 'all', label: 'All products' },
+  { value: 'not_mapped', label: 'Not mapped' },
+  { value: 'partially_matched', label: 'Partially matched' },
+  { value: 'fully_matched', label: 'Fully matched' }
+];
+
+function analysisBucketLabel(bucket) {
+  return ({
+    already_mapped: 'Already mapped',
+    stores_not_mapped: 'Stores not mapped',
+    mapped_store_no_stock: 'Mapped store no stock',
+    home_store_no_stock_prediction: 'Predict new stock',
+    not_mapped_products: 'Not mapped product'
+  })[bucket] || bucket || '-';
+}
+
+function mappingFilterLabel(value) {
+  return SUPPLIER_MAPPING_FILTERS.find((filter) => filter.value === value)?.label || 'Filtered';
+}
+
+function supplierRowStableKey(row) {
+  return [
+    String(row?.supplier_code || '').trim(),
+    String(row?.supplier_product_code || '').trim(),
+    String(row?.supplier_product_name || '').trim().toLowerCase()
+  ].join('::');
+}
+
+function normalizeMappingScopeStatus(row) {
+  if (row?.mapping_scope_status) return row.mapping_scope_status;
+  const hasMapping = Boolean(Number(row?.has_mapping ?? (row?.product_code ? 1 : 0)));
+  if (!hasMapping) return 'not_mapped';
+  const unmappedStoreCount = Number(row?.unmapped_store_count ?? 0);
+  return unmappedStoreCount > 0 ? 'partially_matched' : 'fully_matched';
+}
+
+function normalizeSupplierProductRow(row) {
+  const hasMapping = Boolean(Number(row?.has_mapping ?? (row?.product_code ? 1 : 0)));
+  return {
+    ...row,
+    has_mapping: hasMapping ? 1 : 0,
+    mapping_scope_status: normalizeMappingScopeStatus(row),
+    _stable_key: supplierRowStableKey(row)
+  };
+}
+
+function normalizeSupplierProductRows(rows) {
+  return asArray(rows).map(normalizeSupplierProductRow);
+}
+
 function SupplierStockAnalysis({ session }) {
   const settings = loadSettings();
   const tenantId = settings.tenantId || '';
@@ -1856,7 +2255,10 @@ function SupplierStockAnalysis({ session }) {
   const [products, setProducts] = useState([]);
   const [productSearch, setProductSearch] = useState('');
   const [onlyAvailable, setOnlyAvailable] = useState(true);
+  const [mappingFilter, setMappingFilter] = useState('all');
   const [productStatus, setProductStatus] = useState({ state: 'idle', message: 'Select a supplier to list products.' });
+  const [reportStatus, setReportStatus] = useState({ state: 'idle', message: '' });
+  const [reportBusy, setReportBusy] = useState(false);
   // Keyboard nav (Up/Down/Enter/Esc, req 2) over the virtualized list below.
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const productListScrollRef = useRef(null);
@@ -1892,6 +2294,12 @@ function SupplierStockAnalysis({ session }) {
   const [importOpen, setImportOpen] = useState(false);
   const selectedStockIdRef = useRef('');
   const exactFallbackCacheRef = useRef(new Map());
+  const [persistedAnalysisView, setPersistedAnalysisView] = useState(null);
+  const recentAnalysisCacheRef = useRef(new Map());
+  const [loadMetrics, setLoadMetrics] = useState({ stockMs: null, detailsMs: null, totalMs: null, selectionId: '', resolvedProductCode: '', cached: false });
+  const selectionTimingRef = useRef({ selectionId: '', startedAt: 0, stockResolvedAt: 0, stockMs: null, detailsMs: null });
+  const rowDetailKeyRef = useRef(new Map());
+  const prefetchWindowTokenRef = useRef(0);
   useEffect(() => { selectedStockIdRef.current = selectedStockId; }, [selectedStockId]);
 
   const hideSupplierColumn = isSalesmanOnly(session);
@@ -1938,6 +2346,89 @@ function SupplierStockAnalysis({ session }) {
     };
   }, [match, detailsQuery.data]);
 
+  useEffect(() => {
+    if (!selectedStockId) return;
+    selectionTimingRef.current = {
+      selectionId: selectedStockId,
+      startedAt: performance.now(),
+      stockResolvedAt: 0,
+      stockMs: null,
+      detailsMs: null
+    };
+  }, [selectedStockId]);
+
+  useEffect(() => {
+    if (!selectedStockId || !stockQuery.data || selectionTimingRef.current.selectionId !== selectedStockId) return;
+    if (selectionTimingRef.current.stockResolvedAt) return;
+    const stockMs = performance.now() - selectionTimingRef.current.startedAt;
+    selectionTimingRef.current.stockResolvedAt = performance.now();
+    selectionTimingRef.current.stockMs = stockMs;
+    if (!stockQuery.data.product_code) {
+      setLoadMetrics({
+        stockMs,
+        detailsMs: null,
+        totalMs: stockMs,
+        selectionId: selectedStockId,
+        resolvedProductCode: '',
+        cached: stockQuery.isFetched && !stockQuery.isFetching && stockMs < 80
+      });
+    }
+  }, [selectedStockId, stockQuery.data, stockQuery.isFetched, stockQuery.isFetching]);
+
+  useEffect(() => {
+    if (!selectedStockId || !match?.product_code || !dashboard || selectionTimingRef.current.selectionId !== selectedStockId) return;
+    if (!selectionTimingRef.current.stockResolvedAt) {
+      const stockMs = performance.now() - selectionTimingRef.current.startedAt;
+      selectionTimingRef.current.stockResolvedAt = performance.now();
+      selectionTimingRef.current.stockMs = stockMs;
+    }
+    const detailsMs = performance.now() - selectionTimingRef.current.stockResolvedAt;
+    const totalMs = performance.now() - selectionTimingRef.current.startedAt;
+    selectionTimingRef.current.detailsMs = detailsMs;
+    setLoadMetrics({
+      stockMs: selectionTimingRef.current.stockMs,
+      detailsMs,
+      totalMs,
+      selectionId: selectedStockId,
+      resolvedProductCode: match.product_code,
+      cached: totalMs < 120
+    });
+    setPersistedAnalysisView({
+      selectionId: selectedStockId,
+      match,
+      dashboard
+    });
+  }, [selectedStockId, match, dashboard]);
+
+  useEffect(() => {
+    if (!selectedStockId || !match) return;
+    rememberRecentAnalysis(selectedStockId, {
+      persistedAnalysisView: match.product_code && dashboard
+        ? {
+          selectionId: selectedStockId,
+          match,
+          dashboard
+        }
+        : null,
+      similar,
+      similarStatus,
+      similarDetails,
+      exactFallbackDetails,
+      selectedCandidate,
+      activeDetailStore
+    });
+  }, [
+    selectedStockId,
+    match,
+    dashboard,
+    similar,
+    similarStatus,
+    similarDetails,
+    exactFallbackDetails,
+    selectedCandidate,
+    activeDetailStore
+  ]);
+
   const detailStatus = useMemo(() => {
     if (!selectedStockId) return { state: 'idle', message: 'Select a product to analyze.' };
     if (stockQuery.isLoading) return { state: 'loading', message: 'Loading match and stock details...' };
@@ -1951,6 +2442,44 @@ function SupplierStockAnalysis({ session }) {
   const detailsStage = detailsQuery.isLoading || (Boolean(productCode) && !detailsQuery.data)
     ? 'loading'
     : (detailsQuery.data ? 'done' : 'idle');
+
+  function rememberRecentAnalysis(stockId, snapshot) {
+    if (!stockId || !snapshot) return;
+    const next = new Map(recentAnalysisCacheRef.current);
+    next.delete(stockId);
+    next.set(stockId, { ...snapshot, cachedAt: Date.now() });
+    while (next.size > RECENT_ANALYSIS_ROWS) {
+      const oldestKey = next.keys().next().value;
+      next.delete(oldestKey);
+    }
+    recentAnalysisCacheRef.current = next;
+  }
+
+  function restoreRecentAnalysis(stockId) {
+    const cached = recentAnalysisCacheRef.current.get(stockId);
+    if (!cached) return false;
+    if (cached.persistedAnalysisView) setPersistedAnalysisView(cached.persistedAnalysisView);
+    setSimilar(cached.similar ?? null);
+    setSimilarStatus(cached.similarStatus ?? { state: 'idle', message: '' });
+    setSimilarDetails(cached.similarDetails ?? {});
+    setExactFallbackDetails(cached.exactFallbackDetails ?? {});
+    setSelectedCandidate(cached.selectedCandidate ?? null);
+    if (cached.activeDetailStore) setActiveDetailStore(cached.activeDetailStore);
+    setLoadMetrics((prev) => (
+      cached.persistedAnalysisView?.selectionId === stockId
+        ? { ...prev, selectionId: stockId, cached: true }
+        : prev
+    ));
+    return true;
+  }
+
+  const showingPersistedAnalysis = Boolean(
+    persistedAnalysisView?.dashboard
+    && persistedAnalysisView.selectionId !== selectedStockId
+    && (stockQuery.isFetching || detailsQuery.isFetching)
+  );
+  const renderedMatch = showingPersistedAnalysis ? persistedAnalysisView.match : match;
+  const renderedDashboard = showingPersistedAnalysis ? persistedAnalysisView.dashboard : dashboard;
 
   // Cache Similar Search results (ranked candidates per store) by supplier_stock_id.
   const similarSearchCacheRef = useRef(new Map());
@@ -1995,16 +2524,25 @@ function SupplierStockAnalysis({ session }) {
 
   // Instant client-side narrowing of the already-fetched product list (req 3,
   // req 16: <100ms) - covers both text search and the "in stock only" toggle.
+  const mappingFilteredProducts = useMemo(() => {
+    return products.filter((row) => (
+      mappingFilter === 'all' || row.mapping_scope_status === mappingFilter
+    ));
+  }, [products, mappingFilter]);
+
   const visibleProducts = useMemo(() => {
     const term = productSearch.trim().toLowerCase();
-    return products.filter((row) => {
-      if (onlyAvailable && !(Number(row.available_stock) > 0)) return false;
+    return mappingFilteredProducts.filter((row) => {
+      const shouldApplyStockOnly = onlyAvailable && mappingFilter !== 'not_mapped';
+      if (shouldApplyStockOnly && !(Number(row.available_stock) > 0)) return false;
       if (!term) return true;
       return String(row.supplier_product_name || '').toLowerCase().includes(term)
         || String(row.supplier_product_code || '').toLowerCase().includes(term)
         || String(row.product_code || '').toLowerCase().includes(term);
     });
-  }, [products, productSearch, onlyAvailable]);
+  }, [mappingFilteredProducts, productSearch, onlyAvailable]);
+
+  const filteredOutByStockOnly = mappingFilteredProducts.length > 0 && visibleProducts.length === 0 && onlyAvailable;
 
   useEffect(() => {
     if (!visibleProducts.length) {
@@ -2051,20 +2589,70 @@ function SupplierStockAnalysis({ session }) {
     }
   }
 
-  // req 12: quietly warm the fast stock-stage query for the next couple of
-  // rows around the current selection so scrolling/picking nearby products
-  // feels instant - cheap since it's only the fast stage, not batches/sales.
-  function prefetchAdjacentProducts(index) {
-    visibleProducts.slice(Math.max(0, index - 1), index + 3).forEach((row) => {
-      if (!row?.supplier_stock_id) return;
-      queryClient.prefetchQuery({
-        queryKey: ['supplier-dashboard-stock', row.supplier_stock_id],
-        queryFn: ({ signal }) => api.getSupplierDashboardStock(row.supplier_stock_id, session, { signal })
-      });
+  async function prefetchProductRow(row) {
+    if (!row?.supplier_stock_id) return null;
+    const stockKey = ['supplier-dashboard-stock', row.supplier_stock_id];
+    const stock = await queryClient.fetchQuery({
+      queryKey: stockKey,
+      queryFn: ({ signal }) => api.getSupplierDashboardStock(row.supplier_stock_id, session, { signal }),
+      staleTime: 8 * 60 * 1000
+    }).catch(() => null);
+    if (!stock?.product_code || !stock?.supplier_stock?.store_id) return null;
+    const detailKey = ['supplier-dashboard-details', stock.supplier_stock.store_id, stock.product_code, 4];
+    rowDetailKeyRef.current.set(row.supplier_stock_id, detailKey);
+    await queryClient.prefetchQuery({
+      queryKey: detailKey,
+      queryFn: ({ signal }) => api.getSupplierDashboardDetails(row.supplier_stock_id, session, {
+        signal,
+        productCode: stock.product_code,
+        sourceStoreId: stock.supplier_stock.store_id,
+        months: 4
+      }),
+      staleTime: 8 * 60 * 1000
+    }).catch(() => null);
+    return detailKey;
+  }
+
+  async function prefetchProductWindow(centerIndex) {
+    if (!visibleProducts.length || centerIndex < 0) return;
+    const token = ++prefetchWindowTokenRef.current;
+    const start = Math.max(0, centerIndex - PREFETCH_PREVIOUS_ROWS);
+    const end = Math.min(visibleProducts.length, centerIndex + PREFETCH_NEXT_ROWS + 1);
+    const windowRows = visibleProducts.slice(start, end);
+    const keepIds = new Set(windowRows.map((row) => row.supplier_stock_id));
+    Array.from(recentAnalysisCacheRef.current.keys()).forEach((stockId) => keepIds.add(stockId));
+
+    for (let offset = 0; offset < windowRows.length; offset += PREFETCH_CONCURRENCY) {
+      if (prefetchWindowTokenRef.current !== token) return;
+      const batch = windowRows.slice(offset, offset + PREFETCH_CONCURRENCY);
+      await Promise.all(batch.map((row) => prefetchProductRow(row)));
+    }
+
+    if (prefetchWindowTokenRef.current !== token) return;
+
+    visibleProducts.forEach((row) => {
+      if (!row?.supplier_stock_id || keepIds.has(row.supplier_stock_id)) return;
+      queryClient.removeQueries({ queryKey: ['supplier-dashboard-stock', row.supplier_stock_id], exact: true });
+      const detailKey = rowDetailKeyRef.current.get(row.supplier_stock_id);
+      if (detailKey) {
+        queryClient.removeQueries({ queryKey: detailKey, exact: true });
+        rowDetailKeyRef.current.delete(row.supplier_stock_id);
+      }
     });
   }
 
-  const groups = useMemo(() => (dashboard ? groupDashboardByStore(dashboard) : []), [dashboard]);
+  function prefetchAdjacentProducts(index) {
+    prefetchProductWindow(index).catch(() => {});
+  }
+
+  const groups = useMemo(() => (renderedDashboard ? groupDashboardByStore(renderedDashboard) : []), [renderedDashboard]);
+
+  useEffect(() => {
+    if (!visibleProducts.length) return;
+    const selectedIndex = visibleProducts.findIndex((row) => row.supplier_stock_id === selectedStockId);
+    const centerIndex = selectedIndex >= 0 ? selectedIndex : 0;
+    prefetchProductWindow(centerIndex).catch(() => {});
+  }, [visibleProducts, selectedStockId]);
 
   // Default the store-detail tab to this device's home store whenever a new
   // product's stores load; keep the current tab if it still applies (e.g.
@@ -2079,7 +2667,7 @@ function SupplierStockAnalysis({ session }) {
     });
   }, [groups, session]);
 
-  const activeSupplierProductName = selectedProductName || match?.supplier_stock?.supplier_product_name || '';
+  const activeSupplierProductName = selectedProductName || renderedMatch?.supplier_stock?.supplier_product_name || '';
 
   useEffect(() => {
     if (!selectedStockId || !match || match.product_code || !activeSupplierProductName) return;
@@ -2110,7 +2698,7 @@ function SupplierStockAnalysis({ session }) {
     const cached = await getCachedProducts(tenantId, supplierCode);
     if (productRequestRef.current !== requestToken) return;
     if (cached.length) {
-      setProducts(cached);
+      setProducts(normalizeSupplierProductRows(cached));
       setProductStatus({ state: 'ok', message: `${cached.length} items (cached, refreshing...)` });
     } else {
       setProductStatus({ state: 'loading', message: 'Loading supplier products...' });
@@ -2122,7 +2710,7 @@ function SupplierStockAnalysis({ session }) {
       // gets cached and diffed against next time.
       const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0 });
       if (productRequestRef.current !== requestToken) return;
-      const items = asArray(response);
+      const items = normalizeSupplierProductRows(response);
       setProducts(items);
       setProductStatus({ state: 'ok', message: `${items.length} items` });
       syncCachedProducts(tenantId, supplierCode, items);
@@ -2204,14 +2792,18 @@ function SupplierStockAnalysis({ session }) {
     const cacheKey = `${stockId}:${similarSearchChars}`;
     const cached = similarSearchCacheRef.current.get(cacheKey);
     if (cached) {
-      setSimilar(cached);
-      setSimilarStatus({
-        state: 'ok',
-        message: `${similarSummaryMessage(cached)} Fallback search used ${cached.searchKey || '-'} (${similarSearchChars} chars).`
-      });
-      markRowMatchState(stockId, cached.matchesFound > 0);
-      autoLoadTopCandidates(stockId, cached);
-      return;
+      if (!cached.matchesFound || !cached.byStore?.size) {
+        similarSearchCacheRef.current.delete(cacheKey);
+      } else {
+        setSimilar(cached);
+        setSimilarStatus({
+          state: 'ok',
+          message: `${similarSummaryMessage(cached)} Fallback search used ${cached.searchKey || '-'} (${similarSearchChars} chars).`
+        });
+        markRowMatchState(stockId, cached.matchesFound > 0);
+        autoLoadTopCandidates(stockId, cached);
+        return;
+      }
     }
 
     setSimilarStatus({ state: 'loading', message: 'Searching similar products across stores...' });
@@ -2219,7 +2811,6 @@ function SupplierStockAnalysis({ session }) {
       const searchKey = buildPrefixSearchKey(supplierProductName, similarSearchChars);
       if (!searchKey) {
         const empty = { searchKey: '', matchesFound: 0, storesWithMatches: 0, byStore: new Map() };
-        similarSearchCacheRef.current.set(cacheKey, empty);
         if (selectedStockIdRef.current !== stockId) return;
         setSimilar(empty);
         setSimilarStatus({ state: 'ok', message: 'No similar products found.' });
@@ -2238,7 +2829,6 @@ function SupplierStockAnalysis({ session }) {
 
       if (!storeStepHits.size) {
         const empty = { searchKey, matchesFound: 0, storesWithMatches: 0, byStore: new Map() };
-        similarSearchCacheRef.current.set(cacheKey, empty);
         setSimilar(empty);
         setSimilarStatus({ state: 'ok', message: `No similar products found in any store for "${searchKey}".` });
         markRowMatchState(stockId, false);
@@ -2254,7 +2844,6 @@ function SupplierStockAnalysis({ session }) {
       );
       if (selectedStockIdRef.current !== stockId) return;
 
-      const originalKey = normalizeForBadge(supplierProductName);
       const byStore = new Map();
       let matchesFound = 0;
       storeIds.forEach((storeId, index) => {
@@ -2265,7 +2854,7 @@ function SupplierStockAnalysis({ session }) {
         if (Array.isArray(ranked) && ranked.length) {
           candidates = ranked.map((c) => {
             const stockRow = stockByCode.get(String(c.target_product_code));
-            const isExact = normalizeForBadge(c.target_product_name) === originalKey;
+            const matchMeta = candidateMatchMeta(supplierProductName, c.target_product_name, c.total_score);
             return {
               product_code: c.target_product_code,
               product_name: c.target_product_name,
@@ -2273,23 +2862,30 @@ function SupplierStockAnalysis({ session }) {
               stock: stockRow?.stock,
               mrp: c.mrp ?? stockRow?.mrp,
               score: c.total_score,
-              matchBadge: isExact
-                ? { label: 'EXACT MATCH', className: 'exact' }
-                : { label: `${Math.round(c.total_score)}%`, className: 'similar', title: `Similar match ${Math.round(c.total_score)}%` }
+              matchPriority: matchMeta.priority,
+              matchBadge: matchMeta.badge
             };
           });
         } else {
           // Ranking call failed for this store - fall back to the raw,
           // unranked stock-search hits rather than dropping the store.
-          candidates = hit.products.map((p) => ({
-            ...p,
-            score: 0,
-            matchBadge: normalizeForBadge(p.product_name) === originalKey
-              ? { label: 'EXACT MATCH', className: 'exact' }
-              : { label: 'SIM', className: 'similar', title: 'Similar match' }
-          }));
+          candidates = hit.products.map((p) => {
+            const matchMeta = candidateMatchMeta(supplierProductName, p.product_name, 0);
+            return {
+              ...p,
+              score: 0,
+              matchPriority: matchMeta.priority,
+              matchBadge: matchMeta.priority > 0
+                ? matchMeta.badge
+                : { label: 'SIM', className: 'similar', title: 'Similar match' }
+            };
+          });
         }
-        candidates.sort((a, b) => (b.score || 0) - (a.score || 0));
+        candidates.sort((a, b) => {
+          const priorityDiff = (b.matchPriority || 0) - (a.matchPriority || 0);
+          if (priorityDiff !== 0) return priorityDiff;
+          return (b.score || 0) - (a.score || 0);
+        });
         matchesFound += candidates.length;
         byStore.set(storeId, { storeMeta: hit.storeMeta, candidates });
       });
@@ -2323,11 +2919,14 @@ function SupplierStockAnalysis({ session }) {
     const stockId = row.supplier_stock_id;
     setSelectedStockId(stockId);
     setSelectedProductName(row.supplier_product_name || '');
-    setSimilarDetails({});
-    setExactFallbackDetails({});
-    setSelectedCandidate(null);
-    setSimilar(null);
-    setSimilarStatus({ state: 'idle', message: '' });
+    const restored = restoreRecentAnalysis(stockId);
+    if (!restored) {
+      setSimilarDetails({});
+      setExactFallbackDetails({});
+      setSelectedCandidate(null);
+      setSimilar(null);
+      setSimilarStatus({ state: 'idle', message: '' });
+    }
     const index = visibleProducts.findIndex((item) => item.supplier_stock_id === stockId);
     if (index >= 0) {
       setHighlightIndex(index);
@@ -2403,6 +3002,161 @@ function SupplierStockAnalysis({ session }) {
     setExportStatus({ state: 'ok', message: `Exported ${orderedRows.length} ordered row(s).` });
   }
 
+  async function exportAnalysisReport() {
+    if (!selectedSupplier || reportBusy) return;
+    setReportBusy(true);
+    setReportStatus({ state: 'loading', message: 'Building supplier analysis report...' });
+    try {
+      const response = await api.getSupplierAnalysisReport(selectedSupplier, session, {
+        onlyAvailable: onlyAvailable ? 1 : 0
+      });
+      const rows = asArray(response?.rows);
+      const visibleIds = new Set(visibleProducts.map((row) => row.supplier_stock_id));
+      const visibleStableKeys = new Set(visibleProducts.map((row) => row._stable_key || supplierRowStableKey(row)));
+      const filteredRows = rows.filter((row) => (
+        visibleIds.has(row.supplier_stock_id)
+        || visibleStableKeys.has(supplierRowStableKey(row))
+      ));
+      if (!filteredRows.length) {
+        const fallbackRows = visibleProducts.map((row) => ({
+          supplier_product_code: row.supplier_product_code || '',
+          supplier_product_name: row.supplier_product_name || '',
+          product_code: row.product_code || '',
+          mapped_product_name: row.mapped_product_name || '',
+          mapping_scope_status: row.mapping_scope_status || '',
+          analysis_bucket: row.mapping_scope_status === 'not_mapped' ? 'not_mapped_products' : '',
+          source_store_name: row.store_name || '',
+          source_store_code: row.store_code || '',
+          supplier_available_stock: row.available_stock ?? 0,
+          source_store_stock_qty: '',
+          network_stock_qty: '',
+          mapped_store_count: row.mapped_store_count ?? '',
+          unmapped_store_count: row.unmapped_store_count ?? '',
+          stores_with_stock_count: '',
+          stores_without_stock_count: '',
+          recent_3m_sale_qty: '',
+          avg_monthly_sale_qty: '',
+          predicted_required_qty: '',
+          ptr: row.ptr ?? '',
+          mrp: row.mrp ?? ''
+        }));
+        if (!fallbackRows.length) {
+          setReportStatus({ state: 'error', message: 'No rows match the current filters for analysis export.' });
+          return;
+        }
+        const header = [
+          'Supplier Product Code',
+          'Supplier Product Name',
+          'Mapped Product Code',
+          'Mapped Product Name',
+          'Filter Status',
+          'Analysis Bucket',
+          'Source Store',
+          'Supplier Available Stock',
+          'Source Store Stock',
+          'Network Stock',
+          'Mapped Store Count',
+          'Unmapped Store Count',
+          'Stores With Stock',
+          'Stores Without Stock',
+          'Recent 3M Sale Qty',
+          'Avg Monthly Sale Qty',
+          'Predicted Required New Stock',
+          'PTR',
+          'MRP'
+        ];
+        const csvRows = fallbackRows.map((row) => [
+          row.supplier_product_code || '',
+          row.supplier_product_name || '',
+          row.product_code || '',
+          row.mapped_product_name || '',
+          row.mapping_scope_status || '',
+          analysisBucketLabel(row.analysis_bucket),
+          row.source_store_name || row.source_store_code || '',
+          row.supplier_available_stock ?? 0,
+          row.source_store_stock_qty ?? '',
+          row.network_stock_qty ?? '',
+          row.mapped_store_count ?? '',
+          row.unmapped_store_count ?? '',
+          row.stores_with_stock_count ?? '',
+          row.stores_without_stock_count ?? '',
+          row.recent_3m_sale_qty ?? '',
+          row.avg_monthly_sale_qty ?? '',
+          row.predicted_required_qty ?? '',
+          row.ptr ?? '',
+          row.mrp ?? ''
+        ]);
+        const csv = [header, ...csvRows].map((line) => line.map(csvCell).join(',')).join('\n');
+        downloadTextFile(
+          `supplier_analysis_${selectedSupplier}_${new Date().toISOString().slice(0, 10)}.csv`,
+          csv,
+          'text/csv;charset=utf-8'
+        );
+        setReportStatus({
+          state: 'ok',
+          message: `Exported ${fallbackRows.length} analysis row(s) using the current filtered grid data.`
+        });
+        return;
+      }
+      const header = [
+        'Supplier Product Code',
+        'Supplier Product Name',
+        'Mapped Product Code',
+        'Mapped Product Name',
+        'Filter Status',
+        'Analysis Bucket',
+        'Source Store',
+        'Supplier Available Stock',
+        'Source Store Stock',
+        'Network Stock',
+        'Mapped Store Count',
+        'Unmapped Store Count',
+        'Stores With Stock',
+        'Stores Without Stock',
+        'Recent 3M Sale Qty',
+        'Avg Monthly Sale Qty',
+        'Predicted Required New Stock',
+        'PTR',
+        'MRP'
+      ];
+      const csvRows = filteredRows.map((row) => [
+        row.supplier_product_code || '',
+        row.supplier_product_name || '',
+        row.product_code || '',
+        row.mapped_product_name || '',
+        row.mapping_scope_status || '',
+        analysisBucketLabel(row.analysis_bucket),
+        row.source_store_name || row.source_store_code || '',
+        row.supplier_available_stock ?? 0,
+        row.source_store_stock_qty ?? 0,
+        row.network_stock_qty ?? 0,
+        row.mapped_store_count ?? 0,
+        row.unmapped_store_count ?? 0,
+        row.stores_with_stock_count ?? 0,
+        row.stores_without_stock_count ?? 0,
+        row.recent_3m_sale_qty ?? 0,
+        row.avg_monthly_sale_qty ?? 0,
+        row.predicted_required_qty ?? 0,
+        row.ptr ?? '',
+        row.mrp ?? ''
+      ]);
+      const csv = [header, ...csvRows].map((line) => line.map(csvCell).join(',')).join('\n');
+      downloadTextFile(
+        `supplier_analysis_${selectedSupplier}_${new Date().toISOString().slice(0, 10)}.csv`,
+        csv,
+        'text/csv;charset=utf-8'
+      );
+      setReportStatus({
+        state: 'ok',
+        message: `Exported ${filteredRows.length} analysis row(s). Predicted new stock total: ${response?.summary?.predicted_required_qty ?? 0}.`
+      });
+    } catch (error) {
+      setReportStatus({ state: 'error', message: error.message });
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
   async function confirmMapping(productCode) {
     if (!match?.supplier_stock) return;
     const row = match.supplier_stock;
@@ -2458,7 +3212,7 @@ function SupplierStockAnalysis({ session }) {
     let cancelled = false;
     const normalizedName = buildBrandKey(activeSupplierProductName) || activeSupplierProductName;
     const searchKey = buildPrefixSearchKey(activeSupplierProductName, similarSearchChars);
-    const fallbackCacheKey = `${sourceStoreId || 'source'}:${dashboard?.product_code || 'none'}:${similarSearchChars}`;
+    const fallbackCacheKey = `${sourceStoreId || 'source'}:${renderedDashboard?.product_code || 'none'}:${similarSearchChars}`;
 
     async function resolveUnmappedStores() {
       const cached = exactFallbackCacheRef.current.get(fallbackCacheKey);
@@ -2471,7 +3225,14 @@ function SupplierStockAnalysis({ session }) {
 
         const ranked = await api.getMatchCandidates(store.store_id, normalizedName, session, { limit: 5 }).catch(() => null);
         if (Array.isArray(ranked) && ranked.length) {
-          const top = ranked[0];
+          const top = [...ranked].sort((a, b) => {
+            const matchA = candidateMatchMeta(activeSupplierProductName, a.target_product_name, a.total_score);
+            const matchB = candidateMatchMeta(activeSupplierProductName, b.target_product_name, b.total_score);
+            const priorityDiff = matchB.priority - matchA.priority;
+            if (priorityDiff !== 0) return priorityDiff;
+            return (b.total_score || 0) - (a.total_score || 0);
+          })[0];
+          const matchMeta = candidateMatchMeta(activeSupplierProductName, top.target_product_name, top.total_score);
           candidate = {
             product_code: top.target_product_code,
             product_name: top.target_product_name,
@@ -2479,26 +3240,37 @@ function SupplierStockAnalysis({ session }) {
             stock: 0,
             mrp: top.mrp,
             score: top.total_score,
-            matchBadge: {
-              label: `${Math.round(top.total_score || 0)}%`,
-              className: 'similar',
-              title: `Normalized fallback: ${normalizedName}`
-            }
+            matchPriority: matchMeta.priority,
+            matchBadge: matchMeta.priority > 0
+              ? matchMeta.badge
+              : {
+                label: `${Math.round(top.total_score || 0)}%`,
+                className: 'similar',
+                title: `Normalized fallback: ${normalizedName}`
+              }
           };
         }
 
         if (!candidate && searchKey) {
           const searchResponse = await api.searchStockProducts(searchKey, session, { onlyStock: false }).catch(() => null);
           const storeHit = asArray(searchResponse?.stores).find((row) => row.store_id === store.store_id);
-          const top = storeHit?.products?.[0];
+          const top = [...(storeHit?.products || [])].sort((a, b) => {
+            const matchA = candidateMatchMeta(activeSupplierProductName, a.product_name, 0);
+            const matchB = candidateMatchMeta(activeSupplierProductName, b.product_name, 0);
+            return matchB.priority - matchA.priority;
+          })[0];
           if (top) {
+            const matchMeta = candidateMatchMeta(activeSupplierProductName, top.product_name, 0);
             candidate = {
               ...top,
-              matchBadge: {
-                label: 'SIM',
-                className: 'similar',
-                title: `Normalized fallback: ${searchKey}`
-              }
+              matchPriority: matchMeta.priority,
+              matchBadge: matchMeta.priority > 0
+                ? matchMeta.badge
+                : {
+                  label: 'SIM',
+                  className: 'similar',
+                  title: `Normalized fallback: ${searchKey}`
+                }
             };
           }
         }
@@ -2537,7 +3309,7 @@ function SupplierStockAnalysis({ session }) {
     });
 
     return () => { cancelled = true; };
-  }, [selectedStockId, activeSupplierProductName, exactGridStores, groups, session, similarSearchChars, sourceStoreId, dashboard?.product_code]);
+  }, [selectedStockId, activeSupplierProductName, exactGridStores, groups, session, similarSearchChars, sourceStoreId, renderedDashboard?.product_code]);
 
   const exactGridRows = useMemo(() => {
     const groupMap = new Map(groups.map((group) => [group.store.store_id, group]));
@@ -2552,7 +3324,7 @@ function SupplierStockAnalysis({ session }) {
         };
       }
       const productRow = {
-        product_code: dashboard?.product_code,
+        product_code: renderedDashboard?.product_code,
         product_name: unresolved
           ? 'No mapped product'
           : (group?.store?.product_name || match?.exact_match?.product_name || match?.supplier_stock?.supplier_product_name || '-'),
@@ -2570,7 +3342,11 @@ function SupplierStockAnalysis({ session }) {
             expiry_date: row.expirydate,
             stock: row.stock,
             mrp: row.mrp,
-            batch_no: row.batchcode
+            batch_no: row.batchcode,
+            grndate: row.grndate,
+            lastsaledate: row.lastsaledate,
+            last_purchase_date: row.grndate,
+            last_sale_date: row.lastsaledate
           })),
           purchases: (group?.purchases || []).map((row) => ({
             qty: row.qty,
@@ -2595,7 +3371,7 @@ function SupplierStockAnalysis({ session }) {
         }
       };
     });
-  }, [dashboard?.product_code, exactGridStores, exactFallbackDetails, groups, match]);
+  }, [renderedDashboard?.product_code, exactGridStores, exactFallbackDetails, groups, renderedMatch]);
 
   return (
     <section className="screen-panel supplier-analysis-workbench">
@@ -2623,6 +3399,16 @@ function SupplierStockAnalysis({ session }) {
           onKeyDown={handleProductSearchKeyDown}
           disabled={!selectedSupplier}
         />
+        <select
+          className="toolbar-supplier-select toolbar-mapping-filter"
+          value={mappingFilter}
+          onChange={(event) => setMappingFilter(event.target.value)}
+          disabled={!selectedSupplier}
+        >
+          {SUPPLIER_MAPPING_FILTERS.map((filter) => (
+            <option key={filter.value} value={filter.value}>{filter.label}</option>
+          ))}
+        </select>
         <label className="similar-search-slider" title="When no saved mapping is found, search stores using the first N characters of the product name.">
           <span>Fallback chars</span>
           <input
@@ -2639,6 +3425,9 @@ function SupplierStockAnalysis({ session }) {
           <input type="checkbox" checked={onlyAvailable} onChange={(event) => setOnlyAvailable(event.target.checked)} />
           In stock only
         </label>
+        <button type="button" className="secondary-button toolbar-import-btn" onClick={exportAnalysisReport} disabled={!selectedSupplier || reportBusy}>
+          {reportBusy ? 'Building Report...' : 'Export Analysis Report'}
+        </button>
         <MappingBadge products={products} />
       </div>
 
@@ -2693,6 +3482,7 @@ function SupplierStockAnalysis({ session }) {
             </div>
           )}
           {selectedSupplier && exportStatus.message && <div className={`status-line ${exportStatus.state}`}>{exportStatus.message}</div>}
+          {selectedSupplier && reportStatus.message && <div className={`status-line ${reportStatus.state}`}>{reportStatus.message}</div>}
           <div className="supplier-product-rows procurement-grid-scroll" ref={productListScrollRef}>
             {visibleProducts.length ? (
               <table className="procurement-grid">
@@ -2772,7 +3562,13 @@ function SupplierStockAnalysis({ session }) {
                   })}
                 </tbody>
               </table>
-            ) : <div className="empty-state">{selectedSupplier ? 'No products for this supplier.' : 'Pick a supplier above to list its products.'}</div>}
+            ) : <div className="empty-state">
+              {selectedSupplier
+                ? filteredOutByStockOnly
+                  ? `No ${mappingFilterLabel(mappingFilter).toLowerCase()} products are currently in stock. Turn off "In stock only" to view them.`
+                  : 'No products for this supplier.'
+                : 'Pick a supplier above to list its products.'}
+            </div>}
           </div>
         </div>
 
@@ -2781,6 +3577,18 @@ function SupplierStockAnalysis({ session }) {
 
           {selectedStockId && detailStatus.state !== 'ok' && (
             <div className={`status-line ${detailStatus.state}`}>{detailStatus.message}</div>
+          )}
+
+          {selectedStockId && (
+            <div className={`status-line ${showingPersistedAnalysis ? 'loading' : 'ok'}`}>
+              {showingPersistedAnalysis
+                ? `Loading next product... Previous product kept visible.`
+                : loadMetrics.selectionId === selectedStockId && loadMetrics.stockMs !== null
+                  ? `Load time: stock ${Math.round(loadMetrics.stockMs)}ms`
+                    + (loadMetrics.detailsMs !== null ? `, details ${Math.round(loadMetrics.detailsMs)}ms, total ${Math.round(loadMetrics.totalMs)}ms` : '')
+                    + (loadMetrics.cached ? ' (cached)' : '')
+                  : 'Timing capture pending...'}
+            </div>
           )}
 
           {selectedStockId && match && !match.product_code && (
@@ -2825,9 +3633,9 @@ function SupplierStockAnalysis({ session }) {
             </>
           )}
 
-          {dashboard && (
+          {renderedDashboard && (
             <>
-              <ProductInfoBar dashboard={dashboard} match={match} detailsLoading={detailsStage === 'loading'} />
+              <ProductInfoBar dashboard={renderedDashboard} match={renderedMatch} detailsLoading={!showingPersistedAnalysis && detailsStage === 'loading'} />
               <div className="store-row-workspace no-side-search exact-store-workspace">
                 <section className="store-row-grid">
                   <StoreColumnHeaders hideSupplierColumn={hideSupplierColumn} sticky />
@@ -3053,7 +3861,9 @@ function StoreDetailBody({ group, colorIndex }) {
         </section>
         <section className="detail-block trend-block">
           <h4>4-Month Trend</h4>
-          {hasMovement ? <MonthlyMovementChart rows={movement} /> : <div className="detail-compact-placeholder">No chart data.</div>}
+          {(hasMovement || purchases.length || sales.length)
+            ? <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} />
+            : <div className="detail-compact-placeholder">No chart data.</div>}
         </section>
       </div>
       <div className="store-detail-bottom">

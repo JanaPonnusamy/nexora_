@@ -15,6 +15,11 @@ import os
 
 import pyodbc
 
+try:
+    import pytds
+except Exception:  # pragma: no cover - optional runtime fallback
+    pytds = None
+
 try:  # python-dotenv is a declared dependency; load backend/.env in source mode.
     from dotenv import load_dotenv
 
@@ -23,6 +28,43 @@ except Exception:  # pragma: no cover - dotenv optional / already loaded
     pass
 
 _DEFAULT_DRIVER = "ODBC Driver 17 for SQL Server"
+
+
+class _PytdsCursorAdapter:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def _normalize(self, sql, params):
+        if not params:
+            return sql, ()
+        if len(params) == 1 and isinstance(params[0], (list, tuple)):
+            normalized = tuple(params[0])
+        else:
+            normalized = tuple(params)
+        return sql.replace("?", "%s"), normalized
+
+    def execute(self, sql, *params):
+        statement, normalized = self._normalize(sql, params)
+        return self._cursor.execute(statement, normalized)
+
+    def executemany(self, sql, params_seq):
+        statement = sql.replace("?", "%s")
+        normalized = [tuple(item) if isinstance(item, (list, tuple)) else item for item in params_seq]
+        return self._cursor.executemany(statement, normalized)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _PytdsConnectionAdapter:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def cursor(self):
+        return _PytdsCursorAdapter(self._connection.cursor())
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
 
 
 def _connection_string():
@@ -46,4 +88,21 @@ def _connection_string():
 
 
 def get_connection():
-    return pyodbc.connect(_connection_string())
+    try:
+        return pyodbc.connect(_connection_string())
+    except pyodbc.Error:
+        if pytds is None:
+            raise
+        auth_mode = os.getenv("DB_AUTH_MODE", "SQL").strip().upper()
+        if auth_mode == "WINDOWS":
+            return _PytdsConnectionAdapter(pytds.connect(
+                dsn=os.getenv("DB_SERVER", "192.168.10.73"),
+                database=os.getenv("DB_DATABASE", "NEXORA_PLATFORM"),
+                use_sso=True,
+            ))
+        return _PytdsConnectionAdapter(pytds.connect(
+            dsn=os.getenv("DB_SERVER", "192.168.10.73"),
+            database=os.getenv("DB_DATABASE", "NEXORA_PLATFORM"),
+            user=os.getenv("DB_USERNAME", "sa"),
+            password=os.getenv("DB_PASSWORD", "Admin123"),
+        ))

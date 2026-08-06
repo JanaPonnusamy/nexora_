@@ -36,6 +36,10 @@
   grid-template-columns: repeat(6, minmax(110px, 1fr));
 }
 
+.pr-kpis--compare {
+  grid-template-columns: repeat(6, minmax(160px, 1fr));
+}
+
 .pr-kpi {
   min-height: 74px;
   padding: 12px;
@@ -76,7 +80,7 @@
 
 .pr-table {
   width: 100%;
-  min-width: 1120px;
+  min-width: 1280px;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -96,7 +100,9 @@
   background: #f1f5f9;
   font-size: 12px;
   text-align: left;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.35;
+  vertical-align: top;
 }
 
 .pr-table td span {
@@ -136,6 +142,15 @@
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid #dbe4ef;
+}
+
+.pr-totalrow {
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+.pr-totalrow td {
+  border-top: 2px solid #cbd5e1;
 }
 
 .pr-analysis__head {
@@ -191,6 +206,47 @@
 .pr-chart h3 {
   margin: 0 0 10px;
   font-size: 15px;
+}
+
+.pr-compare-summary {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #dbe4ef;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.pr-compare-summary__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.pr-compare-summary__grid div {
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.pr-compare-summary__grid span {
+  display: block;
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.pr-compare-summary__grid strong {
+  color: #172033;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.pr-compare-note {
+  margin: 12px 0 0;
+  color: #475569;
 }
 
 .pr-bars {
@@ -251,7 +307,9 @@
   }
 
   .pr-kpis,
-  .pr-kpis--compact {
+  .pr-kpis--compact,
+  .pr-kpis--compare,
+  .pr-compare-summary__grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

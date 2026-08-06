@@ -1,0 +1,48 @@
+.wa-send {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.wa-send__panel {
+  min-width: min(34rem, 100%);
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 0.9rem;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+}
+
+.wa-send__head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.wa-send__head small {
+  color: var(--bs-secondary-color);
+}
+
+.wa-send__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+
+.wa-send__meta {
+  margin-top: 0.75rem;
+  color: var(--bs-secondary-color);
+  font-size: 0.86rem;
+}
+
+.wa-send__actions {
+  margin-top: 0.85rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 767.98px) {
+  .wa-send__grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -15,6 +15,7 @@ import SyncAdministrationPage from '../pages/sync/SyncAdministrationPage'
 import ProductMappingPage from '../pages/mapping/ProductMappingPage'
 import StockAvailabilityPage from '../pages/stock/StockAvailabilityPage'
 import StockCheckReportPage from '../pages/stock-check/StockCheckReportPage'
+import StockIntegrityReportPage from '../pages/stock-integrity/StockIntegrityReportPage'
 import PurchaseWorkspacePage from '../pages/procurement/PurchaseWorkspacePage'
 import ProductIntelligencePage from '../pages/procurement/ProductIntelligencePage'
 import RefreshLauncherPage from '../pages/procurement/RefreshLauncherPage'
@@ -86,6 +87,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/product-mapping" element={<RequireCapability cap="PRODUCT_MAPPING"><ProductMappingPage /></RequireCapability>} />
         <Route path="/stock-availability" element={<RequireCapability cap="INVENTORY"><StockAvailabilityPage /></RequireCapability>} />
         <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />
+        <Route path="/stock-integrity" element={<RequireCapability cap="INVENTORY"><StockIntegrityReportPage /></RequireCapability>} />
         <Route path="/procurement/console" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleRefreshConsolePage /></RequireCapability>} />
         <Route path="/procurement/cycles" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleManagementPage /></RequireCapability>} />
         <Route path="/procurement/refreshes" element={<RequireCapability cap="PROCUREMENT_ADMIN"><RefreshManagementPage /></RequireCapability>} />

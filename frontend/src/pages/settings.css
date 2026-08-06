@@ -1,0 +1,208 @@
+.settings-page {
+  --settings-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 252, 0.98));
+  --settings-border: rgba(15, 23, 42, 0.08);
+  --settings-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 1rem;
+}
+
+.settings-card {
+  padding: 1.25rem;
+  background: var(--settings-surface);
+  border: 1px solid var(--settings-border);
+  border-radius: 1rem;
+  box-shadow: var(--settings-shadow);
+}
+
+.settings-card--stack {
+  margin-top: 1rem;
+}
+
+.settings-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.settings-card__header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.settings-card__header p {
+  margin: 0.25rem 0 0;
+  color: var(--bs-secondary-color);
+}
+
+.settings-form {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.settings-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.settings-meta {
+  display: grid;
+  gap: 0.85rem;
+  margin: 1.25rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.settings-meta dt {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.settings-meta dd {
+  margin: 0.2rem 0 0;
+  word-break: break-word;
+}
+
+.health-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.health-item {
+  padding: 1rem;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.health-item.is-ok {
+  border-color: rgba(25, 135, 84, 0.22);
+  background: linear-gradient(180deg, rgba(25, 135, 84, 0.06), rgba(255, 255, 255, 0.9));
+}
+
+.health-item.is-error {
+  border-color: rgba(220, 53, 69, 0.2);
+  background: linear-gradient(180deg, rgba(220, 53, 69, 0.05), rgba(255, 255, 255, 0.9));
+}
+
+.health-item__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.health-item__title h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.health-item p {
+  margin: 0 0 0.45rem;
+}
+
+.health-item small {
+  color: var(--bs-secondary-color);
+}
+
+.settings-profile-list {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.settings-profile-card {
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.settings-profile-card p {
+  margin: 0.5rem 0;
+  color: var(--bs-secondary-color);
+}
+
+.settings-profile-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.settings-profile-card__head small {
+  display: block;
+  color: var(--bs-secondary-color);
+}
+
+.settings-profile-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings-message-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.settings-message-card {
+  padding: 0.9rem 1rem;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.settings-message-card.is-incoming {
+  border-color: rgba(13, 110, 253, 0.22);
+  background: linear-gradient(180deg, rgba(13, 110, 253, 0.05), rgba(255, 255, 255, 0.92));
+}
+
+.settings-message-card.is-outgoing {
+  border-color: rgba(25, 135, 84, 0.22);
+  background: linear-gradient(180deg, rgba(25, 135, 84, 0.05), rgba(255, 255, 255, 0.92));
+}
+
+.settings-message-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.settings-message-card__head small {
+  color: var(--bs-secondary-color);
+}
+
+.settings-message-card p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 991.98px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-inline-grid {
+    grid-template-columns: 1fr;
+  }
+}

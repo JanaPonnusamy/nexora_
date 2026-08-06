@@ -55,7 +55,16 @@ type CycleAction = 'keep' | 'closeRefresh' | 'new'
 type RefreshInfo = { count: number; latestName: string | null; latestNo: number | null; latestAt: string | null }
 
 const POLL_MS = 2500
-const SYNC_TIMEOUT_MS = 240_000
+// The agent picks up a queued task on its own ~60s poll cycle (store_agent's
+// SYNC_POLL_SECONDS), then works through tables sequentially - a store with a
+// few large tables can legitimately run well past 4 minutes. A fixed
+// wall-clock deadline on the whole sync was firing on real, still-progressing
+// work. Instead we only time out when progress genuinely stalls: no change in
+// completed_tables (or status) for STALL_TIMEOUT_MS. SYNC_MAX_MS is just an
+// outer sanity net for a truly wedged execution, not the thing meant to fire
+// in normal operation.
+const STALL_TIMEOUT_MS = 90_000
+const SYNC_MAX_MS = 30 * 60_000
 const STAGES: StageKey[] = ['sync', 'cycle', 'refresh']
 const STAGE_LABEL: Record<StageKey, string> = { sync: 'Sync', cycle: 'Cycle', refresh: 'Refresh' }
 
@@ -95,6 +104,13 @@ function pollSync(
 ): Promise<PollOutcome> {
   return new Promise((resolve) => {
     const start = Date.now()
+    // "Heartbeat" here is the execution's own progress signal (status +
+    // completed_tables), not a separate agent ping — it's already returned by
+    // /api/sync/history/{id} on every poll, so no new endpoint is needed to
+    // tell a genuinely stalled execution apart from one still working through
+    // its table list.
+    let lastSignature = ''
+    let lastProgressAt = start
     const tick = async () => {
       if (cancelled()) return resolve('cancelled')
       try {
@@ -103,12 +119,20 @@ function pollSync(
         const total = sum.total_tables ?? 0
         const done = sum.completed_tables ?? 0
         onProgress(total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null)
+        const signature = `${sum.status ?? ''}:${done}:${sum.failed_tables ?? 0}:${sum.rows_uploaded ?? 0}`
+        if (signature !== lastSignature) {
+          lastSignature = signature
+          lastProgressAt = Date.now()
+        }
         const t = terminal(sum.status)
         if (t) return resolve(t)
       } catch {
-        /* transient (agent mid-write / network blip) — keep polling */
+        /* transient (agent mid-write / network blip) — keep polling, doesn't
+         * reset the stall clock since it's not evidence of real progress */
       }
-      if (Date.now() - start > SYNC_TIMEOUT_MS) return resolve('timeout')
+      const now = Date.now()
+      if (now - lastProgressAt > STALL_TIMEOUT_MS) return resolve('timeout')
+      if (now - start > SYNC_MAX_MS) return resolve('timeout')
       window.setTimeout(tick, POLL_MS)
     }
     window.setTimeout(tick, POLL_MS)

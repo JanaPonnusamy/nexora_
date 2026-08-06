@@ -10,7 +10,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
-from modules.time_report import config, excel_export as xls, service
+from modules.time_report import config, excel_export as xls, images, service
 from modules.time_report.database import TimeReportDatabaseUnavailable
 from modules.time_report.schemas import TimeReportMeta
 
@@ -67,6 +67,43 @@ def daily(
     if export == "xlsx":
         return _xlsx(xls.daily_xlsx(data), f"daily_{rdate}.xlsx")
     return data
+
+
+@router.get("/daily/image")
+def daily_image(
+    date_: str = Query(None, alias="date"),
+    dept_id: str = Query(None),
+):
+    """PNG of a single store/department for one date."""
+    rdate = date_ or date.today().isoformat()
+    data = _guard(lambda: service.daily_report(rdate, dept_id))
+    if not data["departments"]:
+        raise HTTPException(status_code=404, detail="No data for that store/date.")
+    dept = data["departments"][0]
+    buf = images.department_image(dept, data)
+    filename = f"{images._safe(dept['name'])}_{data['date_fmt']}.png"
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/daily/images")
+def daily_images(
+    date_: str = Query(None, alias="date"),
+    dept_id: str = Query(None),
+):
+    """One click -> zip with one PNG per store/department."""
+    rdate = date_ or date.today().isoformat()
+    data = _guard(lambda: service.daily_report(rdate, dept_id))
+    buf = images.all_departments_zip(data)
+    filename = f"store_images_{data['date_fmt']}.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # --------------------------------------------------------------------------

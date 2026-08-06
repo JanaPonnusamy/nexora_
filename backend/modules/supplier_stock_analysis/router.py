@@ -34,6 +34,18 @@ def supplier_stock_match(supplier_stock_id: str, tenant_id: Optional[str] = None
     return service.match_for_supplier_stock(supplier_stock_id, tenant_id)
 
 
+@router.get("/supplier-report")
+def supplier_report(
+    tenant_id: str,
+    supplier_code: str,
+    store_id: Optional[str] = None,
+    only_available: int = 0,
+):
+    return service.supplier_analysis_report(
+        tenant_id, supplier_code, store_id, only_available == 1
+    )
+
+
 @router.get("/supplier-stock/{supplier_stock_id}/dashboard")
 def supplier_stock_dashboard(
     supplier_stock_id: str,
@@ -43,9 +55,48 @@ def supplier_stock_dashboard(
     return service.supplier_stock_dashboard(supplier_stock_id, tenant_id, months)
 
 
+@router.get("/supplier-stock/{supplier_stock_id}/dashboard/stock")
+def supplier_stock_dashboard_stock(
+    supplier_stock_id: str,
+    tenant_id: Optional[str] = None,
+):
+    return service.supplier_stock_dashboard_stock(supplier_stock_id, tenant_id)
+
+
+@router.get("/supplier-stock/{supplier_stock_id}/dashboard/details")
+def supplier_stock_dashboard_details(
+    supplier_stock_id: str,
+    tenant_id: str,
+    source_store_id: str,
+    product_code: str,
+    months: int = 6,
+):
+    return service.supplier_stock_dashboard_details(tenant_id, source_store_id, product_code, months)
+
+
+@router.get("/supplier-stock/{supplier_stock_id}/family")
+def supplier_stock_family(supplier_stock_id: str, tenant_id: Optional[str] = None):
+    return service.family_for_supplier_stock(supplier_stock_id, tenant_id)
+
+
+@router.get("/search")
+def global_search(
+    tenant_id: str,
+    query: str = "",
+    store_id: Optional[str] = None,
+    limit: int = 50,
+):
+    return service.global_search(tenant_id, query, store_id, limit)
+
+
 @router.get("/products/{product_code}/dashboard")
-def product_dashboard(tenant_id: str, product_code: str, months: int = 6):
-    return service.product_dashboard(tenant_id, product_code, months)
+def product_dashboard(
+    tenant_id: str,
+    source_store_id: str,
+    product_code: str,
+    months: int = 6,
+):
+    return service.product_dashboard(tenant_id, source_store_id, product_code, months)
 
 
 @router.post("/mapping")

@@ -30,9 +30,46 @@ class UserRepository:
         conn.close()
         return row
 
+    def get_user_core_by_id(self, user_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT user_id,username,password_hash,first_name,is_platform_user,is_active,tenant_id
+        FROM dbo.users
+        WHERE user_id = ?
+        """, user_id)
+        row = cur.fetchone()
+        conn.close()
+        return row
+
     def get_user_modules(self, user_id):
         conn = get_connection()
         cur = conn.cursor()
+
+        # SUPER_ADMIN / PLATFORM_OWNER bypass role_module_access entirely and
+        # get every active module with full rights, including modules added
+        # later that have no seeded permission rows yet.
+        cur.execute("""
+        SELECT COUNT(*)
+        FROM dbo.user_store_roles usr
+        INNER JOIN dbo.roles r ON r.role_id = usr.role_id
+        WHERE usr.user_id = ?
+          AND usr.is_active = 1
+          AND r.role_name IN ('SUPER_ADMIN','PLATFORM_OWNER')
+        """, user_id)
+        is_full_access = cur.fetchone()[0] > 0
+
+        if is_full_access:
+            cur.execute("""
+            SELECT module_code, module_name, 1, 1, 1, 1, 1
+            FROM dbo.modules
+            WHERE is_active = 1
+            ORDER BY module_name
+            """)
+            rows = cur.fetchall()
+            conn.close()
+            return rows
+
         cur.execute("""
         SELECT DISTINCT
             m.module_code,

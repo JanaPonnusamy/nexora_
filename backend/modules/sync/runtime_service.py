@@ -49,6 +49,10 @@ def control_stores(store_ids, action):
     return runtime_repository.control_stores(store_ids, action)
 
 
+def fail_execution(execution_id, message=None):
+    return runtime_repository.fail_execution(execution_id, message)
+
+
 def ack_chunk(chunk_execution_id):
     return runtime_repository.ack_chunk(chunk_execution_id)
 

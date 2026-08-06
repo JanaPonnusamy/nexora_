@@ -250,7 +250,10 @@ def list_mappings(tenant_id, status=None, source_store_id=None, target_store_id=
     where = ["tenant_id = ?", "is_deleted = 0"]
     params = [tenant_id]
     if status:
-        where.append("status = ?"); params.append(status)
+        # CAST pins the comparison type to the column's VARCHAR(20); without it
+        # pyodbc sends the Python str as NVARCHAR and SQL Server's implicit
+        # CONVERT on the (indexed) status column blocks index seeks entirely.
+        where.append("status = CAST(? AS VARCHAR(20))"); params.append(status)
     if source_store_id:
         where.append("source_store_id = ?"); params.append(source_store_id)
     if target_store_id:
@@ -277,6 +280,47 @@ def list_mappings(tenant_id, status=None, source_store_id=None, target_store_id=
         )
         items = [stringify(r) for r in _rows_to_dicts(cur)]
         return {"total": total, "page": page, "page_size": page_size, "items": items}
+    finally:
+        conn.close()
+
+
+def list_review_batch(tenant_id, source_store_id, target_store_id, search=None,
+                       after_confidence=None, after_mapping_id=None, limit=100):
+    """Keyset (seek) page of PENDING mappings for Manual Review continuous
+    batches. Ordered by (confidence DESC, mapping_id) — the same order as
+    IX_product_mapping_review_queue, so this is an index seek + TOP with no
+    Sort operator, and cost stays flat (~15ms) no matter how deep into the
+    queue the reviewer is, unlike OFFSET which re-scans/discards every prior
+    row. ``after_confidence``/``after_mapping_id`` are the last row's keys from
+    the previous batch; omit both for the first batch.
+    """
+    where = [
+        "tenant_id = ?", "is_deleted = 0", "status = CAST(? AS VARCHAR(20))",
+        "source_store_id = ?", "target_store_id = ?",
+    ]
+    params = [tenant_id, "PENDING", source_store_id, target_store_id]
+    if search:
+        where.append("(source_product_name LIKE '%' + ? + '%' OR source_product_code LIKE ? + '%')")
+        params.extend([search, search])
+    if after_confidence is not None and after_mapping_id is not None:
+        where.append(
+            "(confidence < CAST(? AS DECIMAL(5,2)) "
+            "OR (confidence = CAST(? AS DECIMAL(5,2)) AND mapping_id > ?))"
+        )
+        params.extend([after_confidence, after_confidence, after_mapping_id])
+    clause = " AND ".join(where)
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT TOP (?) * FROM dbo.product_mapping WHERE {clause}
+            ORDER BY confidence DESC, mapping_id
+            """,
+            tuple([int(limit)] + params),
+        )
+        items = [stringify(r) for r in _rows_to_dicts(cur)]
+        return items
     finally:
         conn.close()
 

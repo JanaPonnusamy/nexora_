@@ -19,6 +19,8 @@ export const NAV_ENTRIES: NavEntry[] = [
     cap: 'INVENTORY',
     children: [
       { label: 'Stock Availability', to: '/stock-availability', icon: 'bi-box-seam', cap: 'INVENTORY' },
+      { label: 'Stock Check Report', to: '/stock-check-report', icon: 'bi-clipboard-check', cap: 'INVENTORY' },
+      { label: 'Stock Integrity Check', to: '/stock-integrity', icon: 'bi-shield-check', cap: 'INVENTORY' },
     ],
   },
   {

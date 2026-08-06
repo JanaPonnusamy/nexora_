@@ -1,21 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
-import { UniGrid, type UniGridColumn, UniLoadingOverlay } from '../../platform/ui'
-import { ProcessingQueuePanel } from '../../components/document-extraction/ProcessingQueuePanel'
-import { InvoiceViewer } from '../../components/document-extraction/InvoiceViewer'
+import { PageHeader } from '../../components/common/PageHeader'
 import { HeaderPanel } from '../../components/document-extraction/HeaderPanel'
 import { InvoiceItemsGrid } from '../../components/document-extraction/InvoiceItemsGrid'
+import { InvoiceViewer } from '../../components/document-extraction/InvoiceViewer'
+import { ProcessingQueuePanel } from '../../components/document-extraction/ProcessingQueuePanel'
 import { ValidationPanel } from '../../components/document-extraction/ValidationPanel'
+import { statusLabel, STATUS_BADGE } from '../../components/document-extraction/statusLabels'
+import '../../components/document-extraction/document-extraction.css'
+import { AppDataGrid, type AppDataGridColumn } from '../../design-system/components/AppDataGrid'
+import { InspectorPanel } from '../../design-system/components/InspectorPanel'
+import { SplitView } from '../../design-system/components/SplitView'
+import { KpiBar, StatCard } from '../../design-system/components/StatCard'
+import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
+import { useActingUser } from '../../hooks/useActingUser'
+import { keyboardManager } from '../../platform/keyboard/KeyboardManager'
+import { ApiError } from '../../services/apiClient'
 import { documentExtractionService } from '../../services/documentExtractionService'
 import { storeService } from '../../services/storeService'
-import { useActingUser } from '../../hooks/useActingUser'
-import { ApiError } from '../../services/apiClient'
-import { keyboardManager } from '../../platform/keyboard/KeyboardManager'
-import { statusLabel, STATUS_BADGE } from '../../components/document-extraction/statusLabels'
 import type { ImportListRow, ReviewPayload } from '../../types/documentExtraction'
 import type { Store } from '../../types/store'
-import '../../components/document-extraction/document-extraction.css'
 
 function isTextEditor(el: Element | null): boolean {
   return !!el?.tagName && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
@@ -37,7 +43,7 @@ export default function DocumentExtractionReviewPage() {
   const openUploadPickerRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
-    storeService.list().then((all) => setStores(all.filter((s) => s.is_active))).catch(() => setStores([]))
+    storeService.list().then((all) => setStores(all.filter((store) => store.is_active))).catch(() => setStores([]))
   }, [])
 
   useEffect(() => {
@@ -45,7 +51,7 @@ export default function DocumentExtractionReviewPage() {
   }, [stores, storeId])
 
   const tenantId = useMemo(
-    () => stores.find((s) => s.store_id === storeId)?.tenant_id ?? '',
+    () => stores.find((store) => store.store_id === storeId)?.tenant_id ?? '',
     [stores, storeId],
   )
 
@@ -56,7 +62,9 @@ export default function DocumentExtractionReviewPage() {
       .catch(() => setImports([]))
   }, [tenantId, storeId])
 
-  useEffect(() => { loadImports() }, [loadImports])
+  useEffect(() => {
+    loadImports()
+  }, [loadImports])
 
   const loadReview = useCallback(() => {
     if (!importId) {
@@ -67,18 +75,20 @@ export default function DocumentExtractionReviewPage() {
     setError(null)
     documentExtractionService.review(importId)
       .then(setReview)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load import'))
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load import'))
       .finally(() => setIsLoading(false))
   }, [importId])
 
-  useEffect(() => { loadReview() }, [loadReview])
+  useEffect(() => {
+    loadReview()
+  }, [loadReview])
 
   async function refresh() {
     loadReview()
     loadImports()
   }
 
-  const queueIndex = importId ? imports.findIndex((r) => String(r.import_id) === importId) : -1
+  const queueIndex = importId ? imports.findIndex((row) => String(row.import_id) === importId) : -1
 
   function goToImport(id: number | undefined) {
     if (id == null) return
@@ -92,15 +102,11 @@ export default function DocumentExtractionReviewPage() {
     if (next) goToImport(next.import_id)
   }
 
-  // After a save, jump straight to the next invoice still needing attention
-  // (skipping already-saved/exported ones) so the operator can keep working
-  // the queue without touching the mouse — otherwise every save would dead-
-  // end back at the invoice that was just finished.
   function goToNextPending(afterId: number) {
-    const startIdx = imports.findIndex((r) => r.import_id === afterId)
-    const ordered = imports.filter((r) => r.import_id !== afterId)
+    const startIdx = imports.findIndex((row) => row.import_id === afterId)
+    const ordered = imports.filter((row) => row.import_id !== afterId)
     const rotated = startIdx >= 0 ? [...imports.slice(startIdx + 1), ...imports.slice(0, startIdx)] : ordered
-    const next = rotated.find((r) => r.status !== 'SAVED' && r.status !== 'EXPORTED')
+    const next = rotated.find((row) => row.status !== 'SAVED' && row.status !== 'EXPORTED')
     if (next) navigate(`/document-extraction/review/${next.import_id}`)
     else navigate('/document-extraction/review')
   }
@@ -111,22 +117,20 @@ export default function DocumentExtractionReviewPage() {
     try {
       try {
         await documentExtractionService.save(review.import_id, false, actor)
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 409) {
-          const proceed = window.confirm(
-            'This invoice still has unresolved validation errors. Save it anyway?',
-          )
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          const proceed = window.confirm('This invoice still has unresolved validation errors. Save it anyway?')
           if (!proceed) return
           await documentExtractionService.save(review.import_id, true, actor)
         } else {
-          throw e
+          throw err
         }
       }
       const savedId = review.import_id
       await refresh()
       goToNextPending(savedId)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setIsSaving(false)
     }
@@ -140,33 +144,31 @@ export default function DocumentExtractionReviewPage() {
       await documentExtractionService.deleteImport(review.import_id, actor)
       navigate('/document-extraction/review')
       loadImports()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed')
     } finally {
       setIsSaving(false)
     }
   }
 
-  // Global shortcuts: Ctrl+S completes the open invoice, Ctrl+U starts a new
-  // upload from anywhere in the workspace, PageUp/PageDown walk the queue.
   useEffect(() => {
-    const unregisterSave = keyboardManager.register('ctrl+s', (e) => {
-      e.preventDefault()
+    const unregisterSave = keyboardManager.register('ctrl+s', (event) => {
+      event.preventDefault()
       if (review) void handleComplete()
     })
-    const unregisterUpload = keyboardManager.register('ctrl+u', (e) => {
-      e.preventDefault()
+    const unregisterUpload = keyboardManager.register('ctrl+u', (event) => {
+      event.preventDefault()
       if (importId) navigate('/document-extraction/review')
       else openUploadPickerRef.current?.()
     })
-    const unregisterNext = keyboardManager.register('pagedown', (e) => {
+    const unregisterNext = keyboardManager.register('pagedown', (event) => {
       if (isTextEditor(document.activeElement)) return
-      e.preventDefault()
+      event.preventDefault()
       goRelative(1)
     })
-    const unregisterPrev = keyboardManager.register('pageup', (e) => {
+    const unregisterPrev = keyboardManager.register('pageup', (event) => {
       if (isTextEditor(document.activeElement)) return
-      e.preventDefault()
+      event.preventDefault()
       goRelative(-1)
     })
     return () => {
@@ -177,195 +179,265 @@ export default function DocumentExtractionReviewPage() {
     }
   })
 
-  const queueColumns: UniGridColumn<ImportListRow>[] = [
-    { key: 'invoice_number', header: 'Invoice #', render: (r) => r.invoice_number ?? '—' },
+  const queueColumns: AppDataGridColumn<ImportListRow>[] = [
+    { key: 'invoice_number', header: 'Invoice #', render: (row) => row.invoice_number ?? '-' },
     {
-      key: 'supplier_name', header: 'Supplier',
-      render: (r) => (
-        <>
-          {r.supplier_name ?? '—'}
-          {r.is_supplier_unknown && <span className="badge text-bg-danger ms-1">Unknown</span>}
-        </>
+      key: 'supplier_name',
+      header: 'Supplier',
+      render: (row) => (
+        <div className="d-flex align-items-center gap-2">
+          <span>{row.supplier_name ?? '-'}</span>
+          {row.is_supplier_unknown && <span className="badge text-bg-danger">Unknown</span>}
+        </div>
       ),
     },
     {
-      key: 'status', header: 'Status',
-      render: (r) => <span className={`badge ${STATUS_BADGE[r.status] ?? 'text-bg-secondary'}`}>{statusLabel(r.status)}</span>,
+      key: 'status',
+      header: 'Status',
+      render: (row) => <span className={`badge ${STATUS_BADGE[row.status] ?? 'text-bg-secondary'}`}>{statusLabel(row.status)}</span>,
     },
     {
-      key: 'validation_status', header: 'Validation',
-      render: (r) => (
-        <span className={`badge ${r.validation_status === 'FAILED' ? 'text-bg-danger' : r.validation_status === 'WARNING' ? 'text-bg-warning' : 'text-bg-secondary'}`}>
-          {r.validation_status === 'FAILED' ? 'Errors' : r.validation_status === 'WARNING' ? 'Warnings' : r.validation_status}
+      key: 'validation_status',
+      header: 'Validation',
+      render: (row) => (
+        <span className={`badge ${row.validation_status === 'FAILED' ? 'text-bg-danger' : row.validation_status === 'WARNING' ? 'text-bg-warning' : 'text-bg-secondary'}`}>
+          {row.validation_status === 'FAILED' ? 'Errors' : row.validation_status === 'WARNING' ? 'Warnings' : row.validation_status}
         </span>
       ),
     },
-    { key: 'net_amount', header: 'Net Amount', align: 'end', render: (r) => r.net_amount != null ? `₹${r.net_amount.toLocaleString('en-IN')}` : '—' },
-    { key: 'uploaded_at', header: 'Uploaded', render: (r) => new Date(r.uploaded_at).toLocaleString() },
+    {
+      key: 'net_amount',
+      header: 'Net Amount',
+      align: 'end',
+      render: (row) => (row.net_amount != null ? `Rs. ${row.net_amount.toLocaleString('en-IN')}` : '-'),
+    },
+    {
+      key: 'uploaded_at',
+      header: 'Uploaded',
+      render: (row) => new Date(row.uploaded_at).toLocaleString(),
+    },
   ]
 
-  const pendingCount = imports.filter((r) => r.status !== 'SAVED' && r.status !== 'EXPORTED').length
-  const unknownSupplierCount = imports.filter((r) => r.is_supplier_unknown).length
-  const errorCount = imports.filter((r) => r.validation_status === 'FAILED').length
+  const pendingCount = imports.filter((row) => row.status !== 'SAVED' && row.status !== 'EXPORTED').length
+  const unknownSupplierCount = imports.filter((row) => row.is_supplier_unknown).length
+  const errorCount = imports.filter((row) => row.validation_status === 'FAILED').length
 
-  return (
-    <div className="dx-page">
-      <div className="dx-topbar">
-        <div className="dx-topbar__brand">
-          <i className="bi bi-file-earmark-medical" />
-          <span>Document Extraction</span>
-        </div>
-        <div className="dx-topbar__store">
-          <select className="form-select form-select-sm" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
-            {stores.map((s) => (
-              <option key={s.store_id} value={s.store_id}>{s.store_code} — {s.store_name}</option>
+  const header = (
+    <div className="d-flex flex-column gap-3">
+      <PageHeader
+        title="Document Extraction Review"
+        breadcrumb={['Operations', 'Document Extraction', 'Review']}
+        description="Review OCR imports, correct mappings, validate invoice lines, and move the queue forward without changing the extraction workflow."
+      />
+      <div className="ds-toolbar">
+        <label className="d-flex flex-column gap-1">
+          <span className="small text-muted">Store</span>
+          <select className="form-select" value={storeId} onChange={(event) => setStoreId(event.target.value)}>
+            {stores.map((store) => (
+              <option key={store.store_id} value={store.store_id}>
+                {store.store_code} - {store.store_name}
+              </option>
             ))}
           </select>
-        </div>
+        </label>
         {importId && (
           <>
-            <div className="dx-topbar__jump">
+            <label className="d-flex flex-column gap-1 flex-grow-1">
+              <span className="small text-muted">Jump to invoice</span>
               <select
-                className="form-select form-select-sm"
-                value={importId ?? ''}
-                onChange={(e) => goToImport(Number(e.target.value))}
+                className="form-select"
+                value={importId}
+                onChange={(event) => goToImport(Number(event.target.value))}
               >
-                <option value="">Jump to invoice…</option>
+                <option value="">Jump to invoice</option>
                 {imports.map((row) => (
                   <option key={row.import_id} value={row.import_id}>
-                    #{row.import_id} · {row.invoice_number ?? 'no invoice #'} · {row.supplier_name ?? 'Unknown Supplier'}
+                    #{row.import_id} - {row.invoice_number ?? 'No invoice'} - {row.supplier_name ?? 'Unknown supplier'}
                   </option>
                 ))}
               </select>
-            </div>
-            <div className="dx-topbar__nav">
-              <button type="button" className="btn btn-sm btn-outline-secondary" disabled={queueIndex <= 0} onClick={() => goRelative(-1)} title="Previous invoice (Page Up)">
-                <i className="bi bi-chevron-left" />
+            </label>
+            <div className="d-flex align-items-end gap-2">
+              <button
+                type="button"
+                className="btn btn-outline-secondary ds-button"
+                disabled={queueIndex <= 0}
+                onClick={() => goRelative(-1)}
+                title="Previous invoice (Page Up)"
+              >
+                <i className="bi bi-chevron-left" aria-hidden="true" />
               </button>
-              <button type="button" className="btn btn-sm btn-outline-secondary" disabled={queueIndex < 0 || queueIndex >= imports.length - 1} onClick={() => goRelative(1)} title="Next invoice (Page Down)">
-                <i className="bi bi-chevron-right" />
+              <button
+                type="button"
+                className="btn btn-outline-secondary ds-button"
+                disabled={queueIndex < 0 || queueIndex >= imports.length - 1}
+                onClick={() => goRelative(1)}
+                title="Next invoice (Page Down)"
+              >
+                <i className="bi bi-chevron-right" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary ds-button ds-button--primary"
+                onClick={() => navigate('/document-extraction/review')}
+              >
+                <i className="bi bi-cloud-arrow-up me-1" aria-hidden="true" />
+                Upload Invoice
               </button>
             </div>
           </>
         )}
-        <div className="dx-topbar__spacer" />
-        {importId && (
-          <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate('/document-extraction/review')}>
-            <i className="bi bi-cloud-arrow-up me-1" />Upload Invoice
-          </button>
-        )}
       </div>
-
-      {!importId && (
-        <div className="dx-landing">
-          <ProcessingQueuePanel
-            tenantId={tenantId}
-            storeId={storeId}
-            actor={actor}
-            disabled={!storeId}
-            onOpenReview={(id) => { loadImports(); goToImport(id) }}
-            registerOpenFilePicker={(open) => { openUploadPickerRef.current = open }}
-          />
-
-          {imports.length > 0 && (
-            <div className="dx-landing__queue">
-              <div className="dx-stat-row">
-                <div className="dx-stat"><b>{pendingCount}</b><span>Needs Review</span></div>
-                <div className="dx-stat dx-stat--warn"><b>{unknownSupplierCount}</b><span>Unknown Supplier</span></div>
-                <div className="dx-stat dx-stat--danger"><b>{errorCount}</b><span>Has Errors</span></div>
-              </div>
-              <h6 className="dx-section-title">Recent Invoices</h6>
-              <UniGrid
-                columns={queueColumns}
-                rows={imports}
-                getRowId={(r) => String(r.import_id)}
-                onRowClick={(r) => goToImport(r.import_id)}
-                emptyTitle="No invoices yet"
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {importId && error && <ErrorState description={error} onRetry={refresh} />}
-
-      {importId && !error && (
-        <div className="dx-workspace position-relative">
-          {isLoading && <UniLoadingOverlay fullPage />}
-          {review && (
-            <>
-              <div className="dx-workspace__viewer">
-                <InvoiceViewer
-                  importId={review.import_id}
-                  pageCount={review.header.page_count}
-                  hasPreview={Boolean(review.preview_image_path)}
-                />
-              </div>
-              <div className="dx-workspace__main">
-                <div className="dx-workspace__header">
-                  <HeaderPanel
-                    header={review.header}
-                    items={review.items}
-                    saving={isSaving}
-                    onSaveHeader={async (patch) => {
-                      setIsSaving(true)
-                      try {
-                        await documentExtractionService.updateHeader(review.import_id, { ...patch, actor })
-                        await refresh()
-                      } finally {
-                        setIsSaving(false)
-                      }
-                    }}
-                    onAssignSupplier={async (body) => {
-                      setIsSaving(true)
-                      try {
-                        await documentExtractionService.assignSupplier(review.import_id, { ...body, actor })
-                        await refresh()
-                      } finally {
-                        setIsSaving(false)
-                      }
-                    }}
-                  />
-                </div>
-                <div className="dx-workspace__grid">
-                  <InvoiceItemsGrid
-                    items={review.items}
-                    saving={isSaving}
-                    onSaveItem={async (itemId, patch) => {
-                      setIsSaving(true)
-                      try {
-                        await documentExtractionService.updateItem(review.import_id, itemId, { ...patch, actor })
-                        await refresh()
-                      } finally {
-                        setIsSaving(false)
-                      }
-                    }}
-                    onExcludeItem={async (itemId) => {
-                      setIsSaving(true)
-                      try {
-                        await documentExtractionService.excludeItem(review.import_id, itemId, actor)
-                        await refresh()
-                      } finally {
-                        setIsSaving(false)
-                      }
-                    }}
-                  />
-                </div>
-                <div className="dx-workspace__valbar">
-                  <ValidationPanel
-                    status={review.status}
-                    validationStatus={review.validation.validation_status}
-                    findings={review.validation.findings}
-                    saving={isSaving}
-                    onComplete={handleComplete}
-                    onDelete={handleDelete}
-                  />
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
     </div>
+  )
+
+  const kpis = !importId ? (
+    <KpiBar>
+      <StatCard label="Needs Review" value={pendingCount.toLocaleString()} icon="bi-hourglass-split" tone="primary" />
+      <StatCard label="Unknown Supplier" value={unknownSupplierCount.toLocaleString()} icon="bi-exclamation-triangle" tone="warning" />
+      <StatCard label="Has Errors" value={errorCount.toLocaleString()} icon="bi-x-octagon" tone="danger" />
+      <StatCard label="Queue Size" value={imports.length.toLocaleString()} icon="bi-card-checklist" />
+    </KpiBar>
+  ) : undefined
+
+  const statusBar = importId && review ? (
+    <div className="d-flex flex-wrap align-items-center gap-3">
+      <span className={`badge ${STATUS_BADGE[review.status] ?? 'text-bg-secondary'}`}>{statusLabel(review.status)}</span>
+      <span className={`badge ${review.validation.validation_status === 'FAILED' ? 'text-bg-danger' : review.validation.validation_status === 'WARNING' ? 'text-bg-warning' : 'text-bg-secondary'}`}>
+        {review.validation.validation_status}
+      </span>
+      <span className="text-muted">Ctrl+S to save, Ctrl+U to upload, Page Up / Page Down to move through the queue.</span>
+    </div>
+  ) : undefined
+
+  const landingContent = (
+    <div className="d-flex flex-column gap-4">
+      <ProcessingQueuePanel
+        tenantId={tenantId}
+        storeId={storeId}
+        actor={actor}
+        disabled={!storeId}
+        onOpenReview={(id) => {
+          loadImports()
+          goToImport(id)
+        }}
+        registerOpenFilePicker={(open) => {
+          openUploadPickerRef.current = open
+        }}
+      />
+
+      <AppDataGrid
+        title="Recent Invoices"
+        storageKey="document-extraction-review-queue"
+        columns={queueColumns}
+        rows={imports}
+        getRowId={(row) => String(row.import_id)}
+        onRowClick={(row) => goToImport(row.import_id)}
+        emptyTitle="No invoices yet"
+        emptyDescription="Imports will appear here after invoices are uploaded for the selected store."
+        pageSize={10}
+      />
+    </div>
+  )
+
+  const reviewWorkspace = error ? (
+    <ErrorState description={error} onRetry={refresh} />
+  ) : isLoading && !review ? (
+    <InspectorPanel
+      title="Loading review"
+      summary="Fetching OCR output, mapped header fields, invoice items, and validation state."
+      empty
+      emptyTitle="Preparing invoice workspace"
+      emptyDescription="The review workspace will appear as soon as the selected invoice finishes loading."
+    />
+  ) : review ? (
+    <SplitView
+      primary={
+        <InvoiceViewer
+          importId={review.import_id}
+          pageCount={review.header.page_count}
+          hasPreview={Boolean(review.preview_image_path)}
+        />
+      }
+      secondary={
+        <div className="d-flex flex-column gap-3">
+          <HeaderPanel
+            header={review.header}
+            items={review.items}
+            saving={isSaving}
+            onSaveHeader={async (patch) => {
+              setIsSaving(true)
+              try {
+                await documentExtractionService.updateHeader(review.import_id, { ...patch, actor })
+                await refresh()
+              } finally {
+                setIsSaving(false)
+              }
+            }}
+            onAssignSupplier={async (body) => {
+              setIsSaving(true)
+              try {
+                await documentExtractionService.assignSupplier(review.import_id, { ...body, actor })
+                await refresh()
+              } finally {
+                setIsSaving(false)
+              }
+            }}
+          />
+          <InvoiceItemsGrid
+            items={review.items}
+            saving={isSaving}
+            onSaveItem={async (itemId, patch) => {
+              setIsSaving(true)
+              try {
+                await documentExtractionService.updateItem(review.import_id, itemId, { ...patch, actor })
+                await refresh()
+              } finally {
+                setIsSaving(false)
+              }
+            }}
+            onExcludeItem={async (itemId) => {
+              setIsSaving(true)
+              try {
+                await documentExtractionService.excludeItem(review.import_id, itemId, actor)
+                await refresh()
+              } finally {
+                setIsSaving(false)
+              }
+            }}
+          />
+        </div>
+      }
+      tertiary={
+        <InspectorPanel
+          title="Validation"
+          summary={`${review.items.length.toLocaleString()} invoice lines in scope`}
+        >
+          <ValidationPanel
+            status={review.status}
+            validationStatus={review.validation.validation_status}
+            findings={review.validation.findings}
+            saving={isSaving}
+            onComplete={handleComplete}
+            onDelete={handleDelete}
+          />
+        </InspectorPanel>
+      }
+      primaryDefault={40}
+      secondaryDefault={36}
+      tertiaryDefault={24}
+    />
+  ) : (
+    <EmptyState
+      icon="bi-file-earmark-medical"
+      title="Pick an invoice to review"
+      description="Choose an import from the queue or upload a new file to open the review workspace."
+    />
+  )
+
+  return (
+    <WorkspaceShell header={header} kpis={kpis} statusBar={statusBar} fullWidth>
+      {!importId ? landingContent : reviewWorkspace}
+    </WorkspaceShell>
   )
 }

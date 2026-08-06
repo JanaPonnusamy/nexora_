@@ -59,6 +59,12 @@ from modules.agent_ops.router import (
 from modules.stock_availability.router import (
     router as stock_availability_router
 )
+from modules.stock_check_report.router import (
+    router as stock_check_report_router
+)
+from modules.stock_integrity.router import (
+    router as stock_integrity_router
+)
 from modules.supplier_stock_analysis.router import (
     router as supplier_stock_analysis_router
 )
@@ -85,6 +91,12 @@ from modules.legacy_order.router import (
 )
 from modules.desktop_client.router import (
     router as desktop_client_router
+)
+from modules.automation_settings.router import (
+    router as automation_settings_router
+)
+from modules.whatsapp.router import (
+    router as whatsapp_router
 )
 
 app = FastAPI(title='NEXORA API')
@@ -139,6 +151,7 @@ _PUBLIC_AGENT_PATTERNS = (
     re.compile(r'^/api/sync/tasks/pending/[^/]+$'),
     re.compile(r'^/api/sync/tasks/[^/]+/(start|complete|fail)$'),
     re.compile(r'^/api/sync/configuration/[^/]+$'),
+    re.compile(r'^/api/sync/schema/register$'),
     re.compile(r'^/api/sync/chunks/(upload|ack)$'),
     re.compile(r'^/api/sync/chunks/status/[^/]+$'),
     re.compile(r'^/api/sync/tables/report$'),
@@ -225,6 +238,8 @@ app.include_router(sync_runtime_router)
 app.include_router(sync_agent_router)
 app.include_router(sync_shared_table_router)
 app.include_router(stock_availability_router)
+app.include_router(stock_check_report_router)
+app.include_router(stock_integrity_router)
 app.include_router(supplier_stock_analysis_router)
 app.include_router(procurement_router)
 app.include_router(reports_router)
@@ -234,6 +249,8 @@ app.include_router(document_extraction_router)
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
 app.include_router(desktop_client_router)
+app.include_router(automation_settings_router)
+app.include_router(whatsapp_router)
 app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)
 

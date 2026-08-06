@@ -1,4 +1,4 @@
-import type { ChangeEvent, ReactNode } from 'react'
+import { forwardRef, type ChangeEvent, type ReactNode } from 'react'
 
 export type Tone =
   | 'indigo' | 'teal' | 'success' | 'danger' | 'warning' | 'info' | 'violet' | 'muted'
@@ -50,11 +50,11 @@ export function SxStat({
 /* ---- Chip ---------------------------------------------------------------- */
 
 export function SxChip({
-  children, tone, dot = false, running = false,
-}: { children: ReactNode; tone?: Tone | 'default'; dot?: boolean; running?: boolean }) {
+  children, tone, dot = false, running = false, compact = false,
+}: { children: ReactNode; tone?: Tone | 'default'; dot?: boolean; running?: boolean; compact?: boolean }) {
   const cls = tone && tone !== 'default' ? ` sx-chip--${tone}` : ''
   return (
-    <span className={`sx-chip${cls}${running ? ' sx-chip--running' : ''}`}>
+    <span className={`sx-chip${cls}${running ? ' sx-chip--running' : ''}${compact ? ' sx-chip--compact' : ''}`}>
       {dot && <span className="sx-chip__dot" />}
       {children}
     </span>
@@ -87,13 +87,14 @@ export function SxButton({
 
 /* ---- Search + Select ----------------------------------------------------- */
 
-export function SxSearch({
-  value, onChange, placeholder = 'Search…', ariaLabel,
-}: { value: string; onChange: (v: string) => void; placeholder?: string; ariaLabel?: string }) {
+export const SxSearch = forwardRef<HTMLInputElement, {
+  value: string; onChange: (v: string) => void; placeholder?: string; ariaLabel?: string
+}>(function SxSearch({ value, onChange, placeholder = 'Search…', ariaLabel }, ref) {
   return (
     <span className="sx-search">
       <i className="bi bi-search" aria-hidden="true" />
       <input
+        ref={ref}
         type="search"
         value={value}
         placeholder={placeholder}
@@ -102,7 +103,7 @@ export function SxSearch({
       />
     </span>
   )
-}
+})
 
 export function SxSelect({
   value, onChange, ariaLabel, children,

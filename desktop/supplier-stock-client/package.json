@@ -12,6 +12,8 @@
     "start": "electron ."
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "@tanstack/react-virtual": "^3.14.8",
     "react": "latest",
     "react-dom": "latest"
   },

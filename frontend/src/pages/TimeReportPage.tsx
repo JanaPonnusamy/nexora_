@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/common/PageHeader'
 import { EmptyState } from '../components/common/EmptyState'
 import { ErrorState } from '../components/common/ErrorState'
+import { WhatsAppSendCard } from '../components/common/WhatsAppSendCard'
 import { api, ApiError } from '../services/apiClient'
 import { timeReportService } from '../services/timeReportService'
 import type {
@@ -20,10 +21,6 @@ import './timeReport.css'
 
 const WHITE = 'FFFFFF'
 
-/** Status colours carry meaning (miss punch = red, etc.), so they are applied
- *  inline. The neutral "full/absent" white is left to the theme instead of
- *  forcing a white row in dark mode — full vs. absent stays legible by content
- *  (absent rows have blank punches and hours). */
 function statusStyle(hex?: string, text?: string): React.CSSProperties | undefined {
   if (!hex || hex.toUpperCase() === WHITE) return undefined
   return { background: `#${hex}`, color: `#${text ?? '000000'}` }
@@ -77,14 +74,13 @@ export default function TimeReportPage() {
   useEffect(() => {
     timeReportService
       .meta()
-      .then((m) => {
-        setMeta(m)
-        setDate((c) => c || m.bounds.max)
+      .then((payload) => {
+        setMeta(payload)
+        setDate((current) => current || payload.bounds.max)
       })
-      .catch((e) => setMetaError(e instanceof Error ? e.message : 'Failed to load Time Report metadata'))
+      .catch((err) => setMetaError(err instanceof Error ? err.message : 'Failed to load Time Report metadata'))
   }, [])
 
-  // Params for the currently-selected report (also used to build the export URL).
   const params = useCallback((): TimeReportParams => {
     switch (reportKey) {
       case 'daily':
@@ -105,54 +101,90 @@ export default function TimeReportPage() {
   const run = useCallback(() => {
     setLoading(true)
     setError(null)
-    const p = params()
+    const currentParams = params()
     const call = () => {
       switch (reportKey) {
         case 'daily':
-          return timeReportService.daily(p).then((data) => ({ kind: 'daily', data }) as Result)
+          return timeReportService.daily(currentParams).then((data) => ({ kind: 'daily', data }) as Result)
         case 'monthly':
-          return timeReportService.monthly(p).then((data) => ({ kind: 'monthly', data }) as Result)
+          return timeReportService.monthly(currentParams).then((data) => ({ kind: 'monthly', data }) as Result)
         case 'misspunch':
-          return timeReportService.misspunch(p).then((data) => ({ kind: 'misspunch', data }) as Result)
+          return timeReportService.misspunch(currentParams).then((data) => ({ kind: 'misspunch', data }) as Result)
         case 'user':
-          return timeReportService.user(p).then((data) => ({ kind: 'user', data }) as Result)
+          return timeReportService.user(currentParams).then((data) => ({ kind: 'user', data }) as Result)
         case 'inactive':
-          return timeReportService.inactive(p).then((data) => ({ kind: 'inactive', data }) as Result)
+          return timeReportService.inactive(currentParams).then((data) => ({ kind: 'inactive', data }) as Result)
         default:
           return Promise.reject(new Error('Unknown report'))
       }
     }
     call()
       .then(setResult)
-      .catch((e) => {
+      .catch((err) => {
         setResult(null)
-        setError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to run report')
+        setError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed to run report')
       })
       .finally(() => setLoading(false))
   }, [reportKey, params])
 
+  const downloadBlob = async (path: string, filename: string) => {
+    const blob = await api.blob(path)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const exportXlsx = useCallback(async () => {
     setDownloading(true)
     try {
-      const path = timeReportService.exportPath(reportKey, params())
-      const blob = await api.blob(path)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${reportKey}_${iso(today)}.xlsx`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Export failed')
+      await downloadBlob(timeReportService.exportPath(reportKey, params()), `${reportKey}_${iso(today)}.xlsx`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Export failed')
     } finally {
       setDownloading(false)
     }
   }, [reportKey, params, today])
 
+  const exportImagesZip = useCallback(async () => {
+    setDownloading(true)
+    try {
+      await downloadBlob(timeReportService.dailyImagesZipPath(params()), `store_images_${date}.zip`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Image export failed')
+    } finally {
+      setDownloading(false)
+    }
+  }, [params, date])
+
+  const exportDeptImage = useCallback(async (deptIdForImage: string, deptName: string) => {
+    setDownloading(true)
+    try {
+      await downloadBlob(
+        timeReportService.dailyImagePath({ date, dept_id: deptIdForImage }),
+        `${deptName.replace(/[^a-zA-Z0-9 _-]/g, '_')}_${date}.png`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Image export failed')
+    } finally {
+      setDownloading(false)
+    }
+  }, [date])
+
   const def = useMemo(
     () => meta?.reports.find((r) => r.key === reportKey) ?? null,
     [meta, reportKey],
   )
+
+  const buildWhatsAppFile = async () => {
+    const path = timeReportService.exportPath(reportKey, params())
+    const blob = await api.blob(path)
+    return new File([blob], `${reportKey}_${iso(today)}.xlsx`, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+  }
 
   const yearOptions = useMemo(() => {
     const minY = meta ? Number(meta.bounds.min.slice(0, 4)) : today.getFullYear() - 8
@@ -311,6 +343,17 @@ export default function TimeReportPage() {
         <button className="btn btn-outline-secondary btn-sm" disabled={!hasExport || downloading} onClick={exportXlsx}>
           <i className="bi bi-download" /> {downloading ? 'Exporting…' : 'Excel'}
         </button>
+        <WhatsAppSendCard
+          disabled={!hasExport}
+          title="Send time report to WhatsApp"
+          defaultCaption={`Nexora Time Report | ${def?.label ?? reportKey}`}
+          buildFile={buildWhatsAppFile}
+        />
+        {reportKey === 'daily' && (
+          <button className="btn btn-outline-secondary btn-sm" disabled={!hasExport || downloading} onClick={exportImagesZip}>
+            <i className="bi bi-images" /> All Store Images (zip)
+          </button>
+        )}
       </div>
 
       {def?.description && <div className="trp-desc">{def.description}</div>}
@@ -320,16 +363,24 @@ export default function TimeReportPage() {
       ) : !result ? (
         <EmptyState icon="bi-clock-history" title="Run a report" description="Choose a report and its options, then press Show." />
       ) : (
-        <ResultView result={result} />
+        <ResultView result={result} onDeptImage={exportDeptImage} imageBusy={downloading} />
       )}
     </div>
   )
 }
 
-function ResultView({ result }: { result: Result }) {
+function ResultView({
+  result,
+  onDeptImage,
+  imageBusy,
+}: {
+  result: Result
+  onDeptImage: (deptId: string, deptName: string) => void
+  imageBusy: boolean
+}) {
   switch (result.kind) {
     case 'daily':
-      return <DailyView data={result.data} />
+      return <DailyView data={result.data} onDeptImage={onDeptImage} imageBusy={imageBusy} />
     case 'monthly':
       return <MonthlyView data={result.data} />
     case 'misspunch':
@@ -355,9 +406,18 @@ function PunchCells({ punches, n = 8 }: { punches: string[]; n?: number }) {
   )
 }
 
-function DailyView({ data }: { data: DailyReport }) {
-  const empty = data.departments.length === 0
-  if (empty) return <EmptyState icon="bi-inbox" title="No data" description="No attendance for that date." />
+function DailyView({
+  data,
+  onDeptImage,
+  imageBusy,
+}: {
+  data: DailyReport
+  onDeptImage: (deptId: string, deptName: string) => void
+  imageBusy: boolean
+}) {
+  if (data.departments.length === 0) {
+    return <EmptyState icon="bi-inbox" title="No data" description="No attendance for that date." />
+  }
   return (
     <div>
       <div className="trp-period">{data.period}</div>
@@ -365,6 +425,13 @@ function DailyView({ data }: { data: DailyReport }) {
         <div key={`${dept.dpt_id}-${dept.name}`}>
           <div className="trp-dept-head">
             <h2>{dept.name}</h2>
+            <button
+              className="btn btn-outline-secondary btn-sm"
+              disabled={imageBusy || dept.dpt_id === null}
+              onClick={() => dept.dpt_id !== null && onDeptImage(String(dept.dpt_id), dept.name)}
+            >
+              <i className="bi bi-image" /> Image
+            </button>
           </div>
           <div className="trp-tablewrap">
             <table className="trp-table">
@@ -381,15 +448,15 @@ function DailyView({ data }: { data: DailyReport }) {
                 </tr>
               </thead>
               <tbody>
-                {dept.rows.map((d, i) => (
-                  <tr key={`${d.user_id}-${i}`} style={statusStyle(d.status_hex, d.status_text)}>
-                    <td>{d.user_id}</td>
+                {dept.rows.map((row, index) => (
+                  <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex, row.status_text)}>
+                    <td>{row.user_id}</td>
                     <td className="trp-left">
-                      {d.name.slice(0, 30)}
-                      {d.is_late && <span className="trp-badge">LATE</span>}
+                      {row.name.slice(0, 30)}
+                      {row.is_late && <span className="trp-badge">LATE</span>}
                     </td>
-                    <PunchCells punches={d.punches} />
-                    <td className="trp-center">{d.work_hm}</td>
+                    <PunchCells punches={row.punches} />
+                    <td className="trp-center">{row.work_hm}</td>
                   </tr>
                 ))}
               </tbody>
@@ -432,21 +499,21 @@ function MonthlyView({ data }: { data: MonthlyReport }) {
             </tr>
           </thead>
           <tbody>
-            {data.rows.map((u, i) => (
-              <tr key={`${u.user_id}-${i}`}>
-                <td className="trp-left trp-fixed" title={`${u.user_id} · ${u.department}`}>
-                  {u.name}
+            {data.rows.map((row, index) => (
+              <tr key={`${row.user_id}-${index}`}>
+                <td className="trp-left trp-fixed" title={`${row.user_id} · ${row.department}`}>
+                  {row.name}
                 </td>
-                {u.cells.map((c, j) => (
-                  <td key={j} className="trp-day" style={statusStyle(c.hex)} title={c.work_hm}>
-                    {c.code}
+                {row.cells.map((cell, cellIndex) => (
+                  <td key={cellIndex} className="trp-day" style={statusStyle(cell.hex)} title={cell.work_hm}>
+                    {cell.code}
                   </td>
                 ))}
-                <td className="trp-center">{u.present}</td>
-                <td className="trp-center">{u.absent}</td>
-                <td className="trp-center">{u.miss_punch}</td>
-                <td className="trp-center">{u.late}</td>
-                <td className="trp-center">{u.total_hm}</td>
+                <td className="trp-center">{row.present}</td>
+                <td className="trp-center">{row.absent}</td>
+                <td className="trp-center">{row.miss_punch}</td>
+                <td className="trp-center">{row.late}</td>
+                <td className="trp-center">{row.total_hm}</td>
               </tr>
             ))}
           </tbody>
@@ -480,19 +547,19 @@ function MissPunchView({ data }: { data: MissPunchReport }) {
             {data.rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="trp-center text-muted">
-                  No miss-punch days in this range. 🎉
+                  No miss-punch days in this range.
                 </td>
               </tr>
             ) : (
-              data.rows.map((d, i) => (
-                <tr key={`${d.user_id}-${i}`} style={statusStyle(d.status_hex, d.status_text)}>
-                  <td>{d.pdate_str}</td>
-                  <td>{d.user_id}</td>
-                  <td className="trp-left">{d.name}</td>
-                  <td className="trp-left">{d.department}</td>
-                  <td className="trp-left">{d.punches.join(' | ')}</td>
-                  <td className="trp-center">{d.punch_count}</td>
-                  <td className="trp-center">{d.work_hm}</td>
+              data.rows.map((row, index) => (
+                <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex, row.status_text)}>
+                  <td>{row.pdate_str}</td>
+                  <td>{row.user_id}</td>
+                  <td className="trp-left">{row.name}</td>
+                  <td className="trp-left">{row.department}</td>
+                  <td className="trp-left">{row.punches.join(' | ')}</td>
+                  <td className="trp-center">{row.punch_count}</td>
+                  <td className="trp-center">{row.work_hm}</td>
                 </tr>
               ))
             )}
@@ -534,19 +601,19 @@ function UserView({ data }: { data: UserReport }) {
                   </td>
                 </tr>
               ) : (
-                rows.map((d, i) => (
-                  <tr key={`${d.user_id}-${i}`}>
-                    <td>{d.user_id}</td>
-                    <td className="trp-left">{d.name}</td>
-                    <td className="trp-left">{d.department}</td>
-                    <td className="trp-center">{d.present}</td>
-                    <td className="trp-center">{d.full}</td>
-                    <td className="trp-center">{d.short}</td>
-                    <td className="trp-center">{d.low}</td>
-                    <td className="trp-center">{d.miss_punch}</td>
-                    <td className="trp-center">{d.absent}</td>
-                    <td className="trp-center">{d.late}</td>
-                    <td className="trp-center">{d.total_hm}</td>
+                rows.map((row, index) => (
+                  <tr key={`${row.user_id}-${index}`}>
+                    <td>{row.user_id}</td>
+                    <td className="trp-left">{row.name}</td>
+                    <td className="trp-left">{row.department}</td>
+                    <td className="trp-center">{row.present}</td>
+                    <td className="trp-center">{row.full}</td>
+                    <td className="trp-center">{row.short}</td>
+                    <td className="trp-center">{row.low}</td>
+                    <td className="trp-center">{row.miss_punch}</td>
+                    <td className="trp-center">{row.absent}</td>
+                    <td className="trp-center">{row.late}</td>
+                    <td className="trp-center">{row.total_hm}</td>
                   </tr>
                 ))
               )}
@@ -581,14 +648,14 @@ function UserView({ data }: { data: UserReport }) {
                 </td>
               </tr>
             ) : (
-              rows.map((d, i) => (
-                <tr key={`${d.user_id}-${i}`} style={statusStyle(d.status_hex, d.status_text)}>
-                  <td>{d.pdate_str}</td>
-                  <td>{d.user_id}</td>
-                  <td className="trp-left">{d.name}</td>
-                  <td className="trp-left">{d.punches.join(' | ')}</td>
-                  <td className="trp-center">{d.work_hm}</td>
-                  <td className="trp-center">{d.late_in || ''}</td>
+              rows.map((row, index) => (
+                <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex, row.status_text)}>
+                  <td>{row.pdate_str}</td>
+                  <td>{row.user_id}</td>
+                  <td className="trp-left">{row.name}</td>
+                  <td className="trp-left">{row.punches.join(' | ')}</td>
+                  <td className="trp-center">{row.work_hm}</td>
+                  <td className="trp-center">{row.late_in || ''}</td>
                 </tr>
               ))
             )}
@@ -622,18 +689,18 @@ function InactiveView({ data }: { data: InactiveReport }) {
             {data.rows.length === 0 ? (
               <tr>
                 <td colSpan={6} className="trp-center text-muted">
-                  No inactive users. 🎉
+                  No inactive users.
                 </td>
               </tr>
             ) : (
-              data.rows.map((d, i) => (
-                <tr key={`${d.user_id}-${i}`} style={d.last_seen === 'Never' ? { background: '#F4A7A7', color: '#000' } : undefined}>
-                  <td>{d.user_id}</td>
-                  <td className="trp-left">{d.name}</td>
-                  <td className="trp-left">{d.department}</td>
-                  <td className="trp-center">{d.join_dt}</td>
-                  <td className="trp-center">{d.last_seen}</td>
-                  <td className="trp-center">{d.days_since}</td>
+              data.rows.map((row, index) => (
+                <tr key={`${row.user_id}-${index}`} style={row.last_seen === 'Never' ? { background: '#F4A7A7', color: '#000' } : undefined}>
+                  <td>{row.user_id}</td>
+                  <td className="trp-left">{row.name}</td>
+                  <td className="trp-left">{row.department}</td>
+                  <td className="trp-center">{row.join_dt}</td>
+                  <td className="trp-center">{row.last_seen}</td>
+                  <td className="trp-center">{row.days_since}</td>
                 </tr>
               ))
             )}

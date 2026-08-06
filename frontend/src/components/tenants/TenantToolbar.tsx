@@ -1,4 +1,4 @@
-import type { ChangeEvent } from 'react'
+import { FilterToolbar } from '../../design-system/components/FilterToolbar'
 
 export type StatusFilter = 'all' | 'active' | 'inactive'
 
@@ -18,36 +18,26 @@ export function TenantToolbar({
   onAdd,
 }: TenantToolbarProps) {
   return (
-    <div className="list-toolbar">
-      <div className="list-toolbar__search">
-        <i className="bi bi-search" aria-hidden="true" />
-        <input
-          type="search"
-          className="form-control"
-          placeholder="Search tenants"
-          aria-label="Search tenants"
-          value={search}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => onSearchChange(event.target.value)}
-        />
-      </div>
-
-      <select
-        className="form-select list-toolbar__filter"
-        aria-label="Filter by status"
-        value={status}
-        onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-          onStatusChange(event.target.value as StatusFilter)
-        }
-      >
-        <option value="all">All statuses</option>
-        <option value="active">Active</option>
-        <option value="inactive">Inactive</option>
-      </select>
-
-      <button type="button" className="btn btn-primary ms-auto" onClick={onAdd}>
-        <i className="bi bi-plus-lg me-1" aria-hidden="true" />
-        Add Tenant
-      </button>
-    </div>
+    <FilterToolbar
+      searchPlaceholder="Search tenants"
+      searchAriaLabel="Search tenants"
+      searchValue={search}
+      onSearchChange={onSearchChange}
+      filters={[
+        {
+          key: 'status',
+          ariaLabel: 'Filter by status',
+          value: status,
+          onChange: (value) => onStatusChange(value as StatusFilter),
+          options: [
+            { value: 'all', label: 'All statuses' },
+            { value: 'active', label: 'Active' },
+            { value: 'inactive', label: 'Inactive' },
+          ],
+        },
+      ]}
+      actionLabel="Add Tenant"
+      onAction={onAdd}
+    />
   )
 }

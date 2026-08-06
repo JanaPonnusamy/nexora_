@@ -17,6 +17,13 @@ async function request(path, options = {}) {
   const timeoutMs = options.timeoutMs ?? 45000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // React Query passes its own per-query AbortSignal so switching products
+  // cancels the previous product's in-flight request (req 5) - forward its
+  // abort into our internal controller without losing the timeout behavior.
+  if (options.signal) {
+    if (options.signal.aborted) controller.abort();
+    else options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
   let response;
   try {
     response = await fetch(joinUrl(settings.apiBaseUrl, path), {
@@ -40,7 +47,14 @@ async function request(path, options = {}) {
   const data = text ? safeJson(text) : null;
 
   if (!response.ok) {
-    const message = data?.message || data?.error || `Request failed with ${response.status}`;
+    const message = data?.detail || data?.message || data?.error || `Request failed with ${response.status}`;
+    // A 401 here means the stored token is missing/expired/invalid for a
+    // request that did carry a session - the UI would otherwise sit showing
+    // "Request failed with 401" on every panel forever with no way out. Let
+    // the app shell know so it can drop back to the login screen.
+    if (response.status === 401 && session) {
+      window.dispatchEvent(new CustomEvent('nexora:unauthorized'));
+    }
     throw new Error(message);
   }
 
@@ -114,6 +128,41 @@ export const api = {
     });
   },
 
+  getWhatsAppState(session) {
+    return request('/api/whatsapp/state', { session });
+  },
+
+  saveWhatsAppSettings(payload, session) {
+    return request('/api/whatsapp/settings', {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  saveWhatsAppProfile(payload, session) {
+    return request('/api/whatsapp/profiles', {
+      method: 'POST',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  launchWhatsAppProfile(profileId, session) {
+    return request(`/api/whatsapp/profiles/${profileId}/launch`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
+  },
+
+  deleteWhatsAppProfile(profileId, session) {
+    return request(`/api/whatsapp/profiles/${profileId}`, {
+      method: 'DELETE',
+      session
+    });
+  },
+
   searchStockProducts(query, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/stock-availability/products/search${toQuery({
@@ -138,6 +187,19 @@ export const api = {
       product: productCode,
       months: filters.months || 3
     })}`, { session });
+  },
+
+  getStockCoreBulk(items, session, filters = {}) {
+    const settings = loadSettings();
+    return request('/api/stock-availability/products/core/bulk', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({
+        tenant_id: filters.tenantId || settings.tenantId,
+        months: filters.months || 3,
+        items: items || []
+      })
+    });
   },
 
   getStockBatches(storeId, productCode, session, filters = {}) {
@@ -187,6 +249,16 @@ export const api = {
       bill_date: billDate ? String(billDate).slice(0, 10) : ''
     })}`, { session });
   },
+  getMatchCandidates(storeId, name, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/product-mapping/candidates${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      target_store_id: storeId,
+      name,
+      limit: filters.limit || 8
+    })}`, { session });
+  },
+
   getSuppliers(session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/supplier-stock-analysis/suppliers${toQuery({
@@ -207,12 +279,43 @@ export const api = {
     })}`, { session });
   },
 
+  getSupplierAnalysisReport(supplierCode, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/supplier-stock-analysis/supplier-report${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: filters.storeId || settings.storeId,
+      supplier_code: supplierCode,
+      only_available: filters.onlyAvailable ?? 0
+    })}`, { session });
+  },
+
   getSupplierDashboard(supplierStockId, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/supplier-stock-analysis/supplier-stock/${supplierStockId}/dashboard${toQuery({
       tenant_id: filters.tenantId || settings.tenantId,
       months: filters.months || 6
     })}`, { session });
+  },
+
+  // Fast stage: match resolution + stock/summary for every store in one
+  // batched query - no batches/purchases/sales/movement history.
+  getSupplierDashboardStock(supplierStockId, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/supplier-stock-analysis/supplier-stock/${supplierStockId}/dashboard/stock${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId
+    })}`, { session, signal: filters.signal });
+  },
+
+  // Second stage: batches/purchases/sales/movement history, fetched once the
+  // stock stage has resolved a product_code + source_store_id.
+  getSupplierDashboardDetails(supplierStockId, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/supplier-stock-analysis/supplier-stock/${supplierStockId}/dashboard/details${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      source_store_id: filters.sourceStoreId,
+      product_code: filters.productCode,
+      months: filters.months || 6
+    })}`, { session, signal: filters.signal });
   },
 
   matchSupplierStock(supplierStockId, session, filters = {}) {

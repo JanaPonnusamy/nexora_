@@ -7,6 +7,7 @@ class RoleRepository:
     def seed_roles(self):
         roles = [
             ('SUPER_ADMIN','Platform Control'),
+            ('PLATFORM_OWNER','Platform Owner - Full System Access'),
             ('TENANT_ADMIN','Tenant Control'),
             ('STORE_ADMIN','Store Administration'),
             ('STORE_MANAGER','Store Operations'),

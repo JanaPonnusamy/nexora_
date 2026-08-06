@@ -167,6 +167,7 @@ class SyncRuntimeOrchestrator:
 
     def run_table(self, task_id, table):
         sync_mode = (table.get("sync_mode") or "").upper()
+        table_name = table["table_name"]
         watermark = None
         if sync_mode in _WATERMARK_MODES and table.get("watermark_column"):
             # Rolling window: extract only rows in the window / past watermark.
@@ -188,7 +189,18 @@ class SyncRuntimeOrchestrator:
                 if prev_window is None or int(window) > prev_window:
                     watermark = None
                 self.cache.set_config(key, str(int(window)))
-        extracted = self.extractor.extract(table, watermark=watermark)
+        pk_cursor = None
+        linked_child_cursor = None
+        if table_name == "ProductSaleInformation":
+            pk_cursor = self.cache.get_config("source_max:ProductSaleInformation")
+        elif table_name == "SaleInformation":
+            linked_child_cursor = self.cache.get_config("source_max:ProductSaleInformation")
+        extracted = self.extractor.extract(
+            table,
+            watermark=watermark,
+            pk_cursor=pk_cursor,
+            linked_child_cursor=linked_child_cursor,
+        )
         return self._diff_and_upload(task_id, table, extracted, sync_mode)
 
     @staticmethod
@@ -222,6 +234,7 @@ class SyncRuntimeOrchestrator:
         skipped = examined - len(changed_rows)
         strategy = "WATERMARK_HASH" if sync_mode in _WATERMARK_MODES else "MASTER_HASH"
         source_max = self._source_max(table_name, pk_cols)
+        self._remember_source_max(table_name, pk_cols, source_max)
 
         print(
             "[SYNC] %-24s | %-14s | examined=%-7d changed=%-6d "
@@ -316,6 +329,16 @@ class SyncRuntimeOrchestrator:
             return "NULL" if value is None else str(value)
         except Exception:
             return "err"
+
+    def _remember_source_max(self, table_name, pk_cols, source_max):
+        if not pk_cols or source_max in (None, "n/a", "err", "NULL"):
+            return
+        if len(pk_cols) == 1 and pk_cols[0].upper() == "ID":
+            try:
+                int(str(source_max))
+            except (TypeError, ValueError):
+                return
+            self.cache.set_config("source_max:" + table_name, str(source_max))
 
     @staticmethod
     def _pk_value(row, pk_cols):

@@ -22,8 +22,9 @@ def dashboard(
     tenant_id: str = Query(...),
     from_month: str = Query(...),
     to_month: str = Query(...),
+    source: str = Query("NEXORA"),
 ):
-    return report_service.dashboard(tenant_id, from_month, to_month)
+    return report_service.dashboard(tenant_id, from_month, to_month, source)
 
 
 @router.get("/store-analysis")
@@ -32,12 +33,13 @@ def store_analysis(
     store_id: str = Query(...),
     from_month: Optional[str] = Query(None),
     to_month: Optional[str] = Query(None),
+    source: str = Query("NEXORA"),
 ):
     if not from_month or not to_month:
         now = datetime.now()
         to_month = f"{now.year}-{str(now.month).zfill(2)}"
         from_month = f"{now.year - 1}-{str(now.month).zfill(2)}"
-    return report_service.store_analysis(tenant_id, store_id, from_month, to_month)
+    return report_service.store_analysis(tenant_id, store_id, from_month, to_month, source)
 
 
 @router.get("/compare")
@@ -45,8 +47,9 @@ def compare(
     tenant_id: str = Query(...),
     month_a: str = Query(...),
     month_b: str = Query(...),
+    source: str = Query("NEXORA"),
 ):
-    return report_service.compare(tenant_id, month_a, month_b)
+    return report_service.compare(tenant_id, month_a, month_b, source)
 
 
 @router.get("/compare/export.xlsx")
@@ -54,9 +57,19 @@ def compare_excel(
     tenant_id: str = Query(...),
     month_a: str = Query(...),
     month_b: str = Query(...),
+    source: str = Query("NEXORA"),
 ):
-    payload = report_service.compare(tenant_id, month_a, month_b)
-    content = ExcelExporter.build_workbook(payload["stores"], "Month Compare")
+    payload = report_service.compare(tenant_id, month_a, month_b, source)
+    rows = list(payload["stores"])
+    if payload.get("summary"):
+        rows.append({
+            "Store": "TOTAL",
+            "StoreCode": "",
+            "StoreId": "",
+            "Status": "",
+            **payload["summary"],
+        })
+    content = ExcelExporter.build_workbook(rows, "Month Compare")
     filename = f"Month_Compare_{month_a}_vs_{month_b}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return Response(
         content=content,
@@ -70,8 +83,9 @@ def dashboard_excel(
     tenant_id: str = Query(...),
     from_month: str = Query(...),
     to_month: str = Query(...),
+    source: str = Query("NEXORA"),
 ):
-    payload = report_service.dashboard(tenant_id, from_month, to_month)
+    payload = report_service.dashboard(tenant_id, from_month, to_month, source)
     content = ExcelExporter.build_workbook(payload["stores"], "Store Summary")
     filename = f"All_Store_Summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return Response(
@@ -87,8 +101,9 @@ def store_analysis_excel(
     store_id: str = Query(...),
     from_month: str = Query(...),
     to_month: str = Query(...),
+    source: str = Query("NEXORA"),
 ):
-    payload = report_service.store_analysis(tenant_id, store_id, from_month, to_month)
+    payload = report_service.store_analysis(tenant_id, store_id, from_month, to_month, source)
     content = ExcelExporter.build_workbook(payload["rows"], "Monthly Analysis")
     filename = (
         f"{payload['store_code']}_Monthly_Analysis_"

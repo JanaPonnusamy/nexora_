@@ -120,12 +120,14 @@ export interface SalesBillRow {
   customer_code: string | null
   salesman: string | null
   bill_value: number | null
+  product_code?: string | null
   product_name: string | null
   batch: string | null
   qty: number | null
   mrp: number | null
   discount: number | null
   tax: number | null
+  dont_consider_in_order?: boolean | null
 }
 
 /** Per-store availability of a product (drawer Availability tab). */

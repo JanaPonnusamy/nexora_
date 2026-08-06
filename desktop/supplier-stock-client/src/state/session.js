@@ -8,7 +8,8 @@ const defaultSettings = {
   tenantId: '',
   storeId: '',
   storeName: '',
-  storeOrder: []
+  storeOrder: [],
+  similarSearchChars: 6
 };
 
 function todayKey() {

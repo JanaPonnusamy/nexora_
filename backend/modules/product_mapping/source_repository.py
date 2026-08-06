@@ -11,8 +11,20 @@ ProductCode. Two stores that both stock the same supplier line resolve to their
 respective (possibly different) ProductCodes, giving a trustworthy 100% pair.
 """
 
+import time
+
 from config.database import get_connection
 from modules.procurement._dbutil import rows_to_dicts as _rows_to_dicts
+
+# find_candidates() (Similar Search, called once per store per product click)
+# and engine_service's full mapping run both re-fetch the ENTIRE store catalog
+# on every call - with no connection pooling (get_connection() opens a fresh
+# pyodbc connection each time), that's a full network round-trip + table scan
+# repeated for every click. The catalog only actually changes when a sync
+# runs, so a short TTL cache turns "rescan every click" into "scan once per
+# store per sync interval" without needing to wire up sync-completion events.
+_STORE_PRODUCTS_TTL_SECONDS = 300
+_store_products_cache = {}
 
 
 def _object_exists(cursor, name):
@@ -21,7 +33,16 @@ def _object_exists(cursor, name):
 
 
 def load_store_products(tenant_id, store_id):
-    """Active products for one store: ``[{product_code, product_name, mrp}]``."""
+    """Active products for one store: ``[{product_code, product_name, mrp}]``.
+
+    Cached in-process per ``(tenant_id, store_id)`` for
+    ``_STORE_PRODUCTS_TTL_SECONDS`` - see module docstring note above.
+    """
+    cache_key = (tenant_id, store_id)
+    cached = _store_products_cache.get(cache_key)
+    if cached and (time.monotonic() - cached[0]) < _STORE_PRODUCTS_TTL_SECONDS:
+        return cached[1]
+
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -40,9 +61,21 @@ def load_store_products(tenant_id, store_id):
         rows = _rows_to_dicts(cur)
         for r in rows:
             r["mrp"] = float(r["mrp"]) if r["mrp"] is not None else None
+        _store_products_cache[cache_key] = (time.monotonic(), rows)
         return rows
     finally:
         conn.close()
+
+
+def invalidate_store_products_cache(tenant_id=None, store_id=None):
+    """Drop cached catalog(s) - call after a sync completes for that store so
+    freshly-synced products show up immediately instead of waiting out the TTL."""
+    if tenant_id is None and store_id is None:
+        _store_products_cache.clear()
+        return
+    for key in [k for k in _store_products_cache if
+                (tenant_id is None or k[0] == tenant_id) and (store_id is None or k[1] == store_id)]:
+        _store_products_cache.pop(key, None)
 
 
 def search_store_products(tenant_id, store_id, query, limit=25):

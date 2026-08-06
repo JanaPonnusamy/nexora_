@@ -1,3 +1,5 @@
+export type PharmacyReportSource = 'NEXORA' | 'STORE_DB'
+
 export interface PharmacyReportKpi {
   Sales: number
   Purchase: number
@@ -24,10 +26,12 @@ export interface PharmacyReportStoreSummary {
   GPPercent: number
   PurchaseSalesRatio: number
   StockPendingRatio: number
+  Source?: PharmacyReportSource
 }
 
 export interface PharmacyDashboardResponse {
   success: boolean
+  source: PharmacyReportSource
   kpi: PharmacyReportKpi
   stores: PharmacyReportStoreSummary[]
 }
@@ -53,6 +57,7 @@ export interface PharmacyMonthlyRow {
 
 export interface PharmacyStoreAnalysisResponse {
   success: boolean
+  source: PharmacyReportSource
   store: string
   store_name: string
   store_code: string
@@ -78,11 +83,38 @@ export interface PharmacyCompareStoreRow {
   PaidUpStockPercentA: number
   PaidUpStockB: number
   PaidUpStockPercentB: number
+  AvgDailySalesA: number
+  AvgDailySalesB: number
+  AvgDailySalesGrowthPercent: number
+  Source?: PharmacyReportSource
+}
+
+export interface PharmacyCompareSummary {
+  StoresIncluded: number
+  SalesA: number
+  SalesB: number
+  SalesGrowthPercent: number
+  StockA: number
+  StockB: number
+  StockGrowthPercent: number
+  PendingA: number
+  PendingB: number
+  PaidUpStockA: number
+  PaidUpStockPercentA: number
+  PaidUpStockB: number
+  PaidUpStockPercentB: number
+  AvgDailySalesA: number
+  AvgDailySalesB: number
+  AvgDailySalesGrowthPercent: number
+  WorkingCapitalImpact: number
 }
 
 export interface PharmacyCompareResponse {
   success: boolean
+  source: PharmacyReportSource
   month_a: string
   month_b: string
   stores: PharmacyCompareStoreRow[]
+  summary: PharmacyCompareSummary
+  generated_at?: string
 }

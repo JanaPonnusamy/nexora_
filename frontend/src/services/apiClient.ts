@@ -109,7 +109,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (response.status === 204) {
       return undefined as T
     }
-    return (await response.json()) as T
+    try {
+      return (await response.json()) as T
+    } catch {
+      logger.error('api-client', `${method} ${path} returned a non-JSON body`, response.status)
+      throw new ApiError(
+        `${path} did not return JSON (got status ${response.status}) — the route may not exist or was intercepted.`,
+        response.status,
+      )
+    }
   }
 }
 

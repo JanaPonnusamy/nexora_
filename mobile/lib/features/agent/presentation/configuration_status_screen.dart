@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:nexora_mobile/core/di/agent_providers.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
+import 'package:nexora_mobile/core/widgets/mobile_components.dart';
 import 'package:nexora_mobile/features/agent/presentation/widgets/status_widgets.dart';
 
 /// Phase 2 — what configuration is cached locally, its versions and freshness.
@@ -23,109 +24,121 @@ class ConfigurationStatusScreen extends ConsumerWidget {
           ref.invalidate(allConfigProvider);
         },
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
-            SectionCard(
-              title: 'Store configuration',
-              icon: Icons.storefront_outlined,
-              trailing: cached.maybeWhen(
-                data: (c) => c == null
-                    ? const StatusPill(
-                        label: 'Not cached', color: AppColors.slate,)
-                    : StatusPill(
-                        label: 'v${c.version}', color: AppColors.primary,),
-                orElse: () => const SizedBox.shrink(),
+            const SectionHeader(
+                title: 'STORE CONFIGURATION', icon: Icons.storefront_outlined,),
+            cached.when(
+              loading: () => const StatusCard(
+                  accentColor: AppColors.line, child: InlineLoading(),),
+              error: (e, _) => StatusCard(
+                accentColor: AppColors.error,
+                child: Text('$e', style: const TextStyle(color: AppColors.error)),
               ),
-              children: [
-                cached.when(
-                  loading: () => const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(12),
-                      child: SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2.2),
-                      ),
+              data: (c) {
+                if (c == null) {
+                  return const StatusCard(
+                    accentColor: AppColors.slate,
+                    child: EmptyState(
+                      message:
+                          'No store configuration cached yet. Pull to refresh once online.',
+                      icon: Icons.cloud_off_rounded,
                     ),
-                  ),
-                  error: (e, _) => Text('$e'),
-                  data: (c) {
-                    if (c == null) {
-                      return const Text(
-                        'No store configuration cached yet. Pull to refresh once online.',
-                        style: TextStyle(color: AppColors.slate),
-                      );
-                    }
-                    final s = c.store;
-                    return Column(
-                      children: [
-                        InfoRow(label: 'Store name', value: s.storeName),
-                        InfoRow(label: 'Store code', value: s.storeCode),
-                        InfoRow(label: 'Store ID', value: s.storeId),
-                        InfoRow(label: 'Tenant ID', value: s.tenantId),
-                        InfoRow(
-                          label: 'Active',
-                          valueWidget: StatusPill(
-                            label: s.isActive ? 'Active' : 'Inactive',
-                            color: s.isActive
-                                ? AppColors.success
-                                : AppColors.slate,
+                  );
+                }
+                final s = c.store;
+                return StatusCard(
+                  accentColor: s.isActive ? AppColors.success : AppColors.slate,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              s.storeName,
+                              style: const TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.w800,),
+                            ),
                           ),
-                        ),
-                        InfoRow(
-                            label: 'Downloaded',
-                            value: formatRelative(c.fetchedAt),),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SectionCard(
-              title: 'Cache entries',
-              icon: Icons.folder_open_outlined,
-              children: [
-                entries.when(
-                  loading: () => const SizedBox(
-                    height: 40,
-                    child: Center(
-                      child: SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2.2),
+                          StatusBadge(
+                            label: 'v${c.version}',
+                            color: AppColors.primary,
+                            dense: true,
+                          ),
+                        ],
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          InfoChip(
+                              label: s.storeCode,
+                              icon: Icons.storefront_outlined,),
+                          InfoChip(
+                            label: s.isActive ? 'Active' : 'Inactive',
+                            icon: s.isActive
+                                ? Icons.check_circle_outline
+                                : Icons.remove_circle_outline,
+                            color:
+                                s.isActive ? AppColors.success : AppColors.slate,
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 24),
+                      InfoRow(label: 'Store ID', value: s.storeId),
+                      InfoRow(label: 'Tenant ID', value: s.tenantId),
+                      InfoRow(
+                          label: 'Downloaded', value: formatRelative(c.fetchedAt),),
+                    ],
                   ),
-                  error: (e, _) => Text('$e'),
-                  data: (rows) => rows.isEmpty
-                      ? const Text('Nothing cached yet.',
-                          style: TextStyle(color: AppColors.slate),)
-                      : Column(
-                          children: [
-                            for (final r in rows)
-                              InfoRow(
-                                label: r.key,
-                                valueWidget: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text('v${r.version}',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w600,),),
-                                    Text(
-                                      formatRelative(r.updatedAt),
-                                      style: const TextStyle(
-                                          fontSize: 12, color: AppColors.slate,),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
-                        ),
-                ),
-              ],
+                );
+              },
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
+            SectionHeader(
+              title: 'CACHE ENTRIES',
+              icon: Icons.folder_open_outlined,
+              trailing: entries.maybeWhen(
+                data: (rows) => Text('${rows.length}',
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.slate,),),
+                orElse: () => null,
+              ),
+            ),
+            StatusCard(
+              accentColor: AppColors.line,
+              child: entries.when(
+                loading: () => const InlineLoading(),
+                error: (e, _) => Text('$e'),
+                data: (rows) => rows.isEmpty
+                    ? const EmptyState(
+                        message: 'Nothing cached yet.',
+                        icon: Icons.folder_off_outlined,)
+                    : Column(
+                        children: [
+                          for (final r in rows)
+                            InfoRow(
+                              label: r.key,
+                              valueWidget: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text('v${r.version}',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600,),),
+                                  Text(
+                                    formatRelative(r.updatedAt),
+                                    style: const TextStyle(
+                                        fontSize: 12, color: AppColors.slate,),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
+            ),
           ],
         ),
       ),

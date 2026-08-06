@@ -446,3 +446,67 @@ export interface OptimizationAuditRow {
   moved_by: string | null
   moved_at: string | null
 }
+
+/** Internal Supplier Stock Distribution — one store's own stock (HO, e.g.
+ *  NMW) generated out to every other store's supplier_stock feed. */
+export interface DistributionConfigRow {
+  store_id: string
+  store_code: string
+  store_name: string
+  whatsapp_group: string | null
+  phone_number: string | null
+  enabled: boolean
+  local_supplier_code: string | null
+}
+
+export interface DistributionSupplierMapImportResult {
+  imported: { store_code: string; local_supplier_code: string }[]
+  skipped: string[]
+}
+
+export interface DistributionRunItemResult {
+  store_code: string
+  status: 'success' | 'failed'
+  rows?: number
+  whatsapp_status?: string
+  error?: string
+}
+
+export interface DistributionRunResult {
+  run_id: string
+  stores_total?: number
+  stores_succeeded?: number
+  stores_failed?: number
+  items: DistributionRunItemResult[]
+  error?: string
+}
+
+export interface DistributionRunSummary {
+  run_id: string
+  source_store_code: string
+  provider: string
+  started_at: string
+  finished_at: string | null
+  status: string
+  stores_total: number
+  stores_succeeded: number
+  stores_failed: number
+}
+
+export interface DistributionRunItemRow {
+  run_item_id: string
+  store_code: string
+  rows_exported: number | null
+  rows_imported: number | null
+  excel_path: string | null
+  supplier_updated: boolean
+  whatsapp_status: string
+  status: string
+  error_message: string | null
+  duration_ms: number | null
+}
+
+export interface DistributionRunDetail {
+  run: DistributionRunSummary | null
+  items: DistributionRunItemRow[]
+}

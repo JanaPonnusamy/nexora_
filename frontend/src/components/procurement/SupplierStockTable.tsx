@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { SupplierRow, SupplierStockRow, WorkspaceItem } from '../../types/procurement'
 import { num } from '../stock/format'
@@ -59,6 +59,29 @@ function isTextEditor(target: EventTarget | null): boolean {
 
 type Zone = 'qty' | 'supplier'
 
+type QuickFilter = 'all' | 'ordered' | 'offers' | 'in-stock' | 'zero-stock'
+
+const QUICK_FILTERS: { id: QuickFilter; label: string }[] = [
+  { id: 'ordered', label: 'Only Ordered' },
+  { id: 'offers', label: 'Only Offers' },
+  { id: 'in-stock', label: 'Only Stock Available' },
+  { id: 'zero-stock', label: 'Only Zero Stock' },
+]
+
+/** Human-readable offer detail for the instant hover tooltip (§ OFFER
+ *  TOOLTIP) — built from the same real scheme/free/discount fields as the
+ *  badge, plus the supplier's own scheme text and the stock file's import
+ *  date (there is no separate offer-validity date in supplier_stock). */
+export function offerTooltip(r: SupplierStockRow): string | undefined {
+  const buyGet = formatOffer(r)
+  const hasDiscount = r.discount != null && Number(r.discount) > 0
+  if (!buyGet && !hasDiscount) return undefined
+  const lines = buyGet ? [`Offer: ${buyGet}`] : []
+  if (hasDiscount) lines.push(`Discount: ${num(Number(r.discount))}%`)
+  if (r.transaction_date) lines.push(`As of: ${r.transaction_date}`)
+  return lines.join('\n')
+}
+
 /** Supplier Live Stock. Shows the supplier's live stock file (supplier_stock)
  *  already resolved to store ProductCodes via SupplierProductMatch and
  *  intersected with the current VPL. Selection + order qty are owned by the page
@@ -90,6 +113,8 @@ export function SupplierStockTable({
   onSupplierFocusChange,
   onSkip,
   onRestore,
+  remarks,
+  onRemarksChange,
 }: {
   rows: SupplierStockRow[]
   loading: boolean
@@ -127,6 +152,11 @@ export function SupplierStockTable({
    *  qty-0 Enter skip the row and the Status column pick a skip mode here too. */
   onSkip: (item: WorkspaceItem, reason: string) => void
   onRestore: (item: WorkspaceItem) => void
+  /** Free-text Remarks per row (keyed by stockRowKey), owned by the page so
+   *  values survive search/sort/filter and are still there at export time
+   *  (§ REMARKS, § PERSISTENCE). */
+  remarks: Record<string, string>
+  onRemarksChange: (key: string, value: string) => void
 }) {
   // Order-qty inputs, keyed by row, so keyboard nav can (re)focus a row's cell.
   const inputs = useRef<Record<string, HTMLInputElement | null>>({})
@@ -134,11 +164,43 @@ export function SupplierStockTable({
 
   const [zone, setZone] = useState<Zone>('qty')
   const [supIndex, setSupIndex] = useState(0)
+  // Quick filter is view-only and safe to keep local: it never drops data,
+  // only which rows currently render (§ QUICK FILTER, § PERSISTENCE).
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
   // Row key whose Esc-skip should park focus on its Skip-Mode picker (mirrors
   // ProductGrid's skipFocusId). Cleared on any selection change.
   const [skipFocusKey, setSkipFocusKey] = useState<string | null>(null)
 
+  // Quick-filter view (§ QUICK FILTER): narrows what's *shown*, never the
+  // underlying data — keyboard nav / Enter-to-save / bulk-select below still
+  // walk the full `rows` set so a filtered-out row is never silently skipped
+  // mid-workflow. Order Qty / Remarks are untouched by filtering (§ PERSISTENCE).
+  const visibleRows = useMemo(() => {
+    if (quickFilter === 'all') return rows
+    return rows.filter((r) => {
+      const key = stockRowKey(r)
+      switch (quickFilter) {
+        case 'ordered': {
+          const n = Number(draft[key])
+          return !Number.isNaN(n) && n > 0
+        }
+        case 'offers':
+          return Boolean(formatOffer(r)) || (r.discount != null && Number(r.discount) > 0)
+        case 'in-stock':
+          return (r.available_stock ?? 0) > 0
+        case 'zero-stock':
+          return (r.available_stock ?? 0) <= 0
+        default:
+          return true
+      }
+    })
+  }, [rows, quickFilter, draft])
+
   const selectedIndex = rows.findIndex((r) => stockRowKey(r) === selectedKey)
+  // Same lookup, but against the currently visible (filtered) rows — used only
+  // to resolve the Skip-Mode picker's DOM id, which is numbered by its render
+  // position in `visibleRows`, not the full set.
+  const visibleSelectedIndex = visibleRows.findIndex((r) => stockRowKey(r) === selectedKey)
   // The matched order item + its status for the active row (drives the focus
   // effect below so it re-runs the moment the row becomes skipped).
   const selectedRow = selectedIndex >= 0 ? rows[selectedIndex] : undefined
@@ -168,12 +230,12 @@ export function SupplierStockTable({
     if (zone === 'supplier') { wrapRef.current?.focus(); return }
     const key = stockRowKey(rows[selectedIndex])
     if (selectedItemStatus === 'skipped' && skipFocusKey === key) {
-      (document.getElementById(`pm-sxskip-${selectedIndex}`) as HTMLElement | null)?.focus()
+      (document.getElementById(`pm-sxskip-${visibleSelectedIndex}`) as HTMLElement | null)?.focus()
     } else {
       inputs.current[key]?.focus()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedKey, rows.length, zone, selectedItemStatus, skipFocusKey])
+  }, [selectedKey, rows.length, zone, selectedItemStatus, skipFocusKey, visibleSelectedIndex])
 
   useEffect(() => {
     onSupplierFocusChange?.(zone === 'supplier')
@@ -321,13 +383,32 @@ export function SupplierStockTable({
     else if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleCheckedCurrent() }
   }
 
-  const checkableIds = rows
+  const checkableIds = visibleRows
     .map((r) => (r.product_code ? checkableByCode.get(r.product_code) : undefined))
     .filter((id): id is string => Boolean(id))
   const allChecked = checkableIds.length > 0 && checkableIds.every((id) => checked.has(id))
 
   return (
-    <div className="pm-grid-wrap" ref={wrapRef} tabIndex={-1} onKeyDown={onGridKey}>
+    <div>
+      <div className="pm-quickfilters" role="group" aria-label="Quick filters">
+        {QUICK_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            className={`pm-qf${quickFilter === f.id ? ' pm-qf--on' : ''}`}
+            aria-pressed={quickFilter === f.id}
+            onClick={() => setQuickFilter((cur) => (cur === f.id ? 'all' : f.id))}
+          >
+            {f.label}
+          </button>
+        ))}
+        {quickFilter !== 'all' && (
+          <span className="sx-dim" style={{ alignSelf: 'center', fontSize: 11.5 }}>
+            {visibleRows.length} of {rows.length} shown
+          </span>
+        )}
+      </div>
+      <div className="pm-grid-wrap" ref={wrapRef} tabIndex={-1} onKeyDown={onGridKey}>
       <table className="pm-grid pm-grid--stock">
         {/* Fixed layout so the whole grid fits its column with no horizontal
             scroll (§ NO H-SCROLL): every column below has a fixed width except
@@ -344,6 +425,7 @@ export function SupplierStockTable({
           <col style={{ width: 58 }} />{/* Store Stock */}
           <col style={{ width: 46 }} />{/* Sugg. */}
           <col style={{ width: 66 }} />{/* Order Qty */}
+          <col style={{ width: 100 }} />{/* Remarks */}
           <col style={{ width: 92 }} />{/* Status (after Order Qty) */}
         </colgroup>
         <thead>
@@ -365,11 +447,12 @@ export function SupplierStockTable({
             <th className="sx-num" title="Store Stock">Store Stock</th>
             <th className="sx-num">Sugg.</th>
             <th className="sx-num pm-grid__final">Order Qty</th>
+            <th>Remarks</th>
             <th>Status</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => {
+          {visibleRows.map((r, i) => {
             const key = stockRowKey(r)
             const storeStock = r.product_code != null ? storeStockByCode.get(r.product_code) : undefined
             const checkId = r.product_code ? checkableByCode.get(r.product_code) : undefined
@@ -380,10 +463,13 @@ export function SupplierStockTable({
             const skipped = item?.item_status === 'skipped'
             const assigned = (item?.assigned_qty ?? 0) > 0 && !skipped
             const finalized = !!item && REVIEWED_STATES.includes(item.item_status) && (item.final_qty ?? 0) > 0 && !assigned && !skipped
+            const orderedQty = Number(draft[key])
+            const ordered = !Number.isNaN(orderedQty) && orderedQty > 0
+            const rowClass = [key === selectedKey ? 'pm-row--sel' : '', ordered ? 'pm-row--ordered' : ''].filter(Boolean).join(' ') || undefined
             return (
               <tr
                 key={key}
-                className={key === selectedKey ? 'pm-row--sel' : undefined}
+                className={rowClass}
                 onClick={() => onSelect(r)}
               >
                 <td className="pm-grid__check" onClick={(e) => e.stopPropagation()}>
@@ -405,7 +491,12 @@ export function SupplierStockTable({
                   <div className="pm-prod__name">{r.product_name ?? '—'}</div>
                   <div className="pm-prod__meta">{r.product_code ?? '—'}</div>
                 </td>
-                <td>{formatOffer(r) ? <span className="pm-offer">{formatOffer(r)}</span> : <span className="sx-dim">—</span>}</td>
+                <td>
+                  {(() => {
+                    const label = formatOffer(r) ?? (r.discount != null && Number(r.discount) > 0 ? `${num(Number(r.discount))}%` : null)
+                    return label ? <span className="pm-offer" title={offerTooltip(r)}>{label}</span> : <span className="sx-dim">—</span>
+                  })()}
+                </td>
                 <td className="sx-num">{r.discount != null && Number(r.discount) > 0 ? `${num(Number(r.discount))}%` : <span className="sx-dim">—</span>}</td>
                 <td className="sx-num pm-sx__supp">{num(r.available_stock ?? 0)}</td>
                 <td className="sx-num pm-sx__store">{storeStock != null ? num(storeStock) : '—'}</td>
@@ -420,6 +511,21 @@ export function SupplierStockTable({
                       onFocus={(e) => { onSelect(r); e.currentTarget.select() }}
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => onDraftChange(key, e.target.value)}
+                      // Ctrl+V from a spreadsheet: one value per line/tab pastes
+                      // down starting at this row (§ INLINE ORDERING). A plain
+                      // single-value paste behaves like normal text paste.
+                      onPaste={(e) => {
+                        const text = e.clipboardData.getData('text')
+                        const values = text.split(/\r\n|\r|\n|\t/).map((v) => v.trim()).filter((v) => v !== '')
+                        if (values.length <= 1) return // let the browser handle a normal single-value paste
+                        e.preventDefault()
+                        values.forEach((v, offset) => {
+                          const targetRow = visibleRows[i + offset]
+                          if (!targetRow) return
+                          const n = Number(v)
+                          if (!Number.isNaN(n) && n > 0) onDraftChange(stockRowKey(targetRow), String(Math.trunc(n)))
+                        })
+                      }}
                     />
                     {/* § OFFER WARNING — informational only, never blocks Add/Save. */}
                     {(() => {
@@ -429,6 +535,14 @@ export function SupplierStockTable({
                   </span>
                 </td>
                 <td onClick={(e) => e.stopPropagation()}>
+                  <input
+                    className="pm-remarks-input"
+                    placeholder="—"
+                    value={remarks[key] ?? ''}
+                    onChange={(e) => onRemarksChange(key, e.target.value)}
+                  />
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>
                   {skipped && item ? (
                     // Skip-mode picker (Current Refresh / Until Next Sales /
                     // Until Next Demand) — same keyboard combobox Review All uses.
@@ -436,7 +550,7 @@ export function SupplierStockTable({
                       id={`pm-sxskip-${i}`}
                       value={item.skip_reason}
                       onChange={(code) => onSkip(item, code)}
-                      onConfirm={() => { if (i + 1 < rows.length) onSelect(rows[i + 1]) }}
+                      onConfirm={() => { if (i + 1 < visibleRows.length) onSelect(visibleRows[i + 1]) }}
                       onRestore={() => onRestore(item)}
                     />
                   ) : assigned ? (
@@ -450,6 +564,7 @@ export function SupplierStockTable({
           })}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }

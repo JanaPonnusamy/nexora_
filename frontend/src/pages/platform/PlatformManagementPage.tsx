@@ -1,10 +1,11 @@
 import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../../components/common/PageHeader'
+import { SegmentedTabs } from '../../design-system/components/SegmentedTabs'
+import { WorkspaceContainer } from '../../design-system/components/WorkspaceContainer'
 import TenantsPage from './TenantsPage'
 import StoresPage from './StoresPage'
 import UsersPage from './UsersPage'
 import RolesPage from './RolesPage'
-import './platform-management.css'
 
 const tabs = [
   { id: 'tenants', label: 'Tenants', icon: 'bi-building', description: 'Organizations' },
@@ -27,30 +28,23 @@ export default function PlatformManagementPage() {
   const selectTab = (tab: TabId) => setSearchParams(tab === 'tenants' ? {} : { tab })
 
   return (
-    <div className="container-fluid px-0 platform-management">
+    <WorkspaceContainer className="platform-management">
       <PageHeader
         title="Platform Management"
         breadcrumb={['Platform', 'Management']}
+        description="Manage organizations, locations, people, and access from one operational workspace."
       />
-      <p className="text-body-secondary mt-n3 mb-3">
-        Manage organizations, locations, people, and access from one workspace.
-      </p>
-      <div className="platform-management__tabs" role="tablist" aria-label="Platform management sections">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            aria-controls={`platform-panel-${tab.id}`}
-            className={`platform-management__tab${activeTab === tab.id ? ' is-active' : ''}`}
-            onClick={() => selectTab(tab.id)}
-          >
-            <i className={`bi ${tab.icon}`} aria-hidden="true" />
-            <span><strong>{tab.label}</strong><small>{tab.description}</small></span>
-          </button>
-        ))}
-      </div>
+      <SegmentedTabs
+        items={tabs.map((tab) => ({
+          value: tab.id,
+          label: tab.label,
+          description: tab.description,
+          icon: tab.icon,
+        }))}
+        activeValue={activeTab}
+        ariaLabel="Platform management sections"
+        onChange={selectTab}
+      />
       <section
         id={`platform-panel-${activeTab}`}
         className="platform-management__panel"
@@ -62,6 +56,6 @@ export default function PlatformManagementPage() {
         {activeTab === 'users' && <UsersPage embedded />}
         {activeTab === 'roles' && <RolesPage embedded />}
       </section>
-    </div>
+    </WorkspaceContainer>
   )
 }

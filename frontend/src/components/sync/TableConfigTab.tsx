@@ -97,7 +97,7 @@ export function TableConfigTab() {
 
   return (
     <div className="sx-stack">
-      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-3">
+      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-2">
         <div className="col"><SxStat icon="bi-table" tone="indigo" value={stats.total} label="Total Tables" /></div>
         <div className="col"><SxStat icon="bi-check-circle" tone="success" value={stats.enabled} label="Enabled" /></div>
         <div className="col"><SxStat icon="bi-pause-circle" tone="muted" value={stats.disabled} label="Disabled" /></div>
@@ -105,7 +105,7 @@ export function TableConfigTab() {
         <div className="col"><SxStat icon="bi-clock-history" tone="violet" value={stats.rolling} label="Rolling Window" /></div>
       </div>
 
-      <SxCard>
+      <SxCard className="sx-pane">
         <SxCardHead title="Sync Tables" icon="bi-table"
           sub={scope === 'configured' ? `${filtered.length} shown` : 'browse the full source catalog'}
           action={
@@ -115,9 +115,9 @@ export function TableConfigTab() {
                 options={[{ label: 'Configured', value: 'configured' }, { label: 'All Tables', value: 'available' }]} />
               {scope === 'configured' && (
                 <>
-                  <SxButton variant="ghost" icon="bi-arrow-down-up" busy={workflowBusy === 'populate'} disabled={workflowBusy !== null} onClick={runPopulate}>Populate</SxButton>
-                  <SxButton variant="ghost" icon="bi-arrow-up-circle" busy={workflowBusy === 'promote'} disabled={workflowBusy !== null} onClick={runPromote}>Promote</SxButton>
-                  <SxButton variant="primary" icon="bi-plus-lg" onClick={() => setModal({ mode: 'create' })}>Add Table</SxButton>
+                  <SxButton sm variant="ghost" icon="bi-arrow-down-up" busy={workflowBusy === 'populate'} disabled={workflowBusy !== null} onClick={runPopulate}>Populate</SxButton>
+                  <SxButton sm variant="ghost" icon="bi-arrow-up-circle" busy={workflowBusy === 'promote'} disabled={workflowBusy !== null} onClick={runPromote}>Promote</SxButton>
+                  <SxButton sm variant="primary" icon="bi-plus-lg" onClick={() => setModal({ mode: 'create' })}>Add</SxButton>
                 </>
               )}
             </div>

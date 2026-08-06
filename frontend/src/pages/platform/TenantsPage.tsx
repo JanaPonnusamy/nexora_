@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { WorkspaceContainer } from '../../design-system/components/WorkspaceContainer'
 import { TenantToolbar } from '../../components/tenants/TenantToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { TenantTable } from '../../components/tenants/TenantTable'
@@ -80,7 +81,7 @@ export default function TenantsPage({ embedded = false }: { embedded?: boolean }
   }
 
   return (
-    <div className="container-fluid px-0">
+    <WorkspaceContainer>
       {!embedded && <PageHeader title="Tenants" breadcrumb={['Platform', 'Tenants']} />}
       <TenantToolbar
         search={search}
@@ -101,6 +102,6 @@ export default function TenantsPage({ embedded = false }: { embedded?: boolean }
           }}
         />
       )}
-    </div>
+    </WorkspaceContainer>
   )
 }

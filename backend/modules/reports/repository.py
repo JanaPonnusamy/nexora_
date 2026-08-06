@@ -297,7 +297,7 @@ def non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age=10, limit
     sql += """
         AND (DATEDIFF(DAY, pt.LastBillDate, GETDATE()) > ? OR pt.LastBillDate IS NULL)
         AND DATEDIFF(DAY, pt.LastGrnDate, GETDATE()) >= ?
-        ORDER BY (ISNULL(StripQty, 0) * ISNULL(PurchasePrice, 0)) DESC, p.ProductName
+        ORDER BY (ISNULL(b.Stock, 0) * ISNULL(b.ItemCost, 0)) DESC, p.ProductName
     """
     params = (tenant_id, store_id, tenant_id, store_id, int(dwell_days), int(min_pur_age))
     return _run(sql, params)

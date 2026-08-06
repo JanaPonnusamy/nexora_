@@ -120,6 +120,11 @@ def control(payload: ControlRequest):
     return runtime_service.control_stores(payload.store_ids, payload.action)
 
 
+@router.post("/executions/{execution_id}/fail")
+def fail_execution(execution_id: str, payload: FailRequest):
+    return runtime_service.fail_execution(execution_id, payload.message)
+
+
 @router.post("/tables/report")
 def report_table(payload: TableMetricsRequest):
     return runtime_service.report_table_metrics(payload.dict())

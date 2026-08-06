@@ -35,4 +35,9 @@ export const timeReportService = {
   /** Path to the styled .xlsx download for a report (fetched as a Blob). */
   exportPath: (report: string, p: TimeReportParams) =>
     `/api/time-report/${report}${qs({ ...clean(p), export: 'xlsx' })}`,
+
+  /** PNG of a single department's Daily report (dept_id required — one store). */
+  dailyImagePath: (p: TimeReportParams) => `/api/time-report/daily/image${qs(clean(p))}`,
+  /** Zip with one PNG per department for the current Daily filter. */
+  dailyImagesZipPath: (p: TimeReportParams) => `/api/time-report/daily/images${qs(clean(p))}`,
 }

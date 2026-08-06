@@ -22,11 +22,11 @@ export function StatusBar() {
       <div className="app-statusbar__group ms-auto">
         <span className="app-statusbar__item d-none d-md-inline-flex">
           <i className="bi bi-person" aria-hidden="true" />
-          {user?.fullName ?? '—'}
+          {user?.fullName ?? '-'}
         </span>
         <span className="app-statusbar__item d-none d-md-inline-flex">
           <i className="bi bi-building" aria-hidden="true" />
-          {user?.tenant ?? '—'}
+          {user?.tenant ?? '-'}
         </span>
       </div>
     </footer>

@@ -25,14 +25,14 @@ export function StoreHealthTab() {
 
   return (
     <div className="sx-stack">
-      <div className="row row-cols-2 row-cols-md-4 g-3">
+      <div className="row row-cols-2 row-cols-md-4 g-2">
         <div className="col"><SxStat icon="bi-shop" tone="indigo" value={data.length} label="Stores" /></div>
         <div className="col"><SxStat icon="bi-reception-4" tone="success" value={online} label="Online" /></div>
         <div className="col"><SxStat icon="bi-reception-0" tone="muted" value={offline} label="Offline" /></div>
         <div className="col"><SxStat icon="bi-hourglass-split" tone="warning" value={pending} label="Pending Queue" /></div>
       </div>
 
-      <SxCard>
+      <SxCard className="sx-pane">
         <SxCardHead title="Agent Health" icon="bi-heart-pulse" sub={`${data.length} stores`} />
         <SxCardBody flush>
           {data.length === 0 ? (
@@ -62,7 +62,7 @@ export function StoreHealthTab() {
         </SxCardBody>
       </SxCard>
 
-      <SxCard>
+      <SxCard className="sx-pane">
         <SxCardHead title="Business Activity" icon="bi-graph-up" />
         <SxCardBody>
           <p className="sx-dim small mb-3">

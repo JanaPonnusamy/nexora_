@@ -2,6 +2,7 @@ import { api } from './apiClient'
 import type {
   PharmacyCompareResponse,
   PharmacyDashboardResponse,
+  PharmacyReportSource,
   PharmacyStoreAnalysisResponse,
 } from '../types/procurementReports'
 
@@ -13,59 +14,65 @@ function qs(params: Record<string, string | number | undefined>): string {
 }
 
 export const procurementReportsService = {
-  dashboard: (tenantId: string, fromMonth: string, toMonth: string) =>
+  dashboard: (tenantId: string, fromMonth: string, toMonth: string, source: PharmacyReportSource) =>
     api.get<PharmacyDashboardResponse>(
       `/api/procurement/reports/dashboard${qs({
         tenant_id: tenantId,
         from_month: fromMonth,
         to_month: toMonth,
+        source,
       })}`,
     ),
 
-  storeAnalysis: (tenantId: string, storeId: string, fromMonth: string, toMonth: string) =>
+  storeAnalysis: (tenantId: string, storeId: string, fromMonth: string, toMonth: string, source: PharmacyReportSource) =>
     api.get<PharmacyStoreAnalysisResponse>(
       `/api/procurement/reports/store-analysis${qs({
         tenant_id: tenantId,
         store_id: storeId,
         from_month: fromMonth,
         to_month: toMonth,
+        source,
       })}`,
     ),
 
-  dashboardExcel: (tenantId: string, fromMonth: string, toMonth: string) =>
+  dashboardExcel: (tenantId: string, fromMonth: string, toMonth: string, source: PharmacyReportSource) =>
     api.blob(
       `/api/procurement/reports/dashboard/export.xlsx${qs({
         tenant_id: tenantId,
         from_month: fromMonth,
         to_month: toMonth,
+        source,
       })}`,
     ),
 
-  storeAnalysisExcel: (tenantId: string, storeId: string, fromMonth: string, toMonth: string) =>
+  storeAnalysisExcel: (tenantId: string, storeId: string, fromMonth: string, toMonth: string, source: PharmacyReportSource) =>
     api.blob(
       `/api/procurement/reports/store-analysis/export.xlsx${qs({
         tenant_id: tenantId,
         store_id: storeId,
         from_month: fromMonth,
         to_month: toMonth,
+        source,
       })}`,
     ),
 
-  compare: (tenantId: string, monthA: string, monthB: string) =>
+  compare: (tenantId: string, monthA: string, monthB: string, source: PharmacyReportSource) =>
     api.get<PharmacyCompareResponse>(
       `/api/procurement/reports/compare${qs({
         tenant_id: tenantId,
         month_a: monthA,
         month_b: monthB,
+        source,
       })}`,
     ),
 
-  compareExcel: (tenantId: string, monthA: string, monthB: string) =>
+  compareExcel: (tenantId: string, monthA: string, monthB: string, source: PharmacyReportSource) =>
     api.blob(
       `/api/procurement/reports/compare/export.xlsx${qs({
         tenant_id: tenantId,
         month_a: monthA,
         month_b: monthB,
+        source,
       })}`,
     ),
 }

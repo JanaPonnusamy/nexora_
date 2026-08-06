@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nexora_mobile/core/agent/agent_settings.dart';
 import 'package:nexora_mobile/core/di/agent_providers.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
+import 'package:nexora_mobile/core/widgets/mobile_components.dart';
 import 'package:nexora_mobile/features/agent/presentation/widgets/status_widgets.dart';
 
 /// Phase 2 — user-tunable agent runtime settings, persisted across restarts.
@@ -43,12 +44,15 @@ class _AgentSettingsScreenState extends ConsumerState<AgentSettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Agent Settings')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          SectionCard(
-            title: 'Synchronization',
-            icon: Icons.sync_rounded,
-            children: [
+          const SectionHeader(
+              title: 'SYNCHRONIZATION', icon: Icons.sync_rounded,),
+          StatusCard(
+            accentColor: AppColors.line,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Automatic background sync'),
@@ -73,30 +77,35 @@ class _AgentSettingsScreenState extends ConsumerState<AgentSettingsScreen> {
                 onChanged: (m) => setState(() => _draft =
                     _draft.copyWith(syncInterval: Duration(minutes: m)),),
               ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          SectionCard(
-            title: 'Health & diagnostics',
-            icon: Icons.monitor_heart_outlined,
-            children: [
-              _MinutesDropdown(
-                label: 'Health check interval',
-                value: _draft.healthCheckInterval.inMinutes,
-                choices: _healthChoices,
-                enabled: true,
-                onChanged: (m) => setState(() => _draft =
-                    _draft.copyWith(healthCheckInterval: Duration(minutes: m)),),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Verbose logging'),
-                subtitle: const Text('Record fine-grained sync activity'),
-                value: _draft.verboseLogging,
-                onChanged: (v) =>
-                    setState(() => _draft = _draft.copyWith(verboseLogging: v)),
-              ),
-            ],
+          const SizedBox(height: 16),
+          const SectionHeader(
+              title: 'HEALTH & DIAGNOSTICS', icon: Icons.monitor_heart_outlined,),
+          StatusCard(
+            accentColor: AppColors.line,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _MinutesDropdown(
+                  label: 'Health check interval',
+                  value: _draft.healthCheckInterval.inMinutes,
+                  choices: _healthChoices,
+                  enabled: true,
+                  onChanged: (m) => setState(() => _draft = _draft.copyWith(
+                      healthCheckInterval: Duration(minutes: m),),),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Verbose logging'),
+                  subtitle: const Text('Record fine-grained sync activity'),
+                  value: _draft.verboseLogging,
+                  onChanged: (v) => setState(
+                      () => _draft = _draft.copyWith(verboseLogging: v),),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 8),
           Padding(

@@ -2,6 +2,7 @@ import os
 import socket
 
 import requests
+from store_agent import config
 
 
 class HeartbeatService:
@@ -9,11 +10,11 @@ class HeartbeatService:
     agent_heartbeat_log via the runtime API. Never touches the store DB."""
 
     def __init__(self, ho_api_url, store_id, connection_type=None,
-                 agent_version="1.0.0"):
+                 agent_version=None):
         self.base = ho_api_url.rstrip("/")
         self.store_id = store_id
         self.connection_type = connection_type
-        self.agent_version = agent_version
+        self.agent_version = agent_version or config.installed_agent_version()
 
     def _payload(self):
         try:

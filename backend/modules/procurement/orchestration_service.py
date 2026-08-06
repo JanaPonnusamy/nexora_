@@ -185,6 +185,9 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
             conn, tenant_id, refresh_id,
             cycle.get("store_id"), payload.get("created_by"),
         )
+        items_repo.carry_forward_skips(
+            conn, tenant_id, previous_refresh_id, refresh_id, cycle.get("store_id"),
+        )
         carried = comparison_service.carry_forward(
             conn, tenant_id, previous_refresh_id,
             {"refresh_id": refresh_id, "cycle_id": cycle_id,

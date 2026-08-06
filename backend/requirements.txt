@@ -5,6 +5,7 @@ pyodbc
 pydantic
 python-dotenv
 rapidfuzz
+selenium
 
 # auth stack (controllers/auth_controller.py, services/auth_service.py) — was
 # previously installed ad hoc and not tracked here

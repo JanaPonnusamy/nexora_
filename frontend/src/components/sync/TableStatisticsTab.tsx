@@ -51,7 +51,7 @@ export function TableStatisticsTab() {
 
   return (
     <div className="sx-stack">
-      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-3">
+      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-2">
         <div className="col"><SxStat icon="bi-database" tone="info" value={totals.ho.toLocaleString()} label="HO Rows" /></div>
         <div className="col"><SxStat icon="bi-arrow-repeat" tone="violet" value={totals.changed.toLocaleString()} label="Changed Today" /></div>
         <div className="col"><SxStat icon="bi-cloud-upload" tone="success" value={totals.uploaded.toLocaleString()} label="Uploaded Today" /></div>
@@ -63,7 +63,7 @@ export function TableStatisticsTab() {
         </div>
       </div>
 
-      <SxCard>
+      <SxCard className="sx-pane">
         <SxCardHead title="Last Sync & Business Details" icon="bi-bar-chart-line"
           sub={`${stats.length} tables`}
           action={

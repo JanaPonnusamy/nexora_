@@ -75,7 +75,7 @@ async function main() {
   console.log('Supplier client http://127.0.0.1:5180');
   console.log('Press Ctrl+C once to stop everything.\n');
 
-  const backend = start('backend', python, ['-m', 'uvicorn', 'api.app:app', '--host', '127.0.0.1', '--port', '8000', '--reload'], join(root, 'backend'));
+  const backend = start('backend', python, ['-m', 'uvicorn', 'api.app:app', '--host', '0.0.0.0', '--port', '8000', '--reload'], join(root, 'backend'));
   await waitFor('Backend', 8000, backend);
 
   const frontend = start('frontend', process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '5173', '--strictPort'], join(root, 'frontend'));

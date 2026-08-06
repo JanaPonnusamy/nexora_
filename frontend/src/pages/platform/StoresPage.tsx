@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { WorkspaceContainer } from '../../design-system/components/WorkspaceContainer'
 import { StoreToolbar } from '../../components/stores/StoreToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { StoreTable } from '../../components/stores/StoreTable'
@@ -101,7 +102,7 @@ export default function StoresPage({ embedded = false }: { embedded?: boolean })
   }
 
   return (
-    <div className="container-fluid px-0">
+    <WorkspaceContainer>
       {!embedded && <PageHeader title="Stores" breadcrumb={['Platform', 'Stores']} />}
       {!isLoading && !error && stores.length > 0 && <StoreSummary stores={stores} />}
       <StoreToolbar
@@ -127,6 +128,6 @@ export default function StoresPage({ embedded = false }: { embedded?: boolean })
           }}
         />
       )}
-    </div>
+    </WorkspaceContainer>
   )
 }

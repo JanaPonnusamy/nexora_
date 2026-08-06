@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter
 
 from modules.stock_availability import service
-from modules.stock_availability.schemas import SearchResult
+from modules.stock_availability.schemas import CoreBulkRequest, SalesOrderIgnoreUpdate, SearchResult
 
 router = APIRouter(prefix="/api/stock-availability", tags=["Stock Availability"])
 
@@ -44,6 +44,12 @@ def product_details(tenant_id: str, store_id: str, product: str):
 def product_core(tenant_id: str, store_id: str, product: str, months: int = 3):
     """batches + purchases + sales + movement in one round trip (perf)."""
     return service.product_core(tenant_id, store_id, product, months)
+
+
+@router.post("/products/core/bulk")
+def product_core_bulk(payload: CoreBulkRequest):
+    """Parallel per-store core loading in one HTTP request."""
+    return service.product_core_bulk(payload.tenant_id, payload.items, payload.months)
 
 
 @router.get("/products/batches")
@@ -99,6 +105,20 @@ def sales_bill(
 ):
     """All lines of one sale bill (Sales Bill Drawer). Header on every row."""
     return service.sales_bill(tenant_id, store_id, bill_no, bill_date)
+
+
+@router.put("/bills/sale/ignore-order")
+def set_sales_bill_line_ignore(payload: SalesOrderIgnoreUpdate):
+    """Toggle ProductSaleInformation.DontConsiderInOrder for one bill line."""
+    return service.set_sales_bill_line_ignore(
+        payload.tenant_id,
+        payload.store_id,
+        payload.bill_no,
+        payload.bill_date,
+        payload.product_code,
+        payload.batch,
+        payload.dont_consider_in_order,
+    )
 
 
 @router.get("/products/availability")

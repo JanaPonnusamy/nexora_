@@ -6,9 +6,12 @@ import { tenantService } from '../../services/tenantService'
 import { procurementReportsService } from '../../services/procurementReportsService'
 import type { Tenant } from '../../types/tenant'
 import type {
+  PharmacyCompareStoreRow,
+  PharmacyCompareSummary,
   PharmacyCompareResponse,
   PharmacyDashboardResponse,
   PharmacyMonthlyRow,
+  PharmacyReportSource,
   PharmacyReportStoreSummary,
   PharmacyStoreAnalysisResponse,
 } from '../../types/procurementReports'
@@ -27,6 +30,8 @@ const PERIODS: { value: Period; label: string }[] = [
   { value: 'FINANCIAL_YEAR', label: 'Financial Year' },
   { value: 'CUSTOM', label: 'Custom Month Range' },
 ]
+
+const INTERNAL_COMPARE_STORE_CODES = new Set(['NMW'])
 
 function monthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
@@ -61,6 +66,10 @@ function ratio(value: number | null | undefined): string {
   return Number(value || 0).toFixed(4)
 }
 
+function sourceLabel(value: PharmacyReportSource): string {
+  return value === 'STORE_DB' ? 'Store DB' : 'Nexora Sync'
+}
+
 function formatMonth(value: string): string {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
@@ -83,6 +92,63 @@ function effectiveDaysInMonth(dateValue: string) {
     return now.getDate()
   }
   return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+}
+
+function averageDailySales(sales: number | null | undefined, monthValue: string) {
+  return Number(sales || 0) / Math.max(effectiveDaysInMonth(monthValue), 1)
+}
+
+function paidUpStock(closingStock: number | null | undefined, pendingAmount: number | null | undefined) {
+  return Number(closingStock || 0) - Number(pendingAmount || 0)
+}
+
+function paidUpStockPercent(closingStock: number | null | undefined, pendingAmount: number | null | undefined) {
+  const closing = Number(closingStock || 0)
+  if (closing === 0) return 0
+  return (paidUpStock(closingStock, pendingAmount) / closing) * 100
+}
+
+function growthPercent(previousValue: number, currentValue: number) {
+  if (previousValue === 0) return currentValue === 0 ? 0 : 100
+  return ((currentValue - previousValue) / previousValue) * 100
+}
+
+function isInternalCompareStore(row: PharmacyCompareStoreRow) {
+  return INTERNAL_COMPARE_STORE_CODES.has((row.StoreCode || '').trim().toUpperCase())
+}
+
+function buildCompareSummary(rows: PharmacyCompareStoreRow[], monthA: string, monthB: string): PharmacyCompareSummary {
+  const okRows = rows.filter((row) => row.Status === 'Success')
+  const salesA = okRows.reduce((sum, row) => sum + Number(row.SalesA || 0), 0)
+  const salesB = okRows.reduce((sum, row) => sum + Number(row.SalesB || 0), 0)
+  const stockA = okRows.reduce((sum, row) => sum + Number(row.StockA || 0), 0)
+  const stockB = okRows.reduce((sum, row) => sum + Number(row.StockB || 0), 0)
+  const pendingA = okRows.reduce((sum, row) => sum + Number(row.PendingA || 0), 0)
+  const pendingB = okRows.reduce((sum, row) => sum + Number(row.PendingB || 0), 0)
+  const paidUpStockA = okRows.reduce((sum, row) => sum + Number(row.PaidUpStockA || 0), 0)
+  const paidUpStockB = okRows.reduce((sum, row) => sum + Number(row.PaidUpStockB || 0), 0)
+  const avgDailySalesA = salesA / Math.max(effectiveDaysInMonth(`${monthA}-01`), 1)
+  const avgDailySalesB = salesB / Math.max(effectiveDaysInMonth(`${monthB}-01`), 1)
+
+  return {
+    StoresIncluded: okRows.length,
+    SalesA: salesA,
+    SalesB: salesB,
+    SalesGrowthPercent: growthPercent(salesA, salesB),
+    StockA: stockA,
+    StockB: stockB,
+    StockGrowthPercent: growthPercent(stockA, stockB),
+    PendingA: pendingA,
+    PendingB: pendingB,
+    PaidUpStockA: paidUpStockA,
+    PaidUpStockPercentA: stockA === 0 ? 0 : (paidUpStockA / stockA) * 100,
+    PaidUpStockB: paidUpStockB,
+    PaidUpStockPercentB: stockB === 0 ? 0 : (paidUpStockB / stockB) * 100,
+    AvgDailySalesA: avgDailySalesA,
+    AvgDailySalesB: avgDailySalesB,
+    AvgDailySalesGrowthPercent: growthPercent(avgDailySalesA, avgDailySalesB),
+    WorkingCapitalImpact: (stockB - stockA) + (pendingA - pendingB),
+  }
 }
 
 function dailySalesGrowth(currentSales: number, previousSales: number, currentMonth: string, previousMonth: string) {
@@ -127,6 +193,7 @@ export default function PharmacyReportsPage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState('')
   const [mode, setMode] = useState<ReportMode>('TREND')
+  const [source, setSource] = useState<PharmacyReportSource>('NEXORA')
   const [period, setPeriod] = useState<Period>('LAST_12_MONTHS')
   const [customFrom, setCustomFrom] = useState(monthKey(new Date(today.getFullYear() - 1, today.getMonth(), 1)))
   const [customTo, setCustomTo] = useState(monthKey(today))
@@ -156,27 +223,27 @@ export default function PharmacyReportsPage() {
     setLoading(true)
     setError(null)
     setAnalysis(null)
-    procurementReportsService.dashboard(tenantId, range.fromMonth, range.toMonth)
+    procurementReportsService.dashboard(tenantId, range.fromMonth, range.toMonth, source)
       .then(setDashboard)
       .catch((e) => {
         setDashboard(null)
         setError(e instanceof Error ? e.message : 'Failed to load pharmacy reports.')
       })
       .finally(() => setLoading(false))
-  }, [tenantId, range.fromMonth, range.toMonth])
+  }, [tenantId, range.fromMonth, range.toMonth, source])
 
   const loadCompare = useCallback(() => {
     if (!tenantId || !monthA || !monthB) return
     setLoading(true)
     setError(null)
-    procurementReportsService.compare(tenantId, monthA, monthB)
+    procurementReportsService.compare(tenantId, monthA, monthB, source)
       .then(setCompare)
       .catch((e) => {
         setCompare(null)
         setError(e instanceof Error ? e.message : 'Failed to load month compare report.')
       })
       .finally(() => setLoading(false))
-  }, [tenantId, monthA, monthB])
+  }, [tenantId, monthA, monthB, source])
 
   const generate = mode === 'COMPARE' ? loadCompare : loadDashboard
 
@@ -197,12 +264,28 @@ export default function PharmacyReportsPage() {
     [analysis],
   )
 
+  const comparePrimaryStores = useMemo(
+    () => (compare?.stores ?? []).filter((row) => !isInternalCompareStore(row)),
+    [compare],
+  )
+
+  const compareInternalStores = useMemo(
+    () => (compare?.stores ?? []).filter((row) => isInternalCompareStore(row)),
+    [compare],
+  )
+
+  const compareDisplaySummary = useMemo(
+    () => (compare ? buildCompareSummary(comparePrimaryStores, compare.month_a, compare.month_b) : null),
+    [compare, comparePrimaryStores],
+  )
+
   const analysisTotals = useMemo(() => {
     if (sortedAnalysisRows.length === 0) return null
     const totalSales = sortedAnalysisRows.reduce((sum, r) => sum + Number(r.Sales || 0), 0)
     const totalPurchase = sortedAnalysisRows.reduce((sum, r) => sum + Number(r.Purchase || 0), 0)
     const gpAverage = sortedAnalysisRows.reduce((sum, r) => sum + Number(r.GPPercent || 0), 0) / sortedAnalysisRows.length
     const best = sortedAnalysisRows.reduce((prev, cur) => (Number(cur.Sales || 0) > Number(prev.Sales || 0) ? cur : prev), sortedAnalysisRows[0])
+    const first = sortedAnalysisRows[0]
     const last = sortedAnalysisRows[sortedAnalysisRows.length - 1]
     const previous = sortedAnalysisRows[sortedAnalysisRows.length - 2] ?? sortedAnalysisRows[0]
     return {
@@ -210,8 +293,13 @@ export default function PharmacyReportsPage() {
       totalPurchase,
       gpAverage,
       bestMonth: formatMonth(best.MonthOfStatistics),
-      openingStock: sortedAnalysisRows[0].OpeningStock,
+      openingStock: first.OpeningStock,
       closingStock: last.ClosingStock,
+      supplierPending: last.PendingAmount,
+      paidUpStock: paidUpStock(last.ClosingStock, last.PendingAmount),
+      paidUpStockPercent: paidUpStockPercent(last.ClosingStock, last.PendingAmount),
+      averageDailySales: totalSales / Math.max(sortedAnalysisRows.reduce((sum, row) => sum + effectiveDaysInMonth(row.MonthOfStatistics), 0), 1),
+      workingCapitalImpact: (Number(last.ClosingStock || 0) - Number(first.OpeningStock || 0)) + (Number(first.PendingAmount || 0) - Number(last.PendingAmount || 0)),
       lastMonthGrowth: dailySalesGrowth(last.Sales, previous.Sales, last.MonthOfStatistics, previous.MonthOfStatistics),
     }
   }, [sortedAnalysisRows])
@@ -219,7 +307,7 @@ export default function PharmacyReportsPage() {
   const openStore = (row: PharmacyReportStoreSummary) => {
     setAnalysisLoading(true)
     setError(null)
-    procurementReportsService.storeAnalysis(tenantId, row.StoreId, range.fromMonth, range.toMonth)
+    procurementReportsService.storeAnalysis(tenantId, row.StoreId, range.fromMonth, range.toMonth, source)
       .then(setAnalysis)
       .catch((e) => {
         setAnalysis(null)
@@ -231,17 +319,17 @@ export default function PharmacyReportsPage() {
   const exportDashboard = async () => {
     if (!tenantId) return
     if (mode === 'COMPARE') {
-      const blob = await procurementReportsService.compareExcel(tenantId, monthA, monthB)
+      const blob = await procurementReportsService.compareExcel(tenantId, monthA, monthB, source)
       downloadBlob(blob, `Month_Compare_${monthA}_vs_${monthB}.xlsx`)
       return
     }
-    const blob = await procurementReportsService.dashboardExcel(tenantId, range.fromMonth, range.toMonth)
+    const blob = await procurementReportsService.dashboardExcel(tenantId, range.fromMonth, range.toMonth, source)
     downloadBlob(blob, `All_Store_Summary_${range.fromMonth}_${range.toMonth}.xlsx`)
   }
 
   const exportStore = async () => {
     if (!tenantId || !analysis) return
-    const blob = await procurementReportsService.storeAnalysisExcel(tenantId, analysis.store_id, range.fromMonth, range.toMonth)
+    const blob = await procurementReportsService.storeAnalysisExcel(tenantId, analysis.store_id, range.fromMonth, range.toMonth, source)
     downloadBlob(blob, `${analysis.store_code}_Monthly_Analysis_${range.fromMonth}_${range.toMonth}.xlsx`)
   }
 
@@ -257,6 +345,10 @@ export default function PharmacyReportsPage() {
         <select className="form-select form-select-sm" aria-label="Report mode" value={mode} onChange={(e) => setMode(e.target.value as ReportMode)}>
           <option value="TREND">Trend</option>
           <option value="COMPARE">Month Compare</option>
+        </select>
+        <select className="form-select form-select-sm" aria-label="Report source" value={source} onChange={(e) => setSource(e.target.value as PharmacyReportSource)}>
+          <option value="NEXORA">Nexora Sync</option>
+          <option value="STORE_DB">Store DB</option>
         </select>
         {mode === 'TREND' ? (
           <>
@@ -298,44 +390,148 @@ export default function PharmacyReportsPage() {
         !compare && !error ? (
           <EmptyState icon="bi-bar-chart" title="Loading comparison" description="The month compare report will appear here." />
         ) : compare ? (
-          <section className="pr-gridwrap">
-            <table className="pr-table">
-              <thead>
-                <tr>
-                  <th>Store</th>
-                  <th className="pr-num">Sales ({formatMonth(`${compare.month_a}-01`)})</th>
-                  <th className="pr-num">Sales ({formatMonth(`${compare.month_b}-01`)})</th>
-                  <th className="pr-num">Sales Growth %</th>
-                  <th className="pr-num">Stock ({formatMonth(`${compare.month_a}-01`)})</th>
-                  <th className="pr-num">Stock ({formatMonth(`${compare.month_b}-01`)})</th>
-                  <th className="pr-num">Stock Growth %</th>
-                  <th className="pr-num">Paid-up Stock % ({formatMonth(`${compare.month_a}-01`)})</th>
-                  <th className="pr-num">Paid-up Stock % ({formatMonth(`${compare.month_b}-01`)})</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {compare.stores.map((row) => (
-                  <tr key={row.StoreId}>
-                    <td><strong>{row.Store}</strong><span>{row.StoreCode}</span></td>
-                    <td className="pr-num">{money(row.SalesA)}</td>
-                    <td className="pr-num">{money(row.SalesB)}</td>
-                    <td className="pr-num">{growthBadge(row.SalesGrowthPercent)}</td>
-                    <td className="pr-num">{money(row.StockA)}</td>
-                    <td className="pr-num">{money(row.StockB)}</td>
-                    <td className="pr-num">{growthBadge(row.StockGrowthPercent)}</td>
-                    <td className="pr-num">{percent(row.PaidUpStockPercentA)}</td>
-                    <td className="pr-num">{percent(row.PaidUpStockPercentB)}</td>
-                    <td>
-                      <span className={`pr-status ${row.Status === 'Success' ? 'pr-status--ok' : 'pr-status--bad'}`}>
-                        {row.Status === 'Success' ? 'Connected' : 'Failed'}
-                      </span>
-                    </td>
+          <>
+            <section className="pr-kpis pr-kpis--compare">
+              <Kpi label={`${formatMonth(`${compare.month_a}-01`)} Total Sales`} value={money(compareDisplaySummary?.SalesA)} tone="sales" />
+              <Kpi label={`${formatMonth(`${compare.month_b}-01`)} Total Sales`} value={money(compareDisplaySummary?.SalesB)} tone="sales" />
+              <Kpi label="Avg Sales / Day" value={`${money(compareDisplaySummary?.AvgDailySalesA)} -> ${money(compareDisplaySummary?.AvgDailySalesB)}`} tone="purchase" />
+              <Kpi label="Closing Stock Movement" value={`${money(compareDisplaySummary?.StockA)} -> ${money(compareDisplaySummary?.StockB)}`} tone="stock" />
+              <Kpi label="Supplier Pending Movement" value={`${money(compareDisplaySummary?.PendingA)} -> ${money(compareDisplaySummary?.PendingB)}`} tone="pending" />
+              <Kpi label="Stores Included" value={String(compareDisplaySummary?.StoresIncluded ?? 0)} tone="invoice" />
+            </section>
+
+            <section className="pr-gridwrap">
+              <table className="pr-table pr-table--compare">
+                <thead>
+                  <tr>
+                    <th>Store</th>
+                    <th className="pr-num">Sales<br />{formatMonth(`${compare.month_a}-01`)}</th>
+                    <th className="pr-num">Sales<br />{formatMonth(`${compare.month_b}-01`)}</th>
+                    <th className="pr-num">Sales Growth %</th>
+                    <th className="pr-num">Avg Sales / Day<br />{formatMonth(`${compare.month_a}-01`)}</th>
+                    <th className="pr-num">Avg Sales / Day<br />{formatMonth(`${compare.month_b}-01`)}</th>
+                    <th className="pr-num">Avg Sales / Day Growth %</th>
+                    <th className="pr-num">Closing Stock<br />{formatMonth(`${compare.month_a}-01`)}</th>
+                    <th className="pr-num">Closing Stock<br />{formatMonth(`${compare.month_b}-01`)}</th>
+                    <th className="pr-num">Stock Growth %</th>
+                    <th className="pr-num">Paid-up Stock %<br />{formatMonth(`${compare.month_a}-01`)}</th>
+                    <th className="pr-num">Paid-up Stock %<br />{formatMonth(`${compare.month_b}-01`)}</th>
+                    <th>Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
+                </thead>
+                <tbody>
+                  {comparePrimaryStores.map((row) => (
+                    <tr key={row.StoreId}>
+                      <td><strong>{row.Store}</strong><span>{row.StoreCode} | {sourceLabel(row.Source ?? compare.source)}</span></td>
+                      <td className="pr-num">{money(row.SalesA)}</td>
+                      <td className="pr-num">{money(row.SalesB)}</td>
+                      <td className="pr-num">{growthBadge(row.SalesGrowthPercent)}</td>
+                      <td className="pr-num">{money(row.AvgDailySalesA)}</td>
+                      <td className="pr-num">{money(row.AvgDailySalesB)}</td>
+                      <td className="pr-num">{growthBadge(row.AvgDailySalesGrowthPercent)}</td>
+                      <td className="pr-num">{money(row.StockA)}</td>
+                      <td className="pr-num">{money(row.StockB)}</td>
+                      <td className="pr-num">{growthBadge(row.StockGrowthPercent)}</td>
+                      <td className="pr-num">{percent(row.PaidUpStockPercentA)}</td>
+                      <td className="pr-num">{percent(row.PaidUpStockPercentB)}</td>
+                      <td>
+                        <span className={`pr-status ${row.Status === 'Success' ? 'pr-status--ok' : 'pr-status--bad'}`}>
+                          {row.Status === 'Success' ? 'Connected' : 'Failed'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="pr-totalrow">
+                    <td><strong>Total</strong><span>Network stores only (NMW excluded)</span></td>
+                    <td className="pr-num">{money(compareDisplaySummary?.SalesA)}</td>
+                    <td className="pr-num">{money(compareDisplaySummary?.SalesB)}</td>
+                    <td className="pr-num">{growthBadge(compareDisplaySummary?.SalesGrowthPercent ?? null)}</td>
+                    <td className="pr-num">{money(compareDisplaySummary?.AvgDailySalesA)}</td>
+                    <td className="pr-num">{money(compareDisplaySummary?.AvgDailySalesB)}</td>
+                    <td className="pr-num">{growthBadge(compareDisplaySummary?.AvgDailySalesGrowthPercent ?? null)}</td>
+                    <td className="pr-num">{money(compareDisplaySummary?.StockA)}</td>
+                    <td className="pr-num">{money(compareDisplaySummary?.StockB)}</td>
+                    <td className="pr-num">{growthBadge(compareDisplaySummary?.StockGrowthPercent ?? null)}</td>
+                    <td className="pr-num">{percent(compareDisplaySummary?.PaidUpStockPercentA)}</td>
+                    <td className="pr-num">{percent(compareDisplaySummary?.PaidUpStockPercentB)}</td>
+                    <td><span className="pr-status pr-status--ok">Summary</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            {compareInternalStores.length > 0 && (
+              <section className="pr-compare-summary">
+                <div className="pr-analysis__head">
+                  <div>
+                    <h2>Internal Store Sales</h2>
+                    <p>NMW is shown separately and is excluded from the network total sales and average sales/day.</p>
+                  </div>
+                </div>
+                <section className="pr-gridwrap">
+                  <table className="pr-table pr-table--compare">
+                    <thead>
+                      <tr>
+                        <th>Store</th>
+                        <th className="pr-num">Sales<br />{formatMonth(`${compare.month_a}-01`)}</th>
+                        <th className="pr-num">Sales<br />{formatMonth(`${compare.month_b}-01`)}</th>
+                        <th className="pr-num">Sales Growth %</th>
+                        <th className="pr-num">Avg Sales / Day<br />{formatMonth(`${compare.month_a}-01`)}</th>
+                        <th className="pr-num">Avg Sales / Day<br />{formatMonth(`${compare.month_b}-01`)}</th>
+                        <th className="pr-num">Avg Sales / Day Growth %</th>
+                        <th className="pr-num">Closing Stock<br />{formatMonth(`${compare.month_a}-01`)}</th>
+                        <th className="pr-num">Closing Stock<br />{formatMonth(`${compare.month_b}-01`)}</th>
+                        <th className="pr-num">Stock Growth %</th>
+                        <th className="pr-num">Paid-up Stock %<br />{formatMonth(`${compare.month_a}-01`)}</th>
+                        <th className="pr-num">Paid-up Stock %<br />{formatMonth(`${compare.month_b}-01`)}</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareInternalStores.map((row) => (
+                        <tr key={row.StoreId}>
+                          <td><strong>{row.Store}</strong><span>{row.StoreCode} | {sourceLabel(row.Source ?? compare.source)}</span></td>
+                          <td className="pr-num">{money(row.SalesA)}</td>
+                          <td className="pr-num">{money(row.SalesB)}</td>
+                          <td className="pr-num">{growthBadge(row.SalesGrowthPercent)}</td>
+                          <td className="pr-num">{money(row.AvgDailySalesA)}</td>
+                          <td className="pr-num">{money(row.AvgDailySalesB)}</td>
+                          <td className="pr-num">{growthBadge(row.AvgDailySalesGrowthPercent)}</td>
+                          <td className="pr-num">{money(row.StockA)}</td>
+                          <td className="pr-num">{money(row.StockB)}</td>
+                          <td className="pr-num">{growthBadge(row.StockGrowthPercent)}</td>
+                          <td className="pr-num">{percent(row.PaidUpStockPercentA)}</td>
+                          <td className="pr-num">{percent(row.PaidUpStockPercentB)}</td>
+                          <td>
+                            <span className={`pr-status ${row.Status === 'Success' ? 'pr-status--ok' : 'pr-status--bad'}`}>
+                              {row.Status === 'Success' ? 'Connected' : 'Failed'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+              </section>
+            )}
+
+            <section className="pr-compare-summary">
+              <div className="pr-compare-summary__grid">
+                <div><span>{formatMonth(`${compare.month_a}-01`)} Closing Stock</span><strong>{money(compareDisplaySummary?.StockA)}</strong></div>
+                <div><span>{formatMonth(`${compare.month_b}-01`)} Closing Stock</span><strong>{money(compareDisplaySummary?.StockB)}</strong></div>
+                <div><span>{formatMonth(`${compare.month_a}-01`)} Supplier Pending</span><strong>{money(compareDisplaySummary?.PendingA)}</strong></div>
+                <div><span>{formatMonth(`${compare.month_b}-01`)} Supplier Pending</span><strong>{money(compareDisplaySummary?.PendingB)}</strong></div>
+                <div><span>{formatMonth(`${compare.month_a}-01`)} Paid-up Stock %</span><strong>{percent(compareDisplaySummary?.PaidUpStockPercentA)}</strong></div>
+                <div><span>{formatMonth(`${compare.month_b}-01`)} Paid-up Stock %</span><strong>{percent(compareDisplaySummary?.PaidUpStockPercentB)}</strong></div>
+                <div><span>{formatMonth(`${compare.month_a}-01`)} Avg Sales / Day</span><strong>{money(compareDisplaySummary?.AvgDailySalesA)}</strong></div>
+                <div><span>{formatMonth(`${compare.month_b}-01`)} Avg Sales / Day</span><strong>{money(compareDisplaySummary?.AvgDailySalesB)}</strong></div>
+              </div>
+              <p className="pr-compare-note">
+                Working capital impact for this compare: <strong>{money(compareDisplaySummary?.WorkingCapitalImpact)}</strong>.
+                This uses stock increase plus supplier pending reduction. It is a cash/stock movement indicator, not accounting profit.
+              </p>
+            </section>
+          </>
         ) : null
       ) : !dashboard && !error ? (
         <EmptyState icon="bi-bar-chart" title="Loading reports" description="The pharmacy report dashboard will appear here." />
@@ -349,6 +545,11 @@ export default function PharmacyReportsPage() {
             <Kpi label="Pending Invoices" value={money(dashboard.kpi.PendingInvoices)} tone="invoice" />
             <Kpi label="Average GP %" value={percent(dashboard.kpi.GPPercent)} tone="gp" />
           </section>
+
+          <div className="pr-summary">
+            <span>Source: <strong>{sourceLabel(dashboard.source)}</strong></span>
+            <span>Period: <strong>{range.fromMonth}</strong> to <strong>{range.toMonth}</strong></span>
+          </div>
 
           <section className="pr-gridwrap">
             <table className="pr-table">
@@ -424,6 +625,7 @@ export default function PharmacyReportsPage() {
           </section>
 
           <div className="pr-summary">
+            <span>Source: <strong>{sourceLabel(analysis.source)}</strong></span>
             <span>Months: <strong>{sortedAnalysisRows.length}</strong></span>
             <span>Best Month: <strong>{analysisTotals.bestMonth}</strong></span>
             <span>Last Month Growth: <strong>{growthBadge(analysisTotals.lastMonthGrowth)}</strong></span>
@@ -440,12 +642,15 @@ export default function PharmacyReportsPage() {
                 <tr>
                   <th>Month</th>
                   <th className="pr-num">Sales</th>
+                  <th className="pr-num">Avg Sales / Day</th>
                   <th className="pr-num">Sales Growth %</th>
                   <th className="pr-num">Purchase</th>
                   <th className="pr-num">Opening Stock</th>
                   <th className="pr-num">Closing Stock</th>
                   <th className="pr-num">Stock Growth %</th>
                   <th className="pr-num">Pending Amount</th>
+                  <th className="pr-num">Paid-up Stock</th>
+                  <th className="pr-num">Paid-up Stock %</th>
                   <th className="pr-num">GP</th>
                   <th className="pr-num">GP %</th>
                 </tr>
@@ -463,12 +668,15 @@ export default function PharmacyReportsPage() {
                     <tr key={row.MonthOfStatistics}>
                       <td>{formatMonth(row.MonthOfStatistics)}</td>
                       <td className="pr-num">{money(row.Sales)}</td>
+                      <td className="pr-num">{money(averageDailySales(row.Sales, row.MonthOfStatistics))}</td>
                       <td className="pr-num">{growthBadge(salesGrowth)}</td>
                       <td className="pr-num">{money(row.Purchase)}</td>
                       <td className="pr-num">{money(row.OpeningStock)}</td>
                       <td className="pr-num">{money(row.ClosingStock)}</td>
                       <td className="pr-num">{growthBadge(stockGrowth)}</td>
                       <td className="pr-num">{money(row.PendingAmount)}</td>
+                      <td className="pr-num">{money(paidUpStock(row.ClosingStock, row.PendingAmount))}</td>
+                      <td className="pr-num">{percent(paidUpStockPercent(row.ClosingStock, row.PendingAmount))}</td>
                       <td className="pr-num">{money(row.GP)}</td>
                       <td className="pr-num">{percent(row.GPPercent)}</td>
                     </tr>
@@ -476,6 +684,21 @@ export default function PharmacyReportsPage() {
                 })}
               </tbody>
             </table>
+          </section>
+
+          <section className="pr-compare-summary">
+            <div className="pr-compare-summary__grid">
+              <div><span>{analysisTotals.bestMonth} Best Month</span><strong>{money(sortedAnalysisRows.reduce((best, row) => Math.max(best, Number(row.Sales || 0)), 0))}</strong></div>
+              <div><span>{formatMonth(sortedAnalysisRows[sortedAnalysisRows.length - 1].MonthOfStatistics)} Closing Stock</span><strong>{money(analysisTotals.closingStock)}</strong></div>
+              <div><span>{formatMonth(sortedAnalysisRows[sortedAnalysisRows.length - 1].MonthOfStatistics)} Supplier Pending</span><strong>{money(analysisTotals.supplierPending)}</strong></div>
+              <div><span>{formatMonth(sortedAnalysisRows[sortedAnalysisRows.length - 1].MonthOfStatistics)} Paid-up Stock %</span><strong>{percent(analysisTotals.paidUpStockPercent)}</strong></div>
+              <div><span>Average Sales / Day</span><strong>{money(analysisTotals.averageDailySales)}</strong></div>
+              <div><span>Paid-up Stock Value</span><strong>{money(analysisTotals.paidUpStock)}</strong></div>
+            </div>
+            <p className="pr-compare-note">
+              Working capital movement across the selected period: <strong>{money(analysisTotals.workingCapitalImpact)}</strong>.
+              This combines stock increase and pending reduction, so it helps judge stock strength and collection quality, but it should not be treated as profit by itself.
+            </p>
           </section>
         </section>
       )}

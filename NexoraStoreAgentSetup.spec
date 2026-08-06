@@ -5,7 +5,7 @@ a = Analysis(
     ['E:\\Nexora\\store_agent_setup\\launch_wizard.py'],
     pathex=['E:\\Nexora'],
     binaries=[],
-    datas=[('E:\\Nexora\\dist\\NexoraStoreAgent', 'agent'), ('E:\\Nexora\\dist\\NexoraStoreAgentSettings.exe', '.')],
+    datas=[('E:\\Nexora\\dist\\NexoraStoreAgent.exe', 'agent'), ('E:\\Nexora\\dist\\NexoraStoreAgentWatchdog.exe', '.'), ('E:\\Nexora\\dist\\NexoraStoreAgentSettings.exe', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

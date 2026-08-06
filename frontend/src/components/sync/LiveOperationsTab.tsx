@@ -52,14 +52,14 @@ export function LiveOperationsTab() {
   }
 
   return (
-    <SxCard>
+    <SxCard className="sx-pane">
       <SxCardHead title="Live Operations" icon="bi-broadcast-pin"
-        sub={<SxChip tone="indigo" running dot>{live.length} active</SxChip>}
+        sub={<SxChip tone="indigo" running dot compact>{live.length} active</SxChip>}
         action={
           <div className="d-flex align-items-center gap-2">
             <SxLive label="2s" />
-            <SxButton variant="warning" icon="bi-pause-fill" disabled={busy || selected.size === 0} onClick={() => control('PAUSE')}>Pause</SxButton>
-            <SxButton variant="danger" icon="bi-stop-fill" disabled={busy || selected.size === 0} onClick={() => control('STOP')}>Stop</SxButton>
+            <SxButton sm variant="warning" icon="bi-pause-fill" disabled={busy || selected.size === 0} onClick={() => control('PAUSE')}>Pause</SxButton>
+            <SxButton sm variant="danger" icon="bi-stop-fill" disabled={busy || selected.size === 0} onClick={() => control('STOP')}>Stop</SxButton>
           </div>
         } />
       <SxCardBody flush>
@@ -94,7 +94,7 @@ export function LiveOperationsTab() {
                 <td>{l.chunk_no != null ? `${l.chunk_no}${l.total_chunks ? ` / ${l.total_chunks}` : ''}` : '—'}</td>
                 <td className="sx-num">{l.speed_rows_sec > 0 ? <span style={{ color: 'var(--sx-success)', fontWeight: 650 }}>{l.speed_rows_sec.toLocaleString()}/s</span> : '—'}</td>
                 <td>{fmtEta(l.eta_seconds)}</td>
-                <td><SyncStatusBadge status={l.status === 'PAUSED' ? 'QUEUED' : 'Syncing'} /></td>
+                <td><SyncStatusBadge status={l.status === 'PAUSED' ? 'QUEUED' : 'Syncing'} compact /></td>
               </tr>
             ))}
           </tbody>

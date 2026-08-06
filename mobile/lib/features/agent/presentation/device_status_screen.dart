@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:nexora_mobile/core/agent/agent_state.dart';
-import 'package:nexora_mobile/core/agent/agent_status.dart';
 import 'package:nexora_mobile/core/di/agent_providers.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
+import 'package:nexora_mobile/core/widgets/mobile_components.dart';
+import 'package:nexora_mobile/features/agent/presentation/widgets/agent_health_card.dart';
 import 'package:nexora_mobile/features/agent/presentation/widgets/status_widgets.dart';
 
-/// Phase 2 — device registration + backend health / API compatibility.
+/// Phase 2 — device registration + backend health / API compatibility,
+/// led by a single health hero card with device identity below it.
 class DeviceStatusScreen extends ConsumerWidget {
   const DeviceStatusScreen({super.key});
 
@@ -28,34 +29,49 @@ class DeviceStatusScreen extends ConsumerWidget {
             ref.invalidate(cachedDeviceProvider);
           },
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
-              _AgentCard(state: state),
-              const SizedBox(height: 12),
-              _ConnectivityCard(state: state),
-              const SizedBox(height: 12),
+              AgentHealthCard(state: state),
+              const SizedBox(height: 16),
+              const SectionHeader(
+                  title: 'THIS DEVICE', icon: Icons.smartphone_outlined,),
               device.when(
-                loading: () => const SizedBox.shrink(),
+                loading: () => const InlineLoading(),
                 error: (e, _) => Text('$e'),
-                data: (id) => SectionCard(
-                  title: 'Device',
-                  icon: Icons.smartphone_outlined,
-                  children: [
-                    InfoRow(label: 'Device ID', value: id?.deviceId),
-                    InfoRow(label: 'Platform', value: id?.platform),
-                    InfoRow(label: 'Model', value: _orDash(id?.model)),
-                    InfoRow(label: 'OS', value: _orDash(id?.osVersion)),
-                    InfoRow(label: 'App version', value: id?.versionLabel),
-                    InfoRow(
-                        label: 'Registered',
-                        value: formatRelative(id?.registeredAt),),
-                    InfoRow(
-                        label: 'Last seen',
-                        value: formatRelative(id?.lastSeenAt),),
-                  ],
+                data: (id) => StatusCard(
+                  accentColor: AppColors.line,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          InfoChip(
+                              label: id?.platform ?? '—',
+                              icon: Icons.devices_other_rounded,),
+                          InfoChip(
+                              label: _orDash(id?.model) ?? 'Unknown model',
+                              icon: Icons.phone_android_rounded,),
+                          InfoChip(
+                              label: id?.versionLabel ?? '—',
+                              icon: Icons.info_outline_rounded,),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      const Divider(height: 24),
+                      InfoRow(label: 'Device ID', value: id?.deviceId),
+                      InfoRow(label: 'OS', value: _orDash(id?.osVersion)),
+                      InfoRow(
+                          label: 'Registered',
+                          value: formatRelative(id?.registeredAt),),
+                      InfoRow(
+                          label: 'Last seen',
+                          value: formatRelative(id?.lastSeenAt),),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 24),
             ],
           ),
         ),
@@ -65,88 +81,3 @@ class DeviceStatusScreen extends ConsumerWidget {
 }
 
 String? _orDash(String? v) => (v == null || v.isEmpty) ? null : v;
-
-Color _agentColor(AgentStatus s) => switch (s) {
-      AgentStatus.ready => AppColors.success,
-      AgentStatus.degraded => AppColors.warning,
-      AgentStatus.error => AppColors.error,
-      AgentStatus.offline => AppColors.slate,
-      _ => AppColors.primary,
-    };
-
-class _AgentCard extends StatelessWidget {
-  const _AgentCard({required this.state});
-  final AgentState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return SectionCard(
-      title: 'Store Agent',
-      icon: Icons.hub_outlined,
-      trailing: StatusPill(
-          label: state.status.label, color: _agentColor(state.status),),
-      children: [
-        InfoRow(
-          label: 'Device registered',
-          valueWidget: _BoolPill(value: state.registered),
-        ),
-        InfoRow(
-          label: 'Configuration loaded',
-          valueWidget: _BoolPill(value: state.configLoaded),
-        ),
-        InfoRow(label: 'Active store', value: state.storeName),
-        if (state.lastError != null)
-          InfoRow(label: 'Last error', value: state.lastError),
-      ],
-    );
-  }
-}
-
-class _ConnectivityCard extends StatelessWidget {
-  const _ConnectivityCard({required this.state});
-  final AgentState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return SectionCard(
-      title: 'Backend connectivity',
-      icon: Icons.cloud_outlined,
-      children: [
-        InfoRow(
-          label: 'Reachable',
-          valueWidget: _BoolPill(value: state.backendReachable),
-        ),
-        InfoRow(
-          label: 'API compatible',
-          valueWidget: _BoolPill(value: state.apiCompatible),
-        ),
-        InfoRow(
-          label: 'Latency',
-          value: state.backendLatencyMs == null
-              ? '—'
-              : '${state.backendLatencyMs} ms',
-        ),
-        InfoRow(
-          label: 'Server API version',
-          value: state.serverApiVersion ?? 'Not advertised',
-        ),
-        InfoRow(
-          label: 'Last checked',
-          value: formatRelative(state.lastHealthCheckAt),
-        ),
-      ],
-    );
-  }
-}
-
-class _BoolPill extends StatelessWidget {
-  const _BoolPill({required this.value});
-  final bool value;
-
-  @override
-  Widget build(BuildContext context) => StatusPill(
-        label: value ? 'Yes' : 'No',
-        color: value ? AppColors.success : AppColors.slate,
-        icon: value ? Icons.check_circle_outline : Icons.remove_circle_outline,
-      );
-}

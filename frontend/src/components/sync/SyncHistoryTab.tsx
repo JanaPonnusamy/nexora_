@@ -100,7 +100,7 @@ export function SyncHistoryTab() {
   return (
     <div className="sx-stack">
       {/* ---- Performance summary cards ---- */}
-      <div className="row row-cols-2 row-cols-md-4 g-3">
+      <div className="row row-cols-2 row-cols-md-4 g-2">
         <div className="col"><SxStat icon="bi-collection" tone="indigo" value={num(stats?.total_executions)} label="Total Executions" /></div>
         <div className="col"><SxStat icon="bi-check-circle" tone="success" value={num(stats?.successful)} label="Successful" sub={stats ? `${stats.success_rate}% success` : undefined} /></div>
         <div className="col"><SxStat icon="bi-x-circle" tone="danger" value={num(stats?.failed)} label="Failed" /></div>
@@ -112,7 +112,7 @@ export function SyncHistoryTab() {
       </div>
 
       {/* ---- Filter bar ---- */}
-      <SxCard>
+      <SxCard className="sx-pane">
         <SxCardBody>
           <div className="sx-filterbar">
             <SxSearch value={search} onChange={setSearch} placeholder="Search Execution ID…" ariaLabel="Search execution id" />
@@ -149,7 +149,7 @@ export function SyncHistoryTab() {
         <EmptyState icon="bi-clock-history" title="No sync history yet"
           description={hasFilters ? 'No executions match the current filters.' : 'Completed, running and failed sync runs will appear here.'} />
       ) : (
-        <SxCard>
+        <SxCard className="sx-pane">
           <SxCardHead title="Execution History" icon="bi-clock-history" sub={`${data.length} executions`} />
           <SxCardBody flush>
             <SxTable>
