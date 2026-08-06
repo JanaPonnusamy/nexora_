@@ -31,6 +31,9 @@ export default function LegacyOrderPage() {
   const [reviewLoading, setReviewLoading] = useState(false)
   const [compareBusy, setCompareBusy] = useState(false)
   const [compareMessage, setCompareMessage] = useState('')
+  const [orderSearch, setOrderSearch] = useState('')
+  const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null)
+  const [infoOpenFor, setInfoOpenFor] = useState<string | null>(null)
   const pollers = useRef(new Map<string, number>())
 
   useEffect(() => {
@@ -159,12 +162,36 @@ export default function LegacyOrderPage() {
     (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
   ), [jobs])
 
+  const filteredOrders = useMemo(() => {
+    const term = orderSearch.trim().toLowerCase()
+    if (!term) return previousOrders
+    return previousOrders.filter((order) => String(order.order_id).includes(term))
+  }, [previousOrders, orderSearch])
+
+  const healthyCount = stores.filter((store) => (store.last_sync_status ?? '').toLowerCase() === 'success').length
+  const failedCount = stores.filter((store) => (store.last_sync_status ?? '').toLowerCase() === 'failed').length
+  const runningCount = sortedJobs.filter((job) => job.status === 'running').length
+  const lastGlobalSync = stores.reduce<string | null>((latest, store) => {
+    if (!store.last_sync_time) return latest
+    if (!latest || new Date(store.last_sync_time) > new Date(latest)) return store.last_sync_time
+    return latest
+  }, null)
+
+  const infoStore = infoOpenFor ? stores.find((store) => store.store_name === infoOpenFor) : undefined
+  const infoJob = infoOpenFor ? runningFor(infoOpenFor) ?? sortedJobs.find((job) => job.store_name === infoOpenFor) : undefined
+
   return (
     <div className="legacy-order">
       <header className="lo-header">
         <div>
           <h1>Legacy Order Console</h1>
-          <p className="lo-sub">Run branch sync and order processing independently across multiple stores.</p>
+          <div className="lo-kpis">
+            <span>{stores.length} Stores</span>
+            <span className="lo-kpi-ok"><span className="lo-dot lo-dot-ok" />{healthyCount} Healthy</span>
+            <span className="lo-kpi-fail"><span className="lo-dot lo-dot-fail" />{failedCount} Failed</span>
+            <span className="lo-kpi-run"><span className="lo-dot lo-dot-run" />{runningCount} Running</span>
+            <span className="lo-kpi-sync">Last sync {fmtDateTime(lastGlobalSync)}</span>
+          </div>
         </div>
         <div className="lo-actions">
           <Link to="/legacy-order/qty-check" className="lo-btn"><i className="bi bi-table" /> Qty Check Grid</Link>
@@ -176,34 +203,113 @@ export default function LegacyOrderPage() {
 
       <section className="lo-card">
         <div className="lo-section-title">
-          <div><h2>Store operations</h2><p className="lo-note">Order Process always runs a full sync first. Defaults: 13 min days / 18 max days.</p></div>
-          <span className="lo-count">{stores.length} stores</span>
+          <div><h2>Store operations</h2><p className="lo-note">Process runs Sync → Order → Stock automatically. Defaults: 13 min days / 18 max days.</p></div>
         </div>
-        <div className="lo-store-scroll">
-          <table className="lo-table lo-store-grid">
-            <thead><tr><th>Store</th><th>Connection</th><th>Last sync</th><th>Min / Max</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
-            <tbody>
-              {stores.map((store) => {
-                const config = settings[store.store_name] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
-                const running = runningFor(store.store_name)
-                const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays
-                return (
-                  <tr key={store.store_name}>
-                    <td><strong>{store.store_name}</strong><small className="lo-cell-sub">Code {store.store_code}</small></td>
-                    <td>{store.server_name || '—'}<small className="lo-cell-sub">{store.database || '—'}</small></td>
-                    <td>{fmtDateTime(store.last_sync_time)}{store.last_sync_status && <span className={`lo-chip lo-chip-${store.last_sync_status.toLowerCase()}`}>{store.last_sync_status}</span>}</td>
-                    <td><div className="lo-inline-inputs"><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /><span>/</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></div>{invalid && <small className="lo-invalid">Check range</small>}</td>
-                    <td><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option></select></td>
-                    <td>{running ? <><span className="lo-running-dot" />{running.kind === 'sync' ? 'Syncing' : running.kind === 'order' ? 'Processing' : 'Updating stock'}<small className="lo-cell-sub">{running.message}</small></> : <span className="text-body-secondary">Ready</span>}</td>
-                    <td><div className="lo-actions"><button type="button" className="lo-btn" disabled={Boolean(running)} onClick={() => start(() => legacyOrderService.startSync(store.store_name))}><i className="bi bi-arrow-repeat" /> Sync</button><button type="button" className="lo-btn lo-btn-primary" disabled={Boolean(running) || invalid} onClick={() => start(() => legacyOrderService.startOrderProcess(store.store_name, config.minDays, config.maxDays, config.mode))}><i className="bi bi-play-fill" /> Sync + Order</button>{store.store_name !== HO_STORE_NAME && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${HO_STORE_NAME}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, HO_STORE_NAME))}><i className="bi bi-cloud-arrow-up" /> Stock Update</button>}</div></td>
-                  </tr>
-                )
-              })}
-              {!stores.length && <tr><td colSpan={7} className="lo-empty">No active stores found.</td></tr>}
-            </tbody>
-          </table>
+        <div className="lo-store-cards">
+          {stores.map((store) => {
+            const config = settings[store.store_name] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+            const running = runningFor(store.store_name)
+            const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays
+            const failed = (store.last_sync_status ?? '').toLowerCase() === 'failed'
+            const dotClass = running ? 'lo-dot-run' : failed ? 'lo-dot-fail' : 'lo-dot-ok'
+            const lastJob = sortedJobs.find((job) => job.store_name === store.store_name && job.status !== 'running')
+            const cardState = running ? 'running' : lastJob?.status === 'failed' ? 'failed' : lastJob?.status === 'completed' ? 'completed' : 'idle'
+            return (
+              <article className="lo-op-card" key={store.store_name} data-state={cardState}>
+                <div className="lo-op-head">
+                  <span className={`lo-dot ${dotClass}`} />
+                  <strong>{store.store_name}</strong>
+                  <span className="lo-op-icons">
+                    <button type="button" className="lo-icon-btn" title="Processing settings" aria-label={`${store.store_name} settings`} onClick={() => setSettingsOpenFor(settingsOpenFor === store.store_name ? null : store.store_name)}><i className="bi bi-gear" /></button>
+                    <button type="button" className="lo-icon-btn" title="Store information" aria-label={`${store.store_name} info`} onClick={() => setInfoOpenFor(store.store_name)}><i className="bi bi-info-circle" /></button>
+                  </span>
+                </div>
+                <p className="lo-op-owner">{store.database || '—'}</p>
+                <small className="lo-op-conn">{store.server_name || '—'}</small>
+
+                {settingsOpenFor === store.store_name && (
+                  <div className="lo-op-settings">
+                    <label><span>Min days</span><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /></label>
+                    <label><span>Max days</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></label>
+                    <label><span>Source</span><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option></select></label>
+                    {invalid && <small className="lo-invalid">Min must be ≤ max</small>}
+                    <div className="lo-op-settings-actions">
+                      <button type="button" className="lo-btn" onClick={() => { patchSettings(store.store_name, { minDays: 13, maxDays: 18, mode: 'local' }) }}>Reset default</button>
+                      <button type="button" className="lo-btn" disabled={Boolean(running)} onClick={() => start(() => legacyOrderService.startSync(store.store_name))}><i className="bi bi-arrow-repeat" /> Sync only</button>
+                      {store.store_name !== HO_STORE_NAME && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${HO_STORE_NAME}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, HO_STORE_NAME))}><i className="bi bi-cloud-arrow-up" /> Stock update only</button>}
+                    </div>
+                  </div>
+                )}
+
+                {running ? (
+                  <div className="lo-op-progress">
+                    <div className="lo-op-stepper">
+                      <span className={running.kind !== undefined ? 'is-done' : ''}>Sync</span>
+                      <span className={running.kind === 'order' || running.kind === 'stock' ? 'is-done' : running.kind === 'sync' ? 'is-active' : ''}>Order</span>
+                      <span className={running.kind === 'stock' ? 'is-active' : ''}>Stock</span>
+                    </div>
+                    <small className="lo-cell-sub">{running.message}</small>
+                    <button type="button" className="lo-btn lo-op-process" disabled><i className="bi bi-hourglass-split" /> Processing…</button>
+                  </div>
+                ) : (
+                  <button type="button" className={`lo-btn lo-btn-primary lo-op-process${failed ? ' lo-op-retry' : ''}`} disabled={invalid} onClick={() => start(() => legacyOrderService.startOrderProcess(store.store_name, config.minDays, config.maxDays, config.mode))}>
+                    <i className={`bi ${failed ? 'bi-arrow-clockwise' : 'bi-play-fill'}`} /> {failed ? 'Retry' : 'Process'}
+                  </button>
+                )}
+              </article>
+            )
+          })}
+          {!stores.length && <div className="lo-empty">No active stores found.</div>}
         </div>
       </section>
+
+      {infoStore && (
+        <div className="lo-drawer-backdrop" role="presentation" onClick={() => setInfoOpenFor(null)}>
+          <aside className="lo-drawer" role="dialog" aria-label={`${infoStore.store_name} information`} onClick={(e) => e.stopPropagation()}>
+            <div className="lo-drawer-head">
+              <h3>Store information — {infoStore.store_name}</h3>
+              <button type="button" className="lo-icon-btn" aria-label="Close" onClick={() => setInfoOpenFor(null)}>×</button>
+            </div>
+            <div className="lo-drawer-body">
+              <h4>Last operation</h4>
+              <dl className="lo-meta">
+                <div><dt>Status</dt><dd>{infoJob ? <span className={`lo-chip lo-chip-${infoJob.status}`}>{infoJob.status}</span> : (infoStore.last_sync_status ?? '—')}</dd></div>
+                <div><dt>Started</dt><dd>{infoJob ? fmtDateTime(infoJob.started_at) : '—'}</dd></div>
+                <div><dt>Completed</dt><dd>{infoJob?.finished_at ? fmtDateTime(infoJob.finished_at) : '—'}</dd></div>
+                <div><dt>Message</dt><dd>{infoJob?.message ?? '—'}</dd></div>
+              </dl>
+              <h4>Connection</h4>
+              <dl className="lo-meta">
+                <div><dt>Server</dt><dd>{infoStore.server_name || '—'}</dd></div>
+                <div><dt>Database</dt><dd>{infoStore.database || '—'}</dd></div>
+                <div><dt>Store code</dt><dd>{infoStore.store_code}</dd></div>
+                <div><dt>Last sync</dt><dd>{fmtDateTime(infoStore.last_sync_time)}</dd></div>
+              </dl>
+              {infoJob?.result?.tables && infoJob.result.tables.length > 0 && (
+                <>
+                  <h4>Sync tables</h4>
+                  <table className="lo-table">
+                    <thead><tr><th>Table</th><th className="lo-num">Rows</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {infoJob.result.tables.map((t) => (
+                        <tr key={t.table}><td>{t.table}</td><td className="lo-num">{t.rows}</td><td><span className={`lo-chip lo-chip-${t.status}`}>{t.status}</span></td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+              {infoJob?.log && infoJob.log.length > 0 && (
+                <>
+                  <h4>Log</h4>
+                  <ol className="lo-drawer-log">
+                    {infoJob.log.map((entry, index) => <li key={`${entry.at}-${index}`}><time>{entry.at.split('T')[1] ?? entry.at}</time>{entry.message}</li>)}
+                  </ol>
+                </>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
 
       <div className="lo-lower-grid">
         <section className="lo-card">
@@ -215,16 +321,19 @@ export default function LegacyOrderPage() {
             <button type="button" className="lo-btn lo-btn-primary" disabled={!selectedOrderId || compareBusy || Boolean(runningFor(compareStore))} onClick={compare}>{compareBusy ? 'Comparing…' : 'Compare Order'}</button>
           </div>
           <div className="lo-modern-compare">
-            <label className="lo-store-picker"><span>Store</span><select value={compareStore} onChange={(e) => setCompareStore(e.target.value)}>{stores.map((store) => <option key={store.store_name}>{store.store_name}</option>)}</select></label>
+            <div className="lo-compare-toprow">
+              <label className="lo-store-picker"><span>Store</span><select value={compareStore} onChange={(e) => setCompareStore(e.target.value)}>{stores.map((store) => <option key={store.store_name}>{store.store_name}</option>)}</select></label>
+              <label className="lo-order-search"><i className="bi bi-search" /><input type="search" placeholder="Search order #" value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)} aria-label="Search previous orders" /></label>
+            </div>
             <div className="lo-compare-grid" role="listbox" aria-label="Previous orders">
-              {previousOrders.map((order) => (
+              {filteredOrders.map((order) => (
                 <button type="button" role="option" aria-selected={selectedOrderId === String(order.order_id)} className={`lo-order-tile${selectedOrderId === String(order.order_id) ? ' is-selected' : ''}`} key={order.order_id} onClick={() => setSelectedOrderId(String(order.order_id))}>
                   <span className="lo-order-icon"><i className="bi bi-receipt" /></span>
-                  <span><strong>Order #{order.order_id}</strong><small>{fmtDateTime(order.wanted_date)}</small></span>
+                  <span><strong>#{order.order_id}</strong><small>{fmtDateTime(order.wanted_date)}</small></span>
                   <i className="bi bi-chevron-right" />
                 </button>
               ))}
-              {!previousOrders.length && <div className="lo-empty">No previous orders for this store.</div>}
+              {!filteredOrders.length && <div className="lo-empty">No previous orders match.</div>}
             </div>
             {selectedOrderId && (
               <div className="lo-supplier-area">
