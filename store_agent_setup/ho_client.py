@@ -17,6 +17,21 @@ from backend.config.security import setup_access_checksum
 VERSION_MARKER_NAME = "agent_version_installed.txt"
 
 
+def _http_detail(ex):
+    """Best-effort human-readable error including HO's JSON 'detail' body, so a
+    401 shows WHY (e.g. 'Invalid setup checksum' vs 'Invalid setup credentials')
+    instead of a bare 'Unauthorized'."""
+    resp = getattr(ex, "response", None)
+    if resp is not None:
+        try:
+            detail = resp.json().get("detail")
+        except ValueError:
+            detail = (resp.text or "").strip()[:200] or None
+        if detail:
+            return f"HTTP {resp.status_code}: {detail}"
+    return str(ex)
+
+
 class HoConnectionError(Exception):
     """Raised when HO cannot be reached or returns an error."""
 
@@ -158,7 +173,7 @@ class HoClient:
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as ex:
-            raise HoConnectionError(f"GET {path} failed: {ex}") from ex
+            raise HoConnectionError(f"GET {path} failed: {_http_detail(ex)}") from ex
         except ValueError as ex:
             raise HoConnectionError(f"GET {path} invalid JSON: {ex}") from ex
 
@@ -196,7 +211,8 @@ class HoClient:
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException as ex:
-            raise HoConnectionError(f"Setup login failed: {ex}") from ex
+            raise HoConnectionError(
+                f"Setup login failed: {_http_detail(ex)}") from ex
         except ValueError as ex:
             raise HoConnectionError(f"Setup login returned invalid JSON: {ex}") from ex
         token = data.get("token")
