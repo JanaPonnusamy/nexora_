@@ -89,11 +89,27 @@ def build_watchdog():
     _pyinstaller(*args)
 
 
+def _require_tkinter():
+    """Fail loudly if the build Python lacks Tk, instead of silently shipping a
+    GUI exe that dies with 'No module named tkinter' on the target machine."""
+    try:
+        import tkinter  # noqa: F401
+        import _tkinter  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise SystemExit(
+            "Cannot build the GUI installer: this Python has no Tk "
+            f"({exc}). Rebuild with a Python that includes tkinter/_tkinter "
+            "(the standard python.org installer ships it)."
+        )
+
+
 def build_settings():
     """Standalone settings utility (onefile is fine for a manual tool)."""
+    _require_tkinter()
     _pyinstaller(
         "--onefile", "--windowed", "--name", "NexoraStoreAgentSettings",
         "--paths", str(REPO),
+        "--collect-all", "tkinter",
         str(PKG / "launch_settings.py"),
     )
 
@@ -101,8 +117,9 @@ def build_settings():
 def build_wizard():
     """The distributable wizard (onefile). Bundles the standalone agent exe
     and the settings exe as DATA so the installer can deploy them as-is."""
+    _require_tkinter()
     args = ["--onefile", "--windowed", "--name", "NexoraStoreAgentSetup",
-            "--paths", str(REPO)]
+            "--paths", str(REPO), "--collect-all", "tkinter"]
     agent_exe = DIST / "NexoraStoreAgent.exe"
     watchdog_exe = DIST / "NexoraStoreAgentWatchdog.exe"
     settings_exe = DIST / "NexoraStoreAgentSettings.exe"
