@@ -31,9 +31,9 @@ class TenantRepository:
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-        INSERT INTO dbo.tenants (tenant_id,tenant_code,tenant_abbreviation,tenant_name,db_name,is_active)
+        INSERT INTO dbo.tenants (tenant_id,tenant_code,tenant_abbreviation,tenant_name,db_name,is_active,created_at)
         OUTPUT INSERTED.tenant_id
-        VALUES (NEWID(), ?, ?, ?, ?, 1)
+        VALUES (NEWID(), ?, ?, ?, ?, 1, GETDATE())
         """, tenant_code, tenant_abbreviation, tenant_name, db_name)
         new_id = cur.fetchone()[0]
         conn.commit()
