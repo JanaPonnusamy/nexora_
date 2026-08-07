@@ -139,15 +139,17 @@ class SettingsApp(tk.Tk):
         if not routes:
             messagebox.showerror("HO", "Enter at least one HO URL.")
             return
+        errors = []
         for url in routes:
             try:
                 HoClient(url).test_connection()
                 self.ho_url.set(url)
                 messagebox.showinfo("HO", f"Reachable via {url}.")
                 return
-            except HoConnectionError:
-                continue
-        messagebox.showerror("HO", "None of the URLs are reachable from here.")
+            except HoConnectionError as ex:
+                errors.append(f"{url}\n  {ex}")
+        messagebox.showerror(
+            "HO", "None of the URLs are reachable from here.\n\n" + "\n\n".join(errors))
 
     def _active(self):
         return self.ho_url.get().strip().rstrip("/") or (self._route_urls() or [""])[0]
