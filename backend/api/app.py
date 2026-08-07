@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config.database import get_connection
-from config.security import decode_access_token
+from config.security import decode_access_token, decode_setup_token
 
 # Force correct static MIME types at startup. StaticFiles resolves Content-Type
 # via mimetypes.guess_type, which on Windows reads the registry where .js is
@@ -184,7 +184,7 @@ async def require_auth(request: Request, call_next):
         setup_token = request.headers.get('x-nexora-setup-token', '').strip()
         if setup_token:
             try:
-                claims = decode_access_token(setup_token)
+                claims = decode_setup_token(setup_token)
             except jwt.ExpiredSignatureError:
                 return _with_cors(JSONResponse(status_code=401, content={'detail': 'Setup token expired'}), request)
             except jwt.InvalidTokenError:

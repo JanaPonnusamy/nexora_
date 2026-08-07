@@ -12,6 +12,7 @@ import jwt
 
 SECRET_KEY = os.getenv("UNINEX_JWT_SECRET", "dev-only-insecure-secret-change-me")
 ALGORITHM = "HS256"
+SETUP_AUDIENCE = "store_agent_setup"
 EXPIRE_MINUTES = int(os.getenv("UNINEX_JWT_EXPIRE_MINUTES", "720"))
 SETUP_TOKEN_EXPIRE_MINUTES = int(os.getenv("UNINEX_SETUP_JWT_EXPIRE_MINUTES", "43200"))
 
@@ -25,6 +26,7 @@ def create_access_token(claims: dict) -> str:
 def create_setup_token(claims: dict) -> str:
     payload = dict(claims)
     payload["scope"] = "setup_readonly"
+    payload.setdefault("aud", SETUP_AUDIENCE)
     payload["exp"] = datetime.now(timezone.utc) + timedelta(minutes=SETUP_TOKEN_EXPIRE_MINUTES)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -42,3 +44,12 @@ def setup_access_checksum(
 
 def decode_access_token(token: str) -> dict:
     return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+
+def decode_setup_token(token: str) -> dict:
+    """Setup tokens carry an `aud` claim, so they must be decoded WITH the
+    audience or PyJWT raises InvalidAudienceError. decode_access_token (used for
+    normal bearer tokens, which have no `aud`) cannot validate them."""
+    return jwt.decode(
+        token, SECRET_KEY, algorithms=[ALGORITHM], audience=SETUP_AUDIENCE
+    )
