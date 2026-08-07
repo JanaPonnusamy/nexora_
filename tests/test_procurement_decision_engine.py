@@ -7,6 +7,7 @@ N+1 queries. No database connection is opened.
 
 import os
 import sys
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -39,6 +40,9 @@ def _para500(**overrides):
         "pending_receivable": 50.0,
         "in_transit": 0.0,
         "reserved": 10.0,
+        # Eligible by the legacy date gates: sold today, last GRN a month ago.
+        "last_sale_date": datetime.now(),
+        "last_received_date": datetime.now() - timedelta(days=30),
     }
     src.update(overrides)
     return src
@@ -135,6 +139,38 @@ def test_excluded_zero_required():
     )
     assert out["reason_code"] == rules.EXCLUDED_ZERO_REQUIRED
     assert out["suggested_qty"] == 0
+
+
+def test_excluded_stale_sale():
+    # sells in the window but last bill is older than the 10-day recency floor
+    out = rules.evaluate(
+        _para500(last_sale_date=datetime.now() - timedelta(days=15)), _params()
+    )
+    assert out["procurement_action"] == rules.ACTION_EXCLUDE
+    assert out["reason_code"] == rules.EXCLUDED_STALE_SALE
+    assert out["suggested_qty"] == 0
+
+
+def test_excluded_recently_received():
+    # recently sold, but the last GRN is AFTER the last sale: purchased, not yet
+    # moved — the legacy `ps.lastsaledate >= ps.LastReceivedDate` gate.
+    out = rules.evaluate(
+        _para500(
+            last_sale_date=datetime.now() - timedelta(days=3),
+            last_received_date=datetime.now() - timedelta(days=1),
+        ),
+        _params(),
+    )
+    assert out["procurement_action"] == rules.ACTION_EXCLUDE
+    assert out["reason_code"] == rules.EXCLUDED_RECENTLY_RECEIVED
+    assert out["suggested_qty"] == 0
+
+
+def test_excluded_missing_grn_watermark():
+    # sold recently but no GRN watermark at all -> NULL comparison excludes,
+    # exactly as the legacy LEFT JOIN does.
+    out = rules.evaluate(_para500(last_received_date=None), _params())
+    assert out["reason_code"] == rules.EXCLUDED_RECENTLY_RECEIVED
 
 
 def test_excluded_inactive_and_flagged():

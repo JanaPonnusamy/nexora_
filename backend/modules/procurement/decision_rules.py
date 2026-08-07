@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 
 # --------------------------------------------------------------------------
@@ -25,6 +26,11 @@ EXCLUDED_ADEQUATE_COVER = "EXCLUDED_ADEQUATE_COVER"
 EXCLUDED_FLAGGED = "EXCLUDED_FLAGGED"
 EXCLUDED_INACTIVE = "EXCLUDED_INACTIVE"
 EXCLUDED_ZERO_REQUIRED = "EXCLUDED_ZERO_REQUIRED"
+# Legacy VB.NET eligibility gates ported for parity with order_local/remote.sql:
+#   ps.lastsaledate >= DATEADD(day, -10, GETDATE())   (must have sold recently)
+#   ps.lastsaledate >= ps.LastReceivedDate            (must have sold since the last GRN)
+EXCLUDED_STALE_SALE = "EXCLUDED_STALE_SALE"
+EXCLUDED_RECENTLY_RECEIVED = "EXCLUDED_RECENTLY_RECEIVED"
 
 # Final-quantity determinant (PR-BR-009)
 COVERAGE = "COVERAGE"
@@ -50,6 +56,11 @@ class DecisionParameters:
     movement_medium_cut: float = 10.0
     stock_low_cut: float = 3.0
     stock_safe_cut: float = 15.0
+    # Legacy eligibility-gate constants (order_local/remote.sql). recency_days is
+    # the "sold in the last N days" floor; as_of is the reference "now" (defaults
+    # to wall-clock at evaluation) so the gate is deterministic under test.
+    recency_days: int = 10
+    as_of: datetime | None = None
 
     def validate(self):
         """PR-BR-005 exception: MaxDays >= MinDays > 0; RollingDays > 0."""
@@ -215,6 +226,30 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         out["reason_code"] = EXCLUDED_NOT_SELLING
         out["reason_text"] = "Excluded: no eligible sales in the rolling window."
         return out
+
+    # Legacy eligibility gates (order_local/remote.sql final WHERE), applied
+    # before quantity sizing so an ineligible product never produces an order:
+    #   ps.lastsaledate >= today - 10 days   (recent movement)
+    #   ps.lastsaledate >= ps.LastReceivedDate  (sold since the latest GRN)
+    # The dates come from sync.ProductTrans (MAX LastBillDate / MAX LastGrnDate)
+    # within the legacy 20-day LastBillDate window. A NULL on either side fails
+    # the comparison in the VB SQL (LEFT JOIN → UNKNOWN), so it excludes here too.
+    last_sale = src.get("last_sale_date")
+    last_recv = src.get("last_received_date")
+    now = params.as_of or datetime.now()
+    if last_sale is None or last_sale < now - timedelta(days=params.recency_days):
+        out["reason_code"] = EXCLUDED_STALE_SALE
+        out["reason_text"] = (
+            f"Excluded: no sale in the last {params.recency_days} days."
+        )
+        return out
+    if last_recv is None or last_sale < last_recv:
+        out["reason_code"] = EXCLUDED_RECENTLY_RECEIVED
+        out["reason_text"] = (
+            "Excluded: no sale since the latest GRN (recently received, not yet moved)."
+        )
+        return out
+
     if cover >= params.min_days:
         out["reason_code"] = EXCLUDED_ADEQUATE_COVER
         out["reason_text"] = (

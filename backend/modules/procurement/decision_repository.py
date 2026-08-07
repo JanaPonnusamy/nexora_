@@ -74,8 +74,12 @@ def load_source(conn, tenant_id, store_id, params):
     have no synced source yet (Topic 05); they default to 0, so Effective
     Available = current stock for a fresh cycle. ProductCode is the store's
     integer code; product_code carries it and product_id is a per-snapshot GUID.
-    DontConsiderInOrder is not part of the sync registry, so eligibility uses
-    TransactionValidity only (faithful to the platform's synced schema).
+
+    Sales eligibility matches the legacy VB.NET order query: only retail sale
+    lines (SeriesTransID = 1), valid (TransactionValidity = 0) and not flagged
+    do-not-order (DontConsiderInOrder = 0) count toward the window metrics. The
+    lg CTE supplies the last-sale/last-GRN watermarks the legacy recency and
+    "sold since last GRN" gates need (applied in decision_rules.evaluate).
     """
     if not store_id:
         return []
@@ -95,6 +99,8 @@ def load_source(conn, tenant_id, store_id, params):
             FROM sync.ProductSaleInformation psi
             WHERE psi.tenant_id = ? AND psi.store_id = ?
               AND ISNULL(psi.TransactionValidity, 0) = 0
+              AND psi.SeriesTransID = 1
+              AND ISNULL(psi.DontConsiderInOrder, 0) = 0
               AND psi.TransactionDate >= ?
         ),
         per_day  AS (SELECT ProductCode, d, SUM(qty) AS q FROM sales GROUP BY ProductCode, d),
@@ -106,7 +112,21 @@ def load_source(conn, tenant_id, store_id, params):
             FROM sales GROUP BY ProductCode
         ),
         md AS (SELECT ProductCode, MAX(q) AS max_day_sale_qty FROM per_day GROUP BY ProductCode),
-        mb AS (SELECT ProductCode, MAX(q) AS max_bill_qty FROM per_bill GROUP BY ProductCode)
+        mb AS (SELECT ProductCode, MAX(q) AS max_bill_qty FROM per_bill GROUP BY ProductCode),
+        -- Legacy watermark join (order_local/remote.sql `l` sub-query): last sale
+        -- bill and last GRN per product, taken only from ProductTrans months whose
+        -- LastBillDate is within the legacy 20-day window. Drives the recency and
+        -- "sold since last GRN" eligibility gates in decision_rules.evaluate.
+        lg AS (
+            SELECT ProductCode,
+                   MAX(LastBillDate) AS last_sale_date,
+                   MAX(LastGrnDate)  AS last_received_date
+            FROM sync.ProductTrans
+            WHERE tenant_id = ? AND store_id = ?
+              AND LastBillDate IS NOT NULL
+              AND LastBillDate >= DATEADD(day, -20, GETDATE())
+            GROUP BY ProductCode
+        )
         SELECT
             NEWID()                              AS product_id,
             CAST(p.ProductCode AS VARCHAR(100))  AS product_code,
@@ -121,15 +141,18 @@ def load_source(conn, tenant_id, store_id, params):
             CAST(ISNULL(md.max_day_sale_qty, 0)  AS DECIMAL(18,3)) AS max_day_sale_qty,
             CAST(ISNULL(mb.max_bill_qty, 0)      AS DECIMAL(18,3)) AS max_bill_qty,
             CAST(ISNULL(agg.billing_frequency, 0) AS INT)          AS billing_frequency,
-            CAST({_store_stock_expr("p")} AS DECIMAL(18,3)) AS current_stock
+            CAST({_store_stock_expr("p")} AS DECIMAL(18,3)) AS current_stock,
+            lg.last_sale_date                    AS last_sale_date,
+            lg.last_received_date                AS last_received_date
         FROM sync.Products p
         LEFT JOIN agg ON agg.ProductCode = p.ProductCode
         LEFT JOIN md  ON md.ProductCode  = p.ProductCode
         LEFT JOIN mb  ON mb.ProductCode  = p.ProductCode
+        LEFT JOIN lg  ON lg.ProductCode  = p.ProductCode
         WHERE p.tenant_id = ? AND p.store_id = ?
           AND ISNULL(p.isActive, 1) = 1
         """,
-        (tenant_id, store_id, cutoff, tenant_id, store_id),
+        (tenant_id, store_id, cutoff, tenant_id, store_id, tenant_id, store_id),
     )
     if not cursor.description:
         return []
