@@ -3,5 +3,6 @@ requests>=2.31
 cryptography>=41.0
 pywin32>=306
 pyodbc>=5.0
+PyJWT>=2.8            # pulled in via backend.config.security (ho_client)
 pyinstaller>=6.0
 # tkinter ships with the standard CPython Windows installer
