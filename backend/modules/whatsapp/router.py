@@ -24,6 +24,7 @@ class WhatsAppSettingsPayload(BaseModel):
     browser_command: str = ""
     delivery_mode: str = "manual_browser"
     launch_wait_seconds: int = 15
+    headless: bool = True
 
 
 class WhatsAppProfilePayload(BaseModel):
@@ -68,7 +69,12 @@ def read_whatsapp_state():
 
 @router.put("/settings")
 def save_whatsapp_settings(payload: WhatsAppSettingsPayload):
-    return update_settings(payload.browser_command, payload.delivery_mode, payload.launch_wait_seconds)
+    return update_settings(
+        payload.browser_command,
+        payload.delivery_mode,
+        payload.launch_wait_seconds,
+        payload.headless,
+    )
 
 
 @router.post("/profiles")

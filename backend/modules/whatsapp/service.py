@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -38,7 +40,15 @@ DEFAULT_SETTINGS = {
     "browser_command": "",
     "delivery_mode": "manual_browser",
     "launch_wait_seconds": 15,
+    "headless": True,
 }
+
+
+# Persistent, reusable WhatsApp browser sessions keyed by profile_id.
+# Selenium drivers are not thread-safe and FastAPI runs sync endpoints in a
+# threadpool, so every interaction with a driver is serialized under this lock.
+_DRIVER_LOCK = threading.RLock()
+_DRIVERS: dict[str, Any] = {}
 
 
 def _now_iso() -> str:
@@ -91,6 +101,7 @@ def _load_settings() -> dict[str, Any]:
             settings["browser_command"] = detected
     if settings.get("delivery_mode") not in {"manual_browser", "selenium"}:
         settings["delivery_mode"] = "manual_browser"
+    settings["headless"] = bool(settings.get("headless", True))
     return settings
 
 
@@ -101,6 +112,7 @@ def _save_settings(settings: dict[str, Any]) -> dict[str, Any]:
         merged["delivery_mode"] = "manual_browser"
     merged["browser_command"] = str(merged.get("browser_command", "")).strip()
     merged["launch_wait_seconds"] = int(merged.get("launch_wait_seconds", 15) or 15)
+    merged["headless"] = bool(merged.get("headless", True))
     _write_json(SETTINGS_FILE, merged)
     return merged
 
@@ -174,6 +186,7 @@ def _capabilities(settings: dict[str, Any], profiles: list[dict[str, Any]]) -> d
         "browser_command": browser_command,
         "selenium_available": _HAVE_SELENIUM,
         "delivery_mode": settings.get("delivery_mode", "manual_browser"),
+        "headless": bool(settings.get("headless", True)),
         "can_launch_qr": _browser_ready(browser_command),
         "can_auto_send_attachment": bool(_HAVE_SELENIUM and _browser_ready(browser_command)),
         "can_read_messages": bool(_HAVE_SELENIUM and _browser_ready(browser_command)),
@@ -314,10 +327,89 @@ def _build_driver(profile: dict[str, Any], settings: dict[str, Any]):
     options.add_argument(f"user-data-dir={profile['session_dir']}")
     options.add_argument("--no-first-run")
     options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-dev-shm-usage")
+    if bool(settings.get("headless", True)):
+        # Run WhatsApp Web fully in the background so the user's profile is
+        # never shown on screen (privacy) and no visible window pops up.
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1280,960")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
     browser_command = settings.get("browser_command", "")
     if browser_command and Path(browser_command).is_file():
         options.binary_location = browser_command
     return webdriver.Chrome(options=options)
+
+
+def _driver_alive(driver: Any) -> bool:
+    if driver is None:
+        return False
+    try:
+        _ = driver.current_url
+        return True
+    except Exception:
+        return False
+
+
+def _acquire_driver(profile: dict[str, Any], settings: dict[str, Any]):
+    """Return a persistent, logged-in headless driver for this profile.
+
+    The driver is created once and reused across sends so WhatsApp Web loads
+    and authenticates a single time. Subsequent messages navigate inside the
+    same background session — no new Chrome window, no fresh WhatsApp load.
+    Callers must hold ``_DRIVER_LOCK``.
+    """
+    profile_id = profile["profile_id"]
+    driver = _DRIVERS.get(profile_id)
+    if _driver_alive(driver):
+        return driver
+    if driver is not None:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        _DRIVERS.pop(profile_id, None)
+
+    driver = _build_driver(profile, settings)
+    _DRIVERS[profile_id] = driver
+    # Warm the session up once so the WhatsApp Web SPA is loaded and the
+    # persisted login (from the profile dir) is restored before we send.
+    wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
+    try:
+        driver.get("https://web.whatsapp.com/")
+        WebDriverWait(driver, wait_seconds).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        time.sleep(3)
+    except Exception:
+        pass
+    return driver
+
+
+def _shutdown_driver(profile_id: str) -> None:
+    """Close and forget the background driver for a profile (releases its
+    user-data-dir so a visible browser can reuse the same profile)."""
+    with _DRIVER_LOCK:
+        driver = _DRIVERS.pop(profile_id, None)
+    if driver is not None:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+def shutdown_all_drivers() -> None:
+    with _DRIVER_LOCK:
+        drivers = list(_DRIVERS.values())
+        _DRIVERS.clear()
+    for driver in drivers:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+atexit.register(shutdown_all_drivers)
 
 
 def _open_target_chat(driver, target: dict[str, Any], settings: dict[str, Any], message: str = "") -> str:
@@ -358,10 +450,11 @@ def _open_target_chat(driver, target: dict[str, Any], settings: dict[str, Any], 
 
 
 def _send_via_selenium(profile: dict[str, Any], settings: dict[str, Any], phone: str, message: str, attachment_path: str | None) -> dict[str, Any]:
-    driver = _build_driver(profile, settings)
-    wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
+    mode = "headless" if bool(settings.get("headless", True)) else "selenium"
     url = _whatsapp_url(phone, message)
-    try:
+    with _DRIVER_LOCK:
+        driver = _acquire_driver(profile, settings)
+        wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
         driver.get(url)
         wait = WebDriverWait(driver, wait_seconds)
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
@@ -387,19 +480,18 @@ def _send_via_selenium(profile: dict[str, Any], settings: dict[str, Any], phone:
         time.sleep(2)
         return {
             "status": "sent",
-            "message": "Message sent through WhatsApp automation.",
-            "mode": "selenium",
+            "message": "Message sent in the background through WhatsApp automation.",
+            "mode": mode,
             "url": url,
         }
-    finally:
-        driver.quit()
 
 
 def _send_target_via_selenium(profile: dict[str, Any], target: dict[str, Any], settings: dict[str, Any], message: str, attachment_path: str | None) -> dict[str, Any]:
-    driver = _build_driver(profile, settings)
-    wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
-    wait = WebDriverWait(driver, wait_seconds)
-    try:
+    mode = "headless" if bool(settings.get("headless", True)) else "selenium"
+    with _DRIVER_LOCK:
+        driver = _acquire_driver(profile, settings)
+        wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
+        wait = WebDriverWait(driver, wait_seconds)
         url = _open_target_chat(driver, target, settings, message)
         if attachment_path:
             clip = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[@data-icon='clip']")))
@@ -422,18 +514,16 @@ def _send_target_via_selenium(profile: dict[str, Any], target: dict[str, Any], s
         return {
             "status": "sent",
             "message": f"Message sent to {target['target_name'] or target['target_ref']}.",
-            "mode": "selenium",
+            "mode": mode,
             "url": url,
         }
-    finally:
-        driver.quit()
 
 
 def _scrape_target_messages(profile: dict[str, Any], target: dict[str, Any], settings: dict[str, Any], limit: int = 20) -> list[dict[str, Any]]:
     if not _HAVE_SELENIUM:
         raise RuntimeError("Selenium is not installed in the backend runtime.")
-    driver = _build_driver(profile, settings)
-    try:
+    with _DRIVER_LOCK:
+        driver = _acquire_driver(profile, settings)
         _open_target_chat(driver, target, settings)
         message_nodes = driver.find_elements(By.XPATH, "//div[contains(@class,'message-')]")
         captured: list[dict[str, Any]] = []
@@ -458,8 +548,6 @@ def _scrape_target_messages(profile: dict[str, Any], target: dict[str, Any], set
                 }
             )
         return captured
-    finally:
-        driver.quit()
 
 
 def get_state() -> dict[str, Any]:
@@ -476,14 +564,19 @@ def get_state() -> dict[str, Any]:
     }
 
 
-def update_settings(browser_command: str, delivery_mode: str, launch_wait_seconds: int) -> dict[str, Any]:
+def update_settings(browser_command: str, delivery_mode: str, launch_wait_seconds: int, headless: bool | None = None) -> dict[str, Any]:
+    current = _load_settings()
     settings = _save_settings(
         {
             "browser_command": browser_command,
             "delivery_mode": delivery_mode,
             "launch_wait_seconds": launch_wait_seconds,
+            "headless": current.get("headless", True) if headless is None else bool(headless),
         }
     )
+    # Drop any live sessions so the new headless/visibility choice takes effect
+    # on the next send instead of reusing an old-mode browser.
+    shutdown_all_drivers()
     return {
         "settings": settings,
         "profiles": _load_profiles(),
@@ -554,6 +647,9 @@ def launch_qr(profile_id: str) -> dict[str, Any]:
     settings = _load_settings()
     profiles = _load_profiles()
     profile = _resolve_profile(profile_id, profiles)
+    # QR login needs a visible window sharing this profile's user-data-dir, so
+    # the background headless session must let go of it first.
+    _shutdown_driver(profile_id)
     result = _launch_browser(profile, settings, "https://web.whatsapp.com/")
     profile["last_used_at"] = _now_iso()
     _save_profiles(profiles)
@@ -587,6 +683,7 @@ def send_message(profile_id: str, phone: str, message: str, attachment_name: str
         try:
             return _send_via_selenium(profile, settings, phone_value, message, staged_attachment)
         except Exception as exc:
+            _shutdown_driver(profile["profile_id"])
             fallback = _launch_browser(profile, settings, _whatsapp_url(phone_value, message))
             fallback["status"] = "manual-fallback"
             fallback["message"] = (
@@ -679,6 +776,7 @@ def send_target_message(target_id: str, message: str, attachment_name: str | Non
         try:
             return _send_target_via_selenium(profile, target, settings, message, staged_attachment)
         except Exception as exc:
+            _shutdown_driver(profile["profile_id"])
             fallback_url = "https://web.whatsapp.com/" if target["target_kind"] == "group" else _whatsapp_url(_sanitize_phone(target["target_ref"]), message)
             fallback = _launch_browser(profile, settings, fallback_url)
             fallback["status"] = "manual-fallback"
