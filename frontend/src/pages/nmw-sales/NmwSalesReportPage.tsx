@@ -397,13 +397,30 @@ function StoreCustCodePanel({ tenantId, onDone }: { tenantId: string; onDone: ()
     }
   }
 
+  async function autoMatch() {
+    try {
+      const result = await nmwSalesReportService.autoMatchCustCodes(tenantId, true)
+      const unmatched = result.unmatched?.length ? ` Unmatched: ${result.unmatched.join(', ')} (set manually).` : ''
+      setMsg(result.reason ? result.reason : `Matched ${result.matched} store(s) by customer name.${unmatched}`)
+      await reload()
+      onDone()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Auto-match failed')
+    }
+  }
+
   return (
     <div className="card">
       <div className="card-header d-flex justify-content-between align-items-center">
         <span>Store customer codes (NMW ↔ store routing)</span>
-        <button className="btn btn-sm btn-outline-primary" onClick={() => void importLegacy()}>
-          Import from legacy Stores
-        </button>
+        <div className="d-flex gap-2">
+          <button className="btn btn-sm btn-primary" onClick={() => void autoMatch()}>
+            Auto-match by name
+          </button>
+          <button className="btn btn-sm btn-outline-primary" onClick={() => void importLegacy()}>
+            Import from legacy Stores
+          </button>
+        </div>
       </div>
       <div className="card-body">
         {msg && <div className="alert alert-success py-2 small">{msg}</div>}

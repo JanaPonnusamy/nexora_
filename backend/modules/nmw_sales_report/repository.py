@@ -281,6 +281,91 @@ def list_store_cust_codes(tenant_id):
         conn.close()
 
 
+def _nmw_customers(cursor, tenant_id, nmw_store_id):
+    """Distinct (CustomerCode, CustomerName) seen on NMW's bills — the de-facto
+    customer master, since NMW's stores appear as its bill customers."""
+    cursor.execute(
+        """
+        SELECT CAST(CustomerCode AS NVARCHAR(50)) AS code, MAX(CustomerName) AS name
+        FROM sync.SaleInformation
+        WHERE tenant_id = ? AND store_id = ?
+          AND CustomerCode IS NOT NULL AND LTRIM(RTRIM(CustomerCode)) <> ''
+        GROUP BY CAST(CustomerCode AS NVARCHAR(50))
+        """,
+        (tenant_id, nmw_store_id),
+    )
+    return [{"code": (r[0] or "").strip(), "name": (r[1] or "").strip()} for r in cursor.fetchall()]
+
+
+def _normalize_name(value):
+    return "".join(ch for ch in (value or "").upper() if ch.isalnum())
+
+
+def auto_match_cust_codes(tenant_id, threshold=0.86, apply_changes=True):
+    """Match each store to its most-similar NMW customer by name and set
+    stores.ho_cust_code. Greedy global assignment (best score first, each
+    customer used once) above `threshold`. Returns the proposed/applied rows so
+    the admin can review and correct ambiguous matches in the panel."""
+    from difflib import SequenceMatcher
+
+    nmw_store_id = get_nmw_store_id(tenant_id)
+    if not nmw_store_id:
+        return {"matched": 0, "assignments": [], "reason": "warehouse store (NMW) not found"}
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        _ensure_schema(cursor)
+        customers = _nmw_customers(cursor, tenant_id, nmw_store_id)
+        cursor.execute(
+            "SELECT CAST(store_id AS VARCHAR(50)), store_code, store_name FROM dbo.stores "
+            "WHERE tenant_id = ? AND store_id <> ?",
+            (tenant_id, nmw_store_id),
+        )
+        stores = [{"store_id": r[0], "store_code": r[1], "store_name": r[2] or ""} for r in cursor.fetchall()]
+
+        # Score every store×customer pair, then assign greedily (highest first),
+        # never reusing a store or a customer code.
+        pairs = []
+        for store in stores:
+            s_norm = _normalize_name(store["store_name"])
+            for cust in customers:
+                score = SequenceMatcher(None, s_norm, _normalize_name(cust["name"])).ratio()
+                pairs.append((score, store, cust))
+        pairs.sort(key=lambda p: p[0], reverse=True)
+
+        used_stores, used_codes, assignments = set(), set(), []
+        for score, store, cust in pairs:
+            if store["store_id"] in used_stores or cust["code"] in used_codes:
+                continue
+            if score < threshold:
+                continue
+            used_stores.add(store["store_id"])
+            used_codes.add(cust["code"])
+            assignments.append({
+                "store_id": store["store_id"],
+                "store_code": store["store_code"],
+                "store_name": store["store_name"],
+                "customer_code": cust["code"],
+                "customer_name": cust["name"],
+                "score": round(score, 3),
+            })
+
+        if apply_changes:
+            for a in assignments:
+                cursor.execute(
+                    "UPDATE dbo.stores SET ho_cust_code = ? WHERE tenant_id = ? AND store_id = ?",
+                    (a["customer_code"], tenant_id, a["store_id"]),
+                )
+            conn.commit()
+
+        unmatched = [s["store_code"] for s in stores if s["store_id"] not in used_stores]
+        return {"matched": len(assignments), "assignments": assignments, "unmatched": unmatched, "applied": apply_changes}
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def import_cust_codes_from_legacy(tenant_id):
     """One-shot copy of legacy dbo.Stores.ho_cust_code into platform
     dbo.stores.ho_cust_code, matched by store name. Mirrors the Ho_code import

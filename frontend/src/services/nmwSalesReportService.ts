@@ -49,4 +49,13 @@ export const nmwSalesReportService = {
       `${base}/store-cust-codes/import-legacy?tenant_id=${encodeURIComponent(tenantId)}`,
       {},
     ),
+
+  autoMatchCustCodes: (tenantId: string, apply = true) =>
+    api.post<{
+      matched: number
+      unmatched?: string[]
+      applied?: boolean
+      reason?: string
+      assignments: { store_code: string; store_name: string; customer_code: string; customer_name: string; score: number }[]
+    }>(`${base}/store-cust-codes/auto-match?tenant_id=${encodeURIComponent(tenantId)}&apply=${apply}`, {}),
 }

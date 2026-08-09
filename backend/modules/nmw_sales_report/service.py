@@ -81,6 +81,12 @@ def import_cust_codes(user, tenant_id):
     return repository.import_cust_codes_from_legacy(tenant_id)
 
 
+def auto_match_cust_codes(user, tenant_id, apply_changes):
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Only a super admin can auto-match store customer codes.")
+    return repository.auto_match_cust_codes(tenant_id, apply_changes=apply_changes)
+
+
 def approve(user, req):
     if not is_super_admin(user):
         raise HTTPException(status_code=403, detail="Only a super admin can approve NMW dispatch bills.")

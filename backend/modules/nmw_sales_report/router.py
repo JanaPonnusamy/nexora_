@@ -70,3 +70,14 @@ def set_store_cust_code(
 @router.post("/store-cust-codes/import-legacy")
 def import_store_cust_codes(tenant_id: str, current_user: dict = Depends(get_current_user)):
     return service.import_cust_codes(current_user, tenant_id)
+
+
+@router.post("/store-cust-codes/auto-match")
+def auto_match_store_cust_codes(
+    tenant_id: str,
+    apply: bool = True,
+    current_user: dict = Depends(get_current_user),
+):
+    """Match each store to its most-similar NMW customer name and fill
+    ho_cust_code. Pass apply=false to preview without writing."""
+    return service.auto_match_cust_codes(current_user, tenant_id, apply)
