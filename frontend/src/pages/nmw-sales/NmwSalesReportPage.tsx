@@ -243,6 +243,7 @@ export default function NmwSalesReportPage() {
                   </th>
                 )}
                 <th style={{ whiteSpace: 'nowrap' }}>Bill No</th>
+                <th style={{ whiteSpace: 'nowrap' }}>Type</th>
                 <th style={{ whiteSpace: 'nowrap' }}>Bill Date</th>
                 <th style={{ whiteSpace: 'nowrap' }}>Despatched</th>
                 <th>Destination Store</th>
@@ -273,6 +274,11 @@ export default function NmwSalesReportPage() {
                         </td>
                       )}
                       <td style={{ whiteSpace: 'nowrap' }}>{bill.bill_no}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <span className={`badge ${bill.is_transfer ? 'text-bg-info' : 'text-bg-secondary'}`}>
+                          {bill.bill_type}
+                        </span>
+                      </td>
                       <td style={{ whiteSpace: 'nowrap' }}>{bill.bill_date}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{bill.issued_date?.slice(0, 19).replace('T', ' ')}</td>
                       <td>
@@ -300,7 +306,7 @@ export default function NmwSalesReportPage() {
                     </tr>
                     {expanded === key && (
                       <tr>
-                        <td colSpan={canApprove ? 9 : 8} className="p-0">
+                        <td colSpan={canApprove ? 10 : 9} className="p-0">
                           <BillItemsTable rows={items[key]} />
                         </td>
                       </tr>
@@ -356,8 +362,9 @@ function BillItemsTable({ rows }: { rows: NmwSalesBillItem[] | undefined }) {
 }
 
 function StoreCustCodePanel({ tenantId, onDone }: { tenantId: string; onDone: () => void }) {
-  const [rows, setRows] = useState<{ store_id: string; store_code: string | null; store_name: string | null; ho_cust_code: string | null }[]>([])
+  const [rows, setRows] = useState<{ store_id: string; store_code: string | null; store_name: string | null; ho_cust_code: string | null; ho_transfer_code: string | null }[]>([])
   const [draft, setDraft] = useState<Record<string, string>>({})
+  const [transferDraft, setTransferDraft] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -367,6 +374,7 @@ function StoreCustCodePanel({ tenantId, onDone }: { tenantId: string; onDone: ()
       const result = await nmwSalesReportService.listStoreCustCodes(tenantId)
       setRows(result.stores)
       setDraft(Object.fromEntries(result.stores.map((s) => [s.store_id, s.ho_cust_code ?? ''])))
+      setTransferDraft(Object.fromEntries(result.stores.map((s) => [s.store_id, s.ho_transfer_code ?? ''])))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load store codes')
     }
@@ -378,7 +386,8 @@ function StoreCustCodePanel({ tenantId, onDone }: { tenantId: string; onDone: ()
 
   async function save(storeId: string) {
     try {
-      await nmwSalesReportService.setStoreCustCode(tenantId, storeId, draft[storeId] ?? '')
+      await nmwSalesReportService.setStoreCustCode(tenantId, storeId, draft[storeId] ?? '', 'cust')
+      await nmwSalesReportService.setStoreCustCode(tenantId, storeId, transferDraft[storeId] ?? '', 'transfer')
       setMsg('Saved.')
       onDone()
     } catch (err) {
@@ -429,7 +438,8 @@ function StoreCustCodePanel({ tenantId, onDone }: { tenantId: string; onDone: ()
           <thead>
             <tr className="table-light">
               <th>Store</th>
-              <th style={{ width: '14rem' }}>NMW customer code</th>
+              <th style={{ width: '11rem' }}>Customer code (sales)</th>
+              <th style={{ width: '11rem' }}>Transfer code (TO)</th>
               <th style={{ width: '6rem' }} />
             </tr>
           </thead>
@@ -444,6 +454,13 @@ function StoreCustCodePanel({ tenantId, onDone }: { tenantId: string; onDone: ()
                     className="form-control form-control-sm"
                     value={draft[s.store_id] ?? ''}
                     onChange={(e) => setDraft((prev) => ({ ...prev, [s.store_id]: e.target.value }))}
+                  />
+                </td>
+                <td>
+                  <input
+                    className="form-control form-control-sm"
+                    value={transferDraft[s.store_id] ?? ''}
+                    onChange={(e) => setTransferDraft((prev) => ({ ...prev, [s.store_id]: e.target.value }))}
                   />
                 </td>
                 <td>

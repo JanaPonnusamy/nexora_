@@ -68,10 +68,10 @@ def list_store_cust_codes(user, tenant_id):
     return {"stores": repository.list_store_cust_codes(tenant_id)}
 
 
-def set_store_cust_code(user, tenant_id, store_id, cust_code):
+def set_store_cust_code(user, tenant_id, store_id, cust_code, code_type="cust"):
     if not is_super_admin(user):
         raise HTTPException(status_code=403, detail="Only a super admin can set a store customer code.")
-    updated = repository.set_store_cust_code(tenant_id, store_id, cust_code)
+    updated = repository.set_store_cust_code(tenant_id, store_id, cust_code, code_type)
     return {"updated": updated}
 
 

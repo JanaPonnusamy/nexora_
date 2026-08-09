@@ -1203,6 +1203,7 @@ function NmwSalesReport({ session, settings }) {
             <thead>
               <tr>
                 <th>Bill No</th>
+                <th>Type</th>
                 <th>Bill Date</th>
                 <th>Despatched</th>
                 <th>Amount</th>
@@ -1218,6 +1219,7 @@ function NmwSalesReport({ session, settings }) {
                   <Fragment key={key}>
                     <tr>
                       <td>{bill.bill_no}</td>
+                      <td>{bill.bill_type || (bill.is_transfer ? 'Transfer' : 'Sale')}</td>
                       <td>{formatDate(bill.bill_date)}</td>
                       <td>{bill.issued_date ? String(bill.issued_date).slice(0, 19).replace('T', ' ') : '-'}</td>
                       <td>{formatMoney(bill.bill_amount)}</td>
@@ -1230,7 +1232,7 @@ function NmwSalesReport({ session, settings }) {
                     </tr>
                     {expanded === key && (
                       <tr>
-                        <td colSpan={6}>
+                        <td colSpan={7}>
                           {!rows ? (
                             <div className="empty-state">Loading items...</div>
                           ) : rows.length === 0 ? (

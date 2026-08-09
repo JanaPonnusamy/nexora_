@@ -38,9 +38,9 @@ export const nmwSalesReportService = {
       `${base}/store-cust-codes?tenant_id=${encodeURIComponent(tenantId)}`,
     ),
 
-  setStoreCustCode: (tenantId: string, storeId: string, custCode: string) =>
+  setStoreCustCode: (tenantId: string, storeId: string, custCode: string, codeType: 'cust' | 'transfer' = 'cust') =>
     api.put<{ updated: number }>(
-      `${base}/store-cust-codes/${encodeURIComponent(storeId)}?tenant_id=${encodeURIComponent(tenantId)}&cust_code=${encodeURIComponent(custCode)}`,
+      `${base}/store-cust-codes/${encodeURIComponent(storeId)}?tenant_id=${encodeURIComponent(tenantId)}&cust_code=${encodeURIComponent(custCode)}&code_type=${codeType}`,
       {},
     ),
 

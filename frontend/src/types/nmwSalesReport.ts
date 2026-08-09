@@ -9,6 +9,8 @@ export interface NmwSalesBill {
   total_qty: number
   customer_code: string | null
   customer_name: string | null
+  is_transfer: number
+  bill_type: string
   dest_store_id: string | null
   dest_store_code: string | null
   dest_store_name: string | null
@@ -41,6 +43,7 @@ export interface NmwStoreCustCode {
   store_code: string | null
   store_name: string | null
   ho_cust_code: string | null
+  ho_transfer_code: string | null
 }
 
 export interface BillKey {

@@ -62,9 +62,10 @@ def set_store_cust_code(
     store_id: str,
     tenant_id: str,
     cust_code: str = "",
+    code_type: str = "cust",
     current_user: dict = Depends(get_current_user),
 ):
-    return service.set_store_cust_code(current_user, tenant_id, store_id, cust_code)
+    return service.set_store_cust_code(current_user, tenant_id, store_id, cust_code, code_type)
 
 
 @router.post("/store-cust-codes/import-legacy")

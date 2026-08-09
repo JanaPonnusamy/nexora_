@@ -14,6 +14,8 @@ class NmwSalesBill(BaseModel):
     total_qty: float = 0
     customer_code: Optional[str] = None
     customer_name: Optional[str] = None
+    is_transfer: int = 0
+    bill_type: str = "Sale"                  # Sale | Transfer (TO stock-transfer)
     dest_store_id: Optional[str] = None
     dest_store_code: Optional[str] = None
     dest_store_name: Optional[str] = None
