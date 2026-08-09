@@ -62,9 +62,18 @@ def _ensure_schema(cursor):
         IF COL_LENGTH('sync.SaleInformation', 'SeriesName') IS NULL
             ALTER TABLE sync.SaleInformation ADD SeriesName varchar(20) NULL;
 
-        -- Select IssuedDate + SeriesName for future syncs (derive sync_table_id
-        -- from an existing SaleInformation mapping row; no-op if already present
-        -- or if SaleInformation isn't configured on this HO yet).
+        -- Cancellation signal: a bill is cancelled when Transactionvalidity <> 0
+        -- (mirrors the line-level flag already used on ProductSaleInformation)
+        -- or Cancelleddate is set.
+        IF COL_LENGTH('sync.SaleInformation', 'Transactionvalidity') IS NULL
+            ALTER TABLE sync.SaleInformation ADD Transactionvalidity int NULL;
+
+        IF COL_LENGTH('sync.SaleInformation', 'Cancelleddate') IS NULL
+            ALTER TABLE sync.SaleInformation ADD Cancelleddate datetime NULL;
+
+        -- Select these for future syncs (derive sync_table_id from an existing
+        -- SaleInformation mapping row; no-op if already present or if
+        -- SaleInformation isn't configured on this HO yet).
         IF EXISTS (SELECT 1 FROM sync.sync_column_mapping WHERE table_name = 'SaleInformation')
         INSERT INTO sync.sync_column_mapping
             (mapping_id, sync_table_id, table_name, column_name, data_type,
@@ -73,7 +82,10 @@ def _ensure_schema(cursor):
                1, 0, 0, 0, t.next_order + c.ord, GETDATE()
         FROM (SELECT MAX(sync_table_id) AS sync_table_id, ISNULL(MAX(column_order), 0) AS next_order
               FROM sync.sync_column_mapping WHERE table_name = 'SaleInformation') t
-        CROSS JOIN (VALUES ('IssuedDate', 'datetime', 1), ('SeriesName', 'varchar', 2)) AS c(column_name, data_type, ord)
+        CROSS JOIN (VALUES
+            ('IssuedDate', 'datetime', 1), ('SeriesName', 'varchar', 2),
+            ('Transactionvalidity', 'int', 3), ('Cancelleddate', 'datetime', 4)
+        ) AS c(column_name, data_type, ord)
         WHERE NOT EXISTS (
             SELECT 1 FROM sync.sync_column_mapping m
             WHERE m.table_name = 'SaleInformation' AND m.column_name = c.column_name);
@@ -193,6 +205,8 @@ def list_bills(tenant_id, nmw_store_id, dest_store_ids, status, date_from, date_
                 si.CustomerName                    AS customer_name,
                 si.is_transfer                     AS is_transfer,
                 CASE WHEN si.is_transfer = 1 THEN 'Transfer' ELSE 'Sale' END AS bill_type,
+                CASE WHEN ISNULL(si.Transactionvalidity, 0) <> 0
+                       OR si.Cancelleddate IS NOT NULL THEN 1 ELSE 0 END AS is_cancelled,
                 CAST(dst.store_id AS VARCHAR(50))  AS dest_store_id,
                 dst.store_code                     AS dest_store_code,
                 dst.store_name                     AS dest_store_name,
@@ -251,7 +265,16 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
                 ISNULL(psi.Freequantity, 0)            AS free_qty,
                 ISNULL(psi.MRP, 0)                     AS mrp,
                 ISNULL(psi.Rate, 0)                    AS rate,
-                ISNULL(psi.DiscountPercentage, 0)      AS discount_percentage,
+                -- Dis% derived from PTR (PurchasePrice) vs the actual charged
+                -- Rate, NOT the raw DiscountPercentage column -- that field is
+                -- always 0 on NMW dispatch bills (verified against live data).
+                -- (PTR-Rate)/PTR*100 reproduces NMW's real discount tiers
+                -- (10%, 12%, 14.5%) cleanly against a sample bill.
+                ROUND(
+                    CASE WHEN ISNULL(psi.PurchasePrice, 0) = 0 THEN 0
+                         ELSE (psi.PurchasePrice - ISNULL(psi.Rate, 0)) / psi.PurchasePrice * 100
+                    END, 2
+                ) AS discount_percentage,
                 ISNULL(psi.Transactionamount, 0)       AS amount
             FROM bill_match bm
             -- Join on the full bill number (Bnumber) rather than the retail

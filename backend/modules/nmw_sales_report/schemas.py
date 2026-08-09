@@ -16,6 +16,7 @@ class NmwSalesBill(BaseModel):
     customer_name: Optional[str] = None
     is_transfer: int = 0
     bill_type: str = "Sale"                  # Sale | Transfer (TO stock-transfer)
+    is_cancelled: int = 0
     dest_store_id: Optional[str] = None
     dest_store_code: Optional[str] = None
     dest_store_name: Optional[str] = None
