@@ -305,7 +305,12 @@ def auto_match_cust_codes(tenant_id, threshold=0.86, apply_changes=True):
     """Match each store to its most-similar NMW customer by name and set
     stores.ho_cust_code. Greedy global assignment (best score first, each
     customer used once) above `threshold`. Returns the proposed/applied rows so
-    the admin can review and correct ambiguous matches in the panel."""
+    the admin can review and correct ambiguous matches in the panel.
+
+    Note: NMW and NMC are one GST entity here (NMW is the C-branch warehouse),
+    so NMC is not an NMW *customer* — stock moving to it is an intra-GST transfer,
+    not a customer sale — and correctly stays unmatched. The bare chain-name
+    customer ('NATHAN MEDICALS') is NMA, matched by similarity like the rest."""
     from difflib import SequenceMatcher
 
     nmw_store_id = get_nmw_store_id(tenant_id)
