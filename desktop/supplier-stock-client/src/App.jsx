@@ -195,13 +195,15 @@ function AppShell() {
     if (settings.tenantId && settings.storeId && settings.storeName) return;
     const user = session.user || {};
     const primaryRole = user?.roles?.[0] || {};
-    const nextSettings = saveSettings({
-      ...settings,
-      tenantId: settings.tenantId || user?.tenant_id || '',
-      storeId: settings.storeId || primaryRole?.store_id || '',
-      storeName: settings.storeName || primaryRole?.store_name || ''
-    });
-    setSettings(nextSettings);
+    const nextTenantId = settings.tenantId || user?.tenant_id || '';
+    const nextStoreId = settings.storeId || primaryRole?.store_id || '';
+    const nextStoreName = settings.storeName || primaryRole?.store_name || '';
+    // Only persist when something actually resolved. A platform user (super
+    // admin) has no tenant_id/store, so these stay unchanged — without this
+    // equality guard the effect re-ran on its own setState forever (the
+    // "Maximum update depth exceeded" storm).
+    if (nextTenantId === settings.tenantId && nextStoreId === settings.storeId && nextStoreName === settings.storeName) return;
+    setSettings(saveSettings({ ...settings, tenantId: nextTenantId, storeId: nextStoreId, storeName: nextStoreName }));
   }, [session, settings]);
 
   // A platform user (e.g. super admin) has no tenant_id, so on such a login the
@@ -1175,53 +1177,152 @@ function StockAvailability({ session, settings, onOpenSettings }) {
   );
 }
 
-// NMW Sales Report (Bill-wise): warehouse -> this store despatch bills. Only
-// approved + despatched bills for THIS device's store are returned (server
-// enforces the store scope; we also pass the device store_id). "one store bill
-// not shows another store" is guaranteed server-side.
+// NMW Sales Report (Bill-wise): warehouse -> store despatch bills. A super
+// admin (or other broad role — admin/manager/purchase) sees EVERY store,
+// pending + approved, and can approve (single/bulk/by-date) and export. A
+// store user is locked server-side to their own store's approved bills only —
+// "one store bill not shows another store" is guaranteed by the API, not by
+// what this screen requests.
 function NmwSalesReport({ session, settings }) {
-  const storeName = session?.user?.roles?.[0]?.store_name || settings?.storeName || 'this store';
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
-  const storeId = settings?.storeId || session?.user?.roles?.[0]?.store_id || '';
+  const isBroad = isSuperAdmin(session) || canViewPurchaseDetails(session);
+  const storeId = isBroad ? '' : (settings?.storeId || session?.user?.roles?.[0]?.store_id || '');
+  const storeName = session?.user?.roles?.[0]?.store_name || settings?.storeName || 'this store';
+
   const [bills, setBills] = useState([]);
-  const [status, setStatus] = useState({ state: 'loading', message: 'Loading despatched bills...' });
+  const [status, setStatus] = useState({ state: 'loading', message: 'Loading bills...' });
   const [expanded, setExpanded] = useState(null);
   const [items, setItems] = useState({});
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [selected, setSelected] = useState(new Set());
+  const [cutoff, setCutoff] = useState(new Date().toISOString().slice(0, 10));
 
   function reload() {
     if (!tenantId) {
       setStatus({ state: 'idle', message: 'Waiting for device tenant/store configuration...' });
       return;
     }
-    setStatus({ state: 'loading', message: 'Loading despatched bills...' });
-    api.getNmwSalesBills(session, { status: 'approved', tenantId, storeId })
+    setStatus({ state: 'loading', message: 'Loading bills...' });
+    setSelected(new Set());
+    api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId })
       .then((result) => {
         const rows = asArray(result?.bills);
         setBills(rows);
-        setStatus({ state: 'ok', message: rows.length ? `${rows.length} approved bill(s).` : 'No approved despatch bills yet.' });
+        setStatus({ state: 'ok', message: rows.length ? `${rows.length} bill(s).` : 'No bills for this filter.' });
       })
       .catch((error) => setStatus({ state: 'error', message: error.message }));
   }
 
-  useEffect(() => { reload(); }, [session, tenantId, storeId]);
+  useEffect(() => { reload(); }, [session, tenantId, storeId, statusFilter]);
 
   function toggle(bill) {
     const key = `${bill.bill_date}|${bill.bill_no}`;
     if (expanded === key) { setExpanded(null); return; }
     setExpanded(key);
     if (!items[key] && bill.bill_no) {
-      api.getNmwSalesBillItems(bill.bill_no, bill.bill_date, session)
+      api.getNmwSalesBillItems(bill.bill_no, bill.bill_date, session, { tenantId })
         .then((result) => setItems((prev) => ({ ...prev, [key]: asArray(result?.items) })))
         .catch(() => setItems((prev) => ({ ...prev, [key]: [] })));
     }
   }
 
+  function toggleSelect(bill) {
+    const key = `${bill.bill_date}|${bill.bill_no}`;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  const pending = bills.filter((b) => b.status !== 'approved');
+  const allPendingSelected = pending.length > 0 && pending.every((b) => selected.has(`${b.bill_date}|${b.bill_no}`));
+
+  function toggleSelectAll() {
+    setSelected(allPendingSelected ? new Set() : new Set(pending.map((b) => `${b.bill_date}|${b.bill_no}`)));
+  }
+
+  function approveOne(bill) {
+    api.approveNmwBills(tenantId, [{ bill_date: bill.bill_date, bill_no: bill.bill_no }], session)
+      .then(() => reload())
+      .catch((error) => setStatus({ state: 'error', message: error.message }));
+  }
+
+  function approveSelected() {
+    const toApprove = pending
+      .filter((b) => selected.has(`${b.bill_date}|${b.bill_no}`))
+      .map((b) => ({ bill_date: b.bill_date, bill_no: b.bill_no }));
+    if (!toApprove.length) return;
+    api.approveNmwBills(tenantId, toApprove, session)
+      .then((result) => setStatus({ state: 'ok', message: `Approved ${result.approved} bill(s).` }))
+      .then(reload)
+      .catch((error) => setStatus({ state: 'error', message: error.message }));
+  }
+
+  function approveBeforeCutoff() {
+    if (!cutoff) return;
+    api.approveNmwBefore(tenantId, cutoff, session)
+      .then((result) => setStatus({ state: 'ok', message: `Approved ${result.approved} bill(s) before ${result.cutoff}.` }))
+      .then(reload)
+      .catch((error) => setStatus({ state: 'error', message: error.message }));
+  }
+
+  function exportCsv() {
+    const header = ['Bill No', 'Type', 'Bill Date', 'Destination Store', 'Customer Code', 'Amount', 'Status', 'Approved By', 'Approved At'];
+    const rows = bills.map((b) => [
+      b.bill_no, b.bill_type || (b.is_transfer ? 'Transfer' : 'Sale'), b.bill_date,
+      `${b.dest_store_code || ''} ${b.dest_store_name || ''}`.trim(), b.customer_code,
+      b.bill_amount, b.status, b.approved_by || '', b.approved_at || ''
+    ]);
+    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `nmw-sales-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <section className="screen-panel">
       <div className="screen-panel-head">
-        <ScreenHeader title="NMW Sales Report (Bill-wise)" subtitle={`Approved despatch bills for ${storeName}.`} />
+        <ScreenHeader
+          title="NMW Sales Report (Bill-wise)"
+          subtitle={isBroad ? 'All stores — despatch approval and export.' : `Approved despatch bills for ${storeName}.`}
+        />
         <button className="secondary-button" onClick={reload}>Refresh</button>
       </div>
+
+      <div className="action-row">
+        <label className="stock-only-filter">
+          Status
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="all">All</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+          </select>
+        </label>
+
+        {isBroad && (
+          <>
+            <button className="primary-button" disabled={selected.size === 0} onClick={approveSelected}>
+              Approve selected ({selected.size})
+            </button>
+            <label className="stock-only-filter">
+              Approve all before
+              <input type="date" value={cutoff} onChange={(event) => setCutoff(event.target.value)} />
+            </label>
+            <button className="secondary-button" onClick={approveBeforeCutoff}>Approve</button>
+          </>
+        )}
+
+        <button className="secondary-button" disabled={bills.length === 0} onClick={exportCsv}>
+          Export CSV
+        </button>
+      </div>
+
       <div className={`status-line ${status.state}`}>{status.message}</div>
 
       {bills.length > 0 && (
@@ -1229,11 +1330,17 @@ function NmwSalesReport({ session, settings }) {
           <table>
             <thead>
               <tr>
+                {isBroad && (
+                  <th>
+                    <input type="checkbox" checked={allPendingSelected} disabled={pending.length === 0} onChange={toggleSelectAll} />
+                  </th>
+                )}
                 <th>Bill No</th>
                 <th>Type</th>
                 <th>Bill Date</th>
-                <th>Despatched</th>
+                {isBroad && <th>Destination Store</th>}
                 <th>Amount</th>
+                <th>Status</th>
                 <th>Approved By</th>
                 <th />
               </tr>
@@ -1242,24 +1349,36 @@ function NmwSalesReport({ session, settings }) {
               {bills.map((bill) => {
                 const key = `${bill.bill_date}|${bill.bill_no}`;
                 const rows = items[key];
+                const isApproved = bill.status === 'approved';
                 return (
                   <Fragment key={key}>
                     <tr>
+                      {isBroad && (
+                        <td>
+                          {!isApproved && (
+                            <input type="checkbox" checked={selected.has(key)} onChange={() => toggleSelect(bill)} />
+                          )}
+                        </td>
+                      )}
                       <td>{bill.bill_no}</td>
                       <td>{bill.bill_type || (bill.is_transfer ? 'Transfer' : 'Sale')}</td>
                       <td>{formatDate(bill.bill_date)}</td>
-                      <td>{bill.issued_date ? String(bill.issued_date).slice(0, 19).replace('T', ' ') : '-'}</td>
+                      {isBroad && <td>{bill.dest_store_code} — {bill.dest_store_name}</td>}
                       <td>{formatMoney(bill.bill_amount)}</td>
+                      <td>{isApproved ? 'Approved' : 'Pending'}</td>
                       <td>{bill.approved_by || '-'}</td>
                       <td>
                         <button className="secondary-button" onClick={() => toggle(bill)}>
                           {expanded === key ? 'Hide' : 'Items'}
                         </button>
+                        {isBroad && !isApproved && (
+                          <button className="secondary-button" onClick={() => approveOne(bill)}>Approve</button>
+                        )}
                       </td>
                     </tr>
                     {expanded === key && (
                       <tr>
-                        <td colSpan={7}>
+                        <td colSpan={isBroad ? 9 : 7}>
                           {!rows ? (
                             <div className="empty-state">Loading items...</div>
                           ) : rows.length === 0 ? (

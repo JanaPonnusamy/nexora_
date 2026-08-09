@@ -370,16 +370,15 @@ export const api = {
     });
   },
 
-  // NMW Sales Report (Bill-wise). This device is registered to one store, so we
-  // always pass its store_id + status=approved — the server also enforces store
-  // scoping, but sending it keeps a broad-role login on a store device from
-  // seeing another store's bills.
+  // NMW Sales Report (Bill-wise). store_id is passed only when the caller wants
+  // to narrow to one store; a super admin omits it to see every store. The
+  // server also enforces scoping (store users are locked to their own stores).
   getNmwSalesBills(session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/nmw-sales-report/bills${toQuery({
       tenant_id: filters.tenantId || settings.tenantId,
-      store_id: filters.storeId || settings.storeId,
-      status: filters.status || 'approved',
+      store_id: filters.storeId || '',
+      status: filters.status || 'all',
       date_from: filters.dateFrom || '',
       date_to: filters.dateTo || ''
     })}`, { session });
@@ -391,6 +390,22 @@ export const api = {
       tenant_id: filters.tenantId || settings.tenantId,
       bill_date: billDate ? String(billDate).slice(0, 10) : ''
     })}`, { session });
+  },
+
+  approveNmwBills(tenantId, bills, session, status = 'approved') {
+    return request('/api/nmw-sales-report/bills/approve', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ tenant_id: tenantId, bills, status })
+    });
+  },
+
+  approveNmwBefore(tenantId, cutoff, session) {
+    return request(`/api/nmw-sales-report/bills/approve-before${toQuery({ tenant_id: tenantId, cutoff })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
   }
 };
 
