@@ -211,9 +211,98 @@
   color: #fff;
 }
 
+.lo-btn-danger {
+  border-color: var(--bs-danger, #dc3545);
+  background: var(--bs-danger, #dc3545);
+  color: #fff;
+}
+
 .lo-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* ----- legacy DB recovery card ----- */
+.lo-db-recovery {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--bs-warning-border-subtle, #ffe69c);
+  border-radius: 0.5rem;
+  background: var(--bs-warning-bg-subtle, #fff3cd);
+}
+
+.lo-db-recovery.is-online {
+  border-color: var(--bs-success-border-subtle, #a3cfbb);
+  background: var(--bs-success-bg-subtle, #d1e7dd);
+}
+
+.lo-db-recovery.is-online .lo-db-recovery-head strong {
+  color: var(--bs-success-text-emphasis, #0f5132);
+}
+
+.lo-db-recovery.is-online .lo-db-recovery-result {
+  border-top-color: var(--bs-success-border-subtle, #a3cfbb);
+}
+
+.lo-db-recovery-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.lo-db-recovery-head strong {
+  display: block;
+  color: var(--bs-warning-text-emphasis, #664d03);
+}
+
+.lo-db-recovery-head .lo-note {
+  margin: 0.2rem 0 0;
+}
+
+.lo-db-recovery-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.lo-db-recovery-result {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px dashed var(--bs-warning-border-subtle, #ffe69c);
+  font-size: 0.85rem;
+}
+
+.lo-db-recovery-result.is-ok { color: var(--bs-success-text-emphasis, #0f5132); }
+.lo-db-recovery-result.is-fail { color: var(--bs-danger-text-emphasis, #58151c); }
+
+.lo-db-recovery-result > p {
+  margin: 0 0 0.4rem;
+  font-weight: 500;
+}
+
+.lo-db-steps {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.lo-db-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--bs-body-color);
+}
+
+.lo-db-steps li.is-ok > i { color: var(--bs-success, #198754); }
+.lo-db-steps li.is-fail > i { color: var(--bs-danger, #dc3545); }
+
+.lo-db-steps li small {
+  color: var(--bs-secondary-color);
 }
 
 /* ----- progress ----- */

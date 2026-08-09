@@ -39,3 +39,9 @@ class UpdateOrderQtyRequest(BaseModel):
 
 class UpdateQtyCheckRequest(BaseModel):
     order_qty: int
+
+
+class EmergencyRepairRequest(BaseModel):
+    # Guard rail: the destructive REPAIR_ALLOW_DATA_LOSS path only runs when the
+    # caller explicitly opts in. The UI sends this from a confirmation dialog.
+    confirm: bool = False

@@ -16,6 +16,8 @@ import type {
   SalesDetailRow,
   SupplierComparison,
   SupplierComparisonProduct,
+  LegacyDbHealth,
+  LegacyDbRecovery,
 } from '../types/legacyOrder'
 
 const BASE = '/api/legacy-order'
@@ -119,4 +121,11 @@ export const legacyOrderService = {
     api.get<OrderHistoryRow[]>(
       `${BASE}/qty-check/${encodeURIComponent(storeName)}/${productCode}/order-history`,
     ),
+
+  dbHealth: () => api.get<LegacyDbHealth>(`${BASE}/db/health`),
+
+  dbRecover: () => api.post<LegacyDbRecovery>(`${BASE}/db/recover`, {}),
+
+  dbEmergencyRepair: () =>
+    api.post<LegacyDbRecovery>(`${BASE}/db/emergency-repair`, { confirm: true }),
 }

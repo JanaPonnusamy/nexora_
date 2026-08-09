@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { legacyOrderService } from '../../services/legacyOrderService'
-import type { LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
+import type { LegacyDbHealth, LegacyDbRecovery, LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
 
 const POLL_MS = 1500
@@ -34,9 +34,12 @@ export default function LegacyOrderPage() {
   const [orderSearch, setOrderSearch] = useState('')
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null)
   const [infoOpenFor, setInfoOpenFor] = useState<string | null>(null)
+  const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
+  const [dbBusy, setDbBusy] = useState<'' | 'check' | 'recover' | 'repair'>('')
+  const [recovery, setRecovery] = useState<LegacyDbRecovery | null>(null)
   const pollers = useRef(new Map<string, number>())
 
-  useEffect(() => {
+  const loadStores = useCallback(() =>
     Promise.all([legacyOrderService.listStores(), legacyOrderService.defaults()])
       .then(([storeList, defaults]) => {
         setStores(storeList)
@@ -44,12 +47,52 @@ export default function LegacyOrderPage() {
           store.store_name,
           { minDays: defaults.min_days, maxDays: defaults.max_days, mode: 'local' as const },
         ])))
-        if (storeList.length) {
-          setCompareStore(storeList[0].store_name)
+        setCompareStore((current) => current || (storeList[0]?.store_name ?? ''))
+      }), [])
+
+  // Read DB state without changing it. On success (DB healthy) reload the stores
+  // and clear the outage banner; on failure surface it so the recovery card shows.
+  const checkHealth = useCallback((silent = false): Promise<LegacyDbHealth | null> => {
+    if (!silent) setDbBusy('check')
+    return legacyOrderService.dbHealth()
+      .then((health) => {
+        setDbHealth(health)
+        if (health.online) {
+          setError(null)
+          void loadStores()
         }
+        return health
+      })
+      .catch((e: Error) => { if (!silent) setError(e.message); return null })
+      .finally(() => { if (!silent) setDbBusy('') })
+  }, [loadStores])
+
+  useEffect(() => {
+    loadStores().catch((e: Error) => {
+      setError(e.message)
+      void checkHealth(true)
+    })
+  }, [loadStores, checkHealth])
+
+  const runRecovery = (mode: 'recover' | 'repair') => {
+    if (mode === 'repair' && !window.confirm(
+      'Emergency Repair runs DBCC CHECKDB with REPAIR_ALLOW_DATA_LOSS. It can permanently '
+      + 'delete corrupt rows/pages to bring the database back online. This is a last resort — continue?',
+    )) return
+    setDbBusy(mode)
+    setRecovery(null)
+    setError(null)
+    const call = mode === 'repair'
+      ? legacyOrderService.dbEmergencyRepair()
+      : legacyOrderService.dbRecover()
+    call
+      .then((result) => {
+        setRecovery(result)
+        return checkHealth(true)
       })
       .catch((e: Error) => setError(e.message))
-  }, [])
+      .finally(() => setDbBusy(''))
+  }
 
   const updateJob = useCallback((job: LegacyJob) => {
     setJobs((current) => ({ ...current, [job.job_id]: job }))
@@ -200,6 +243,50 @@ export default function LegacyOrderPage() {
       </header>
 
       {error && <div className="lo-error" role="alert">{error}<button type="button" onClick={() => setError(null)} aria-label="Dismiss">×</button></div>}
+
+      {((dbHealth && !dbHealth.online) || recovery) && (
+        <section className={`lo-db-recovery${dbHealth?.online ? ' is-online' : ''}`} role="region" aria-label="Legacy database recovery">
+          <div className="lo-db-recovery-head">
+            <div>
+              {dbHealth?.online
+                ? <strong><i className="bi bi-database-check" /> Legacy database is back online ({dbHealth.state} / {dbHealth.access})</strong>
+                : <strong><i className="bi bi-database-exclamation" /> Legacy database {dbHealth?.state ? `is ${dbHealth.state}` : 'unavailable'}{dbHealth?.access ? ` / ${dbHealth.access}` : ''}</strong>}
+              <p className="lo-note">{dbHealth?.message}</p>
+            </div>
+            <div className="lo-db-recovery-actions">
+              <button type="button" className="lo-btn" disabled={Boolean(dbBusy)} onClick={() => { if (dbHealth?.online) setRecovery(null); void checkHealth() }}>
+                <i className="bi bi-arrow-repeat" /> {dbBusy === 'check' ? 'Checking…' : dbHealth?.online ? 'Dismiss' : 'Recheck'}
+              </button>
+              {!dbHealth?.online && (
+                <button type="button" className="lo-btn lo-btn-primary" disabled={Boolean(dbBusy)} title="Non-destructive: flips single-user back to multi-user or restarts crash recovery. Never loses data." onClick={() => runRecovery('recover')}>
+                  <i className="bi bi-bandaid" /> {dbBusy === 'recover' ? 'Recovering…' : 'Auto Recover'}
+                </button>
+              )}
+              {!dbHealth?.online && (
+                <button type="button" className="lo-btn lo-btn-danger" disabled={Boolean(dbBusy)} title="Last resort: EMERGENCY + DBCC CHECKDB REPAIR_ALLOW_DATA_LOSS. Can permanently lose data." onClick={() => runRecovery('repair')}>
+                  <i className="bi bi-exclamation-octagon" /> {dbBusy === 'repair' ? 'Repairing…' : 'Emergency Repair'}
+                </button>
+              )}
+            </div>
+          </div>
+          {recovery && (
+            <div className={`lo-db-recovery-result ${recovery.ok ? 'is-ok' : 'is-fail'}`}>
+              <p><i className={`bi ${recovery.ok ? 'bi-check-circle' : 'bi-exclamation-triangle'}`} /> {recovery.message}</p>
+              {recovery.steps.length > 0 && (
+                <ol className="lo-db-steps">
+                  {recovery.steps.map((step, index) => (
+                    <li key={`${step.action}-${index}`} className={step.ok ? 'is-ok' : 'is-fail'}>
+                      <i className={`bi ${step.ok ? 'bi-check-lg' : 'bi-x-lg'}`} />
+                      <span>{step.action}</span>
+                      {step.detail && <small>{step.detail}</small>}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="lo-card">
         <div className="lo-section-title">

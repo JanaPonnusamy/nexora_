@@ -7,9 +7,38 @@ and the branch DBs it points at -- NOT NEXORA_PLATFORM's sync.* tables.
 from fastapi import APIRouter, HTTPException
 
 from modules.legacy_order import database, repository, service, sync_engine
-from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest
+from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest
 
 router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"])
+
+
+# ---- Legacy DB health & recovery (RECOVERY_PENDING / single-user / repair) ----
+
+@router.get("/db/health")
+def db_health():
+    """State of the OrderNMC database (ONLINE / RECOVERY_PENDING / single-user...).
+    Read-only -- powers the console's DB status card and Recheck button."""
+    return database.database_health()
+
+
+@router.post("/db/recover")
+def db_recover():
+    """Non-destructive auto-recovery: flip single-user back to MULTI_USER, or
+    restart crash recovery for a RECOVERY_PENDING/SUSPECT database. Never loses
+    data. This is the 'Auto Recover' button."""
+    return database.recover_database(allow_data_loss=False)
+
+
+@router.post("/db/emergency-repair")
+def db_emergency_repair(payload: EmergencyRepairRequest):
+    """Last resort: EMERGENCY + DBCC CHECKDB(REPAIR_ALLOW_DATA_LOSS). CAN LOSE
+    DATA, so it only runs when the caller explicitly confirms."""
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Emergency repair must be confirmed; it can permanently lose data.",
+        )
+    return database.recover_database(allow_data_loss=True)
 
 
 @router.get("/stores")

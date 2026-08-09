@@ -191,3 +191,29 @@ export interface SupplierComparisonProduct {
 
 /** 'local' reads OrderNMC's own synced copy; 'remote' hits the branch DB live. */
 export type OrderMode = 'local' | 'remote'
+
+export interface LegacyDbHealth {
+  database: string
+  server: string | null
+  reachable: boolean
+  state: string | null
+  access: string | null
+  online: boolean
+  message: string
+}
+
+export interface LegacyDbRecoveryStep {
+  action: string
+  ok: boolean
+  detail: string
+}
+
+export interface LegacyDbRecovery {
+  ok: boolean
+  database: string
+  before?: { state: string | null; access: string | null }
+  after?: { state: string | null; access: string | null }
+  connected?: boolean
+  steps: LegacyDbRecoveryStep[]
+  message: string
+}

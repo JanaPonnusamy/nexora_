@@ -93,8 +93,14 @@ def branch_connection_string(server, database, username, password):
     )
 
 
+# Access modes we can safely flip back to MULTI_USER without a DBA.
 _RECOVERABLE_ACCESS = {"SINGLE_USER", "RESTRICTED_USER"}
-_UNRECOVERABLE_STATES = {"RESTORING", "RECOVERING", "RECOVERY_PENDING", "SUSPECT", "OFFLINE"}
+# A genuine restore/recovery is in progress -- interrupting it can destroy the
+# database. Never touch these, not even with an explicit repair request.
+_DBA_ONLY_STATES = {"RESTORING", "RECOVERING"}
+# States a non-destructive restart (offline/online) can clear, and that an
+# explicit emergency repair can attack with REPAIR_ALLOW_DATA_LOSS.
+_REPAIRABLE_STATES = {"RECOVERY_PENDING", "SUSPECT"}
 
 
 def _server_and_creds():
@@ -103,6 +109,10 @@ def _server_and_creds():
         _env("LEGACY_DB_USERNAME", "DB_USERNAME"),
         _env("LEGACY_DB_PASSWORD", "DB_PASSWORD"),
     )
+
+
+def _database_name():
+    return os.getenv("LEGACY_DB_DATABASE", "OrderNMC")
 
 
 def _master_connection_string(server, username, password):
@@ -116,53 +126,196 @@ def _master_connection_string(server, username, password):
     )
 
 
-def _try_recover_database(server, username, password, database):
-    """Best-effort fix for a database stuck in SINGLE_USER/RESTRICTED_USER mode.
+def _valid_db_name(database):
+    return bool(database and re.fullmatch(r"[A-Za-z0-9_. -]+", database))
 
-    OrderNMC periodically gets left in single-user mode by a maintenance
-    session that never switched it back, which makes every other connection
-    (including this API) fail. If that is the actual cause, clear the
-    blocking session and flip it back to MULTI_USER so the request can just
-    proceed instead of surfacing a raw 500. States like RESTORING/SUSPECT are
-    left alone -- those need a DBA, not an auto-fix that could lose data.
+
+def _quoted(database):
+    return f"[{database.replace(']', ']]')}]"
+
+
+def _read_state(cur, database):
+    row = cur.execute(
+        "SELECT state_desc, user_access_desc FROM sys.databases WHERE name = ?",
+        database,
+    ).fetchone()
+    return (row[0], row[1]) if row else (None, None)
+
+
+def database_health():
+    """State of the legacy database, read through master without changing it.
+
+    Powers the console's DB status card and its Recheck button.
     """
+    server, username, password = _server_and_creds()
+    database = _database_name()
+    result = {
+        "database": database,
+        "server": server,
+        "reachable": False,
+        "state": None,
+        "access": None,
+        "online": False,
+        "message": "",
+    }
     try:
-        admin_conn = pyodbc.connect(
-            _master_connection_string(server, username, password), timeout=10, autocommit=True
+        conn = pyodbc.connect(
+            _master_connection_string(server, username, password), timeout=10
         )
-    except Exception:
-        return False
+    except Exception as exc:
+        result["message"] = f"Cannot reach SQL Server: {_short_error(exc)}"
+        return result
+    try:
+        state, access = _read_state(conn.cursor(), database)
+        result.update(reachable=True, state=state, access=access)
+        result["online"] = state == "ONLINE" and access == "MULTI_USER"
+        if state is None:
+            result["message"] = f"Database '{database}' was not found on this server."
+        elif result["online"]:
+            result["message"] = "Database is ONLINE and MULTI_USER."
+        else:
+            result["message"] = f"Database is {state} / {access}."
+    finally:
+        conn.close()
+    return result
 
+
+def _short_error(exc):
+    text = str(exc).strip()
+    return text.splitlines()[-1] if text else exc.__class__.__name__
+
+
+def recover_database(allow_data_loss=False):
+    """Walk a database back to ONLINE / MULTI_USER, escalating only as needed.
+
+    The ladder, safest first:
+
+    1. ONLINE but SINGLE_USER/RESTRICTED_USER -> flip to MULTI_USER (a stuck
+       maintenance session; the common case).
+    2. RECOVERY_PENDING / SUSPECT -> a clean OFFLINE then ONLINE re-runs crash
+       recovery. This is non-destructive: if the log is intact it just works.
+    3. Still broken and ``allow_data_loss`` -> EMERGENCY + SINGLE_USER +
+       ``DBCC CHECKDB REPAIR_ALLOW_DATA_LOSS`` + MULTI_USER. This CAN lose data,
+       so it only runs for the explicit Emergency Repair action, never
+       automatically.
+
+    Restores in progress (RESTORING/RECOVERING) are always left alone. Returns
+    a structured report the UI renders step by step.
+    """
+    server, username, password = _server_and_creds()
+    database = _database_name()
+    steps = []
+
+    def log(action, ok, detail=""):
+        steps.append({"action": action, "ok": ok, "detail": detail})
+
+    if not _valid_db_name(database):
+        return {
+            "ok": False, "database": database, "steps": steps,
+            "message": "Refusing to operate on an unsafe database name.",
+        }
+    quoted = _quoted(database)
+
+    try:
+        admin = pyodbc.connect(
+            _master_connection_string(server, username, password),
+            timeout=15, autocommit=True,
+        )
+    except Exception as exc:
+        return {
+            "ok": False, "database": database, "steps": steps,
+            "message": f"Cannot reach SQL Server: {_short_error(exc)}",
+        }
+
+    before = {"state": None, "access": None}
+    after = {"state": None, "access": None}
     try:
         with _recovery_lock:
-            cur = admin_conn.cursor()
-            row = cur.execute(
-                "SELECT state_desc, user_access_desc FROM sys.databases WHERE name = ?",
-                database,
-            ).fetchone()
-            if not row:
-                return False
-            state_desc, user_access_desc = row
+            cur = admin.cursor()
+            state, access = _read_state(cur, database)
+            before = {"state": state, "access": access}
 
-            if state_desc in _UNRECOVERABLE_STATES or state_desc == "EMERGENCY":
-                _logger.error(
-                    "Legacy database %s requires DBA recovery: state=%s access=%s",
-                    database, state_desc, user_access_desc,
-                )
-                return False
+            if state is None:
+                return {
+                    "ok": False, "database": database, "before": before,
+                    "steps": steps, "message": f"Database '{database}' was not found.",
+                }
+            if state in _DBA_ONLY_STATES:
+                log(f"detect {state}", False, "A restore/recovery is in progress.")
+                return {
+                    "ok": False, "database": database, "before": before,
+                    "after": before, "steps": steps,
+                    "message": f"Database is {state}; a restore is in progress. Left untouched.",
+                }
 
-            if user_access_desc in _RECOVERABLE_ACCESS:
-                if not re.fullmatch(r"[A-Za-z0-9_. -]+", database):
+            def run(action, sql):
+                try:
+                    cur.execute(sql)
+                    log(action, True)
+                    return True
+                except Exception as exc:
+                    log(action, False, _short_error(exc))
                     return False
-                quoted = f"[{database.replace(']', ']]')}]"
-                cur.execute(f"ALTER DATABASE {quoted} SET MULTI_USER WITH ROLLBACK IMMEDIATE")
-                return True
 
-            return False
-    except Exception:
-        return False
+            # 1. Access-only problem: ONLINE but not MULTI_USER.
+            if state == "ONLINE" and access in _RECOVERABLE_ACCESS:
+                run("SET MULTI_USER", f"ALTER DATABASE {quoted} SET MULTI_USER WITH ROLLBACK IMMEDIATE")
+                state, access = _read_state(cur, database)
+
+            # 2. RECOVERY_PENDING / SUSPECT: non-destructive restart of recovery.
+            if state in _REPAIRABLE_STATES:
+                if run("SET OFFLINE", f"ALTER DATABASE {quoted} SET OFFLINE WITH ROLLBACK IMMEDIATE"):
+                    run("SET ONLINE", f"ALTER DATABASE {quoted} SET ONLINE")
+                state, access = _read_state(cur, database)
+
+            # 3. Still broken: emergency repair, only with explicit consent.
+            if state in _REPAIRABLE_STATES:
+                if allow_data_loss:
+                    run("SET EMERGENCY", f"ALTER DATABASE {quoted} SET EMERGENCY")
+                    run("SET SINGLE_USER", f"ALTER DATABASE {quoted} SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+                    run(
+                        "DBCC CHECKDB REPAIR_ALLOW_DATA_LOSS",
+                        f"DBCC CHECKDB ({quoted}, REPAIR_ALLOW_DATA_LOSS) WITH NO_INFOMSGS, ALL_ERRORMSGS",
+                    )
+                    run("SET MULTI_USER", f"ALTER DATABASE {quoted} SET MULTI_USER")
+                    state, access = _read_state(cur, database)
+                else:
+                    log("emergency repair", False, "Skipped: needs explicit confirmation (data loss possible).")
+
+            # Ensure we did not leave it single-user after a repair.
+            if state == "ONLINE" and access in _RECOVERABLE_ACCESS:
+                run("SET MULTI_USER", f"ALTER DATABASE {quoted} SET MULTI_USER WITH ROLLBACK IMMEDIATE")
+                state, access = _read_state(cur, database)
+
+            after = {"state": state, "access": access}
     finally:
-        admin_conn.close()
+        admin.close()
+
+    # Confirm with a real application connection.
+    connected = False
+    try:
+        pyodbc.connect(central_connection_string(), timeout=15).close()
+        connected = True
+    except Exception:
+        connected = False
+
+    ok = connected and after.get("state") == "ONLINE"
+    if ok:
+        message = f"Recovered: database is {after['state']} / {after['access']}."
+    elif after.get("state") in _REPAIRABLE_STATES and not allow_data_loss:
+        message = (
+            f"Database is still {after['state']}. The non-destructive restart did not clear it -- "
+            "run Emergency Repair (may lose data) or call a DBA."
+        )
+    else:
+        message = f"Recovery incomplete: database is {after.get('state')} / {after.get('access')}."
+
+    _logger.info("Legacy DB recovery (allow_data_loss=%s): %s -> %s | %s",
+                 allow_data_loss, before, after, message)
+    return {
+        "ok": ok, "database": database, "before": before, "after": after,
+        "connected": connected, "steps": steps, "message": message,
+    }
 
 
 def get_central_connection(timeout=30):
@@ -170,37 +323,25 @@ def get_central_connection(timeout=30):
     try:
         return pyodbc.connect(conn_string, timeout=timeout)
     except pyodbc.Error as initial_error:
-        server, username, password = _server_and_creds()
-        database = os.getenv("LEGACY_DB_DATABASE", "OrderNMC")
-        if not _try_recover_database(server, username, password, database):
-            state = _database_state(server, username, password, database)
-            state_text = f" SQL Server reports state={state[0]}, access={state[1]}." if state else ""
-            raise LegacyDatabaseUnavailable(
-                f"Legacy database '{database}' is unavailable.{state_text} "
-                "Check database files, disk space, the SQL Server error log, and login permissions."
-            ) from initial_error
-        try:
-            return pyodbc.connect(conn_string, timeout=timeout)
-        except pyodbc.Error as retry_error:
-            raise LegacyDatabaseUnavailable(
-                f"Legacy database '{database}' was returned to MULTI_USER, but still cannot be opened. "
-                "Check the SQL Server error log and login permissions."
-            ) from retry_error
-
-
-def _database_state(server, username, password, database):
-    """Read state through master without changing the database."""
-    try:
-        with pyodbc.connect(
-            _master_connection_string(server, username, password), timeout=10
-        ) as conn:
-            row = conn.cursor().execute(
-                "SELECT state_desc, user_access_desc FROM sys.databases WHERE name = ?",
-                database,
-            ).fetchone()
-            return tuple(row) if row else None
-    except Exception:
-        return None
+        # Best-effort NON-DESTRUCTIVE auto-recovery: a single-user flip, or a
+        # clean offline/online restart for RECOVERY_PENDING/SUSPECT. Data-loss
+        # repair is never automatic -- that is the explicit Emergency Repair
+        # button only.
+        result = recover_database(allow_data_loss=False)
+        if result.get("connected"):
+            try:
+                return pyodbc.connect(conn_string, timeout=timeout)
+            except pyodbc.Error:
+                pass
+        database = _database_name()
+        after = result.get("after") or {}
+        state_text = ""
+        if after.get("state"):
+            state_text = f" SQL Server reports state={after['state']}, access={after['access']}."
+        raise LegacyDatabaseUnavailable(
+            f"Legacy database '{database}' is unavailable.{state_text} "
+            "Check database files, disk space, the SQL Server error log, and login permissions."
+        ) from initial_error
 
 
 def get_branch_connection(server, database, username, password, timeout=30):
