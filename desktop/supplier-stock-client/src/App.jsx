@@ -128,6 +128,18 @@ function AppShell() {
   const [settings, setSettings] = useState(loadSettings);
   const [session, setSession] = useState(loadSession);
   const [activeScreen, setActiveScreen] = useState('stock');
+  // Tenant list for the super-admin tenant filter on the Stock Availability
+  // screen. The API already scopes this to the caller's own tenant for any
+  // non-super-admin login (see backend/controllers/tenant_controller.py), so
+  // this array is a single item for everyone except a super admin / platform
+  // user - it doubles as that role check for the UI without duplicating the
+  // server's role logic here.
+  const [tenants, setTenants] = useState([]);
+
+  useEffect(() => {
+    if (!session) { setTenants([]); return; }
+    api.listTenants(session).then((rows) => setTenants(asArray(rows).filter((t) => t.is_active))).catch(() => {});
+  }, [session]);
 
   const sessionStore = session?.user?.roles?.[0] || null;
   const effectiveTenantId = settings.tenantId || session?.user?.tenant_id || '';
@@ -285,7 +297,13 @@ function AppShell() {
         ) : activeScreen === 'nmw_sales' ? (
           <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : (
-          <StockAvailability session={session} settings={runtimeSettings} onOpenSettings={() => setActiveScreen('settings')} />
+          <StockAvailability
+            session={session}
+            settings={runtimeSettings}
+            onOpenSettings={() => setActiveScreen('settings')}
+            tenants={tenants}
+            onTenantChange={(tenantId) => persistSettings({ ...settings, tenantId })}
+          />
         )}
       </main>
     </div>
@@ -787,7 +805,7 @@ function LoginScreen({ onLogin, onOpenSettings }) {
   );
 }
 
-function StockAvailability({ session, settings, onOpenSettings }) {
+function StockAvailability({ session, settings, onOpenSettings, tenants = [], onTenantChange }) {
   const [query, setQuery] = useState('');
   const [onlyStock, setOnlyStock] = useState(false);
   // Seed from the last successful store list so the NMW/store panels render
@@ -1072,7 +1090,7 @@ function StockAvailability({ session, settings, onOpenSettings }) {
   // fired independently and can win the race) - fall back to the stores the
   // search itself returned so rows render immediately instead of showing
   // "no matching products" against placeholder store IDs the search can't match.
-  const visibleStores = allStores.length
+  const visibleStoresUnfiltered = allStores.length
     ? allStores
     : searchStores.length
       ? searchStores
@@ -1084,6 +1102,14 @@ function StockAvailability({ session, settings, onOpenSettings }) {
           ? { store_id: 'pending-nmw', store_code: 'NMW', store_name: 'Loading warehouse...' }
           : { store_id: 'pending-' + index, store_name: 'Loading store...' }
       ));
+  // A super admin's store list spans every tenant (the API only narrows this
+  // to one tenant for non-broad roles) - without this filter their screen mixed
+  // every tenant's branches into one grid. tenants.length > 1 is true only for
+  // a broad login, since the API already locks everyone else to their own
+  // tenant, so this filter is a no-op for regular store/purchase/salesman users.
+  const visibleStores = tenants.length > 1 && settings?.tenantId
+    ? visibleStoresUnfiltered.filter((store) => !store.tenant_id || store.tenant_id === settings.tenantId)
+    : visibleStoresUnfiltered;
   const stores = orderStores(visibleStores, loginStoreId, settings?.storeOrder || []);
   const warehouseStore = stores.find(isWarehouseStore);
   const otherStores = stores.filter((store) => !isWarehouseStore(store));
@@ -1104,6 +1130,18 @@ function StockAvailability({ session, settings, onOpenSettings }) {
           <input type="checkbox" checked={onlyStock} onChange={(event) => setOnlyStock(event.target.checked)} />
           Stock only
         </label>
+        {tenants.length > 1 && (
+          <label className="tenant-filter">
+            Tenant
+            <select value={settings?.tenantId || ''} onChange={(event) => onTenantChange?.(event.target.value)}>
+              {tenants.map((tenant) => (
+                <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                  {tenant.tenant_name || tenant.tenant_code}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className={`status-line ${status.state}`}>{status.message}</div>
         <div className="current-store-badge">
           <span>This device: {session?.user?.roles?.[0]?.store_name || settings?.storeName || 'Not registered'}</span>

@@ -6,6 +6,7 @@ from time import monotonic
 
 from fastapi import HTTPException
 
+from dependencies.store_scope import assert_tenant_access
 from modules.product_mapping import service as mapping_service
 from modules.supplier_stock_analysis import excel_import, repository
 
@@ -63,10 +64,11 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
     return {"rows": rows, "summary": summary}
 
 
-def match_for_supplier_stock(supplier_stock_id, tenant_id=None):
+def match_for_supplier_stock(user, supplier_stock_id, tenant_id=None):
     row = repository.supplier_stock_row(supplier_stock_id, tenant_id)
     if not row:
         raise HTTPException(status_code=404, detail="Supplier stock row not found")
+    assert_tenant_access(user, row["tenant_id"])
     product_code = row.get("product_code")
     match = None
     match_status = "unmatched"
@@ -224,8 +226,8 @@ def product_dashboard(tenant_id, source_store_id, product_code, months=6):
     }
 
 
-def supplier_stock_dashboard(supplier_stock_id, tenant_id=None, months=6):
-    match = match_for_supplier_stock(supplier_stock_id, tenant_id)
+def supplier_stock_dashboard(user, supplier_stock_id, tenant_id=None, months=6):
+    match = match_for_supplier_stock(user, supplier_stock_id, tenant_id)
     product_code = match.get("product_code")
     dashboard = None
     if product_code:
@@ -307,8 +309,8 @@ def _details_only_dashboard(tenant_id, source_store_id, product_code, months=6):
     return _cache_set(_details_dashboard_cache, cache_key, result)
 
 
-def supplier_stock_dashboard_stock(supplier_stock_id, tenant_id=None):
-    match = match_for_supplier_stock(supplier_stock_id, tenant_id)
+def supplier_stock_dashboard_stock(user, supplier_stock_id, tenant_id=None):
+    match = match_for_supplier_stock(user, supplier_stock_id, tenant_id)
     product_code = match.get("product_code")
     dashboard = None
     if product_code:
@@ -324,11 +326,11 @@ def supplier_stock_dashboard_details(tenant_id, source_store_id, product_code, m
     return _details_only_dashboard(tenant_id, source_store_id, product_code, months)
 
 
-def family_for_supplier_stock(supplier_stock_id, tenant_id=None):
+def family_for_supplier_stock(user, supplier_stock_id, tenant_id=None):
     """All plausible product variants for a supplier product (e.g. AMBRODIL,
     AMBRODIL D, AMBRODIL LS), each resolved across every active store -
     supports rendering one grid row per family member per store."""
-    match = match_for_supplier_stock(supplier_stock_id, tenant_id)
+    match = match_for_supplier_stock(user, supplier_stock_id, tenant_id)
     row = match["supplier_stock"]
     candidates = mapping_service.find_candidates(
         row["tenant_id"], row["store_id"], row.get("supplier_product_name"), limit=15

@@ -8,6 +8,7 @@ through to their procedures.
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from dependencies.store_scope import assert_store_access, scoped_store_ids
 from modules.stock_availability import repository
 
 
@@ -20,12 +21,19 @@ def _to_number(value):
         return 0
 
 
-def _group_by_store(rows):
-    """Collapse flat product rows into per-branch cards + summary tiles."""
+def _group_by_store(rows, allowed_store_ids=None):
+    """Collapse flat product rows into per-branch cards + summary tiles.
+
+    allowed_store_ids=None means unrestricted (super admin/platform user);
+    otherwise rows for any other store are dropped before grouping - a
+    non-broad user's tenant may span more stores than they're assigned to.
+    """
     stores = {}
     order = []
     for row in rows:
         store_id = str(row.get("store_id")) if row.get("store_id") is not None else ""
+        if allowed_store_ids is not None and store_id not in allowed_store_ids:
+            continue
         if store_id not in stores:
             stores[store_id] = {
                 "store_id": store_id,
@@ -66,36 +74,43 @@ def _group_by_store(rows):
     }
 
 
-def search_products(tenant_id, query, only_stock):
+def search_products(user, tenant_id, query, only_stock):
+    allowed = scoped_store_ids(user, tenant_id)
     rows = repository.search_products(tenant_id, query or None, 1 if only_stock else 0)
-    return _group_by_store(rows)
+    return _group_by_store(rows, allowed)
 
 
-def search_batches(tenant_id, batch_no, mrp, product_name):
+def search_batches(user, tenant_id, batch_no, mrp, product_name):
+    allowed = scoped_store_ids(user, tenant_id)
     rows = repository.search_batches(
         tenant_id,
         batch_no or None,
         mrp if mrp not in ("", None) else None,
         product_name or None,
     )
-    return _group_by_store(rows)
+    return _group_by_store(rows, allowed)
 
 
-def product_details(tenant_id, store_id, product_code):
+def product_details(user, tenant_id, store_id, product_code):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_product_details(tenant_id, store_id, product_code)
 
 
-def product_core(tenant_id, store_id, product_code, months=3):
+def product_core(user, tenant_id, store_id, product_code, months=3):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_product_core(tenant_id, store_id, product_code, months)
 
 
-def product_core_bulk(tenant_id, items, months=3):
+def product_core_bulk(user, tenant_id, items, months=3):
+    allowed = scoped_store_ids(user, tenant_id)
     unique_items = []
     seen = set()
     for item in items or []:
         store_id = str(item.get("store_id") or "").strip()
         product_code = str(item.get("product_code") or "").strip()
         if not store_id or not product_code:
+            continue
+        if allowed is not None and store_id not in allowed:
             continue
         key = (store_id, product_code)
         if key in seen:
@@ -141,37 +156,45 @@ def product_core_bulk(tenant_id, items, months=3):
     return {"items": results}
 
 
-def batch_details(tenant_id, store_id, product_code):
+def batch_details(user, tenant_id, store_id, product_code):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_batch_details(tenant_id, store_id, product_code)
 
 
-def purchase_history(tenant_id, store_id, product_code):
+def purchase_history(user, tenant_id, store_id, product_code):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_purchase_history(tenant_id, store_id, product_code)
 
 
-def sales_history(tenant_id, store_id, product_code):
+def sales_history(user, tenant_id, store_id, product_code):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_sales_history(tenant_id, store_id, product_code)
 
 
-def bill_items(tenant_id, store_id, bill_no, bill_date):
+def bill_items(user, tenant_id, store_id, bill_no, bill_date):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_bill_items(tenant_id, store_id, bill_no, bill_date)
 
 
-def monthly_movement(tenant_id, store_id, product_code, months=4):
+def monthly_movement(user, tenant_id, store_id, product_code, months=4):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_monthly_movement(tenant_id, store_id, product_code, months)
 
 
 # ----- Bill Drawer (Purchase Manager detail panel) ------------------------
 
-def purchase_bill(tenant_id, store_id, grn_no, grn_date):
+def purchase_bill(user, tenant_id, store_id, grn_no, grn_date):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_purchase_bill(tenant_id, store_id, grn_no, grn_date or None)
 
 
-def sales_bill(tenant_id, store_id, bill_no, bill_date):
+def sales_bill(user, tenant_id, store_id, bill_no, bill_date):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_sales_bill(tenant_id, store_id, bill_no, bill_date or None)
 
 
 def set_sales_bill_line_ignore(
+    user,
     tenant_id,
     store_id,
     bill_no,
@@ -180,6 +203,7 @@ def set_sales_bill_line_ignore(
     batch,
     dont_consider_in_order,
 ):
+    assert_store_access(user, tenant_id, store_id)
     updated = repository.set_sales_bill_line_ignore(
         tenant_id,
         store_id,
@@ -195,13 +219,16 @@ def set_sales_bill_line_ignore(
     }
 
 
-def product_availability(tenant_id, store_id, product_code):
+def product_availability(user, tenant_id, store_id, product_code):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_product_availability(tenant_id, store_id, product_code)
 
 
-def customer_history(tenant_id, store_id, customer_code):
+def customer_history(user, tenant_id, store_id, customer_code):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_customer_history(tenant_id, store_id, customer_code)
 
 
-def repeat_purchase(tenant_id, store_id, product_code):
+def repeat_purchase(user, tenant_id, store_id, product_code):
+    assert_store_access(user, tenant_id, store_id)
     return repository.get_repeat_purchase(tenant_id, store_id, product_code)

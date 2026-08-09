@@ -1036,6 +1036,26 @@ th {
   cursor: pointer;
 }
 
+.tenant-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #344154;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tenant-filter select {
+  height: 34px;
+  border: 1px solid #dbe2ec;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #ffffff;
+}
+
 .global-search-row .status-line {
   font-size: 12px;
 }

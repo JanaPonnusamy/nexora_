@@ -1,7 +1,9 @@
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from services.tenant_service import TenantService
 from dtos.tenant_request import TenantRequest, TenantStatusRequest
+from dependencies.auth import get_current_user_optional
+from dependencies.store_scope import has_unrestricted_scope
 
 router = APIRouter(prefix="/api/tenants", tags=["Tenants"])
 
@@ -16,9 +18,15 @@ def _serialize(r):
     }
 
 @router.get("")
-def get_tenants():
+def get_tenants(current_user: dict | None = Depends(get_current_user_optional)):
     rows = TenantService().get_all()
-    return [_serialize(r) for r in rows]
+    tenants = [_serialize(r) for r in rows]
+    if has_unrestricted_scope(current_user):
+        return tenants
+    # Non-broad users (including purchase/salesman) only see their own tenant -
+    # otherwise every tenant name/id was exposed to any authenticated user.
+    own_tenant_id = str(current_user.get("tenant_id") or "")
+    return [t for t in tenants if t["tenant_id"] == own_tenant_id]
 
 @router.get("/{tenant_id}")
 def get_tenant(tenant_id: str):

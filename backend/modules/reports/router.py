@@ -6,8 +6,10 @@ single tenant + store and (where applicable) a date range. No writes.
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from dependencies.auth import get_current_user
+from dependencies.store_scope import assert_store_access
 from modules.reports import service
 from modules.reports.schemas import ReportResult
 
@@ -26,8 +28,10 @@ def report_suppliers(
     store_id: str = Query(...),
     q: str = Query("", alias="q"),
     limit: int = Query(30, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
 ):
     """Supplier lookup for the Non-Moving / Purchased-Not-Sold filters."""
+    assert_store_access(current_user, tenant_id, store_id)
     return service.suppliers(tenant_id, store_id, q, limit)
 
 
@@ -38,8 +42,10 @@ def non_moving_highlights(
     dwell_days: int = Query(120),
     min_pur_age: int = Query(10),
     limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
 ):
     """Lean, TOP-N variant of the Non Moving report for rotating highlight panels."""
+    assert_store_access(current_user, tenant_id, store_id)
     return service.non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age, limit)
 
 
@@ -53,7 +59,9 @@ def run_report(
     dwell_days: Optional[int] = Query(None),
     supplier_code: Optional[str] = Query(None),
     division_code: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
 ):
+    assert_store_access(current_user, tenant_id, store_id)
     return service.run(
         report_key, tenant_id, store_id, from_date, to_date,
         dwell_days, supplier_code, division_code,
