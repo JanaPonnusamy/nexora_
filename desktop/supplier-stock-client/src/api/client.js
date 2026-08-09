@@ -368,6 +368,29 @@ export const api = {
       session,
       body: JSON.stringify(payload)
     });
+  },
+
+  // NMW Sales Report (Bill-wise). This device is registered to one store, so we
+  // always pass its store_id + status=approved — the server also enforces store
+  // scoping, but sending it keeps a broad-role login on a store device from
+  // seeing another store's bills.
+  getNmwSalesBills(session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/nmw-sales-report/bills${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: filters.storeId || settings.storeId,
+      status: filters.status || 'approved',
+      date_from: filters.dateFrom || '',
+      date_to: filters.dateTo || ''
+    })}`, { session });
+  },
+
+  getNmwSalesBillItems(billNo, billDate, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/nmw-sales-report/bills/${encodeURIComponent(billNo)}/items${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      bill_date: billDate ? String(billDate).slice(0, 10) : ''
+    })}`, { session });
   }
 };
 

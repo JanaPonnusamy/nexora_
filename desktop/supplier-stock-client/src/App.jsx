@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from './api/client.js';
@@ -15,6 +15,7 @@ import { getCachedProducts, syncCachedProducts } from './lib/productCache.js';
 const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
   { id: 'analysis', label: 'Supplier Stock Analysis', module: 'supplier_stock_analysis' },
+  { id: 'nmw_sales', label: 'NMW Sales Report', module: 'nmw_sales_report' },
   { id: 'settings', label: 'Settings', module: 'settings' }
 ];
 
@@ -252,6 +253,8 @@ function AppShell() {
           <SettingsScreen settings={runtimeSettings} onSave={persistSettings} session={session} />
         ) : activeScreen === 'analysis' ? (
           <SupplierStockAnalysis session={session} />
+        ) : activeScreen === 'nmw_sales' ? (
+          <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : (
           <StockAvailability session={session} settings={runtimeSettings} onOpenSettings={() => setActiveScreen('settings')} />
         )}
@@ -1146,6 +1149,125 @@ function StockAvailability({ session, settings, onOpenSettings }) {
       )}
       {billDetail && (
         <BillDetailCard detail={billDetail} session={session} visibility={visibility} onClose={() => setBillDetail(null)} />
+      )}
+    </section>
+  );
+}
+
+// NMW Sales Report (Bill-wise): warehouse -> this store despatch bills. Only
+// approved + despatched bills for THIS device's store are returned (server
+// enforces the store scope; we also pass the device store_id). "one store bill
+// not shows another store" is guaranteed server-side.
+function NmwSalesReport({ session, settings }) {
+  const storeName = session?.user?.roles?.[0]?.store_name || settings?.storeName || 'this store';
+  const [bills, setBills] = useState([]);
+  const [status, setStatus] = useState({ state: 'loading', message: 'Loading despatched bills...' });
+  const [expanded, setExpanded] = useState(null);
+  const [items, setItems] = useState({});
+
+  function reload() {
+    setStatus({ state: 'loading', message: 'Loading despatched bills...' });
+    api.getNmwSalesBills(session, { status: 'approved' })
+      .then((result) => {
+        const rows = asArray(result?.bills);
+        setBills(rows);
+        setStatus({ state: 'ok', message: rows.length ? `${rows.length} approved bill(s).` : 'No approved despatch bills yet.' });
+      })
+      .catch((error) => setStatus({ state: 'error', message: error.message }));
+  }
+
+  useEffect(() => { reload(); }, [session]);
+
+  function toggle(bill) {
+    const key = `${bill.bill_date}|${bill.bill_no}`;
+    if (expanded === key) { setExpanded(null); return; }
+    setExpanded(key);
+    if (!items[key] && bill.bill_no) {
+      api.getNmwSalesBillItems(bill.bill_no, bill.bill_date, session)
+        .then((result) => setItems((prev) => ({ ...prev, [key]: asArray(result?.items) })))
+        .catch(() => setItems((prev) => ({ ...prev, [key]: [] })));
+    }
+  }
+
+  return (
+    <section className="screen-panel">
+      <div className="screen-panel-head">
+        <ScreenHeader title="NMW Sales Report (Bill-wise)" subtitle={`Approved despatch bills for ${storeName}.`} />
+        <button className="secondary-button" onClick={reload}>Refresh</button>
+      </div>
+      <div className={`status-line ${status.state}`}>{status.message}</div>
+
+      {bills.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Bill No</th>
+                <th>Bill Date</th>
+                <th>Despatched</th>
+                <th>Amount</th>
+                <th>Approved By</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {bills.map((bill) => {
+                const key = `${bill.bill_date}|${bill.bill_no}`;
+                const rows = items[key];
+                return (
+                  <Fragment key={key}>
+                    <tr>
+                      <td>{bill.bill_no}</td>
+                      <td>{formatDate(bill.bill_date)}</td>
+                      <td>{bill.issued_date ? String(bill.issued_date).slice(0, 19).replace('T', ' ') : '-'}</td>
+                      <td>{formatMoney(bill.bill_amount)}</td>
+                      <td>{bill.approved_by || '-'}</td>
+                      <td>
+                        <button className="secondary-button" onClick={() => toggle(bill)}>
+                          {expanded === key ? 'Hide' : 'Items'}
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded === key && (
+                      <tr>
+                        <td colSpan={6}>
+                          {!rows ? (
+                            <div className="empty-state">Loading items...</div>
+                          ) : rows.length === 0 ? (
+                            <div className="empty-state">No line items.</div>
+                          ) : (
+                            <table>
+                              <thead>
+                                <tr>
+                                  <th>Product</th><th>Batch</th><th>Expiry</th>
+                                  <th>Qty</th><th>Free</th><th>MRP</th><th>Rate</th><th>Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rows.map((row, index) => (
+                                  <tr key={`${row.product_code}-${row.batch_no}-${index}`}>
+                                    <td>{row.product_name}</td>
+                                    <td>{row.batch_no}</td>
+                                    <td>{formatDate(row.expiry_date)}</td>
+                                    <td>{formatQty(row.qty)}</td>
+                                    <td>{formatQty(row.free_qty)}</td>
+                                    <td>{formatMoney(row.mrp)}</td>
+                                    <td>{formatMoney(row.rate)}</td>
+                                    <td>{formatMoney(row.amount)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );

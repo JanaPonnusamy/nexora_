@@ -62,6 +62,9 @@ from modules.stock_availability.router import (
 from modules.stock_check_report.router import (
     router as stock_check_report_router
 )
+from modules.nmw_sales_report.router import (
+    router as nmw_sales_report_router
+)
 from modules.stock_integrity.router import (
     router as stock_integrity_router
 )
@@ -239,6 +242,7 @@ app.include_router(sync_agent_router)
 app.include_router(sync_shared_table_router)
 app.include_router(stock_availability_router)
 app.include_router(stock_check_report_router)
+app.include_router(nmw_sales_report_router)
 app.include_router(stock_integrity_router)
 app.include_router(supplier_stock_analysis_router)
 app.include_router(procurement_router)
