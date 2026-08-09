@@ -97,3 +97,16 @@ def approve(user, req):
     approved_by = user.get("username") or user.get("sub")
     count = repository.approve(req.tenant_id, nmw_store_id, req.bills, status, approved_by, req.remarks)
     return {"approved": count, "status": status}
+
+
+def approve_before(user, tenant_id, cutoff_date):
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Only a super admin can bulk-approve NMW bills.")
+    nmw_store_id = repository.get_nmw_store_id(tenant_id)
+    if not nmw_store_id:
+        raise HTTPException(status_code=404, detail="Warehouse store (NMW) not found for this tenant.")
+    if not (cutoff_date or "").strip():
+        raise HTTPException(status_code=400, detail="A cutoff date (YYYY-MM-DD) is required.")
+    approved_by = user.get("username") or user.get("sub")
+    count = repository.approve_before(tenant_id, nmw_store_id, cutoff_date.strip(), approved_by)
+    return {"approved": count, "cutoff": cutoff_date.strip()}

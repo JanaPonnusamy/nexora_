@@ -121,6 +121,23 @@ export default function NmwSalesReportPage() {
     }
   }
 
+  const [bulkCutoff, setBulkCutoff] = useState('2026-08-01')
+
+  async function approveBefore() {
+    if (!bulkCutoff) return
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await nmwSalesReportService.approveBefore(tenantId, bulkCutoff)
+      setNotice(`Approved ${result.approved} bill(s) dated before ${result.cutoff}.`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Bulk approval failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function approve(target: NmwSalesBill[]) {
     const keys = target.filter((b) => b.bill_no && b.bill_date)
     if (!keys.length) return
@@ -211,6 +228,13 @@ export default function NmwSalesReportPage() {
               <i className="bi bi-upc-scan me-1" />
               Store customer codes
             </button>
+            <div className="input-group" style={{ width: 'auto' }}>
+              <span className="input-group-text">Approve all before</span>
+              <input type="date" className="form-control" style={{ maxWidth: '10rem' }} value={bulkCutoff} onChange={(e) => setBulkCutoff(e.target.value)} />
+              <button className="btn btn-warning" disabled={loading || !bulkCutoff} onClick={() => void approveBefore()}>
+                Approve
+              </button>
+            </div>
           </>
         )}
       </div>

@@ -33,6 +33,12 @@ export const nmwSalesReportService = {
       status,
     }),
 
+  approveBefore: (tenantId: string, cutoff: string) =>
+    api.post<{ approved: number; cutoff: string }>(
+      `${base}/bills/approve-before?tenant_id=${encodeURIComponent(tenantId)}&cutoff=${encodeURIComponent(cutoff)}`,
+      {},
+    ),
+
   listStoreCustCodes: (tenantId: string) =>
     api.get<{ stores: NmwStoreCustCode[] }>(
       `${base}/store-cust-codes?tenant_id=${encodeURIComponent(tenantId)}`,

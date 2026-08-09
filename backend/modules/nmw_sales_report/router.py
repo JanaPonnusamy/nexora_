@@ -47,6 +47,12 @@ def approve(req: ApproveRequest, current_user: dict = Depends(get_current_user))
     return service.approve(current_user, req)
 
 
+@router.post("/bills/approve-before")
+def approve_before(tenant_id: str, cutoff: str, current_user: dict = Depends(get_current_user)):
+    """Bulk-approve every routable NMW bill with BillDate < cutoff (YYYY-MM-DD)."""
+    return service.approve_before(current_user, tenant_id, cutoff)
+
+
 # --- Store customer-code administration (super admin) ----------------------
 # Maps each store to its NMW customer code (dbo.stores.ho_cust_code), which the
 # report joins against SaleInformation.CustomerCode to route bills store-wise.

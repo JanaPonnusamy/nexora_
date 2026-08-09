@@ -147,9 +147,12 @@ def list_bills(tenant_id, nmw_store_id, dest_store_ids, status, date_from, date_
         # numeric value can point at different stores across the two, so they must
         # not be mixed. SeriesName may lag behind a sync, so fall back to the
         # 'TO' prefix on BNumber which is always present.
-        where = [
-            "si.IssuedDate IS NOT NULL",
-        ]
+        #
+        # Visibility is gated on APPROVAL (is_shown), not IssuedDate: the despatch
+        # date only syncs for rows inside SaleInformation's rolling window, so
+        # historical bills would never surface. IssuedDate is kept as an info
+        # column; the super admin's approval is the show/hide switch.
+        where = ["1 = 1"]
         params = [tenant_id, nmw_store_id]
 
         if dest_store_ids is not None:
@@ -467,6 +470,49 @@ def import_cust_codes_from_legacy(tenant_id):
             (imported if cursor.rowcount else skipped).append(store_name)
         conn.commit()
         return {"imported": len(imported), "skipped": skipped}
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def approve_before(tenant_id, nmw_store_id, cutoff_date, approved_by):
+    """Bulk-approve every routable NMW bill with BillDate < cutoff_date (one-shot
+    for historical bills). Only routable bills (matching a store via ho_cust_code
+    or ho_transfer_code, series-aware) are inserted; already-approved rows are
+    skipped. Returns the number newly approved."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        _ensure_schema(cursor)
+        cursor.execute(
+            """
+            INSERT INTO dbo.nmw_sales_dispatch_approval
+                (tenant_id, source_store_id, bill_date, bnumber, status, approved_by, approved_at)
+            SELECT DISTINCT si.tenant_id, si.store_id, si.BillDate, si.BNumber, 'approved', ?, GETDATE()
+            FROM sync.SaleInformation si
+            WHERE si.tenant_id = ? AND si.store_id = ?
+              AND CAST(si.BillDate AS DATE) < CAST(? AS DATE)
+              AND EXISTS (
+                  SELECT 1 FROM dbo.stores dst
+                  WHERE dst.tenant_id = si.tenant_id
+                    AND (
+                        ((LTRIM(RTRIM(ISNULL(si.SeriesName, ''))) = 'TO' OR si.BNumber LIKE 'TO%')
+                         AND NULLIF(LTRIM(RTRIM(dst.ho_transfer_code)), '') = LTRIM(RTRIM(si.CustomerCode)))
+                     OR (NOT (LTRIM(RTRIM(ISNULL(si.SeriesName, ''))) = 'TO' OR si.BNumber LIKE 'TO%')
+                         AND NULLIF(LTRIM(RTRIM(dst.ho_cust_code)), '') = LTRIM(RTRIM(si.CustomerCode)))
+                    )
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM dbo.nmw_sales_dispatch_approval a
+                  WHERE a.tenant_id = si.tenant_id AND a.source_store_id = si.store_id
+                    AND a.bill_date = si.BillDate AND a.bnumber = si.BNumber
+              )
+            """,
+            (approved_by, tenant_id, nmw_store_id, cutoff_date),
+        )
+        count = cursor.rowcount
+        conn.commit()
+        return count
     finally:
         cursor.close()
         conn.close()
