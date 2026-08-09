@@ -138,7 +138,11 @@ function AppShell() {
   const navItems = useMemo(() => {
     const modules = userModules(session?.user);
     if (!modules.length) return screens;
-    return screens.filter((screen) => screen.id === 'settings' || modules.includes(screen.module) || modules.includes(screen.id));
+    // 'settings' and 'nmw_sales' are always available: the NMW Sales Report is
+    // scoped server-side (store users see only their own approved bills), so it
+    // never depends on a per-user module grant.
+    const always = new Set(['settings', 'nmw_sales']);
+    return screens.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
 
   useEffect(() => {
@@ -199,6 +203,23 @@ function AppShell() {
     });
     setSettings(nextSettings);
   }, [session, settings]);
+
+  // A platform user (e.g. super admin) has no tenant_id, so on such a login the
+  // API calls would drop the required tenant_id param and every request 422s.
+  // Resolve the tenant from the device's registered store (or the first store
+  // in this single-tenant deployment) and persist it so all screens can load.
+  useEffect(() => {
+    if (!session || settings.tenantId) return;
+    api.listStores(session).then((rows) => {
+      const stores = asArray(rows);
+      const mine = stores.find((s) => s.store_id === effectiveStoreId)
+        || stores.find(isWarehouseStore)
+        || stores[0];
+      if (mine?.tenant_id) {
+        persistSettings({ ...settings, tenantId: mine.tenant_id });
+      }
+    }).catch(() => {});
+  }, [session, settings.tenantId, effectiveStoreId]);
 
   return (
     <div className="app-shell">
@@ -1160,14 +1181,20 @@ function StockAvailability({ session, settings, onOpenSettings }) {
 // not shows another store" is guaranteed server-side.
 function NmwSalesReport({ session, settings }) {
   const storeName = session?.user?.roles?.[0]?.store_name || settings?.storeName || 'this store';
+  const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
+  const storeId = settings?.storeId || session?.user?.roles?.[0]?.store_id || '';
   const [bills, setBills] = useState([]);
   const [status, setStatus] = useState({ state: 'loading', message: 'Loading despatched bills...' });
   const [expanded, setExpanded] = useState(null);
   const [items, setItems] = useState({});
 
   function reload() {
+    if (!tenantId) {
+      setStatus({ state: 'idle', message: 'Waiting for device tenant/store configuration...' });
+      return;
+    }
     setStatus({ state: 'loading', message: 'Loading despatched bills...' });
-    api.getNmwSalesBills(session, { status: 'approved' })
+    api.getNmwSalesBills(session, { status: 'approved', tenantId, storeId })
       .then((result) => {
         const rows = asArray(result?.bills);
         setBills(rows);
@@ -1176,7 +1203,7 @@ function NmwSalesReport({ session, settings }) {
       .catch((error) => setStatus({ state: 'error', message: error.message }));
   }
 
-  useEffect(() => { reload(); }, [session]);
+  useEffect(() => { reload(); }, [session, tenantId, storeId]);
 
   function toggle(bill) {
     const key = `${bill.bill_date}|${bill.bill_no}`;
