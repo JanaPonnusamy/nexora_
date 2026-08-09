@@ -22,6 +22,7 @@ export interface WhatsAppCapabilities {
   selenium_available: boolean
   delivery_mode: 'manual_browser' | 'selenium'
   headless: boolean
+  manual_fallback: boolean
   can_launch_qr: boolean
   can_auto_send_attachment: boolean
   can_read_messages: boolean
@@ -35,6 +36,7 @@ export interface WhatsAppState {
     delivery_mode: 'manual_browser' | 'selenium'
     launch_wait_seconds: number
     headless: boolean
+    manual_fallback: boolean
   }
   profiles: WhatsAppProfile[]
   targets: WhatsAppTarget[]
@@ -77,6 +79,7 @@ export const whatsappService = {
     delivery_mode: 'manual_browser' | 'selenium'
     launch_wait_seconds: number
     headless?: boolean
+    manual_fallback?: boolean
   }) {
     return api.put<WhatsAppState>('/api/whatsapp/settings', payload)
   },

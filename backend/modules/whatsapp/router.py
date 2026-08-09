@@ -25,6 +25,7 @@ class WhatsAppSettingsPayload(BaseModel):
     delivery_mode: str = "manual_browser"
     launch_wait_seconds: int = 15
     headless: bool = True
+    manual_fallback: bool = False
 
 
 class WhatsAppProfilePayload(BaseModel):
@@ -74,6 +75,7 @@ def save_whatsapp_settings(payload: WhatsAppSettingsPayload):
         payload.delivery_mode,
         payload.launch_wait_seconds,
         payload.headless,
+        payload.manual_fallback,
     )
 
 
