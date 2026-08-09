@@ -6,12 +6,13 @@
   text-rendering: optimizeLegibility;
   /* Single source of truth for the fixed store-row height — NMW
      (.store-data-row) and the NON MOVING panel (.non-moving-wrap) must
-     always be exactly this tall, on purpose (see both rules' comments). */
-  --store-row-height: 86px;
-  /* Was 214px - much taller than a single NMA row and the Non Moving panel,
-     leaving a large empty area under NMW's one product row. NMW is exactly
-     one store row, so it must match --store-row-height like every other
-     row and like .non-moving-wrap already does. */
+     always be exactly this tall, on purpose (see both rules' comments).
+     Sized to NMW's actual minimum content: its column-header row (27px) +
+     status line (~20px) + .warehouse-only .store-product-grid-wrap's
+     own min-height (146px, tuned to show 5 product rows without clipping)
+     + row padding/border (~15px) = ~208px. Shrinking this below that
+     re-clips NMW's product list to 1-2 rows. */
+  --store-row-height: 208px;
   --warehouse-panel-height: var(--store-row-height);
 }
 
