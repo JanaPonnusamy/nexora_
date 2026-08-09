@@ -20,6 +20,7 @@ class NmwSalesBill(BaseModel):
     dest_store_code: Optional[str] = None
     dest_store_name: Optional[str] = None
     status: str = "pending"                 # pending | approved
+    is_shown: int = 0                       # 1 once approved (visible to stores)
     approved_by: Optional[str] = None
     approved_at: Optional[str] = None
 

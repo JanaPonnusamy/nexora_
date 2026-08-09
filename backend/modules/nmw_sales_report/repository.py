@@ -194,6 +194,7 @@ def list_bills(tenant_id, nmw_store_id, dest_store_ids, status, date_from, date_
                 dst.store_code                     AS dest_store_code,
                 dst.store_name                     AS dest_store_name,
                 ISNULL(ap.status, 'pending')       AS status,
+                CASE WHEN ap.status = 'approved' THEN 1 ELSE 0 END AS is_shown,
                 ap.approved_by                     AS approved_by,
                 ap.approved_at                     AS approved_at
             FROM src si
