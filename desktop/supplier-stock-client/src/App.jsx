@@ -1188,58 +1188,49 @@ function StockAvailability({ session, settings, onOpenSettings }) {
   );
 }
 
-// NMW Sales Report (Bill-wise): warehouse -> store despatch bills. A super
-// admin (or other broad role — admin/manager/purchase) sees EVERY store,
-// pending + approved, and can approve (single/bulk/by-date) and export. A
-// store user is locked server-side to their own store's approved bills only —
-// "one store bill not shows another store" is guaranteed by the API, not by
-// what this screen requests.
-//
-// Whether THIS login is broad-access is read from the API response
-// (can_approve / scope), not detected client-side: role names/shapes differ
-// across deployments ("SUPER_ADMIN" vs "Super Admin" vs is_platform_user with
-// no store-scoped role at all), so the server — which already has to enforce
-// this for security — is the only reliable source of truth for it.
+// A fixed, non-editable 2-day operational window: day-before-yesterday through
+// yesterday. Recomputed on every load (not a filter the user can change) so
+// today's still-being-modified bills never show and the daily approval queue
+// stays exactly "yesterday and the day before".
+function nmwDefaultDateRange() {
+  const fmt = (offsetDays) => {
+    const d = new Date();
+    d.setDate(d.getDate() - offsetDays);
+    return d.toISOString().slice(0, 10);
+  };
+  return { dateFrom: fmt(2), dateTo: fmt(1) };
+}
+
+function nmwBillKey(bill) {
+  return `${bill.bill_date}|${bill.bill_no}`;
+}
+
+// NMW Sales Report (Bill-wise): warehouse -> store despatch bills, master/
+// detail layout. Left: compact bill list (checkbox = bulk-select for Approve
+// selected; row click = view that bill's items on the right). Right: the
+// active bill's header + line items; the first bill is auto-selected on load.
+// A super admin (or other broad role) sees EVERY store, pending + approved,
+// and can approve + export. A store user is locked server-side to their own
+// store's approved bills only — enforced by the API, not by what this screen
+// requests. Whether THIS login is broad-access is read from the API response
+// (can_approve / scope), not detected client-side — role name shapes differ
+// across deployments, so the server is the only reliable source of truth.
 function NmwSalesReport({ session, settings }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
-  const storeName = session?.user?.roles?.[0]?.store_name || settings?.storeName || 'this store';
 
   const [bills, setBills] = useState([]);
   const [status, setStatus] = useState({ state: 'loading', message: 'Loading bills...' });
-  const [expanded, setExpanded] = useState(null);
+  const [activeKey, setActiveKey] = useState(null);
   const [items, setItems] = useState({});
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState(new Set());
-  const [cutoff, setCutoff] = useState(new Date().toISOString().slice(0, 10));
   const [canApprove, setCanApprove] = useState(false);
   const [isBroad, setIsBroad] = useState(false);
+  const [range, setRange] = useState(nmwDefaultDateRange);
 
-  function reload() {
-    if (!tenantId) {
-      setStatus({ state: 'idle', message: 'Waiting for device tenant/store configuration...' });
-      return;
-    }
-    setStatus({ state: 'loading', message: 'Loading bills...' });
-    setSelected(new Set());
-    // No store_id: the server applies the correct scope on its own — every
-    // store for a broad login, only this device's store for a store user.
-    api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId: '' })
-      .then((result) => {
-        const rows = asArray(result?.bills);
-        setBills(rows);
-        setCanApprove(Boolean(result?.can_approve));
-        setIsBroad(result?.scope === 'all');
-        setStatus({ state: 'ok', message: rows.length ? `${rows.length} bill(s).` : 'No bills for this filter.' });
-      })
-      .catch((error) => setStatus({ state: 'error', message: error.message }));
-  }
-
-  useEffect(() => { reload(); }, [session, tenantId, statusFilter]);
-
-  function toggle(bill) {
-    const key = `${bill.bill_date}|${bill.bill_no}`;
-    if (expanded === key) { setExpanded(null); return; }
-    setExpanded(key);
+  function loadItems(bill) {
+    const key = nmwBillKey(bill);
+    setActiveKey(key);
     if (!items[key] && bill.bill_no) {
       api.getNmwSalesBillItems(bill.bill_no, bill.bill_date, session, { tenantId })
         .then((result) => setItems((prev) => ({ ...prev, [key]: asArray(result?.items) })))
@@ -1247,8 +1238,34 @@ function NmwSalesReport({ session, settings }) {
     }
   }
 
+  function reload() {
+    if (!tenantId) {
+      setStatus({ state: 'idle', message: 'Waiting for device tenant/store configuration...' });
+      return;
+    }
+    const freshRange = nmwDefaultDateRange();
+    setRange(freshRange);
+    setStatus({ state: 'loading', message: 'Loading bills...' });
+    setSelected(new Set());
+    // No store_id: the server applies the correct scope on its own — every
+    // store for a broad login, only this device's store for a store user.
+    api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId: '', dateFrom: freshRange.dateFrom, dateTo: freshRange.dateTo })
+      .then((result) => {
+        const rows = asArray(result?.bills);
+        setBills(rows);
+        setCanApprove(Boolean(result?.can_approve));
+        setIsBroad(result?.scope === 'all');
+        setStatus({ state: 'ok', message: rows.length ? `${rows.length} bill(s).` : 'No bills for this filter.' });
+        if (rows.length) loadItems(rows[0]);
+        else setActiveKey(null);
+      })
+      .catch((error) => setStatus({ state: 'error', message: error.message }));
+  }
+
+  useEffect(() => { reload(); }, [session, tenantId, statusFilter]);
+
   function toggleSelect(bill) {
-    const key = `${bill.bill_date}|${bill.bill_no}`;
+    const key = nmwBillKey(bill);
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -1258,10 +1275,10 @@ function NmwSalesReport({ session, settings }) {
   }
 
   const pending = bills.filter((b) => b.status !== 'approved');
-  const allPendingSelected = pending.length > 0 && pending.every((b) => selected.has(`${b.bill_date}|${b.bill_no}`));
+  const allPendingSelected = pending.length > 0 && pending.every((b) => selected.has(nmwBillKey(b)));
 
   function toggleSelectAll() {
-    setSelected(allPendingSelected ? new Set() : new Set(pending.map((b) => `${b.bill_date}|${b.bill_no}`)));
+    setSelected(allPendingSelected ? new Set() : new Set(pending.map(nmwBillKey)));
   }
 
   function approveOne(bill) {
@@ -1272,19 +1289,11 @@ function NmwSalesReport({ session, settings }) {
 
   function approveSelected() {
     const toApprove = pending
-      .filter((b) => selected.has(`${b.bill_date}|${b.bill_no}`))
+      .filter((b) => selected.has(nmwBillKey(b)))
       .map((b) => ({ bill_date: b.bill_date, bill_no: b.bill_no }));
     if (!toApprove.length) return;
     api.approveNmwBills(tenantId, toApprove, session)
       .then((result) => setStatus({ state: 'ok', message: `Approved ${result.approved} bill(s).` }))
-      .then(reload)
-      .catch((error) => setStatus({ state: 'error', message: error.message }));
-  }
-
-  function approveBeforeCutoff() {
-    if (!cutoff) return;
-    api.approveNmwBefore(tenantId, cutoff, session)
-      .then((result) => setStatus({ state: 'ok', message: `Approved ${result.approved} bill(s) before ${result.cutoff}.` }))
       .then(reload)
       .catch((error) => setStatus({ state: 'error', message: error.message }));
   }
@@ -1306,12 +1315,15 @@ function NmwSalesReport({ session, settings }) {
     URL.revokeObjectURL(url);
   }
 
+  const activeBill = bills.find((b) => nmwBillKey(b) === activeKey) || null;
+  const activeItems = activeKey ? items[activeKey] : undefined;
+
   return (
-    <section className="screen-panel">
+    <section className="screen-panel nmw-report-screen">
       <div className="screen-panel-head">
         <ScreenHeader
           title="NMW Sales Report (Bill-wise)"
-          subtitle={isBroad ? 'All stores — despatch approval and export.' : `Approved despatch bills for ${storeName}.`}
+          subtitle={`${isBroad ? 'All stores' : 'Your store'} · despatch bills from ${formatDate(range.dateFrom)} to ${formatDate(range.dateTo)}.`}
         />
         <button className="secondary-button" onClick={reload}>Refresh</button>
       </div>
@@ -1327,16 +1339,9 @@ function NmwSalesReport({ session, settings }) {
         </label>
 
         {canApprove && (
-          <>
-            <button className="primary-button" disabled={selected.size === 0} onClick={approveSelected}>
-              Approve selected ({selected.size})
-            </button>
-            <label className="stock-only-filter">
-              Approve all before
-              <input type="date" value={cutoff} onChange={(event) => setCutoff(event.target.value)} />
-            </label>
-            <button className="secondary-button" onClick={approveBeforeCutoff}>Approve</button>
-          </>
+          <button className="primary-button" disabled={selected.size === 0} onClick={approveSelected}>
+            Approve selected ({selected.size})
+          </button>
         )}
 
         <button className="secondary-button" disabled={bills.length === 0} onClick={exportCsv}>
@@ -1347,35 +1352,36 @@ function NmwSalesReport({ session, settings }) {
       <div className={`status-line ${status.state}`}>{status.message}</div>
 
       {bills.length > 0 && (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                {canApprove && (
-                  <th>
-                    <input type="checkbox" checked={allPendingSelected} disabled={pending.length === 0} onChange={toggleSelectAll} />
-                  </th>
-                )}
-                <th>Bill No</th>
-                <th>Type</th>
-                <th>Bill Date</th>
-                {isBroad && <th>Destination Store</th>}
-                <th>Amount</th>
-                <th>Status</th>
-                <th>Approved By</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {bills.map((bill) => {
-                const key = `${bill.bill_date}|${bill.bill_no}`;
-                const rows = items[key];
-                const isApproved = bill.status === 'approved';
-                return (
-                  <Fragment key={key}>
-                    <tr>
+        <div className="nmw-split">
+          <div className="table-wrap nmw-bill-list-pane">
+            <table className="nmw-compact-table">
+              <thead>
+                <tr>
+                  {canApprove && (
+                    <th>
+                      <input type="checkbox" checked={allPendingSelected} disabled={pending.length === 0} onChange={toggleSelectAll} />
+                    </th>
+                  )}
+                  <th>Bill No</th>
+                  <th>Type</th>
+                  <th>Date</th>
+                  {isBroad && <th>Store</th>}
+                  <th>Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bills.map((bill) => {
+                  const key = nmwBillKey(bill);
+                  const isApproved = bill.status === 'approved';
+                  return (
+                    <tr
+                      key={key}
+                      className={activeKey === key ? 'nmw-row-active' : ''}
+                      onClick={() => loadItems(bill)}
+                    >
                       {canApprove && (
-                        <td>
+                        <td onClick={(event) => event.stopPropagation()}>
                           {!isApproved && (
                             <input type="checkbox" checked={selected.has(key)} onChange={() => toggleSelect(bill)} />
                           )}
@@ -1384,58 +1390,68 @@ function NmwSalesReport({ session, settings }) {
                       <td>{bill.bill_no}</td>
                       <td>{bill.bill_type || (bill.is_transfer ? 'Transfer' : 'Sale')}</td>
                       <td>{formatDate(bill.bill_date)}</td>
-                      {isBroad && <td>{bill.dest_store_code} — {bill.dest_store_name}</td>}
+                      {isBroad && <td>{bill.dest_store_code}</td>}
                       <td>{formatMoney(bill.bill_amount)}</td>
                       <td>{isApproved ? 'Approved' : 'Pending'}</td>
-                      <td>{bill.approved_by || '-'}</td>
-                      <td>
-                        <button className="secondary-button" onClick={() => toggle(bill)}>
-                          {expanded === key ? 'Hide' : 'Items'}
-                        </button>
-                        {canApprove && !isApproved && (
-                          <button className="secondary-button" onClick={() => approveOne(bill)}>Approve</button>
-                        )}
-                      </td>
                     </tr>
-                    {expanded === key && (
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="table-wrap nmw-bill-detail-pane">
+            {!activeBill ? (
+              <div className="empty-state">Select a bill to view its items.</div>
+            ) : (
+              <>
+                <div className="nmw-bill-detail-head">
+                  <div>
+                    <strong>{activeBill.bill_no}</strong> · {activeBill.bill_type || (activeBill.is_transfer ? 'Transfer' : 'Sale')}
+                    <span className="nmw-bill-detail-sub">
+                      {formatDate(activeBill.bill_date)} · {activeBill.dest_store_code} — {activeBill.dest_store_name} · {formatMoney(activeBill.bill_amount)}
+                      {' · '}{activeBill.status === 'approved' ? 'Approved' : 'Pending'}
+                      {activeBill.approved_by ? ` by ${activeBill.approved_by}` : ''}
+                    </span>
+                  </div>
+                  {canApprove && activeBill.status !== 'approved' && (
+                    <button className="primary-button" onClick={() => approveOne(activeBill)}>Approve this bill</button>
+                  )}
+                </div>
+
+                {!activeItems ? (
+                  <div className="empty-state">Loading items...</div>
+                ) : activeItems.length === 0 ? (
+                  <div className="empty-state">No line items.</div>
+                ) : (
+                  <table className="nmw-compact-table">
+                    <thead>
                       <tr>
-                        <td colSpan={7 + (canApprove ? 1 : 0) + (isBroad ? 1 : 0)}>
-                          {!rows ? (
-                            <div className="empty-state">Loading items...</div>
-                          ) : rows.length === 0 ? (
-                            <div className="empty-state">No line items.</div>
-                          ) : (
-                            <table>
-                              <thead>
-                                <tr>
-                                  <th>Product</th><th>Batch</th><th>Expiry</th>
-                                  <th>Qty</th><th>Free</th><th>MRP</th><th>Rate</th><th>Amount</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {rows.map((row, index) => (
-                                  <tr key={`${row.product_code}-${row.batch_no}-${index}`}>
-                                    <td>{row.product_name}</td>
-                                    <td>{row.batch_no}</td>
-                                    <td>{formatDate(row.expiry_date)}</td>
-                                    <td>{formatQty(row.qty)}</td>
-                                    <td>{formatQty(row.free_qty)}</td>
-                                    <td>{formatMoney(row.mrp)}</td>
-                                    <td>{formatMoney(row.rate)}</td>
-                                    <td>{formatMoney(row.amount)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </td>
+                        <th>Product Code</th><th>Product</th><th>Batch</th><th>Expiry</th>
+                        <th>Qty</th><th>Free</th><th>MRP</th><th>Rate</th><th>Dis%</th><th>Amount</th>
                       </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                    </thead>
+                    <tbody>
+                      {activeItems.map((row, index) => (
+                        <tr key={`${row.product_code}-${row.batch_no}-${index}`}>
+                          <td>{row.product_code}</td>
+                          <td>{row.product_name}</td>
+                          <td>{row.batch_no}</td>
+                          <td>{formatDate(row.expiry_date)}</td>
+                          <td>{formatQty(row.qty)}</td>
+                          <td>{formatQty(row.free_qty)}</td>
+                          <td>{formatMoney(row.mrp)}</td>
+                          <td>{formatMoney(row.rate)}</td>
+                          <td>{row.discount_percentage}</td>
+                          <td>{formatMoney(row.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </section>

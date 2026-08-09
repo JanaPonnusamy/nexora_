@@ -3283,3 +3283,82 @@ th {
     grid-template-columns: 1fr;
   }
 }
+
+/* NMW Sales Report: split master/detail layout with a wider max-width than
+   the default .screen-panel, a compact bill-list on the left, and a detail +
+   items pane on the right. */
+.screen-panel.nmw-report-screen {
+  max-width: 1560px;
+}
+
+.screen-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nmw-split {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.85fr) minmax(480px, 1.15fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.nmw-bill-list-pane {
+  max-height: 72vh;
+  overflow-y: auto;
+}
+
+.nmw-bill-detail-pane {
+  max-height: 72vh;
+  overflow-y: auto;
+}
+
+/* Reduced row height for a denser bill list / items grid than the app's
+   default table padding (12px 10px). */
+.nmw-compact-table th,
+.nmw-compact-table td {
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.nmw-bill-list-pane tbody tr {
+  cursor: pointer;
+}
+
+.nmw-bill-list-pane tbody tr:hover {
+  background: #f4f7fc;
+}
+
+.nmw-row-active {
+  background: #eaf1ff;
+}
+
+.nmw-row-active:hover {
+  background: #eaf1ff;
+}
+
+.nmw-bill-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #e7ecf4;
+}
+
+.nmw-bill-detail-sub {
+  display: block;
+  margin-top: 4px;
+  color: #657186;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 1200px) {
+  .nmw-split {
+    grid-template-columns: 1fr;
+  }
+}

@@ -398,14 +398,6 @@ export const api = {
       session,
       body: JSON.stringify({ tenant_id: tenantId, bills, status })
     });
-  },
-
-  approveNmwBefore(tenantId, cutoff, session) {
-    return request(`/api/nmw-sales-report/bills/approve-before${toQuery({ tenant_id: tenantId, cutoff })}`, {
-      method: 'POST',
-      session,
-      body: JSON.stringify({})
-    });
   }
 };
 
