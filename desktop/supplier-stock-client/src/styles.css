@@ -3358,7 +3358,28 @@ th {
 .nmw-export-group {
   display: flex;
   gap: 6px;
-  margin-left: auto;
+}
+
+/* Small icon+label export buttons, scoped to the bill open in the detail
+   pane (export is per-bill, not a bulk export of the whole visible list). */
+.nmw-icon-button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #cbd4e1;
+  background: #ffffff;
+  color: #27344a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nmw-icon-button:hover {
+  border-color: #2357d6;
+  color: #2357d6;
+}
+
+.nmw-icon-button:disabled {
+  opacity: 0.5;
 }
 
 .nmw-split {
@@ -3431,6 +3452,13 @@ th {
   color: #657186;
   font-size: 13px;
   font-weight: 600;
+}
+
+.nmw-bill-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .nmw-bill-detail-head .nmw-row-cancelled .nmw-bill-detail-sub {

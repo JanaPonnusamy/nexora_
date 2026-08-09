@@ -1370,35 +1370,23 @@ function NmwSalesReport({ session, settings }) {
       .catch((error) => setStatus({ state: 'error', message: error.message }));
   }
 
-  // Fetches (and caches) items for every exportable bill, builds one CSV/XLSX
-  // row per line item (bill header columns repeated per line) so the export
-  // carries everything shown on screen, including Dis%. Cancelled bills are
-  // excluded entirely — viewable on screen, never exported.
-  async function collectExportRows() {
-    const exportable = bills.filter((b) => !b.is_cancelled);
-    const withItems = await Promise.all(exportable.map(async (bill) => {
-      const key = nmwBillKey(bill);
-      const cached = items[key];
-      if (cached) return { bill, lineItems: cached };
-      try {
-        const result = await api.getNmwSalesBillItems(bill.bill_no, bill.bill_date, session, { tenantId });
-        const lineItems = asArray(result?.items);
-        setItems((prev) => ({ ...prev, [key]: lineItems }));
-        return { bill, lineItems };
-      } catch {
-        return { bill, lineItems: [] };
-      }
-    }));
-    return withItems.flatMap(({ bill, lineItems }) => nmwExportRows(bill, lineItems));
-  }
-
-  async function exportAs(format) {
-    if (bills.length === 0 || exporting) return;
+  // Export is scoped to the single bill currently open in the detail pane
+  // (not the whole visible list) — the buttons live in that pane's header.
+  // Cancelled bills are view-only: never exportable.
+  async function exportBillAs(bill, format) {
+    if (!bill || bill.is_cancelled || exporting) return;
     setExporting(true);
     setStatus({ state: 'loading', message: `Preparing ${format.toUpperCase()} export...` });
     try {
-      const rows = await collectExportRows();
-      const filename = `nmw-sales-report-${new Date().toISOString().slice(0, 10)}`;
+      const key = nmwBillKey(bill);
+      let lineItems = items[key];
+      if (!lineItems) {
+        const result = await api.getNmwSalesBillItems(bill.bill_no, bill.bill_date, session, { tenantId });
+        lineItems = asArray(result?.items);
+        setItems((prev) => ({ ...prev, [key]: lineItems }));
+      }
+      const rows = nmwExportRows(bill, lineItems);
+      const filename = `nmw-bill-${bill.bill_no}-${bill.bill_date}`.replace(/[^\w-]/g, '_');
       if (format === 'csv') {
         const csv = [NMW_EXPORT_COLUMNS, ...rows].map((r) => r.map(nmwCsvCell).join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -1413,7 +1401,7 @@ function NmwSalesReport({ session, settings }) {
         const buffer = XLSX.write(wb, { bookType, type: 'array' });
         downloadBlob(new Blob([buffer], { type: 'application/octet-stream' }), `${filename}.${ext}`);
       }
-      setStatus({ state: 'ok', message: `Exported ${rows.length} row(s) (${format.toUpperCase()}).` });
+      setStatus({ state: 'ok', message: `Exported bill ${bill.bill_no} (${format.toUpperCase()}).` });
     } catch (error) {
       setStatus({ state: 'error', message: error.message });
     } finally {
@@ -1484,12 +1472,6 @@ function NmwSalesReport({ session, settings }) {
             Approve selected ({selected.size})
           </button>
         )}
-
-        <div className="nmw-export-group">
-          <button className="secondary-button" disabled={bills.length === 0 || exporting} onClick={() => exportAs('csv')}>CSV</button>
-          <button className="secondary-button" disabled={bills.length === 0 || exporting} onClick={() => exportAs('xlsx')}>XLSX</button>
-          <button className="secondary-button" disabled={bills.length === 0 || exporting} onClick={() => exportAs('xls')}>XLS 97-2003</button>
-        </div>
       </div>
 
       <div className={`status-line ${status.state}`}>{status.message}</div>
@@ -1557,9 +1539,24 @@ function NmwSalesReport({ session, settings }) {
                       {activeBill.approved_by ? ` by ${activeBill.approved_by}` : ''}
                     </span>
                   </div>
-                  {canApprove && !activeBill.is_cancelled && activeBill.status !== 'approved' && (
-                    <button className="primary-button" onClick={() => approveOne(activeBill)}>Approve this bill</button>
-                  )}
+                  <div className="nmw-bill-detail-actions">
+                    {!activeBill.is_cancelled && (
+                      <div className="nmw-export-group">
+                        <button className="nmw-icon-button" disabled={exporting} onClick={() => exportBillAs(activeBill, 'csv')} title="Export this bill as CSV">
+                          ⬇ CSV
+                        </button>
+                        <button className="nmw-icon-button" disabled={exporting} onClick={() => exportBillAs(activeBill, 'xlsx')} title="Export this bill as XLSX">
+                          ⬇ XLSX
+                        </button>
+                        <button className="nmw-icon-button" disabled={exporting} onClick={() => exportBillAs(activeBill, 'xls')} title="Export this bill as Excel 97-2003">
+                          ⬇ XLS
+                        </button>
+                      </div>
+                    )}
+                    {canApprove && !activeBill.is_cancelled && activeBill.status !== 'approved' && (
+                      <button className="primary-button" onClick={() => approveOne(activeBill)}>Approve this bill</button>
+                    )}
+                  </div>
                 </div>
 
                 {!activeItems ? (
