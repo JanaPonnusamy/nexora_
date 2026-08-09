@@ -2,14 +2,26 @@
 
 A web trigger for the two buttons of the old VB.NET OrderManagement app: Sync
 and Order Process. Everything here reads and writes the OLD OrderNMC database
-and the branch DBs it points at -- NOT NEXORA_PLATFORM's sync.* tables.
+and the branch DBs it points at -- NOT NEXORA_PLATFORM's sync.* tables. This
+is a platform-ops console (DB recovery, sync jobs) with no per-tenant model
+of its own, so it's gated to super admin / platform users only rather than
+tenant-scoped like the rest of the API.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from dependencies.auth import get_current_user
+from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, repository, service, sync_engine
 from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest
 
-router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"])
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    if not has_unrestricted_scope(current_user):
+        raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
+    return current_user
+
+
+router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"], dependencies=[Depends(require_admin)])
 
 
 # ---- Legacy DB health & recovery (RECOVERY_PENDING / single-user / repair) ----

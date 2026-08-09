@@ -41,11 +41,11 @@ def get_stores(current_user: dict | None = Depends(get_current_user_optional)):
     if has_unrestricted_scope(current_user):
         return stores
 
-    # Non-broad users (purchase, salesman, any store-scoped role) only see
-    # their own tenant, further narrowed to the stores they're assigned in
-    # dbo.user_store_roles - previously every store across every tenant was
-    # returned to any authenticated user, which is how a store login ended up
-    # seeing other tenants' stores in the desktop Supplier Stock client.
+    # Non-broad users (purchase manager, salesman, any store-scoped role) only
+    # see their own tenant, further narrowed to the store(s) they're assigned
+    # in dbo.user_store_roles - one purchase manager/salesman per store, never
+    # another store's (or another tenant's) data. Previously every store
+    # across every tenant was returned to any authenticated user.
     own_tenant_id = str(current_user.get("tenant_id") or "")
     allowed = set(user_store_ids(current_user.get("sub")))
     return [s for s in stores if s["tenant_id"] == own_tenant_id and s["store_id"] in allowed]

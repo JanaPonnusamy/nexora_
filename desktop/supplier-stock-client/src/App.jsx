@@ -155,12 +155,17 @@ function AppShell() {
 
   const navItems = useMemo(() => {
     const modules = userModules(session?.user);
-    if (!modules.length) return screens;
+    // Supplier Stock Analysis is a purchasing/admin tool - a salesman-only
+    // login must not see the tab at all (the API also 403s it server-side,
+    // this just keeps the nav honest). Checked before the module-grant
+    // early-return below so it also applies to logins with no module list.
+    const base = isSalesmanOnly(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
+    if (!modules.length) return base;
     // 'settings' and 'nmw_sales' are always available: the NMW Sales Report is
     // scoped server-side (store users see only their own approved bills), so it
     // never depends on a per-user module grant.
     const always = new Set(['settings', 'nmw_sales']);
-    return screens.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
+    return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
 
   useEffect(() => {

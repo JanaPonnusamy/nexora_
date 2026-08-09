@@ -6,7 +6,7 @@ from time import monotonic
 
 from fastapi import HTTPException
 
-from dependencies.store_scope import assert_tenant_access
+from dependencies.store_scope import assert_store_access
 from modules.product_mapping import service as mapping_service
 from modules.supplier_stock_analysis import excel_import, repository
 
@@ -68,7 +68,7 @@ def match_for_supplier_stock(user, supplier_stock_id, tenant_id=None):
     row = repository.supplier_stock_row(supplier_stock_id, tenant_id)
     if not row:
         raise HTTPException(status_code=404, detail="Supplier stock row not found")
-    assert_tenant_access(user, row["tenant_id"])
+    assert_store_access(user, row["tenant_id"], row.get("store_id"))
     product_code = row.get("product_code")
     match = None
     match_status = "unmatched"

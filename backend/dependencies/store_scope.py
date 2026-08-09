@@ -1,15 +1,25 @@
 """Tenant / store scoping for endpoints that used to trust client-supplied
 tenant_id / store_id query params with no server-side check at all.
 
-A logged-in user could previously pass any tenant_id/store_id (Stock
-Availability, Reports, Supplier Stock Analysis, /api/stores, /api/tenants...)
-and get that tenant/store's data back regardless of their own assignment -
-the desktop Supplier Stock client rendered every tenant's stores in one grid
-for every role, including purchase and salesman logins.
+A logged-in user could previously pass any tenant_id/store_id and get that
+tenant/store's data back regardless of their own assignment - the desktop
+Supplier Stock client rendered every tenant's (and every store's) data in
+one grid for every role, including purchase manager and salesman logins.
 
-Only a super admin (or platform user) may see across tenants/stores. Every
-other role is locked to their own tenant (JWT claim) and to the stores they
-are assigned in dbo.user_store_roles.
+Two boundaries, used by different kinds of endpoint:
+- assert_tenant_access / TENANT boundary: for cross-store engines where
+  comparing/matching across a tenant's own stores is the intended job
+  (product mapping, procurement, pass-gen, document extraction...). A
+  purchase manager or salesman still can't reach another tenant.
+- assert_store_access / scoped_store_ids / STORE boundary: for the
+  store-browsing screens (Stock Availability, Supplier Stock Analysis,
+  Reports, the /api/stores listing). A purchase manager or salesman is
+  assigned to exactly one store (one store = one purchase manager, per
+  product decision) and must not see another store's bills/stock/purchase
+  history, even within their own tenant.
+
+Only a super admin (or platform user, i.e. no tenant_id at all) crosses
+either boundary, and only with an explicit tenant picker in the UI.
 """
 
 from fastapi import HTTPException
@@ -26,16 +36,27 @@ def is_super_admin(user: dict) -> bool:
 
 
 def has_unrestricted_scope(user: dict | None) -> bool:
-    """Super admins and platform users (no store-scoped role at all) see
-    everything. Everyone else - including purchase and salesman roles - is
-    locked to their own tenant and assigned stores. `user is None` covers the
-    store-agent setup-token flow (no JWT/user at all, see
+    """Super admins and platform users (no tenant-scoped role at all) cross
+    every boundary. Everyone else - including purchase manager and salesman
+    roles - is locked to their own tenant (and, on store-browsing endpoints,
+    their own assigned store(s)). `user is None` covers the store-agent
+    setup-token flow (no JWT/user at all, see
     dependencies.auth.get_current_user_optional), which is already restricted
     to a fixed whitelist of read-only endpoints by app.py's require_auth
     middleware and stays unrestricted within that whitelist."""
     if user is None:
         return True
     return is_super_admin(user) or bool(user.get("is_platform_user"))
+
+
+def is_salesman_only(user: dict) -> bool:
+    """True when every role this user holds (across all their store
+    assignments) is a salesman-type role - used to gate them out of
+    admin/purchase-facing screens like Supplier Stock Analysis entirely."""
+    names = [str(r or "").strip().lower() for r in (user.get("role_names") or [])]
+    if not names:
+        return False
+    return all("salesman" in name or "sales man" in name for name in names)
 
 
 def user_store_ids(user_id) -> list:
@@ -55,7 +76,9 @@ def user_store_ids(user_id) -> list:
 
 
 def assert_tenant_access(user: dict, tenant_id) -> None:
-    """Raise 403 if a non-broad user asks for a tenant that isn't their own."""
+    """Raise 403 if a non-broad user asks for a tenant that isn't their own.
+    Does not check store assignment - use assert_store_access/
+    scoped_store_ids for screens that browse individual stores."""
     if has_unrestricted_scope(user):
         return
     if str(user.get("tenant_id") or "") != str(tenant_id or ""):
@@ -63,8 +86,9 @@ def assert_tenant_access(user: dict, tenant_id) -> None:
 
 
 def assert_store_access(user: dict, tenant_id, store_id) -> None:
-    """Raise 403 if a non-broad user asks for a store outside their own tenant
-    or outside their assigned stores."""
+    """Raise 403 if a non-broad user asks for a store outside their own
+    tenant or outside the store(s) they're assigned in dbo.user_store_roles -
+    one purchase manager/salesman per store, never another store's data."""
     assert_tenant_access(user, tenant_id)
     if has_unrestricted_scope(user):
         return

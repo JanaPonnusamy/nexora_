@@ -26,7 +26,7 @@ def _group_by_store(rows, allowed_store_ids=None):
 
     allowed_store_ids=None means unrestricted (super admin/platform user);
     otherwise rows for any other store are dropped before grouping - a
-    non-broad user's tenant may span more stores than they're assigned to.
+    purchase manager/salesman only sees the store(s) they're assigned.
     """
     stores = {}
     order = []
