@@ -184,7 +184,7 @@ export function WhatsAppSendCard({
               </label>
 
               <div className="wa-send__meta">
-                Mode: {state.capabilities.delivery_mode === 'selenium' ? 'Selenium automation' : 'Manual browser'}
+                Mode: {state.capabilities.delivery_mode === 'selenium' ? 'Automated (background)' : 'Manual browser'}
                 {!state.capabilities.can_auto_send_attachment && ' | Attachments open in WhatsApp Web for manual send.'}
                 {selectedTarget && ` | Target: ${selectedTarget.target_name}`}
               </div>

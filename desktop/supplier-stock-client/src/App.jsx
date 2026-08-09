@@ -46,9 +46,15 @@ function isSalesmanOnly(session) {
 }
 
 function isSuperAdmin(session) {
+  // Mirrors backend dependencies.auth.has_full_access: a platform user (no
+  // store-scoped role at all, e.g. superadmin with tenant_id=NULL) is always
+  // full-access. Role names are also compared with separators stripped so
+  // 'SUPER_ADMIN', 'Super Admin', and 'superadmin' all match — a plain
+  // includes('super admin') missed the underscore variant used by this seed.
+  if (session?.user?.is_platform_user) return true;
   const roles = session?.user?.roles || [];
-  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase());
-  return roleNames.some((name) => name.includes('super admin') || name.includes('superadmin'));
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase().replace(/[^a-z]/g, ''));
+  return roleNames.some((name) => name.includes('superadmin') || name.includes('platformowner'));
 }
 
 function canUnlockDeviceSetup(userOrSession) {
@@ -825,8 +831,13 @@ function StockAvailability({ session, settings, onOpenSettings }) {
   }, [session]);
 
   useEffect(() => {
-    if (!allStores.length) return;
-    Promise.all(allStores.map((store) => api.getNonMovingStock(store.store_id, session, { dwellDays: 120, minPurAge: 10, limit: 50 })
+    // Guard on settings.tenantId too: for a platform user (e.g. super admin) it
+    // resolves asynchronously (device has no configured tenant of its own), and
+    // this effect only depends on [allStores] - without the guard+dependency it
+    // would fire once with tenant_id missing (422 on every store) and never
+    // retry once the tenant actually resolves.
+    if (!allStores.length || !settings?.tenantId) return;
+    Promise.all(allStores.map((store) => api.getNonMovingStock(store.store_id, session, { tenantId: settings.tenantId, dwellDays: 120, minPurAge: 10, limit: 50 })
       .then((result) => asArray(result?.rows)
         .map((row) => ({ ...row, __storeId: store.store_id, __storeName: store.store_name || store.store_code })))
       .catch(() => [])))
@@ -840,7 +851,7 @@ function StockAvailability({ session, settings, onOpenSettings }) {
         setNonMovingProducts(merged);
         setNonMovingLoading(false);
       });
-  }, [allStores]);
+  }, [allStores, settings?.tenantId]);
 
   const filteredNonMoving = useMemo(
     () => (nonMovingStoreFilter
@@ -1183,10 +1194,14 @@ function StockAvailability({ session, settings, onOpenSettings }) {
 // store user is locked server-side to their own store's approved bills only —
 // "one store bill not shows another store" is guaranteed by the API, not by
 // what this screen requests.
+//
+// Whether THIS login is broad-access is read from the API response
+// (can_approve / scope), not detected client-side: role names/shapes differ
+// across deployments ("SUPER_ADMIN" vs "Super Admin" vs is_platform_user with
+// no store-scoped role at all), so the server — which already has to enforce
+// this for security — is the only reliable source of truth for it.
 function NmwSalesReport({ session, settings }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
-  const isBroad = isSuperAdmin(session) || canViewPurchaseDetails(session);
-  const storeId = isBroad ? '' : (settings?.storeId || session?.user?.roles?.[0]?.store_id || '');
   const storeName = session?.user?.roles?.[0]?.store_name || settings?.storeName || 'this store';
 
   const [bills, setBills] = useState([]);
@@ -1196,6 +1211,8 @@ function NmwSalesReport({ session, settings }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState(new Set());
   const [cutoff, setCutoff] = useState(new Date().toISOString().slice(0, 10));
+  const [canApprove, setCanApprove] = useState(false);
+  const [isBroad, setIsBroad] = useState(false);
 
   function reload() {
     if (!tenantId) {
@@ -1204,16 +1221,20 @@ function NmwSalesReport({ session, settings }) {
     }
     setStatus({ state: 'loading', message: 'Loading bills...' });
     setSelected(new Set());
-    api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId })
+    // No store_id: the server applies the correct scope on its own — every
+    // store for a broad login, only this device's store for a store user.
+    api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId: '' })
       .then((result) => {
         const rows = asArray(result?.bills);
         setBills(rows);
+        setCanApprove(Boolean(result?.can_approve));
+        setIsBroad(result?.scope === 'all');
         setStatus({ state: 'ok', message: rows.length ? `${rows.length} bill(s).` : 'No bills for this filter.' });
       })
       .catch((error) => setStatus({ state: 'error', message: error.message }));
   }
 
-  useEffect(() => { reload(); }, [session, tenantId, storeId, statusFilter]);
+  useEffect(() => { reload(); }, [session, tenantId, statusFilter]);
 
   function toggle(bill) {
     const key = `${bill.bill_date}|${bill.bill_no}`;
@@ -1305,7 +1326,7 @@ function NmwSalesReport({ session, settings }) {
           </select>
         </label>
 
-        {isBroad && (
+        {canApprove && (
           <>
             <button className="primary-button" disabled={selected.size === 0} onClick={approveSelected}>
               Approve selected ({selected.size})
@@ -1330,7 +1351,7 @@ function NmwSalesReport({ session, settings }) {
           <table>
             <thead>
               <tr>
-                {isBroad && (
+                {canApprove && (
                   <th>
                     <input type="checkbox" checked={allPendingSelected} disabled={pending.length === 0} onChange={toggleSelectAll} />
                   </th>
@@ -1353,7 +1374,7 @@ function NmwSalesReport({ session, settings }) {
                 return (
                   <Fragment key={key}>
                     <tr>
-                      {isBroad && (
+                      {canApprove && (
                         <td>
                           {!isApproved && (
                             <input type="checkbox" checked={selected.has(key)} onChange={() => toggleSelect(bill)} />
@@ -1371,14 +1392,14 @@ function NmwSalesReport({ session, settings }) {
                         <button className="secondary-button" onClick={() => toggle(bill)}>
                           {expanded === key ? 'Hide' : 'Items'}
                         </button>
-                        {isBroad && !isApproved && (
+                        {canApprove && !isApproved && (
                           <button className="secondary-button" onClick={() => approveOne(bill)}>Approve</button>
                         )}
                       </td>
                     </tr>
                     {expanded === key && (
                       <tr>
-                        <td colSpan={isBroad ? 9 : 7}>
+                        <td colSpan={7 + (canApprove ? 1 : 0) + (isBroad ? 1 : 0)}>
                           {!rows ? (
                             <div className="empty-state">Loading items...</div>
                           ) : rows.length === 0 ? (

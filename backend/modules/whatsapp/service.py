@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import atexit
 import json
-import os
 import re
 import shutil
-import subprocess
 import threading
 import time
 import uuid
@@ -15,16 +13,11 @@ from typing import Any
 from urllib.parse import quote
 
 try:
-    from selenium import webdriver
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.common.keys import Keys
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.support.ui import WebDriverWait
-    _HAVE_SELENIUM = True
+    from playwright.sync_api import sync_playwright
+    _HAVE_PLAYWRIGHT = True
 except Exception:  # pragma: no cover - optional runtime dependency
-    webdriver = None
-    By = Keys = WebDriverWait = EC = None
-    _HAVE_SELENIUM = False
+    sync_playwright = None
+    _HAVE_PLAYWRIGHT = False
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -38,6 +31,7 @@ TARGETS_FILE = STORAGE_DIR / "targets.json"
 INBOX_FILE = STORAGE_DIR / "inbox.json"
 
 DEFAULT_SETTINGS = {
+    # Legacy field, unused now that Playwright manages its own bundled Firefox.
     "browser_command": "",
     "delivery_mode": "manual_browser",
     "launch_wait_seconds": 15,
@@ -48,10 +42,14 @@ DEFAULT_SETTINGS = {
 
 
 # Persistent, reusable WhatsApp browser sessions keyed by profile_id.
-# Selenium drivers are not thread-safe and FastAPI runs sync endpoints in a
-# threadpool, so every interaction with a driver is serialized under this lock.
+# Playwright sync objects are not thread-safe and FastAPI runs sync endpoints
+# in a threadpool, so every interaction with a context is serialized under
+# this lock. Firefox (unlike headless Chrome) does not crash against a real,
+# already-bloated profile, so we run headless directly on the login profile —
+# no mirror-copy workaround needed.
 _DRIVER_LOCK = threading.RLock()
-_DRIVERS: dict[str, Any] = {}
+_PLAYWRIGHT_DRIVER: Any = None
+_CONTEXTS: dict[str, dict[str, Any]] = {}  # profile_id -> {context, page, headless}
 
 
 def _now_iso() -> str:
@@ -78,30 +76,9 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _detect_browser_command() -> str:
-    env_candidate = os.getenv("NEXORA_WHATSAPP_BROWSER", "").strip()
-    if env_candidate:
-        return env_candidate
-
-    candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    ]
-    for candidate in candidates:
-        if Path(candidate).is_file():
-            return candidate
-    return ""
-
-
 def _load_settings() -> dict[str, Any]:
     settings = dict(DEFAULT_SETTINGS)
     settings.update(_read_json(SETTINGS_FILE, {}))
-    if not settings.get("browser_command"):
-        detected = _detect_browser_command()
-        if detected:
-            settings["browser_command"] = detected
     if settings.get("delivery_mode") not in {"manual_browser", "selenium"}:
         settings["delivery_mode"] = "manual_browser"
     settings["headless"] = bool(settings.get("headless", True))
@@ -180,22 +157,18 @@ def _sanitize_phone(phone: str) -> str:
     return re.sub(r"[^\d]", "", phone or "")
 
 
-def _browser_ready(browser_command: str) -> bool:
-    return bool(browser_command and Path(browser_command).is_file())
-
-
 def _capabilities(settings: dict[str, Any], profiles: list[dict[str, Any]]) -> dict[str, Any]:
-    browser_command = settings.get("browser_command", "")
+    ready = _HAVE_PLAYWRIGHT
     return {
-        "browser_detected": _browser_ready(browser_command),
-        "browser_command": browser_command,
-        "selenium_available": _HAVE_SELENIUM,
+        "browser_detected": ready,
+        "browser_command": settings.get("browser_command", ""),
+        "selenium_available": ready,  # kept for frontend compatibility; now means "automation engine ready"
         "delivery_mode": settings.get("delivery_mode", "manual_browser"),
         "headless": bool(settings.get("headless", True)),
         "manual_fallback": bool(settings.get("manual_fallback", False)),
-        "can_launch_qr": _browser_ready(browser_command),
-        "can_auto_send_attachment": bool(_HAVE_SELENIUM and _browser_ready(browser_command)),
-        "can_read_messages": bool(_HAVE_SELENIUM and _browser_ready(browser_command)),
+        "can_launch_qr": ready,
+        "can_auto_send_attachment": ready,
+        "can_read_messages": ready,
         "profile_count": len(profiles),
         "default_profile_id": next((profile["profile_id"] for profile in profiles if profile["is_default"]), ""),
     }
@@ -304,255 +277,211 @@ def _whatsapp_url(phone: str, message: str) -> str:
     return base
 
 
-def _launch_browser(profile: dict[str, Any], settings: dict[str, Any], url: str) -> dict[str, Any]:
-    browser_command = settings.get("browser_command", "")
-    if not _browser_ready(browser_command):
-        raise ValueError("WhatsApp browser is not configured. Set a valid browser path in WhatsApp settings.")
+# --- Playwright / Firefox session management -------------------------------
 
-    session_dir = Path(profile["session_dir"])
+def _ensure_playwright_driver() -> Any:
+    """Start (once) the Playwright driver process for this backend's lifetime."""
+    global _PLAYWRIGHT_DRIVER
+    if not _HAVE_PLAYWRIGHT:
+        raise RuntimeError("Playwright is not installed in the backend runtime.")
+    if _PLAYWRIGHT_DRIVER is None:
+        _PLAYWRIGHT_DRIVER = sync_playwright().start()
+    return _PLAYWRIGHT_DRIVER
+
+
+def _firefox_profile_dir(profile: dict[str, Any]) -> Path:
+    """Firefox gets its own clean subfolder, separate from any legacy Chrome
+    profile data that may still sit under session_dir (from before the switch
+    to Playwright) — mixing the two profile formats in one folder is fragile
+    and slows first-run bootstrap under antivirus file scanning."""
+    return Path(profile["session_dir"]) / "firefox_profile"
+
+
+# Skip network calls Firefox normally makes on first run (telemetry, remote
+# settings sync, update/experiment checks, new-tab content) — on a locked-down
+# network these can stall persistent-context startup for minutes and add
+# nothing for our use case. This is the standard automation preference set
+# (the same family geckodriver/mozprofile use for test profiles).
+_FIREFOX_USER_PREFS = {
+    "app.update.auto": False,
+    "app.update.enabled": False,
+    "app.normandy.enabled": False,
+    "app.normandy.api_url": "",
+    "datareporting.healthreport.uploadEnabled": False,
+    "datareporting.policy.dataSubmissionEnabled": False,
+    "datareporting.policy.dataSubmissionPolicyBypassNotification": True,
+    "toolkit.telemetry.enabled": False,
+    "toolkit.telemetry.unified": False,
+    "toolkit.telemetry.server": "",
+    "toolkit.telemetry.archive.enabled": False,
+    "toolkit.telemetry.reportingpolicy.firstRun": False,
+    "toolkit.telemetry.shutdownPingSender.enabled": False,
+    "services.settings.server": "",
+    "extensions.getAddons.cache.enabled": False,
+    "extensions.update.enabled": False,
+    "extensions.pocket.enabled": False,
+    "identity.fxaccounts.enabled": False,
+    "browser.aboutwelcome.enabled": False,
+    "browser.newtabpage.enabled": False,
+    "browser.newtabpage.activity-stream.feeds.telemetry": False,
+    "browser.newtabpage.activity-stream.feeds.snippets": False,
+    "browser.newtabpage.activity-stream.feeds.section.topstories": False,
+    "browser.newtabpage.activity-stream.showSponsored": False,
+    "browser.discovery.enabled": False,
+    "browser.ping-centre.telemetry": False,
+    "browser.shell.checkDefaultBrowser": False,
+    "browser.startup.homepage": "about:blank",
+    "browser.uitour.enabled": False,
+    "network.captive-portal-service.enabled": False,
+    "network.connectivity-service.enabled": False,
+    "network.prefetch-next": False,
+    "network.dns.disablePrefetch": True,
+}
+
+
+def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
+    """Launch a persistent Firefox context against a clean, dedicated profile
+    folder (separate from any legacy Chrome data).
+
+    Unlike headless Chrome (which crashed against a bloated, extension-laden
+    profile), Playwright's bundled Firefox runs headless directly on the same
+    profile used for a visible QR-login session — no mirror copy required.
+    """
+    driver = _ensure_playwright_driver()
+    session_dir = _firefox_profile_dir(profile)
     session_dir.mkdir(parents=True, exist_ok=True)
-    command = [
-        browser_command,
-        f"--user-data-dir={session_dir}",
-        "--new-window",
-        url,
-    ]
-    subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return {
-        "status": "launched",
-        "message": "WhatsApp Web opened with the selected profile.",
-        "mode": settings.get("delivery_mode", "manual_browser"),
-        "url": url,
-    }
-
-
-# The full headed login profile (extensions + GPU/component caches) crashes
-# headless Chrome ("DevToolsActivePort file doesn't exist"). WhatsApp's login
-# lives in IndexedDB / Local Storage, so we run headless against a clean mirror
-# that carries only the session data — it starts headless and stays logged in.
-_HEADLESS_KEEP_ROOT = ["Local State"]
-_HEADLESS_KEEP_DEFAULT = [
-    "Local Storage",
-    "IndexedDB",
-    "Session Storage",
-    "Service Worker",
-    "Preferences",
-    "Secure Preferences",
-    "shared_proto_db",
-    "WebStorage",
-    "blob_storage",
-    "databases",
-    "Network",
-]
-
-
-def _headless_dir(profile: dict[str, Any]) -> Path:
-    return PROFILES_DIR / f"{profile['profile_id']}__headless"
-
-
-def _copy_resilient(src: Path, dst: Path) -> None:
-    """Recursive copy that skips individual locked/missing files instead of
-    aborting the whole tree (the login profile may be open during a copy)."""
-    try:
-        if src.is_file():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            return
-        if src.is_dir():
-            dst.mkdir(parents=True, exist_ok=True)
-            for child in src.iterdir():
-                _copy_resilient(child, dst / child.name)
-    except Exception:
-        pass
-
-
-def _sync_headless_profile(profile: dict[str, Any]) -> Path:
-    """Build the lightweight, headless-capable mirror of the login profile."""
-    src_root = Path(profile["session_dir"])
-    dst_root = _headless_dir(profile)
-    (dst_root / "Default").mkdir(parents=True, exist_ok=True)
-    for name in _HEADLESS_KEEP_ROOT:
-        _copy_resilient(src_root / name, dst_root / name)
-    for name in _HEADLESS_KEEP_DEFAULT:
-        _copy_resilient(src_root / "Default" / name, dst_root / "Default" / name)
-    return dst_root
-
-
-def _prepare_headless_dir(profile: dict[str, Any]) -> Path:
-    """Return the headless mirror dir, adopting the login session on first use.
-    After a fresh QR login the mirror is wiped (see launch_qr) so it re-adopts."""
-    dst = _headless_dir(profile)
-    if not (dst / "Default" / "IndexedDB").exists():
-        _sync_headless_profile(profile)
-    return dst
-
-
-def _kill_profile_chrome(user_data_dir: str) -> None:
-    """Best-effort kill of any Chrome still holding this user-data-dir.
-
-    Only matches the exact (unique) mirror path, so it never touches the user's
-    normal browser or the visible QR-login window (a different directory)."""
-    if os.name != "nt" or not user_data_dir:
-        return
-    ps = (
-        "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
-        "Where-Object { $_.CommandLine -like '*" + str(user_data_dir) + "*' } | "
-        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    context = driver.firefox.launch_persistent_context(
+        user_data_dir=str(session_dir),
+        headless=headless,
+        viewport={"width": 1280, "height": 960} if headless else None,
+        args=["--width=1280", "--height=960"] if not headless else [],
+        firefox_user_prefs=_FIREFOX_USER_PREFS,
+        timeout=45000,
     )
-    try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            timeout=20,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(0.6)
-    except Exception:
-        pass
+    page = context.pages[0] if context.pages else context.new_page()
+    return context, page
 
 
-def _build_driver(profile: dict[str, Any], settings: dict[str, Any]):
-    if not _HAVE_SELENIUM:
-        raise RuntimeError("Selenium is not installed in the backend runtime.")
-    headless = bool(settings.get("headless", True))
-    user_data_dir = profile["session_dir"]
-    options = webdriver.ChromeOptions()
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    options.add_argument("--disable-dev-shm-usage")
-    if headless:
-        # Run against the clean mirror so the background session never shows a
-        # window and doesn't crash on the bloated headed profile.
-        user_data_dir = str(_prepare_headless_dir(profile))
-        # uvicorn --reload / a hard restart can orphan a headless Chrome that
-        # keeps this folder locked; a new launch then exits immediately
-        # ("Chrome instance exited"). Reap any leftover before launching.
-        _kill_profile_chrome(user_data_dir)
-        options.add_argument("--headless=new")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1280,960")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--remote-debugging-port=0")
-        options.add_argument("--profile-directory=Default")
-    options.add_argument(f"--user-data-dir={user_data_dir}")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    browser_command = settings.get("browser_command", "")
-    if browser_command and Path(browser_command).is_file():
-        options.binary_location = browser_command
-    return webdriver.Chrome(options=options)
-
-
-def _driver_alive(driver: Any) -> bool:
-    if driver is None:
+def _context_alive(entry: dict[str, Any] | None) -> bool:
+    if not entry:
         return False
     try:
-        _ = driver.current_url
+        _ = entry["page"].url
         return True
     except Exception:
         return False
 
 
-def _acquire_driver(profile: dict[str, Any], settings: dict[str, Any]):
-    """Return a persistent, logged-in headless driver for this profile.
+def _acquire_context(profile: dict[str, Any], settings: dict[str, Any], want_headless: bool) -> Any:
+    """Return a persistent, logged-in Firefox page for this profile.
 
-    The driver is created once and reused across sends so WhatsApp Web loads
-    and authenticates a single time. Subsequent messages navigate inside the
-    same background session — no new Chrome window, no fresh WhatsApp load.
+    The context is created once per (profile, headless-mode) and reused across
+    sends so WhatsApp Web loads and authenticates a single time. Subsequent
+    messages navigate inside the same session — no new window, no reload.
     Callers must hold ``_DRIVER_LOCK``.
     """
     profile_id = profile["profile_id"]
-    driver = _DRIVERS.get(profile_id)
-    if _driver_alive(driver):
-        return driver
-    if driver is not None:
+    entry = _CONTEXTS.get(profile_id)
+    if entry and entry["headless"] == want_headless and _context_alive(entry):
+        return entry["page"]
+    if entry is not None:
         try:
-            driver.quit()
+            entry["context"].close()
         except Exception:
             pass
-        _DRIVERS.pop(profile_id, None)
+        _CONTEXTS.pop(profile_id, None)
 
-    driver = _build_driver(profile, settings)
-    _DRIVERS[profile_id] = driver
-    # Warm the session up once so the WhatsApp Web SPA is loaded and the
-    # persisted login (from the profile dir) is restored before we send.
+    context, page = _build_context(profile, want_headless)
+    _CONTEXTS[profile_id] = {"context": context, "page": page, "headless": want_headless}
+
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     try:
-        driver.get("https://web.whatsapp.com/")
-        WebDriverWait(driver, wait_seconds).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
-        time.sleep(3)
+        page.goto("https://web.whatsapp.com/", timeout=wait_seconds * 1000)
+        page.wait_for_timeout(3000)
     except Exception:
         pass
-    return driver
+    return page
 
 
-def _shutdown_driver(profile_id: str) -> None:
-    """Close and forget the background driver for a profile (releases its
-    user-data-dir so a visible browser can reuse the same profile)."""
+def _shutdown_context(profile_id: str) -> None:
+    """Close and forget the live session for a profile (releases its profile
+    dir so a different mode/window can reuse it)."""
     with _DRIVER_LOCK:
-        driver = _DRIVERS.pop(profile_id, None)
-    if driver is not None:
+        entry = _CONTEXTS.pop(profile_id, None)
+    if entry is not None:
         try:
-            driver.quit()
+            entry["context"].close()
         except Exception:
             pass
 
 
 def shutdown_all_drivers() -> None:
     with _DRIVER_LOCK:
-        drivers = list(_DRIVERS.values())
-        _DRIVERS.clear()
-    for driver in drivers:
+        entries = list(_CONTEXTS.values())
+        _CONTEXTS.clear()
+    for entry in entries:
         try:
-            driver.quit()
+            entry["context"].close()
         except Exception:
             pass
+    global _PLAYWRIGHT_DRIVER
+    if _PLAYWRIGHT_DRIVER is not None:
+        try:
+            _PLAYWRIGHT_DRIVER.stop()
+        except Exception:
+            pass
+        _PLAYWRIGHT_DRIVER = None
 
 
 atexit.register(shutdown_all_drivers)
 
 
 # --- Robust WhatsApp Web automation helpers -------------------------------
-# WhatsApp Web changes its DOM often and headless is stricter about visibility,
-# so every interaction tries several selectors and falls back to a JS click /
-# Enter key. On failure we snapshot the page so the real cause is visible.
+# WhatsApp Web changes its DOM often, so every interaction tries several
+# selectors and falls back to a JS click. On failure we snapshot the page so
+# the real cause is visible (backend/storage/whatsapp/debug).
 
-_SEARCH_BOX_LOCATORS = [
-    (By.XPATH, "//input[@aria-label='Search or start a new chat']"),
-    (By.XPATH, "//div[@aria-label='Chat list']//input[@role='textbox']"),
-    (By.XPATH, "//div[@contenteditable='true'][@data-tab='3']"),
-    (By.XPATH, "//div[@role='textbox'][@contenteditable='true'][@aria-label]"),
+_SEARCH_BOX_SELECTORS = [
+    "xpath=//input[@aria-label='Search or start a new chat']",
+    "xpath=//div[@aria-label='Chat list']//input[@role='textbox']",
+    "xpath=//div[@contenteditable='true'][@data-tab='3']",
+    "xpath=//div[@role='textbox'][@contenteditable='true'][@aria-label]",
 ]
-_COMPOSER_LOCATORS = [
-    (By.XPATH, "//footer//div[@contenteditable='true'][@data-tab='10']"),
-    (By.XPATH, "//div[@contenteditable='true'][starts-with(@aria-label,'Type a message')]"),
-    (By.XPATH, "//footer//div[@contenteditable='true']"),
-    (By.XPATH, "(//div[@contenteditable='true'])[last()]"),
+_COMPOSER_SELECTORS = [
+    "xpath=//footer//div[@contenteditable='true'][@data-tab='10']",
+    "xpath=//div[@contenteditable='true'][starts-with(@aria-label,'Type a message')]",
+    "xpath=//footer//div[@contenteditable='true']",
+    "xpath=(//div[@contenteditable='true'])[last()]",
 ]
-_SEND_BUTTON_LOCATORS = [
-    (By.XPATH, "//button[@aria-label='Send']"),
-    (By.XPATH, "//span[@data-icon='send']"),
-    (By.XPATH, "//span[@data-icon='wds-ic-send-filled']"),
+_SEND_BUTTON_SELECTORS = [
+    "xpath=//button[@aria-label='Send']",
+    "xpath=//span[@data-icon='send']",
+    "xpath=//span[@data-icon='wds-ic-send-filled']",
+]
+_ATTACH_SELECTORS = [
+    "xpath=//button[@aria-label='Attach']",
+    "xpath=//span[@data-icon='plus-rounded']",
+    "xpath=//span[@data-icon='clip']",
+    "xpath=//button[@title='Attach']",
 ]
 
 
-def _capture_debug(driver, tag: str) -> str | None:
+def _capture_debug(page: Any, tag: str) -> str | None:
     """Save a screenshot + page source so a failed send is diagnosable."""
     try:
         DEBUG_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         base = DEBUG_DIR / f"{stamp}_{re.sub(r'[^a-zA-Z0-9._-]+', '_', tag)}"
         try:
-            driver.save_screenshot(str(base) + ".png")
+            page.screenshot(path=str(base) + ".png")
         except Exception:
             pass
         try:
-            (Path(str(base) + ".html")).write_text(driver.page_source or "", encoding="utf-8")
+            (Path(str(base) + ".html")).write_text(page.content() or "", encoding="utf-8")
         except Exception:
             pass
         try:
-            meta = {"url": driver.current_url, "title": driver.title, "logged_in": _is_logged_in(driver)}
+            meta = {"url": page.url, "title": page.title(), "logged_in": _is_logged_in(page)}
             (Path(str(base) + ".json")).write_text(json.dumps(meta, indent=2), encoding="utf-8")
         except Exception:
             pass
@@ -561,173 +490,147 @@ def _capture_debug(driver, tag: str) -> str | None:
         return None
 
 
-def _is_logged_in(driver) -> bool:
+def _is_logged_in(page: Any) -> bool:
     """True when the chat UI is present; False on the QR / landing screen."""
     try:
-        if driver.find_elements(By.XPATH, "//input[@aria-label='Search or start a new chat']"):
+        if page.locator("xpath=//input[@aria-label='Search or start a new chat']").count() > 0:
             return True
-        if driver.find_elements(By.XPATH, "//div[@contenteditable='true'][@data-tab='3']"):
+        if page.locator("xpath=//div[@id='pane-side']").count() > 0:
             return True
-        if driver.find_elements(By.XPATH, "//div[@id='pane-side']"):
-            return True
-        # QR canvas / linked-device landing => not logged in
-        if driver.find_elements(By.XPATH, "//canvas[@aria-label] | //div[@data-ref]"):
-            return False
     except Exception:
         return False
     return False
 
 
-def _first_element(driver, locators, timeout: int, clickable: bool = False):
-    """Return the first element that matches any locator within the timeout."""
-    end = time.time() + timeout
+def _first_locator(page: Any, selectors: list[str], timeout_seconds: int) -> Any:
+    """Return the first visible element that matches any selector within the timeout."""
+    end = time.time() + timeout_seconds
     last_error: Exception | None = None
     while time.time() < end:
-        for by, sel in locators:
+        for sel in selectors:
             try:
-                elements = driver.find_elements(by, sel)
-                for el in elements:
-                    try:
-                        if el.is_displayed() and (not clickable or el.is_enabled()):
-                            return el
-                    except Exception:
-                        continue
+                loc = page.locator(sel)
+                if loc.count() > 0:
+                    first = loc.first
+                    if first.is_visible():
+                        return first
             except Exception as exc:  # pragma: no cover - defensive
                 last_error = exc
-        time.sleep(0.5)
+        time.sleep(0.4)
     if last_error is not None:
         raise last_error
-    raise TimeoutError(f"None of the selectors matched: {[sel for _, sel in locators]}")
+    raise TimeoutError(f"None of the selectors matched: {selectors}")
 
 
-def _safe_click(driver, element) -> None:
-    """Click an element, scrolling it in view and falling back to a JS click."""
+def _safe_click(locator: Any) -> None:
+    """Click an element, falling back to a JS click if the normal click is blocked."""
     try:
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", element)
-    except Exception:
-        pass
-    try:
-        element.click()
+        locator.click(timeout=5000)
         return
     except Exception:
-        driver.execute_script("arguments[0].click();", element)
+        try:
+            locator.evaluate("el => el.click()")
+        except Exception:
+            raise
 
 
-def _ensure_logged_in(driver, settings: dict[str, Any]) -> None:
+def _ensure_logged_in(page: Any, settings: dict[str, Any]) -> None:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     end = time.time() + wait_seconds
     while time.time() < end:
-        if _is_logged_in(driver):
+        if _is_logged_in(page):
             return
         time.sleep(1)
     raise RuntimeError(
-        "WhatsApp Web is not logged in for this profile in the background session. "
+        "WhatsApp Web is not logged in for this profile. "
         "Open the profile and scan the QR code once (Launch WhatsApp), then retry."
     )
 
 
-def _type_and_send(driver, settings: dict[str, Any], message: str) -> None:
+def _type_and_send(page: Any, settings: dict[str, Any], message: str) -> None:
     """Focus the message composer, type the message and send with Enter."""
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
-    composer = _first_element(driver, _COMPOSER_LOCATORS, wait_seconds, clickable=True)
-    _safe_click(driver, composer)
-    time.sleep(0.5)
+    composer = _first_locator(page, _COMPOSER_SELECTORS, wait_seconds)
+    _safe_click(composer)
+    time.sleep(0.3)
     if message:
-        composer.send_keys(Keys.CONTROL, "a")
-        composer.send_keys(Keys.DELETE)
-        composer.send_keys(message)
-        time.sleep(0.5)
+        composer.press("Control+a")
+        composer.press("Delete")
+        composer.type(message, delay=8)
+        time.sleep(0.3)
     # Enter is the most reliable way to send and avoids send-button churn.
     try:
-        composer.send_keys(Keys.ENTER)
+        composer.press("Enter")
     except Exception:
-        try:
-            send = _first_element(driver, _SEND_BUTTON_LOCATORS, wait_seconds, clickable=True)
-            _safe_click(driver, send)
-        except Exception:
-            raise
+        send = _first_locator(page, _SEND_BUTTON_SELECTORS, wait_seconds)
+        _safe_click(send)
     time.sleep(2)
 
 
-def _open_target_chat(driver, target: dict[str, Any], settings: dict[str, Any], message: str = "") -> str:
+def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any], message: str = "") -> str:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
-    wait = WebDriverWait(driver, wait_seconds)
     if target["target_kind"] == "contact":
         phone = _sanitize_phone(target["target_ref"])
         if not phone:
             raise ValueError("Contact target requires a phone number.")
         url = _whatsapp_url(phone, message)
-        driver.get(url)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        _ensure_logged_in(driver, settings)
+        page.goto(url, timeout=wait_seconds * 1000)
+        _ensure_logged_in(page, settings)
         time.sleep(4)
         return url
 
-    driver.get("https://web.whatsapp.com/")
-    wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-    _ensure_logged_in(driver, settings)
+    if "web.whatsapp.com" not in (page.url or ""):
+        page.goto("https://web.whatsapp.com/", timeout=wait_seconds * 1000)
+    _ensure_logged_in(page, settings)
     label = target["target_name"] or target["target_ref"]
     query = target["target_ref"] or target["target_name"]
 
-    search = _first_element(driver, _SEARCH_BOX_LOCATORS, wait_seconds, clickable=True)
-    _safe_click(driver, search)
-    search.send_keys(Keys.CONTROL, "a")
-    search.send_keys(Keys.DELETE)
-    search.send_keys(query)
+    search = _first_locator(page, _SEARCH_BOX_SELECTORS, wait_seconds)
+    _safe_click(search)
+    search.press("Control+a")
+    search.press("Delete")
+    search.type(query, delay=15)
     time.sleep(2)
 
-    chat_locators = [
-        (By.XPATH, f"//span[@title={json.dumps(label)}]"),
-        (By.XPATH, f"//*[@title={json.dumps(label)}]"),
-        (By.XPATH, f"//span[contains(@title, {json.dumps(label)})]"),
+    chat_selectors = [
+        f"xpath=//span[@title={json.dumps(label)}]",
+        f"xpath=//*[@title={json.dumps(label)}]",
+        f"xpath=//span[contains(@title, {json.dumps(label)})]",
     ]
     try:
-        chat = _first_element(driver, chat_locators, wait_seconds, clickable=True)
+        chat = _first_locator(page, chat_selectors, wait_seconds)
     except Exception:
         raise ValueError(
             f"No WhatsApp chat named '{label}' was found for this account. "
             "Use the exact chat/group name as it appears in WhatsApp."
         )
-    _safe_click(driver, chat)
+    _safe_click(chat)
     time.sleep(2)
     return "https://web.whatsapp.com/"
 
 
-def _attach_file(driver, settings: dict[str, Any], attachment_path: str) -> None:
+def _attach_file(page: Any, settings: dict[str, Any], attachment_path: str) -> None:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
-    clip = _first_element(
-        driver,
-        [
-            (By.XPATH, "//button[@aria-label='Attach']"),
-            (By.XPATH, "//span[@data-icon='plus-rounded']"),
-            (By.XPATH, "//span[@data-icon='clip']"),
-            (By.XPATH, "//button[@title='Attach']"),
-        ],
-        wait_seconds,
-        clickable=True,
-    )
-    _safe_click(driver, clip)
-    file_input = _first_element(driver, [(By.XPATH, "//input[@type='file']")], wait_seconds)
-    file_input.send_keys(str(Path(attachment_path).resolve()))
+    clip = _first_locator(page, _ATTACH_SELECTORS, wait_seconds)
+    _safe_click(clip)
+    file_input = _first_locator(page, ["xpath=//input[@type='file']"], wait_seconds)
+    file_input.set_input_files(str(Path(attachment_path).resolve()))
     time.sleep(3)
 
 
-def _send_via_selenium(profile: dict[str, Any], settings: dict[str, Any], phone: str, message: str, attachment_path: str | None) -> dict[str, Any]:
-    mode = "headless" if bool(settings.get("headless", True)) else "selenium"
+def _send_via_playwright(profile: dict[str, Any], settings: dict[str, Any], phone: str, message: str, attachment_path: str | None) -> dict[str, Any]:
+    mode = "headless" if bool(settings.get("headless", True)) else "playwright"
     url = _whatsapp_url(phone, message)
     with _DRIVER_LOCK:
-        driver = _acquire_driver(profile, settings)
+        page = _acquire_context(profile, settings, bool(settings.get("headless", True)))
         wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
         try:
-            driver.get(url)
-            WebDriverWait(driver, wait_seconds).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            _ensure_logged_in(driver, settings)
+            page.goto(url, timeout=wait_seconds * 1000)
+            _ensure_logged_in(page, settings)
             time.sleep(4)
             if attachment_path:
-                _attach_file(driver, settings, attachment_path)
-            _type_and_send(driver, settings, message)
+                _attach_file(page, settings, attachment_path)
+            _type_and_send(page, settings, message)
             return {
                 "status": "sent",
                 "message": "Message sent in the background through WhatsApp automation.",
@@ -735,19 +638,19 @@ def _send_via_selenium(profile: dict[str, Any], settings: dict[str, Any], phone:
                 "url": url,
             }
         except Exception:
-            _capture_debug(driver, "send-text-fail")
+            _capture_debug(page, "send-text-fail")
             raise
 
 
-def _send_target_via_selenium(profile: dict[str, Any], target: dict[str, Any], settings: dict[str, Any], message: str, attachment_path: str | None) -> dict[str, Any]:
-    mode = "headless" if bool(settings.get("headless", True)) else "selenium"
+def _send_target_via_playwright(profile: dict[str, Any], target: dict[str, Any], settings: dict[str, Any], message: str, attachment_path: str | None) -> dict[str, Any]:
+    mode = "headless" if bool(settings.get("headless", True)) else "playwright"
     with _DRIVER_LOCK:
-        driver = _acquire_driver(profile, settings)
+        page = _acquire_context(profile, settings, bool(settings.get("headless", True)))
         try:
-            url = _open_target_chat(driver, target, settings, message)
+            url = _open_target_chat(page, target, settings, message)
             if attachment_path:
-                _attach_file(driver, settings, attachment_path)
-            _type_and_send(driver, settings, message)
+                _attach_file(page, settings, attachment_path)
+            _type_and_send(page, settings, message)
             return {
                 "status": "sent",
                 "message": f"Message sent to {target['target_name'] or target['target_ref']}.",
@@ -755,23 +658,27 @@ def _send_target_via_selenium(profile: dict[str, Any], target: dict[str, Any], s
                 "url": url,
             }
         except Exception:
-            _capture_debug(driver, f"send-target-{target.get('target_kind', 'x')}-fail")
+            _capture_debug(page, f"send-target-{target.get('target_kind', 'x')}-fail")
             raise
 
 
 def _scrape_target_messages(profile: dict[str, Any], target: dict[str, Any], settings: dict[str, Any], limit: int = 20) -> list[dict[str, Any]]:
-    if not _HAVE_SELENIUM:
-        raise RuntimeError("Selenium is not installed in the backend runtime.")
+    if not _HAVE_PLAYWRIGHT:
+        raise RuntimeError("Playwright is not installed in the backend runtime.")
     with _DRIVER_LOCK:
-        driver = _acquire_driver(profile, settings)
-        _open_target_chat(driver, target, settings)
-        message_nodes = driver.find_elements(By.XPATH, "//div[contains(@class,'message-')]")
+        page = _acquire_context(profile, settings, bool(settings.get("headless", True)))
+        _open_target_chat(page, target, settings)
+        message_nodes = page.locator("xpath=//div[contains(@class,'message-')]")
+        count = message_nodes.count()
         captured: list[dict[str, Any]] = []
-        for node in message_nodes[-limit:]:
+        start_idx = max(0, count - limit)
+        for i in range(start_idx, count):
+            node = message_nodes.nth(i)
             classes = (node.get_attribute("class") or "").lower()
             direction = "incoming" if "message-in" in classes else "outgoing"
-            text_nodes = node.find_elements(By.XPATH, ".//span[contains(@class,'selectable-text')]")
-            text = " ".join((part.text or "").strip() for part in text_nodes).strip()
+            text_nodes = node.locator("xpath=.//span[contains(@class,'selectable-text')]")
+            parts = [(text_nodes.nth(j).inner_text() or "").strip() for j in range(text_nodes.count())]
+            text = " ".join(parts).strip()
             if not text:
                 continue
             timestamp = node.get_attribute("data-pre-plain-text") or ""
@@ -816,7 +723,7 @@ def update_settings(browser_command: str, delivery_mode: str, launch_wait_second
         }
     )
     # Drop any live sessions so the new headless/visibility choice takes effect
-    # on the next send instead of reusing an old-mode browser.
+    # on the next send instead of reusing an old-mode session.
     shutdown_all_drivers()
     return {
         "settings": settings,
@@ -870,11 +777,10 @@ def delete_profile(profile_id: str) -> dict[str, Any]:
     remaining = [row for row in profiles if row["profile_id"] != profile_id]
     remaining_targets = [row for row in _load_targets() if row["profile_id"] != profile_id]
     remaining_messages = [row for row in _load_inbox() if row["profile_id"] != profile_id]
-    _shutdown_driver(profile_id)
+    _shutdown_context(profile_id)
     session_dir = Path(profile["session_dir"])
     if session_dir.exists():
         shutil.rmtree(session_dir, ignore_errors=True)
-    shutil.rmtree(_headless_dir(profile), ignore_errors=True)
     saved = _save_profiles(remaining)
     _save_targets(remaining_targets)
     _save_inbox(remaining_messages)
@@ -887,19 +793,30 @@ def delete_profile(profile_id: str) -> dict[str, Any]:
 
 
 def launch_qr(profile_id: str) -> dict[str, Any]:
+    """Open a visible Firefox window for QR login. Leaves it running so the
+    user can scan the code; subsequent headless sends reuse the same profile
+    dir once the headed window is closed (or explicitly relaunched)."""
     settings = _load_settings()
     profiles = _load_profiles()
     profile = _resolve_profile(profile_id, profiles)
-    # QR login needs a visible window sharing this profile's user-data-dir, so
-    # the background headless session must let go of it first.
-    _shutdown_driver(profile_id)
-    # Drop the headless mirror so the next send re-adopts the freshly-scanned
-    # login instead of an old (possibly logged-out) session.
-    shutil.rmtree(_headless_dir(profile), ignore_errors=True)
-    result = _launch_browser(profile, settings, "https://web.whatsapp.com/")
+    with _DRIVER_LOCK:
+        # A headed and a headless session can't share the same profile dir at
+        # once, so drop any live background session before opening the visible one.
+        _shutdown_context(profile_id)
+        page = _acquire_context(profile, settings, want_headless=False)
+        try:
+            if "web.whatsapp.com" not in (page.url or ""):
+                page.goto("https://web.whatsapp.com/", timeout=30000)
+        except Exception:
+            pass
     profile["last_used_at"] = _now_iso()
     _save_profiles(profiles)
-    return result
+    return {
+        "status": "launched",
+        "message": "A WhatsApp Web window was opened for this profile. Scan the QR code with your phone to log in.",
+        "mode": "playwright-visible",
+        "url": "https://web.whatsapp.com/",
+    }
 
 
 def _stage_attachment(file_name: str, content: bytes) -> str:
@@ -928,6 +845,25 @@ def _headless_failure(exc: Exception, staged_attachment: str | None = None, targ
     return result
 
 
+def _visible_open(profile: dict[str, Any], settings: dict[str, Any], url: str) -> dict[str, Any]:
+    """Open a visible Firefox window on this profile without auto-sending,
+    used for delivery_mode='manual_browser' and as a fallback after a failed
+    automated send when manual_fallback is enabled."""
+    with _DRIVER_LOCK:
+        _shutdown_context(profile["profile_id"])
+        page = _acquire_context(profile, settings, want_headless=False)
+        try:
+            page.goto(url, timeout=30000)
+        except Exception:
+            pass
+    return {
+        "status": "launched",
+        "message": "WhatsApp Web opened with the selected profile.",
+        "mode": "playwright-visible",
+        "url": url,
+    }
+
+
 def send_message(profile_id: str, phone: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
     profiles = _load_profiles()
     settings = _load_settings()
@@ -943,23 +879,22 @@ def send_message(profile_id: str, phone: str, message: str, attachment_name: str
     profile["last_used_at"] = _now_iso()
     _save_profiles(profiles)
 
-    if settings.get("delivery_mode") == "selenium" and _HAVE_SELENIUM:
+    if settings.get("delivery_mode") == "selenium" and _HAVE_PLAYWRIGHT:
         try:
-            return _send_via_selenium(profile, settings, phone_value, message, staged_attachment)
+            return _send_via_playwright(profile, settings, phone_value, message, staged_attachment)
         except Exception as exc:
             if not bool(settings.get("manual_fallback", False)):
                 return _headless_failure(exc, staged_attachment)
-            _shutdown_driver(profile["profile_id"])
-            fallback = _launch_browser(profile, settings, _whatsapp_url(phone_value, message))
+            fallback = _visible_open(profile, settings, _whatsapp_url(phone_value, message))
             fallback["status"] = "manual-fallback"
             fallback["message"] = (
-                f"Selenium send failed and WhatsApp Web was opened for manual send instead: {exc}"
+                f"Automated send failed and WhatsApp Web was opened for manual send instead: {exc}"
             )
             if staged_attachment:
                 fallback["attachment_path"] = staged_attachment
             return fallback
 
-    result = _launch_browser(profile, settings, _whatsapp_url(phone_value, message))
+    result = _visible_open(profile, settings, _whatsapp_url(phone_value, message))
     result["status"] = "manual"
     if staged_attachment:
         result["attachment_path"] = staged_attachment
@@ -1038,26 +973,25 @@ def send_target_message(target_id: str, message: str, attachment_name: str | Non
     profile["last_used_at"] = _now_iso()
     _save_profiles(profiles)
 
-    if settings.get("delivery_mode") == "selenium" and _HAVE_SELENIUM:
+    if settings.get("delivery_mode") == "selenium" and _HAVE_PLAYWRIGHT:
         try:
-            return _send_target_via_selenium(profile, target, settings, message, staged_attachment)
+            return _send_target_via_playwright(profile, target, settings, message, staged_attachment)
         except Exception as exc:
             if not bool(settings.get("manual_fallback", False)):
                 return _headless_failure(exc, staged_attachment, target["target_name"] or target["target_ref"])
-            _shutdown_driver(profile["profile_id"])
             fallback_url = "https://web.whatsapp.com/" if target["target_kind"] == "group" else _whatsapp_url(_sanitize_phone(target["target_ref"]), message)
-            fallback = _launch_browser(profile, settings, fallback_url)
+            fallback = _visible_open(profile, settings, fallback_url)
             fallback["status"] = "manual-fallback"
-            fallback["message"] = f"Selenium send failed. WhatsApp Web opened for manual send instead: {exc}"
+            fallback["message"] = f"Automated send failed. WhatsApp Web opened for manual send instead: {exc}"
             fallback["target_hint"] = target["target_name"] or target["target_ref"]
             if staged_attachment:
                 fallback["attachment_path"] = staged_attachment
             return fallback
 
     if target["target_kind"] == "contact":
-        result = _launch_browser(profile, settings, _whatsapp_url(_sanitize_phone(target["target_ref"]), message))
+        result = _visible_open(profile, settings, _whatsapp_url(_sanitize_phone(target["target_ref"]), message))
     else:
-        result = _launch_browser(profile, settings, "https://web.whatsapp.com/")
+        result = _visible_open(profile, settings, "https://web.whatsapp.com/")
         result["target_hint"] = target["target_name"] or target["target_ref"]
     result["status"] = "manual"
     result["message"] = (
@@ -1075,8 +1009,8 @@ def sync_target_messages(target_id: str, limit: int = 20) -> dict[str, Any]:
     target = _resolve_target(target_id)
     if not target["can_read"] or not target["is_active"]:
         raise ValueError("This WhatsApp target is not enabled for reading.")
-    if not (_HAVE_SELENIUM and _browser_ready(settings.get("browser_command", ""))):
-        raise RuntimeError("Incoming message sync requires Selenium plus a configured browser runtime.")
+    if not _HAVE_PLAYWRIGHT:
+        raise RuntimeError("Incoming message sync requires the Playwright runtime.")
     profile = _resolve_profile(target["profile_id"], profiles)
     messages = _scrape_target_messages(profile, target, settings, limit=max(1, min(limit, 100)))
     stored = _append_inbox_messages(messages)

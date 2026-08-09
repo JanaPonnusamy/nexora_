@@ -394,14 +394,14 @@ export default function SettingsPage() {
 
           <div className="settings-form">
             <label className="form-label">
-              Browser command
+              Browser command <small className="text-body-secondary">(unused — Playwright runs its own bundled Firefox)</small>
               <input className="form-control" value={whatsAppSettingsForm.browserCommand} onChange={(event) => setWhatsAppSettingsForm((current) => ({ ...current, browserCommand: event.target.value }))} disabled={whatsAppLoading || whatsAppSaving} />
             </label>
             <label className="form-label">
               Delivery mode
               <select className="form-select" value={whatsAppSettingsForm.deliveryMode} onChange={(event) => setWhatsAppSettingsForm((current) => ({ ...current, deliveryMode: event.target.value as 'manual_browser' | 'selenium' }))}>
                 <option value="manual_browser">Manual browser</option>
-                <option value="selenium">Selenium automation</option>
+                <option value="selenium">Automated (background)</option>
               </select>
             </label>
             <label className="form-label">
@@ -424,7 +424,7 @@ export default function SettingsPage() {
                     <StatusBadge ok={whatsAppData.capabilities.browser_detected} />
                   </div>
                   <p>Default profile: {defaultProfile?.profile_name || 'Not set'}</p>
-                  <small>Selenium available: {whatsAppData.capabilities.selenium_available ? 'Yes' : 'No'} | Read messages: {whatsAppData.capabilities.can_read_messages ? 'Yes' : 'No'}</small>
+                  <small>Automation engine ready: {whatsAppData.capabilities.selenium_available ? 'Yes' : 'No'} | Read messages: {whatsAppData.capabilities.can_read_messages ? 'Yes' : 'No'}</small>
                 </article>
               </div>
             )}
