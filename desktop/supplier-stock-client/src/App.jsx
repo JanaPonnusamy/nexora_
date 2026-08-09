@@ -1226,10 +1226,9 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   );
 }
 
-// A fixed, non-editable 2-day operational window: day-before-yesterday through
-// yesterday. Recomputed on every load (not a filter the user can change) so
-// today's still-being-modified bills never show and the daily approval queue
-// stays exactly "yesterday and the day before".
+// A fixed 2-day starting default: day-before-yesterday through yesterday
+// (still user-editable via the date pickers, unlike the earlier fixed-only
+// version — the daily approval queue starts here but can be widened).
 function nmwDefaultDateRange() {
   const fmt = (offsetDays) => {
     const d = new Date();
@@ -1243,10 +1242,35 @@ function nmwBillKey(bill) {
   return `${bill.bill_date}|${bill.bill_no}`;
 }
 
+function nmwCsvCell(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+const NMW_EXPORT_COLUMNS = [
+  'Bill No', 'Type', 'Bill Date', 'Destination Store', 'Customer Code', 'Bill Amount',
+  'Bill Status', 'Approved By', 'Approved At',
+  'Product Code', 'Product', 'Batch', 'Expiry', 'Qty', 'Free', 'MRP', 'Rate', 'Dis%', 'Item Amount'
+];
+
+function nmwExportRows(bill, lineItems) {
+  const base = [
+    bill.bill_no, bill.bill_type || (bill.is_transfer ? 'Transfer' : 'Sale'), bill.bill_date,
+    `${bill.dest_store_code || ''} ${bill.dest_store_name || ''}`.trim(), bill.customer_code,
+    bill.bill_amount, bill.status, bill.approved_by || '', bill.approved_at || ''
+  ];
+  if (!lineItems || lineItems.length === 0) return [[...base, '', '', '', '', '', '', '', '', '', '']];
+  return lineItems.map((row) => [
+    ...base,
+    row.product_code, row.product_name, row.batch_no, row.expiry_date,
+    row.qty, row.free_qty, row.mrp, row.rate, row.discount_percentage, row.amount
+  ]);
+}
+
 // NMW Sales Report (Bill-wise): warehouse -> store despatch bills, master/
 // detail layout. Left: compact bill list (checkbox = bulk-select for Approve
 // selected; row click = view that bill's items on the right). Right: the
 // active bill's header + line items; the first bill is auto-selected on load.
+// Cancelled bills are shown in red — viewable, but excluded from export.
 // A super admin (or other broad role) sees EVERY store, pending + approved,
 // and can approve + export. A store user is locked server-side to their own
 // store's approved bills only — enforced by the API, not by what this screen
@@ -1256,6 +1280,11 @@ function nmwBillKey(bill) {
 function NmwSalesReport({ session, settings }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
 
+  const [tenants, setTenants] = useState([]);
+  const [stores, setStores] = useState([]);
+  const [storeFilter, setStoreFilter] = useState('');
+  const [range, setRange] = useState(nmwDefaultDateRange);
+
   const [bills, setBills] = useState([]);
   const [status, setStatus] = useState({ state: 'loading', message: 'Loading bills...' });
   const [activeKey, setActiveKey] = useState(null);
@@ -1264,7 +1293,15 @@ function NmwSalesReport({ session, settings }) {
   const [selected, setSelected] = useState(new Set());
   const [canApprove, setCanApprove] = useState(false);
   const [isBroad, setIsBroad] = useState(false);
-  const [range, setRange] = useState(nmwDefaultDateRange);
+  const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    api.listTenants(session).then((rows) => setTenants(asArray(rows))).catch(() => {});
+  }, [session]);
+
+  useEffect(() => {
+    api.listStores(session).then((rows) => setStores(asArray(rows))).catch(() => {});
+  }, [session]);
 
   function loadItems(bill) {
     const key = nmwBillKey(bill);
@@ -1281,13 +1318,9 @@ function NmwSalesReport({ session, settings }) {
       setStatus({ state: 'idle', message: 'Waiting for device tenant/store configuration...' });
       return;
     }
-    const freshRange = nmwDefaultDateRange();
-    setRange(freshRange);
     setStatus({ state: 'loading', message: 'Loading bills...' });
     setSelected(new Set());
-    // No store_id: the server applies the correct scope on its own — every
-    // store for a broad login, only this device's store for a store user.
-    api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId: '', dateFrom: freshRange.dateFrom, dateTo: freshRange.dateTo })
+    api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId: storeFilter, dateFrom: range.dateFrom, dateTo: range.dateTo })
       .then((result) => {
         const rows = asArray(result?.bills);
         setBills(rows);
@@ -1312,7 +1345,8 @@ function NmwSalesReport({ session, settings }) {
     });
   }
 
-  const pending = bills.filter((b) => b.status !== 'approved');
+  // Cancelled bills stay viewable but are never bulk-selectable/exportable.
+  const pending = bills.filter((b) => b.status !== 'approved' && !b.is_cancelled);
   const allPendingSelected = pending.length > 0 && pending.every((b) => selected.has(nmwBillKey(b)));
 
   function toggleSelectAll() {
@@ -1336,19 +1370,62 @@ function NmwSalesReport({ session, settings }) {
       .catch((error) => setStatus({ state: 'error', message: error.message }));
   }
 
-  function exportCsv() {
-    const header = ['Bill No', 'Type', 'Bill Date', 'Destination Store', 'Customer Code', 'Amount', 'Status', 'Approved By', 'Approved At'];
-    const rows = bills.map((b) => [
-      b.bill_no, b.bill_type || (b.is_transfer ? 'Transfer' : 'Sale'), b.bill_date,
-      `${b.dest_store_code || ''} ${b.dest_store_name || ''}`.trim(), b.customer_code,
-      b.bill_amount, b.status, b.approved_by || '', b.approved_at || ''
-    ]);
-    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  // Fetches (and caches) items for every exportable bill, builds one CSV/XLSX
+  // row per line item (bill header columns repeated per line) so the export
+  // carries everything shown on screen, including Dis%. Cancelled bills are
+  // excluded entirely — viewable on screen, never exported.
+  async function collectExportRows() {
+    const exportable = bills.filter((b) => !b.is_cancelled);
+    const withItems = await Promise.all(exportable.map(async (bill) => {
+      const key = nmwBillKey(bill);
+      const cached = items[key];
+      if (cached) return { bill, lineItems: cached };
+      try {
+        const result = await api.getNmwSalesBillItems(bill.bill_no, bill.bill_date, session, { tenantId });
+        const lineItems = asArray(result?.items);
+        setItems((prev) => ({ ...prev, [key]: lineItems }));
+        return { bill, lineItems };
+      } catch {
+        return { bill, lineItems: [] };
+      }
+    }));
+    return withItems.flatMap(({ bill, lineItems }) => nmwExportRows(bill, lineItems));
+  }
+
+  async function exportAs(format) {
+    if (bills.length === 0 || exporting) return;
+    setExporting(true);
+    setStatus({ state: 'loading', message: `Preparing ${format.toUpperCase()} export...` });
+    try {
+      const rows = await collectExportRows();
+      const filename = `nmw-sales-report-${new Date().toISOString().slice(0, 10)}`;
+      if (format === 'csv') {
+        const csv = [NMW_EXPORT_COLUMNS, ...rows].map((r) => r.map(nmwCsvCell).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        downloadBlob(blob, `${filename}.csv`);
+      } else {
+        const XLSX = await import('xlsx');
+        const ws = XLSX.utils.aoa_to_sheet([NMW_EXPORT_COLUMNS, ...rows]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'NMW Sales');
+        const bookType = format === 'xls' ? 'biff8' : 'xlsx';
+        const ext = format === 'xls' ? 'xls' : 'xlsx';
+        const buffer = XLSX.write(wb, { bookType, type: 'array' });
+        downloadBlob(new Blob([buffer], { type: 'application/octet-stream' }), `${filename}.${ext}`);
+      }
+      setStatus({ state: 'ok', message: `Exported ${rows.length} row(s) (${format.toUpperCase()}).` });
+    } catch (error) {
+      setStatus({ state: 'error', message: error.message });
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `nmw-sales-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -1358,16 +1435,40 @@ function NmwSalesReport({ session, settings }) {
 
   return (
     <section className="screen-panel nmw-report-screen">
-      <div className="screen-panel-head">
-        <ScreenHeader
-          title="NMW Sales Report (Bill-wise)"
-          subtitle={`${isBroad ? 'All stores' : 'Your store'} · despatch bills from ${formatDate(range.dateFrom)} to ${formatDate(range.dateTo)}.`}
-        />
-        <button className="secondary-button" onClick={reload}>Refresh</button>
-      </div>
+      <div className="nmw-toolbar">
+        <strong className="nmw-toolbar-title">NMW Sales Report</strong>
 
-      <div className="action-row">
-        <label className="stock-only-filter">
+        <label className="nmw-toolbar-field">
+          Tenant
+          <select value={tenantId} disabled>
+            {tenants.length === 0 && <option value={tenantId}>{tenantId ? 'Current tenant' : 'Loading...'}</option>}
+            {tenants.map((t) => (
+              <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>
+            ))}
+          </select>
+        </label>
+
+        {isBroad && (
+          <label className="nmw-toolbar-field">
+            Store
+            <select value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)}>
+              <option value="">All stores</option>
+              {stores.map((s) => (
+                <option key={s.store_id} value={s.store_id}>{s.store_code} — {s.store_name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <label className="nmw-toolbar-field">
+          From
+          <input type="date" value={range.dateFrom} onChange={(event) => setRange((prev) => ({ ...prev, dateFrom: event.target.value }))} />
+        </label>
+        <label className="nmw-toolbar-field">
+          To
+          <input type="date" value={range.dateTo} onChange={(event) => setRange((prev) => ({ ...prev, dateTo: event.target.value }))} />
+        </label>
+        <label className="nmw-toolbar-field">
           Status
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
             <option value="all">All</option>
@@ -1376,15 +1477,19 @@ function NmwSalesReport({ session, settings }) {
           </select>
         </label>
 
+        <button className="secondary-button" onClick={reload}>Load</button>
+
         {canApprove && (
           <button className="primary-button" disabled={selected.size === 0} onClick={approveSelected}>
             Approve selected ({selected.size})
           </button>
         )}
 
-        <button className="secondary-button" disabled={bills.length === 0} onClick={exportCsv}>
-          Export CSV
-        </button>
+        <div className="nmw-export-group">
+          <button className="secondary-button" disabled={bills.length === 0 || exporting} onClick={() => exportAs('csv')}>CSV</button>
+          <button className="secondary-button" disabled={bills.length === 0 || exporting} onClick={() => exportAs('xlsx')}>XLSX</button>
+          <button className="secondary-button" disabled={bills.length === 0 || exporting} onClick={() => exportAs('xls')}>XLS 97-2003</button>
+        </div>
       </div>
 
       <div className={`status-line ${status.state}`}>{status.message}</div>
@@ -1415,12 +1520,12 @@ function NmwSalesReport({ session, settings }) {
                   return (
                     <tr
                       key={key}
-                      className={activeKey === key ? 'nmw-row-active' : ''}
+                      className={`${activeKey === key ? 'nmw-row-active' : ''} ${bill.is_cancelled ? 'nmw-row-cancelled' : ''}`}
                       onClick={() => loadItems(bill)}
                     >
                       {canApprove && (
                         <td onClick={(event) => event.stopPropagation()}>
-                          {!isApproved && (
+                          {!isApproved && !bill.is_cancelled && (
                             <input type="checkbox" checked={selected.has(key)} onChange={() => toggleSelect(bill)} />
                           )}
                         </td>
@@ -1430,7 +1535,7 @@ function NmwSalesReport({ session, settings }) {
                       <td>{formatDate(bill.bill_date)}</td>
                       {isBroad && <td>{bill.dest_store_code}</td>}
                       <td>{formatMoney(bill.bill_amount)}</td>
-                      <td>{isApproved ? 'Approved' : 'Pending'}</td>
+                      <td>{bill.is_cancelled ? 'Cancelled' : isApproved ? 'Approved' : 'Pending'}</td>
                     </tr>
                   );
                 })}
@@ -1444,15 +1549,15 @@ function NmwSalesReport({ session, settings }) {
             ) : (
               <>
                 <div className="nmw-bill-detail-head">
-                  <div>
+                  <div className={activeBill.is_cancelled ? 'nmw-row-cancelled' : ''}>
                     <strong>{activeBill.bill_no}</strong> · {activeBill.bill_type || (activeBill.is_transfer ? 'Transfer' : 'Sale')}
                     <span className="nmw-bill-detail-sub">
                       {formatDate(activeBill.bill_date)} · {activeBill.dest_store_code} — {activeBill.dest_store_name} · {formatMoney(activeBill.bill_amount)}
-                      {' · '}{activeBill.status === 'approved' ? 'Approved' : 'Pending'}
+                      {' · '}{activeBill.is_cancelled ? 'Cancelled' : activeBill.status === 'approved' ? 'Approved' : 'Pending'}
                       {activeBill.approved_by ? ` by ${activeBill.approved_by}` : ''}
                     </span>
                   </div>
-                  {canApprove && activeBill.status !== 'approved' && (
+                  {canApprove && !activeBill.is_cancelled && activeBill.status !== 'approved' && (
                     <button className="primary-button" onClick={() => approveOne(activeBill)}>Approve this bill</button>
                   )}
                 </div>
@@ -1979,7 +2084,9 @@ function StoreProductGrid({ products, hasSearched, selectedProductCode, onProduc
                 </span>
               </span>,
               <span className="product-cell-unit">{product.sale_unit || product.unitdescription || '-'}</span>,
-              <span className="product-cell-stock">{product.stock ?? 0}</span>
+              <span className={`product-cell-stock ${(Number(product.stock) || 0) > 0 ? 'product-cell-stock--available' : 'product-cell-stock--zero'}`}>
+                {product.stock ?? 0}
+              </span>
             ]}
             onClick={() => onProductSelect(product)}
           />

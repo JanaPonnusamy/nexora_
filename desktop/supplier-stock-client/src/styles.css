@@ -8,7 +8,11 @@
      (.store-data-row) and the NON MOVING panel (.non-moving-wrap) must
      always be exactly this tall, on purpose (see both rules' comments). */
   --store-row-height: 86px;
-  --warehouse-panel-height: 214px;
+  /* Was 214px - much taller than a single NMA row and the Non Moving panel,
+     leaving a large empty area under NMW's one product row. NMW is exactly
+     one store row, so it must match --store-row-height like every other
+     row and like .non-moving-wrap already does. */
+  --warehouse-panel-height: var(--store-row-height);
 }
 
 * {
@@ -3036,6 +3040,15 @@ th {
   font-weight: 700;
 }
 
+.product-cell-stock--available {
+  color: #15803d;
+  font-size: 17px;
+}
+
+.product-cell-stock--zero {
+  color: #dc2626;
+}
+
 .product-name-with-badge {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -3309,13 +3322,42 @@ th {
    items pane on the right. */
 .screen-panel.nmw-report-screen {
   max-width: 1560px;
+  gap: 12px;
 }
 
-.screen-panel-head {
+/* Single-row filter/action bar replaces the usual large title+subtitle
+   header block, so the whole toolbar (tenant/store/date/status/actions)
+   fits in the space that block used to waste. */
+.nmw-toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nmw-toolbar-title {
+  align-self: center;
+  margin-right: 4px;
+  color: #172033;
+  font-size: 18px;
+}
+
+.nmw-toolbar-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.nmw-toolbar-field select,
+.nmw-toolbar-field input {
+  min-height: 36px;
+  padding: 6px 8px;
+}
+
+.nmw-export-group {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
 }
 
 .nmw-split {
@@ -3325,14 +3367,11 @@ th {
   align-items: start;
 }
 
-.nmw-bill-list-pane {
-  max-height: 72vh;
-  overflow-y: auto;
-}
-
+.nmw-bill-list-pane,
 .nmw-bill-detail-pane {
-  max-height: 72vh;
+  max-height: 76vh;
   overflow-y: auto;
+  position: relative;
 }
 
 /* Reduced row height for a denser bill list / items grid than the app's
@@ -3341,6 +3380,15 @@ th {
 .nmw-compact-table td {
   padding: 5px 8px;
   font-size: 13px;
+}
+
+/* Column headers stay visible while the body rows scroll, in both panes. */
+.nmw-compact-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #ffffff;
+  box-shadow: 0 1px 0 #e7ecf4;
 }
 
 .nmw-bill-list-pane tbody tr {
@@ -3359,6 +3407,13 @@ th {
   background: #eaf1ff;
 }
 
+/* Cancelled bills stay visible (view-only) but are called out in red and
+   excluded from bulk-select/approve/export. */
+.nmw-row-cancelled,
+.nmw-row-cancelled td {
+  color: #be3434;
+}
+
 .nmw-bill-detail-head {
   display: flex;
   align-items: center;
@@ -3375,6 +3430,10 @@ th {
   color: #657186;
   font-size: 13px;
   font-weight: 600;
+}
+
+.nmw-bill-detail-head .nmw-row-cancelled .nmw-bill-detail-sub {
+  color: #be3434;
 }
 
 @media (max-width: 1200px) {
