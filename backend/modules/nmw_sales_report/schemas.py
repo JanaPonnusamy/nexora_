@@ -43,6 +43,8 @@ class NmwSalesBillItem(BaseModel):
     rate: float = 0
     discount_percentage: float = 0
     amount: float = 0
+    packing: Optional[str] = None
+    sublocation: Optional[str] = None
 
 
 class NmwSalesBillItemList(BaseModel):

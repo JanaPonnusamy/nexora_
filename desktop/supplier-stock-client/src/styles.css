@@ -3396,6 +3396,16 @@ th {
   position: relative;
 }
 
+/* Chromium renders a sticky <th> over collapsed borders incorrectly (the
+   scrolling row beneath bleeds through / duplicates around the sticky header)
+   when the table uses border-collapse:collapse, which the app's base `table`
+   rule sets globally. Switch this table to separate borders (with spacing 0
+   so it still looks collapsed) so sticky headers render cleanly. */
+.nmw-compact-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
 /* Reduced row height for a denser bill list / items grid than the app's
    default table padding (12px 10px). */
 .nmw-compact-table th,
@@ -3408,7 +3418,7 @@ th {
 .nmw-compact-table thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   background: #ffffff;
   box-shadow: 0 1px 0 #e7ecf4;
 }

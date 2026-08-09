@@ -1252,22 +1252,27 @@ function nmwCsvCell(value) {
 }
 
 const NMW_EXPORT_COLUMNS = [
-  'Bill No', 'Type', 'Bill Date', 'Destination Store', 'Customer Code', 'Bill Amount',
-  'Bill Status', 'Approved By', 'Approved At',
-  'Product Code', 'Product', 'Batch', 'Expiry', 'Qty', 'Free', 'MRP', 'Rate', 'Dis%', 'Item Amount'
+  'Inv No', 'Type', 'Inv Date', 'Customer Code', 'Inv Amount',
+  'Product Code', 'Product', 'Batch', 'Expiry', 'Qty', 'Free', 'MRP', 'Rate', 'Dis%',
+  'Packing', 'Sublocation', 'Amount'
 ];
+
+function nmwDis2(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+}
 
 function nmwExportRows(bill, lineItems) {
   const base = [
     bill.bill_no, bill.bill_type || (bill.is_transfer ? 'Transfer' : 'Sale'), bill.bill_date,
-    `${bill.dest_store_code || ''} ${bill.dest_store_name || ''}`.trim(), bill.customer_code,
-    bill.bill_amount, bill.status, bill.approved_by || '', bill.approved_at || ''
+    bill.customer_code, bill.bill_amount
   ];
-  if (!lineItems || lineItems.length === 0) return [[...base, '', '', '', '', '', '', '', '', '', '']];
+  if (!lineItems || lineItems.length === 0) return [[...base, '', '', '', '', '', '', '', '', '0.00', '', '', '']];
   return lineItems.map((row) => [
     ...base,
     row.product_code, row.product_name, row.batch_no, row.expiry_date,
-    row.qty, row.free_qty, row.mrp, row.rate, row.discount_percentage, row.amount
+    row.qty, row.free_qty, row.mrp, row.rate, nmwDis2(row.discount_percentage),
+    row.packing || '', row.sublocation || '', row.amount
   ]);
 }
 
@@ -1397,13 +1402,27 @@ function NmwSalesReport({ session, settings }) {
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         downloadBlob(blob, `${filename}.csv`);
       } else {
-        const XLSX = await import('xlsx');
-        const ws = XLSX.utils.aoa_to_sheet([NMW_EXPORT_COLUMNS, ...rows]);
+        // xlsx-js-style (not the plain SheetJS community build) is the
+        // dependency here specifically because it keeps cell .s style objects
+        // on write for both xlsx and legacy biff8 - the plain xlsx package
+        // silently drops all styling on write.
+        const XLSX = await import('xlsx-js-style');
+        const aoa = [NMW_EXPORT_COLUMNS, ...rows];
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const font = { name: 'Times New Roman', sz: 10 };
+        for (let r = 0; r < aoa.length; r += 1) {
+          for (let c = 0; c < NMW_EXPORT_COLUMNS.length; c += 1) {
+            const ref = XLSX.utils.encode_cell({ r, c });
+            const cell = ws[ref];
+            if (!cell) continue;
+            cell.s = { font: r === 0 ? { ...font, bold: true } : font };
+          }
+        }
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'NMW Sales');
         const bookType = format === 'xls' ? 'biff8' : 'xlsx';
         const ext = format === 'xls' ? 'xls' : 'xlsx';
-        const buffer = XLSX.write(wb, { bookType, type: 'array' });
+        const buffer = XLSX.write(wb, { bookType, type: 'array', cellStyles: true });
         downloadBlob(new Blob([buffer], { type: 'application/octet-stream' }), `${filename}.${ext}`);
       }
       setStatus({ state: 'ok', message: `Exported bill ${bill.bill_no} (${format.toUpperCase()}).` });

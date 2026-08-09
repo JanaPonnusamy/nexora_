@@ -89,6 +89,23 @@ def _ensure_schema(cursor):
         WHERE NOT EXISTS (
             SELECT 1 FROM sync.sync_column_mapping m
             WHERE m.table_name = 'SaleInformation' AND m.column_name = c.column_name);
+
+        -- Packing description for the item-export sheet (SubLocation is
+        -- already synced/used by stock_check_report; PackageInformation is not).
+        IF COL_LENGTH('sync.Products', 'PackageInformation') IS NULL
+            ALTER TABLE sync.Products ADD PackageInformation varchar(200) NULL;
+
+        IF EXISTS (SELECT 1 FROM sync.sync_column_mapping WHERE table_name = 'Products')
+           AND NOT EXISTS (
+               SELECT 1 FROM sync.sync_column_mapping
+               WHERE table_name = 'Products' AND column_name = 'PackageInformation')
+        INSERT INTO sync.sync_column_mapping
+            (mapping_id, sync_table_id, table_name, column_name, data_type,
+             is_selected, is_pk, is_hash, is_watermark, column_order, created_at)
+        SELECT NEWID(), MAX(sync_table_id), 'Products', 'PackageInformation', 'varchar',
+               1, 0, 0, 0, ISNULL(MAX(column_order), 0) + 1, GETDATE()
+        FROM sync.sync_column_mapping
+        WHERE table_name = 'Products';
         """
     )
     try:
@@ -243,6 +260,7 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        _ensure_schema(cursor)
         cursor.execute(
             """
             ;WITH bill_match AS (
@@ -275,7 +293,9 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
                          ELSE (psi.PurchasePrice - ISNULL(psi.Rate, 0)) / psi.PurchasePrice * 100
                     END, 2
                 ) AS discount_percentage,
-                ISNULL(psi.Transactionamount, 0)       AS amount
+                ISNULL(psi.Transactionamount, 0)       AS amount,
+                ISNULL(p.PackageInformation, '')       AS packing,
+                ISNULL(p.SubLocation, '')               AS sublocation
             FROM bill_match bm
             -- Join on the full bill number (Bnumber) rather than the retail
             -- SeriesName = LEFT(BNumber,1) heuristic: NMW dispatch bills use a
