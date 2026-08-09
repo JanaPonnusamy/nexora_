@@ -387,6 +387,30 @@ def _prepare_headless_dir(profile: dict[str, Any]) -> Path:
     return dst
 
 
+def _kill_profile_chrome(user_data_dir: str) -> None:
+    """Best-effort kill of any Chrome still holding this user-data-dir.
+
+    Only matches the exact (unique) mirror path, so it never touches the user's
+    normal browser or the visible QR-login window (a different directory)."""
+    if os.name != "nt" or not user_data_dir:
+        return
+    ps = (
+        "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+        "Where-Object { $_.CommandLine -like '*" + str(user_data_dir) + "*' } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            timeout=20,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.6)
+    except Exception:
+        pass
+
+
 def _build_driver(profile: dict[str, Any], settings: dict[str, Any]):
     if not _HAVE_SELENIUM:
         raise RuntimeError("Selenium is not installed in the backend runtime.")
@@ -400,6 +424,10 @@ def _build_driver(profile: dict[str, Any], settings: dict[str, Any]):
         # Run against the clean mirror so the background session never shows a
         # window and doesn't crash on the bloated headed profile.
         user_data_dir = str(_prepare_headless_dir(profile))
+        # uvicorn --reload / a hard restart can orphan a headless Chrome that
+        # keeps this folder locked; a new launch then exits immediately
+        # ("Chrome instance exited"). Reap any leftover before launching.
+        _kill_profile_chrome(user_data_dir)
         options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1280,960")
