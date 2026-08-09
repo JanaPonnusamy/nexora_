@@ -67,7 +67,7 @@ def match_receipts(assignment, receipts):
         r_supplier = r.get("supplier_code")
         if r_supplier is not None and r_supplier != assignment.get("supplier_code"):
             continue
-        total += r.get("received_qty") or 0
+        total += float(r.get("received_qty") or 0)
         grn_no = r.get("grn_no") or grn_no
         bill_no = r.get("supplier_bill_no") or bill_no
     return total, grn_no, bill_no
