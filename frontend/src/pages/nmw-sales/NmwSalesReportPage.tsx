@@ -178,17 +178,19 @@ export default function NmwSalesReportPage() {
           </select>
         </label>
 
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">Destination store</span>
-          <select className="form-select" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
-            <option value="">All stores</option>
-            {stores.map((s) => (
-              <option key={s.store_id} value={s.store_id}>
-                {s.store_code} — {s.store_name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {scope === 'all' && (
+          <label className="d-flex flex-column gap-1">
+            <span className="small text-muted">Destination store</span>
+            <select className="form-select" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+              <option value="">All stores</option>
+              {stores.map((s) => (
+                <option key={s.store_id} value={s.store_id}>
+                  {s.store_code} — {s.store_name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label className="d-flex flex-column gap-1">
           <span className="small text-muted">Status</span>
