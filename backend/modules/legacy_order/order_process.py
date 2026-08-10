@@ -22,6 +22,7 @@ stale variant. The inline query is the real rule engine and is the one ported.
 import datetime
 import os
 import re
+import threading
 import time
 
 import pyodbc
@@ -33,6 +34,15 @@ _SQL_DIR = os.path.join(os.path.dirname(__file__), "sql")
 _DEADLOCK_SQLSTATE = "40001"
 _DEADLOCK_RETRIES = 3
 _DEADLOCK_BACKOFF_SECONDS = 2
+
+# start_order_process (service.py) fires one thread per store, and every
+# store's InsertDataIntoDestination hits the SAME shared OrderManagement
+# table. Without an index, the backup INSERT...SELECT and the DELETE below
+# scan the whole table (not just this store's rows), so two stores' scans
+# overlap and SQL Server picks one as a deadlock victim (1205). Indexing
+# StoreName narrows the scans to seeks, but serializing this block in-process
+# removes the race entirely rather than just shrinking it.
+_write_lock = threading.Lock()
 
 # OrderManagement column mappings from InsertDataIntoDestination's SqlBulkCopy.
 # (source column in the query result -> OrderManagement column). OrderQty is
@@ -126,44 +136,48 @@ def insert_data_into_destination(columns, rows, store_name):
 
     # Multiple stores' one-click runs can land in this transaction at the same
     # time; all writes are scoped to StoreName so a deadlocked attempt is safe
-    # to redo from scratch rather than needing the whole job to fail.
-    for attempt in range(1, _DEADLOCK_RETRIES + 1):
-        with pyodbc.connect(database.central_connection_string(), timeout=30) as conn:
-            conn.timeout = 0
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    "INSERT INTO OrderManagementBackup "
-                    "SELECT * FROM OrderManagement WHERE StoreName = ?",
-                    store_name,
-                )
-                cur.execute("DELETE FROM OrderManagement WHERE StoreName = ?", store_name)
-
-                if payload:
-                    col_list = ", ".join(f"[{c}]" for c in dest_cols)
-                    placeholders = ", ".join("?" for _ in dest_cols)
-                    cur.fast_executemany = True
-                    cur.executemany(
-                        f"INSERT INTO OrderManagement ({col_list}) VALUES ({placeholders})",
-                        payload,
+    # to redo from scratch rather than needing the whole job to fail. The
+    # in-process lock below removes the concurrent-writer race for this app;
+    # the retry loop stays as a safety net for anything still writing to
+    # OrderManagement outside this process (e.g. the legacy desktop app).
+    with _write_lock:
+        for attempt in range(1, _DEADLOCK_RETRIES + 1):
+            with pyodbc.connect(database.central_connection_string(), timeout=30) as conn:
+                conn.timeout = 0
+                cur = conn.cursor()
+                try:
+                    cur.execute(
+                        "INSERT INTO OrderManagementBackup "
+                        "SELECT * FROM OrderManagement WHERE StoreName = ?",
+                        store_name,
                     )
-                    cur.fast_executemany = False
+                    cur.execute("DELETE FROM OrderManagement WHERE StoreName = ?", store_name)
 
-                cur.execute(
-                    "UPDATE OrderManagement SET OrderQty = 0, OrgOrderQty = 0, Status = 2, "
-                    "Remarks = 'Additional' "
-                    "WHERE StoreName = ? AND WantedType = 'Additional Row'",
-                    store_name,
-                )
-                conn.commit()
-                return len(payload)
-            except pyodbc.Error as exc:
-                conn.rollback()
-                sqlstate = exc.args[0] if exc.args else None
-                if sqlstate == _DEADLOCK_SQLSTATE and attempt < _DEADLOCK_RETRIES:
-                    time.sleep(_DEADLOCK_BACKOFF_SECONDS * attempt)
-                    continue
-                raise
+                    if payload:
+                        col_list = ", ".join(f"[{c}]" for c in dest_cols)
+                        placeholders = ", ".join("?" for _ in dest_cols)
+                        cur.fast_executemany = True
+                        cur.executemany(
+                            f"INSERT INTO OrderManagement ({col_list}) VALUES ({placeholders})",
+                            payload,
+                        )
+                        cur.fast_executemany = False
+
+                    cur.execute(
+                        "UPDATE OrderManagement SET OrderQty = 0, OrgOrderQty = 0, Status = 2, "
+                        "Remarks = 'Additional' "
+                        "WHERE StoreName = ? AND WantedType = 'Additional Row'",
+                        store_name,
+                    )
+                    conn.commit()
+                    return len(payload)
+                except pyodbc.Error as exc:
+                    conn.rollback()
+                    sqlstate = exc.args[0] if exc.args else None
+                    if sqlstate == _DEADLOCK_SQLSTATE and attempt < _DEADLOCK_RETRIES:
+                        time.sleep(_DEADLOCK_BACKOFF_SECONDS * attempt)
+                        continue
+                    raise
 
 
 def update_order_header_details(source_cs, store_name, min_days, max_days):

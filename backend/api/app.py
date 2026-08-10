@@ -62,6 +62,9 @@ from modules.stock_availability.router import (
 from modules.stock_check_report.router import (
     router as stock_check_report_router
 )
+from modules.label_exporter.router import (
+    router as label_exporter_router
+)
 from modules.nmw_sales_report.router import (
     router as nmw_sales_report_router
 )
@@ -112,11 +115,16 @@ app = FastAPI(title='NEXORA API')
 #
 # For a whole subnet (any LAN host) set a pattern instead, e.g.
 #   UNINEX_CORS_ORIGIN_REGEX=http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?
+# "null" is always included: a packaged Electron app (e.g. supplier-stock-client)
+# loads its UI via file://, and Chromium sends "Origin: null" on every fetch from
+# a file:// page. Auth is still enforced per-request via JWT bearer token
+# regardless of origin, so allowing it here only affects which origins the
+# browser lets read the response.
 _cors_env = os.getenv('UNINEX_CORS_ORIGINS')
 _allowed_origins = (
-    [o.strip() for o in _cors_env.split(',') if o.strip()]
+    [o.strip() for o in _cors_env.split(',') if o.strip()] + ['null']
     if _cors_env else
-    ['http://localhost:5173', 'http://127.0.0.1:5173']
+    ['http://localhost:5173', 'http://127.0.0.1:5173', 'null']
 )
 _cors_regex = os.getenv('UNINEX_CORS_ORIGIN_REGEX') or r'http://(localhost|127\.0\.0\.1)(:\d+)?'
 _cors_regex_compiled = re.compile(_cors_regex)
@@ -242,6 +250,7 @@ app.include_router(sync_agent_router)
 app.include_router(sync_shared_table_router)
 app.include_router(stock_availability_router)
 app.include_router(stock_check_report_router)
+app.include_router(label_exporter_router)
 app.include_router(nmw_sales_report_router)
 app.include_router(stock_integrity_router)
 app.include_router(supplier_stock_analysis_router)
