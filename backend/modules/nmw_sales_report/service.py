@@ -17,12 +17,17 @@ def is_super_admin(user):
 
 
 def can_view_all(user):
-    """Broad viewers see every destination store and pending bills: super admins,
-    admin/manager roles, and purchase-manager users."""
-    if is_super_admin(user):
-        return True
-    broad = ("admin", "manager", "purchase", "owner")
-    return any(any(token in name for token in broad) for name in _role_names(user))
+    """Only a genuine super admin / platform user sees every destination store.
+
+    A role NAME containing "purchase"/"manager"/"admin" is NOT itself a signal
+    for cross-store access: this deployment has store-scoped roles that share
+    the exact same role_name as a would-be network-wide one (e.g. a
+    'PURCHASE_MANAGER' bound to only NMA must see only NMA, even though
+    another 'PURCHASE_MANAGER' login might be bound elsewhere) - the store
+    binding in dbo.user_store_roles is what actually determines scope, not the
+    role label. This mirrors dependencies.store_scope.has_unrestricted_scope
+    used elsewhere in the platform for the same reason."""
+    return is_super_admin(user)
 
 
 def list_bills(user, tenant_id, store_id, status, date_from, date_to):

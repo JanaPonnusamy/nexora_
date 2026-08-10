@@ -94,6 +94,7 @@ TotalStockPerProduct AS (
 SELECT
     p.ProductCode,
     p.ProductName,
+    p.SubLocation,
     tsp.TotalStock AS stock,
     ROUND(
         CASE
@@ -129,6 +130,7 @@ def branch_stock(store):
                 "name": r.ProductName,
                 "stock": float(r.stock or 0),
                 "disc_percent": float(r.ProductDiscPercent or 0),
+                "rack": (r.SubLocation or "").strip() or None,
             }
             for r in cur.fetchall()
         ]
@@ -143,6 +145,19 @@ def replace_supplier_stock(target_store_name, supplier_code, rows):
     exactly like any other supplier upload."""
     with database.get_central_connection() as conn:
         cur = conn.cursor()
+        # This replace is a delete+reinsert, so a row's previous Rack would
+        # otherwise be lost outright whenever the source has no SubLocation
+        # for that cycle. Carry the last known Rack forward per product so a
+        # blank source value doesn't wipe a rack that was already on file.
+        existing_racks = {
+            str(r.supplierproductcode): r.Rack
+            for r in cur.execute(
+                "SELECT supplierproductcode, Rack FROM SupplierStock "
+                "WHERE storename = ? AND suppliercode = ?",
+                (target_store_name, supplier_code),
+            ).fetchall()
+            if r.Rack
+        }
         cur.execute(
             "DELETE FROM SupplierStock WHERE storename = ? AND suppliercode = ?",
             (target_store_name, supplier_code),
@@ -152,11 +167,12 @@ def replace_supplier_stock(target_store_name, supplier_code, rows):
             cur.executemany(
                 "INSERT INTO SupplierStock "
                 "(suppliercode, supplierproductcode, supplierproductname, mrp, ptr, "
-                "stock, discound, packing, storename, sch, free, transactiondate, minqty) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?)",
+                "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)",
                 [
                     (supplier_code, r["code"], r["name"], None, None,
-                     r["stock"], str(r["disc_percent"]), None, target_store_name, 0, 0, None)
+                     r["stock"], str(r["disc_percent"]), None, target_store_name, 0, 0, None,
+                     r.get("rack") or existing_racks.get(str(r["code"])))
                     for r in rows
                 ],
             )
@@ -398,20 +414,33 @@ def previous_orders(store_name):
 
 
 def compare_previous_order(store_name, order_id):
-    """Port Form1.CompareOrderManagement's three comparison rules atomically."""
+    """Port Form1.CompareOrderManagement's comparison rules atomically."""
     remarks = f"Compare Order with {order_id}"
     sql = """
+    -- Rule 1: backup item was fully assigned (status=1) -> carry supplier + ordered
+    -- qty forward and mark the current record processed.
     UPDATE om SET om.OrQty = omb.OrQty, om.OrSupplier = omb.OrSupplier,
         om.Status = 2, om.Remarks = ?
     FROM OrderManagement om INNER JOIN OrderManagementBackup omb
         ON om.ProductCode = omb.ProductCode AND om.StoreName = omb.StoreName
     WHERE omb.OrderId = ? AND omb.Status = 1 AND omb.OrSupplier IS NOT NULL
         AND omb.OrQty IS NOT NULL AND om.StoreName = ?;
+    -- Rule 2: backup item still open (status=0) but a supplier and qty were chosen
+    -- -> mark the current record processed (do not copy supplier/qty).
     UPDATE om SET om.Status = 2, om.Remarks = ?
     FROM OrderManagement om INNER JOIN OrderManagementBackup omb
         ON om.ProductCode = omb.ProductCode AND om.StoreName = omb.StoreName
     WHERE omb.OrderId = ? AND omb.Status = 0 AND om.StoreName = ?
-        AND ((omb.OrSupplier IS NOT NULL AND omb.OrQty IS NOT NULL) OR omb.OrderQty = 0);
+        AND omb.OrSupplier IS NOT NULL AND omb.OrQty IS NOT NULL;
+    -- Rule 3: user manually reviewed the item (qtycheck=1) and intentionally set
+    -- OrderQty to 0. Item is considered processed: mark status=2 and the comparison
+    -- remark only. Do NOT copy supplier, do NOT copy ordered qty, do NOT recalc demand.
+    UPDATE om SET om.Status = 2, om.Remarks = ?
+    FROM OrderManagement om INNER JOIN OrderManagementBackup omb
+        ON om.ProductCode = omb.ProductCode AND om.StoreName = omb.StoreName
+    WHERE omb.OrderId = ? AND omb.Status = 0 AND omb.QtyCheck = 1
+        AND omb.OrderQty = 0 AND omb.Remarks IS NOT NULL AND om.StoreName = ?;
+    -- Rule 4: stock sold since the backup -> reduce the outstanding qty and reopen.
     UPDATE om SET om.OrderQty = (om.OrgOrderQty - omb.OrQty), om.Status = 0,
         om.Remarks = 'After Order Sold', om.WantedType = 'After Order Sold'
     FROM OrderManagement om INNER JOIN OrderManagementBackup omb
@@ -422,7 +451,13 @@ def compare_previous_order(store_name, order_id):
     with database.get_central_connection() as conn:
         cur = conn.cursor()
         try:
-            cur.execute(sql, remarks, order_id, store_name, remarks, order_id, store_name, order_id, store_name)
+            cur.execute(
+                sql,
+                remarks, order_id, store_name,
+                remarks, order_id, store_name,
+                remarks, order_id, store_name,
+                order_id, store_name,
+            )
             affected = 0
             while True:
                 if cur.rowcount > 0:
