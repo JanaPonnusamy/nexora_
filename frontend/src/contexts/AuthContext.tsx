@@ -11,6 +11,8 @@ interface MeResponse {
   username: string
   first_name: string
   tenant_id: string | null
+  is_platform_user: boolean
+  roles: { role_name: string; store_id: string; store_code: string }[]
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -44,7 +46,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .get<MeResponse>('/api/auth/me')
       .then((me) => {
         if (!live) return
-        setUser({ id: me.user_id, username: me.username, fullName: me.first_name, tenant: me.tenant_id ?? '' })
+        const primaryRole = me.roles?.[0]
+        setUser({
+          id: me.user_id,
+          username: me.username,
+          fullName: me.first_name,
+          tenant: me.tenant_id ?? '',
+          isPlatformUser: me.is_platform_user,
+          roleNames: (me.roles ?? []).map((r) => r.role_name),
+          storeId: primaryRole?.store_id ?? '',
+          storeCode: primaryRole?.store_code ?? '',
+        })
       })
       .catch(() => {
         if (live) logout()

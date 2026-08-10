@@ -26,12 +26,15 @@ def login(req: LoginRequest):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid Username Or Password")
 
+    primary_role = user["roles"][0] if user["roles"] else {}
     token = create_access_token({
         "sub": user["user_id"],
         "username": user["username"],
         "tenant_id": user["tenant_id"],
         "is_platform_user": user["is_platform_user"],
         "role_names": [r["role_name"] for r in user["roles"]],
+        "store_id": primary_role.get("store_id"),
+        "store_code": primary_role.get("store_code"),
     })
 
     return {"token": token, "token_type": "bearer", "user": user}

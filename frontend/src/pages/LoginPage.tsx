@@ -39,11 +39,16 @@ export default function LoginPage() {
     setSubmitting(true)
     try {
       const res = await api.post<LoginResponse>('/api/auth/login', { username, password })
+      const primaryRole = res.user.roles?.[0]
       login(res.token, {
         id: res.user.user_id,
         username: res.user.username,
         fullName: res.user.first_name,
         tenant: res.user.tenant_id ?? '',
+        isPlatformUser: res.user.is_platform_user,
+        roleNames: res.user.roles.map((r) => r.role_name),
+        storeId: primaryRole?.store_id ?? '',
+        storeCode: primaryRole?.store_code ?? '',
       })
       navigate('/', { replace: true })
     } catch (err) {

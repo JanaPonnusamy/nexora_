@@ -3,6 +3,10 @@ export interface AuthUser {
   username: string
   fullName: string
   tenant: string
+  isPlatformUser: boolean
+  roleNames: string[]
+  storeId: string
+  storeCode: string
 }
 
 export interface AuthContextValue {

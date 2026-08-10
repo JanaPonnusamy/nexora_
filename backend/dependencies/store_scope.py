@@ -72,3 +72,21 @@ def assert_store_access(user: dict, tenant_id, store_id=None) -> None:
     checked - see module docstring for why store-level access isn't
     restricted within a user's own tenant."""
     assert_tenant_access(user, tenant_id)
+
+
+def assert_label_exporter_store_access(user: dict, tenant_id, store_id) -> None:
+    """Label Exporter is a per-store printing workflow (labels physically go
+    on that store's shelves), not a lookup tool - so unlike assert_store_access
+    it IS store-level, not just tenant-level. Only NMW (the warehouse, which
+    prints for every store) and super admin/platform users may pick a store
+    other than their own; everyone else is locked to their own store_id, which
+    comes from the JWT's primary-role store_id/store_code (see
+    controllers.auth_controller.login)."""
+    assert_tenant_access(user, tenant_id)
+    if has_unrestricted_scope(user):
+        return
+    if str(user.get("store_code") or "").strip().upper() == "NMW":
+        return
+    if str(user.get("store_id") or "") == str(store_id or ""):
+        return
+    raise HTTPException(status_code=403, detail="You do not have access to this store.")
