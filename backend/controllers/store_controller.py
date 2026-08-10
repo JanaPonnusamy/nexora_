@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from services.store_service import StoreService
 from dtos.store_request import StoreRequest, StoreStatusRequest
 from dependencies.auth import get_current_user_optional
-from dependencies.store_scope import has_unrestricted_scope, user_store_ids
+from dependencies.store_scope import has_unrestricted_scope
 
 router = APIRouter(
     prefix="/api/stores",
@@ -41,14 +41,13 @@ def get_stores(current_user: dict | None = Depends(get_current_user_optional)):
     if has_unrestricted_scope(current_user):
         return stores
 
-    # Non-broad users (purchase manager, salesman, any store-scoped role) only
-    # see their own tenant, further narrowed to the store(s) they're assigned
-    # in dbo.user_store_roles - one purchase manager/salesman per store, never
-    # another store's (or another tenant's) data. Previously every store
-    # across every tenant was returned to any authenticated user.
+    # Non-broad users (purchase manager, salesman, any tenant-scoped role) only
+    # see their own tenant's stores - Stock Availability is a network-wide
+    # stock lookup, so any store within their own tenant is fair game, just
+    # never another tenant's. Previously every store across every tenant was
+    # returned to any authenticated user.
     own_tenant_id = str(current_user.get("tenant_id") or "")
-    allowed = set(user_store_ids(current_user.get("sub")))
-    return [s for s in stores if s["tenant_id"] == own_tenant_id and s["store_id"] in allowed]
+    return [s for s in stores if s["tenant_id"] == own_tenant_id]
 
 
 @router.get("/tenant/{tenant_id}")
@@ -70,11 +69,10 @@ def get_by_tenant(tenant_id: str, current_user: dict | None = Depends(get_curren
         for r in rows
     ]
 
-    if has_unrestricted_scope(current_user):
-        return stores
-
-    allowed = set(user_store_ids(current_user.get("sub")))
-    return [s for s in stores if s["store_id"] in allowed]
+    # The tenant check above already rejected any tenant_id that isn't this
+    # user's own (or let a super admin/platform user through), so every
+    # store this query returns is already in-scope.
+    return stores
 
 
 @router.get("/{store_id}/agent-config")

@@ -8,7 +8,7 @@ through to their procedures.
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from dependencies.store_scope import assert_store_access, scoped_store_ids
+from dependencies.store_scope import assert_store_access, assert_tenant_access
 from modules.stock_availability import repository
 
 
@@ -21,19 +21,12 @@ def _to_number(value):
         return 0
 
 
-def _group_by_store(rows, allowed_store_ids=None):
-    """Collapse flat product rows into per-branch cards + summary tiles.
-
-    allowed_store_ids=None means unrestricted (super admin/platform user);
-    otherwise rows for any other store are dropped before grouping - a
-    purchase manager/salesman only sees the store(s) they're assigned.
-    """
+def _group_by_store(rows):
+    """Collapse flat product rows into per-branch cards + summary tiles."""
     stores = {}
     order = []
     for row in rows:
         store_id = str(row.get("store_id")) if row.get("store_id") is not None else ""
-        if allowed_store_ids is not None and store_id not in allowed_store_ids:
-            continue
         if store_id not in stores:
             stores[store_id] = {
                 "store_id": store_id,
@@ -75,20 +68,20 @@ def _group_by_store(rows, allowed_store_ids=None):
 
 
 def search_products(user, tenant_id, query, only_stock):
-    allowed = scoped_store_ids(user, tenant_id)
+    assert_tenant_access(user, tenant_id)
     rows = repository.search_products(tenant_id, query or None, 1 if only_stock else 0)
-    return _group_by_store(rows, allowed)
+    return _group_by_store(rows)
 
 
 def search_batches(user, tenant_id, batch_no, mrp, product_name):
-    allowed = scoped_store_ids(user, tenant_id)
+    assert_tenant_access(user, tenant_id)
     rows = repository.search_batches(
         tenant_id,
         batch_no or None,
         mrp if mrp not in ("", None) else None,
         product_name or None,
     )
-    return _group_by_store(rows, allowed)
+    return _group_by_store(rows)
 
 
 def product_details(user, tenant_id, store_id, product_code):
@@ -102,15 +95,13 @@ def product_core(user, tenant_id, store_id, product_code, months=3):
 
 
 def product_core_bulk(user, tenant_id, items, months=3):
-    allowed = scoped_store_ids(user, tenant_id)
+    assert_tenant_access(user, tenant_id)
     unique_items = []
     seen = set()
     for item in items or []:
         store_id = str(item.get("store_id") or "").strip()
         product_code = str(item.get("product_code") or "").strip()
         if not store_id or not product_code:
-            continue
-        if allowed is not None and store_id not in allowed:
             continue
         key = (store_id, product_code)
         if key in seen:

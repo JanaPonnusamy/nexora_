@@ -45,6 +45,16 @@ function isSalesmanOnly(session) {
   return roleNames.every((name) => name.includes('salesman') || name.includes('sales man'));
 }
 
+// Mirrors backend dependencies.store_scope.is_supplier_analysis_blocked:
+// Supplier Stock Analysis is admin-tier only - a login whose roles are ALL
+// purchase-manager and/or salesman must not see the tab at all.
+function isSupplierAnalysisBlocked(session) {
+  const roles = session?.user?.roles || [];
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase());
+  if (!roleNames.length) return false;
+  return roleNames.every((name) => name.includes('purchase') || name.includes('salesman') || name.includes('sales man'));
+}
+
 function isSuperAdmin(session) {
   // Mirrors backend dependencies.auth.has_full_access: a platform user (no
   // store-scoped role at all, e.g. superadmin with tenant_id=NULL) is always
@@ -155,11 +165,12 @@ function AppShell() {
 
   const navItems = useMemo(() => {
     const modules = userModules(session?.user);
-    // Supplier Stock Analysis is a purchasing/admin tool - a salesman-only
-    // login must not see the tab at all (the API also 403s it server-side,
-    // this just keeps the nav honest). Checked before the module-grant
-    // early-return below so it also applies to logins with no module list.
-    const base = isSalesmanOnly(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
+    // Supplier Stock Analysis is admin-tier only - a purchase-manager-only or
+    // salesman-only login must not see the tab at all (the API also 403s it
+    // server-side, this just keeps the nav honest). Checked before the
+    // module-grant early-return below so it also applies to logins with no
+    // module list.
+    const base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
     if (!modules.length) return base;
     // 'settings' and 'nmw_sales' are always available: the NMW Sales Report is
     // scoped server-side (store users see only their own approved bills), so it
