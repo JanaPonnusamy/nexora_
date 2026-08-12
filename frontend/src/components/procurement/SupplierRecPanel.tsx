@@ -1,17 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
-import type { DrawerTab } from './DetailColumn'
-import { money, num } from '../stock/format'
-import { supplierAbbrev } from './supplierAbbrev'
-import { preferredSupplier, SUPPLIER_REC_LIMIT } from './purchaseValue'
-
-// Whole days since a date (for "90 Days" style relative Last Purchase labels).
-function daysSince(d?: string | null): number | null {
-  if (!d) return null
-  const t = Date.parse(d)
-  if (Number.isNaN(t)) return null
-  return Math.max(0, Math.round((Date.now() - t) / 86_400_000))
-}
+import { date, money, num } from '../stock/format'
+import { costMarginPercent, marginPercent, preferredSupplier, SUPPLIER_REC_LIMIT } from './purchaseValue'
 
 // A mouse click on a card (plain <div>, no tabIndex) never claims DOM focus —
 // document.activeElement falls back to <body>, which is not a descendant of
@@ -52,6 +42,7 @@ function costBands(suppliers: SupplierRow[]): Record<string, string> {
 export function SupplierRecPanel({
   item,
   suppliers,
+  loading = false,
   selectedCode,
   assignedCode,
   assignedName,
@@ -59,10 +50,11 @@ export function SupplierRecPanel({
   active,
   onSelect,
   onCommit,
-  onOpenInfo,
+  onRemoveAssignment,
 }: {
   item: WorkspaceItem | null
   suppliers: SupplierRow[]
+  loading?: boolean
   selectedCode?: string | null
   assignedCode?: string | null
   /** Display name of the supplier holding the current assignment (if any) —
@@ -72,7 +64,9 @@ export function SupplierRecPanel({
   active?: boolean
   onSelect?: (supplierCode: string) => void
   onCommit?: (item: WorkspaceItem, supplierCode: string) => void
-  onOpenInfo?: (item: WorkspaceItem, tab?: DrawerTab) => void
+  /** Unassign the current supplier from this product (reverts to review/draft).
+   *  Rendered only on the assigned card, not every card. */
+  onRemoveAssignment?: () => void
 }) {
   const recommendedQty = item ? item.remaining_qty ?? item.final_qty ?? 0 : 0
   const canAssign = Boolean(item) && item!.item_status !== 'skipped' && recommendedQty > 0
@@ -88,7 +82,12 @@ export function SupplierRecPanel({
   return (
     <div className={`pm-srp${active ? ' pm-srp--active' : ''}`}>
       <div className="pm-srp__title"><i className="bi bi-people" /> Supplier Recommendation</div>
-      {!item ? (
+      {!loading && item && suppliers.length > 0 && (
+        <div className="pm-srp__ranking-note">Ranked by recent purchase, frequency &amp; price</div>
+      )}
+      {loading ? (
+        <div className="pm-srp__hint">Loading supplier recommendations...</div>
+      ) : !item ? (
         <div className="pm-srp__hint">Select a product.</div>
       ) : suppliers.length === 0 ? (
         <div className="pm-srp__hint">No purchase history for this product.</div>
@@ -96,20 +95,33 @@ export function SupplierRecPanel({
         <div className="pm-srp__list">
           {(() => {
             const bands = costBands(shown)
-            // Suppliers arrive cheapest-first (sortSuppliersByCost). The first
-            // priced supplier is the cheapest → gets the green "best price" accent.
-            const cheapestCode = shown.find((s) => s.last_purchase_rate != null)?.supplier_code
-            // Preferred = latest purchased (own purchase history). Badged in
-            // place, not reordered — cheapest-first stays the display order.
+            // Suppliers arrive already ranked (rankSuppliersForRecommendation —
+            // recency + frequency + PTR blend, not price alone). The top card
+            // is BEST; badge follows the array position, not a separate
+            // "cheapest" lookup, so BEST always matches what Up/Down keyboard
+            // navigation lands on first.
+            const bestCode = shown[0]?.supplier_code
+            // Preferred = latest purchased (own purchase history) — a
+            // secondary badge, shown even when it's not also the top-ranked
+            // card, so "most recently bought from" stays visible.
             const preferredCode = preferredSupplier(shown)
             return shown.map((s) => {
             const code = s.supplier_code
             const selected = selectedCode === code
             const assigned = assignedCode === code
-            const cheapest = code === cheapestCode
-            const preferred = code === preferredCode
+            const best = code === bestCode
+            const preferred = code === preferredCode && code !== bestCode
             const live = Boolean(liveCodes?.has(code))
-            const days = daysSince(s.last_grn_date)
+            // Prefer the margin already recorded on the purchase transaction
+            // (sync.PurchaseTrans.Margin, surfaced as last_margin_percent) —
+            // the approved source figure. Next, derive it from Cost vs PTR
+            // using the same formula legacy_order already uses for this exact
+            // relationship. Only fall back to the MRP-vs-PTR calculation when
+            // neither purchase-history figure is available.
+            const margin =
+              s.last_margin_percent ??
+              costMarginPercent(s.last_purchase_rate, s.last_item_cost) ??
+              marginPercent(item?.mrp, s.last_purchase_rate)
             // A different supplier already owns this product — the button
             // stays reachable (routes into the confirm-reassign flow) but is
             // disabled from a plain click/Enter fast-path.
@@ -118,54 +130,77 @@ export function SupplierRecPanel({
               <div
                 key={code}
                 ref={(el) => { if (el) cardRefs.current.set(code, el); else cardRefs.current.delete(code) }}
-                className={`pm-srpcard${selected ? ' pm-srpcard--sel' : ''}${assigned ? ' pm-srpcard--assigned' : ''}${cheapest ? ' pm-srpcard--cheapest' : ''}${ownedElsewhere ? ' pm-srpcard--disabled' : ''}`}
+                className={`pm-srpcard${selected ? ' pm-srpcard--sel' : ''}${assigned ? ' pm-srpcard--assigned' : ''}${best ? ' pm-srpcard--cheapest' : ''}${ownedElsewhere ? ' pm-srpcard--disabled' : ''}`}
                 onClick={() => { onSelect?.(code); focusGrid() }}
                 onDoubleClick={() => { if (item) onCommit?.(item, code); focusGrid() }}
                 title={s.supplier_name ?? code}
               >
                 <div className="pm-srpcard__top">
-                  <span className="pm-srpcard__abbr">{supplierAbbrev(s.supplier_name, code)}</span>
-                  {cheapest && <span className="pm-srpcard__best" title="Lowest cost (PTR)">BEST</span>}
-                  {preferred && <span className="pm-srpcard__preferred" title="Latest purchasing supplier (purchase history)">PREFERRED</span>}
-                  <span className={`pm-srpcard__ptr ${bands[code] ?? ''}`}>{money(s.last_purchase_rate)}</span>
-                  {live && <span className="pm-srpcard__live">LIVE</span>}
+                  <div className="pm-srpcard__badges">
+                    {best && <span className="pm-srpcard__best" title="Top recommendation — recent purchase, frequency and price combined">BEST</span>}
+                    {preferred && <span className="pm-srpcard__preferred" title="Latest purchasing supplier (purchase history)">PREFERRED</span>}
+                    {live && <span className="pm-srpcard__live">LIVE</span>}
+                  </div>
+                  {/* No product-level batch/lot number exists in the supplier
+                      recommendation data (SupplierRow carries no batch field) —
+                      nothing is shown here rather than fabricated. */}
+                </div>
+                {/* Full name, never truncated (§2/§16) — wraps onto as many
+                    lines as it needs; the card grows, the panel never
+                    widens (bounded by PmWorkspaceSplit's px min/max). */}
+                <div className="pm-srpcard__name">{s.supplier_name ?? code}</div>
+                {/* Cost -> PTR -> Margin % -> MRP, always in this order and always
+                    all four visible without expanding the card (spec) — each
+                    value comes straight from the supplier recommendation feed
+                    (or the product's own MRP); a missing source value renders
+                    as "—", never a fabricated 0 or estimate. */}
+                <div className="pm-srpcard__stats">
+                  <span className="pm-srpcard__stat">
+                    <b>{money(s.last_item_cost)}</b>
+                    <label>Cost</label>
+                  </span>
+                  <span className="pm-srpcard__stat">
+                    <b className={bands[code] ?? ''}>{money(s.last_purchase_rate)}</b>
+                    <label>PTR</label>
+                  </span>
+                  <span className="pm-srpcard__stat">
+                    <b className={margin != null ? 'pm-srpcard__margin' : undefined}>{margin != null ? `${margin.toFixed(2)}%` : '—'}</b>
+                    <label>Margin</label>
+                  </span>
+                  <span className="pm-srpcard__stat">
+                    <b>{item?.mrp != null ? money(item.mrp) : '—'}</b>
+                    <label>MRP</label>
+                  </span>
                 </div>
                 <div className="pm-srpcard__facts">
+                  <span>Last Purchase: {s.last_grn_date ? date(s.last_grn_date) : 'No history'}</span>
                   <span>Freq {num(s.purchase_frequency ?? 0)}</span>
-                  <span>{days != null ? `${num(days)} Days` : 'No history'}</span>
                 </div>
-                <button
-                  className="pm-btn pm-btn--success pm-btn--sm pm-srpcard__assign"
-                  disabled={!canAssign || ownedElsewhere}
-                  onClick={(e) => { e.stopPropagation(); if (item) onCommit?.(item, code); focusGrid() }}
-                  title={
-                    assigned ? 'Already assigned to this supplier'
-                      : ownedElsewhere ? `Already assigned to ${assignedName ?? assignedCode} — use Change Supplier in the Assign stage to reassign`
-                        : canAssign ? 'Assign the remaining quantity to this supplier' : 'Nothing left to assign'
-                  }
-                >
-                  {assigned ? 'Assigned' : `Assign ${recommendedQty > 0 ? num(recommendedQty) : ''}`}
-                </button>
+                <div className="pm-srpcard__actions">
+                  {assigned && onRemoveAssignment && (
+                    <button
+                      className="pm-linkbtn pm-linkbtn--sm pm-linkbtn--danger pm-srpcard__remove"
+                      onClick={(e) => { e.stopPropagation(); onRemoveAssignment(); focusGrid() }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                  <button
+                    className="pm-btn pm-btn--success pm-btn--sm pm-srpcard__assign"
+                    disabled={!canAssign || ownedElsewhere}
+                    onClick={(e) => { e.stopPropagation(); if (item) onCommit?.(item, code); focusGrid() }}
+                    title={
+                      assigned ? 'Already assigned to this supplier'
+                        : ownedElsewhere ? `Already assigned to ${assignedName ?? assignedCode} — use Change Supplier in the Assign stage to reassign`
+                          : canAssign ? 'Assign the remaining quantity to this supplier' : 'Nothing left to assign'
+                    }
+                  >
+                    {assigned ? 'Assigned' : `Assign ${recommendedQty > 0 ? num(recommendedQty) : ''}`}
+                  </button>
+                </div>
               </div>
             )
           }) })()}
-        </div>
-      )}
-
-      {/* Decision Summary — compact, sits directly below the supplier list */}
-      {item && (
-        <div className="pm-srp__decision">
-          <div className="pm-srp__dtitle"><i className="bi bi-lightbulb" /> Decision Summary</div>
-          <div className="pm-srp__drow">
-            <span className="pm-srp__dcell"><b>{num(item.final_qty ?? 0)}</b><span>Final</span></span>
-            <span className="pm-srp__dcell"><b>{num(item.suggested_qty ?? 0)}</b><span>Suggested</span></span>
-            <span className="pm-srp__dcell"><b>{item.days_cover != null ? `${item.days_cover.toFixed(0)}d` : '—'}</b><span>Cover</span></span>
-          </div>
-          {onOpenInfo && (
-            <button className="pm-btn pm-btn--ghost pm-btn--sm pm-srp__why" onClick={() => onOpenInfo(item, 'decision')}>
-              <i className="bi bi-question-circle" /> Why?
-            </button>
-          )}
         </div>
       )}
     </div>

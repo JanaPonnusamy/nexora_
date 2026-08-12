@@ -15,6 +15,8 @@ import SyncAdministrationPage from '../pages/sync/SyncAdministrationPage'
 import ProductMappingPage from '../pages/mapping/ProductMappingPage'
 import StockAvailabilityPage from '../pages/stock/StockAvailabilityPage'
 import StockCheckReportPage from '../pages/stock-check/StockCheckReportPage'
+import LabelExporterPage from '../pages/label-export/LabelExporterPage'
+import BoxWorkspacePage from '../pages/label-export/BoxWorkspacePage'
 import NmwSalesReportPage from '../pages/nmw-sales/NmwSalesReportPage'
 import StockIntegrityReportPage from '../pages/stock-integrity/StockIntegrityReportPage'
 import PurchaseWorkspacePage from '../pages/procurement/PurchaseWorkspacePage'
@@ -54,12 +56,17 @@ export const appRouter = createBrowserRouter(
       <Route path="/login" element={<LoginPage />} />
       {/* Desktop Platform shell preview — a separate top-level route (not
           nested under AppShell) so the new shell can be built and compared
-          side-by-side without touching the existing app. */}
+          side-by-side without touching the existing app. Owner-directed: the
+          sidebar (AppShell) is the one standard navigation pattern going
+          forward, so this stays reachable for admins only (internal
+          comparison/preview), not exposed to every logged-in user by URL. */}
       <Route
         path="/platform-shell-preview"
         element={
           <ProtectedRoute>
-            <PlatformShellPreviewPage />
+            <RequireCapability cap="ADMINISTRATION">
+              <PlatformShellPreviewPage />
+            </RequireCapability>
           </ProtectedRoute>
         }
       />
@@ -88,6 +95,8 @@ export const appRouter = createBrowserRouter(
         <Route path="/product-mapping" element={<RequireCapability cap="PRODUCT_MAPPING"><ProductMappingPage /></RequireCapability>} />
         <Route path="/stock-availability" element={<RequireCapability cap="INVENTORY"><StockAvailabilityPage /></RequireCapability>} />
         <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />
+        <Route path="/label-exporter" element={<RequireCapability cap="INVENTORY"><LabelExporterPage /></RequireCapability>} />
+        <Route path="/label-exporter/box-workspace" element={<RequireCapability cap="INVENTORY"><BoxWorkspacePage /></RequireCapability>} />
         <Route path="/nmw-sales-report" element={<RequireCapability cap="INVENTORY"><NmwSalesReportPage /></RequireCapability>} />
         <Route path="/stock-integrity" element={<RequireCapability cap="INVENTORY"><StockIntegrityReportPage /></RequireCapability>} />
         <Route path="/procurement/console" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleRefreshConsolePage /></RequireCapability>} />

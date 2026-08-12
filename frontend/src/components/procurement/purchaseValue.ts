@@ -40,6 +40,74 @@ export function preferredSupplier(suppliers: SupplierRow[] | undefined): string 
   return best?.supplier_code ?? null
 }
 
+/**
+ * Ranks suppliers for the Supplier Recommendation panel's display + keyboard
+ * order — a weighted blend of purchase recency, frequency and PTR (lower
+ * PTR = better), not price alone. Previously this used sortSuppliersByCost
+ * (pure cheapest-first), which meant "BEST" was always just the lowest PTR
+ * regardless of how stale or infrequent that supplier's history was
+ * (owner-directed fix).
+ *
+ * Weights are the SAME ratios already approved for Auto Assign supplier
+ * selection (AA_WEIGHTS.lastPurchase/frequency/ptr, defined below) — reused
+ * here rather than invented, so "the system's top pick" means the same thing
+ * in both the Auto Assign engine and the manual recommendation panel.
+ *
+ * MRP-based margin % is intentionally NOT part of this ranking: for one
+ * product, MRP is identical across every one of its suppliers, so ranking by
+ * margin-descending and ranking by PTR-ascending produce the exact same
+ * ORDER (margin is a monotonic function of PTR when MRP is fixed) — margin %
+ * only adds information as a DISPLAYED figure, which the caller derives from
+ * item.mrp per supplier, not as a further sort key.
+ */
+export function rankSuppliersForRecommendation(suppliers: SupplierRow[]): SupplierRow[] {
+  if (suppliers.length <= 1) return [...suppliers]
+  const maxFreq = Math.max(1, ...suppliers.map((s) => s.purchase_frequency ?? 0))
+  const times = suppliers.map((s) => (s.last_grn_date ? Date.parse(s.last_grn_date) : NaN)).filter((t) => !Number.isNaN(t))
+  const newest = times.length ? Math.max(...times) : NaN
+  const oldest = times.length ? Math.min(...times) : NaN
+  const rates = suppliers.map((s) => s.last_purchase_rate).filter((x): x is number => x != null)
+  const minRate = rates.length ? Math.min(...rates) : NaN
+  const maxRate = rates.length ? Math.max(...rates) : NaN
+
+  const score = (s: SupplierRow) => {
+    let sc = 0
+    if (s.last_grn_date && !Number.isNaN(newest)) {
+      const t = Date.parse(s.last_grn_date)
+      const span = newest - oldest
+      sc += AA_WEIGHTS.lastPurchase * (span > 0 ? (t - oldest) / span : 1)
+    }
+    sc += AA_WEIGHTS.frequency * ((s.purchase_frequency ?? 0) / maxFreq)
+    if (s.last_purchase_rate != null && !Number.isNaN(minRate)) {
+      const span = maxRate - minRate
+      sc += AA_WEIGHTS.ptr * (span > 0 ? (maxRate - s.last_purchase_rate) / span : 1)
+    }
+    return sc
+  }
+  // Stable-ish tie-break: equal score keeps original (cheapest-first) relative
+  // order, since Array.prototype.sort is stable and ties are rare in practice.
+  return [...suppliers].sort((a, b) => score(b) - score(a))
+}
+
+/** Margin % for one supplier's PTR against the product's MRP — display only,
+ *  not a ranking input (see rankSuppliersForRecommendation). null when either
+ *  figure is missing/non-positive. */
+export function marginPercent(mrp: number | null | undefined, ptr: number | null | undefined): number | null {
+  if (mrp == null || mrp <= 0 || ptr == null) return null
+  return ((mrp - ptr) / mrp) * 100
+}
+
+/** Trade margin % between what the supplier was paid (Item Cost) and PTR —
+ *  the same formula already used elsewhere for purchase-history margin
+ *  (legacy_order's ProductDiscPercent: (PTR - Cost) / PTR * 100), reused here
+ *  rather than invented, as the fallback when the recommendation feed's own
+ *  last_margin_percent isn't populated. null when either figure is
+ *  missing/non-positive. */
+export function costMarginPercent(ptr: number | null | undefined, cost: number | null | undefined): number | null {
+  if (ptr == null || ptr <= 0 || cost == null) return null
+  return ((ptr - cost) / ptr) * 100
+}
+
 /** Optional per-product signals for Auto Assign scoring that are not carried in
  *  the batched recommendation feed (kept optional so the caller adds no extra
  *  per-product query). */

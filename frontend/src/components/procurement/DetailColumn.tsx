@@ -24,14 +24,6 @@ export type DrawerTab = 'info' | 'history' | 'decision'
 /** History "View All" dialog target. */
 export type ViewAllKind = 'purchase' | 'sales'
 
-/**
- * Right-hand Purchase Decision Panel. Fits entirely inside the viewport (the
- * page never scrolls because of it): the Product header, Sales Trend chart and
- * Supplier Recommendation stay pinned, while Purchase History and Sales History
- * scroll internally at a fixed height. Decision Summary is low-priority and
- * sits at the bottom. Batch / Expiry / PTR / MRP detail belongs to GRN, not the
- * Purchase Manager, so it is intentionally absent here.
- */
 /** Real per-supplier offer facts (Supplier Live Stock only — sourced from
  *  procurement.supplier_stock's scheme/free/discount, not the still-unpopulated
  *  WorkspaceItem.offer field). Optional: absent in Review All / Supplier
@@ -42,9 +34,17 @@ export interface OfferInfo {
   discount?: number | null
 }
 
+/**
+ * Right-hand Purchase Decision Panel. Fits entirely inside the viewport (the
+ * page never scrolls because of it): the Product header, Sales Trend chart and
+ * Supplier Recommendation stay pinned, while Purchase History and Sales History
+ * scroll internally at a fixed height. Batch / Expiry / PTR / MRP detail
+ * belongs to GRN, not the Purchase Manager, so it is intentionally absent here.
+ */
 export function DetailColumn({
   tenantId,
   item,
+  loading = false,
   onOpenInfo,
   onOpenBill,
   onViewAll,
@@ -56,6 +56,7 @@ export function DetailColumn({
 }: {
   tenantId: string
   item: WorkspaceItem | null
+  loading?: boolean
   onOpenInfo?: (item: WorkspaceItem, tab?: DrawerTab) => void
   /** Open the Purchase/Sales Bill Drawer for a clicked history row. */
   onOpenBill?: (target: BillTarget) => void
@@ -123,9 +124,13 @@ export function DetailColumn({
     return (
       <div className="pm-dpanel pm-dpanel--empty">
         <EmptyState
-          icon="bi-hand-index"
-          title="Select a product"
-          description="Choose a row on the left to see the sales trend, supplier recommendation, recent purchases and sales."
+          icon={loading ? 'bi-hourglass-split' : 'bi-hand-index'}
+          title={loading ? 'Loading product details...' : 'Select a product'}
+          description={
+            loading
+              ? 'The current workspace context is loading.'
+              : 'Choose a row on the left to see the sales trend, supplier recommendation, recent purchases and sales.'
+          }
         />
       </div>
     )
@@ -369,4 +374,3 @@ function SalesMiniTable({
     </div>
   )
 }
-

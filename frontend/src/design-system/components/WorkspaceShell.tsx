@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { WorkspaceContainer } from './WorkspaceContainer'
 
 interface WorkspaceShellProps {
@@ -9,6 +9,7 @@ interface WorkspaceShellProps {
   statusBar?: ReactNode
   className?: string
   fullWidth?: boolean
+  style?: CSSProperties
 }
 
 export function WorkspaceShell({
@@ -19,9 +20,10 @@ export function WorkspaceShell({
   statusBar,
   className = '',
   fullWidth = false,
+  style,
 }: WorkspaceShellProps) {
   const shell = (
-    <div className={`ds-workspace-shell ${className}`.trim()}>
+    <div className={`ds-workspace-shell ${className}`.trim()} style={style}>
       <div className="ds-workspace-shell__header">{header}</div>
       {kpis && <div className="ds-workspace-shell__kpis">{kpis}</div>}
       {filters && <div className="ds-workspace-shell__filters">{filters}</div>}

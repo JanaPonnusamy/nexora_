@@ -4,11 +4,36 @@
 .pm {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   height: calc(100vh - 96px);
   min-height: 520px;
   font-size: 13px;
 }
+
+/* ---- Compact page header (title + context + view/stage tabs, one block) --
+   Title and selectors sit close together on the left — justify-content used
+   to be space-between, which flung the selectors to the far right edge and
+   left a wide, disconnected-looking gap in the middle of the row. */
+.pm-header { display: flex; flex-direction: column; gap: 5px; }
+.pm-header__top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.pm-header__title { margin: 0; font-size: 1rem; font-weight: 700; white-space: nowrap; color: inherit; }
+.pm-header__tabs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* ---- Context bar (Tenant/Store/Cycle/Refresh) ----------------------------- */
+.pm-ctxbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pm-ctxsel {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 7px; border: 1px solid #d8dce3; border-radius: 7px;
+  background: var(--bs-body-bg, #fff);
+}
+.pm-ctxsel i { font-size: 10.5px; color: #94a3b8; }
+.pm-ctxsel select {
+  border: 0; background: transparent; outline: none;
+  font-size: 12px; font-weight: 600; color: inherit;
+  height: 24px; max-width: 230px; padding: 0;
+}
+[data-bs-theme="dark"] .pm-ctxsel { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }
+[data-bs-theme="dark"] .pm-ctxsel select option { color: #0f172a; }
 
 /* ---- Top bar ------------------------------------------------------------- */
 .pm-top {
@@ -56,39 +81,53 @@
    labels: modes are a segmented track, search/selects are raised inputs,
    the state filters are toggle chips that tint when checked. */
 .pm-toolbar {
-  display: flex; flex-direction: column; gap: 7px;
-  padding: 7px 9px; border-radius: 12px;
-  background: linear-gradient(180deg, #fbfcfe 0%, #f5f7fa 100%);
+  display: flex; flex-direction: column; min-width: 0;
+  padding: 5px 8px; border-radius: 9px;
+  background: var(--bs-tertiary-bg, #f5f7fa);
   border: 1px solid #e6e9ef;
 }
 /* Rows never wrap and never change height, so the grid below stays put. */
 .pm-toolbar__row {
-  display: flex; align-items: center; gap: 7px;
-  flex-wrap: nowrap; min-height: 34px;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: nowrap; min-height: 28px;
 }
+/* Every control below keeps flex-shrink:0 (see .pm-slot and the chip/mode/btn
+   rule further down) — nothing in this row is allowed to compress below its
+   readable width. When the row's content is wider than the viewport, IT
+   scrolls horizontally (own scrollbar, kept visible on purpose — a hidden
+   scrollbar here previously left Deferred/Skipped etc. undiscoverable, which
+   read as "clipped"), never the page. min-width:0 lets this row actually be
+   narrower than its content so that scrolling — instead of the whole app
+   shell — is what happens. */
 .pm-toolbar__row--filters {
-  border-top: 1px dashed #e2e6ec; padding-top: 7px;
-  overflow-x: auto; scrollbar-width: none;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
 }
-.pm-toolbar__row--filters::-webkit-scrollbar { display: none; }
-/* Fixed-width slots: a hidden control leaves its slot empty instead of
-   collapsing and shuffling everything after it. */
-/* Slots keep their order and their share of the row; they may narrow on a
-   small window (min-width floors) but never wrap or swap places. */
-.pm-slot { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; }
+.pm-toolbar__row--filters::-webkit-scrollbar { height: 6px; }
+.pm-toolbar__row--filters::-webkit-scrollbar-thumb { background: #cbd2dc; border-radius: 999px; }
+.pm-toolbar__row--filters::-webkit-scrollbar-track { background: transparent; }
+[data-bs-theme="dark"] .pm-toolbar__row--filters::-webkit-scrollbar-thumb { background: #3a4354; }
+/* Slots never shrink below a width that fits their full label — the row
+   scrolls instead (see above). Widths are minimums, not caps: a select's own
+   content (e.g. a long refresh name) can still push it wider. */
+.pm-slot { flex: 0 0 auto; min-width: 0; display: flex; align-items: center; }
 .pm-slot--search { width: 220px; min-width: 150px; }
-.pm-slot--select { width: 150px; min-width: 120px; }
-.pm-slot--offer { width: 118px; min-width: 112px; }
+.pm-slot--select { width: auto; min-width: 175px; }
+.pm-slot--offer { width: auto; min-width: 100px; }
 .pm-slot--supplier { width: 250px; min-width: 170px; }
 .pm-slot > * { width: 100%; }
 .pm-slot--offer > * { justify-content: center; }
 /* "Show" caption for the planning-state chip row */
+.pm-toolbar__sep { flex: 0 0 auto; width: 1px; align-self: stretch; margin: 2px 0; background: #e2e6ec; }
+[data-bs-theme="dark"] .pm-toolbar__sep { background: rgba(255,255,255,.12); }
 .pm-toolbar__label {
   flex: 0 0 auto; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
   text-transform: uppercase; color: #8a95a8; padding-right: 2px;
 }
 .pm-toolbar__count { flex: 0 0 auto; margin-left: auto; padding-left: 10px; font-size: 11.5px; color: #64748b; white-space: nowrap; }
-.pm-toolbar__count b { color: #0f172a; font-variant-numeric: tabular-nums; }
+.pm-toolbar__count b { color: var(--bs-body-color, #0f172a); font-variant-numeric: tabular-nums; }
 .pm-toolbar__count .bi-tag { color: #b45309; }
 .pm-toolbar__modes, .pm-toolbar__right { display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto; }
 .pm-toolbar__right { margin-left: auto; }
@@ -115,15 +154,15 @@
 /* Raised input skin shared by the product search, supplier search and selects */
 .pm-toolbar .sx-search input,
 .pm-toolbar .sx-select {
-  border: 1px solid #dfe3ea; border-radius: 9px;
-  background-color: var(--bs-body-bg, #fff); color: #0f172a;
+  border: 1px solid var(--bs-border-color, #dfe3ea); border-radius: 9px;
+  background-color: var(--bs-body-bg, #fff); color: var(--bs-body-color, #0f172a);
   box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
   font-size: 12.5px; font-weight: 500;
   transition: border-color .15s, box-shadow .15s, background-color .15s;
 }
-.pm-toolbar .sx-search input::placeholder { color: #98a2b3; font-weight: 400; }
+.pm-toolbar .sx-search input::placeholder { color: var(--bs-secondary-color, #98a2b3); font-weight: 400; }
 .pm-toolbar .sx-search input:hover,
-.pm-toolbar .sx-select:hover { border-color: #c3cad6; }
+.pm-toolbar .sx-select:hover { border-color: var(--bs-emphasis-color, #c3cad6); }
 .pm-toolbar .sx-search input:focus,
 .pm-toolbar .sx-select:focus {
   border-color: var(--bs-primary, #4f46e5);
@@ -186,66 +225,173 @@
 }
 .pm-iconbtn--danger:hover { color: #dc2626; border-color: #dc2626; }
 
-/* ---- Split (master grid + detail) --------------------------------------- */
-.pm-split { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr); gap: 10px; flex: 1; min-height: 0; }
-/* Three-column workspace: narrowed grid · vertical Supplier Recommendation ·
-   detail panel. */
-.pm-split--3 { grid-template-columns: minmax(0, 1fr) 205px minmax(300px, 0.8fr); }
-/* Supplier Live Stock: the central grid is the heart of the screen and its two
-   product-name columns need real width, so give it more of the row — a slimmer
-   supplier-recommendation rail and a narrower detail panel than the shared
-   3-column split. */
-.pm-split--stock3 { grid-template-columns: minmax(0, 1.6fr) 184px minmax(260px, 0.62fr); }
-.pm-split__grid { min-height: 0; overflow: auto; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; background: var(--bs-body-bg, #fff); }
-.pm-split__suppliers { min-height: 0; overflow: hidden; }
-.pm-split__detail { min-height: 0; overflow: hidden; }
+/* ---- Split (master grid + Supplier Recommendation + detail) -------------- */
+/* The three panels (spec §2/§3) are DockGroup/DockPanelItem/DockSeparator
+   (react-resizable-panels, wrapped in frontend/src/platform/workspace/
+   DockPanel.tsx) instead of a fixed CSS grid — default proportions come from
+   PmWorkspaceSplit's defaultSize props (~55/22/23), and the user can drag
+   the separators; sizes persist to localStorage automatically. Scoped under
+   .pm so this doesn't affect other DockGroup consumers in the app. */
+.pm [data-group] { flex: 1; min-height: 0; gap: 10px; }
+.pm-split__grid { height: 100%; min-height: 0; overflow: auto; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; background: var(--bs-body-bg, #fff); }
+/* Supplier Recommendation + Product Details share one column (spec — merge
+   them so the combined right rail can stay narrower than two separate
+   panels). .pm-split__side is the DockPanelItem's own content div; the two
+   children stack and split its height, each independently scrollable. */
+.pm-split__side { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.pm-split__suppliers { flex: 1 1 52%; min-height: 220px; min-width: 0; overflow: hidden; }
+.pm-split__detail { flex: 1 1 48%; min-height: 220px; min-width: 0; overflow: hidden; border-top: 1px solid var(--bs-border-color, #e5e7eb); padding-top: 8px; }
+/* The narrow-mode permanent detail panel and the floating supplier overlay
+   are still direct DockPanelItem content — full height there. */
+.pm-workspace-narrow .pm-split__detail,
+.pm-split__suppliers--floating { height: 100%; min-height: 0; border-top: 0; padding-top: 0; }
 
-/* ---- Supplier Recommendation panel (middle column) ---------------------- */
-.pm-srp { height: 100%; display: flex; flex-direction: column; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; background: var(--bs-body-bg, #fff); padding: 8px; gap: 8px; }
-.pm-srp--active { border-color: var(--bs-primary, #4f46e5); box-shadow: 0 0 0 2px rgba(79,70,229,.25); }
-.pm-srp__title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #64748b; display: flex; align-items: center; gap: 6px; }
-.pm-srp__hint { color: #94a3b8; font-size: 12px; }
+/* Narrow-workspace (<=1366px, spec §7) wrapper: 2 permanent panels (grid +
+   detail) via their own DockGroup, plus the floating Supplier Recommendation
+   overlay positioned relative to this container. */
+.pm-workspace-narrow { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.pm-srp-overlay {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; width: min(360px, 92vw); padding: 8px 8px 8px 0;
+  animation: pm-srp-overlay-in .12s ease-out;
+}
+@keyframes pm-srp-overlay-in { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+.pm-split__suppliers--floating {
+  width: 100%; height: 100%; overflow: hidden;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, .22);
+  border-radius: 10px;
+}
+/* Drag handle between panels — styled locally (not relying on the Electron
+   shell's platform-shell.css, which this page may render without) so resize
+   works identically on plain web routes and inside the desktop shell. */
+.pm [data-separator] { flex: 0 0 6px; background: transparent; cursor: col-resize; position: relative; }
+.pm [data-separator]::after {
+  content: ''; position: absolute; top: 6px; bottom: 6px; left: 2px; right: 2px;
+  border-radius: 3px; background: var(--bs-border-color, #d8dce3);
+}
+.pm [data-separator]:hover::after,
+.pm [data-separator][data-resize-handle-active]::after { background: var(--bs-primary, #4f46e5); }
+[data-bs-theme="dark"] .pm [data-separator]::after { background: rgba(255,255,255,.14); }
+
+/* ---- Supplier Recommendation panel (middle column) ----------------------
+   Glass surface built from the design-system's shared elevated-surface
+   tokens (same ones the header/sidebar already use for their blur), not a
+   one-off panel color — so it reads as the same NEXORA visual language, in
+   both themes, without hand-tuning light vs dark separately. */
+.pm-srp {
+  --pm-card-bg: rgba(15, 23, 42, .03);
+  --pm-card-border: rgba(15, 23, 42, .08);
+  --pm-card-shine: rgba(255, 255, 255, .55);
+  height: 100%; display: flex; flex-direction: column;
+  border: 1px solid var(--ds-border, #e5e7eb);
+  border-radius: var(--ds-radius-lg, 10px);
+  background: var(--ds-surface-elevated, #fff);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--ds-shadow-sm);
+  padding: 10px; gap: 8px;
+}
+[data-bs-theme="dark"] .pm-srp {
+  --pm-card-bg: rgba(255, 255, 255, .04);
+  --pm-card-border: rgba(255, 255, 255, .12);
+  --pm-card-shine: rgba(255, 255, 255, .06);
+}
+.pm-srp--active { border-color: var(--ds-accent, #4f46e5); box-shadow: 0 0 0 2px var(--ds-focus-ring, rgba(79,70,229,.25)); }
+.pm-srp__title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--ds-text-muted, #64748b); display: flex; align-items: center; gap: 6px; }
+.pm-srp__ranking-note { font-size: 10px; color: var(--ds-text-muted, #94a3b8); margin-top: -4px; }
+.pm-srp__hint { color: var(--ds-text-muted, #94a3b8); font-size: 12px; }
 /* List grows to fill the (taller) panel and scrolls internally; the Decision
    Summary stays pinned below it. */
-.pm-srp__list { flex: 1 1 auto; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; min-height: 0; }
+.pm-srp__list { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; padding: 2px; }
 /* Decision Summary pinned at the bottom of the middle column */
-.pm-srp__decision { border-top: 1px solid var(--bs-border-color, #e5e7eb); padding-top: 7px; display: flex; flex-direction: column; gap: 5px; }
-.pm-srp__dtitle { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #64748b; display: flex; align-items: center; gap: 5px; }
+.pm-srp__decision { border-top: 1px solid var(--ds-border, #e5e7eb); padding-top: 7px; display: flex; flex-direction: column; gap: 5px; }
+.pm-srp__dtitle { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--ds-text-muted, #64748b); display: flex; align-items: center; gap: 5px; }
 .pm-srp__drow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
-.pm-srp__dcell { display: flex; flex-direction: column; align-items: center; background: var(--bs-tertiary-bg, #f8fafc); border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 7px; padding: 4px 2px; }
-.pm-srp__dcell b { font-size: 14px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; }
-.pm-srp__dcell span { font-size: 9px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
+.pm-srp__dcell { display: flex; flex-direction: column; align-items: center; background: var(--ds-surface-subtle, #f8fafc); border: 1px solid var(--ds-border, #e5e7eb); border-radius: 7px; padding: 4px 2px; }
+.pm-srp__dcell b { font-size: 14px; font-weight: 800; color: var(--ds-text-primary, #0f172a); font-variant-numeric: tabular-nums; }
+.pm-srp__dcell span { font-size: 9px; text-transform: uppercase; letter-spacing: .02em; color: var(--ds-text-muted, #64748b); }
 .pm-srp__why { width: 100%; justify-content: center; }
-.pm-srpcard { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 9px; padding: 7px 8px; cursor: pointer; background: var(--bs-body-bg, #fff); }
-.pm-srpcard:hover { border-color: var(--bs-primary, #4f46e5); }
-.pm-srpcard--sel { border-color: var(--bs-primary, #4f46e5); background: rgba(79,70,229,.07); box-shadow: inset 3px 0 0 var(--bs-primary, #4f46e5); }
-.pm-srpcard--assigned { border-color: #16a34a; background: #f0fdf4; }
+
+/* Supplier card — subtle glass surface: soft top-edge shine, thin
+   translucent border, restrained shadow, slight lift on hover. Deliberately
+   NOT a flat tinted block (spec: "not purple blocks") and NOT overdone glow
+   — this is a long-session ERP screen, so blur/gradient stay understated
+   and text keeps full contrast via the design-system text tokens. */
+.pm-srpcard {
+  position: relative;
+  border: 1px solid var(--pm-card-border);
+  border-radius: var(--ds-radius-md, 9px);
+  padding: 8px 10px;
+  cursor: pointer;
+  background:
+    linear-gradient(180deg, var(--pm-card-shine) 0%, transparent 60%),
+    var(--pm-card-bg);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+  transition: border-color 140ms var(--ds-motion-ease, ease), box-shadow 140ms var(--ds-motion-ease, ease), transform 140ms var(--ds-motion-ease, ease);
+}
+.pm-srpcard:hover { border-color: var(--ds-accent, #4f46e5); box-shadow: 0 6px 16px -10px rgba(15, 23, 42, .35); transform: translateY(-1px); }
+.pm-srpcard--sel {
+  border-color: var(--ds-accent, #4f46e5);
+  box-shadow: inset 3px 0 0 var(--ds-accent, #4f46e5), 0 6px 16px -10px rgba(15, 23, 42, .3);
+  background: linear-gradient(180deg, var(--pm-card-shine) 0%, transparent 60%), var(--ds-accent-soft, rgba(79,70,229,.08));
+}
+.pm-srpcard--assigned { border-color: #16a34a; background: linear-gradient(180deg, var(--pm-card-shine) 0%, transparent 60%), rgba(34, 197, 94, .10); }
 /* Cheapest supplier (top of the cost-sorted list) — green "best price" accent. */
-.pm-srpcard--cheapest { border-color: #86efac; background: #f6fefa; box-shadow: inset 3px 0 0 #16a34a; }
+.pm-srpcard--cheapest { border-color: #4ade80; box-shadow: inset 3px 0 0 #16a34a; background: linear-gradient(180deg, var(--pm-card-shine) 0%, transparent 60%), rgba(34, 197, 94, .07); }
 /* BEST is the card Right-Arrow lands on, so it must NOT wear the same indigo
    cursor tint as every other card — the keyboard cursor turns it green, and
    only the green card is the cheapest one. */
 .pm-srpcard--cheapest.pm-srpcard--sel {
-  background: #dcfce7; border-color: #16a34a;
+  background: linear-gradient(180deg, var(--pm-card-shine) 0%, transparent 60%), rgba(34, 197, 94, .16);
+  border-color: #16a34a;
   box-shadow: inset 4px 0 0 #15803d, 0 0 0 2px rgba(22, 163, 74, .25);
 }
-.pm-srpcard__best { font-size: 9px; font-weight: 800; color: #fff; background: #16a34a; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; flex-shrink: 0; }
+.pm-srpcard__best {
+  font-size: 9px; font-weight: 800; color: #fff;
+  background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%);
+  box-shadow: 0 1px 3px rgba(22, 163, 74, .35), inset 0 1px 0 rgba(255,255,255,.35);
+  border-radius: 999px; padding: 1px 6px; letter-spacing: .03em; flex-shrink: 0;
+}
 /* Latest-purchased supplier (own purchase history) — badge only, order unchanged. */
-.pm-srpcard__preferred { font-size: 9px; font-weight: 800; color: #a16207; background: #fef9c3; border-radius: 5px; padding: 0 4px; letter-spacing: .03em; flex-shrink: 0; }
+.pm-srpcard__preferred { font-size: 9px; font-weight: 800; color: #a16207; background: #fef9c3; border-radius: 999px; padding: 1px 6px; letter-spacing: .03em; flex-shrink: 0; }
 /* A different supplier already owns this product (one-supplier rule) — the
    card stays visible for context but its Assign button is disabled. */
 .pm-srpcard--disabled { opacity: .55; }
 .pm-srpcard--disabled .pm-srpcard__assign { cursor: not-allowed; }
-.pm-srpcard__top { display: flex; align-items: center; gap: 6px; }
-/* Name is the only element allowed to shrink/truncate — flex items default to
-   min-width:auto (their full content width), which was forcing the row wider
-   than the card and clipping the price on the right. Badges and price stay
-   flex-shrink:0 + nowrap so they are always fully visible. */
-.pm-srpcard__abbr { font-weight: 800; font-size: 13px; letter-spacing: .02em; color: #0f172a; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pm-srpcard__ptr { margin-left: auto; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; flex-shrink: 0; white-space: nowrap; }
+/* Full name is never truncated/ellipsised (§2/§16 — hard requirement) — it
+   wraps onto as many lines as it needs; the CARD grows taller, the PANEL
+   never grows wider (bounded width lives on the DockPanelItem, see
+   PmWorkspaceSplit.tsx). */
+.pm-srpcard__name { font-weight: 800; font-size: 13px; line-height: 1.35; letter-spacing: .01em; color: var(--ds-text-primary, #0f172a); white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.pm-srpcard__top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; min-height: 14px; }
+.pm-srpcard__badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* Cost / PTR / Margin % / MRP — always all four visible, in that fixed
+   order, as a 4-up grid that only drops to 2-up when the card is genuinely
+   too narrow (§ mandatory pricing display) — never hidden/scrolled. */
+.pm-srpcard__stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 8px; margin-top: 6px; }
+.pm-srpcard__stat { display: flex; flex-direction: column; min-width: 0; }
+.pm-srpcard__stat b { font-weight: 700; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--ds-text-primary, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-srpcard__stat label { font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--ds-text-muted, #8a95a8); }
+.pm-srpcard__margin { color: #16a34a; }
+[data-bs-theme="dark"] .pm-srpcard__margin { color: #4ade80; }
 .pm-srpcard__live { font-size: 9px; font-weight: 800; color: #16a34a; border: 1px solid #86efac; border-radius: 5px; padding: 0 3px; }
-.pm-srpcard__facts { display: flex; justify-content: space-between; gap: 6px; font-size: 10.5px; color: #64748b; margin: 3px 0 6px; }
-.pm-srpcard__assign { width: 100%; justify-content: center; }
+.pm-srpcard__facts { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; font-size: 10.5px; color: var(--ds-text-muted, #64748b); margin: 6px 0 5px; }
+.pm-srpcard__actions { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+/* Assign — the one "premium" action per card, so it gets the gradient/glass
+   treatment; scoped to this class (not the shared .pm-btn--success used
+   elsewhere) so other panels' plain green buttons are untouched. */
+.pm-srpcard__assign {
+  width: 100%; justify-content: center;
+  background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%);
+  border: 1px solid rgba(255,255,255,.18);
+  box-shadow: 0 1px 3px rgba(22, 163, 74, .35), inset 0 1px 0 rgba(255,255,255,.25);
+}
+.pm-srpcard__assign:hover:not(:disabled) {
+  background: linear-gradient(135deg, #15803d 0%, #16a34a 100%);
+  box-shadow: 0 3px 10px rgba(22, 163, 74, .4), inset 0 1px 0 rgba(255,255,255,.3);
+}
+.pm-srpcard__assign:disabled { background: var(--ds-surface-subtle, #e5e7eb); color: var(--ds-text-muted); border-color: var(--ds-border); box-shadow: none; }
+.pm-srpcard__remove { display: block; width: 100%; text-align: center; margin: 0; }
 .pm-stockmode { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; background: var(--bs-body-bg, #fff); }
 
 /* ---- Grid ---------------------------------------------------------------- */
@@ -259,6 +405,11 @@
 }
 /* Denser rows (~12% shorter than the old 6px) to fit more products on screen. */
 .pm-grid tbody td { padding: 4px 8px; border-bottom: 1px solid var(--bs-border-color, #f1f5f9); vertical-align: middle; }
+/* Compact density (spec §20) — tightens row padding further on top of the
+   already-dense default; no logic changes, presentation only. */
+.pm--compact .pm-grid tbody td { padding: 2px 6px; }
+.pm--compact .pm-grid thead th { padding: 4px 6px; }
+.pm--compact .pm-qty { height: 22px; }
 .pm-grid .sx-num { text-align: right; font-variant-numeric: tabular-nums; }
 .pm-grid .sx-dim { color: #94a3b8; }
 .pm-grid__check, .pm-grid__sno { width: 34px; text-align: center; }
@@ -319,9 +470,9 @@
 /* The editable Final Qty cell on the current row is tinted (light amber) so the
    one cell you can type into stands out even before it takes focus. */
 .pm-row--sel .pm-grid__final { background: #fef9c3; }
-/* Finalised (qty set, no supplier) = light purple; Assigned = light green;
+/* Finalised (qty set, no supplier) = light teal; Assigned = light green;
    Skipped = grey row (with red Skip text). */
-.pm-row--finalized { background: #faf5ff; }
+.pm-row--finalized { background: #ecfeff; }
 .pm-row--assigned { background: #f0fdf4; }
 .pm-row--skip { opacity: .62; background: #f1f5f9; }
 .pm-row--sel.pm-row--skip { opacity: 1; }
@@ -483,30 +634,31 @@
 .pm-sxchip { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
 .pm-sxchip--assigned { background: #dcfce7; color: #15803d; }
 .pm-sxchip--skipped { background: #f1f5f9; color: #64748b; }
-.pm-sxchip--finalized { background: #ede9fe; color: #6d28d9; }
+.pm-sxchip--finalized { background: #cffafe; color: #0e7490; }
 
-/* §5 Toolbar — one uniform control height so every element aligns on one row */
+/* §5 Toolbar — one uniform control height so every element aligns on one row.
+   Target: the whole filter row (padding included) lands at ~40-44px. */
 .pm-toolbar .pm-btn,
 .pm-toolbar .pm-mode,
 .pm-toolbar .sx-select,
 .pm-toolbar .sx-search,
 .pm-toolbar .sx-search input,
 .pm-toolbar .pm-iconbtn,
-.pm-toolbar .pm-suppick--picked { height: 34px; box-sizing: border-box; }
+.pm-toolbar .pm-suppick--picked { height: 28px; box-sizing: border-box; }
 .pm-toolbar .pm-btn,
 .pm-toolbar .pm-mode { display: inline-flex; align-items: center; }
 .pm-toolbar .sx-search input { min-width: 0; width: 100%; }
 /* Modes sit in a 3px-padded track, so the buttons themselves run shorter to
-   keep the track on the same 34px row as every other control. */
-.pm-toolbar .pm-mode { height: 26px; }
-.pm-toolbar .pm-chk { height: 34px; min-height: 34px; }
+   keep the track on the same row as every other control. */
+.pm-toolbar .pm-mode { height: 22px; }
+.pm-toolbar .pm-chk { height: 28px; min-height: 28px; }
 
 /* ---- Status column ------------------------------------------------------- */
 .pm-status-wrap { display: inline-flex; align-items: center; gap: 6px; }
 .pm-status { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .pm-status--reviewed { background: #dcfce7; color: #166534; }
-/* Finalised = purple text (qty set, awaiting supplier); Assigned = green. */
-.pm-status--finalized { background: #f3e8ff; color: #7e22ce; }
+/* Finalised = teal (qty set, awaiting supplier); Assigned = green. */
+.pm-status--finalized { background: #cffafe; color: #0e7490; }
 .pm-status--assigned { background: #dcfce7; color: #166534; }
 .pm-status--notrev { background: #f1f5f9; color: #94a3b8; }
 .pm-status--skip { background: #fee2e2; color: #b91c1c; }
@@ -514,7 +666,7 @@
 .pm-status--unsaved { display: inline-flex; align-items: center; gap: 5px; background: #fef3c7; color: #b45309; }
 .pm-status--blank { background: transparent; color: #cbd5e1; font-weight: 400; padding: 0; }
 .pm-linkbtn { border: 0; background: transparent; color: #64748b; cursor: pointer; padding: 2px 5px; border-radius: 6px; font-size: 12px; font-weight: 600; }
-.pm-linkbtn:hover { background: rgba(100,116,139,.14); color: #0f172a; }
+.pm-linkbtn:hover { background: rgba(100,116,139,.14); color: var(--bs-body-color, #0f172a); }
 .pm-linkbtn--skip { color: #b91c1c; }
 .pm-linkbtn--skip:hover { background: #fee2e2; color: #991b1b; }
 
@@ -553,13 +705,22 @@
    internally. The floor is one header + ~4 rows: any higher and the two floors
    together exceeded the column, so Sales History was pushed out of the panel
    and clipped away entirely (pm-split__detail is overflow:hidden). */
-.pm-dsec--scroll { flex: 1 1 0; min-height: 104px; display: flex; flex-direction: column; }
+/* min-height tuned so >=5 rows of .pm-minitable (~24px/row + sticky header)
+   are visible without opening History/View All (spec: Purchase/Sales History
+   must show >=5 rows) — a real minimum, not just a flex-grow floor: on a
+   short window flex-grow settles at this size and .pm-dpanel--fit (which
+   already scrolls) absorbs the rest, rather than history rows losing the
+   fight against the header/chart for whatever's left. */
+.pm-dsec--scroll { flex: 1 1 0; min-height: 195px; display: flex; flex-direction: column; }
 .pm-dsec--scroll .pm-minitable-wrap { flex: 1; min-height: 0; overflow-y: auto; }
 /* Column header stays put while the rows scroll under it — opaque + a hairline
    so rows never bleed through it. */
 .pm-dsec--scroll .pm-minitable thead th { position: sticky; top: 0; z-index: 1; }
-.pm-dsec--pur.pm-dsec--scroll .pm-minitable thead th { background: #f0fdf4; box-shadow: inset 0 -1px 0 #bbf7d0; }
-.pm-dsec--sales.pm-dsec--scroll .pm-minitable thead th { background: #fff7ed; box-shadow: inset 0 -1px 0 #fed7aa; }
+.pm-dsec--pur.pm-dsec--scroll .pm-minitable thead th,
+.pm-dsec--sales.pm-dsec--scroll .pm-minitable thead th {
+  background: var(--ds-surface-elevated, #fff);
+  box-shadow: inset 0 -1px 0 var(--ds-border, #e5e7eb);
+}
 .pm-dsec--grow { flex: 1 1 0; }
 /* § NO EMPTY PANELS — a section with nothing to show collapses to its hint's
    natural height instead of claiming an equal share of the panel. */
@@ -580,7 +741,7 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .06em;
-  color: #475569;
+  color: var(--ds-text-secondary, #475569);
   display: flex;
   align-items: center;
   gap: 7px;
@@ -588,19 +749,19 @@
 }
 .pm-dsec__titlebtn { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 11px; }
 .pm-dsec__hint {
-  color: #94a3b8;
+  color: var(--ds-text-muted, #94a3b8);
   font-size: 12px;
   padding: 10px 0;
   border: 1px dashed rgba(148, 163, 184, .35);
   border-radius: 10px;
-  background: rgba(255,255,255,.45);
+  background: var(--ds-surface-subtle, rgba(255,255,255,.45));
 }
 .pm-dsec__cta { margin-top: 8px; }
 .pm-dsec--decision { background: #eff6ff; border-color: #bfdbfe; }
 .pm-dsec--assign { background: #f8fafc; border-color: #e2e8f0; }
 .pm-asum { display: flex; gap: 8px; }
 .pm-asum__cell { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 4px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
-.pm-asum__cell b { font-size: 16px; font-weight: 700; color: #0f172a; font-variant-numeric: tabular-nums; }
+.pm-asum__cell b { font-size: 16px; font-weight: 700; color: var(--bs-body-color, #0f172a); font-variant-numeric: tabular-nums; }
 .pm-asum__cell span { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: #64748b; }
 .pm-asum__cell--warn { border-color: #fecaca; background: #fef2f2; }
 .pm-asum__cell--warn b { color: #dc2626; }
@@ -608,20 +769,25 @@
 .pm-asum__chip { font-size: 11px; font-weight: 600; color: #334155; background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 2px 7px; }
 .pm-asum__chip b { color: #16a34a; }
 .pm-dsec--batch { background: #f5f3ff; border-color: #ddd6fe; }
-.pm-dsec--pur {
-  background: linear-gradient(180deg, #f7fff9 0%, #eefcf3 100%);
-  border-color: #bbf7d0;
-}
+/* Sales Trend / Purchase History / Sales History (DetailColumn only) — one
+   shared glass treatment, same visual language as the Supplier Recommendation
+   panel (--ds-surface-elevated + blur + thin border), instead of each section
+   wearing its own flat green/orange/purple wash. Icon + title alone carry the
+   section identity now; the surface itself stays neutral and translucent so
+   all three read as one modern panel, not three differently-tinted boxes. */
+.pm-dsec--trend,
+.pm-dsec--pur,
 .pm-dsec--sales {
-  background: linear-gradient(180deg, #fffaf2 0%, #fff4e5 100%);
-  border-color: #fed7aa;
+  background: var(--ds-surface-elevated, #fff);
+  border-color: var(--ds-border, #e5e7eb);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
-.pm-dsec--trend { background: var(--bs-body-bg, #fff); border-color: #e5e7eb; }
 .pm-dsec--sup { background: var(--bs-body-bg, #fff); border-color: #e5e7eb; }
 
 /* View-mode switch (Summary / History) in the panel header */
-.pm-vswitch { display: inline-flex; gap: 3px; background: rgba(100,116,139,.12); padding: 3px; border-radius: 8px; }
-.pm-vswitch__btn { border: 0; background: transparent; border-radius: 6px; padding: 4px 11px; font-weight: 600; font-size: 12px; color: inherit; cursor: pointer; }
+.pm-vswitch { display: inline-flex; gap: 3px; background: rgba(100,116,139,.12); padding: 2px; border-radius: 7px; }
+.pm-vswitch__btn { border: 0; background: transparent; border-radius: 5px; padding: 3px 9px; font-weight: 600; font-size: 11.5px; color: inherit; cursor: pointer; }
 .pm-vswitch__btn--on { background: var(--bs-body-bg, #fff); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 
 /* Compact Decision Summary (3 metrics + Why?) */
@@ -632,7 +798,7 @@
 .pm-batchstrip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 .pm-batchstrip__cell { background: rgba(255,255,255,.7); border: 1px solid rgba(148,163,184,.2); border-radius: 7px; padding: 5px 7px; display: flex; flex-direction: column; min-width: 0; }
 .pm-batchstrip__k { font-size: 9.5px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
-.pm-batchstrip__v { font-size: 12.5px; font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-batchstrip__v { font-size: 12.5px; font-weight: 700; color: var(--bs-body-color, #0f172a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Compact purchase/sales grids inside the panel — tightened header + row
    padding so ~7-10 rows fit the SAME .pm-dsec--scroll height (150px / 84px on
@@ -642,7 +808,7 @@
 .pm-minitable thead th {
   text-align: left;
   font-weight: 700;
-  color: #475569;
+  color: var(--ds-text-secondary, #475569);
   padding: 6px 8px;
   line-height: 1.25;
   white-space: nowrap;
@@ -657,32 +823,46 @@
 .pm-minitable .sx-num { text-align: right; font-variant-numeric: tabular-nums; }
 .pm-minitable .sx-dim { color: #94a3b8; }
 .pm-minitable tbody tr:last-child td { border-bottom: 0; }
-.pm-minitable tbody tr:hover { background: rgba(255,255,255,.6); }
+.pm-minitable tbody tr:hover { background: var(--ds-surface-subtle, rgba(255,255,255,.6)); }
 .pm-mt__ellip { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 
 .pm-drow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
-/* Header */
-.pm-dhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 2px 2px 0; }
-.pm-dhead__name { font-size: 15px; font-weight: 700; line-height: 1.2; }
-.pm-dhead__meta { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 3px; font-size: 11.5px; color: #64748b; }
-.pm-dhead__meta b { color: #94a3b8; font-weight: 600; margin-right: 5px; text-transform: uppercase; font-size: 10px; letter-spacing: .02em; }
-.pm-dhead__actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
-/* Inline Change Supplier (§4) */
+/* Header — name and the Summary/History/Info action row stack vertically
+   (not side-by-side) so the action row's fixed-width buttons can never
+   squeeze the product name into a near-zero-width column that wraps every
+   word onto its own line. The right rail is only ~15% of the workspace
+   width (spec §3/§4 "compact information rail"), narrow enough that a
+   side-by-side header doesn't reliably fit both. */
+.pm-dhead { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 0; }
+.pm-dhead__name { font-size: 15px; font-weight: 700; line-height: 1.25; overflow-wrap: break-word; color: var(--ds-text-primary, #0f172a); }
+.pm-dhead__meta { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 3px; font-size: 11.5px; color: var(--ds-text-secondary, #64748b); }
+.pm-dhead__meta b { color: var(--ds-text-muted, #94a3b8); font-weight: 600; margin-right: 5px; text-transform: uppercase; font-size: 10px; letter-spacing: .02em; }
+.pm-dhead__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Inline Change Supplier (§4) — a soft glass badge (translucent green tint +
+   thin border), not a solid flat-green block, so it sits visually with the
+   rest of the glass workspace instead of reading as an old legacy chip. */
 .pm-dhead__assigned {
   display: flex; align-items: center; gap: 6px; margin-top: 5px;
-  font-size: 11.5px; color: #166534; background: #f0fdf4; border: 1px solid #bbf7d0;
-  border-radius: 6px; padding: 3px 8px; width: fit-content;
+  font-size: 11.5px; color: #15803d; background: rgba(34, 197, 94, .10); border: 1px solid rgba(34, 197, 94, .28);
+  border-radius: 999px; padding: 3px 10px; width: fit-content;
 }
+[data-bs-theme="dark"] .pm-dhead__assigned { color: #86efac; background: rgba(34, 197, 94, .14); border-color: rgba(34, 197, 94, .3); }
 .pm-dhead__assigned b { font-weight: 700; }
 .pm-dhead__changesup { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
 .pm-linkbtn--sm { font-size: 11px; padding: 1px 6px; }
 .pm-linkbtn--danger { color: #dc2626; }
+/* Decision Summary relocated into the header (spec §9/§10) — reuses
+   .pm-srp__decision's card styling but drops its border-top/bottom-pin
+   (those made sense pinned at the foot of the narrow supplier column; here
+   it's one more header row) and caps its width so the three stat cells never
+   stretch to the full detail-panel width. */
+.pm-dhead__decision { border-top: 0; padding-top: 4px; margin-top: 4px; max-width: 320px; }
 
 /* Decision Summary */
 .pm-dsum { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .pm-dsum__cell { display: flex; flex-direction: column; }
-.pm-dsum__val { font-size: 18px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; color: #0f172a; }
+.pm-dsum__val { font-size: 18px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--bs-body-color, #0f172a); }
 .pm-dsum__val--accent { color: #1d4ed8; }
 .pm-dsum__lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: #64748b; margin-top: 1px; }
 .pm-dsum__reason { margin-top: 8px; font-size: 12px; color: #1e3a5f; background: #dbeafe; border-radius: 8px; padding: 6px 9px; display: flex; gap: 6px; align-items: baseline; }
@@ -698,11 +878,14 @@
 .pm-purgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 14px; }
 .pm-fact { display: flex; flex-direction: column; min-width: 0; }
 .pm-fact__k { font-size: 10px; text-transform: uppercase; letter-spacing: .02em; color: #94a3b8; }
-.pm-fact__v { font-size: 13px; font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-fact__v { font-size: 13px; font-weight: 700; color: var(--bs-body-color, #0f172a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Movement chart (reused component, kept compact) — the trend is a glance, the
    two history tables below it are the work; it gives up height to them. */
-.pm-chart-wrap { height: 152px; margin-top: 4px; }
+/* Compact — the right rail is a secondary info panel (§3): Sales Trend gives
+   up height so Purchase/Sales History can show >=5 rows without scrolling
+   the whole panel. */
+.pm-chart-wrap { height: 120px; margin-top: 4px; }
 
 /* Supplier recommendation cards */
 .pm-supcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
@@ -751,7 +934,7 @@
 .pm-sqcard__chk { margin: 0; cursor: pointer; }
 .pm-sqcard__name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pm-sqcard__stat { display: flex; flex-direction: column; font-size: 10px; text-transform: uppercase; letter-spacing: .02em; color: #94a3b8; }
-.pm-sqcard__stat b { font-size: 13px; color: #0f172a; font-variant-numeric: tabular-nums; }
+.pm-sqcard__stat b { font-size: 13px; color: var(--bs-body-color, #0f172a); font-variant-numeric: tabular-nums; }
 .pm-sqcard__cta { display: inline-flex; gap: 6px; justify-self: end; }
 .pm-sqstat { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; padding: 2px 9px; border-radius: 999px; justify-self: end; white-space: nowrap; }
 .pm-sqstat--ready { background: #dcfce7; color: #166534; }
@@ -842,7 +1025,7 @@
 .pm-srv__confirm-btns { display: flex; gap: 6px; }
 .pm-srv__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border-top: 1px solid var(--bs-border-color, #e5e7eb); flex-wrap: wrap; }
 .pm-srv__foottotal { font-size: 12.5px; color: #475569; }
-.pm-srv__foottotal b { font-size: 15px; color: #0f172a; margin-left: 4px; }
+.pm-srv__foottotal b { font-size: 15px; color: var(--bs-body-color, #0f172a); margin-left: 4px; }
 .pm-srv__footbtns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pm-btn--danger { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
 .pm-btn--danger:hover:not(:disabled) { background: #fecaca; }
@@ -925,7 +1108,7 @@
 .pm-drawer__head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--bs-border-color, #e5e7eb); flex: 0 0 auto; }
 .pm-drawer__tabs { display: flex; gap: 2px; padding: 8px 12px 0; border-bottom: 1px solid var(--bs-border-color, #e5e7eb); flex: 0 0 auto; }
 .pm-drawer__tab { border: 0; background: transparent; color: #64748b; cursor: pointer; font-weight: 600; font-size: 12.5px; padding: 8px 14px; border-radius: 8px 8px 0 0; display: inline-flex; align-items: center; gap: 6px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.pm-drawer__tab:hover { color: #0f172a; background: rgba(100,116,139,.08); }
+.pm-drawer__tab:hover { color: var(--bs-body-color, #0f172a); background: rgba(100,116,139,.08); }
 .pm-drawer__tab--on { color: var(--bs-primary, #4f46e5); border-bottom-color: var(--bs-primary, #4f46e5); }
 .pm-drawer__body { padding: 14px 16px; overflow: auto; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 /* Wide bill drawer + its denormalised header facts strip. */
@@ -944,7 +1127,7 @@
 .pm-modal__bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--bs-border-color, #e5e7eb); }
 .pm-modal__body { padding: 8px 16px 16px; overflow: auto; }
 .pm-sortth { cursor: pointer; user-select: none; }
-.pm-sortth:hover { color: #0f172a; }
+.pm-sortth:hover { color: var(--bs-body-color, #0f172a); }
 /* Clickable history rows → open the Bill Drawer. */
 .pm-minitable--click tbody tr { cursor: pointer; }
 .pm-minitable--click tbody tr:hover { background: rgba(37,99,235,.06); }
@@ -1019,7 +1202,7 @@
 /* Footer stat chips: Total Products · Current Row · Pending Review · Filter · Value */
 .pm-stat { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1.2; }
 .pm-stat__k { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: #94a3b8; }
-.pm-stat__v { font-size: 13px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; }
+.pm-stat__v { font-size: 13px; font-weight: 800; color: var(--bs-body-color, #0f172a); font-variant-numeric: tabular-nums; }
 .pm-stat__v--warn { color: #b45309; }
 .pm-stat--value { margin-left: auto; }
 .pm-stat--value .pm-stat__k { align-self: center; }
@@ -1199,7 +1382,7 @@
   max-width: 320px;
   white-space: normal;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--bs-body-color, #0f172a);
 }
 
 .pm-lineflag {
@@ -1443,7 +1626,7 @@
    Finalized/Assigned/Deferred rows in Purchase Manager). Swap them for
    translucent low-alpha tints of the same hue (readable on light OR dark)
    and lighten the paired text so it has real contrast on a dark row. */
-[data-bs-theme="dark"] .pm-row--finalized { background: rgba(168, 85, 247, .14); }
+[data-bs-theme="dark"] .pm-row--finalized { background: rgba(34, 211, 238, .12); }
 [data-bs-theme="dark"] .pm-row--assigned { background: rgba(34, 197, 94, .12); }
 [data-bs-theme="dark"] .pm-row--skip { background: rgba(148, 163, 184, .12); }
 [data-bs-theme="dark"] .pm-row--deferred { background: rgba(217, 119, 6, .10); }
@@ -1458,7 +1641,7 @@
 }
 [data-bs-theme="dark"] .pm-row--sel .pm-grid__final { background: rgba(250, 204, 21, .18); }
 
-[data-bs-theme="dark"] .pm-status--finalized { background: rgba(168, 85, 247, .18); color: #d8b4fe; }
+[data-bs-theme="dark"] .pm-status--finalized { background: rgba(34, 211, 238, .18); color: #67e8f9; }
 [data-bs-theme="dark"] .pm-status--assigned,
 [data-bs-theme="dark"] .pm-status--reviewed { background: rgba(34, 197, 94, .18); color: #86efac; }
 [data-bs-theme="dark"] .pm-status--notrev { background: rgba(148, 163, 184, .16); color: #cbd5e1; }
@@ -1480,7 +1663,7 @@
 [data-bs-theme="dark"] .pm-prio--low,
 [data-bs-theme="dark"] .pm-step--waiting,
 [data-bs-theme="dark"] .pm-step--skipped { background: rgba(148, 163, 184, .16); color: #cbd5e1; }
-[data-bs-theme="dark"] .pm-sxchip--finalized { background: rgba(168, 85, 247, .18); color: #d8b4fe; }
+[data-bs-theme="dark"] .pm-sxchip--finalized { background: rgba(34, 211, 238, .18); color: #67e8f9; }
 [data-bs-theme="dark"] .pm-badge--medium,
 [data-bs-theme="dark"] .pm-optstat--ready,
 [data-bs-theme="dark"] .pm-step--running { background: rgba(59, 130, 246, .18); color: #93c5fd; }
@@ -1525,13 +1708,14 @@
 [data-bs-theme="dark"] .pm-toolbar .pm-chk--offer:has(input:checked) { background: rgba(217, 119, 6, .16); color: #fcd34d; }
 [data-bs-theme="dark"] .pm-dsec--decision { background: rgba(59, 130, 246, .1); border-color: rgba(59, 130, 246, .3); }
 [data-bs-theme="dark"] .pm-dsec--batch { background: rgba(168, 85, 247, .1); border-color: rgba(168, 85, 247, .3); }
-[data-bs-theme="dark"] .pm-dsec--pur { background: rgba(34, 197, 94, .1); border-color: rgba(34, 197, 94, .3); }
-[data-bs-theme="dark"] .pm-dsec--sales { background: rgba(217, 119, 6, .1); border-color: rgba(217, 119, 6, .3); }
+[data-bs-theme="dark"] .pm-dsec--trend,
+[data-bs-theme="dark"] .pm-dsec--pur,
+[data-bs-theme="dark"] .pm-dsec--sales {
+  background: var(--ds-surface-elevated, rgba(15, 23, 42, .86));
+  border-color: var(--ds-border, rgba(148, 163, 184, .18));
+}
 [data-bs-theme="dark"] .pm-dsum__reason { background: rgba(59, 130, 246, .14); color: #93c5fd; }
-[data-bs-theme="dark"] .pm-srpcard--assigned,
-[data-bs-theme="dark"] .pm-srpcard--cheapest,
 [data-bs-theme="dark"] .pm-supicon--assigned { background: rgba(34, 197, 94, .12); }
-[data-bs-theme="dark"] .pm-srpcard--cheapest.pm-srpcard--sel { background: rgba(34, 197, 94, .2); }
 [data-bs-theme="dark"] .pm-srpcard__preferred { background: rgba(217, 119, 6, .2); color: #fcd34d; }
 [data-bs-theme="dark"] .pm-sqexp__totalbar { background: linear-gradient(135deg, rgba(99,102,241,.14), rgba(168,85,247,.14)); border-color: rgba(99,102,241,.35); }
 [data-bs-theme="dark"] .pm-sqexp__totalname,
@@ -1548,3 +1732,53 @@
 [data-bs-theme="dark"] .pm-btn--add { background: rgba(16, 185, 129, .16); color: #6ee7b7; border-color: rgba(16, 185, 129, .4); }
 [data-bs-theme="dark"] .pm-ro-badge { background: rgba(217, 119, 6, .18); color: #fcd34d; border-color: rgba(217, 119, 6, .4); }
 [data-bs-theme="dark"] .pm-qty--dirty { background: rgba(245, 158, 11, .12); border-color: #f59e0b; }
+
+/* ---- Workspace Settings popover (spec §6/§20) ---------------------------- */
+.pm-settings-anchor { display: inline-flex; }
+/* Positioned inline (position: fixed; top/right) by WorkspaceSettings.tsx —
+   it's portalled to document.body so it isn't clipped by the toolbar row's
+   overflow-x: auto (which the CSS spec silently upgrades to overflow-y: auto
+   too, see the component's own comment). This rule only styles the box. */
+.pm-settings {
+  z-index: 30;
+  width: 260px; max-height: 70vh; overflow-y: auto;
+  background: var(--bs-body-bg, #fff); border: 1px solid var(--bs-border-color, #e5e7eb);
+  border-radius: 10px; box-shadow: 0 10px 32px rgba(15, 23, 42, .18);
+  padding: 10px; display: flex; flex-direction: column; gap: 12px;
+}
+.pm-settings__section { display: flex; flex-direction: column; gap: 4px; }
+.pm-settings__title {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: #8a95a8; padding-bottom: 2px; border-bottom: 1px solid var(--bs-border-color, #eef1f5);
+}
+.pm-settings__row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 3px 2px; font-size: 12.5px;
+}
+.pm-settings__check { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.pm-settings__check input { flex: 0 0 auto; }
+.pm-settings__lockrow {
+  display: flex; align-items: center; gap: 6px; padding: 3px 2px;
+  font-size: 11px; color: #94a3b8; font-style: italic;
+}
+.pm-settings__locktag {
+  margin-left: auto; font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .03em; color: #94a3b8; white-space: nowrap;
+}
+.pm-settings__reorder { display: inline-flex; gap: 2px; flex: 0 0 auto; }
+.pm-settings__reorder button {
+  width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--bs-border-color, #d0d5dd); background: var(--bs-body-bg, #fff);
+  border-radius: 5px; font-size: 10px; color: inherit; cursor: pointer;
+}
+.pm-settings__reorder button:disabled { opacity: .35; cursor: not-allowed; }
+.pm-settings__chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.pm-settings__chip {
+  padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  border: 1px solid var(--bs-border-color, #d0d5dd); background: var(--bs-body-bg, #fff);
+  color: inherit; cursor: pointer;
+}
+.pm-settings__chip--on { border-color: var(--bs-primary, #4f46e5); background: rgba(79,70,229,.1); color: var(--bs-primary, #4f46e5); }
+[data-bs-theme="dark"] .pm-settings { background: #1a2030; border-color: rgba(255,255,255,.12); }
+[data-bs-theme="dark"] .pm-settings__reorder button { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }
+[data-bs-theme="dark"] .pm-settings__chip { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }

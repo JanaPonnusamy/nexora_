@@ -6,6 +6,9 @@ import { useAccess } from '../../hooks/useAccess'
 interface SidebarProps {
   isMobileOpen: boolean
   onNavigate: () => void
+  /** Icon-only mode — labels/group titles hidden, icons keep their `title`
+   *  tooltip so every destination is still reachable and identifiable. */
+  collapsed?: boolean
 }
 
 function SidebarLink({
@@ -32,11 +35,11 @@ function SidebarLink({
   )
 }
 
-export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
+export function Sidebar({ isMobileOpen, onNavigate, collapsed }: SidebarProps) {
   const { can } = useAccess()
 
   return (
-    <aside className={`app-sidebar${isMobileOpen ? ' is-open' : ''}`}>
+    <aside className={`app-sidebar${isMobileOpen ? ' is-open' : ''}${collapsed ? ' app-sidebar--collapsed' : ''}`}>
       <nav className="app-sidebar__nav">
         {NAV_ENTRIES.map((entry) => {
           if (entry.kind === 'link') {

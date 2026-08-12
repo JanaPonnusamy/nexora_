@@ -2,7 +2,7 @@
   --app-header-height: 56px;
   --app-statusbar-height: 32px;
   --app-sidebar-width: 248px;
-  --app-sidebar-rail-width: 64px;
+  --app-sidebar-rail-width: 56px;
   --app-gutter: 1.5rem;
   --app-radius: 0.5rem;
 }
@@ -164,6 +164,30 @@ body {
   border-right: 1px solid var(--bs-border-color);
   background: var(--bs-tertiary-bg);
   overflow-y: auto;
+  transition: flex-basis .15s ease, width .15s ease;
+}
+
+/* Icon-only mode (give more width back to the workspace on low-viewport
+   monitors) — labels/group titles hide, icons stay centered; every link
+   still carries a `title` tooltip so nothing becomes unreachable. */
+.app-sidebar--collapsed {
+  flex-basis: var(--app-sidebar-rail-width);
+  width: var(--app-sidebar-rail-width);
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+.app-sidebar--collapsed .app-sidebar__label,
+.app-sidebar--collapsed .app-sidebar__group-title .app-sidebar__label {
+  display: none;
+}
+.app-sidebar--collapsed .app-sidebar__link,
+.app-sidebar--collapsed .app-sidebar__group-title {
+  justify-content: center;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+.app-sidebar--collapsed .app-sidebar__link--child {
+  padding-left: 0.5rem;
 }
 
 .app-sidebar__nav {

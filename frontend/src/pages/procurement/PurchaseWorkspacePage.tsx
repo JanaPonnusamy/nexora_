@@ -22,11 +22,17 @@ import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { ProductGrid } from '../../components/procurement/ProductGrid'
 import { DetailColumn } from '../../components/procurement/DetailColumn'
-import type { DrawerTab, ViewAllKind } from '../../components/procurement/DetailColumn'
+import type { AssignedSupplierInfo, DrawerTab, OfferInfo, ViewAllKind } from '../../components/procurement/DetailColumn'
 import { BillDrawer } from '../../components/procurement/BillDrawer'
 import type { BillTarget } from '../../components/procurement/BillDrawer'
 import { HistoryAllDialog } from '../../components/procurement/HistoryAllDialog'
 import { SupplierRecPanel } from '../../components/procurement/SupplierRecPanel'
+import { PmWorkspaceSplit } from '../../components/procurement/PmWorkspaceSplit'
+import { WorkspaceSettings } from '../../components/procurement/WorkspaceSettings'
+import type { GridColumnConfig } from '../../components/procurement/gridColumns'
+import { NARROW_DEFAULT_VISIBLE_COLUMNS, hasSavedColumnConfig, loadColumnConfig, saveColumnConfig } from '../../components/procurement/gridColumns'
+import { settingsService } from '../../platform/services/SettingsService'
+import { useNarrowWorkspace } from '../../hooks/useNarrowWorkspace'
 import { ProductInfoDialog } from '../../components/procurement/ProductInfoDialog'
 import { SupplierQueuePanel } from '../../components/procurement/SupplierQueuePanel'
 import type { SupplierQueueGroup } from '../../components/procurement/SupplierQueuePanel'
@@ -42,14 +48,12 @@ import {
   computeRankAssignment,
   effectiveCost,
   eligibleForAutoAssign,
-  sortSuppliersByCost,
+  rankSuppliersForRecommendation,
 } from '../../components/procurement/purchaseValue'
 import { SupplierRankPanel } from '../../components/procurement/SupplierRankPanel'
 import { AutoAssignPreviewModal } from '../../components/procurement/AutoAssignPreviewModal'
-import { PageHeader } from '../../components/common/PageHeader'
 import { money, num, date } from '../../components/stock/format'
 import { SegmentedTabs } from '../../design-system/components/SegmentedTabs'
-import { KpiBar, StatCard } from '../../design-system/components/StatCard'
 import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
 import '../../components/procurement/purchase-manager.css'
 
@@ -57,6 +61,7 @@ type View = 'purchase' | 'pending' | 'grn'
 // Operational stages of the Purchase view (normalizes the previously-mixed screen).
 type Stage = 'review' | 'assign' | 'optimize' | 'export'
 type Banner = { kind: 'success' | 'danger'; text: string } | null
+type ContextResetScope = 'tenant' | 'store' | 'cycle' | 'refresh'
 
 const STAGES: { key: Stage; label: string; icon: string }[] = [
   { key: 'review', label: 'Review Products', icon: 'bi-clipboard-check' },
@@ -124,6 +129,7 @@ export default function PurchaseWorkspacePage() {
   const [items, setItems] = useState<WorkspaceItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [contextLoading, setContextLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // The refresh_id the currently-loaded `items` actually belong to — set only
   // once a workspace fetch resolves. Lets the eager Supplier Queue load tell
@@ -157,6 +163,34 @@ export default function PurchaseWorkspacePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // True while the keyboard "supplier zone" holds focus (rings the side panel).
   const [supplierZoneActive, setSupplierZoneActive] = useState(false)
+  // Product Grid's user-configurable middle columns (§5/§6) + workspace
+  // zoom/density (§20) — persisted via settingsService, lazily read once on
+  // mount so a saved preference never causes a visible layout flash/reflow.
+  const [columnConfig, setColumnConfig] = useState<GridColumnConfig>(() => loadColumnConfig())
+  // Remembers whether the column preference was ever explicitly saved, so the
+  // narrow-width default (§7) only kicks in before the user has made a
+  // deliberate choice — after that, their choice always wins, even at 720p.
+  const [columnConfigIsUserSet, setColumnConfigIsUserSet] = useState(() => hasSavedColumnConfig())
+  const narrowWorkspace = useNarrowWorkspace()
+  const effectiveColumnVisible =
+    narrowWorkspace && !columnConfigIsUserSet ? NARROW_DEFAULT_VISIBLE_COLUMNS : columnConfig.visible
+  const [pmZoom, setPmZoom] = useState(() => settingsService.get<number>('purchaseWorkspace.zoom', 100))
+  const [pmDensity, setPmDensity] = useState(() => settingsService.get<'normal' | 'compact'>('purchaseWorkspace.density', 'normal'))
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsBtnRef = useRef<HTMLButtonElement>(null)
+  const updateColumnConfig = useCallback((next: GridColumnConfig) => {
+    setColumnConfig(next)
+    saveColumnConfig(next)
+    setColumnConfigIsUserSet(true)
+  }, [])
+  const updateZoom = useCallback((next: number) => {
+    setPmZoom(next)
+    settingsService.set('purchaseWorkspace.zoom', next)
+  }, [])
+  const updateDensity = useCallback((next: 'normal' | 'compact') => {
+    setPmDensity(next)
+    settingsService.set('purchaseWorkspace.density', next)
+  }, [])
   // The grid checkbox is NOT a selection state — it means "included for the
   // current supplier's export". It is ON automatically the instant a product
   // finalizes and OFF while not finalized; Space Bar only lets the buyer pull
@@ -227,6 +261,7 @@ export default function PurchaseWorkspacePage() {
   // timer firing again, an error-path reload, a manual refresh click, etc.) so a
   // slow, stale response can never overwrite fresher state.
   const workspaceAbortRef = useRef<AbortController | null>(null)
+  const workspaceRequestRef = useRef(0)
   // Order-item ids with a Final Qty save in flight — dedupes Enter/blur so one
   // row can never fire two concurrent /final-qty requests.
   const savingIds = useRef<Set<string>>(new Set())
@@ -237,6 +272,7 @@ export default function PurchaseWorkspacePage() {
   // assigned item, so two concurrent calls (rapid supplier switches, chained
   // actions) could otherwise resolve out of order and let a stale result win.
   const queueRunRef = useRef(0)
+  const workspaceContextRef = useRef('')
 
   const say = useCallback((kind: 'success' | 'danger', text: string) => {
     setBanner({ kind, text })
@@ -252,6 +288,71 @@ export default function PurchaseWorkspacePage() {
   // Show the one banner and stop; the workspace ErrorState already offers Retry.
   const isOffline = (e: unknown) =>
     e instanceof ApiError && (e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504)
+
+  const resetWorkspaceContext = useCallback((scope: ContextResetScope) => {
+    workspaceAbortRef.current?.abort()
+    workspaceAbortRef.current = null
+    workspaceRequestRef.current += 1
+    queueRunRef.current += 1
+    workspaceContextRef.current = ''
+
+    setContextLoading(true)
+    setLoading(true)
+    setError(null)
+    setItems([])
+    setTotal(0)
+    setItemsRefreshId('')
+    setRecommendations({})
+    setSelectedSupplier({})
+    setSelectedId(null)
+    setSupplierZoneActive(false)
+    setQueueLines([])
+    setQueueLoading(false)
+    setQueueError(null)
+    setLockedIds(new Set())
+    setInfo(null)
+    setBill(null)
+    setViewAll(null)
+    setSupplier(null)
+    setSupplierProductIds(null)
+    setSupplierProductsLoading(false)
+    setSupplierStock([])
+    setSupplierStockLoading(false)
+    setSupplierStockError(null)
+    setStockSelectedKey(null)
+    setStockDraft({})
+    setStockRemarks({})
+    setProductRemarks({})
+    setPending([])
+    setPendingDraft({})
+    setPendingSel(new Set())
+    setPendingBusy(false)
+    setGrnNumber('')
+    setCheckOverrides({})
+    setEdits({})
+
+    if (scope === 'tenant') {
+      setCycles([])
+      setCycleId('')
+      setRefreshes([])
+      setRefreshId('')
+      setSelectedStoreId('')
+      setMinOrders({})
+      setOfferProductCodes(null)
+    } else if (scope === 'store') {
+      setCycles([])
+      setCycleId('')
+      setRefreshes([])
+      setRefreshId('')
+      setMinOrders({})
+      setOfferProductCodes(null)
+    } else if (scope === 'cycle') {
+      setRefreshId('')
+      setOfferProductCodes(null)
+    } else {
+      setOfferProductCodes(null)
+    }
+  }, [])
 
   useEffect(() => {
     tenantService
@@ -386,8 +487,11 @@ export default function PurchaseWorkspacePage() {
       .then((rows) => {
         if (!live) return
         const map: Record<string, SupplierRow[]> = {}
-        // Cheapest-first everywhere (grid keyboard order + side panel agree).
-        rows.forEach((r) => { map[r.order_item_id] = sortSuppliersByCost(r.suppliers) })
+        // Recommendation-ranked (recency + frequency + PTR, not price alone —
+        // see rankSuppliersForRecommendation) everywhere: this is the single
+        // source both the grid's keyboard order and the side panel's display
+        // order read from, so they always agree.
+        rows.forEach((r) => { map[r.order_item_id] = rankSuppliersForRecommendation(r.suppliers) })
         setRecommendations(map)
       })
       .catch(() => live && setRecommendations({}))
@@ -404,11 +508,19 @@ export default function PurchaseWorkspacePage() {
     workspaceAbortRef.current?.abort()
     if (!tenantId || !refreshId) {
       setItems([])
+      setTotal(0)
+      setItemsRefreshId('')
+      setLoading(false)
+      setContextLoading(false)
       return
     }
     const controller = new AbortController()
+    const requestId = ++workspaceRequestRef.current
+    const requestContext = `${tenantId}|${selectedStoreId}|${cycleId}|${refreshId}`
     workspaceAbortRef.current = controller
+    workspaceContextRef.current = requestContext
     setLoading(true)
+    setContextLoading(true)
     setError(null)
     procurementService
       .workspace(
@@ -428,18 +540,24 @@ export default function PurchaseWorkspacePage() {
         controller.signal,
       )
       .then((p) => {
+        if (workspaceRequestRef.current !== requestId) return
+        if (workspaceContextRef.current !== requestContext) return
         setItems(p.items)
         setTotal(p.total ?? p.items.length)
         setItemsRefreshId(refreshId)
       })
       .catch((e) => {
         if (e instanceof DOMException && e.name === 'AbortError') return // superseded, not an error
+        if (workspaceRequestRef.current !== requestId) return
         setError(e instanceof Error ? e.message : 'Failed to load')
       })
       .finally(() => {
-        if (workspaceAbortRef.current === controller) setLoading(false)
+        if (workspaceRequestRef.current !== requestId) return
+        if (workspaceAbortRef.current === controller) workspaceAbortRef.current = null
+        setLoading(false)
+        setContextLoading(false)
       })
-  }, [tenantId, refreshId, search, movement, isReviewStage])
+  }, [tenantId, selectedStoreId, cycleId, refreshId, search, movement, isReviewStage])
 
   useEffect(() => {
     const id = window.setTimeout(loadWorkspace, 250)
@@ -855,7 +973,7 @@ export default function PurchaseWorkspacePage() {
     setPrevVisibleItems(visibleItems)
     if (visibleItems.length === 0) {
       if (selectedId !== null) setSelectedId(null)
-    } else if (!visibleItems.some((i) => i.order_item_id === selectedId)) {
+    } else if (!contextLoading && !visibleItems.some((i) => i.order_item_id === selectedId)) {
       setSelectedId(visibleItems[0].order_item_id)
     }
   }
@@ -1516,20 +1634,6 @@ export default function PurchaseWorkspacePage() {
     }
   }
 
-  // Changing supplier never touches the order item's own qty/status (it's
-  // still fully assigned, just to a different supplier) — the queue reload
-  // alone keeps assignedByItem / the review panel / the grid's Assigned tag
-  // correct, no full workspace reload needed (§23).
-  const reviewChangeSupplier = async (assignmentId: string, newSupplier: SupplierRow) => {
-    if (!guardRW()) return
-    try {
-      await procurementService.changeSupplier(tenantId, assignmentId, newSupplier.supplier_code, actingUser || null)
-      say('success', `Moved to ${newSupplier.supplier_name ?? newSupplier.supplier_code}`)
-      await loadQueue()
-    } catch (e) {
-      fail(e)
-    }
-  }
   // Removing a supplier DOES revert the order item's own status (assigned →
   // review/draft) — reconcile just that one row from the server instead of
   // reloading the whole workspace (§23).
@@ -1538,6 +1642,23 @@ export default function PurchaseWorkspacePage() {
     try {
       await procurementService.removeAssignment(tenantId, assignmentId, actingUser || null)
       say('success', 'Removed from supplier')
+      const fresh = await procurementService.getOrderItem(tenantId, orderItemId)
+      setItems((list) => list.map((it) => (it.order_item_id === orderItemId ? fresh : it)))
+      await loadQueue()
+    } catch (e) {
+      fail(e)
+    }
+  }
+
+  // Inline "Change Supplier" from the Detail panel's header (Review All mode,
+  // §4) — an atomic reassignment via the dedicated backend endpoint rather
+  // than remove-then-assign, which would race the still-stale assignedByItem
+  // snapshot this same handler closes over.
+  const reviewChangeSupplier = async (assignmentId: string, orderItemId: string, newSupplier: SupplierRow) => {
+    if (!guardRW()) return
+    try {
+      await procurementService.changeSupplier(tenantId, assignmentId, newSupplier.supplier_code, actingUser || null)
+      say('success', `Changed to ${newSupplier.supplier_name ?? newSupplier.supplier_code}`)
       const fresh = await procurementService.getOrderItem(tenantId, orderItemId)
       setItems((list) => list.map((it) => (it.order_item_id === orderItemId ? fresh : it)))
       await loadQueue()
@@ -1781,173 +1902,154 @@ export default function PurchaseWorkspacePage() {
   }
 
   const header = (
-    <div className="d-flex flex-column gap-3">
-      <PageHeader
-        title="Purchase Workspace"
-        breadcrumb={['Operations', 'Procurement', 'Purchase Workspace']}
-        description="Review refreshes, assign suppliers, optimize procurement value, and monitor downstream export work from one shared workspace."
-      />
-      <div className="ds-toolbar">
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">Tenant</span>
-          <select className="form-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
-            {tenants.length === 0 && <option value="">Loading...</option>}
-            {tenants.map((tenant) => (
-              <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                {tenant.tenant_name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">Store</span>
-          <select className="form-select" aria-label="Store" value={selectedStoreId} onChange={(e) => setSelectedStoreId(e.target.value)}>
-            <option value="">Select store</option>
-            {tenantStores.map((store) => (
-              <option key={store.store_id} value={store.store_id}>
-                {store.store_name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">Cycle</span>
-          <select className="form-select" aria-label="Cycle" value={cycleId} onChange={(e) => setCycleId(e.target.value)}>
-            <option value="">Select cycle</option>
-            {cycles.map((cycle) => (
-              <option key={cycle.cycle_id} value={cycle.cycle_id}>
-                {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' - Closed'}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">Refresh</span>
-          <select className="form-select" aria-label="Refresh" value={refreshId} onChange={(e) => setRefreshId(e.target.value)}>
-            <option value="">{refreshesInCycle.length ? 'Select refresh' : 'No refreshes'}</option>
-            {refreshesInCycle.map((refresh) => (
-              <option key={refresh.refresh_id} value={refresh.refresh_id}>
-                {refresh.snapshot_name} - {refresh.snapshot_status}
-              </option>
-            ))}
-          </select>
-        </label>
-        {readOnly && (
-          <span className="badge text-bg-secondary align-self-end">
-            <i className="bi bi-lock-fill me-1" aria-hidden="true" />
-            Read Only · {cycleClosed ? 'Closed Cycle' : 'Closed Refresh'}
-          </span>
-        )}
-      </div>
-      <SegmentedTabs
-        items={[
-          { value: 'purchase', label: 'Purchase', description: 'Review and assign products', icon: 'bi-cart-check' },
-          { value: 'pending', label: 'Pending', description: 'Carry-forward and finalize pending rows', icon: 'bi-hourglass-split' },
-          { value: 'grn', label: 'GRN', description: 'Reconcile store receipts', icon: 'bi-receipt' },
-        ]}
-        activeValue={view}
-        ariaLabel="Procurement workspace views"
-        onChange={setView}
-      />
-      {canWork && view === 'purchase' && (
-        <SegmentedTabs
-          items={STAGES.map((stageItem) => ({
-            value: stageItem.key,
-            label: stageItem.label,
-            description: stageItem.key === 'export' && !hasAssignments ? 'Assign suppliers first' : 'Workflow stage',
-            icon: stageItem.icon,
-          }))}
-          activeValue={stage}
-          ariaLabel="Purchase workflow stages"
-          onChange={(value) => {
-            if (value === 'export' && !hasAssignments) return
-            goStage(value)
-          }}
-        />
-      )}
-    </div>
-  )
-
-  const kpis = (
-    <KpiBar>
-      <StatCard label="Working Items" value={num(total || items.length)} icon="bi-box-seam" tone="primary" loading={loading} />
-      <StatCard label="Pending Review" value={num(pendingReview)} icon="bi-hourglass-split" tone={pendingReview > 0 ? 'warning' : 'success'} loading={loading} />
-      <StatCard label="Assigned" value={num(assignedCount)} icon="bi-diagram-3" tone="success" loading={loading} />
-      <StatCard label="Purchase Value" value={money(totalPurchaseValue)} icon="bi-currency-rupee" loading={loading} />
-    </KpiBar>
-  )
-
-  const statusBar = banner ? <div className={`pm-banner pm-banner--${banner.kind}`}>{banner.text}</div> : undefined
-
-  return (
-    <WorkspaceShell header={header} kpis={kpis} statusBar={statusBar} className="pm" fullWidth>
-      <header className="pm-top d-none" aria-hidden="true">
-        <div className="pm-top__ctx">
-          <span className="pm-top__brand"><i className="bi bi-cart-check" /> Purchase Manager</span>
-          <select className="sx-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
-            {tenants.length === 0 && <option value="">Loading…</option>}
-            {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
-          <select className="sx-select" aria-label="Store" value={selectedStoreId} onChange={(e) => setSelectedStoreId(e.target.value)}>
-            <option value="">Select store…</option>
-            {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-          </select>
-          {/* Cycle selector — current OPEN cycle is auto-selected; previous
-              CLOSED cycles stay viewable (read-only). */}
-          <select className="sx-select" aria-label="Cycle" value={cycleId} onChange={(e) => setCycleId(e.target.value)}>
-            <option value="">Select cycle…</option>
-            {cycles.map((c) => (
-              <option key={c.cycle_id} value={c.cycle_id}>
-                {c.name}{(c.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' · Closed'}
-              </option>
-            ))}
-          </select>
-          {/* Refresh selector — scoped to the selected cycle, latest first. */}
-          <select className="sx-select" aria-label="Refresh" value={refreshId} onChange={(e) => setRefreshId(e.target.value)}>
-            <option value="">{refreshesInCycle.length ? 'Select refresh…' : 'No refreshes'}</option>
-            {refreshesInCycle.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
-          </select>
+    <div className="pm-header">
+      {/* Title + context selectors share one row — no breadcrumb (the sidebar
+          nav already shows "Purchase Manager" as active) and no separate
+          label-over-select blocks. This is a working screen, not a dashboard:
+          every row here is height the product grid doesn't get. */}
+      <div className="pm-header__top">
+        <h1 className="pm-header__title">Purchase Workspace</h1>
+        <div className="pm-ctxbar">
+          <label className="pm-ctxsel" title="Tenant">
+            <i className="bi bi-building" aria-hidden="true" />
+            <select
+              aria-label="Tenant"
+              value={tenantId}
+              onChange={(e) => {
+                const next = e.target.value
+                if (next === tenantId) return
+                resetWorkspaceContext('tenant')
+                setTenantId(next)
+              }}
+            >
+              {tenants.length === 0 && <option value="">Loading...</option>}
+              {tenants.map((tenant) => (
+                <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                  {tenant.tenant_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="pm-ctxsel" title="Store">
+            <i className="bi bi-shop" aria-hidden="true" />
+            <select
+              aria-label="Store"
+              value={selectedStoreId}
+              onChange={(e) => {
+                const next = e.target.value
+                if (next === selectedStoreId) return
+                resetWorkspaceContext('store')
+                setSelectedStoreId(next)
+              }}
+            >
+              <option value="">Select store</option>
+              {tenantStores.map((store) => (
+                <option key={store.store_id} value={store.store_id}>
+                  {store.store_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="pm-ctxsel" title="Cycle">
+            <i className="bi bi-arrow-repeat" aria-hidden="true" />
+            <select
+              aria-label="Cycle"
+              value={cycleId}
+              onChange={(e) => {
+                const next = e.target.value
+                if (next === cycleId) return
+                resetWorkspaceContext('cycle')
+                setCycleId(next)
+              }}
+            >
+              <option value="">Select cycle</option>
+              {cycles.map((cycle) => (
+                <option key={cycle.cycle_id} value={cycle.cycle_id}>
+                  {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' - Closed'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="pm-ctxsel" title="Refresh">
+            <i className="bi bi-clock-history" aria-hidden="true" />
+            <select
+              aria-label="Refresh"
+              value={refreshId}
+              onChange={(e) => {
+                const next = e.target.value
+                if (next === refreshId) return
+                resetWorkspaceContext('refresh')
+                setRefreshId(next)
+              }}
+            >
+              <option value="">{refreshesInCycle.length ? 'Select refresh' : 'No refreshes'}</option>
+              {refreshesInCycle.map((refresh) => (
+                <option key={refresh.refresh_id} value={refresh.refresh_id}>
+                  {refresh.snapshot_name} - {refresh.snapshot_status}
+                </option>
+              ))}
+            </select>
+          </label>
           {readOnly && (
-            <span className="pm-ro-badge" title="Closed — viewing only">
-              <i className="bi bi-lock-fill" /> Read Only · {cycleClosed ? 'Closed Cycle' : 'Closed Refresh'}
+            <span className="badge text-bg-secondary">
+              <i className="bi bi-lock-fill me-1" aria-hidden="true" />
+              Read Only · {cycleClosed ? 'Closed Cycle' : 'Closed Refresh'}
             </span>
           )}
         </div>
-        {/* Stage stepper rides the header row rather than owning a second full-
-            width row of its own — the row had ~60% empty space and the detail
-            panel below needs the height (Sales History was falling off-screen). */}
+      </div>
+      {/* View tabs (Purchase/Pending/GRN) and workflow stage tabs share one
+          row — both are compact pill tabs, not the card-style default. */}
+      <div className="pm-header__tabs">
+        <SegmentedTabs
+          items={[
+            { value: 'purchase', label: 'Purchase', description: 'Review and assign products', icon: 'bi-cart-check' },
+            { value: 'pending', label: 'Pending', description: 'Carry-forward and finalize pending rows', icon: 'bi-hourglass-split' },
+            { value: 'grn', label: 'GRN', description: 'Reconcile store receipts', icon: 'bi-receipt' },
+          ]}
+          activeValue={view}
+          ariaLabel="Procurement workspace views"
+          onChange={setView}
+          compact
+        />
         {canWork && view === 'purchase' && (
-          <nav className="pm-stages" aria-label="Purchase workflow stages">
-            {STAGES.map((st, i) => {
-              const active = stage === st.key
-              const locked = st.key === 'export' && !hasAssignments
-              return (
-                <button
-                  key={st.key}
-                  className={`pm-stage${active ? ' pm-stage--on' : ''}${locked ? ' pm-stage--locked' : ''}`}
-                  aria-current={active ? 'step' : undefined}
-                  disabled={locked}
-                  title={locked ? 'Assign suppliers first' : st.label}
-                  onClick={() => goStage(st.key)}
-                >
-                  <span className="pm-stage__no">{i + 1}</span>
-                  <span className="pm-stage__lbl"><i className={`bi ${st.icon}`} /> {st.label}</span>
-                </button>
-              )
-            })}
-          </nav>
+          <>
+            <span className="pm-toolbar__sep" aria-hidden="true" />
+            <SegmentedTabs
+              items={STAGES.map((stageItem) => ({
+                value: stageItem.key,
+                label: stageItem.label,
+                description: stageItem.key === 'export' && !hasAssignments ? 'Assign suppliers first' : 'Workflow stage',
+                icon: stageItem.icon,
+              }))}
+              activeValue={stage}
+              ariaLabel="Purchase workflow stages"
+              onChange={(value) => {
+                if (value === 'export' && !hasAssignments) return
+                goStage(value)
+              }}
+              compact
+            />
+          </>
         )}
-        <div className="pm-top__views">
-          {(['purchase', 'pending', 'grn'] as View[]).map((v) => (
-            <button key={v} className={`pm-vtab${view === v ? ' pm-vtab--on' : ''}`} onClick={() => setView(v)}>
-              {v === 'purchase' ? 'Purchase' : v === 'pending' ? 'Pending' : 'GRN'}
-            </button>
-          ))}
-        </div>
-      </header>
+      </div>
+    </div>
+  )
 
-      {null}
+  // No top KPI strip — the same four numbers (Total Products/Pending Review/
+  // Assigned/Purchase Value) already live in the footer bar right above the
+  // stage actions, where they sit next to the row the buyer is working on
+  // instead of costing the grid a whole row of height at the top.
+  const statusBar = banner ? <div className={`pm-banner pm-banner--${banner.kind}`}>{banner.text}</div> : undefined
 
+  return (
+    <WorkspaceShell
+      header={header}
+      statusBar={statusBar}
+      className={`pm${pmDensity === 'compact' ? ' pm--compact' : ''}`}
+      style={{ zoom: pmZoom / 100 }}
+      fullWidth
+    >
       {!canWork ? (
         <EmptyState icon="bi-clipboard-check" title="Select a tenant and refresh" description="Choose a generated refresh to open the Purchase Manager workspace." />
       ) : view === 'pending' ? (
@@ -1992,8 +2094,11 @@ export default function PurchaseWorkspacePage() {
               fixed width, so switching mode/stage only empties a slot — it
               never re-flows the row or moves the other controls. */}
           {(stage === 'review' || stage === 'assign') && (
-            <div className="pm-toolbar">
-              <div className="pm-toolbar__row">
+            <div className="pm-toolbar pm-toolbar--single">
+              {/* One dense, horizontally-scrollable row: mode + scope filters +
+                  planning-state chips + actions + count. Was two stacked rows —
+                  merged so the grid below gets that height back. */}
+              <div className="pm-toolbar__row pm-toolbar__row--filters">
                 <div className="pm-toolbar__modes">
                   {MODE_OPTIONS.map((m) => (
                     <button key={m.value} className={`pm-mode${mode === m.value ? ' pm-mode--on' : ''}`} onClick={() => setMode(m.value)}>
@@ -2052,19 +2157,9 @@ export default function PurchaseWorkspacePage() {
                     />
                   )}
                 </div>
-                <div className="pm-toolbar__right">
-                  {isReviewStage && (
-                    <button className="pm-btn pm-btn--ghost" onClick={() => setManualOpen(true)}><i className="bi bi-plus-lg" /> Manual</button>
-                  )}
-                  <button className="pm-btn pm-btn--ghost" onClick={loadWorkspace} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
-                </div>
-              </div>
-
-              {/* Second row keeps its height in every mode, so the grid below
-                  never jumps when the filters change. */}
-              <div className="pm-toolbar__row pm-toolbar__row--filters">
                 {mode !== 'supplier-stock' && (
                   <>
+                    <span className="pm-toolbar__sep" aria-hidden="true" />
                     <span className="pm-toolbar__label">Show</span>
                     {/* The supplier workspace is assignment-based, not
                         review-based (§18): default shows every state (all six
@@ -2097,6 +2192,35 @@ export default function PurchaseWorkspacePage() {
                     <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" hidden onChange={(e) => onImportPick(e.target.files?.[0] ?? null)} />
                   </>
                 )}
+                <div className="pm-toolbar__right">
+                  {isReviewStage && (
+                    <button className="pm-btn pm-btn--ghost" onClick={() => setManualOpen(true)}><i className="bi bi-plus-lg" /> Manual</button>
+                  )}
+                  <button className="pm-btn pm-btn--ghost" onClick={loadWorkspace} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
+                  <div className="pm-settings-anchor">
+                    <button
+                      ref={settingsBtnRef}
+                      className="pm-btn pm-btn--ghost"
+                      onClick={() => setSettingsOpen((v) => !v)}
+                      title="Workspace settings"
+                      aria-expanded={settingsOpen}
+                    >
+                      <i className="bi bi-gear" /> Settings
+                    </button>
+                    {settingsOpen && (
+                      <WorkspaceSettings
+                        anchorRef={settingsBtnRef}
+                        columnConfig={columnConfig}
+                        onColumnConfigChange={updateColumnConfig}
+                        zoom={pmZoom}
+                        onZoomChange={updateZoom}
+                        density={pmDensity}
+                        onDensityChange={updateDensity}
+                        onClose={() => setSettingsOpen(false)}
+                      />
+                    )}
+                  </div>
+                </div>
                 {/* Makes every filter above accountable — a filter that hides
                     everything now says so instead of leaving a blank grid. */}
                 {mode !== 'supplier-stock' && (
@@ -2241,8 +2365,12 @@ export default function PurchaseWorkspacePage() {
               // the per-row supply/discount/scheme facts it duplicated already
               // live as grid columns, and the buyer reviews the PRODUCT here,
               // not a supplier stat card.
-              <div className="pm-split pm-split--3 pm-split--stock3">
-                <div className="pm-split__grid pm-stockgrid">
+              <PmWorkspaceSplit
+                id="stock"
+                stockVariant
+                supplierActive={supplierZoneActive}
+                grid={
+                  <>
                   {supplierStock.length > 0 && (
                     <div className="pm-sxcards">
                       <span className="pm-sxcard"><span className="pm-sxcard__k">Supplier</span><b className="pm-sxcard__v">{supplier.supplier_name ?? supplier.supplier_code}</b></span>
@@ -2300,8 +2428,9 @@ export default function PurchaseWorkspacePage() {
                       onRemarksChange={(key, value) => setStockRemarks((r) => ({ ...r, [key]: value }))}
                     />
                   </div>
-                </div>
-                <div className="pm-split__suppliers">
+                  </>
+                }
+                suppliers={
                   <SupplierRecPanel
                     item={matchedStockItem}
                     suppliers={matchedStockItem ? recommendations[matchedStockItem.order_item_id] ?? [] : []}
@@ -2319,24 +2448,6 @@ export default function PurchaseWorkspacePage() {
                     active={supplierZoneActive}
                     onSelect={(code) => matchedStockItem && onSelectSupplier(matchedStockItem.order_item_id, code)}
                     onCommit={(it, code) => onCommitSupplier(it, code)}
-                    onOpenInfo={openInfo}
-                  />
-                </div>
-                <div className="pm-split__detail">
-                  <DetailColumn
-                    tenantId={tenantId}
-                    item={matchedStockItem}
-                    onOpenInfo={openInfo}
-                    onOpenBill={setBill}
-                    onViewAll={(kind) => matchedStockItem && setViewAll({ kind, item: matchedStockItem })}
-                    assignedSupplier={matchedStockItem ? assignedByItem.get(matchedStockItem.order_item_id) ?? null : null}
-                    onChangeSupplier={reviewChangeSupplier}
-                    offerInfo={
-                      selectedStockRow && formatOffer(selectedStockRow)
-                        ? { supplierName: supplier?.supplier_name ?? supplier?.supplier_code ?? null, label: formatOffer(selectedStockRow)!, discount: selectedStockRow.discount }
-                        : null
-                    }
-                    supplierRemarks={stockSelectedKey ? stockRemarks[stockSelectedKey] : undefined}
                     onRemoveAssignment={
                       matchedStockItem
                         ? () => {
@@ -2346,18 +2457,68 @@ export default function PurchaseWorkspacePage() {
                         : undefined
                     }
                   />
-                </div>
-              </div>
+                }
+                detail={
+                  <DetailColumn
+                    tenantId={tenantId}
+                    item={matchedStockItem}
+                    onOpenInfo={openInfo}
+                    onOpenBill={setBill}
+                    onViewAll={(kind) => matchedStockItem && setViewAll({ kind, item: matchedStockItem })}
+                    assignedSupplier={
+                      matchedStockItem
+                        ? ((): AssignedSupplierInfo | null => {
+                            const a = assignedByItem.get(matchedStockItem.order_item_id)
+                            return a ? { assignmentId: a.assignmentId, supplierCode: a.supplierCode, supplierName: a.supplierName } : null
+                          })()
+                        : null
+                    }
+                    onChangeSupplier={
+                      matchedStockItem
+                        ? (assignmentId, newSupplier) => reviewChangeSupplier(assignmentId, matchedStockItem.order_item_id, newSupplier)
+                        : undefined
+                    }
+                    onRemoveAssignment={
+                      matchedStockItem
+                        ? () => {
+                            const a = assignedByItem.get(matchedStockItem.order_item_id)
+                            if (a) reviewRemove(a.assignmentId, matchedStockItem.order_item_id)
+                          }
+                        : undefined
+                    }
+                    offerInfo={
+                      selectedStockRow
+                        ? ({
+                            supplierName: selectedStockRow.supplier_code,
+                            label: formatOffer(selectedStockRow) ?? '—',
+                            discount: selectedStockRow.discount,
+                          } as OfferInfo)
+                        : null
+                    }
+                    supplierRemarks={stockSelectedKey ? stockRemarks[stockSelectedKey] ?? null : null}
+                  />
+                }
+              />
             )
           ) : error ? (
             <ErrorState description={error} onRetry={loadWorkspace} />
           ) : (
-            <div className="pm-split pm-split--3">
-              <div className="pm-split__grid">
+            <PmWorkspaceSplit
+              id="review"
+              supplierActive={supplierZoneActive}
+              grid={
+                <>
                 {mode === 'supplier' && !supplier ? (
                   <EmptyState icon="bi-truck" title="Select a supplier to review products." />
                 ) : mode === 'supplier' && supplierProductsLoading ? (
                   <EmptyState icon="bi-hourglass-split" title="Loading purchase history…" />
+                ) : contextLoading && visibleItems.length === 0 ? (
+                  // Tenant/Store/Cycle/Refresh just changed — the old context's
+                  // rows are already cleared (resetWorkspaceContext), and the new
+                  // ones haven't arrived yet. Say so instead of rendering an empty
+                  // grid table, so the buyer never mistakes "still loading" for
+                  // "this context genuinely has zero products".
+                  <EmptyState icon="bi-hourglass-split" title="Loading products…" />
                 ) : visibleItems.length === 0 && !loading ? (
                   <EmptyState
                     icon="bi-inbox"
@@ -2392,17 +2553,21 @@ export default function PurchaseWorkspacePage() {
                     offerByProductCode={mode === 'supplier' ? supplierStockByProductCode : undefined}
                     remarks={mode === 'supplier' ? productRemarks : undefined}
                     onRemarksChange={mode === 'supplier' ? (id, value) => setProductRemarks((r) => ({ ...r, [id]: value })) : undefined}
+                    columnOrder={columnConfig.order}
+                    columnVisible={effectiveColumnVisible}
                   />
                 )}
-              </div>
-              <div className="pm-split__suppliers">
-                {/* onCommit always assigns to the supplier whose CARD was acted on.
-                    Supplier Purchasing used to force the toolbar's supplier here,
-                    so a product could never be moved to a different supplier from
-                    this panel. */}
+                </>
+              }
+              // onCommit always assigns to the supplier whose CARD was acted on.
+              // Supplier Purchasing used to force the toolbar's supplier here,
+              // so a product could never be moved to a different supplier from
+              // this panel.
+              suppliers={
                 <SupplierRecPanel
                   item={selectedItem}
                   suppliers={selectedId ? recommendations[selectedId] ?? [] : []}
+                  loading={contextLoading}
                   selectedCode={selectedId ? selectedSupplier[selectedId] ?? null : null}
                   assignedCode={
                     selectedItem && (selectedItem.assigned_qty ?? 0) > 0
@@ -2417,22 +2582,6 @@ export default function PurchaseWorkspacePage() {
                   active={supplierZoneActive}
                   onSelect={(code) => selectedId && onSelectSupplier(selectedId, code)}
                   onCommit={(it, code) => onCommitSupplier(it, code)}
-                  onOpenInfo={openInfo}
-                />
-              </div>
-              <div className="pm-split__detail">
-                {/* One shared Product Detail panel for every mode (§ Supplier
-                    Purchasing / Supplier Live Stock parity) — the buyer is
-                    reviewing PRODUCTS here, not supplier statistics. Change /
-                    Remove assignment stay reachable per-product via the header. */}
-                <DetailColumn
-                  tenantId={tenantId}
-                  item={selectedItem}
-                  onOpenInfo={openInfo}
-                  onOpenBill={setBill}
-                  onViewAll={(kind) => selectedItem && setViewAll({ kind, item: selectedItem })}
-                  assignedSupplier={selectedItem ? assignedByItem.get(selectedItem.order_item_id) ?? null : null}
-                  onChangeSupplier={reviewChangeSupplier}
                   onRemoveAssignment={
                     selectedItem
                       ? () => {
@@ -2442,8 +2591,41 @@ export default function PurchaseWorkspacePage() {
                       : undefined
                   }
                 />
-              </div>
-            </div>
+              }
+              // Shared right-rail info panel for every mode (§ Supplier
+              // Purchasing / Supplier Live Stock parity).
+              detail={
+                <DetailColumn
+                  tenantId={tenantId}
+                  item={selectedItem}
+                  loading={contextLoading}
+                  onOpenInfo={openInfo}
+                  onOpenBill={setBill}
+                  onViewAll={(kind) => selectedItem && setViewAll({ kind, item: selectedItem })}
+                  assignedSupplier={
+                    selectedItem
+                      ? ((): AssignedSupplierInfo | null => {
+                          const a = assignedByItem.get(selectedItem.order_item_id)
+                          return a ? { assignmentId: a.assignmentId, supplierCode: a.supplierCode, supplierName: a.supplierName } : null
+                        })()
+                      : null
+                  }
+                  onChangeSupplier={
+                    selectedItem
+                      ? (assignmentId, newSupplier) => reviewChangeSupplier(assignmentId, selectedItem.order_item_id, newSupplier)
+                      : undefined
+                  }
+                  onRemoveAssignment={
+                    selectedItem
+                      ? () => {
+                          const a = assignedByItem.get(selectedItem.order_item_id)
+                          if (a) reviewRemove(a.assignmentId, selectedItem.order_item_id)
+                        }
+                      : undefined
+                  }
+                />
+              }
+            />
           )}
 
           {/* Totals + stage actions share one footer row: separately they cost two

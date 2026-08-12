@@ -6,9 +6,11 @@ import { APP_NAME } from '../../utils/appInfo'
 
 interface HeaderProps {
   onToggleNav: () => void
+  sidebarCollapsed?: boolean
+  onToggleSidebar?: () => void
 }
 
-export function Header({ onToggleNav }: HeaderProps) {
+export function Header({ onToggleNav, sidebarCollapsed, onToggleSidebar }: HeaderProps) {
   const { user, logout } = useAuth()
   const { roles, currentRole, currentRoleId, setRoleId } = useAccess()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -27,6 +29,17 @@ export function Header({ onToggleNav }: HeaderProps) {
         >
           <i className="bi bi-list" aria-hidden="true" />
         </button>
+        {onToggleSidebar && (
+          <button
+            type="button"
+            className="btn btn-link app-header__icon-btn d-none d-md-inline-flex"
+            onClick={onToggleSidebar}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <i className={`bi ${sidebarCollapsed ? 'bi-layout-sidebar-inset' : 'bi-layout-sidebar-inset-reverse'}`} aria-hidden="true" />
+          </button>
+        )}
         <span className="app-brand">
           <span className="app-brand__mark">
             <i className="bi bi-hexagon-fill" aria-hidden="true" />

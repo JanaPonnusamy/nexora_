@@ -6,6 +6,8 @@ import { DEFAULT_SKIP_MODE } from './skipModes'
 import { SkipModeCell } from './SkipModeCell'
 import { SUPPLIER_REC_LIMIT } from './purchaseValue'
 import { formatOffer, offerTooltip } from './SupplierStockTable'
+import type { GridColumnId } from './gridColumns'
+import { DEFAULT_COLUMN_ORDER, DEFAULT_VISIBLE_COLUMNS, MANDATORY_COLUMNS } from './gridColumns'
 
 const REVIEWED_STATES = ['review', 'assigned', 'partial']
 
@@ -50,6 +52,8 @@ export function ProductGrid({
   offerByProductCode,
   remarks,
   onRemarksChange,
+  columnOrder = DEFAULT_COLUMN_ORDER,
+  columnVisible = DEFAULT_VISIBLE_COLUMNS,
 }: {
   items: WorkspaceItem[]
   selectedId: string | null
@@ -84,6 +88,11 @@ export function ProductGrid({
    *  values survive re-renders / row navigation. */
   remarks?: Record<string, string>
   onRemarksChange?: (orderItemId: string, value: string) => void
+  /** Order/visibility of the columns between the locked Product and Planning
+   *  State columns (spec §5/§6) — Settings-driven, defaults to the standard
+   *  layout when the caller doesn't pass a saved preference. */
+  columnOrder?: GridColumnId[]
+  columnVisible?: GridColumnId[]
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -394,6 +403,89 @@ export function ProductGrid({
   // Offer only when at least one row carries it.
   const hasOffer = items.some((i) => offerFor(i) != null)
 
+  // Middle-section columns (between the locked Product and Planning State
+  // columns) driven by the Settings-configured order/visibility (§5/§6).
+  // finalQty is always included regardless of `columnVisible` (never
+  // hideable); pack/unit/offer/remarks respect the user's choice; offer is
+  // additionally gated by hasOffer (§13); remarks by whether the caller wired
+  // onRemarksChange at all (Supplier Purchasing mode only).
+  const visibleSet = new Set(columnVisible)
+  const activeColumns = columnOrder.filter((id) => {
+    if (id === 'finalQty') return true
+    if (id === 'offer') return hasOffer && visibleSet.has(id)
+    if (id === 'remarks') return Boolean(onRemarksChange) && visibleSet.has(id)
+    if (MANDATORY_COLUMNS.has(id)) return true
+    return visibleSet.has(id)
+  })
+
+  const headCell = (id: GridColumnId) => {
+    switch (id) {
+      case 'pack': return <th key={id} className="pm-grid__pack">Pack</th>
+      case 'unit': return <th key={id} className="pm-grid__unit">Unit</th>
+      case 'stock': return <th key={id} className="sx-num pm-col70">Stock</th>
+      case 'suggested': return <th key={id} className="sx-num pm-col70">Sugg.</th>
+      case 'finalQty': return <th key={id} className="sx-num pm-grid__final">Order Qty</th>
+      case 'offer': return <th key={id} className="pm-grid__offer">Offer</th>
+      case 'remarks': return <th key={id}>Remarks</th>
+      default: return null
+    }
+  }
+
+  const bodyCell = (id: GridColumnId, item: WorkspaceItem, i: number, dirty: boolean, locked: boolean) => {
+    switch (id) {
+      case 'pack':
+        return <td key={id} className="pm-grid__pack sx-dim">{item.pack || '—'}</td>
+      case 'unit':
+        return <td key={id} className="pm-grid__unit sx-dim">{item.unit_description || '—'}</td>
+      case 'stock':
+        return <td key={id} className="sx-num pm-col70">{num(item.current_stock_qty ?? 0)}</td>
+      case 'suggested':
+        return <td key={id} className="sx-num pm-col70 sx-dim">{num(item.suggested_qty ?? 0)}</td>
+      case 'finalQty':
+        return (
+          <td key={id} className="sx-num pm-grid__final">
+            {locked ? (
+              <span className="fw-semibold">{num(item.final_qty ?? 0)}</span>
+            ) : (
+              <input
+                id={`pm-qty-${i}`}
+                className={`pm-qty${dirty ? ' pm-qty--dirty' : ''}`}
+                inputMode="numeric"
+                maxLength={5}
+                value={qtyValue(item)}
+                onFocus={(e) => e.currentTarget.select()}
+                onDoubleClick={(e) => e.currentTarget.select()}
+                onChange={(e) => onQtyChange(item.order_item_id, e.target.value)}
+                onBlur={() => { if (dirty) onSaveRow?.(item) }}
+              />
+            )}
+          </td>
+        )
+      case 'offer':
+        return (
+          <td key={id} className="pm-grid__offer">
+            {(() => {
+              const offer = offerFor(item)
+              return offer ? <span className="pm-offer" title={offer.tooltip}>{offer.label}</span> : null
+            })()}
+          </td>
+        )
+      case 'remarks':
+        return (
+          <td key={id} onClick={(e) => e.stopPropagation()}>
+            <input
+              className="pm-remarks-input"
+              placeholder="—"
+              value={remarks?.[item.order_item_id] ?? ''}
+              onChange={(e) => onRemarksChange?.(item.order_item_id, e.target.value)}
+            />
+          </td>
+        )
+      default:
+        return null
+    }
+  }
+
   return (
     <div className="pm-grid-wrap" ref={wrapRef} tabIndex={-1} onKeyDown={onGridKey}>
       <table className="pm-grid">
@@ -411,14 +503,8 @@ export function ProductGrid({
             )}
             <th className="pm-grid__sno">#</th>
             <th className="pm-grid__prod">Product</th>
-            <th className="pm-grid__pack">Pack</th>
-            <th className="pm-grid__unit">Unit</th>
-            <th className="sx-num pm-col70">Stock</th>
-            <th className="sx-num pm-col70">Sugg.</th>
-            <th className="sx-num pm-grid__final">Order Qty</th>
+            {activeColumns.map(headCell)}
             <th className="pm-grid__status">Planning State</th>
-            {hasOffer && <th className="pm-grid__offer">Offer</th>}
-            {onRemarksChange && <th>Remarks</th>}
           </tr>
         </thead>
         <tbody>
@@ -461,27 +547,7 @@ export function ProductGrid({
                   {item.is_manual && <span className="pm-tag pm-tag--manual">manual</span>}
                   {locked && <span className="pm-tag pm-tag--exported">exported</span>}
                 </td>
-                <td className="pm-grid__pack sx-dim">{item.pack || '—'}</td>
-                <td className="pm-grid__unit sx-dim">{item.unit_description || '—'}</td>
-                <td className="sx-num pm-col70">{num(item.current_stock_qty ?? 0)}</td>
-                <td className="sx-num pm-col70 sx-dim">{num(item.suggested_qty ?? 0)}</td>
-                <td className="sx-num pm-grid__final">
-                  {locked ? (
-                    <span className="fw-semibold">{num(item.final_qty ?? 0)}</span>
-                  ) : (
-                    <input
-                      id={`pm-qty-${i}`}
-                      className={`pm-qty${dirty ? ' pm-qty--dirty' : ''}`}
-                      inputMode="numeric"
-                      maxLength={5}
-                      value={qtyValue(item)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onDoubleClick={(e) => e.currentTarget.select()}
-                      onChange={(e) => onQtyChange(item.order_item_id, e.target.value)}
-                      onBlur={() => { if (dirty) onSaveRow?.(item) }}
-                    />
-                  )}
-                </td>
+                {activeColumns.map((id) => bodyCell(id, item, i, dirty, locked))}
                 <td className="pm-grid__status">
                   {locked ? (
                     <span className="pm-status pm-status--reviewed"><i className="bi bi-lock-fill" /> Reviewed</span>
@@ -532,24 +598,6 @@ export function ProductGrid({
                     </span>
                   )}
                 </td>
-                {hasOffer && (
-                  <td className="pm-grid__offer">
-                    {(() => {
-                      const offer = offerFor(item)
-                      return offer ? <span className="pm-offer" title={offer.tooltip}>{offer.label}</span> : null
-                    })()}
-                  </td>
-                )}
-                {onRemarksChange && (
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <input
-                      className="pm-remarks-input"
-                      placeholder="—"
-                      value={remarks?.[item.order_item_id] ?? ''}
-                      onChange={(e) => onRemarksChange(item.order_item_id, e.target.value)}
-                    />
-                  </td>
-                )}
               </tr>
             )
           })}

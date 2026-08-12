@@ -116,9 +116,13 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
         )}
         <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Monthly movement chart" className="sa-chart__svg" preserveAspectRatio="none">
           <defs>
+            {/* Theme-aware via CSS classes (stop-color), not inline attrs — a
+                fixed white gradient washed out the bars/gridlines under it in
+                dark mode (readability bug, reported against the real
+                rendered chart, not guessed). */}
             <linearGradient id="sa-chart-glass" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgba(255,255,255,0.55)" />
-              <stop offset="100%" stopColor="rgba(255,255,255,0.05)" />
+              <stop offset="0%" className="sa-chart__glass-a" />
+              <stop offset="100%" className="sa-chart__glass-b" />
             </linearGradient>
           </defs>
           <rect x={padL - 8} y={barTopLimit - 4} width={plotW + 20} height={barAreaH + 8} rx={12} fill="url(#sa-chart-glass)" />

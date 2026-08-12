@@ -396,6 +396,12 @@
 .sa-chart__barval { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sa-chart__month { fill: var(--sx-muted); font-size: 12px; font-weight: 650; }
 .sa-chart__month--on { fill: var(--sx-accent); font-weight: 800; }
+/* "Glass" backing behind the bars — a fixed white gradient washed out the
+   bars/gridlines under it in dark mode. */
+.sa-chart__glass-a { stop-color: rgba(255, 255, 255, 0.55); }
+.sa-chart__glass-b { stop-color: rgba(255, 255, 255, 0.05); }
+[data-bs-theme="dark"] .sa-chart__glass-a { stop-color: rgba(255, 255, 255, 0.09); }
+[data-bs-theme="dark"] .sa-chart__glass-b { stop-color: rgba(255, 255, 255, 0.02); }
 
 /* one row: all six metrics across, value on top, code below */
 .sa-chart__readout {
