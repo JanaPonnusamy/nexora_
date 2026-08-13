@@ -1911,88 +1911,80 @@ export default function PurchaseWorkspacePage() {
       <div className="pm-header__top">
         <h1 className="pm-header__title">Purchase Workspace</h1>
         <div className="pm-ctxbar">
-          <label className="pm-ctxsel" title="Tenant">
-            <i className="bi bi-building" aria-hidden="true" />
-            <select
-              aria-label="Tenant"
-              value={tenantId}
-              onChange={(e) => {
-                const next = e.target.value
+          <FilterSelect
+            compact
+            icon="bi-building"
+            title="Tenant"
+            ariaLabel="Tenant"
+            value={tenantId}
+            onChange={(next) => {
                 if (next === tenantId) return
                 resetWorkspaceContext('tenant')
                 setTenantId(next)
-              }}
-            >
-              {tenants.length === 0 && <option value="">Loading...</option>}
-              {tenants.map((tenant) => (
-                <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                  {tenant.tenant_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pm-ctxsel" title="Store">
-            <i className="bi bi-shop" aria-hidden="true" />
-            <select
-              aria-label="Store"
-              value={selectedStoreId}
-              onChange={(e) => {
-                const next = e.target.value
+            }}
+          >
+            {tenants.length === 0 && <option value="">Loading...</option>}
+            {tenants.map((tenant) => (
+              <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name}</option>
+            ))}
+          </FilterSelect>
+          <FilterSelect
+            compact
+            icon="bi-shop"
+            title="Store"
+            ariaLabel="Store"
+            value={selectedStoreId}
+            onChange={(next) => {
                 if (next === selectedStoreId) return
                 resetWorkspaceContext('store')
                 setSelectedStoreId(next)
-              }}
-            >
-              <option value="">Select store</option>
-              {tenantStores.map((store) => (
-                <option key={store.store_id} value={store.store_id}>
-                  {store.store_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pm-ctxsel" title="Cycle">
-            <i className="bi bi-arrow-repeat" aria-hidden="true" />
-            <select
-              aria-label="Cycle"
-              value={cycleId}
-              onChange={(e) => {
-                const next = e.target.value
+            }}
+          >
+            <option value="">Select store</option>
+            {tenantStores.map((store) => (
+              <option key={store.store_id} value={store.store_id}>{store.store_name}</option>
+            ))}
+          </FilterSelect>
+          <FilterSelect
+            compact
+            icon="bi-arrow-repeat"
+            title="Cycle"
+            ariaLabel="Cycle"
+            value={cycleId}
+            onChange={(next) => {
                 if (next === cycleId) return
                 resetWorkspaceContext('cycle')
                 setCycleId(next)
-              }}
-            >
-              <option value="">Select cycle</option>
-              {cycles.map((cycle) => (
-                <option key={cycle.cycle_id} value={cycle.cycle_id}>
-                  {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' - Closed'}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pm-ctxsel" title="Refresh">
-            <i className="bi bi-clock-history" aria-hidden="true" />
-            <select
-              aria-label="Refresh"
-              value={refreshId}
-              onChange={(e) => {
-                const next = e.target.value
+            }}
+          >
+            <option value="">Select cycle</option>
+            {cycles.map((cycle) => (
+              <option key={cycle.cycle_id} value={cycle.cycle_id}>
+                {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' - Closed'}
+              </option>
+            ))}
+          </FilterSelect>
+          <FilterSelect
+            compact
+            icon="bi-clock-history"
+            title="Refresh"
+            ariaLabel="Refresh"
+            value={refreshId}
+            onChange={(next) => {
                 if (next === refreshId) return
                 resetWorkspaceContext('refresh')
                 setRefreshId(next)
-              }}
-            >
-              <option value="">{refreshesInCycle.length ? 'Select refresh' : 'No refreshes'}</option>
-              {refreshesInCycle.map((refresh) => (
-                <option key={refresh.refresh_id} value={refresh.refresh_id}>
-                  {refresh.snapshot_name} - {refresh.snapshot_status}
-                </option>
-              ))}
-            </select>
-          </label>
+            }}
+          >
+            <option value="">{refreshesInCycle.length ? 'Select refresh' : 'No refreshes'}</option>
+            {refreshesInCycle.map((refresh) => (
+              <option key={refresh.refresh_id} value={refresh.refresh_id}>
+                {refresh.snapshot_name} - {refresh.snapshot_status}
+              </option>
+            ))}
+          </FilterSelect>
           {readOnly && (
-            <span className="badge text-bg-secondary">
+            <span className="pm-ro-badge">
               <i className="bi bi-lock-fill me-1" aria-hidden="true" />
               Read Only · {cycleClosed ? 'Closed Cycle' : 'Closed Refresh'}
             </span>

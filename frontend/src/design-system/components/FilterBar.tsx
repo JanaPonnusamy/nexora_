@@ -107,6 +107,8 @@ type FilterSelectProps<T extends string = string> = {
   className?: string
   disabled?: boolean
   title?: string
+  icon?: string
+  compact?: boolean
 }
 
 export function FilterSelect<T extends string = string>({
@@ -119,10 +121,12 @@ export function FilterSelect<T extends string = string>({
   className = '',
   disabled = false,
   title,
+  icon,
+  compact = false,
 }: FilterSelectProps<T>) {
   const select = (
     <select
-      className={`ds-filter-select ${className}`.trim()}
+      className={`ds-filter-select${icon ? ' ds-filter-select--with-icon' : ''}${compact ? ' ds-filter-select--compact' : ''} ${className}`.trim()}
       value={value}
       aria-label={ariaLabel}
       disabled={disabled}
@@ -136,7 +140,14 @@ export function FilterSelect<T extends string = string>({
     </select>
   )
 
-  return label ? <label className="ds-filter-field"><span>{label}</span>{select}</label> : select
+  const control = icon ? (
+    <span className="ds-filter-select-wrap">
+      <i className={`bi ${icon}`} aria-hidden="true" />
+      {select}
+    </span>
+  ) : select
+
+  return label ? <label className="ds-filter-field"><span>{label}</span>{control}</label> : control
 }
 
 type FilterFieldProps = {

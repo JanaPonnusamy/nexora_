@@ -261,6 +261,24 @@ body {
 
 .ds-filter-search > input { padding: 0.45rem 0.8rem 0.45rem 2.35rem; }
 .ds-filter-select { width: auto; min-width: 9.5rem; padding: 0.4rem 2rem 0.4rem 0.7rem; }
+.ds-filter-select-wrap { position: relative; display: inline-flex; align-items: center; min-width: 0; }
+.ds-filter-select-wrap > i {
+  position: absolute;
+  z-index: 1;
+  left: 0.7rem;
+  color: var(--nx-text-muted);
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+.ds-filter-select--with-icon { padding-left: 2rem; }
+.ds-filter-select--compact {
+  min-height: 2rem;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  box-shadow: none;
+}
 .ds-filter-select--active {
   border-color: var(--nx-accent);
   background: var(--nx-accent-sunk);
