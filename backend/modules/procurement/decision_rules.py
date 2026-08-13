@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Procurement Decision Engine — business rules (pure Python, no I/O).
 
 Implements the ratified Decision Engine rules PR-BR-001..016 exactly as defined
@@ -9,7 +11,7 @@ No SQL and no side effects live in this module (mandatory: business rules are
 Python, SQL is only for reading source data and bulk persistence).
 """
 
-from __future__ import annotations
+from dataclasses import dataclass
 
 import math
 from dataclasses import dataclass

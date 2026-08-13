@@ -2,6 +2,7 @@ fastapi
 uvicorn
 sqlalchemy
 pyodbc
+python-tds
 pydantic
 python-dotenv
 rapidfuzz
@@ -16,7 +17,7 @@ email-validator==2.3.0
 itsdangerous==2.2.0
 passlib==1.7.4
 PyJWT==2.12.0
-python-multipart==0.0.27
+python-multipart
 
 # document_extraction module — Chunk 5 (Image Processing), installed and wired
 opencv-python

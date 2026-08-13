@@ -1,4 +1,6 @@
 
+from __future__ import annotations
+
 # Architecture freeze:
 #   Heartbeat = Agent Health (store_agent_registry / agent_heartbeat_log) -- never
 #               touches the store database.

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Procurement lifecycle orchestration (Phase 4).
 
 Connects the pieces built in earlier phases — it adds NO business rules:

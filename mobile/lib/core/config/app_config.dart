@@ -40,8 +40,8 @@ class AppConfig {
   /// `--dart-define=NEXORA_API_BASE_URL=...`. iOS simulator can use
   /// `http://localhost:8000` directly.
   static String _defaultBaseUrl(AppEnvironment env) => switch (env) {
-        AppEnvironment.dev => 'http://10.0.2.2:8000',
-        AppEnvironment.staging => 'http://10.0.2.2:8000',
+        AppEnvironment.dev => 'http://122.252.246.181:8443',
+        AppEnvironment.staging => 'http://122.252.246.181:8443',
         AppEnvironment.prod => 'https://ho.nexora.local',
       };
 

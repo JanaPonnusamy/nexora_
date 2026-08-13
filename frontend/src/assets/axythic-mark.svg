@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 96" role="img" aria-label="Axythic">
+  <title>Axythic</title>
+  <defs>
+    <linearGradient id="axm-leg-left" x1="0.15" y1="1" x2="0.75" y2="0">
+      <stop offset="0%" stop-color="#1b3a8f"/>
+      <stop offset="45%" stop-color="#2f5fd0"/>
+      <stop offset="100%" stop-color="#5aa9f5"/>
+    </linearGradient>
+    <linearGradient id="axm-leg-right" x1="0.85" y1="1" x2="0.3" y2="0">
+      <stop offset="0%" stop-color="#f4622e"/>
+      <stop offset="28%" stop-color="#e0402f"/>
+      <stop offset="60%" stop-color="#a03aa8"/>
+      <stop offset="100%" stop-color="#3f6fe0"/>
+    </linearGradient>
+    <linearGradient id="axm-crossbar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2a55c4"/>
+      <stop offset="100%" stop-color="#b13c96"/>
+    </linearGradient>
+    <linearGradient id="axm-apex" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#b6e8ff"/>
+      <stop offset="50%" stop-color="#74c8fb" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#4b9ef0" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <path d="M42 8 L58 8 L26 88 L2 88 Z" fill="url(#axm-leg-left)"/>
+  <path d="M42 8 L58 8 L98 88 L74 88 Z" fill="url(#axm-leg-right)"/>
+  <path d="M36.4 62 L63.6 62 L70 78 L30 78 Z" fill="url(#axm-crossbar)"/>
+  <path d="M42 8 L58 8 L54 40 L46 40 Z" fill="url(#axm-apex)"/>
+</svg>

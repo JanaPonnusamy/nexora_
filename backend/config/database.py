@@ -41,10 +41,17 @@ class _PytdsCursorAdapter:
             normalized = tuple(params[0])
         else:
             normalized = tuple(params)
+        if not normalized:
+            return sql, ()
         return sql.replace("?", "%s"), normalized
 
     def execute(self, sql, *params):
         statement, normalized = self._normalize(sql, params)
+        if not normalized:
+            # pytds still runs %-formatting whenever a params argument is
+            # passed, which blows up on literal '%' in the SQL (LIKE patterns,
+            # etc). Omit the argument entirely for parameterless statements.
+            return self._cursor.execute(statement)
         return self._cursor.execute(statement, normalized)
 
     def executemany(self, sql, params_seq):
@@ -58,13 +65,18 @@ class _PytdsCursorAdapter:
 
 class _PytdsConnectionAdapter:
     def __init__(self, connection):
-        self._connection = connection
+        object.__setattr__(self, "_connection", connection)
 
     def cursor(self):
         return _PytdsCursorAdapter(self._connection.cursor())
 
     def __getattr__(self, name):
         return getattr(self._connection, name)
+
+    def __setattr__(self, name, value):
+        # Without this, `conn.autocommit = True` would silently set the flag on
+        # the adapter and leave the real connection in a transaction.
+        setattr(self._connection, name, value)
 
 
 def _connection_string():

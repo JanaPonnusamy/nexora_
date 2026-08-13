@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Tenant scoping for endpoints that used to trust client-supplied
 tenant_id / store_id query params with no server-side check at all.
 

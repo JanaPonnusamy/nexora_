@@ -1,4 +1,6 @@
 
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException
 from services.module_service import ModuleService
 from dtos.module_request import ModuleRequest, ModuleStatusRequest

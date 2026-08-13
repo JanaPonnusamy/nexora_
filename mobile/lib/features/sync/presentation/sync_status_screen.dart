@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:nexora_mobile/core/database/app_database.dart';
 import 'package:nexora_mobile/core/di/agent_providers.dart';
+import 'package:nexora_mobile/core/sync/sync_status.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
 import 'package:nexora_mobile/core/widgets/mobile_components.dart';
 import 'package:nexora_mobile/features/agent/presentation/widgets/status_widgets.dart';
