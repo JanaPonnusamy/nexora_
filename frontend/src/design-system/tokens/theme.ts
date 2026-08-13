@@ -230,10 +230,10 @@ export type ThemeName = keyof typeof themes
  * so the shell has one import rather than several.
  * ------------------------------------------------------------------ */
 export const layout = {
-  headerHeight: '52px',
+  headerHeight: '64px',
   statusbarHeight: '30px',
   /** Icon-only sidebar width */
-  sidebarWidth: '56px',
+  sidebarWidth: '68px',
   flyoutWidth: '232px',
   gutter: '1.25rem',
   radiusSm: '6px',

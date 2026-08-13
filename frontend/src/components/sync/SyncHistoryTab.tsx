@@ -7,6 +7,7 @@ import { SyncStatusBadge, SyncTypeBadge } from './SyncBadges'
 import { formatDateTime } from '../../utils/format'
 import { SxCard, SxCardHead, SxCardBody, SxStat, SxTable, SxSearch, SxSelect, SxButton } from './ui'
 import { ExecutionDrawer, formatDuration } from './ExecutionDrawer'
+import { FilterBar } from '../../design-system/components/FilterBar'
 import type {
   StoreHealthRow,
   SyncHistoryFilters,
@@ -114,7 +115,7 @@ export function SyncHistoryTab() {
       {/* ---- Filter bar ---- */}
       <SxCard className="sx-pane">
         <SxCardBody>
-          <div className="sx-filterbar">
+          <FilterBar compact ariaLabel="Sync history filters">
             <SxSearch value={search} onChange={setSearch} placeholder="Search Execution ID…" ariaLabel="Search execution id" />
             <SxButton icon="bi-search" variant="ghost" sm onClick={applySearch}>Search</SxButton>
             <SxSelect value={filters.store_id ?? ''} onChange={(v) => setFilter('store_id', v)} ariaLabel="Filter by store">
@@ -140,7 +141,7 @@ export function SyncHistoryTab() {
               <SxButton icon="bi-arrow-clockwise" variant="ghost" sm onClick={() => load(filters)}>Refresh</SxButton>
               <SxButton icon="bi-filetype-csv" variant="primary" sm disabled={!data || data.length === 0} onClick={() => data && exportCsv(data)}>Export CSV</SxButton>
             </div>
-          </div>
+          </FilterBar>
         </SxCardBody>
       </SxCard>
 

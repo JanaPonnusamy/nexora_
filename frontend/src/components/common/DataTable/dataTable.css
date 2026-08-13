@@ -1,0 +1,266 @@
+/* ============================================================================
+   DataTable — Reusable, Theme-Aware Data Table Component
+   Supports Light Mode & Dark Mode out of the box via design system CSS tokens.
+   ========================================================================= */
+
+.nx-data-table-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border: 1px solid var(--nx-rule, var(--ds-border, #e2e8f0));
+  border-radius: var(--nx-radius-lg, var(--ds-radius-lg, 12px));
+  background: var(--nx-surface, var(--ds-surface, #ffffff));
+  box-shadow: none;
+  overflow: hidden;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+/* ── Header / Controls Bar ────────────────────────────────────────── */
+.nx-data-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--nx-rule, var(--ds-border, #e2e8f0));
+  background: color-mix(in srgb, var(--nx-surface, #fff) 96%, transparent);
+  flex-wrap: wrap;
+}
+
+.nx-data-table-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--nx-text, var(--ds-text-primary, #0f172a));
+}
+
+.nx-data-table-badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  background: var(--nx-surface-sunk, var(--ds-accent-soft, #f1f5f9));
+  color: var(--nx-text-soft, var(--ds-text-secondary, #475569));
+}
+
+.nx-data-table-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.nx-data-table-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid var(--nx-rule, var(--ds-border, #cbd5e1));
+  border-radius: var(--nx-radius-sm, 6px);
+  background: var(--nx-surface, #ffffff);
+  color: var(--nx-text-soft, #475569);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.nx-data-table-btn:hover {
+  background: var(--nx-surface-hover, #f8fafc);
+  color: var(--nx-text, #0f172a);
+}
+
+.nx-data-table-btn.is-active {
+  background: var(--nx-accent-sunk, #eff6ff);
+  color: var(--nx-accent-ink, #1d4ed8);
+  border-color: var(--nx-accent, #3b82f6);
+}
+
+/* ── Table Responsive Container ───────────────────────────────────── */
+.nx-data-table-container {
+  width: 100%;
+  overflow-x: auto;
+  position: relative;
+}
+
+.nx-data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+  color: var(--nx-text, var(--ds-text-primary, #0f172a));
+}
+
+/* Density variants */
+.nx-data-table--compact th,
+.nx-data-table--compact td {
+  padding: 0.55rem 0.85rem;
+}
+
+.nx-data-table--comfortable th,
+.nx-data-table--comfortable td {
+  padding: 0.85rem 1rem;
+}
+
+/* ── Table Header (thead) ─────────────────────────────────────────── */
+.nx-data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--nx-surface-sunk, color-mix(in srgb, var(--nx-surface, #fff) 94%, #000 6%));
+  color: var(--nx-text-muted, var(--ds-text-muted, #64748b));
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  border-bottom: 1px solid var(--nx-rule, var(--ds-border, #e2e8f0));
+  user-select: none;
+  white-space: nowrap;
+}
+
+.nx-data-table thead th.is-sortable {
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.nx-data-table thead th.is-sortable:hover {
+  color: var(--nx-text, #0f172a);
+  background: var(--nx-surface-hover, #f1f5f9);
+}
+
+.nx-data-table thead th.is-sortable:focus-visible,
+.nx-data-table-row:focus-visible {
+  outline: 2px solid var(--nx-accent, #3b82f6);
+  outline-offset: -2px;
+}
+
+.nx-data-table-sort-icon {
+  display: inline-flex;
+  margin-left: 0.35rem;
+  font-size: 0.7rem;
+  opacity: 0.5;
+  transition: opacity 120ms ease;
+}
+
+.nx-data-table thead th.is-sortable:hover .nx-data-table-sort-icon,
+.nx-data-table-sort-icon.is-active {
+  opacity: 1;
+  color: var(--nx-accent, #3b82f6);
+}
+
+/* ── Table Body (tbody) ───────────────────────────────────────────── */
+.nx-data-table tbody td {
+  border-bottom: 1px solid var(--nx-rule, var(--ds-border, #f1f5f9));
+  vertical-align: middle;
+  transition: background-color 100ms ease;
+}
+
+.nx-data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.nx-data-table-row {
+  transition: background-color 110ms ease;
+}
+
+.nx-data-table-row:hover {
+  background: var(--nx-surface-hover, color-mix(in srgb, var(--nx-accent-sunk, #eff6ff) 40%, var(--nx-surface, #fff)));
+}
+
+.nx-data-table-row.is-clickable {
+  cursor: pointer;
+}
+
+.nx-data-table-row.is-selected {
+  background: var(--nx-accent-sunk, #eff6ff);
+}
+
+/* Sticky column support */
+.nx-data-table .is-sticky-left {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: inherit;
+}
+
+.nx-data-table thead .is-sticky-left {
+  z-index: 3;
+}
+
+/* ── Pagination Footer ───────────────────────────────────────────── */
+.nx-data-table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 1rem;
+  border-top: 1px solid var(--nx-rule, var(--ds-border, #e2e8f0));
+  background: color-mix(in srgb, var(--nx-surface, #fff) 98%, transparent);
+  font-size: 0.8rem;
+  color: var(--nx-text-soft, #64748b);
+  flex-wrap: wrap;
+}
+
+.nx-data-table-pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.nx-data-table-page-size-select {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--nx-rule, #cbd5e1);
+  border-radius: var(--nx-radius-sm, 6px);
+  background: var(--nx-surface, #ffffff);
+  color: var(--nx-text, #0f172a);
+}
+
+.nx-data-table-pagination-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.nx-data-table-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid var(--nx-rule, #e2e8f0);
+  border-radius: var(--nx-radius-sm, 6px);
+  background: var(--nx-surface, #ffffff);
+  color: var(--nx-text-soft, #475569);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.nx-data-table-page-btn:hover:not(:disabled) {
+  background: var(--nx-surface-hover, #f8fafc);
+  color: var(--nx-text, #0f172a);
+}
+
+.nx-data-table-page-btn.is-active {
+  background: var(--nx-accent, #3b82f6);
+  color: #ffffff;
+  border-color: var(--nx-accent, #3b82f6);
+  font-weight: 600;
+}
+
+.nx-data-table-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Empty & Skeleton States ──────────────────────────────────────── */
+.nx-data-table-empty,
+.nx-data-table-loading {
+  padding: 2.5rem 1rem;
+  text-align: center;
+}

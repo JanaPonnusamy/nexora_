@@ -11,6 +11,7 @@ import type {
   SalesDetailRow,
 } from '../../types/legacyOrder'
 import './legacy-order.css'
+import { FilterBar, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
 
 function fmtDate(value: string | null): string {
   if (!value) return '—'
@@ -204,14 +205,17 @@ export default function QtyCheckPage() {
 
       <section className="lo-card">
         <div className="lo-section-title">
-          <div className="lo-row" style={{ margin: 0 }}>
-            <label><span>Select Store</span><select value={store} onChange={(e) => setStore(e.target.value)}>{stores.map((s) => <option key={s.store_name} value={s.store_name}>{s.store_name}</option>)}</select></label>
-            <fieldset className="lo-modes" style={{ margin: 0 }}>
-              <legend>DB Source</legend>
-              <label><input type="radio" checked={mode === 'local'} onChange={() => setMode('local')} /> Local DB</label>
-              <label><input type="radio" checked={mode === 'remote'} onChange={() => setMode('remote')} /> Remote DB</label>
-            </fieldset>
-          </div>
+          <FilterBar compact className="lo-row" ariaLabel="Quantity check filters">
+            <FilterSelect label="Select Store" ariaLabel="Select Store" value={store} onChange={setStore}>
+              {stores.map((s) => <option key={s.store_name} value={s.store_name}>{s.store_name}</option>)}
+            </FilterSelect>
+            <FilterTabs
+              value={mode}
+              ariaLabel="Database source"
+              options={[{ value: 'local', label: 'Local DB' }, { value: 'remote', label: 'Remote DB' }]}
+              onChange={setMode}
+            />
+          </FilterBar>
           <span className="lo-count">{totalProducts} products</span>
         </div>
       </section>

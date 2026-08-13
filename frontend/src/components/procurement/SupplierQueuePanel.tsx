@@ -4,6 +4,7 @@ import type { PurchaseMode } from '../../types/procurement'
 import { money, num, date } from '../stock/format'
 import { ExportSettingsDialog } from './ExportSettingsDialog'
 import { SupplierReplyImportDialog } from './SupplierReplyImportDialog'
+import { FilterBar, FilterSearch, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
 
 /* ---- Data model (built by the workspace from draft assignments) ----------- */
 
@@ -331,33 +332,20 @@ export function SupplierQueuePanel({
             <div className="pm-sq__hint">No suppliers available. Assign suppliers to products, then Load Suppliers.</div>
           ) : (
             <>
-              <div className="pm-sq__toolbar">
-                <div className="pm-sq__filters">
-                  {FILTERS.map((f) => (
-                    <button
-                      key={f.value}
-                      className={`pm-sq__filter${filter === f.value ? ' pm-sq__filter--on' : ''}`}
-                      onClick={() => setFilter(f.value)}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-                <span className="sx-search pm-sq__search">
-                  <i className="bi bi-search" aria-hidden="true" />
-                  <input type="search" value={search} placeholder="Search supplier…" aria-label="Search supplier" onChange={(e) => setSearch(e.target.value)} />
-                </span>
-                <select className="sx-select" aria-label="Sort suppliers" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+              <FilterBar compact className="pm-sq__toolbar" ariaLabel="Supplier queue filters">
+                <FilterTabs value={filter} ariaLabel="Supplier status" options={FILTERS} onChange={setFilter} />
+                <FilterSearch className="pm-sq__search" value={search} placeholder="Search supplier…" ariaLabel="Search supplier" onChange={setSearch} />
+                <FilterSelect ariaLabel="Sort suppliers" value={sort} onChange={setSort}>
                   <option value="value">Sort: Highest Value</option>
                   <option value="count">Sort: Most Products</option>
-                </select>
+                </FilterSelect>
                 {exportableVisible.length > 0 && (
                   <label className="pm-chk pm-sq__selectall">
                     <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} />
                     Select all visible
                   </label>
                 )}
-              </div>
+              </FilterBar>
 
               {visible.length === 0 ? (
                 <div className="pm-sq__hint">No suppliers match the current filter.</div>
@@ -615,4 +603,3 @@ function Stat({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
-

@@ -4,6 +4,7 @@ import { ErrorState } from '../../components/common/ErrorState'
 import { PageHeader } from '../../components/common/PageHeader'
 import { tenantService } from '../../services/tenantService'
 import { procurementReportsService } from '../../services/procurementReportsService'
+import { FilterBar } from '../../design-system/components/FilterBar'
 import type { Tenant } from '../../types/tenant'
 import type {
   PharmacyCompareStoreRow,
@@ -337,7 +338,7 @@ export default function PharmacyReportsPage() {
     <div className="container-fluid px-0 pr">
       <PageHeader title="Pharmacy Reports" breadcrumb={['Procurement', 'Pharmacy Reports']} />
 
-      <div className="pr-toolbar">
+      <FilterBar compact className="pr-toolbar" ariaLabel="Pharmacy report filters">
         <select className="form-select form-select-sm" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
           {tenants.length === 0 && <option value="">Loading...</option>}
           {tenants.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name}</option>)}
@@ -382,7 +383,7 @@ export default function PharmacyReportsPage() {
         <button className="btn btn-outline-secondary btn-sm" onClick={() => window.print()}>
           <i className="bi bi-printer" /> PDF
         </button>
-      </div>
+      </FilterBar>
 
       {error && <ErrorState description={error} onRetry={generate} />}
 

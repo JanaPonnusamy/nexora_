@@ -1,4 +1,5 @@
-import { forwardRef, type ChangeEvent, type ReactNode } from 'react'
+import { forwardRef, type ReactNode } from 'react'
+import { FilterSearch, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
 
 export type Tone =
   | 'indigo' | 'teal' | 'success' | 'danger' | 'warning' | 'info' | 'violet' | 'muted'
@@ -90,34 +91,13 @@ export function SxButton({
 export const SxSearch = forwardRef<HTMLInputElement, {
   value: string; onChange: (v: string) => void; placeholder?: string; ariaLabel?: string
 }>(function SxSearch({ value, onChange, placeholder = 'Search…', ariaLabel }, ref) {
-  return (
-    <span className="sx-search">
-      <i className="bi bi-search" aria-hidden="true" />
-      <input
-        ref={ref}
-        type="search"
-        value={value}
-        placeholder={placeholder}
-        aria-label={ariaLabel ?? placeholder}
-        onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
-      />
-    </span>
-  )
+  return <FilterSearch inputRef={ref} value={value} onChange={onChange} placeholder={placeholder} ariaLabel={ariaLabel ?? placeholder} />
 })
 
 export function SxSelect({
   value, onChange, ariaLabel, children,
 }: { value: string; onChange: (v: string) => void; ariaLabel: string; children: ReactNode }) {
-  return (
-    <select
-      className="sx-select"
-      aria-label={ariaLabel}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      {children}
-    </select>
-  )
+  return <FilterSelect ariaLabel={ariaLabel} value={value} onChange={onChange}>{children}</FilterSelect>
 }
 
 /* ---- Segmented control --------------------------------------------------- */
@@ -130,20 +110,7 @@ export function SxSegmented<T extends string>({
   onChange: (v: T) => void
   ariaLabel: string
 }) {
-  return (
-    <div className="sx-seg" role="group" aria-label={ariaLabel}>
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          className={`sx-seg__btn${value === o.value ? ' sx-seg__btn--active' : ''}`}
-          onClick={() => onChange(o.value)}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  )
+  return <FilterTabs options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} />
 }
 
 /* ---- Progress ------------------------------------------------------------ */

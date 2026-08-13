@@ -5,6 +5,7 @@ import { ErrorState } from '../components/common/ErrorState'
 import { WhatsAppSendCard } from '../components/common/WhatsAppSendCard'
 import { api, ApiError } from '../services/apiClient'
 import { timeReportService } from '../services/timeReportService'
+import { FilterBar } from '../design-system/components/FilterBar'
 import type {
   DailyReport,
   DayRecord,
@@ -210,7 +211,7 @@ export default function TimeReportPage() {
     <div className="container-fluid px-0">
       <PageHeader title="Time Report" breadcrumb={['Time Report']} />
 
-      <div className="trp-bar">
+      <FilterBar compact className="trp-bar" ariaLabel="Time report filters">
         <label className="trp-field">
           <span>Report</span>
           <select
@@ -354,7 +355,7 @@ export default function TimeReportPage() {
             <i className="bi bi-images" /> All Store Images (zip)
           </button>
         )}
-      </div>
+      </FilterBar>
 
       {def?.description && <div className="trp-desc">{def.description}</div>}
 

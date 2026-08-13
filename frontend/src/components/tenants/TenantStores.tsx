@@ -2,6 +2,7 @@ import type { TenantStore } from '../../types/store'
 import { EmptyState } from '../common/EmptyState'
 import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
+import { DataTable, type DataTableColumn } from '../common/DataTable'
 
 interface TenantStoresProps {
   stores: TenantStore[]
@@ -18,6 +19,16 @@ export function TenantStores({
   onRetry,
   onCreateStore,
 }: TenantStoresProps) {
+  const columns: DataTableColumn<TenantStore>[] = [
+    { key: 'store_code', header: 'Store Code', sortable: true },
+    {
+      key: 'store_name',
+      header: 'Store Name',
+      sortable: true,
+      accessor: (store) => <span className="fw-medium">{store.store_name}</span>,
+    },
+  ]
+
   if (isLoading) {
     return <TableSkeleton rows={4} columns={2} />
   }
@@ -36,23 +47,11 @@ export function TenantStores({
   }
 
   return (
-    <div className="table-responsive">
-      <table className="table table-hover align-middle data-table">
-        <thead>
-          <tr>
-            <th scope="col">Store Code</th>
-            <th scope="col">Store Name</th>
-          </tr>
-        </thead>
-        <tbody>
-          {stores.map((store) => (
-            <tr key={store.store_id}>
-              <td>{store.store_code}</td>
-              <td className="fw-medium">{store.store_name}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={columns}
+      data={stores}
+      getRowId={(store) => store.store_id}
+      pageSize={10}
+    />
   )
 }

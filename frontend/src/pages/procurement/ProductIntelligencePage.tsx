@@ -16,6 +16,9 @@ import { IntelligenceDetail } from '../../components/procurement/intelligence/In
 import { IntelligenceCharts } from '../../components/procurement/intelligence/IntelligenceCharts'
 import { AssignProductDialog } from '../../components/procurement/intelligence/AssignProductDialog'
 import { num } from '../../components/stock/format'
+import {
+  FilterAction, FilterBar, FilterBarEnd, FilterSearch, FilterSelect, FilterTabs,
+} from '../../design-system/components/FilterBar'
 import '../../components/procurement/purchase-manager.css'
 import '../../components/procurement/intelligence/product-intelligence.css'
 
@@ -281,21 +284,20 @@ export default function ProductIntelligencePage() {
       <header className="pm-top">
         <div className="pm-top__ctx">
           <span className="pm-top__brand"><i className="bi bi-cpu" /> Product Intelligence</span>
-          <select className="sx-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+          <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId}>
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
-          <select
-            className="sx-select"
-            aria-label="Purchasing warehouse"
+          </FilterSelect>
+          <FilterSelect
+            ariaLabel="Purchasing warehouse"
             title="The store the network purchase quantity is calculated FOR"
             value={warehouseId}
-            onChange={(e) => setWarehouseId(e.target.value)}
+            onChange={setWarehouseId}
           >
             {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>Buying for {s.store_name}</option>)}
-          </select>
+          </FilterSelect>
 
           <div className="pi-storepick">
-            <button type="button" className="sx-select pi-storepick__btn" onClick={() => setStorePicker((v) => !v)}>
+            <button type="button" className="ds-filter-select pi-storepick__btn" onClick={() => setStorePicker((v) => !v)}>
               <i className="bi bi-diagram-3" /> {storeLabel} <i className="bi bi-chevron-down" />
             </button>
             {storePicker && (
@@ -317,26 +319,12 @@ export default function ProductIntelligencePage() {
             )}
           </div>
 
-          <div className="pi-modes" role="tablist">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'network'}
-              className={mode === 'network' ? 'pi-modes--on' : undefined}
-              onClick={() => { setMode('network'); setFilter('all') }}
-            >
-              Network
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'offers'}
-              className={mode === 'offers' ? 'pi-modes--on' : undefined}
-              onClick={() => { setMode('offers'); setFilter('all') }}
-            >
-              Supplier Offer
-            </button>
-          </div>
+          <FilterTabs
+            value={mode}
+            ariaLabel="Intelligence mode"
+            options={[{ value: 'network', label: 'Network' }, { value: 'offers', label: 'Supplier Offer' }]}
+            onChange={(next) => { setMode(next); setFilter('all') }}
+          />
         </div>
 
         <div className="pi-buildbar">
@@ -347,63 +335,58 @@ export default function ProductIntelligencePage() {
                 : '—'}
             </span>
           )}
-          <button className="pm-btn pm-btn--import" disabled={busy || !warehouseId} onClick={refreshAndBuild}>
-            <i className="bi bi-arrow-repeat" /> {busy ? 'Refreshing…' : 'Refresh & Build'}
-          </button>
+          <FilterAction
+            label={busy ? 'Refreshing…' : 'Refresh & Build'}
+            icon="bi-arrow-repeat"
+            disabled={busy || !warehouseId}
+            onClick={refreshAndBuild}
+          />
         </div>
       </header>
 
       {banner && <div className={`pm-banner pm-banner--${banner.kind}`}>{banner.text}</div>}
 
-      <div className="pm-toolbar">
-        <span className="sx-search">
-          <i className="bi bi-search" aria-hidden="true" />
-          <input
-            ref={searchRef}
-            type="search"
-            value={search}
-            placeholder="Search product…"
-            aria-label="Search product"
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </span>
-        <div className="pi-filters">
-          {FILTERS[mode].map((f) => (
-            <button
-              key={f.value}
-              type="button"
-              className={filter === f.value ? 'pi-filters--on' : undefined}
-              onClick={() => setFilter(f.value)}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
+      <FilterBar compact stacked ariaLabel="Product intelligence filters">
+        <FilterSearch
+          inputRef={searchRef}
+          value={search}
+          placeholder="Search product…"
+          ariaLabel="Search product"
+          onChange={setSearch}
+        />
+        <FilterTabs
+          value={filter}
+          ariaLabel="Product filters"
+          options={FILTERS[mode]}
+          onChange={setFilter}
+        />
         {mode === 'offers' && (
-          <select
-            className="sx-select"
-            aria-label="Supplier"
+          <FilterSelect
+            ariaLabel="Supplier"
             value={supplierCode}
-            onChange={(e) => setSupplierCode(e.target.value)}
+            onChange={setSupplierCode}
           >
             {suppliers.map((s) => (
               <option key={s.supplier_code} value={s.supplier_code}>
                 {s.supplier_name ?? s.supplier_code} ({s.line_count})
               </option>
             ))}
-          </select>
+          </FilterSelect>
         )}
-        <div className="pm-toolbar__right">
+        <FilterBarEnd>
           {mode === 'offers' && offers && (
             <span className="pi-stamp">
               {offers.summary.unmapped_lines} unmapped of {offers.summary.offered_lines}
             </span>
           )}
-          <button className="pm-btn pm-btn--ghost" onClick={mode === 'network' ? loadGrid : loadOffers} title="Reload">
-            <i className="bi bi-arrow-clockwise" />
-          </button>
-        </div>
-      </div>
+          <FilterAction
+            label="Reload"
+            icon="bi-arrow-clockwise"
+            variant="secondary"
+            onClick={mode === 'network' ? loadGrid : loadOffers}
+          />
+        </FilterBarEnd>
+      </FilterBar>
 
       <div className="pi-layout">
         <div className="pi-gridwrap" ref={gridRef}>

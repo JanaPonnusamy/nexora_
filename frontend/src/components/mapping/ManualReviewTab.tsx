@@ -10,6 +10,7 @@ import { SxButton, SxCard, SxCardBody, SxCardHead, SxChip, SxProgress, SxSearch,
 import { ConfidenceChip, RequireStorePair, type MappingCtx } from './shared'
 import { ProductSearchDialog } from './ProductSearchDialog'
 import { MatchLogicDrawer } from './MatchLogicDrawer'
+import { FilterBar } from '../../design-system/components/FilterBar'
 
 const BATCH_SIZE = 100
 
@@ -296,7 +297,7 @@ export function ManualReviewTab({ ctx }: { ctx: MappingCtx }) {
               icon="bi-diagram-3"
               sub={`${progress.remaining.toLocaleString()} pending · ${selected.size} selected`}
               action={
-                <div className="pmx-toolbar">
+                <FilterBar compact className="pmx-toolbar" ariaLabel="Manual review filters and actions">
                   <SxSearch ref={searchRef} value={search} onChange={setSearch} placeholder="Filter source product… ( / )" />
                   <SxButton variant="success" sm icon="bi-check2-all" busy={busy} disabled={selected.size === 0} onClick={() => runBulk('APPROVE')}>
                     Approve Selected
@@ -307,7 +308,7 @@ export function ManualReviewTab({ ctx }: { ctx: MappingCtx }) {
                   <SxButton variant="ghost" sm icon="bi-skip-forward" disabled={busy || selected.size === 0} onClick={skipSelected}>
                     Skip Selected
                   </SxButton>
-                </div>
+                </FilterBar>
               }
             />
             <SxCardBody flush>

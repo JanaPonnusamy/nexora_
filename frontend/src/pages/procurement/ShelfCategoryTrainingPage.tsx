@@ -7,6 +7,7 @@ import type { Store } from '../../types/store'
 import type { Refresh } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
 import '../../components/procurement/purchase-manager.css'
+import { FilterSelect } from '../../design-system/components/FilterBar'
 
 type Row = { name: string; unit: string | null; product_code: string | null; category: string }
 
@@ -123,24 +124,24 @@ export default function ShelfCategoryTrainingPage() {
         <div className="pm-train__controls">
           <label className="pm-launch__field">
             <span>Tenant</span>
-            <select className="sx-select" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+            <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId}>
               {tenants.length === 0 && <option value="">Loading…</option>}
               {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-            </select>
+            </FilterSelect>
           </label>
           <label className="pm-launch__field">
             <span>Store</span>
-            <select className="sx-select" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+            <FilterSelect ariaLabel="Store" value={storeId} onChange={setStoreId}>
               <option value="">Select store…</option>
               {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-            </select>
+            </FilterSelect>
           </label>
           <label className="pm-launch__field">
             <span>Order</span>
-            <select className="sx-select" value={refreshId} onChange={(e) => setRefreshId(e.target.value)} disabled={loading}>
+            <FilterSelect ariaLabel="Order" value={refreshId} onChange={setRefreshId} disabled={loading}>
               <option value="">{loading ? 'Loading…' : 'Select an order…'}</option>
               {refreshes.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
-            </select>
+            </FilterSelect>
           </label>
         </div>
 

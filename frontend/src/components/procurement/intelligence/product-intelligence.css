@@ -125,14 +125,6 @@
 }
 .pi-storepick__menu label:hover { background: #f1f5f9; }
 
-.pi-modes, .pi-filters { display: inline-flex; border: 1px solid var(--bs-border-color, #d0d5dd); border-radius: 7px; overflow: hidden; }
-.pi-modes button, .pi-filters button {
-  border: 0; background: transparent; color: #475569; cursor: pointer;
-  font-size: 11.5px; font-weight: 600; padding: 4px 10px;
-}
-.pi-modes button + button, .pi-filters button + button { border-left: 1px solid var(--bs-border-color, #e5e7eb); }
-.pi-modes--on, .pi-filters--on { background: #4f46e5; color: #fff !important; }
-
 /* ---- Right panel --------------------------------------------------------- */
 .pi-detail {
   height: 100%; display: flex; flex-direction: column;

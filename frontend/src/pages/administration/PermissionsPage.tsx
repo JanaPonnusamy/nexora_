@@ -3,9 +3,11 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { DataTable, type DataTableColumn } from '../../components/common/DataTable'
 import { usePermissionMatrix } from '../../hooks/usePermissionMatrix'
 import { permissionService } from '../../services/permissionService'
 import { ToggleCheck } from '../../components/dashboard/ToggleCheck'
+import type { PermissionModule } from '../../types/permission'
 
 const cellKey = (roleId: string, moduleId: string) => `${roleId}:${moduleId}`
 
@@ -75,48 +77,49 @@ export default function PermissionsPage() {
       )
     }
 
+    const columns: DataTableColumn<PermissionModule>[] = [
+      {
+        key: 'module_name',
+        header: 'Module',
+        sortable: true,
+        sticky: true,
+        className: 'permission-matrix__module',
+        accessor: (module) => (
+          <>
+            <div className="fw-medium">{module.module_name}</div>
+            <code className="small">{module.module_code}</code>
+          </>
+        ),
+      },
+      ...matrix.roles.map((role): DataTableColumn<PermissionModule> => ({
+        key: role.role_id,
+        header: role.role_name,
+        align: 'center',
+        accessor: (module) => {
+          const key = cellKey(role.role_id, module.module_id)
+          const isAssigned = assigned.has(key)
+          return (
+            <ToggleCheck
+              checked={isAssigned}
+              busy={busy.has(key)}
+              label={`${isAssigned ? 'Unassign' : 'Assign'} ${module.module_name} for ${role.role_name}`}
+              onClick={() => toggle(role.role_id, module.module_id)}
+            />
+          )
+        },
+      })),
+    ]
+
     return (
       <>
         {actionError && <div className="alert alert-danger py-2">{actionError}</div>}
-        <div className="table-responsive">
-          <table className="table align-middle data-table permission-matrix">
-            <thead>
-              <tr>
-                <th scope="col" className="permission-matrix__corner">Module</th>
-                {matrix.roles.map((role) => (
-                  <th scope="col" key={role.role_id} className="text-center">
-                    {role.role_name}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {matrix.modules.map((module) => (
-                <tr key={module.module_id}>
-                  <th scope="row" className="permission-matrix__module">
-                    <div className="fw-medium">{module.module_name}</div>
-                    <code className="small">{module.module_code}</code>
-                  </th>
-                  {matrix.roles.map((role) => {
-                    const key = cellKey(role.role_id, module.module_id)
-                    const isAssigned = assigned.has(key)
-                    const isBusy = busy.has(key)
-                    return (
-                      <td key={role.role_id} className="text-center">
-                        <ToggleCheck
-                          checked={isAssigned}
-                          busy={isBusy}
-                          label={`${isAssigned ? 'Unassign' : 'Assign'} ${module.module_name} for ${role.role_name}`}
-                          onClick={() => toggle(role.role_id, module.module_id)}
-                        />
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={columns}
+          data={matrix.modules}
+          getRowId={(module) => module.module_id}
+          pageSize={0}
+          className="permission-matrix"
+        />
       </>
     )
   }

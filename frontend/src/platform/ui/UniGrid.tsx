@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
-import { EmptyState } from '../../components/common/EmptyState'
-import { UniLoadingOverlay } from './UniLoadingOverlay'
+import { DataTable, type DataTableColumn } from '../../components/common/DataTable'
 
 export interface UniGridColumn<T> {
   key: string
@@ -21,13 +20,7 @@ interface UniGridProps<T> {
   activeRowId?: string
 }
 
-/**
- * Shared data grid — 5+ existing modules (Purchase Manager's ProductGrid,
- * Product Intelligence's IntelligenceGrid, Supplier Live Stock's table,
- * every platform-admin entity table, ...) each hand-roll their own
- * `<table>`. This is the reusable version new modules build on; existing
- * grids are not touched by this change.
- */
+/** Lightweight platform adapter for the application-wide DataTable. */
 export function UniGrid<T>({
   columns,
   rows,
@@ -38,48 +31,31 @@ export function UniGrid<T>({
   onRowClick,
   activeRowId,
 }: UniGridProps<T>) {
+  const dataTableColumns: DataTableColumn<T>[] = columns.map((column) => ({
+    key: column.key,
+    header: column.header,
+    accessor: column.render,
+    align:
+      column.align === 'start' ? 'left' : column.align === 'end' ? 'right' : column.align,
+    width: column.width,
+    sortable: true,
+  }))
+
   return (
-    <div className="uni-grid">
-      <table className="table uni-grid__table">
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th key={column.key} style={{ width: column.width, textAlign: column.align }}>
-                {column.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const rowId = getRowId(row)
-            return (
-              <tr
-                key={rowId}
-                className={[
-                  onRowClick ? 'uni-grid__row--clickable' : '',
-                  rowId === activeRowId ? 'table-active' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
-              >
-                {columns.map((column) => (
-                  <td key={column.key} style={{ textAlign: column.align }}>
-                    {column.render
-                      ? column.render(row)
-                      : String((row as Record<string, unknown>)[column.key] ?? '')}
-                  </td>
-                ))}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      {isLoading && <UniLoadingOverlay fullPage />}
-      {!isLoading && rows.length === 0 && (
-        <EmptyState icon="bi-table" title={emptyTitle} description={emptyDescription} />
-      )}
-    </div>
+    <DataTable
+      columns={dataTableColumns}
+      data={rows}
+      getRowId={getRowId}
+      isLoading={isLoading}
+      emptyText={
+        <>
+          <strong className="d-block text-body">{emptyTitle}</strong>
+          {emptyDescription && <span>{emptyDescription}</span>}
+        </>
+      }
+      onRowClick={onRowClick}
+      activeRowId={activeRowId}
+      pageSize={0}
+    />
   )
 }

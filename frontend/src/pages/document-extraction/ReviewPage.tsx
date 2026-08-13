@@ -15,6 +15,7 @@ import { InspectorPanel } from '../../design-system/components/InspectorPanel'
 import { SplitView } from '../../design-system/components/SplitView'
 import { KpiBar, StatCard } from '../../design-system/components/StatCard'
 import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
+import { FilterBar } from '../../design-system/components/FilterBar'
 import { useActingUser } from '../../hooks/useActingUser'
 import { keyboardManager } from '../../platform/keyboard/KeyboardManager'
 import { ApiError } from '../../services/apiClient'
@@ -229,7 +230,7 @@ export default function DocumentExtractionReviewPage() {
         breadcrumb={['Operations', 'Document Extraction', 'Review']}
         description="Review OCR imports, correct mappings, validate invoice lines, and move the queue forward without changing the extraction workflow."
       />
-      <div className="ds-toolbar">
+      <FilterBar ariaLabel="Document review filters">
         <label className="d-flex flex-column gap-1">
           <span className="small text-muted">Store</span>
           <select className="form-select" value={storeId} onChange={(event) => setStoreId(event.target.value)}>
@@ -287,7 +288,7 @@ export default function DocumentExtractionReviewPage() {
             </div>
           </>
         )}
-      </div>
+      </FilterBar>
     </div>
   )
 

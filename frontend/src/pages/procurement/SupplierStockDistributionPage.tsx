@@ -7,6 +7,7 @@ import type { DistributionConfigRow, DistributionRunSummary } from '../../types/
 import { EmptyState } from '../../components/common/EmptyState'
 import { date } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
+import { FilterSelect } from '../../design-system/components/FilterBar'
 
 type Banner = { kind: 'success' | 'danger'; text: string } | null
 
@@ -127,18 +128,18 @@ export default function SupplierStockDistributionPage() {
       <header className="pm-admin__head">
         <div className="pm-admin__title"><i className="bi bi-broadcast" /> Supplier Stock Distribution</div>
         <div className="pm-admin__ctx">
-          <select className="sx-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+          <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId}>
             {tenants.length === 0 && <option value="">Loading…</option>}
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
+          </FilterSelect>
           <input
             className="pm-input pm-input--sm" placeholder="Source store code (e.g. NMW)"
             value={sourceStoreCode} onChange={(e) => setSourceStoreCode(e.target.value.trim().toUpperCase())}
           />
-          <select className="sx-select" aria-label="Source" value={provider} onChange={(e) => setProvider(e.target.value as 'legacy' | 'nexora')}>
+          <FilterSelect ariaLabel="Source" value={provider} onChange={setProvider}>
             <option value="legacy">Legacy (OrderNMC)</option>
             <option value="nexora">Nexora (synced)</option>
-          </select>
+          </FilterSelect>
           <button className="pm-btn pm-btn--ghost" onClick={load} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
         </div>
       </header>

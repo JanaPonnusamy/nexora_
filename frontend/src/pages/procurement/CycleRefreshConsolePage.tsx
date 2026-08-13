@@ -11,6 +11,7 @@ import type { Cycle } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
 import { num } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
+import { FilterSelect } from '../../design-system/components/FilterBar'
 
 type Banner = { kind: 'success' | 'danger'; text: string } | null
 
@@ -627,10 +628,10 @@ export default function CycleRefreshConsolePage() {
       <header className="pm-admin__head">
         <div className="pm-admin__title"><i className="bi bi-arrow-repeat" /> Cycle &amp; Refresh Console</div>
         <div className="pm-admin__ctx">
-          <select className="sx-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)} disabled={running}>
+          <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId} disabled={running}>
             {tenants.length === 0 && <option value="">Loading…</option>}
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
+          </FilterSelect>
           <button className="pm-btn pm-btn--ghost" onClick={reloadContext} disabled={running} title="Reload"><i className="bi bi-arrow-clockwise" /></button>
         </div>
       </header>
@@ -651,17 +652,18 @@ export default function CycleRefreshConsolePage() {
             title="Every store's VPL is merged into one network grid, and the purchase quantity is calculated FOR this store"
           >
             <span>Buying warehouse</span>
-            <select
-              className="sx-select sx-select--sm"
+            <FilterSelect
+              className="sx-select--sm"
+              ariaLabel="Buying warehouse"
               value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
+              onChange={setWarehouseId}
               disabled={running}
             >
               <option value="">Skip consolidation</option>
               {tenantStores.map((s) => (
                 <option key={s.store_id} value={s.store_id}>{s.store_name}</option>
               ))}
-            </select>
+            </FilterSelect>
           </label>
           <button className="pm-btn pm-btn--primary pm-console__run" disabled={running || selected.size === 0} onClick={runBatch}>
             <i className="bi bi-play-fill" /> {consolidating ? 'Consolidating…' : running ? 'Running…' : `Run ${selected.size || ''} store${selected.size === 1 ? '' : 's'}`.replace('  ', ' ')}

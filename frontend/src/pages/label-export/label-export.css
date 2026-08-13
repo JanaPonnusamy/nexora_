@@ -7,9 +7,10 @@
   align-items: flex-end;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  background: var(--bs-body-bg, #fff);
-  border: 1px solid var(--bs-border-color, #dee2e6);
-  border-radius: 0.375rem;
+  background: var(--nx-surface-sunk, var(--bs-tertiary-bg, #fff));
+  border: 1px solid var(--nx-rule, var(--bs-border-color, #dee2e6));
+  border-radius: var(--nx-radius-lg, 0.5rem);
+  box-shadow: var(--nx-shadow-sm, none);
 }
 
 .label-export-toolbar--compact {

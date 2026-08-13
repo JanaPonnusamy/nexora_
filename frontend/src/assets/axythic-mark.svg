@@ -1,29 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 96" role="img" aria-label="Axythic">
-  <title>Axythic</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 78 88" fill="none">
   <defs>
-    <linearGradient id="axm-leg-left" x1="0.15" y1="1" x2="0.75" y2="0">
-      <stop offset="0%" stop-color="#1b3a8f"/>
-      <stop offset="45%" stop-color="#2f5fd0"/>
-      <stop offset="100%" stop-color="#5aa9f5"/>
+    <!-- Left face: deep blue gradient (top-bright → bottom-dark) -->
+    <linearGradient id="aBlue" x1="39" y1="4" x2="3" y2="84" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#42B4F5"/>
+      <stop offset="45%"  stop-color="#1976D2"/>
+      <stop offset="100%" stop-color="#0D3A8A"/>
     </linearGradient>
-    <linearGradient id="axm-leg-right" x1="0.85" y1="1" x2="0.3" y2="0">
-      <stop offset="0%" stop-color="#f4622e"/>
-      <stop offset="28%" stop-color="#e0402f"/>
-      <stop offset="60%" stop-color="#a03aa8"/>
-      <stop offset="100%" stop-color="#3f6fe0"/>
+
+    <!-- Center-right face: cyan → purple → magenta → orange -->
+    <linearGradient id="aRainbow" x1="39" y1="4" x2="73" y2="84" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#00D4E8"/>
+      <stop offset="28%"  stop-color="#8B3FD9"/>
+      <stop offset="62%"  stop-color="#E82070"/>
+      <stop offset="100%" stop-color="#FF6010"/>
     </linearGradient>
-    <linearGradient id="axm-crossbar" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#2a55c4"/>
-      <stop offset="100%" stop-color="#b13c96"/>
+
+    <!-- Right metallic edge: silver-blue to steel -->
+    <linearGradient id="aSilver" x1="52" y1="4" x2="75" y2="84" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#A8D4F0"/>
+      <stop offset="60%"  stop-color="#7FA8C8"/>
+      <stop offset="100%" stop-color="#4D7490"/>
     </linearGradient>
-    <linearGradient id="axm-apex" x1="0.5" y1="0" x2="0.5" y2="1">
-      <stop offset="0%" stop-color="#b6e8ff"/>
-      <stop offset="50%" stop-color="#74c8fb" stop-opacity="0.7"/>
-      <stop offset="100%" stop-color="#4b9ef0" stop-opacity="0"/>
+
+    <!-- Apex highlight: bright white-blue -->
+    <radialGradient id="aApex" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Reflection fade mask -->
+    <linearGradient id="aReflect" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="white" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
     </linearGradient>
+    <mask id="reflectMask">
+      <rect x="0" y="0" width="78" height="18" fill="url(#aReflect)"/>
+    </mask>
   </defs>
-  <path d="M42 8 L58 8 L26 88 L2 88 Z" fill="url(#axm-leg-left)"/>
-  <path d="M42 8 L58 8 L98 88 L74 88 Z" fill="url(#axm-leg-right)"/>
-  <path d="M36.4 62 L63.6 62 L70 78 L30 78 Z" fill="url(#axm-crossbar)"/>
-  <path d="M42 8 L58 8 L54 40 L46 40 Z" fill="url(#axm-apex)"/>
+
+  <!-- ── Reflection (below main mark, flipped & faded) ── -->
+  <g transform="translate(0, 172) scale(1, -1)" mask="url(#reflectMask)">
+    <polygon fill="url(#aBlue)"    points="39,4 3,84 21,84 39,57"/>
+    <polygon fill="url(#aRainbow)" points="39,4 52,4 73,84 57,84 39,57"/>
+    <polygon fill="url(#aSilver)"  points="52,4 55,4 75,84 73,84"/>
+  </g>
+
+  <!-- ── Main "A" Mark ── -->
+  <!-- Face 1: Left leg — deep blue -->
+  <polygon fill="url(#aBlue)" points="39,4 3,84 21,84 39,57"/>
+
+  <!-- Face 2: Right section + diagonal band — rainbow -->
+  <polygon fill="url(#aRainbow)" points="39,4 52,4 73,84 57,84 39,57"/>
+
+  <!-- Face 3: Thin right 3-D edge — metallic silver-blue -->
+  <polygon fill="url(#aSilver)" points="52,4 55,4 75,84 73,84"/>
+
+  <!-- Apex highlight (soft glint at the top point) -->
+  <ellipse cx="44" cy="11" rx="9" ry="6"
+    fill="url(#aApex)"
+    transform="rotate(-18, 44, 11)"/>
 </svg>

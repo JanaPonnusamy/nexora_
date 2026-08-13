@@ -1,5 +1,5 @@
 .pr {
-  color: #172033;
+  color: var(--nx-text, var(--bs-body-color, #172033));
 }
 
 .pr-toolbar {
@@ -9,9 +9,10 @@
   align-items: center;
   margin-bottom: 14px;
   padding: 10px;
-  border: 1px solid #dbe4ef;
-  background: #f8fafc;
-  border-radius: 8px;
+  border: 1px solid var(--nx-rule, var(--bs-border-color, #dbe4ef));
+  background: var(--nx-surface-sunk, var(--bs-tertiary-bg, #f8fafc));
+  border-radius: var(--nx-radius-lg, 8px);
+  box-shadow: var(--nx-shadow-sm, none);
 }
 
 .pr-toolbar > select,
@@ -22,7 +23,7 @@
 
 .pr-vs {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--nx-text-muted, #64748b);
 }
 
 .pr-kpis {

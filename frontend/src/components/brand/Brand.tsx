@@ -7,14 +7,12 @@ interface BrandProps {
   to?: string
 }
 
-/**
- * Axythic logo component for the header bar.
- */
+/** Axythic identity used throughout the application shell. */
 export function Brand({ to = '/' }: BrandProps) {
   const content = (
     <>
       <img className="app-brand__lockup" src={logoLockup} alt="Axythic" />
-      <img className="app-brand__mark" src={logoMark} alt="Axythic" />
+      <img className="app-brand__mark" src={logoMark} alt="" aria-hidden="true" />
     </>
   )
 
@@ -28,4 +26,3 @@ export function Brand({ to = '/' }: BrandProps) {
     </Link>
   )
 }
-

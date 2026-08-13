@@ -1,4 +1,4 @@
-import type { ChangeEvent } from 'react'
+import { FilterAction, FilterBar, FilterSearch, FilterSelect } from './FilterBar'
 
 export interface ToolbarOption {
   label: string
@@ -35,39 +35,27 @@ export function FilterToolbar({
   onAction,
 }: FilterToolbarProps) {
   return (
-    <div className="ds-toolbar list-toolbar">
-      <label className="ds-search-field list-toolbar__search">
-        <i className="bi bi-search" aria-hidden="true" />
-        <input
-          type="search"
-          className="form-control"
-          placeholder={searchPlaceholder}
-          aria-label={searchAriaLabel}
-          value={searchValue}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => onSearchChange(event.target.value)}
-        />
-      </label>
+    <FilterBar className="list-toolbar">
+      <FilterSearch
+        className="list-toolbar__search"
+        placeholder={searchPlaceholder}
+        ariaLabel={searchAriaLabel}
+        value={searchValue}
+        onChange={onSearchChange}
+      />
 
       {filters.map((filter) => (
-        <select
+        <FilterSelect
           key={filter.key}
-          className="form-select list-toolbar__filter ds-toolbar__filter"
-          aria-label={filter.ariaLabel}
+          className="list-toolbar__filter"
+          ariaLabel={filter.ariaLabel}
           value={filter.value}
-          onChange={(event: ChangeEvent<HTMLSelectElement>) => filter.onChange(event.target.value)}
-        >
-          {filter.options.map((option) => (
-            <option key={`${filter.key}-${option.value}`} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          onChange={filter.onChange}
+          options={filter.options}
+        />
       ))}
 
-      <button type="button" className="btn btn-primary ds-button ds-button--primary ms-auto" onClick={onAction}>
-        {actionIcon && <i className={`bi ${actionIcon} me-1`} aria-hidden="true" />}
-        {actionLabel}
-      </button>
-    </div>
+      <FilterAction className="ms-auto" label={actionLabel} icon={actionIcon} onClick={onAction} />
+    </FilterBar>
   )
 }
