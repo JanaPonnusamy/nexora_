@@ -1,4 +1,6 @@
 
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException
 from services.role_service import RoleService
 from dtos.role_request import RoleRequest, RoleStatusRequest

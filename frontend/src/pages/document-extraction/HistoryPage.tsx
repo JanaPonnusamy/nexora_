@@ -9,6 +9,7 @@ import { AppDataGrid, type AppDataGridColumn } from '../../design-system/compone
 import { InspectorPanel } from '../../design-system/components/InspectorPanel'
 import { SplitView } from '../../design-system/components/SplitView'
 import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
+import { FilterBar, FilterSearch, FilterSelect } from '../../design-system/components/FilterBar'
 
 export default function DocumentExtractionHistoryPage() {
   const [stores, setStores] = useState<Store[]>([])
@@ -92,35 +93,27 @@ export default function DocumentExtractionHistoryPage() {
         />
       }
       filters={
-        <div className="ds-toolbar">
-          <select className="form-select list-toolbar__filter ds-toolbar__filter" value={storeId} onChange={(event) => setStoreId(event.target.value)} aria-label="Store">
+        <FilterBar ariaLabel="Invoice history filters">
+          <FilterSelect className="list-toolbar__filter" value={storeId} onChange={setStoreId} ariaLabel="Store">
             {stores.map((store) => (
               <option key={store.store_id} value={store.store_id}>{store.store_code} - {store.store_name}</option>
             ))}
-          </select>
-          <label className="ds-search-field list-toolbar__search">
-            <i className="bi bi-receipt" aria-hidden="true" />
-            <input
-              type="search"
-              className="form-control"
-              value={invoiceNumber}
-              placeholder="Search invoice number"
-              aria-label="Search invoice number"
-              onChange={(event) => setInvoiceNumber(event.target.value)}
-            />
-          </label>
-          <label className="ds-search-field list-toolbar__search">
-            <i className="bi bi-building" aria-hidden="true" />
-            <input
-              type="search"
-              className="form-control"
-              value={supplierName}
-              placeholder="Search supplier"
-              aria-label="Search supplier"
-              onChange={(event) => setSupplierName(event.target.value)}
-            />
-          </label>
-          <select className="form-select list-toolbar__filter ds-toolbar__filter" value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Status">
+          </FilterSelect>
+          <FilterSearch
+            icon="bi-receipt"
+            value={invoiceNumber}
+            placeholder="Search invoice number"
+            ariaLabel="Search invoice number"
+            onChange={setInvoiceNumber}
+          />
+          <FilterSearch
+            icon="bi-building"
+            value={supplierName}
+            placeholder="Search supplier"
+            ariaLabel="Search supplier"
+            onChange={setSupplierName}
+          />
+          <FilterSelect className="list-toolbar__filter" value={status} onChange={setStatus} ariaLabel="Status">
             <option value="">All statuses</option>
             <option value="UPLOADED">Uploaded</option>
             <option value="EXTRACTED">Extracted</option>
@@ -128,8 +121,8 @@ export default function DocumentExtractionHistoryPage() {
             <option value="SAVED">Saved</option>
             <option value="EXPORTED">Exported</option>
             <option value="FAILED">Failed</option>
-          </select>
-        </div>
+          </FilterSelect>
+        </FilterBar>
       }
       statusBar={
         <>

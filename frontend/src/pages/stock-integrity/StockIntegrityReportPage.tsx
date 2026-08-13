@@ -6,6 +6,7 @@ import { stockIntegrityService } from '../../services/stockIntegrityService'
 import type { Tenant } from '../../types/tenant'
 import type { TenantStore } from '../../types/store'
 import type { StockIntegrityRow } from '../../types/stockIntegrity'
+import { FilterBar } from '../../design-system/components/FilterBar'
 
 export default function StockIntegrityReportPage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
@@ -96,7 +97,7 @@ export default function StockIntegrityReportPage() {
         the audit table.
       </div>
 
-      <div className="ds-toolbar d-flex flex-wrap gap-3 align-items-end">
+      <FilterBar compact className="align-items-end" ariaLabel="Stock integrity filters">
         <label className="d-flex flex-column gap-1">
           <span className="small text-muted">Tenant</span>
           <select className="form-select" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
@@ -135,7 +136,7 @@ export default function StockIntegrityReportPage() {
           <i className="bi bi-tools me-1" />
           {repairing ? 'Repairing…' : 'Repair All'}
         </button>
-      </div>
+      </FilterBar>
 
       {error && <div className="alert alert-danger py-2 small mb-0">{error}</div>}
       {repairMessage && <div className="alert alert-success py-2 small mb-0">{repairMessage}</div>}

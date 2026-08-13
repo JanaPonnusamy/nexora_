@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { legacyOrderService } from '../../services/legacyOrderService'
 import type { LegacyDbHealth, LegacyDbRecovery, LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
+import { FilterBar, FilterSearch, FilterSelect } from '../../design-system/components/FilterBar'
 
 const POLL_MS = 1500
 // The internal "HO" branch whose own stock feeds every other store's
@@ -408,10 +409,12 @@ export default function LegacyOrderPage() {
             <button type="button" className="lo-btn lo-btn-primary" disabled={!selectedOrderId || compareBusy || Boolean(runningFor(compareStore))} onClick={compare}>{compareBusy ? 'Comparing…' : 'Compare Order'}</button>
           </div>
           <div className="lo-modern-compare">
-            <div className="lo-compare-toprow">
-              <label className="lo-store-picker"><span>Store</span><select value={compareStore} onChange={(e) => setCompareStore(e.target.value)}>{stores.map((store) => <option key={store.store_name}>{store.store_name}</option>)}</select></label>
-              <label className="lo-order-search"><i className="bi bi-search" /><input type="search" placeholder="Search order #" value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)} aria-label="Search previous orders" /></label>
-            </div>
+            <FilterBar compact className="lo-compare-toprow" ariaLabel="Previous order filters">
+              <FilterSelect label="Store" ariaLabel="Store" value={compareStore} onChange={setCompareStore}>
+                {stores.map((store) => <option key={store.store_name}>{store.store_name}</option>)}
+              </FilterSelect>
+              <FilterSearch value={orderSearch} placeholder="Search order #" ariaLabel="Search previous orders" onChange={setOrderSearch} />
+            </FilterBar>
             <div className="lo-compare-grid" role="listbox" aria-label="Previous orders">
               {filteredOrders.map((order) => (
                 <button type="button" role="option" aria-selected={selectedOrderId === String(order.order_id)} className={`lo-order-tile${selectedOrderId === String(order.order_id) ? ' is-selected' : ''}`} key={order.order_id} onClick={() => setSelectedOrderId(String(order.order_id))}>

@@ -1,18 +1,36 @@
 import { useTheme } from '../../hooks/useTheme'
 
+const ICON = {
+  light: 'bi-sun',
+  dark: 'bi-moon-stars',
+  system: 'bi-circle-half',
+} as const
+
+const LABEL = {
+  light: 'Light theme',
+  dark: 'Dark theme',
+  system: 'Match system theme',
+} as const
+
+const NEXT = {
+  light: 'dark',
+  dark: 'system',
+  system: 'light',
+} as const
+
+/** Cycles light -> dark -> follow system. */
 export function ThemeToggle() {
-  const { theme, toggleTheme } = useTheme()
-  const isDark = theme === 'dark'
+  const { preference, cycleTheme } = useTheme()
 
   return (
     <button
       type="button"
-      className="btn btn-link app-header__icon-btn"
-      onClick={toggleTheme}
-      aria-label="Toggle theme"
-      title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      className="app-iconbtn"
+      onClick={cycleTheme}
+      aria-label={`${LABEL[preference]}. Switch to ${LABEL[NEXT[preference]].toLowerCase()}`}
+      title={`${LABEL[preference]} — click for ${LABEL[NEXT[preference]].toLowerCase()}`}
     >
-      <i className={`bi ${isDark ? 'bi-sun' : 'bi-moon-stars'}`} aria-hidden="true" />
+      <i className={`bi ${ICON[preference]}`} aria-hidden="true" />
     </button>
   )
 }

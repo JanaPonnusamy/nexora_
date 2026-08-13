@@ -10,6 +10,7 @@ import type { Tenant } from '../types/tenant'
 import type { Store } from '../types/store'
 import type { ReportColumn, ReportDef, ReportResult, SupplierOption } from '../types/reports'
 import { money, num, date } from '../components/stock/format'
+import { FilterBar } from '../design-system/components/FilterBar'
 import './reports.css'
 
 const iso = (d: Date) => d.toISOString().slice(0, 10)
@@ -141,7 +142,7 @@ export default function ReportsPage() {
     <div className="container-fluid px-0 rpt">
       <PageHeader title="Reports" breadcrumb={['Reports']} />
 
-      <div className="rpt-bar">
+      <FilterBar compact className="rpt-bar" ariaLabel="Report filters">
         <select className="form-select form-select-sm" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
           {tenants.length === 0 && <option value="">Loading…</option>}
           {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
@@ -188,7 +189,7 @@ export default function ReportsPage() {
           defaultCaption={`Nexora ${def?.label ?? 'Report'} | ${from}${to ? ` to ${to}` : ''}`}
           buildFile={buildCsvFile}
         />
-      </div>
+      </FilterBar>
 
       {error ? (
         <ErrorState description={error} onRetry={run} />

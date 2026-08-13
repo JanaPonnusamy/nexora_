@@ -2,6 +2,7 @@ import type { User } from '../../types/user'
 import { StatusBadge } from '../common/StatusBadge'
 import { UserActions } from './UserActions'
 import { formatDateTime } from '../../utils/format'
+import { DataTable, type DataTableColumn } from '../common/DataTable'
 
 interface UserTableProps {
   users: User[]
@@ -12,44 +13,69 @@ interface UserTableProps {
 }
 
 export function UserTable({ users, onView, onEdit, onRoles, onStores }: UserTableProps) {
+  const columns: DataTableColumn<User>[] = [
+    {
+      key: 'username',
+      header: 'Username',
+      sortable: true,
+      accessor: (user) => <span className="fw-medium">{user.username}</span>,
+    },
+    {
+      key: 'full_name',
+      header: 'Full Name',
+      sortable: true,
+      accessor: (user) => user.full_name,
+    },
+    {
+      key: 'store_count',
+      header: 'Stores',
+      sortable: true,
+      accessor: (user) => user.store_count ?? '—',
+    },
+    {
+      key: 'role_count',
+      header: 'Roles',
+      sortable: true,
+      accessor: (user) => user.role_count ?? '—',
+    },
+    {
+      key: 'last_login',
+      header: 'Last Login',
+      sortable: true,
+      accessor: (user) => formatDateTime(user.last_login),
+    },
+    {
+      key: 'is_active',
+      header: 'Status',
+      sortable: true,
+      accessor: (user) => <StatusBadge active={user.is_active} />,
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      accessor: (user) => (
+        <UserActions
+          userName={user.username}
+          onView={() => onView(user)}
+          onEdit={() => onEdit(user)}
+          onRoles={() => onRoles(user)}
+          onStores={() => onStores(user)}
+        />
+      ),
+    },
+  ]
+
   return (
-    <div className="table-responsive d-none d-md-block">
-      <table className="table table-hover align-middle data-table">
-        <thead>
-          <tr>
-            <th scope="col">Username</th>
-            <th scope="col">Full Name</th>
-            <th scope="col">Stores</th>
-            <th scope="col">Roles</th>
-            <th scope="col">Last Login</th>
-            <th scope="col">Status</th>
-            <th scope="col" className="text-end">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((user) => (
-            <tr key={user.user_id} className="data-row" onClick={() => onView(user)}>
-              <td className="fw-medium">{user.username}</td>
-              <td>{user.full_name}</td>
-              <td>{user.store_count ?? '—'}</td>
-              <td>{user.role_count ?? '—'}</td>
-              <td>{formatDateTime(user.last_login)}</td>
-              <td>
-                <StatusBadge active={user.is_active} />
-              </td>
-              <td className="text-end">
-                <UserActions
-                  userName={user.username}
-                  onView={() => onView(user)}
-                  onEdit={() => onEdit(user)}
-                  onRoles={() => onRoles(user)}
-                  onStores={() => onStores(user)}
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="d-none d-md-block">
+      <DataTable
+        columns={columns}
+        data={users}
+        getRowId={(user) => user.user_id}
+        onRowClick={(user) => onView(user)}
+        pageSize={10}
+        showDensityToggle={true}
+      />
     </div>
   )
 }

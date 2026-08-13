@@ -1,6 +1,7 @@
 import type { Role } from '../../types/role'
 import { StatusBadge } from '../common/StatusBadge'
 import { RoleActions } from './RoleActions'
+import { DataTable, type DataTableColumn } from '../common/DataTable'
 
 interface RoleTableProps {
   roles: Role[]
@@ -10,39 +11,56 @@ interface RoleTableProps {
 }
 
 export function RoleTable({ roles, onView, onEdit, onUsers }: RoleTableProps) {
+  const columns: DataTableColumn<Role>[] = [
+    {
+      key: 'role_name',
+      header: 'Role Name',
+      sortable: true,
+      accessor: (role) => <span className="fw-medium">{role.role_name}</span>,
+    },
+    {
+      key: 'description',
+      header: 'Description',
+      sortable: true,
+      accessor: (role) => <span className="text-secondary">{role.description ?? '—'}</span>,
+    },
+    {
+      key: 'assigned_users',
+      header: 'Assigned Users',
+      sortable: true,
+      accessor: (role) => role.assigned_users ?? 0,
+    },
+    {
+      key: 'is_active',
+      header: 'Status',
+      sortable: true,
+      accessor: (role) => <StatusBadge active={role.is_active} />,
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      accessor: (role) => (
+        <RoleActions
+          roleName={role.role_name}
+          onView={() => onView(role)}
+          onEdit={() => onEdit(role)}
+          onUsers={() => onUsers(role)}
+        />
+      ),
+    },
+  ]
+
   return (
-    <div className="table-responsive d-none d-md-block">
-      <table className="table table-hover align-middle data-table">
-        <thead>
-          <tr>
-            <th scope="col">Role Name</th>
-            <th scope="col">Description</th>
-            <th scope="col">Assigned Users</th>
-            <th scope="col">Status</th>
-            <th scope="col" className="text-end">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {roles.map((role) => (
-            <tr key={role.role_id} className="data-row" onClick={() => onView(role)}>
-              <td className="fw-medium">{role.role_name}</td>
-              <td className="text-secondary">{role.description ?? '—'}</td>
-              <td>{role.assigned_users ?? 0}</td>
-              <td>
-                <StatusBadge active={role.is_active} />
-              </td>
-              <td className="text-end">
-                <RoleActions
-                  roleName={role.role_name}
-                  onView={() => onView(role)}
-                  onEdit={() => onEdit(role)}
-                  onUsers={() => onUsers(role)}
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="d-none d-md-block">
+      <DataTable
+        columns={columns}
+        data={roles}
+        getRowId={(role) => role.role_id}
+        onRowClick={(role) => onView(role)}
+        pageSize={10}
+        showDensityToggle={true}
+      />
     </div>
   )
 }

@@ -10,6 +10,7 @@ import type { Tenant } from '../../types/tenant'
 import { buildPreparedLabelItem, printLabelSheet, type PreparedLabelItem } from './printLabelSheet'
 import { canChangeLabelExportStore } from './labelExportAccess'
 import { useAuth } from '../../hooks/useAuth'
+import { FilterBar } from '../../design-system/components/FilterBar'
 import './label-export.css'
 
 type StockFilter = 'all' | 'in_stock' | 'zero_recent_sale'
@@ -251,7 +252,7 @@ export default function LabelExporterPage() {
     <div className="d-flex flex-column gap-3">
       <PageHeader title="Label Exporter" breadcrumb={['Operations', 'Inventory', 'Label Exporter']} />
 
-      <div className="label-export-toolbar label-export-toolbar--compact">
+      <FilterBar compact className="label-export-toolbar label-export-toolbar--compact" ariaLabel="Label export filters">
         <label className="label-export-field">
           <span className="label-export-field__label">Tenant</span>
           <select className="form-select form-select-sm" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
@@ -362,7 +363,7 @@ export default function LabelExporterPage() {
             Box Workspace
           </Link>
         </div>
-      </div>
+      </FilterBar>
 
       <div className="label-export-status">
         <span>Last box: <strong>{lastBoxForLetter || '-'}</strong></span>

@@ -8,6 +8,7 @@ import type { TenantStore } from '../../types/store'
 import type { Tenant } from '../../types/tenant'
 import { canChangeLabelExportStore } from './labelExportAccess'
 import { useAuth } from '../../hooks/useAuth'
+import { FilterBar } from '../../design-system/components/FilterBar'
 import './label-export.css'
 
 export default function BoxWorkspacePage() {
@@ -129,7 +130,7 @@ export default function BoxWorkspacePage() {
     <div className="d-flex flex-column gap-3">
       <PageHeader title="Box Workspace" breadcrumb={['Operations', 'Inventory', 'Box Workspace']} />
 
-      <div className="label-export-toolbar label-export-toolbar--compact">
+      <FilterBar compact className="label-export-toolbar label-export-toolbar--compact" ariaLabel="Box workspace filters">
         <label className="label-export-field">
           <span className="label-export-field__label">Tenant</span>
           <select className="form-select form-select-sm" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
@@ -181,7 +182,7 @@ export default function BoxWorkspacePage() {
             {loading ? 'Loading...' : 'Search'}
           </button>
         </div>
-      </div>
+      </FilterBar>
 
       {error && <div className="alert alert-danger py-2 small mb-0">{error}</div>}
 

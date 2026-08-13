@@ -10,6 +10,7 @@ import { groupStockCheckRows, isExpired } from './stockCheckGrouping'
 import type { Tenant } from '../../types/tenant'
 import type { TenantStore } from '../../types/store'
 import type { StockCheckRow } from '../../types/stockCheckReport'
+import { FilterBar } from '../../design-system/components/FilterBar'
 
 const POLL_MS = 2000
 const SYNC_MAX_MS = 5 * 60 * 1000
@@ -132,7 +133,7 @@ export default function StockCheckReportPage() {
         description="Physical-count sheet by sublocation range, ported from the legacy OrderRpt report. Sync the store, preview, then export to Excel."
       />
 
-      <div className="ds-toolbar d-flex flex-wrap gap-3 align-items-end">
+      <FilterBar compact className="align-items-end" ariaLabel="Stock check filters">
         <label className="d-flex flex-column gap-1">
           <span className="small text-muted">Tenant</span>
           <select className="form-select" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
@@ -199,7 +200,7 @@ export default function StockCheckReportPage() {
           <i className="bi bi-file-earmark-excel me-1" />
           Export Excel
         </button>
-      </div>
+      </FilterBar>
 
       {syncMessage && <div className="alert alert-info py-2 small mb-0">{syncMessage}</div>}
       {error && <div className="alert alert-danger py-2 small mb-0">{error}</div>}

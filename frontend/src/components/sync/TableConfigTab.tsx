@@ -12,6 +12,7 @@ import type { SyncTable } from '../../types/sync'
 import {
   SxCard, SxCardHead, SxCardBody, SxStat, SxButton, SxSearch, SxSegmented, SxPager, SxTable,
 } from './ui'
+import { FilterBar } from '../../design-system/components/FilterBar'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; table: SyncTable } | null
 type StatusFilter = 'all' | 'enabled' | 'disabled'
@@ -129,7 +130,7 @@ export function TableConfigTab() {
         ) : (
         <>
         <SxCardBody>
-          <div className="sx-toolbar mb-3">
+          <FilterBar compact className="mb-3" ariaLabel="Configured table filters">
             <SxSearch value={search} onChange={(v) => { setSearch(v); resetPage() }} placeholder="Search tables…" ariaLabel="Search tables" />
             <SxSegmented ariaLabel="Status" value={statusFilter}
               onChange={(v) => { setStatusFilter(v); resetPage() }}
@@ -137,7 +138,7 @@ export function TableConfigTab() {
             <SxSegmented ariaLabel="Mode" value={modeFilter}
               onChange={(v) => { setModeFilter(v); resetPage() }}
               options={[{ label: 'All', value: 'all' }, { label: 'Upsert', value: 'UPSERT' }, { label: 'Rolling', value: 'ROLLING_WINDOW' }]} />
-          </div>
+          </FilterBar>
 
           {workflowMessage && <div className="sx-alert sx-alert--info">{workflowMessage}</div>}
           {actionError && <div className="sx-alert sx-alert--danger">{actionError}</div>}

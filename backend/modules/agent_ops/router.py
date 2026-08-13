@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Remote control + self-update for store agents.
 
 Two routers, deliberately on different prefixes:

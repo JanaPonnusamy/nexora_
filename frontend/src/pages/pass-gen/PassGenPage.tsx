@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { PassGenRow, PassGenRowResult, PassGenStore } from '../../types/passGen'
 import { passGenService } from '../../services/passGenService'
 import './pass-gen.css'
+import { FilterBar } from '../../design-system/components/FilterBar'
 
 const MAX_DAYS_FIELD = 1295 // 2-char Base36 ceiling of the passcode format
 
@@ -173,7 +174,7 @@ export default function PassGenPage() {
         </table>
       )}
 
-      <div className="pg-toolbar">
+      <FilterBar compact className="pg-toolbar" ariaLabel="Pass generation options">
         <div className="pg-field">
           <label htmlFor="pg-order-no">Order No</label>
           <input
@@ -211,7 +212,7 @@ export default function PassGenPage() {
             Generate all rows
           </button>
         </div>
-      </div>
+      </FilterBar>
 
       <div className="pg-rows">
         {rows.map((row) => {

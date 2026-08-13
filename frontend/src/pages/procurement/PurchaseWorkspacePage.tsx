@@ -55,6 +55,7 @@ import { AutoAssignPreviewModal } from '../../components/procurement/AutoAssignP
 import { money, num, date } from '../../components/stock/format'
 import { SegmentedTabs } from '../../design-system/components/SegmentedTabs'
 import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
+import { FilterSearch, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
 import '../../components/procurement/purchase-manager.css'
 
 type View = 'purchase' | 'pending' | 'grn'
@@ -1910,88 +1911,80 @@ export default function PurchaseWorkspacePage() {
       <div className="pm-header__top">
         <h1 className="pm-header__title">Purchase Workspace</h1>
         <div className="pm-ctxbar">
-          <label className="pm-ctxsel" title="Tenant">
-            <i className="bi bi-building" aria-hidden="true" />
-            <select
-              aria-label="Tenant"
-              value={tenantId}
-              onChange={(e) => {
-                const next = e.target.value
+          <FilterSelect
+            compact
+            icon="bi-building"
+            title="Tenant"
+            ariaLabel="Tenant"
+            value={tenantId}
+            onChange={(next) => {
                 if (next === tenantId) return
                 resetWorkspaceContext('tenant')
                 setTenantId(next)
-              }}
-            >
-              {tenants.length === 0 && <option value="">Loading...</option>}
-              {tenants.map((tenant) => (
-                <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                  {tenant.tenant_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pm-ctxsel" title="Store">
-            <i className="bi bi-shop" aria-hidden="true" />
-            <select
-              aria-label="Store"
-              value={selectedStoreId}
-              onChange={(e) => {
-                const next = e.target.value
+            }}
+          >
+            {tenants.length === 0 && <option value="">Loading...</option>}
+            {tenants.map((tenant) => (
+              <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name}</option>
+            ))}
+          </FilterSelect>
+          <FilterSelect
+            compact
+            icon="bi-shop"
+            title="Store"
+            ariaLabel="Store"
+            value={selectedStoreId}
+            onChange={(next) => {
                 if (next === selectedStoreId) return
                 resetWorkspaceContext('store')
                 setSelectedStoreId(next)
-              }}
-            >
-              <option value="">Select store</option>
-              {tenantStores.map((store) => (
-                <option key={store.store_id} value={store.store_id}>
-                  {store.store_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pm-ctxsel" title="Cycle">
-            <i className="bi bi-arrow-repeat" aria-hidden="true" />
-            <select
-              aria-label="Cycle"
-              value={cycleId}
-              onChange={(e) => {
-                const next = e.target.value
+            }}
+          >
+            <option value="">Select store</option>
+            {tenantStores.map((store) => (
+              <option key={store.store_id} value={store.store_id}>{store.store_name}</option>
+            ))}
+          </FilterSelect>
+          <FilterSelect
+            compact
+            icon="bi-arrow-repeat"
+            title="Cycle"
+            ariaLabel="Cycle"
+            value={cycleId}
+            onChange={(next) => {
                 if (next === cycleId) return
                 resetWorkspaceContext('cycle')
                 setCycleId(next)
-              }}
-            >
-              <option value="">Select cycle</option>
-              {cycles.map((cycle) => (
-                <option key={cycle.cycle_id} value={cycle.cycle_id}>
-                  {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' - Closed'}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pm-ctxsel" title="Refresh">
-            <i className="bi bi-clock-history" aria-hidden="true" />
-            <select
-              aria-label="Refresh"
-              value={refreshId}
-              onChange={(e) => {
-                const next = e.target.value
+            }}
+          >
+            <option value="">Select cycle</option>
+            {cycles.map((cycle) => (
+              <option key={cycle.cycle_id} value={cycle.cycle_id}>
+                {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' - Closed'}
+              </option>
+            ))}
+          </FilterSelect>
+          <FilterSelect
+            compact
+            icon="bi-clock-history"
+            title="Refresh"
+            ariaLabel="Refresh"
+            value={refreshId}
+            onChange={(next) => {
                 if (next === refreshId) return
                 resetWorkspaceContext('refresh')
                 setRefreshId(next)
-              }}
-            >
-              <option value="">{refreshesInCycle.length ? 'Select refresh' : 'No refreshes'}</option>
-              {refreshesInCycle.map((refresh) => (
-                <option key={refresh.refresh_id} value={refresh.refresh_id}>
-                  {refresh.snapshot_name} - {refresh.snapshot_status}
-                </option>
-              ))}
-            </select>
-          </label>
+            }}
+          >
+            <option value="">{refreshesInCycle.length ? 'Select refresh' : 'No refreshes'}</option>
+            {refreshesInCycle.map((refresh) => (
+              <option key={refresh.refresh_id} value={refresh.refresh_id}>
+                {refresh.snapshot_name} - {refresh.snapshot_status}
+              </option>
+            ))}
+          </FilterSelect>
           {readOnly && (
-            <span className="badge text-bg-secondary">
+            <span className="pm-ro-badge">
               <i className="bi bi-lock-fill me-1" aria-hidden="true" />
               Read Only · {cycleClosed ? 'Closed Cycle' : 'Closed Refresh'}
             </span>
@@ -2099,38 +2092,29 @@ export default function PurchaseWorkspacePage() {
                   planning-state chips + actions + count. Was two stacked rows —
                   merged so the grid below gets that height back. */}
               <div className="pm-toolbar__row pm-toolbar__row--filters">
-                <div className="pm-toolbar__modes">
-                  {MODE_OPTIONS.map((m) => (
-                    <button key={m.value} className={`pm-mode${mode === m.value ? ' pm-mode--on' : ''}`} onClick={() => setMode(m.value)}>
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
+                <FilterTabs value={mode} ariaLabel="Purchase workspace mode" options={MODE_OPTIONS} onChange={setMode} />
                 <div className="pm-slot pm-slot--search">
                   {isReviewStage && (
-                    <span className="sx-search">
-                      <i className="bi bi-search" aria-hidden="true" />
-                      <input ref={searchRef} type="search" value={search} placeholder="Search product…" aria-label="Search product" onChange={(e) => setSearch(e.target.value)} />
-                    </span>
+                    <FilterSearch inputRef={searchRef} value={search} placeholder="Search product…" ariaLabel="Search product" onChange={setSearch} />
                   )}
                 </div>
                 <div className="pm-slot pm-slot--select">
                   {isReviewStage && (
-                    <select className={`sx-select${movement ? ' sx-select--active' : ''}`} aria-label="Movement filter" value={movement} onChange={(e) => setMovement(e.target.value)}>
+                    <FilterSelect className={movement ? 'ds-filter-select--active' : ''} ariaLabel="Movement filter" value={movement} onChange={setMovement}>
                       {MOVEMENT.map((m) => <option key={m} value={m}>{m || 'Movement: all'}</option>)}
-                    </select>
+                    </FilterSelect>
                   )}
                 </div>
                 {/* Category filter is available in every mode/stage (§5) — it
                     only narrows the grid view, it never touches assignments. */}
                 <div className="pm-slot pm-slot--select">
                   {mode !== 'supplier-stock' && (
-                    <select className={`sx-select${productType ? ' sx-select--active' : ''}`} aria-label="Product Type filter" value={productType} onChange={(e) => setProductType(e.target.value)}>
+                    <FilterSelect className={productType ? 'ds-filter-select--active' : ''} ariaLabel="Product Type filter" value={productType} onChange={setProductType}>
                       <option value="">Product Type: all</option>
                       <option value="1">Pharma</option>
                       <option value="0">Non-Pharma</option>
                       <option value="2">Others</option>
-                    </select>
+                    </FilterSelect>
                   )}
                 </div>
                 {/* Has Offer belongs with the scope filters, not the planning
@@ -2176,10 +2160,7 @@ export default function PurchaseWorkspacePage() {
                 {mode === 'supplier-stock' && (
                   <>
                     <div className="pm-slot pm-slot--search">
-                      <span className="sx-search">
-                        <i className="bi bi-search" aria-hidden="true" />
-                        <input type="search" value={stockSearch} placeholder="Search live stock…" aria-label="Search live stock" onChange={(e) => setStockSearch(e.target.value)} />
-                      </span>
+                      <FilterSearch value={stockSearch} placeholder="Search live stock…" ariaLabel="Search live stock" onChange={setStockSearch} />
                     </div>
                     <button
                       className="pm-btn pm-btn--import"

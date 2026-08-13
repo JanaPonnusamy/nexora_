@@ -1,0 +1,141 @@
+/* ========================================================================== 
+   Application data-table system
+
+   The app contains purpose-built grids for procurement, reports, sync,
+   imports, and administration. This final presentation layer gives every
+   native table the same surface, header, row, and interaction language while
+   leaving feature-specific sizing, sticky columns, inputs, and behavior intact.
+   ========================================================================== */
+
+#root table {
+  --nx-table-header: color-mix(in srgb, var(--nx-surface-sunk) 88%, var(--nx-accent-sunk) 12%);
+  --nx-table-row: var(--nx-surface-raised);
+  --nx-table-row-hover: color-mix(in srgb, var(--nx-accent-sunk) 46%, var(--nx-surface-raised));
+  --nx-table-cell-block: 0.58rem;
+  --nx-table-cell-inline: 0.75rem;
+
+  width: 100%;
+  border: 1px solid var(--nx-rule) !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  border-radius: var(--nx-radius-lg);
+  overflow: hidden;
+  background: var(--nx-table-row);
+  color: var(--nx-text);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  box-shadow: none;
+}
+
+#root table > thead > tr > :where(th, td) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--nx-table-cell-block) var(--nx-table-cell-inline) !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--nx-rule) !important;
+  background: var(--nx-table-header) !important;
+  color: var(--nx-text-muted) !important;
+  font-size: 0.73rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+  line-height: 1.25;
+  text-transform: none !important;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* DataTable already owns the outer card border and clipping. */
+#root table.nx-data-table {
+  border: 0 !important;
+  border-radius: 0;
+}
+
+#root table.nx-data-table > thead > tr > th.is-sticky-left {
+  z-index: 3;
+}
+
+#root table > tbody > tr > :where(td, th) {
+  padding: var(--nx-table-cell-block) var(--nx-table-cell-inline) !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--nx-rule) !important;
+  color: var(--nx-text-soft);
+  vertical-align: middle;
+}
+
+#root table > tbody > tr:last-child > :where(td, th) {
+  border-bottom: 0 !important;
+}
+
+#root table > tbody > tr {
+  background: var(--nx-table-row);
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+#root table > tbody > tr:hover {
+  background: var(--nx-table-row-hover);
+}
+
+#root table > tbody > tr:focus-visible {
+  outline: 2px solid var(--nx-accent);
+  outline-offset: -2px;
+}
+
+#root table > tbody > tr > :where(td, th):first-child,
+#root table > thead > tr > :where(td, th):first-child {
+  padding-left: 0.85rem !important;
+}
+
+#root table > tbody > tr > :where(td, th):last-child,
+#root table > thead > tr > :where(td, th):last-child {
+  padding-right: 0.85rem !important;
+}
+
+#root table :where(code, .sx-dim, .text-secondary, .text-muted) {
+  color: var(--nx-text-muted) !important;
+}
+
+#root table :where(.sx-num, .lo-num, .pi-num, .text-end) {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Small detail, preview, and nested tables preserve their denser footprint. */
+#root :where(
+  table.table-sm,
+  table.pm-minitable,
+  table.pm-import__map,
+  table.pm-import__sample,
+  table.sx-subtable,
+  table.label-export-inline-table
+) {
+  --nx-table-cell-block: 0.36rem;
+  --nx-table-cell-inline: 0.58rem;
+  border-radius: var(--nx-radius-md);
+  font-size: 0.76rem;
+}
+
+/* Inputs remain visually contained and do not inherit row hover backgrounds. */
+#root table :where(input, select, textarea, button) {
+  position: relative;
+  z-index: 0;
+}
+
+/* Bootstrap paints table cells with inset shadows; neutralise it so the shared
+   theme colours above are the single source of truth. */
+#root table.table > :not(caption) > * > * {
+  box-shadow: none !important;
+}
+
+@media (max-width: 767.98px) {
+  #root table {
+    --nx-table-cell-block: 0.48rem;
+    --nx-table-cell-inline: 0.62rem;
+    font-size: 0.78rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root table > tbody > tr {
+    transition: none;
+  }
+}

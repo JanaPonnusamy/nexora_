@@ -20,6 +20,7 @@ import { InspectorPanel } from '../../design-system/components/InspectorPanel'
 import { SegmentedTabs } from '../../design-system/components/SegmentedTabs'
 import { KpiBar, StatCard } from '../../design-system/components/StatCard'
 import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
+import { FilterBar, FilterSearch } from '../../design-system/components/FilterBar'
 import { stockService } from '../../services/stockService'
 import { tenantService } from '../../services/tenantService'
 import type { BranchCard as BranchCardData, ProductContext, StockProductRow, StockSearchResult } from '../../types/stock'
@@ -152,7 +153,7 @@ export default function StockAvailabilityPage() {
         breadcrumb={['Operations', 'Inventory', 'Stock Availability']}
         description="Search products or batches across branches and inspect live stock, sales, purchase, and bill context."
       />
-      <div className="ds-toolbar">
+      <FilterBar compact ariaLabel="Stock availability context">
         <label className="d-flex flex-column gap-1">
           <span className="small text-muted">Tenant</span>
           <select
@@ -169,7 +170,7 @@ export default function StockAvailabilityPage() {
             ))}
           </select>
         </label>
-      </div>
+      </FilterBar>
     </div>
   )
 
@@ -193,21 +194,16 @@ export default function StockAvailabilityPage() {
         ariaLabel="Search mode"
         onChange={setMode}
       />
-      <div className="ds-toolbar">
+      <FilterBar ariaLabel="Stock search filters">
         {mode === 'product' ? (
           <>
-            <label className="ds-search-field flex-grow-1">
-              <i className="bi bi-search" aria-hidden="true" />
-              <input
-                type="search"
-                className="form-control"
-                autoFocus
-                value={productQuery}
-                placeholder="Search product name"
-                aria-label="Product name"
-                onChange={(event) => setProductQuery(event.target.value)}
-              />
-            </label>
+            <FilterSearch
+              autoFocus
+              value={productQuery}
+              placeholder="Search product name"
+              ariaLabel="Product name"
+              onChange={setProductQuery}
+            />
             <label className="form-check d-flex align-items-center gap-2 m-0">
               <input
                 className="form-check-input"
@@ -220,43 +216,12 @@ export default function StockAvailabilityPage() {
           </>
         ) : (
           <>
-            <label className="ds-search-field">
-              <i className="bi bi-upc" aria-hidden="true" />
-              <input
-                type="search"
-                className="form-control"
-                value={batchNo}
-                placeholder="Batch number"
-                aria-label="Batch number"
-                onChange={(event) => setBatchNo(event.target.value)}
-              />
-            </label>
-            <label className="ds-search-field">
-              <i className="bi bi-tag" aria-hidden="true" />
-              <input
-                type="search"
-                className="form-control"
-                inputMode="decimal"
-                value={mrp}
-                placeholder="MRP"
-                aria-label="MRP"
-                onChange={(event) => setMrp(event.target.value)}
-              />
-            </label>
-            <label className="ds-search-field flex-grow-1">
-              <i className="bi bi-search" aria-hidden="true" />
-              <input
-                type="search"
-                className="form-control"
-                value={batchProduct}
-                placeholder="Product name"
-                aria-label="Product name"
-                onChange={(event) => setBatchProduct(event.target.value)}
-              />
-            </label>
+            <FilterSearch icon="bi-upc" value={batchNo} placeholder="Batch number" ariaLabel="Batch number" onChange={setBatchNo} />
+            <FilterSearch icon="bi-tag" value={mrp} placeholder="MRP" ariaLabel="MRP" onChange={setMrp} />
+            <FilterSearch value={batchProduct} placeholder="Product name" ariaLabel="Product name" onChange={setBatchProduct} />
           </>
         )}
-      </div>
+      </FilterBar>
     </div>
   )
 

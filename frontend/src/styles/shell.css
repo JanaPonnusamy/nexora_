@@ -1,0 +1,800 @@
+/* ============================================================================
+   Application shell — header, navigation, canvas, status bar.
+
+   Every colour here resolves to a `--nx-*` custom property emitted from
+   design-system/tokens/theme.ts. There are no colour literals in this file,
+   and no [data-bs-theme] overrides: switching theme swaps the token values
+   underneath, so each rule below is written exactly once.
+   ========================================================================= */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--nx-canvas);
+  color: var(--nx-text);
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--nx-canvas);
+  color: var(--nx-text);
+}
+
+/* ===== Shared controls ==================================================== */
+
+.app-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--nx-radius-sm);
+  background: transparent;
+  color: var(--nx-text-muted);
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.app-iconbtn:hover {
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
+}
+
+:where(.app-shell, .nav-flyout, .cmdk) :focus-visible {
+  outline: 2px solid var(--nx-accent);
+  outline-offset: 2px;
+  border-radius: var(--nx-radius-sm);
+}
+
+/* ===== Header ============================================================= */
+
+.app-header {
+  position: relative;
+  z-index: var(--nx-z-header);
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1.15rem;
+  height: var(--nx-header-height);
+  padding: 0 1rem 0 1.25rem;
+  background: var(--nx-surface);
+  border-bottom: 1px solid var(--nx-rule);
+}
+
+.app-header__zone {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.app-header__zone--start {
+  gap: 0.75rem;
+}
+
+.app-header__zone--context {
+  justify-content: flex-start;
+  padding-left: 0.5rem;
+}
+
+.app-header__zone--end {
+  justify-content: flex-end;
+}
+
+.app-header__rule {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 20px;
+  margin: 0 0.3rem;
+  background: var(--nx-rule);
+}
+
+/* ===== Brand ============================================================== */
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.app-brand__lockup {
+  display: block;
+  width: auto;
+  height: 36px;
+}
+
+.app-brand__mark {
+  display: none;
+  width: auto;
+  height: 36px;
+}
+
+.app-brand__rule {
+  width: 1px;
+  height: 18px;
+  background: var(--nx-rule);
+}
+
+.app-brand__product {
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.115em;
+  text-transform: uppercase;
+  color: var(--nx-text-muted);
+  white-space: nowrap;
+}
+
+/* Below sm the wordmark would crowd the context bar, so the mark stands alone. */
+@media (max-width: 575.98px) {
+  .app-brand__lockup {
+    display: none;
+  }
+  .app-brand__mark {
+    display: block;
+  }
+}
+
+/* ===== Context (where you are) =========================================== */
+
+.app-context {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: 0.9rem;
+}
+
+.app-context__group {
+  color: var(--nx-text-muted);
+  white-space: nowrap;
+}
+
+.app-context__sep {
+  font-size: 0.62rem;
+  color: var(--nx-text-muted);
+}
+
+.app-context__page {
+  font-weight: 600;
+  color: var(--nx-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 767.98px) {
+  .app-context__group,
+  .app-context__sep {
+    display: none;
+  }
+}
+
+/* ===== Command search ==================================================== */
+
+.app-search-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 38px;
+  padding: 0 0.65rem 0 0.75rem;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.app-search-trigger:hover {
+  border-color: var(--nx-rule-strong);
+  color: var(--nx-text-soft);
+}
+
+.app-search-trigger__text {
+  min-width: 3.5rem;
+  text-align: left;
+}
+
+.app-search-trigger__kbd {
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--nx-rule);
+  border-radius: 4px;
+  background: var(--nx-surface);
+  color: var(--nx-text-muted);
+  font-family: inherit;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 991.98px) {
+  .app-search-trigger__text,
+  .app-search-trigger__kbd {
+    display: none;
+  }
+  .app-search-trigger {
+    padding: 0 0.5rem;
+  }
+}
+
+.cmdk-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--nx-z-modal, 1080);
+  display: flex;
+  justify-content: center;
+  padding: 12vh 1rem 1rem;
+  background: var(--nx-scrim);
+}
+
+.cmdk {
+  display: flex;
+  flex-direction: column;
+  width: min(34rem, 100%);
+  max-height: 60vh;
+  overflow: hidden;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-lg);
+  background: var(--nx-surface-raised);
+  box-shadow: var(--nx-shadow-lg);
+}
+
+.cmdk__field {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 0 0 auto;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--nx-rule);
+  color: var(--nx-text-muted);
+}
+
+.cmdk__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--nx-text);
+  font-size: 0.95rem;
+  outline: none;
+}
+
+.cmdk__input::placeholder {
+  color: var(--nx-text-muted);
+}
+
+.cmdk__list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.4rem;
+}
+
+.cmdk__empty {
+  margin: 0;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  color: var(--nx-text-muted);
+  font-size: 0.88rem;
+}
+
+.cmdk__item {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  border-radius: var(--nx-radius-sm);
+  background: transparent;
+  color: var(--nx-text-soft);
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cmdk__item.is-cursor {
+  background: var(--nx-accent-sunk);
+  color: var(--nx-accent-ink);
+}
+
+.cmdk__icon {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  text-align: center;
+  color: var(--nx-text-muted);
+}
+
+.cmdk__item.is-cursor .cmdk__icon {
+  color: inherit;
+}
+
+.cmdk__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmdk__group {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: var(--nx-text-muted);
+}
+
+/* ===== Role picker ======================================================= */
+
+.app-rolepick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 38px;
+  padding: 0 0.65rem;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text-muted);
+  font-size: 0.85rem;
+}
+
+.app-rolepick__select {
+  max-width: 9rem;
+  border: 0;
+  background: transparent;
+  color: var(--nx-text-soft);
+  font-size: 0.85rem;
+  outline: none;
+  cursor: pointer;
+}
+
+/* The native popup list is painted by the OS, so its options need a real
+   colour rather than a transparent inherit. */
+.app-rolepick__select option {
+  background: var(--nx-surface-raised);
+  color: var(--nx-text);
+}
+
+@media (max-width: 1199.98px) {
+  .app-rolepick {
+    display: none;
+  }
+}
+
+/* ===== User menu ========================================================= */
+
+.app-usermenu {
+  position: relative;
+}
+
+.app-usermenu__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 38px;
+  padding: 0 0.5rem 0 0.35rem;
+  border: 1px solid transparent;
+  border-radius: var(--nx-radius-sm);
+  background: transparent;
+  color: var(--nx-text-soft);
+  cursor: pointer;
+}
+
+.app-usermenu__trigger:hover {
+  background: var(--nx-surface-hover);
+}
+
+.app-usermenu__avatar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--nx-accent);
+  color: var(--nx-text-on);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.app-usermenu__name {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.app-usermenu__caret {
+  font-size: 0.6rem;
+  color: var(--nx-text-muted);
+}
+
+@media (max-width: 767.98px) {
+  .app-usermenu__name,
+  .app-usermenu__caret {
+    display: none;
+  }
+}
+
+.app-usermenu__panel {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: var(--nx-z-dropdown);
+  min-width: 13rem;
+  padding: 0.35rem;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-md);
+  background: var(--nx-surface-raised);
+  box-shadow: var(--nx-shadow-md);
+}
+
+.app-usermenu__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.5rem 0.6rem 0.6rem;
+  border-bottom: 1px solid var(--nx-rule);
+  margin-bottom: 0.35rem;
+}
+
+.app-usermenu__identity-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--nx-text);
+}
+
+.app-usermenu__identity-meta {
+  font-size: 0.75rem;
+  color: var(--nx-text-muted);
+}
+
+.app-usermenu__action {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  border-radius: var(--nx-radius-sm);
+  background: transparent;
+  color: var(--nx-text-soft);
+  font-size: 0.87rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-usermenu__action:hover {
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
+}
+
+/* ===== Body ============================================================== */
+
+.app-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+/* ===== Sidebar =========================================================== */
+
+.app-sidebar {
+  z-index: var(--nx-z-sidebar);
+  flex: 0 0 var(--nx-sidebar-width);
+  width: var(--nx-sidebar-width);
+  padding: 0.7rem 0.4rem;
+  border-right: 1px solid var(--nx-rule);
+  background: var(--nx-surface);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.app-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.app-nav__item {
+  display: contents;
+}
+
+.app-nav__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 100%;
+  min-height: 50px;
+  padding: 0.7rem 0;
+  border: 0;
+  border-radius: var(--nx-radius-sm);
+  background: transparent;
+  color: var(--nx-text-soft);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease;
+}
+
+.app-nav__row:hover,
+.app-nav__row.is-open {
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
+}
+
+/* The group that owns the current route. An accent rail plus a tinted
+   ground, rather than a solid fill that would outweigh the page itself. */
+.app-nav__row.is-current,
+.app-nav__row.is-active {
+  background: var(--nx-accent-sunk);
+  color: var(--nx-accent-ink);
+  font-weight: 600;
+}
+
+.app-nav__row.is-current::before,
+.app-nav__row.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 15%;
+  bottom: 15%;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--nx-accent);
+}
+
+.app-nav__icon {
+  flex: 0 0 auto;
+  font-size: 1.28rem;
+  text-align: center;
+}
+
+.app-nav__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-nav__chevron {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  color: var(--nx-text-muted);
+  transition: transform 130ms ease;
+}
+
+.app-nav__row.is-current .app-nav__chevron {
+  color: inherit;
+}
+
+/* ===== Mobile inline submenu ============================================= */
+
+.app-nav__sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0.1rem 0 0.3rem 0.85rem;
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--nx-rule);
+}
+
+.app-nav__sublink {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.42rem 0.5rem;
+  border-radius: var(--nx-radius-sm);
+  color: var(--nx-text-soft);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.app-nav__sublink:hover {
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
+}
+
+.app-nav__sublink.is-active {
+  background: var(--nx-accent-sunk);
+  color: var(--nx-accent-ink);
+  font-weight: 600;
+}
+
+@media (min-width: 768px) {
+  .app-nav__row.is-open .app-nav__chevron {
+    transform: translateX(2px);
+  }
+}
+
+/* ===== Drawer (below md) ================================================= */
+
+@media (max-width: 767.98px) {
+  .app-sidebar {
+    position: fixed;
+    top: var(--nx-header-height);
+    bottom: var(--nx-statusbar-height);
+    left: 0;
+    z-index: var(--nx-z-drawer);
+    width: min(17rem, 82vw);
+    flex-basis: auto;
+    transform: translateX(-102%);
+    transition: transform 160ms ease;
+    box-shadow: var(--nx-shadow-lg);
+  }
+
+  .app-sidebar.is-open {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar {
+    transition: none;
+  }
+}
+
+.app-drawer-scrim {
+  position: fixed;
+  inset: var(--nx-header-height) 0 var(--nx-statusbar-height) 0;
+  z-index: var(--nx-z-drawer-scrim);
+  padding: 0;
+  border: 0;
+  background: var(--nx-scrim);
+}
+
+/* ===== Nav flyout ======================================================== */
+
+.nav-flyout {
+  position: fixed;
+  z-index: var(--nx-z-nav-flyout);
+  width: var(--nx-flyout-width);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  margin-left: 1px;
+  padding: 0.35rem;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-md);
+  background: var(--nx-surface-raised);
+  box-shadow: var(--nx-shadow-lg);
+}
+
+.nav-flyout__title {
+  margin: 0;
+  padding: 0.4rem 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--nx-rule);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--nx-text-muted);
+}
+
+.nav-flyout__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  padding-top: 0.35rem;
+}
+
+.nav-flyout__link {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.48rem 0.6rem;
+  border-radius: var(--nx-radius-sm);
+  color: var(--nx-text-soft);
+  font-size: 0.865rem;
+  text-decoration: none;
+  transition: background-color 110ms ease, color 110ms ease;
+}
+
+.nav-flyout__link:hover {
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
+}
+
+.nav-flyout__link.is-active {
+  background: var(--nx-accent-sunk);
+  color: var(--nx-accent-ink);
+  font-weight: 600;
+}
+
+.nav-flyout__icon {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  font-size: 0.92rem;
+  text-align: center;
+  color: var(--nx-text-muted);
+}
+
+.nav-flyout__link:hover .nav-flyout__icon,
+.nav-flyout__link.is-active .nav-flyout__icon {
+  color: inherit;
+}
+
+/* ===== Main canvas ======================================================= */
+
+.app-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--nx-gutter);
+  background: var(--nx-canvas);
+}
+
+/* ===== Status bar ======================================================== */
+
+.app-statusbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  height: var(--nx-statusbar-height);
+  padding: 0 1rem;
+  border-top: 1px solid var(--nx-rule);
+  background: var(--nx-surface);
+  font-size: 0.73rem;
+  color: var(--nx-text-muted);
+}
+
+.app-statusbar__spacer {
+  flex: 1 1 auto;
+}
+
+/* The Platform shell preview route builds its status bar from grouped items
+   rather than a flat row, so it keeps its own wrapper. */
+.app-statusbar__group {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  min-width: 0;
+}
+
+.app-statusbar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.app-statusbar__item--live {
+  color: var(--nx-text-soft);
+}
+
+.app-statusbar__item--live .bi-circle-fill {
+  font-size: 0.42rem;
+  color: var(--nx-success);
+}
+
+@media (max-width: 767.98px) {
+  .app-statusbar {
+    gap: 0.75rem;
+  }
+  .app-statusbar__item:not(.app-statusbar__item--live) {
+    display: none;
+  }
+}

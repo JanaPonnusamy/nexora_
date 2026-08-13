@@ -6,6 +6,7 @@ import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
 import type { AvailableTable } from '../../types/sync'
 import { SxSearch, SxButton, SxChip, SxTable, SxPager } from './ui'
+import { FilterBar } from '../../design-system/components/FilterBar'
 
 const PAGE_SIZE = 20
 
@@ -86,10 +87,10 @@ export function AvailableTablesPanel({ onChanged }: { onChanged: () => void }) {
 
   return (
     <>
-      <div className="sx-toolbar mb-3">
+      <FilterBar compact className="mb-3" ariaLabel="Available table filters">
         <SxSearch value={search} onChange={setSearch} placeholder="Search all source tables…" ariaLabel="Search all tables" />
         <span className="sx-card__sub">{rows.length.toLocaleString()} found</span>
-      </div>
+      </FilterBar>
 
       {error && <div className="sx-alert sx-alert--danger">{error}</div>}
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """JWT issuing/verification for the NEXORA API.
 
 UNINEX_JWT_SECRET must be set to a strong random value in production (HO

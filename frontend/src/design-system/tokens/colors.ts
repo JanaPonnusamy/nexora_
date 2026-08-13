@@ -1,32 +1,34 @@
-export const colors = {
-  accent: '#2563eb',
-  accentStrong: '#1d4ed8',
-  accentSoft: '#dbeafe',
-  success: '#059669',
-  warning: '#d97706',
-  danger: '#dc2626',
-  info: '#0891b2',
-  slate900: '#0f172a',
-  slate700: '#334155',
-  slate500: '#64748b',
-  slate300: '#cbd5e1',
-  slate200: '#e2e8f0',
-  slate100: '#f1f5f9',
-  white: '#ffffff',
-} as const
+/**
+ * Colours live in `theme.ts`. This module stays as the convenience surface
+ * for TypeScript consumers and re-exports from there — it deliberately holds
+ * no literals of its own, so there is exactly one place a colour is defined.
+ */
+export { palette, lightTheme, darkTheme, themes } from './theme'
+export type { ThemeTokens, ThemeName } from './theme'
 
+/**
+ * Semantic colours as CSS variable references, for inline styles and for
+ * anywhere a value has to be handed to a non-CSS consumer (canvas, SVG
+ * gradients, chart libraries).
+ */
 export const semanticColors = {
-  surface: 'var(--ds-surface)',
-  surfaceMuted: 'var(--ds-surface-muted)',
-  surfaceSubtle: 'var(--ds-surface-subtle)',
-  border: 'var(--ds-border)',
-  borderStrong: 'var(--ds-border-strong)',
-  textPrimary: 'var(--ds-text-primary)',
-  textSecondary: 'var(--ds-text-secondary)',
-  textMuted: 'var(--ds-text-muted)',
-  accent: 'var(--ds-accent)',
-  success: 'var(--ds-success)',
-  warning: 'var(--ds-warning)',
-  danger: 'var(--ds-danger)',
-  info: 'var(--ds-info)',
+  canvas: 'var(--nx-canvas)',
+  surface: 'var(--nx-surface)',
+  surfaceRaised: 'var(--nx-surface-raised)',
+  surfaceSunk: 'var(--nx-surface-sunk)',
+  surfaceHover: 'var(--nx-surface-hover)',
+  rule: 'var(--nx-rule)',
+  ruleStrong: 'var(--nx-rule-strong)',
+  text: 'var(--nx-text)',
+  textSoft: 'var(--nx-text-soft)',
+  textMuted: 'var(--nx-text-muted)',
+  textOn: 'var(--nx-text-on)',
+  accent: 'var(--nx-accent)',
+  accentSunk: 'var(--nx-accent-sunk)',
+  accentInk: 'var(--nx-accent-ink)',
+  success: 'var(--nx-success)',
+  warning: 'var(--nx-warning)',
+  danger: 'var(--nx-danger)',
+  info: 'var(--nx-info)',
+  focus: 'var(--nx-focus)',
 } as const

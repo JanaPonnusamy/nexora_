@@ -1,4 +1,6 @@
 
+from __future__ import annotations
+
 from fastapi import APIRouter, Depends, HTTPException
 from services.tenant_service import TenantService
 from dtos.tenant_request import TenantRequest, TenantStatusRequest

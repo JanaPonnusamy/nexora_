@@ -1,65 +1,49 @@
-import { useEffect, useRef, useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { useState } from 'react'
+import { Outlet, useLocation } from 'react-router-dom'
 import { Header } from '../components/header/Header'
 import { Sidebar } from '../components/sidebar/Sidebar'
 import { StatusBar } from '../components/statusbar/StatusBar'
-import { settingsService } from '../platform/services/SettingsService'
-import { useMediaQuery } from '../hooks/useMediaQuery'
 
-// Same threshold the Purchase Workspace uses for its own responsive split
-// (useNarrowWorkspace) — one consistent "low viewport monitor" definition
-// across the app, covering 1280x720 / 1366x768.
-const NARROW_VIEWPORT_QUERY = '(max-width: 1366px)'
-
+/**
+ * The application frame: header, navigation, canvas, status bar.
+ *
+ * The sidebar has a single width — there is no collapsed variant and no
+ * toggle. Groups show as one row each and their children open in a flyout,
+ * so the nav always fits the viewport without needing to be shrunk.
+ */
 export function AppShell() {
-  const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const isNarrowViewport = useMediaQuery(NARROW_VIEWPORT_QUERY)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const { pathname } = useLocation()
 
-  // Icon-only sidebar (spec: side menu "take more space" on low-viewport
-  // monitors — 720p/768p in particular). Before the user has ever touched
-  // the toggle, default to collapsed on a narrow viewport and expanded on a
-  // normal one, and keep following live resizes; the moment they explicitly
-  // toggle it, that choice is remembered and wins from then on, same
-  // "narrow-default-until-user-choice" pattern the Purchase Workspace's
-  // column config already uses.
-  const userSetRef = useRef(settingsService.get<boolean | null>('appShell.sidebarCollapsed', null) !== null)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
-    settingsService.get<boolean | null>('appShell.sidebarCollapsed', null) ?? isNarrowViewport,
-  )
-
-  useEffect(() => {
-    if (userSetRef.current) return
-    setSidebarCollapsed(isNarrowViewport)
-  }, [isNarrowViewport])
-
-  const toggleSidebar = () => {
-    userSetRef.current = true
-    setSidebarCollapsed((v) => {
-      const next = !v
-      settingsService.set('appShell.sidebarCollapsed', next)
-      return next
-    })
+  // Navigating closes the mobile drawer. Adjusted during render rather than in
+  // an effect so the new page never paints with the drawer still over it.
+  const [lastPath, setLastPath] = useState(pathname)
+  if (lastPath !== pathname) {
+    setLastPath(pathname)
+    if (drawerOpen) setDrawerOpen(false)
   }
 
   return (
     <div className="app-shell">
-      <Header
-        onToggleNav={() => setMobileNavOpen((open) => !open)}
-        sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={toggleSidebar}
-      />
+      <Header onToggleNav={() => setDrawerOpen((open) => !open)} />
+
       <div className="app-body">
-        <Sidebar isMobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} collapsed={sidebarCollapsed} />
-        {mobileNavOpen && (
-          <div
-            className="app-sidebar-backdrop d-md-none"
-            onClick={() => setMobileNavOpen(false)}
+        <Sidebar isMobileOpen={drawerOpen} onNavigate={() => setDrawerOpen(false)} />
+
+        {drawerOpen && (
+          <button
+            type="button"
+            className="app-drawer-scrim d-md-none"
+            aria-label="Close navigation"
+            onClick={() => setDrawerOpen(false)}
           />
         )}
-        <main className="app-main">
+
+        <main className="app-main" id="main-content">
           <Outlet />
         </main>
       </div>
+
       <StatusBar />
     </div>
   )

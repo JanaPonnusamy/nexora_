@@ -7,6 +7,7 @@ import type { Store } from '../../types/store'
 import type { Cycle, CompareChange, Refresh, WorkspaceItem } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
 import { num } from '../../components/stock/format'
+import { FilterBar, FilterSearch, FilterSelect } from '../../design-system/components/FilterBar'
 import '../../components/procurement/purchase-manager.css'
 
 type Banner = { kind: 'success' | 'danger'; text: string } | null
@@ -252,22 +253,22 @@ export default function RefreshComparePage() {
       <header className="pm-admin__head">
         <div className="pm-admin__title"><i className="bi bi-arrow-left-right" /> Refresh Compare</div>
         <div className="pm-admin__ctx">
-          <select className="sx-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+          <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId}>
             {tenants.length === 0 && <option value="">Loading…</option>}
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
-          <select className="sx-select" aria-label="Store" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+          </FilterSelect>
+          <FilterSelect ariaLabel="Store" value={storeId} onChange={setStoreId}>
             <option value="">Select store…</option>
             {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-          </select>
-          <select className="sx-select" aria-label="Cycle" value={cycleId} onChange={(e) => setCycleId(e.target.value)}>
+          </FilterSelect>
+          <FilterSelect ariaLabel="Cycle" value={cycleId} onChange={setCycleId}>
             <option value="">Select cycle…</option>
             {cycles.map((c) => (
               <option key={c.cycle_id} value={c.cycle_id}>
                 {c.name}{(c.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' · Closed'}
               </option>
             ))}
-          </select>
+          </FilterSelect>
         </div>
       </header>
 
@@ -276,33 +277,33 @@ export default function RefreshComparePage() {
       <section className="pm-admin__panel pm-cmp__bar">
         <label className="pm-admin__field">
           <span>From (base)</span>
-          <select className="sx-select sx-select--sm" value={fromId} onChange={(e) => setFromId(e.target.value)}>
+          <FilterSelect className="sx-select--sm" ariaLabel="From refresh" value={fromId} onChange={setFromId}>
             <option value="">—</option>
             {refreshesInCycle.map((r) => (
               <option key={r.refresh_id} value={r.refresh_id} disabled={r.refresh_id === toId}>
                 {r.refresh_no != null ? `Refresh ${r.refresh_no}` : r.snapshot_name} · {r.snapshot_status}
               </option>
             ))}
-          </select>
+          </FilterSelect>
         </label>
         <i className="bi bi-arrow-right pm-cmp__arrow" aria-hidden="true" />
         <label className="pm-admin__field">
           <span>To (compare)</span>
-          <select className="sx-select sx-select--sm" value={toId} onChange={(e) => setToId(e.target.value)}>
+          <FilterSelect className="sx-select--sm" ariaLabel="To refresh" value={toId} onChange={setToId}>
             <option value="">—</option>
             {refreshesInCycle.map((r) => (
               <option key={r.refresh_id} value={r.refresh_id} disabled={r.refresh_id === fromId}>
                 {r.refresh_no != null ? `Refresh ${r.refresh_no}` : r.snapshot_name} · {r.snapshot_status}
               </option>
             ))}
-          </select>
+          </FilterSelect>
         </label>
         <label className="pm-admin__field">
           <span>Supplier</span>
-          <select className="sx-select sx-select--sm" value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)} disabled={!rows}>
+          <FilterSelect className="sx-select--sm" ariaLabel="Supplier" value={supplierFilter} onChange={setSupplierFilter} disabled={!rows}>
             <option value="">All suppliers</option>
             {supplierOptions.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
-          </select>
+          </FilterSelect>
         </label>
         <button className="pm-btn pm-btn--primary pm-cmp__run" disabled={!canCompare || loading} onClick={runCompare}>
           <i className="bi bi-arrow-left-right" /> {loading ? 'Comparing…' : 'Compare'}
@@ -310,7 +311,7 @@ export default function RefreshComparePage() {
       </section>
 
       {rows && (
-        <section className="pm-admin__panel pm-cmp__filters">
+        <FilterBar compact className="pm-admin__panel pm-cmp__filters" ariaLabel="Refresh comparison filters">
           <label className="pm-console__opt" title="Hide products whose order quantity did not change">
             <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} />
             <span>Changed only</span>
@@ -319,13 +320,10 @@ export default function RefreshComparePage() {
             <input type="checkbox" checked={includeSkipped} onChange={(e) => setIncludeSkipped(e.target.checked)} />
             <span>Include skipped</span>
           </label>
-          <select className="sx-select sx-select--sm" aria-label="Change filter" value={action} onChange={(e) => setAction(e.target.value)}>
+          <FilterSelect className="sx-select--sm" ariaLabel="Change filter" value={action} onChange={setAction}>
             {ACTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
-          </select>
-          <span className="sx-search">
-            <i className="bi bi-search" aria-hidden="true" />
-            <input type="search" value={search} placeholder="Search product…" aria-label="Search product" onChange={(e) => setSearch(e.target.value)} />
-          </span>
+          </FilterSelect>
+          <FilterSearch value={search} placeholder="Search product…" ariaLabel="Search product" onChange={setSearch} />
           <div className="pm-cmp__tally">
             <span className="pm-cmp-badge pm-cmp--added">+{tally.Added} added</span>
             <span className="pm-cmp-badge pm-cmp--removed">−{tally.Removed} removed</span>
@@ -333,7 +331,7 @@ export default function RefreshComparePage() {
             <span className="pm-cmp-badge pm-cmp--down">↓{tally.Decreased}</span>
             <span className="pm-cmp__count">{num(visible.length)} shown</span>
           </div>
-        </section>
+        </FilterBar>
       )}
 
       {stale && (

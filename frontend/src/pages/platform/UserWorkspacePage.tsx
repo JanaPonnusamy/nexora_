@@ -5,12 +5,14 @@ import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
 import { StatusBadge } from '../../components/common/StatusBadge'
+import { DataTable, type DataTableColumn } from '../../components/common/DataTable'
 import { Skeleton } from '../../components/common/Skeleton'
 import { UserFormModal } from '../../components/users/UserFormModal'
 import { useUser } from '../../hooks/useUser'
 import { useUserRoles } from '../../hooks/useUserRoles'
 import { userService } from '../../services/userService'
 import { formatDateTime } from '../../utils/format'
+import type { UserRoleAssignment } from '../../types/userRole'
 
 type WorkspaceTab = 'overview' | 'roles' | 'stores'
 
@@ -33,6 +35,16 @@ export default function UserWorkspacePage() {
   const [editing, setEditing] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
+
+  const roleColumns: DataTableColumn<UserRoleAssignment>[] = [
+    {
+      key: 'role_name',
+      header: 'Role',
+      sortable: true,
+      accessor: (assignment) => <span className="fw-medium">{assignment.role_name}</span>,
+    },
+    { key: 'store_name', header: 'Store', sortable: true },
+  ]
 
   const tabParam = searchParams.get('tab')
   const activeTab: WorkspaceTab =
@@ -223,24 +235,12 @@ export default function UserWorkspacePage() {
               description="Roles assigned to this user will appear here."
             />
           ) : (
-            <div className="table-responsive">
-              <table className="table table-hover align-middle data-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Role</th>
-                    <th scope="col">Store</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {assignments.map((assignment) => (
-                    <tr key={`${assignment.role_id}-${assignment.store_id}`}>
-                      <td className="fw-medium">{assignment.role_name}</td>
-                      <td>{assignment.store_name}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={roleColumns}
+              data={assignments}
+              getRowId={(assignment) => `${assignment.role_id}-${assignment.store_id}`}
+              pageSize={10}
+            />
           ))}
 
         {activeTab === 'stores' &&
@@ -255,24 +255,20 @@ export default function UserWorkspacePage() {
               description="Stores this user can access will appear here."
             />
           ) : (
-            <div className="table-responsive">
-              <table className="table table-hover align-middle data-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Store Code</th>
-                    <th scope="col">Store Name</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {uniqueStores.map((store) => (
-                    <tr key={store.store_id}>
-                      <td>{store.store_code}</td>
-                      <td className="fw-medium">{store.store_name}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={[
+                { key: 'store_code', header: 'Store Code', sortable: true },
+                {
+                  key: 'store_name',
+                  header: 'Store Name',
+                  sortable: true,
+                  accessor: (store) => <span className="fw-medium">{store.store_name}</span>,
+                },
+              ]}
+              data={uniqueStores}
+              getRowId={(store) => store.store_id}
+              pageSize={10}
+            />
           ))}
       </div>
 

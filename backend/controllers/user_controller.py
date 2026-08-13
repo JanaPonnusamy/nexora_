@@ -1,4 +1,6 @@
 
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException
 from services.user_service import UserService
 from dtos.user_request import UserRequest, UserStatusRequest

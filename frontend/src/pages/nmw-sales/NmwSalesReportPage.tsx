@@ -6,6 +6,7 @@ import { nmwSalesReportService } from '../../services/nmwSalesReportService'
 import type { Tenant } from '../../types/tenant'
 import type { TenantStore } from '../../types/store'
 import type { NmwSalesBill, NmwSalesBillItem } from '../../types/nmwSalesReport'
+import { FilterBar } from '../../design-system/components/FilterBar'
 
 type StatusFilter = 'all' | 'pending' | 'approved'
 
@@ -165,7 +166,7 @@ export default function NmwSalesReportPage() {
         description="Warehouse (NMW) despatch bills routed to each store. Bills appear once despatched; a super admin approves the despatch before store devices display them."
       />
 
-      <div className="ds-toolbar d-flex flex-wrap gap-3 align-items-end">
+      <FilterBar compact className="align-items-end" ariaLabel="NMW sales filters">
         <label className="d-flex flex-column gap-1">
           <span className="small text-muted">Tenant</span>
           <select className="form-select" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
@@ -239,7 +240,7 @@ export default function NmwSalesReportPage() {
             </div>
           </>
         )}
-      </div>
+      </FilterBar>
 
       {scope === 'store' && (
         <div className="alert alert-secondary py-2 small mb-0">
