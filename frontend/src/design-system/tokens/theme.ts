@@ -232,8 +232,8 @@ export type ThemeName = keyof typeof themes
 export const layout = {
   headerHeight: '52px',
   statusbarHeight: '30px',
-  /** Only one sidebar width exists — there is no collapsed variant. */
-  sidebarWidth: '204px',
+  /** Icon-only sidebar width */
+  sidebarWidth: '56px',
   flyoutWidth: '232px',
   gutter: '1.25rem',
   radiusSm: '6px',

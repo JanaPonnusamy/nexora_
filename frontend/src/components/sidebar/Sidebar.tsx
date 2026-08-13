@@ -108,9 +108,10 @@ export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
                 to={entry.to}
                 className={({ isActive }) => `app-nav__row${isActive ? ' is-active' : ''}`}
                 onClick={onNavigate}
+                title={entry.label}
+                aria-label={entry.label}
               >
                 <i className={`bi ${entry.icon} app-nav__icon`} aria-hidden="true" />
-                <span className="app-nav__label">{entry.label}</span>
               </NavLink>
             )
           }
@@ -127,6 +128,8 @@ export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
                 className={`app-nav__row${containsRoute ? ' is-current' : ''}${isOpen ? ' is-open' : ''}`}
                 aria-haspopup="menu"
                 aria-expanded={isOpen}
+                title={entry.label}
+                aria-label={entry.label}
                 onClick={(event) => {
                   if (isOpen && open?.pinned) {
                     close()
@@ -167,8 +170,6 @@ export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
                 }}
               >
                 <i className={`bi ${entry.icon} app-nav__icon`} aria-hidden="true" />
-                <span className="app-nav__label">{entry.label}</span>
-                <i className="bi bi-chevron-right app-nav__chevron" aria-hidden="true" />
               </button>
 
               {/* Mobile has no hover and no room beside the drawer, so children
@@ -181,9 +182,10 @@ export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
                       to={child.to}
                       className={({ isActive }) => `app-nav__sublink${isActive ? ' is-active' : ''}`}
                       onClick={onNavigate}
+                      title={child.label}
+                      aria-label={child.label}
                     >
                       <i className={`bi ${child.icon} app-nav__icon`} aria-hidden="true" />
-                      <span>{child.label}</span>
                     </NavLink>
                   ))}
                 </div>
