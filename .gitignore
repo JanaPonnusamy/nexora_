@@ -68,3 +68,22 @@ catalog.db
 # Node deps / build output (desktop Electron client)
 node_modules/
 desktop/supplier-stock-client/dist/
+
+# WhatsApp runtime data: browser session profiles, generated send debug
+# captures, and outbound file attachments. Regenerated at runtime; profiles/
+# can contain live session/auth cookies.
+backend/storage/whatsapp/profiles/
+backend/storage/whatsapp/profiles.json
+backend/storage/whatsapp/debug/
+backend/storage/whatsapp/files/
+
+# Generated Excel/legacy .xls exports (distribution runs, ad-hoc temp
+# exports) -- not source, regenerated on demand.
+*.xlsx
+*.xls
+temp/
+
+# Playwright's downloaded browser binaries (fixed shared path, see
+# backend/.env PLAYWRIGHT_BROWSERS_PATH) -- large, regenerated via
+# `playwright install firefox`, never source.
+/.ms-playwright/
