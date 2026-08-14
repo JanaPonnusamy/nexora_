@@ -35,6 +35,7 @@ export function WhatsAppSendCard({
   const [message, setMessage] = useState(defaultCaption)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  const [launching, setLaunching] = useState(false)
   const [addingContact, setAddingContact] = useState(false)
   const [newContactName, setNewContactName] = useState('')
   const [newContactPhone, setNewContactPhone] = useState('')
@@ -146,6 +147,26 @@ export function WhatsAppSendCard({
     }
   }
 
+  const needsQrLogin = /not logged in/i.test(error)
+
+  const launchQr = async () => {
+    if (!profileId) {
+      setError('Choose a WhatsApp profile first.')
+      return
+    }
+    setLaunching(true)
+    setStatus('')
+    setError('')
+    try {
+      const result = await whatsappService.launchProfile(profileId)
+      setStatus(result.message || 'WhatsApp opened — scan the QR code, then click Send report.')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to launch WhatsApp for this profile.')
+    } finally {
+      setLaunching(false)
+    }
+  }
+
   const send = async () => {
     if (!profileId) {
       setError('Choose a WhatsApp profile first.')
@@ -186,7 +207,21 @@ export function WhatsAppSendCard({
           </div>
 
           {loading && <div className="text-body-secondary">Loading WhatsApp profiles...</div>}
-          {error && <div className="alert alert-danger mb-0">{error}</div>}
+          {error && (
+            <div className="alert alert-danger mb-0">
+              {error}
+              {needsQrLogin && (
+                <button
+                  type="button"
+                  className="btn btn-outline-danger btn-sm ms-2"
+                  disabled={launching}
+                  onClick={() => void launchQr()}
+                >
+                  {launching ? 'Launching...' : 'Launch WhatsApp (Scan QR)'}
+                </button>
+              )}
+            </div>
+          )}
           {status && !error && <div className="alert alert-success mb-0">{status}</div>}
 
           {!loading && state && (

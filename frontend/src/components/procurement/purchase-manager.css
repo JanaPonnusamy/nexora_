@@ -87,6 +87,8 @@
 .pm-banner { border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 500; }
 .pm-banner--success { background: #dcfce7; color: #166534; }
 .pm-banner--danger { background: #fee2e2; color: #991b1b; }
+[data-bs-theme="dark"] .pm-banner--success { background: rgba(34, 197, 94, .18); color: #86efac; }
+[data-bs-theme="dark"] .pm-banner--danger { background: rgba(239, 68, 68, .18); color: #fca5a5; }
 
 /* Read-only badge — a closed cycle is view-only. */
 .pm-ro-badge {
@@ -711,6 +713,9 @@
 .pm-badge--low { background: #fef3c7; color: #92400e; }
 .pm-badge--safe { background: #dcfce7; color: #166534; }
 .pm-badge--over { background: #ede9fe; color: #5b21b6; }
+.pm-badge--success { background: #dcfce7; color: #166534; }
+.pm-badge--danger { background: #fee2e2; color: #991b1b; }
+.pm-badge--warn { background: #fef3c7; color: #92400e; }
 
 /* ---- Decision Panel (right column) --------------------------------------- */
 /* One focused answer to "should I buy this, and how much?" — sits in the
@@ -1788,6 +1793,7 @@
 [data-bs-theme="dark"] .pm-badge--fast,
 [data-bs-theme="dark"] .pm-badge--safe,
 [data-bs-theme="dark"] .pm-badge--ok,
+[data-bs-theme="dark"] .pm-badge--success,
 [data-bs-theme="dark"] .pm-optstat--ok,
 [data-bs-theme="dark"] .pm-step--completed,
 [data-bs-theme="dark"] .pm-tag--exported,
@@ -1803,12 +1809,14 @@
 [data-bs-theme="dark"] .pm-step--running { background: rgba(59, 130, 246, .18); color: #93c5fd; }
 [data-bs-theme="dark"] .pm-badge--slow,
 [data-bs-theme="dark"] .pm-badge--low,
+[data-bs-theme="dark"] .pm-badge--warn,
 [data-bs-theme="dark"] .pm-optstat--short,
 [data-bs-theme="dark"] .pm-prio--med,
 [data-bs-theme="dark"] .pm-unsaved,
 [data-bs-theme="dark"] .pm-tag--manual { background: rgba(217, 119, 6, .18); color: #fcd34d; }
 [data-bs-theme="dark"] .pm-badge--none,
 [data-bs-theme="dark"] .pm-badge--out,
+[data-bs-theme="dark"] .pm-badge--danger,
 [data-bs-theme="dark"] .pm-optstat--none,
 [data-bs-theme="dark"] .pm-prio--high,
 [data-bs-theme="dark"] .pm-step--failed,

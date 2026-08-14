@@ -10,6 +10,7 @@ import type {
 } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
 import { WhatsAppSendCard } from '../../components/common/WhatsAppSendCard'
+import { whatsappService } from '../../services/whatsappService'
 import { buildDistributionImage } from '../../components/procurement/distributionImage'
 import { date } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
@@ -28,8 +29,8 @@ function statusBadge(status: string) {
 
 function waStatusLine(status: string | null | undefined) {
   const s = status || 'not_queued'
-  if (s === 'sent') return { icon: <span style={{ color: '#166534' }}>✓</span>, label: 'Sent' }
-  if (s === 'failed') return { icon: <span style={{ color: '#991b1b' }}>✕</span>, label: 'Failed' }
+  if (s === 'sent') return { icon: <span style={{ color: 'var(--nx-success-ink)' }}>✓</span>, label: 'Sent' }
+  if (s === 'failed') return { icon: <span style={{ color: 'var(--nx-danger-ink)' }}>✕</span>, label: 'Failed' }
   if (s === 'queued') return { icon: <span className="sx-dim">…</span>, label: 'Queued' }
   return { icon: <span className="sx-dim">–</span>, label: 'Not sent' }
 }
@@ -63,6 +64,27 @@ export default function SupplierStockDistributionPage() {
   const [lastRunItems, setLastRunItems] = useState<DistributionRunItemRow[]>([])
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   const [waErrorOpen, setWaErrorOpen] = useState<string | null>(null)
+  const [waLaunching, setWaLaunching] = useState(false)
+  const [waLaunchStatus, setWaLaunchStatus] = useState('')
+
+  const launchWhatsAppLogin = async () => {
+    setWaLaunching(true)
+    setWaLaunchStatus('')
+    try {
+      const state = await whatsappService.getState()
+      const profileId = state.capabilities.default_profile_id
+      if (!profileId) {
+        setWaLaunchStatus('No WhatsApp profile configured to launch.')
+        return
+      }
+      const result = await whatsappService.launchProfile(profileId)
+      setWaLaunchStatus(result.message || 'WhatsApp opened — scan the QR code, then retry the failed store.')
+    } catch (e) {
+      setWaLaunchStatus(e instanceof Error ? e.message : 'Unable to launch WhatsApp.')
+    } finally {
+      setWaLaunching(false)
+    }
+  }
 
   const say = useCallback((kind: 'success' | 'danger', text: string) => {
     setBanner({ kind, text })
@@ -331,11 +353,15 @@ export default function SupplierStockDistributionPage() {
       {lastRunItems.length > 0 && (
         <section className="pm-admin__panel">
           <div className="pm-admin__panel-title">WhatsApp Distribution</div>
+          {waLaunchStatus && (
+            <div className="pm-banner pm-banner--success" style={{ marginBottom: 12 }}>{waLaunchStatus}</div>
+          )}
           <table className="pm-grid pm-admin__table">
             <tbody>
               {lastRunItems.map((it) => {
                 const wa = waStatusLine(it.whatsapp_status)
                 const errorText = it.whatsapp_error
+                const needsQrLogin = it.whatsapp_status === 'failed' && !!errorText && /not logged in/i.test(errorText)
                 return (
                   <tr key={it.run_item_id}>
                     <td className="pm-prod__name" style={{ width: 100 }}>{it.store_code}</td>
@@ -344,6 +370,11 @@ export default function SupplierStockDistributionPage() {
                       {it.whatsapp_status === 'failed' && errorText && (
                         <button className="pm-btn pm-btn--ghost" onClick={() => setWaErrorOpen((c) => (c === it.run_item_id ? null : it.run_item_id))}>
                           {waErrorOpen === it.run_item_id ? 'Hide error' : 'View error'}
+                        </button>
+                      )}
+                      {needsQrLogin && (
+                        <button className="pm-btn pm-btn--ghost" disabled={waLaunching} onClick={() => void launchWhatsAppLogin()} style={{ marginLeft: 8 }}>
+                          {waLaunching ? 'Launching…' : 'Launch WhatsApp (Scan QR)'}
                         </button>
                       )}
                       {waErrorOpen === it.run_item_id && <span className="sx-dim" style={{ marginLeft: 8 }}>{errorText}</span>}
