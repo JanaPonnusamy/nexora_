@@ -65,7 +65,13 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-arrow-repeat',
     cap: 'SYNC',
     children: [
-      { label: 'Sync Administration', to: '/sync-administration', icon: 'bi-arrow-repeat', cap: 'SYNC' },
+      { label: 'Sync Live', to: '/sync/live', icon: 'bi-broadcast-pin', cap: 'SYNC' },
+      { label: 'Sync Schedules', to: '/sync/schedules', icon: 'bi-calendar-event', cap: 'SYNC' },
+      { label: 'Sync Config', to: '/sync/config', icon: 'bi-table', cap: 'SYNC' },
+      { label: 'Sync Mapping', to: '/sync/mapping', icon: 'bi-diagram-3', cap: 'SYNC' },
+      { label: 'Sync Store Health', to: '/sync/store-health', icon: 'bi-heart-pulse', cap: 'SYNC' },
+      { label: 'Sync History', to: '/sync/history', icon: 'bi-clock-history', cap: 'SYNC' },
+      { label: 'Sync Agents', to: '/sync/agents', icon: 'bi-router', cap: 'SYNC' },
     ],
   },
   {
