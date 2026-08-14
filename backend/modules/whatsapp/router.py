@@ -5,10 +5,12 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from .service import (
+    check_status,
     delete_profile,
     delete_target,
     get_state,
     launch_qr,
+    logout_profile,
     send_message,
     send_target_message,
     sync_target_messages,
@@ -93,6 +95,16 @@ def remove_whatsapp_profile(profile_id: str):
 @router.post("/profiles/{profile_id}/launch")
 def launch_whatsapp_qr(profile_id: str):
     return launch_qr(profile_id)
+
+
+@router.get("/profiles/{profile_id}/status")
+def read_whatsapp_profile_status(profile_id: str):
+    return check_status(profile_id)
+
+
+@router.post("/profiles/{profile_id}/logout")
+def logout_whatsapp_profile(profile_id: str):
+    return logout_profile(profile_id)
 
 
 @router.post("/send/text")

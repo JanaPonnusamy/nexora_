@@ -117,6 +117,21 @@ export const whatsappService = {
       attachment_path?: string
     }>(`/api/whatsapp/profiles/${profileId}/launch`, {})
   },
+  checkProfileStatus(profileId: string) {
+    return api.get<{
+      profile_id: string
+      logged_in: boolean
+      checked_at: string
+    }>(`/api/whatsapp/profiles/${profileId}/status`)
+  },
+  logoutProfile(profileId: string) {
+    return api.post<{
+      profile_id: string
+      logged_in: boolean
+      profiles: WhatsAppProfile[]
+      capabilities: WhatsAppCapabilities
+    }>(`/api/whatsapp/profiles/${profileId}/logout`, {})
+  },
   sendFile(profileId: string, phone: string, message: string, file: File) {
     const form = new FormData()
     form.append('profile_id', profileId)

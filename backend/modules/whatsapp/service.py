@@ -821,16 +821,23 @@ def update_settings(browser_command: str, delivery_mode: str, launch_wait_second
     # Drop any live sessions so the new headless/visibility choice takes effect
     # on the next send instead of reusing an old-mode session.
     shutdown_all_drivers()
+    profiles = _load_profiles()
     return {
         "settings": settings,
-        "profiles": _load_profiles(),
-        "capabilities": _capabilities(settings, _load_profiles()),
+        "profiles": profiles,
+        "targets": _load_targets(),
+        "messages": _load_inbox()[:100],
+        "capabilities": _capabilities(settings, profiles),
     }
 
 
 def upsert_profile(payload: dict[str, Any]) -> dict[str, Any]:
     profiles = _load_profiles()
-    profile_id = str(payload.get("profile_id", "")).strip() or str(uuid.uuid4())
+    # `payload.get("profile_id", "")` returns the JSON `null` the Pydantic
+    # model sends for an unset optional field, not the "" default -- and
+    # str(None) == "None", a truthy string that skipped the uuid4()
+    # fallback below. `or ""` collapses None/""/missing to the same "".
+    profile_id = str(payload.get("profile_id") or "").strip() or str(uuid.uuid4())
     now = _now_iso()
     existing = next((row for row in profiles if row["profile_id"] == profile_id), None)
     if existing is None:
@@ -916,6 +923,56 @@ def _launch_qr_impl(profile_id: str) -> dict[str, Any]:
         "message": "A WhatsApp Web window was opened for this profile. Scan the QR code with your phone to log in.",
         "mode": "playwright-visible",
         "url": "https://web.whatsapp.com/",
+    }
+
+
+def check_status(profile_id: str) -> dict[str, Any]:
+    return _run_on_driver_thread(_check_status_impl, profile_id)
+
+
+def _check_status_impl(profile_id: str) -> dict[str, Any]:
+    """Headless check of whether this profile's saved session is still logged
+    in to WhatsApp Web, without sending anything. Reuses a live background
+    context if one is already open; otherwise opens one just for the check."""
+    settings = _load_settings()
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    with _DRIVER_LOCK:
+        page = _acquire_context(profile, settings, want_headless=True)
+        try:
+            page.wait_for_timeout(1500)
+        except Exception:
+            pass
+        logged_in = _is_logged_in(page)
+    return {
+        "profile_id": profile_id,
+        "logged_in": logged_in,
+        "checked_at": _now_iso(),
+    }
+
+
+def logout_profile(profile_id: str) -> dict[str, Any]:
+    return _run_on_driver_thread(_logout_profile_impl, profile_id)
+
+
+def _logout_profile_impl(profile_id: str) -> dict[str, Any]:
+    """Clear this profile's WhatsApp Web session (cookies/local storage) so
+    the next send/launch requires a fresh QR scan. Unlike delete_profile,
+    the saved profile record (name, targets, message history) is kept."""
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    with _DRIVER_LOCK:
+        _shutdown_context(profile_id)
+        session_dir = _firefox_profile_dir(profile)
+        if session_dir.exists():
+            shutil.rmtree(session_dir, ignore_errors=True)
+    profile["last_used_at"] = _now_iso()
+    saved = _save_profiles(profiles)
+    return {
+        "profile_id": profile_id,
+        "logged_in": False,
+        "profiles": saved,
+        "capabilities": _capabilities(_load_settings(), saved),
     }
 
 
@@ -1013,12 +1070,14 @@ def _send_message_impl(profile_id: str, phone: str, message: str, attachment_nam
 
 def upsert_target(payload: dict[str, Any]) -> dict[str, Any]:
     profiles = _load_profiles()
-    profile_id = str(payload.get("profile_id", "")).strip()
+    profile_id = str(payload.get("profile_id") or "").strip()
     if not profile_id:
         raise ValueError("Profile is required for a WhatsApp target.")
     _resolve_profile(profile_id, profiles)
     targets = _load_targets()
-    target_id = str(payload.get("target_id", "")).strip() or str(uuid.uuid4())
+    # See upsert_profile: None -> "" here too, so a fresh target actually
+    # gets a uuid4() instead of the literal string "None".
+    target_id = str(payload.get("target_id") or "").strip() or str(uuid.uuid4())
     now = _now_iso()
     existing = next((row for row in targets if row["target_id"] == target_id), None)
     if existing is None:
