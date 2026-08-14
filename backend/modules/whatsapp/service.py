@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import concurrent.futures
 import json
 import re
 import shutil
@@ -50,6 +51,19 @@ DEFAULT_SETTINGS = {
 _DRIVER_LOCK = threading.RLock()
 _PLAYWRIGHT_DRIVER: Any = None
 _CONTEXTS: dict[str, dict[str, Any]] = {}  # profile_id -> {context, page, headless}
+
+# Playwright's sync API is pinned to whichever OS thread created the driver —
+# a second thread touching it tears the connection down (the browser opens,
+# then closes within seconds). FastAPI hands sync endpoints to whatever
+# thread is free in its pool, so a lock alone (mutual exclusion) isn't
+# enough; every driver-touching entrypoint below is routed through this one
+# dedicated thread so the driver, contexts and pages stay on a single thread
+# for their whole lifetime.
+_DRIVER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="wa-driver")
+
+
+def _run_on_driver_thread(fn, *args, **kwargs):
+    return _DRIVER_EXECUTOR.submit(fn, *args, **kwargs).result()
 
 
 def _now_iso() -> str:
@@ -859,7 +873,7 @@ def delete_profile(profile_id: str) -> dict[str, Any]:
     remaining = [row for row in profiles if row["profile_id"] != profile_id]
     remaining_targets = [row for row in _load_targets() if row["profile_id"] != profile_id]
     remaining_messages = [row for row in _load_inbox() if row["profile_id"] != profile_id]
-    _shutdown_context(profile_id)
+    _run_on_driver_thread(_shutdown_context, profile_id)
     session_dir = Path(profile["session_dir"])
     if session_dir.exists():
         shutil.rmtree(session_dir, ignore_errors=True)
@@ -875,6 +889,10 @@ def delete_profile(profile_id: str) -> dict[str, Any]:
 
 
 def launch_qr(profile_id: str) -> dict[str, Any]:
+    return _run_on_driver_thread(_launch_qr_impl, profile_id)
+
+
+def _launch_qr_impl(profile_id: str) -> dict[str, Any]:
     """Open a visible Firefox window for QR login. Leaves it running so the
     user can scan the code; subsequent headless sends reuse the same profile
     dir once the headed window is closed (or explicitly relaunched)."""
@@ -947,6 +965,10 @@ def _visible_open(profile: dict[str, Any], settings: dict[str, Any], url: str) -
 
 
 def send_message(profile_id: str, phone: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
+    return _run_on_driver_thread(_send_message_impl, profile_id, phone, message, attachment_name, attachment_content)
+
+
+def _send_message_impl(profile_id: str, phone: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
     profiles = _load_profiles()
     settings = _load_settings()
     profile = _resolve_profile(profile_id, profiles)
@@ -1043,6 +1065,10 @@ def delete_target(target_id: str) -> dict[str, Any]:
 
 
 def send_target_message(target_id: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
+    return _run_on_driver_thread(_send_target_message_impl, target_id, message, attachment_name, attachment_content)
+
+
+def _send_target_message_impl(target_id: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
     profiles = _load_profiles()
     settings = _load_settings()
     target = _resolve_target(target_id)
@@ -1086,6 +1112,10 @@ def send_target_message(target_id: str, message: str, attachment_name: str | Non
 
 
 def sync_target_messages(target_id: str, limit: int = 20) -> dict[str, Any]:
+    return _run_on_driver_thread(_sync_target_messages_impl, target_id, limit)
+
+
+def _sync_target_messages_impl(target_id: str, limit: int = 20) -> dict[str, Any]:
     profiles = _load_profiles()
     settings = _load_settings()
     target = _resolve_target(target_id)
