@@ -273,7 +273,7 @@ def _build_workbook(rows, target_store_code):
         }
         for r in rows
     ]
-    return ExcelExporter.build_workbook(sheet_rows, f"SupplierStock_{target_store_code}")
+    return ExcelExporter.build_workbook_xls(sheet_rows, f"SupplierStock_{target_store_code}")
 
 
 def _replace_supplier_stock(conn, tenant_id, target_store_id, supplier_code, rows):
@@ -516,7 +516,7 @@ def generate(tenant_id, source_store_code, provider_name, only_store_ids=None,
             if not supplier_update_only:
                 try:
                     content = _build_workbook(source_rows, store["store_code"])
-                    filename = f"{source_store_code}_Stock_{store['store_code']}_{run_date}.xlsx"
+                    filename = f"{source_store_code}_Stock_{store['store_code']}_{run_date}.xls"
                     excel_path = os.path.join(storage_dir, filename)
                     with open(excel_path, "wb") as fh:
                         fh.write(content)

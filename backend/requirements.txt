@@ -41,3 +41,8 @@ openpyxl
 # (product_category_ai.py). Only used when ANTHROPIC_API_KEY is set; the
 # feature degrades gracefully to keyword + cross-store rules when absent.
 anthropic
+
+# Supplier Stock Distribution export — writes legacy Excel 97-2003 (.xls,
+# BIFF) files because the receiving 3rd-party supplier app can't read
+# openpyxl's modern .xlsx (OOXML) output.
+xlwt
