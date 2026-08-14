@@ -43,7 +43,7 @@ def top_suppliers(tenant_id, product_code, store_id, limit):
                 a.supplier_code,
                 CAST(RTRIM(s.suppliername) AS VARCHAR(300)) AS supplier_name,
                 a.purchase_frequency, a.last_grn_date, a.last_grn_no,
-                a.last_purchase_rate, a.avg_lead_days
+                a.last_purchase_rate, a.last_item_cost, a.last_margin_percent, a.last_mrp, a.avg_lead_days
             FROM (
                 SELECT
                     CAST(pt.SupplierCode AS VARCHAR(100)) AS supplier_code,
@@ -51,6 +51,9 @@ def top_suppliers(tenant_id, product_code, store_id, limit):
                     MAX(pt.GRNDate)                       AS last_grn_date,
                     CAST(MAX(pt.GRNNumber) AS VARCHAR(100)) AS last_grn_no,
                     MAX(ISNULL(pt.PurchasePrice, 0))      AS last_purchase_rate,
+                    MAX(pt.ItemCost)                      AS last_item_cost,
+                    MAX(pt.Margin)                        AS last_margin_percent,
+                    MAX(pt.mrp)                           AS last_mrp,
                     CAST(NULL AS INT)                     AS avg_lead_days
                 FROM sync.PurchaseTrans pt
                 WHERE pt.tenant_id = ? AND pt.store_id = ?
@@ -107,6 +110,9 @@ def top_suppliers_bulk(tenant_id, refresh_id, limit):
                     MAX(pt.GRNDate)                           AS last_grn_date,
                     CAST(MAX(pt.GRNNumber) AS VARCHAR(100))   AS last_grn_no,
                     MAX(ISNULL(pt.PurchasePrice, 0))          AS last_purchase_rate,
+                    MAX(pt.ItemCost)                          AS last_item_cost,
+                    MAX(pt.Margin)                            AS last_margin_percent,
+                    MAX(pt.mrp)                                AS last_mrp,
                     CAST(NULL AS INT)                         AS avg_lead_days,
                     ROW_NUMBER() OVER (
                         PARTITION BY oi.order_item_id
@@ -125,7 +131,7 @@ def top_suppliers_bulk(tenant_id, refresh_id, limit):
             SELECT r.order_item_id, r.product_code, r.supplier_code,
                    CAST(RTRIM(s.suppliername) AS VARCHAR(300)) AS supplier_name,
                    r.purchase_frequency, r.last_grn_date, r.last_grn_no,
-                   r.last_purchase_rate, r.avg_lead_days,
+                   r.last_purchase_rate, r.last_item_cost, r.last_margin_percent, r.last_mrp, r.avg_lead_days,
                    ISNULL(s.auto_assign, 1)   AS auto_assign,
                    ISNULL(s.min_products, 2)  AS min_products
             FROM ranked r

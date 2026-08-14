@@ -32,6 +32,7 @@ import type {
   DistributionRunResult,
   DistributionRunSummary,
   DistributionRunDetail,
+  DistributionRunItemProducts,
   DistributionSupplierMapImportResult,
 } from '../types/procurement'
 
@@ -794,4 +795,7 @@ export const procurementService = {
       `/api/procurement/distribution/runs/${runId}/retry${qs({ provider, started_by: startedBy ?? undefined })}`,
       {},
     ),
+
+  distributionRunItemProducts: (runItemId: string) =>
+    api.get<DistributionRunItemProducts>(`/api/procurement/distribution/run-items/${runItemId}/products`),
 }

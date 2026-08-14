@@ -112,16 +112,26 @@ export function SupplierRecPanel({
             const best = code === bestCode
             const preferred = code === preferredCode && code !== bestCode
             const live = Boolean(liveCodes?.has(code))
-            // Prefer the margin already recorded on the purchase transaction
-            // (sync.PurchaseTrans.Margin, surfaced as last_margin_percent) —
-            // the approved source figure. Next, derive it from Cost vs PTR
-            // using the same formula legacy_order already uses for this exact
-            // relationship. Only fall back to the MRP-vs-PTR calculation when
-            // neither purchase-history figure is available.
+            // Per-supplier MRP from this supplier's last purchase transaction
+            // (sync.PurchaseTrans.mrp) wins over the product-level VPL figure,
+            // which is often not captured at refresh time.
+            const mrp = s.last_mrp ?? item?.mrp ?? null
+            // Margin % = (PTR - Cost) / Cost * 100 — markup on cost, the SAME
+            // formula NEXORA's own Margin Report already treats as the
+            // authoritative "Margin %" (reports/repository.py's margin();
+            // see costMarginPercent's docstring). The raw
+            // sync.PurchaseTrans.Margin column (last_margin_percent) does not
+            // reconcile against the visible Cost/PTR figures (verified against
+            // real data — e.g. Cost 103.00/PTR 108.42 stored Margin=40.36%
+            // when the true Cost/PTR margin is ~5.26%), so it is only used as
+            // a last resort when Cost itself isn't available. Falls back to
+            // the MRP-vs-PTR calculation only when neither purchase-history
+            // figure is present.
+            const legacyMargin = s.last_item_cost == null ? (s.last_margin_percent ?? null) : null
             const margin =
-              s.last_margin_percent ??
               costMarginPercent(s.last_purchase_rate, s.last_item_cost) ??
-              marginPercent(item?.mrp, s.last_purchase_rate)
+              legacyMargin ??
+              marginPercent(mrp, s.last_purchase_rate)
             // A different supplier already owns this product — the button
             // stays reachable (routes into the confirm-reassign flow) but is
             // disabled from a plain click/Enter fast-path.
@@ -168,7 +178,7 @@ export function SupplierRecPanel({
                     <label>Margin</label>
                   </span>
                   <span className="pm-srpcard__stat">
-                    <b>{item?.mrp != null ? money(item.mrp) : '—'}</b>
+                    <b>{mrp != null ? money(mrp) : '—'}</b>
                     <label>MRP</label>
                   </span>
                 </div>

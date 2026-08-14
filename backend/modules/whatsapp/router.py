@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from .service import (
@@ -127,7 +128,7 @@ async def send_whatsapp_file(
     file: UploadFile = File(...),
 ):
     content = await file.read()
-    return send_message(profile_id, phone, message, file.filename, content)
+    return await run_in_threadpool(send_message, profile_id, phone, message, file.filename, content)
 
 
 @router.post("/targets/send-file")
@@ -137,4 +138,4 @@ async def send_whatsapp_target_file(
     file: UploadFile = File(...),
 ):
     content = await file.read()
-    return send_target_message(target_id, message, file.filename, content)
+    return await run_in_threadpool(send_target_message, target_id, message, file.filename, content)

@@ -7,8 +7,10 @@ Supplier Queue, Supplier Assignment (single/bulk/change/remove) and Export.
 import json
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 
+from dependencies.auth import get_current_user_optional
+from dependencies.store_scope import assert_tenant_access
 from modules.procurement import workspace_service
 from modules.procurement import supplier_service
 from modules.procurement import supplier_stock_service
@@ -58,7 +60,9 @@ def workspace(
     # internally. Raised from 500 so the workspace never truncates; true row
     # virtualization is the follow-up for very large cycles.
     page_size: int = Query(50, ge=1, le=5000),
+    current_user: dict | None = Depends(get_current_user_optional),
 ):
+    assert_tenant_access(current_user, tenant_id)
     filters = {
         "search": search, "item_status": item_status,
         "movement_class": movement_class, "stock_status": stock_status,
@@ -77,12 +81,14 @@ def workspace_summary(
     tenant_id: str = Query(...),
     search: Optional[str] = Query(None),
     movement_class: Optional[str] = Query(None),
+    current_user: dict | None = Depends(get_current_user_optional),
 ):
     """Footer counts (Total Products / Pending Review / Assigned / Finalized /
     Skipped) for the whole refresh, computed in SQL. Scope matches the grid's
     base load (search + movement_class only) — Planning State / Product Type /
     Manual are display filters and never narrowed these totals. Purchase Value
     is not included — see workspace_repository.get_summary's docstring."""
+    assert_tenant_access(current_user, tenant_id)
     filters = {"search": search, "movement_class": movement_class}
     return workspace_service.get_summary(tenant_id, refresh_id, filters)
 
@@ -373,6 +379,13 @@ def distribution_run_detail(run_id: str):
 @router.post("/distribution/runs/{run_id}/retry")
 def distribution_retry(run_id: str, provider: Optional[str] = Query(None), started_by: Optional[str] = Query(None)):
     return distribution_service.retry_failed(run_id, provider, started_by)
+
+
+@router.get("/distribution/run-items/{run_item_id}/products")
+def distribution_run_item_products(run_item_id: str):
+    """Product rows from that item's already-generated Excel file, for the
+    WhatsApp image preview/send."""
+    return distribution_service.run_item_products(run_item_id)
 
 
 # --------------------------------------------------------------------------

@@ -354,9 +354,23 @@ def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
         user_data_dir=str(session_dir),
         headless=headless,
         viewport={"width": 1280, "height": 960} if headless else None,
-        args=["--width=1280", "--height=960"] if not headless else [],
+        # No window-size CLI args for the headed path: Chromium's
+        # --width=/--height= are not Firefox flags at all, and even
+        # Firefox's own single-dash -width/-height aren't reliably accepted
+        # by this Playwright-bundled build ("-height" logs as an
+        # unrecognized flag here). An unrecognized flag's value falls
+        # through to Firefox's positional "open this as a URL" argument,
+        # and a bare integer like 1280 gets canonicalised as a decimal IPv4
+        # literal (1280 = 0x0500 = 0.0.5.0) -- exactly the bogus
+        # "Unable to connect... 0.0.5.0" page this was producing. Simplest
+        # fix: don't pass size args; Firefox opens at its own default size.
+        args=[],
         firefox_user_prefs=_FIREFOX_USER_PREFS,
-        timeout=45000,
+        # First-run profile bootstrap (cache/cert DB init) can exceed 45s
+        # under antivirus file-scanning on a locked-down machine -- give it
+        # real headroom rather than failing a launch that was still in
+        # progress.
+        timeout=120000,
     )
     page = context.pages[0] if context.pages else context.new_page()
     return context, page
@@ -458,11 +472,34 @@ _SEND_BUTTON_SELECTORS = [
     "xpath=//span[@data-icon='send']",
     "xpath=//span[@data-icon='wds-ic-send-filled']",
 ]
+# After a file is attached, WhatsApp opens a preview overlay with its OWN
+# caption box -- it is NOT inside <footer>, unlike the normal chat composer.
+# The regular _COMPOSER_SELECTORS' footer-scoped entry still matches the
+# background chat composer (Playwright's is_visible() checks CSS
+# visibility/size, not z-index occlusion, so a covered-but-present element
+# still reads as "visible"), so typing there sends a bare text message while
+# the actual attachment preview is left unconfirmed. These selectors target
+# the caption box specifically so the caption travels WITH the file.
+_CAPTION_SELECTORS = [
+    "xpath=//div[@data-testid='media-caption-input-container']",
+    "xpath=//div[@aria-label='Add a caption'][@contenteditable='true']",
+    "xpath=//div[@contenteditable='true'][@data-tab='10'][not(ancestor::footer)]",
+]
 _ATTACH_SELECTORS = [
     "xpath=//button[@aria-label='Attach']",
     "xpath=//span[@data-icon='plus-rounded']",
     "xpath=//span[@data-icon='clip']",
     "xpath=//button[@title='Attach']",
+]
+# Current WhatsApp Web opens a type-picker menu after Attach (Document /
+# Photos & videos / Camera / Audio / ...) instead of exposing the file input
+# directly -- "Document" must be clicked first for a generic file (e.g. the
+# distribution Excel) to activate the right <input type="file">.
+_ATTACH_DOCUMENT_SELECTORS = [
+    "xpath=//div[@aria-label='Document']",
+    "xpath=//li[@aria-label='Document']",
+    "xpath=//span[normalize-space(text())='Document']",
+    "xpath=//div[normalize-space(text())='Document']",
 ]
 
 
@@ -567,6 +604,23 @@ def _type_and_send(page: Any, settings: dict[str, Any], message: str) -> None:
     time.sleep(2)
 
 
+def _caption_and_send_attachment(page: Any, settings: dict[str, Any], message: str) -> None:
+    """Type the caption into the FILE PREVIEW's own caption box (not the
+    background chat composer -- see _CAPTION_SELECTORS) and click Send
+    explicitly. Must be called right after _attach_file, while the preview
+    overlay is still open."""
+    wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
+    caption = _first_locator(page, _CAPTION_SELECTORS, wait_seconds)
+    _safe_click(caption)
+    time.sleep(0.3)
+    if message:
+        caption.type(message, delay=8)
+        time.sleep(0.3)
+    send = _first_locator(page, _SEND_BUTTON_SELECTORS, wait_seconds)
+    _safe_click(send)
+    time.sleep(3)
+
+
 def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any], message: str = "") -> str:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     if target["target_kind"] == "contact":
@@ -592,10 +646,19 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
     search.type(query, delay=15)
     time.sleep(2)
 
+    # Case-insensitive fallbacks: WhatsApp group names are configured
+    # elsewhere (e.g. dbo.stores.w_group_name) and easily drift in case from
+    # the real chat title ("NMV GROUP" vs the actual "NMV Group") -- XPath 1.0
+    # has no case-insensitive contains(), so translate() both sides to
+    # lowercase before comparing.
+    _UPPER, _LOWER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+    label_lower = json.dumps(label.lower())
     chat_selectors = [
         f"xpath=//span[@title={json.dumps(label)}]",
         f"xpath=//*[@title={json.dumps(label)}]",
         f"xpath=//span[contains(@title, {json.dumps(label)})]",
+        f"xpath=//span[translate(@title, '{_UPPER}', '{_LOWER}')={label_lower}]",
+        f"xpath=//span[contains(translate(@title, '{_UPPER}', '{_LOWER}'), {label_lower})]",
     ]
     try:
         chat = _first_locator(page, chat_selectors, wait_seconds)
@@ -611,10 +674,25 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
 
 def _attach_file(page: Any, settings: dict[str, Any], attachment_path: str) -> None:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
+    resolved_path = str(Path(attachment_path).resolve())
     clip = _first_locator(page, _ATTACH_SELECTORS, wait_seconds)
     _safe_click(clip)
+
+    try:
+        doc_item = _first_locator(page, _ATTACH_DOCUMENT_SELECTORS, 5)
+        # expect_file_chooser intercepts the native/JS file dialog directly --
+        # more robust than hunting for a hidden <input type="file"> whose
+        # visibility/activation is menu-state-dependent in the current UI.
+        with page.expect_file_chooser(timeout=8000) as fc_info:
+            _safe_click(doc_item)
+        fc_info.value.set_files(resolved_path)
+        time.sleep(3)
+        return
+    except Exception:
+        pass  # fall through: older UI, or no menu/chooser appeared
+
     file_input = _first_locator(page, ["xpath=//input[@type='file']"], wait_seconds)
-    file_input.set_input_files(str(Path(attachment_path).resolve()))
+    file_input.set_input_files(resolved_path)
     time.sleep(3)
 
 
@@ -630,7 +708,9 @@ def _send_via_playwright(profile: dict[str, Any], settings: dict[str, Any], phon
             time.sleep(4)
             if attachment_path:
                 _attach_file(page, settings, attachment_path)
-            _type_and_send(page, settings, message)
+                _caption_and_send_attachment(page, settings, message)
+            else:
+                _type_and_send(page, settings, message)
             return {
                 "status": "sent",
                 "message": "Message sent in the background through WhatsApp automation.",
@@ -650,7 +730,9 @@ def _send_target_via_playwright(profile: dict[str, Any], target: dict[str, Any],
             url = _open_target_chat(page, target, settings, message)
             if attachment_path:
                 _attach_file(page, settings, attachment_path)
-            _type_and_send(page, settings, message)
+                _caption_and_send_attachment(page, settings, message)
+            else:
+                _type_and_send(page, settings, message)
             return {
                 "status": "sent",
                 "message": f"Message sent to {target['target_name'] or target['target_ref']}.",

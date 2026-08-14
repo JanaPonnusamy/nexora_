@@ -1,33 +1,68 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { tenantService } from '../../services/tenantService'
 import { procurementService } from '../../services/procurementService'
 import { useActingUser } from '../../hooks/useActingUser'
 import type { Tenant } from '../../types/tenant'
-import type { DistributionConfigRow, DistributionRunSummary } from '../../types/procurement'
+import type {
+  DistributionConfigRow,
+  DistributionRunSummary,
+  DistributionRunItemRow,
+} from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
+import { WhatsAppSendCard } from '../../components/common/WhatsAppSendCard'
+import { buildDistributionImage } from '../../components/procurement/distributionImage'
 import { date } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
 import { FilterSelect } from '../../design-system/components/FilterBar'
 
-type Banner = { kind: 'success' | 'danger'; text: string } | null
+function stageBadge(status: string | null | undefined) {
+  const s = status || 'skipped'
+  const kind = s === 'success' || s === 'sent' ? 'success' : s === 'failed' ? 'danger' : 'muted'
+  return <span className={`pm-badge pm-badge--${kind}`}>{s}</span>
+}
 
-/** Supplier Stock Distribution (Procurement Admin) — one click generates the
- *  source ("HO") store's own stock out to every other store: an Excel file
+function statusBadge(status: string) {
+  const kind = status === 'completed' ? 'success' : status === 'failed' ? 'danger' : status === 'partial' ? 'warn' : 'muted'
+  return <span className={`pm-badge pm-badge--${kind}`}>{status.toUpperCase()}</span>
+}
+
+function waStatusLine(status: string | null | undefined) {
+  const s = status || 'not_queued'
+  if (s === 'sent') return { icon: <span style={{ color: '#166534' }}>✓</span>, label: 'Sent' }
+  if (s === 'failed') return { icon: <span style={{ color: '#991b1b' }}>✕</span>, label: 'Failed' }
+  if (s === 'queued') return { icon: <span className="sx-dim">…</span>, label: 'Queued' }
+  return { icon: <span className="sx-dim">–</span>, label: 'Not sent' }
+}
+
+type Banner = { kind: 'success' | 'danger'; text: string } | null
+type ActiveAction = 'all' | 'selected' | 'excel' | 'stock' | null
+
+/** NEXORA Platform — Supplier Stock Distribution. One click generates the
+ *  source store's ("NMW") own stock out to every other store: an Excel file
  *  per store + an automatic replace of that store's procurement.supplier_stock
- *  feed (source = 'internal_distribution'), plus a WhatsApp send queue. See
- *  backend/modules/procurement/distribution_service.py. */
+ *  feed, plus a WhatsApp image send. See
+ *  backend/modules/procurement/distribution_service.py. Frontend presents
+ *  this purely as a NEXORA workflow — no implementation/legacy terminology. */
 export default function SupplierStockDistributionPage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState('')
   const [sourceStoreCode, setSourceStoreCode] = useState('NMW')
-  const [provider, setProvider] = useState<'legacy' | 'nexora'>('legacy')
+  const provider = 'legacy' as const
   const [config, setConfig] = useState<DistributionConfigRow[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [runs, setRuns] = useState<DistributionRunSummary[]>([])
   const [loading, setLoading] = useState(false)
-  const [generating, setGenerating] = useState(false)
+  const [activeAction, setActiveAction] = useState<ActiveAction>(null)
   const actingUser = useActingUser()
   const [banner, setBanner] = useState<Banner>(null)
+  const [expandedRun, setExpandedRun] = useState<string | null>(null)
+  const [runItems, setRunItems] = useState<DistributionRunItemRow[]>([])
+  const [runItemsLoading, setRunItemsLoading] = useState(false)
+
+  const [lastRun, setLastRun] = useState<DistributionRunSummary | null>(null)
+  const [lastRunItems, setLastRunItems] = useState<DistributionRunItemRow[]>([])
+  const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  const [waErrorOpen, setWaErrorOpen] = useState<string | null>(null)
 
   const say = useCallback((kind: 'success' | 'danger', text: string) => {
     setBanner({ kind, text })
@@ -58,14 +93,6 @@ export default function SupplierStockDistributionPage() {
       .finally(() => setLoading(false))
   }, [tenantId, sourceStoreCode, fail])
 
-  const importLegacyMap = async () => {
-    try {
-      const res = await procurementService.importLegacySupplierMap(tenantId, sourceStoreCode)
-      say('success', `Mapped ${res.imported.length} store(s) from legacy Ho_code${res.skipped.length ? `, skipped ${res.skipped.join(', ')}` : ''}`)
-      load()
-    } catch (e) { fail(e) }
-  }
-
   useEffect(() => { load() }, [load])
 
   const targets = useMemo(
@@ -81,11 +108,14 @@ export default function SupplierStockDistributionPage() {
     })
   }
 
-  const run = async (opts: { excelOnly?: boolean; supplierUpdateOnly?: boolean; onlySelected?: boolean }) => {
+  const run = async (
+    action: Exclude<ActiveAction, null>,
+    opts: { excelOnly?: boolean; supplierUpdateOnly?: boolean; onlySelected?: boolean },
+  ) => {
     if (!tenantId || !sourceStoreCode) return say('danger', 'Select a tenant and source store')
     const storeIds = opts.onlySelected ? Array.from(selected) : undefined
-    if (opts.onlySelected && (!storeIds || storeIds.length === 0)) return say('danger', 'Select at least one store')
-    setGenerating(true)
+    if (opts.onlySelected && (!storeIds || storeIds.length === 0)) return say('danger', 'Select at least one target store')
+    setActiveAction(action)
     try {
       const res = await procurementService.generateDistribution(tenantId, sourceStoreCode, provider, {
         storeIds,
@@ -95,11 +125,30 @@ export default function SupplierStockDistributionPage() {
       })
       if (res.error) throw new Error(res.error)
       say('success', `Done — ${res.stores_succeeded ?? 0} succeeded, ${res.stores_failed ?? 0} failed`)
+      if (res.run_id) {
+        const detail = await procurementService.distributionRunDetail(res.run_id)
+        setLastRun(detail.run)
+        setLastRunItems(detail.items)
+      }
       load()
     } catch (e) {
       fail(e)
     } finally {
-      setGenerating(false)
+      setActiveAction(null)
+    }
+  }
+
+  const toggleRunDetail = async (runId: string) => {
+    if (expandedRun === runId) { setExpandedRun(null); return }
+    setExpandedRun(runId)
+    setRunItemsLoading(true)
+    try {
+      const detail = await procurementService.distributionRunDetail(runId)
+      setRunItems(detail.items)
+    } catch (e) {
+      fail(e)
+    } finally {
+      setRunItemsLoading(false)
     }
   }
 
@@ -123,23 +172,35 @@ export default function SupplierStockDistributionPage() {
     } catch (e) { fail(e); load() }
   }
 
+  const copyPath = (path: string) => {
+    navigator.clipboard.writeText(path).then(() => {
+      setCopiedPath(path)
+      window.setTimeout(() => setCopiedPath((c) => (c === path ? null : c)), 2000)
+    }).catch(() => fail(new Error('Could not copy path')))
+  }
+
+  const exportedItems = lastRunItems.filter((it) => it.excel_status === 'success' && it.excel_path)
+
   return (
     <div className="pm-admin">
       <header className="pm-admin__head">
-        <div className="pm-admin__title"><i className="bi bi-broadcast" /> Supplier Stock Distribution</div>
+        <div className="pm-admin__title">
+          <i className="bi bi-broadcast" />
+          <div>
+            <div className="sx-dim" style={{ fontSize: 12, letterSpacing: '0.06em' }}>NEXORA PLATFORM</div>
+            <div>Supplier Stock Distribution</div>
+          </div>
+        </div>
         <div className="pm-admin__ctx">
           <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId}>
             {tenants.length === 0 && <option value="">Loading…</option>}
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
           </FilterSelect>
           <input
-            className="pm-input pm-input--sm" placeholder="Source store code (e.g. NMW)"
+            className="pm-input pm-input--sm" placeholder="Source store (e.g. NMW)"
             value={sourceStoreCode} onChange={(e) => setSourceStoreCode(e.target.value.trim().toUpperCase())}
+            title="Source store"
           />
-          <FilterSelect ariaLabel="Source" value={provider} onChange={setProvider}>
-            <option value="legacy">Legacy (OrderNMC)</option>
-            <option value="nexora">Nexora (synced)</option>
-          </FilterSelect>
           <button className="pm-btn pm-btn--ghost" onClick={load} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
         </div>
       </header>
@@ -149,35 +210,30 @@ export default function SupplierStockDistributionPage() {
       <section className="pm-admin__panel">
         <div className="pm-admin__panel-title">Generate</div>
         <div className="pm-admin__form">
-          <button className="pm-btn pm-btn--primary" disabled={generating} onClick={() => run({})}>
-            <i className="bi bi-play-fill" /> {generating ? 'Working…' : 'Generate All'}
+          <button className="pm-btn pm-btn--primary" disabled={activeAction !== null} onClick={() => run('all', {})}>
+            <i className="bi bi-play-fill" /> {activeAction === 'all' ? 'Generating…' : 'Generate All'}
           </button>
-          <button className="pm-btn" disabled={generating} onClick={() => run({ onlySelected: true })}>
-            Generate Selected ({selected.size})
+          <button className="pm-btn" disabled={activeAction !== null} onClick={() => run('selected', { onlySelected: true })}>
+            {activeAction === 'selected' ? 'Generating…' : `Generate Selected (${selected.size})`}
           </button>
-          <button className="pm-btn" disabled={generating} onClick={() => run({ excelOnly: true })}>
-            Generate Excel Only
+          <button className="pm-btn" disabled={activeAction !== null} onClick={() => run('excel', { excelOnly: true })}>
+            {activeAction === 'excel' ? 'Exporting…' : 'Export Excel'}
           </button>
-          <button className="pm-btn" disabled={generating} onClick={() => run({ supplierUpdateOnly: true })}>
-            Update Supplier Stock Only
+          <button className="pm-btn" disabled={activeAction !== null} onClick={() => run('stock', { supplierUpdateOnly: true })}>
+            {activeAction === 'stock' ? 'Updating…' : 'Update Supplier Stock'}
           </button>
         </div>
       </section>
 
       <section className="pm-admin__panel">
-        <div className="pm-admin__panel-title">
-          Target stores, supplier code mapping &amp; WhatsApp distribution config
-          <button className="pm-btn pm-btn--ghost" style={{ marginLeft: 12 }} onClick={importLegacyMap} title="Copy each store's own supplier code for this source from the legacy OrderNMC Ho_code column">
-            <i className="bi bi-download" /> Import from Legacy Ho_code
-          </button>
-        </div>
+        <div className="pm-admin__panel-title">Target stores</div>
         {targets.length === 0 && !loading ? (
           <EmptyState icon="bi-shop" title="No target stores" description="Every store in this tenant is either missing or matches the source store code." />
         ) : (
           <table className="pm-grid pm-admin__table">
             <thead>
               <tr>
-                <th></th><th>Store</th><th>Local Supplier Code</th><th>WhatsApp Group</th><th>Phone Number</th><th>Enabled</th>
+                <th></th><th>Store</th><th>Supplier Code</th><th>WhatsApp Group</th><th>Phone Number</th><th>Enabled</th>
               </tr>
             </thead>
             <tbody>
@@ -219,6 +275,87 @@ export default function SupplierStockDistributionPage() {
         )}
       </section>
 
+      {exportedItems.length > 0 && (
+        <section className="pm-admin__panel">
+          <div className="pm-admin__panel-title">Export</div>
+          <div className="pm-banner pm-banner--success" style={{ marginBottom: 12 }}>
+            <i className="bi bi-check-circle" /> Excel exported successfully
+          </div>
+          <table className="pm-grid pm-admin__table">
+            <thead>
+              <tr>
+                <th>Store</th><th>File</th><th>WhatsApp</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {exportedItems.map((it) => {
+                const targetCfg = targets.find((t) => t.store_code === it.store_code)
+                const runDateText = date(lastRun?.started_at)
+                return (
+                  <tr key={it.run_item_id}>
+                    <td className="pm-prod__name">{it.store_code}</td>
+                    <td>
+                      <code style={{ fontSize: 12 }}>{it.excel_path}</code>{' '}
+                      <button className="pm-btn pm-btn--ghost" onClick={() => copyPath(it.excel_path as string)}>
+                        {copiedPath === it.excel_path ? 'Copied!' : 'Copy Path'}
+                      </button>
+                    </td>
+                    <td>{waStatusLine(it.whatsapp_status).icon} {waStatusLine(it.whatsapp_status).label}</td>
+                    <td>
+                      <WhatsAppSendCard
+                        title={`Send ${it.store_code} distribution image`}
+                        buttonLabel="Send WhatsApp Image"
+                        defaultCaption={`NEXORA PLATFORM\nSUPPLIER STOCK DISTRIBUTION\n\nSource: ${sourceStoreCode}\nTarget: ${it.store_code}\nDate: ${runDateText}`}
+                        preferredTargetName={targetCfg?.whatsapp_group ?? undefined}
+                        preferredPhone={targetCfg?.phone_number ?? undefined}
+                        buildFile={async () => {
+                          const products = await procurementService.distributionRunItemProducts(it.run_item_id)
+                          return buildDistributionImage({
+                            sourceStoreCode,
+                            targetStoreCode: it.store_code,
+                            targetStoreName: targetCfg?.store_name ?? it.store_code,
+                            runDate: runDateText,
+                            rows: products.rows,
+                          })
+                        }}
+                      />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {lastRunItems.length > 0 && (
+        <section className="pm-admin__panel">
+          <div className="pm-admin__panel-title">WhatsApp Distribution</div>
+          <table className="pm-grid pm-admin__table">
+            <tbody>
+              {lastRunItems.map((it) => {
+                const wa = waStatusLine(it.whatsapp_status)
+                const errorText = it.whatsapp_error
+                return (
+                  <tr key={it.run_item_id}>
+                    <td className="pm-prod__name" style={{ width: 100 }}>{it.store_code}</td>
+                    <td>{wa.icon} {wa.label}</td>
+                    <td>
+                      {it.whatsapp_status === 'failed' && errorText && (
+                        <button className="pm-btn pm-btn--ghost" onClick={() => setWaErrorOpen((c) => (c === it.run_item_id ? null : it.run_item_id))}>
+                          {waErrorOpen === it.run_item_id ? 'Hide error' : 'View error'}
+                        </button>
+                      )}
+                      {waErrorOpen === it.run_item_id && <span className="sx-dim" style={{ marginLeft: 8 }}>{errorText}</span>}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <section className="pm-admin__panel">
         <div className="pm-admin__panel-title">Run history</div>
         {runs.length === 0 && !loading ? (
@@ -227,26 +364,67 @@ export default function SupplierStockDistributionPage() {
           <table className="pm-grid pm-admin__table">
             <thead>
               <tr>
-                <th>Started</th><th>Source</th><th>Provider</th><th>Status</th>
-                <th className="sx-num">Stores</th><th className="sx-num">OK</th><th className="sx-num">Failed</th><th></th>
+                <th>Run Date</th><th>Operation</th><th>Status</th>
+                <th className="sx-num">Stores</th><th className="sx-num">Success</th><th className="sx-num">Failed</th>
+                <th className="sx-num">Products</th><th className="sx-num">Total Qty</th><th></th>
               </tr>
             </thead>
             <tbody>
               {runs.map((r) => (
-                <tr key={r.run_id}>
-                  <td className="sx-dim">{date(r.started_at)}</td>
-                  <td>{r.source_store_code}</td>
-                  <td><span className="pm-badge pm-badge--muted">{r.provider}</span></td>
-                  <td><span className={`pm-badge ${r.status === 'completed' ? 'pm-badge--success' : r.status === 'failed' ? 'pm-badge--danger' : 'pm-badge--muted'}`}>{r.status}</span></td>
-                  <td className="sx-num">{r.stores_total}</td>
-                  <td className="sx-num">{r.stores_succeeded}</td>
-                  <td className="sx-num">{r.stores_failed}</td>
-                  <td>
-                    {r.stores_failed > 0 && (
-                      <button className="pm-btn pm-btn--ghost" onClick={() => retryFailed(r.run_id)}>Retry Failed</button>
-                    )}
-                  </td>
-                </tr>
+                <Fragment key={r.run_id}>
+                  <tr>
+                    <td className="sx-dim">{date(r.started_at)}</td>
+                    <td>{r.source_store_code} Distribution</td>
+                    <td>{statusBadge(r.status)}</td>
+                    <td className="sx-num">{r.stores_total}</td>
+                    <td className="sx-num">{r.stores_succeeded}</td>
+                    <td className="sx-num">{r.stores_failed}</td>
+                    <td className="sx-num">{r.total_products ?? '—'}</td>
+                    <td className="sx-num">{r.total_stock_qty ?? '—'}</td>
+                    <td>
+                      <button className="pm-btn pm-btn--ghost" onClick={() => toggleRunDetail(r.run_id)}>
+                        {expandedRun === r.run_id ? 'Hide' : 'View'}
+                      </button>
+                      {r.stores_failed > 0 && (
+                        <button className="pm-btn pm-btn--ghost" onClick={() => retryFailed(r.run_id)}>Retry Failed</button>
+                      )}
+                    </td>
+                  </tr>
+                  {expandedRun === r.run_id && (
+                    <tr>
+                      <td colSpan={9}>
+                        <div className="sx-dim" style={{ marginBottom: 8 }}>
+                          <strong>NEXORA PLATFORM</strong> — Distribution Run Details · Source Store: {r.source_store_code} · Run Date: {date(r.started_at)} · Status: {r.status.toUpperCase()}
+                        </div>
+                        {r.error_summary && <div className="pm-banner pm-banner--danger" style={{ marginBottom: 8 }}>{r.error_summary}</div>}
+                        {runItemsLoading ? (
+                          <div className="sx-dim">Loading…</div>
+                        ) : (
+                          <table className="pm-grid pm-admin__table">
+                            <thead>
+                              <tr>
+                                <th>Store</th><th className="sx-num">Rows</th>
+                                <th>Stock Update</th><th>Excel</th><th>WhatsApp</th><th>Error</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {runItems.map((it) => (
+                                <tr key={it.run_item_id}>
+                                  <td>{it.store_code}</td>
+                                  <td className="sx-num">{it.rows_imported ?? it.rows_exported ?? '—'}</td>
+                                  <td>{stageBadge(it.stock_status)}</td>
+                                  <td>{stageBadge(it.excel_status)}</td>
+                                  <td>{stageBadge(it.whatsapp_status)}</td>
+                                  <td className="sx-dim">{it.stock_error || it.excel_error || it.whatsapp_error || it.error_message || ''}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
