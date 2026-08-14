@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../components/common/PageHeader'
+import { SegmentedTabs } from '../design-system/components/SegmentedTabs'
 import { ApiError } from '../services/apiClient'
 import {
   automationSettingsService,
@@ -12,6 +14,17 @@ import {
   type WhatsAppTarget,
 } from '../services/whatsappService'
 import './settings.css'
+
+const SETTINGS_TABS = [
+  { id: 'general', label: 'General', icon: 'bi-sliders', description: 'Git & automation' },
+  { id: 'whatsapp', label: 'WhatsApp', icon: 'bi-whatsapp', description: 'Profiles, contacts & inbox' },
+] as const
+
+type SettingsTabId = (typeof SETTINGS_TABS)[number]['id']
+
+function isSettingsTabId(value: string | null): value is SettingsTabId {
+  return SETTINGS_TABS.some((tab) => tab.id === value)
+}
 
 type AutomationFormState = {
   repoPath: string
@@ -114,6 +127,18 @@ function targetToForm(target: WhatsAppTarget): WhatsAppTargetForm {
 }
 
 export default function SettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const activeTab: SettingsTabId = isSettingsTabId(requestedTab) ? requestedTab : 'general'
+  const selectTab = (tab: SettingsTabId) => setSearchParams(tab === 'general' ? {} : { tab })
+  const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  const copyPath = (path: string) => {
+    navigator.clipboard.writeText(path).then(() => {
+      setCopiedPath(path)
+      window.setTimeout(() => setCopiedPath((current) => (current === path ? null : current)), 2000)
+    }).catch(() => setError('Could not copy path.'))
+  }
+
   const [automationData, setAutomationData] = useState<AutomationSettingsResponse | null>(null)
   const [automationForm, setAutomationForm] = useState<AutomationFormState>(emptyAutomationForm)
   const [automationLoading, setAutomationLoading] = useState(true)
@@ -129,6 +154,9 @@ export default function SettingsPage() {
   })
   const [whatsAppProfileForm, setWhatsAppProfileForm] = useState<WhatsAppProfileForm>(emptyWhatsAppProfile)
   const [whatsAppTargetForm, setWhatsAppTargetForm] = useState<WhatsAppTargetForm>(emptyWhatsAppTarget)
+  const [whatsAppProfileStatus, setWhatsAppProfileStatus] = useState<
+    Record<string, { logged_in: boolean; checked_at: string } | 'checking' | 'error'>
+  >({})
 
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -311,6 +339,39 @@ export default function SettingsPage() {
     }
   }
 
+  const checkWhatsAppProfileStatus = async (profileId: string) => {
+    setWhatsAppProfileStatus((current) => ({ ...current, [profileId]: 'checking' }))
+    try {
+      const payload = await whatsappService.checkProfileStatus(profileId)
+      setWhatsAppProfileStatus((current) => ({
+        ...current,
+        [profileId]: { logged_in: payload.logged_in, checked_at: payload.checked_at },
+      }))
+    } catch (err) {
+      setWhatsAppProfileStatus((current) => ({ ...current, [profileId]: 'error' }))
+      setError(err instanceof ApiError ? err.message : 'Unable to check WhatsApp login status for this profile.')
+    }
+  }
+
+  const logoutWhatsAppProfile = async (profileId: string) => {
+    setWhatsAppSaving(true)
+    setMessage('')
+    setError('')
+    try {
+      const payload = await whatsappService.logoutProfile(profileId)
+      setWhatsAppData((current) => current ? { ...current, profiles: payload.profiles, capabilities: payload.capabilities } : current)
+      setWhatsAppProfileStatus((current) => ({
+        ...current,
+        [profileId]: { logged_in: false, checked_at: new Date().toISOString() },
+      }))
+      setMessage('WhatsApp session cleared for this profile. Launch QR / Web to log in again.')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to log out this WhatsApp profile.')
+    } finally {
+      setWhatsAppSaving(false)
+    }
+  }
+
   const syncWhatsAppTarget = async (targetId: string) => {
     setWhatsAppSaving(true)
     setMessage('')
@@ -353,6 +414,19 @@ export default function SettingsPage() {
       {error && <div className="alert alert-danger">{error}</div>}
       {message && !error && <div className="alert alert-success">{message}</div>}
 
+      <SegmentedTabs
+        items={SETTINGS_TABS.map((tab) => ({
+          value: tab.id,
+          label: tab.label,
+          description: tab.description,
+          icon: tab.icon,
+        }))}
+        activeValue={activeTab}
+        ariaLabel="Settings sections"
+        onChange={selectTab}
+      />
+
+      {activeTab === 'general' && (
       <div className="settings-grid">
         <section className="settings-card">
           <div className="settings-card__header">
@@ -431,14 +505,17 @@ export default function SettingsPage() {
           </div>
         </section>
       </div>
+      )}
 
+      {activeTab === 'whatsapp' && (
+      <>
       <section className="settings-card settings-card--stack">
         <div className="settings-card__header">
           <div>
             <h2>WhatsApp Profiles</h2>
             <p>Create per-store, per-user, or shared profiles. Each one keeps its own QR session.</p>
           </div>
-          {whatsAppData && <StatusBadge ok={whatsAppData.profiles.length > 0} />}
+          {whatsAppData && <StatusBadge ok={(whatsAppData.profiles ?? []).length > 0} />}
         </div>
 
         <div className="settings-form">
@@ -495,29 +572,57 @@ export default function SettingsPage() {
         </div>
 
         <div className="settings-profile-list">
-          {(whatsAppData?.profiles ?? []).map((profile) => (
-            <article key={profile.profile_id} className="settings-profile-card">
-              <div className="settings-profile-card__head">
-                <div>
-                  <strong>{profile.profile_name}</strong>
-                  <small>{profile.owner_type}{profile.owner_name ? ` | ${profile.owner_name}` : ''}</small>
+          {(whatsAppData?.profiles ?? []).map((profile) => {
+            const status = whatsAppProfileStatus[profile.profile_id]
+            const checking = status === 'checking'
+            return (
+              <article key={profile.profile_id} className="settings-profile-card">
+                <div className="settings-profile-card__head">
+                  <div>
+                    <strong>{profile.profile_name}</strong>
+                    <small>{profile.owner_type}{profile.owner_name ? ` | ${profile.owner_name}` : ''}</small>
+                  </div>
+                  <div className="d-flex gap-1 align-items-center">
+                    {profile.is_default && <span className="badge text-bg-success">Default</span>}
+                    {status && status !== 'checking' && status !== 'error' && (
+                      <span className={`badge ${status.logged_in ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                        {status.logged_in ? 'Logged in' : 'Logged out'}
+                      </span>
+                    )}
+                    {status === 'error' && <span className="badge text-bg-danger">Status unknown</span>}
+                  </div>
                 </div>
-                {profile.is_default && <span className="badge text-bg-success">Default</span>}
-              </div>
-              <p>{profile.default_phone || 'No default phone saved'}</p>
-              <div className="settings-profile-card__actions">
-                <button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setWhatsAppProfileForm(profileToForm(profile))}>
-                  Edit
-                </button>
-                <button type="button" className="btn btn-outline-success btn-sm" onClick={() => void launchWhatsAppProfile(profile.profile_id)} disabled={whatsAppSaving}>
-                  Launch QR / Web
-                </button>
-                <button type="button" className="btn btn-outline-danger btn-sm" onClick={() => void deleteWhatsAppProfile(profile.profile_id)} disabled={whatsAppSaving}>
-                  Delete
-                </button>
-              </div>
-            </article>
-          ))}
+                <p>{profile.default_phone || 'No default phone saved'}</p>
+                <div className="settings-profile-card__path">
+                  <code>{profile.session_dir}</code>
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm"
+                    onClick={() => copyPath(profile.session_dir)}
+                  >
+                    {copiedPath === profile.session_dir ? 'Copied!' : 'Copy Path'}
+                  </button>
+                </div>
+                <div className="settings-profile-card__actions">
+                  <button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setWhatsAppProfileForm(profileToForm(profile))}>
+                    Edit
+                  </button>
+                  <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => void checkWhatsAppProfileStatus(profile.profile_id)} disabled={checking}>
+                    {checking ? 'Checking...' : 'Check status'}
+                  </button>
+                  <button type="button" className="btn btn-outline-success btn-sm" onClick={() => void launchWhatsAppProfile(profile.profile_id)} disabled={whatsAppSaving}>
+                    Launch QR / Web
+                  </button>
+                  <button type="button" className="btn btn-outline-warning btn-sm" onClick={() => void logoutWhatsAppProfile(profile.profile_id)} disabled={whatsAppSaving}>
+                    Logout
+                  </button>
+                  <button type="button" className="btn btn-outline-danger btn-sm" onClick={() => void deleteWhatsAppProfile(profile.profile_id)} disabled={whatsAppSaving}>
+                    Delete
+                  </button>
+                </div>
+              </article>
+            )
+          })}
         </div>
       </section>
 
@@ -527,7 +632,7 @@ export default function SettingsPage() {
             <h2>Allowed Contacts And Groups</h2>
             <p>Whitelisted targets only. Use these for group report sending and restricted inbox reading.</p>
           </div>
-          {whatsAppData && <StatusBadge ok={whatsAppData.targets.length > 0} />}
+          {whatsAppData && <StatusBadge ok={(whatsAppData.targets ?? []).length > 0} />}
         </div>
 
         <div className="settings-form">
@@ -634,6 +739,8 @@ export default function SettingsPage() {
           )}
         </div>
       </section>
+      </>
+      )}
     </div>
   )
 }

@@ -142,6 +142,7 @@ def load_source(conn, tenant_id, store_id, params):
             CAST(ISNULL(mb.max_bill_qty, 0)      AS DECIMAL(18,3)) AS max_bill_qty,
             CAST(ISNULL(agg.billing_frequency, 0) AS INT)          AS billing_frequency,
             CAST({_store_stock_expr("p")} AS DECIMAL(18,3)) AS current_stock,
+            CAST(ISNULL(p.SaleUnit, 0) AS DECIMAL(18,3))    AS sale_unit,
             lg.last_sale_date                    AS last_sale_date,
             lg.last_received_date                AS last_received_date
         FROM sync.Products p

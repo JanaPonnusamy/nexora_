@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from .service import (
+    check_status,
     delete_profile,
     delete_target,
     get_state,
     launch_qr,
+    logout_profile,
     send_message,
     send_target_message,
     sync_target_messages,
@@ -94,6 +97,16 @@ def launch_whatsapp_qr(profile_id: str):
     return launch_qr(profile_id)
 
 
+@router.get("/profiles/{profile_id}/status")
+def read_whatsapp_profile_status(profile_id: str):
+    return check_status(profile_id)
+
+
+@router.post("/profiles/{profile_id}/logout")
+def logout_whatsapp_profile(profile_id: str):
+    return logout_profile(profile_id)
+
+
 @router.post("/send/text")
 def send_whatsapp_text(payload: WhatsAppTextPayload):
     return send_message(payload.profile_id, payload.phone, payload.message)
@@ -127,7 +140,7 @@ async def send_whatsapp_file(
     file: UploadFile = File(...),
 ):
     content = await file.read()
-    return send_message(profile_id, phone, message, file.filename, content)
+    return await run_in_threadpool(send_message, profile_id, phone, message, file.filename, content)
 
 
 @router.post("/targets/send-file")
@@ -137,4 +150,4 @@ async def send_whatsapp_target_file(
     file: UploadFile = File(...),
 ):
     content = await file.read()
-    return send_target_message(target_id, message, file.filename, content)
+    return await run_in_threadpool(send_target_message, target_id, message, file.filename, content)

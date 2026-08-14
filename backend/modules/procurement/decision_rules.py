@@ -130,12 +130,19 @@ def coverage_required(target_stock_qty, effective_avail):
     return target_stock_qty - effective_avail
 
 
-def final_required(coverage_req, max_day_sale_qty, max_bill_qty):
+def final_required(coverage_req, max_day_sale_qty, max_bill_qty, sale_unit=0.0):
     """PR-BR-007/008/009: Required = MAX(coverage, floors); Final = CEILING(Required).
 
-    Returns (required, final_required_qty, determinant). The determinant is the
-    argument equal to the MAX, preferring COVERAGE, then SPIKE_PROTECTION, then
-    MAX_BILL_TRIGGER (PR-BR-009).
+    Legacy parity (order_local/remote.sql): the loose-unit shortfall is then
+    divided by the product's strip/pack size (``SaleUnit``) and ceiling'd —
+    ``CEILING((maxqty - TotalStock) / SaleUnit)`` — so the order quantity is
+    expressed in strips, not loose units. When SaleUnit is missing/<=0 the
+    strip quantity falls back to the loose quantity (legacy would zero it,
+    but that would silently drop the product from procurement here).
+
+    Returns (required, final_required_qty, suggested_strip_qty, determinant).
+    The determinant is the argument equal to the MAX, preferring COVERAGE,
+    then SPIKE_PROTECTION, then MAX_BILL_TRIGGER (PR-BR-009).
     """
     max_day_sale_qty = max_day_sale_qty or 0.0
     max_bill_qty = max_bill_qty or 0.0
@@ -147,7 +154,11 @@ def final_required(coverage_req, max_day_sale_qty, max_bill_qty):
         determinant = SPIKE_PROTECTION
     else:
         determinant = MAX_BILL_TRIGGER
-    return required, final_qty, determinant
+    if sale_unit and sale_unit > 0:
+        suggested_qty = math.ceil(final_qty / sale_unit)
+    else:
+        suggested_qty = final_qty
+    return required, final_qty, suggested_qty, determinant
 
 
 # --------------------------------------------------------------------------
@@ -173,6 +184,7 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
     reserved = src.get("reserved", 0.0) or 0.0
     max_day = src.get("max_day_sale_qty", 0.0) or 0.0
     max_bill = src.get("max_bill_qty", 0.0) or 0.0
+    sale_unit = src.get("sale_unit", 0.0) or 0.0
 
     # Stage 2 — metrics
     avg = average_daily_sales(src.get("window_sales_qty", 0.0), params.rolling_days)
@@ -262,7 +274,9 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
     # Included candidate — Stages 6-9
     tgt = target_stock(avg, params.max_days)
     cov_req = coverage_required(tgt, eff)
-    required, final_qty, determinant = final_required(cov_req, max_day, max_bill)
+    required, final_qty, suggested_qty, determinant = final_required(
+        cov_req, max_day, max_bill, sale_unit
+    )
 
     out["target_days"] = params.max_days
     out["target_stock_qty"] = tgt
@@ -276,12 +290,12 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         return out
 
     out["procurement_action"] = ACTION_INCLUDE
-    out["suggested_qty"] = final_qty
-    out["final_required_qty"] = final_qty
+    out["suggested_qty"] = suggested_qty
+    out["final_required_qty"] = suggested_qty
     out["reason_code"] = INCLUDED_BELOW_MIN_DAYS
     out["reason_text"] = (
-        f"Included; {final_qty} units; cover {cover:.1f}d < min "
-        f"{params.min_days:g}d; driven by {determinant} "
+        f"Included; {suggested_qty} strip(s) ({final_qty} loose units); cover "
+        f"{cover:.1f}d < min {params.min_days:g}d; driven by {determinant} "
         f"(coverage {cov_req:.0f}, floors {max_day:g}/{max_bill:g})."
     )
     return out

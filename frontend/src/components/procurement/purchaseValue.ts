@@ -98,14 +98,18 @@ export function marginPercent(mrp: number | null | undefined, ptr: number | null
 }
 
 /** Trade margin % between what the supplier was paid (Item Cost) and PTR —
- *  the same formula already used elsewhere for purchase-history margin
- *  (legacy_order's ProductDiscPercent: (PTR - Cost) / PTR * 100), reused here
- *  rather than invented, as the fallback when the recommendation feed's own
- *  last_margin_percent isn't populated. null when either figure is
- *  missing/non-positive. */
+ *  the SAME formula NEXORA's own Margin Report already uses as the
+ *  authoritative "Margin %" definition (reports/repository.py's margin():
+ *  MarginPercentage = (Profit / Cost) * 100, i.e. markup on cost, NOT
+ *  legacy_order's ProductDiscPercent — that field is a *discount* % off PTR,
+ *  a different named metric, and does not reconcile against real Cost/PTR
+ *  pairs). Applied here to the same Cost -> PTR relationship:
+ *  ((PTR - Cost) / Cost) * 100. Reused rather than invented; owner-verified
+ *  against real data (e.g. Cost 101.92 / PTR 108.43 -> ~6.39%). null when
+ *  either figure is missing/non-positive. */
 export function costMarginPercent(ptr: number | null | undefined, cost: number | null | undefined): number | null {
-  if (ptr == null || ptr <= 0 || cost == null) return null
-  return ((ptr - cost) / ptr) * 100
+  if (cost == null || cost <= 0 || ptr == null) return null
+  return ((ptr - cost) / cost) * 100
 }
 
 /** Optional per-product signals for Auto Assign scoring that are not carried in

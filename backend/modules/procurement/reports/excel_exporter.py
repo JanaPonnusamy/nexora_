@@ -1,5 +1,6 @@
 from io import BytesIO
 
+import xlwt
 from openpyxl import Workbook
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -113,6 +114,43 @@ class ExcelExporter:
         cls.add_totals(ws)
         cls.auto_width(ws)
         cls.conditional_formatting(ws)
+
+        buf = BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    @classmethod
+    def build_workbook_xls(cls, rows, title):
+        """Legacy Excel 97-2003 (.xls, BIFF) output — some 3rd-party apps
+        that receive these exports can't open openpyxl's .xlsx (OOXML)."""
+        wb = xlwt.Workbook(encoding="utf-8")
+        ws = wb.add_sheet(title[:31] or "Sheet1")
+
+        header_style = xlwt.easyxf(
+            "font: bold on, color white; "
+            "pattern: pattern solid, fore_colour dark_blue; "
+            "align: horiz center; "
+            "borders: left thin, right thin, top thin, bottom thin;"
+        )
+        cell_style = xlwt.easyxf("borders: left thin, right thin, top thin, bottom thin;")
+
+        if rows:
+            headers = list(rows[0].keys())
+            widths = [len(str(h)) for h in headers]
+            for col, header in enumerate(headers):
+                ws.write(0, col, header, header_style)
+            for row_idx, row in enumerate(rows, start=1):
+                for col, header in enumerate(headers):
+                    value = row.get(header)
+                    ws.write(row_idx, col, value, cell_style)
+                    widths[col] = max(widths[col], len(str(value)) if value is not None else 0)
+            for col, width in enumerate(widths):
+                ws.col(col).width = min((width + 5) * 256, 65535)
+        else:
+            ws.write(0, 0, "No Data")
+
+        ws.set_panes_frozen(True)
+        ws.set_horz_split_pos(1)
 
         buf = BytesIO()
         wb.save(buf)

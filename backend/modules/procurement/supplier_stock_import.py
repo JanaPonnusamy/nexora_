@@ -13,6 +13,8 @@ import io
 import os
 import re
 
+import pyodbc
+
 from config.database import get_connection, _connection_string
 
 # Canonical mapping target -> supplier_stock column. Mapping.column_name uses the
@@ -94,7 +96,7 @@ def _stores_by_code(conn):
 _STOCK_COLS = (
     "tenant_id, store_id, supplier_code, supplier_product_code, supplier_product_name, "
     "product_code, available_stock, ptr, mrp, discount, packing, free, minimum_qty, "
-    "scheme, transaction_date, source, is_active, imported_by"
+    "scheme, transaction_date, source, is_active, imported_by, rack"
 )
 
 
@@ -128,13 +130,37 @@ def resolve_product_codes(conn, tenant_id=None, store_id=None, supplier_code=Non
     return cur.rowcount
 
 
+# pyodbc's fast_executemany infers each string parameter's buffer size from
+# the FIRST row's value length; a later row with a longer string then raises
+# "String data, right truncation". setinputsizes pins every varchar param to
+# its actual column width up front so batch order can never cause that.
+_STOCK_INPUT_SIZES = [
+    None, None,                      # tenant_id, store_id (uniqueidentifier)
+    (pyodbc.SQL_VARCHAR, 50, 0),     # supplier_code
+    (pyodbc.SQL_VARCHAR, 50, 0),     # supplier_product_code
+    (pyodbc.SQL_VARCHAR, 200, 0),    # supplier_product_name
+    (pyodbc.SQL_VARCHAR, 50, 0),     # product_code
+    None,                             # available_stock
+    None, None,                       # ptr, mrp
+    (pyodbc.SQL_VARCHAR, 50, 0),     # discount
+    (pyodbc.SQL_VARCHAR, 50, 0),     # packing
+    None, None, None,                 # free, minimum_qty, scheme
+    None,                             # transaction_date
+    (pyodbc.SQL_VARCHAR, 30, 0),     # source
+    None,                             # is_active
+    (pyodbc.SQL_VARCHAR, 100, 0),    # imported_by
+    (pyodbc.SQL_VARCHAR, 50, 0),     # rack
+]
+
+
 def insert_stock_rows(conn, rows):
     """Bulk-insert prepared supplier_stock tuples (order matches ``_STOCK_COLS``)."""
     if not rows:
         return 0
     cur = conn.cursor()
     cur.fast_executemany = True
-    placeholders = ",".join(["?"] * 18)
+    cur.setinputsizes(_STOCK_INPUT_SIZES)
+    placeholders = ",".join(["?"] * 19)
     cur.executemany(
         f"INSERT INTO procurement.supplier_stock ({_STOCK_COLS}) VALUES ({placeholders})",
         rows,
@@ -158,7 +184,7 @@ def import_legacy(imported_by="legacy-import"):
         scur = src.cursor()
         scur.execute(
             "SELECT suppliercode, supplierproductcode, supplierproductname, mrp, ptr, "
-            "stock, discound, packing, storename, sch, free, transactiondate, minqty "
+            "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack "
             "FROM SupplierStock"
         )
         stock_rows, skipped = [], 0
@@ -172,7 +198,7 @@ def import_legacy(imported_by="legacy-import"):
                 tenant_id, store_id, r.suppliercode, r.supplierproductcode,
                 r.supplierproductname, None, r.stock, r.mrp, r.ptr, r.discound,
                 r.packing, r.free, r.minqty, r.sch, r.transactiondate,
-                "legacy", 1, imported_by,
+                "legacy", 1, imported_by, getattr(r, "Rack", None),
             ))
         inserted = insert_stock_rows(dest, stock_rows)
         dest.commit()
@@ -423,7 +449,7 @@ def import_excel(tenant_id, store_id, supplier_code, file_bytes, filename,
             tenant_id, store_id, supplier_code, r["supplier_product_code"],
             r["supplier_product_name"], None, r["available_stock"], r["ptr"], r["mrp"],
             r["discount"], r["packing"], r["free"], r["minimum_qty"], r["scheme"],
-            None, "excel", 1, imported_by,
+            None, "excel", 1, imported_by, None,
         ) for r in merged.values()]
         inserted = insert_stock_rows(conn, rows)
         conn.commit()

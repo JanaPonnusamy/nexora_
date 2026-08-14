@@ -317,12 +317,18 @@ function PurchaseMiniTable({
   if (rows.length === 0) return <div className="pm-dsec__hint">No recent purchases.</div>
   return (
     <div className="pm-minitable-wrap">
-      <table className="pm-minitable pm-minitable--click">
+      <table className="pm-minitable pm-minitable--click pm-minitable--pur">
+        <colgroup>
+          <col style={{ width: '55px' }} /><col style={{ width: '100px' }} />
+          <col style={{ width: '32px' }} /><col style={{ width: '32px' }} />
+          <col style={{ width: '66px' }} /><col style={{ width: '66px' }} />
+          <col style={{ width: '66px' }} />
+        </colgroup>
         <thead>
           <tr>
             <th>Date</th><th>Supplier</th>
             <th className="sx-num">Qty</th><th className="sx-num">Free</th>
-            <th className="sx-num">Item Cost</th><th className="sx-num">PTR</th>
+            <th className="sx-num">Cost</th><th className="sx-num">PTR</th>
             <th className="sx-num">MRP</th>
           </tr>
         </thead>
@@ -352,7 +358,12 @@ function SalesMiniTable({
   if (rows.length === 0) return <div className="pm-dsec__hint">No recent sales.</div>
   return (
     <div className="pm-minitable-wrap">
-      <table className="pm-minitable pm-minitable--click">
+      <table className="pm-minitable pm-minitable--click pm-minitable--sales">
+        <colgroup>
+          <col style={{ width: '55px' }} /><col style={{ width: '65px' }} />
+          <col style={{ width: '100px' }} /><col style={{ width: '38px' }} />
+          <col style={{ width: '45px' }} />
+        </colgroup>
         <thead>
           <tr>
             <th>Date</th><th>Bill</th><th>Customer</th>

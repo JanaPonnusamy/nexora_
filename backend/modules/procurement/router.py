@@ -7,8 +7,10 @@ Exposes tenant-scoped CRUD for Procurement Cycles, plus the mounted Refresh
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from dependencies.auth import get_current_user_optional
+from dependencies.store_scope import assert_tenant_access
 from modules.procurement import service
 from modules.procurement.schemas import CycleCreate, CycleUpdate
 from modules.procurement.vpl_router import router as vpl_router
@@ -61,12 +63,19 @@ def list_cycles(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
+    current_user: dict | None = Depends(get_current_user_optional),
 ):
+    assert_tenant_access(current_user, tenant_id)
     return service.list_cycles(tenant_id, status, search, page, page_size, store_id)
 
 
 @router.get("/cycles/{cycle_id}")
-def get_cycle(cycle_id: str, tenant_id: str = Query(...)):
+def get_cycle(
+    cycle_id: str,
+    tenant_id: str = Query(...),
+    current_user: dict | None = Depends(get_current_user_optional),
+):
+    assert_tenant_access(current_user, tenant_id)
     return service.get_cycle(tenant_id, cycle_id)
 
 

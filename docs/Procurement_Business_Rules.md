@@ -288,23 +288,29 @@ Each rule uses this structure:
   and discard non-orders. Records which rule determined the final quantity.
 - **Inputs:** `CoverageRequired`, `MaxDaySaleQty`, `MaxBillQty`.
 - **Calculation Logic:** `Required = MAX(CoverageRequired, MaxDaySaleQty, MaxBillQty)`;
-  `FinalRequiredQty = CEILING(Required)`; drop if `≤ 0`. **Determining reason** = the argument that equals
-  the MAX (`COVERAGE` | `SPIKE_PROTECTION` | `MAX_BILL_TRIGGER`).
+  `FinalRequiredQty(loose) = CEILING(Required)`; drop if `≤ 0`. **Determining reason** = the argument that
+  equals the MAX (`COVERAGE` | `SPIKE_PROTECTION` | `MAX_BILL_TRIGGER`). The loose-unit quantity is then
+  converted to strip/pack units via the product's `SaleUnit`:
+  `FinalRequiredQty = CEILING(FinalRequiredQty(loose) / SaleUnit)` when `SaleUnit > 0`, else the loose
+  quantity is used unconverted (legacy `order_local/remote.sql` instead zeroes the order in this case, but
+  that would silently drop the product from procurement, so the engine falls back to loose qty).
 - **Conditions:** Per candidate.
 - **Exceptions:** `Final ≤ 0` → excluded (`EXCLUDED_ZERO_REQUIRED`).
 - **Dependencies:** PR-BR-006/007/008.
-- **Outputs:** `final_required_qty`; determining Reason Code + Text → `order_virtual_items`.
-- **Business Example:** PARA-500.
-- **Worked Calculation:** `MAX(130, 40, 60) = 130` → `CEILING(130) = 130`.
-- **Intermediate Values:** Required = 130; determinant = COVERAGE.
-- **Final Decision:** **Suggested order = 130 units.**
+- **Outputs:** `final_required_qty` / `suggested_qty` (strip units); determining Reason Code + Text →
+  `order_virtual_items`.
+- **Business Example:** PARA-500 (SaleUnit = 10).
+- **Worked Calculation:** `MAX(130, 40, 60) = 130` → `CEILING(130) = 130` loose → `CEILING(130/10) = 13` strips.
+- **Intermediate Values:** Required = 130; loose qty = 130; determinant = COVERAGE.
+- **Final Decision:** **Suggested order = 13 strips.**
 - **Reason Code:** `COVERAGE` (this example).
-- **Displayed Explanation:** "Suggested 130 — driven by coverage to the 200 target; protection floors (40, 60) not binding."
-- **Decision Explorer Output:** All three candidates, the MAX, the determinant, final qty.
+- **Displayed Explanation:** "Suggested 13 strip(s) (130 loose units) — driven by coverage to the 200 target; protection floors (40, 60) not binding."
+- **Decision Explorer Output:** All three candidates, the MAX, the determinant, final qty (loose and strip).
 - **Future Decision Dependencies:** Customer Demand (PR-BR-026+, additive), Manual Override, Supplier
   Assignment (Topic 06).
-- **Legacy Evidence:** `CEILING(...)` + `DELETE WHERE FinalRequiredQty<=0`.
-- **Status:** Ratified · **Version:** 2.0
+- **Legacy Evidence:** `CEILING((maxqty - TotalStock) / SaleUnit)` (order_local/remote.sql `Orderqty`) +
+  `DELETE WHERE FinalRequiredQty<=0`.
+- **Status:** Ratified · **Version:** 2.1
 
 ## PR-BR-010 — Movement Class
 

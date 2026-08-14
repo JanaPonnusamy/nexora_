@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import concurrent.futures
 import json
 import re
 import shutil
@@ -50,6 +51,19 @@ DEFAULT_SETTINGS = {
 _DRIVER_LOCK = threading.RLock()
 _PLAYWRIGHT_DRIVER: Any = None
 _CONTEXTS: dict[str, dict[str, Any]] = {}  # profile_id -> {context, page, headless}
+
+# Playwright's sync API is pinned to whichever OS thread created the driver —
+# a second thread touching it tears the connection down (the browser opens,
+# then closes within seconds). FastAPI hands sync endpoints to whatever
+# thread is free in its pool, so a lock alone (mutual exclusion) isn't
+# enough; every driver-touching entrypoint below is routed through this one
+# dedicated thread so the driver, contexts and pages stay on a single thread
+# for their whole lifetime.
+_DRIVER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="wa-driver")
+
+
+def _run_on_driver_thread(fn, *args, **kwargs):
+    return _DRIVER_EXECUTOR.submit(fn, *args, **kwargs).result()
 
 
 def _now_iso() -> str:
@@ -354,9 +368,23 @@ def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
         user_data_dir=str(session_dir),
         headless=headless,
         viewport={"width": 1280, "height": 960} if headless else None,
-        args=["--width=1280", "--height=960"] if not headless else [],
+        # No window-size CLI args for the headed path: Chromium's
+        # --width=/--height= are not Firefox flags at all, and even
+        # Firefox's own single-dash -width/-height aren't reliably accepted
+        # by this Playwright-bundled build ("-height" logs as an
+        # unrecognized flag here). An unrecognized flag's value falls
+        # through to Firefox's positional "open this as a URL" argument,
+        # and a bare integer like 1280 gets canonicalised as a decimal IPv4
+        # literal (1280 = 0x0500 = 0.0.5.0) -- exactly the bogus
+        # "Unable to connect... 0.0.5.0" page this was producing. Simplest
+        # fix: don't pass size args; Firefox opens at its own default size.
+        args=[],
         firefox_user_prefs=_FIREFOX_USER_PREFS,
-        timeout=45000,
+        # First-run profile bootstrap (cache/cert DB init) can exceed 45s
+        # under antivirus file-scanning on a locked-down machine -- give it
+        # real headroom rather than failing a launch that was still in
+        # progress.
+        timeout=120000,
     )
     page = context.pages[0] if context.pages else context.new_page()
     return context, page
@@ -458,11 +486,34 @@ _SEND_BUTTON_SELECTORS = [
     "xpath=//span[@data-icon='send']",
     "xpath=//span[@data-icon='wds-ic-send-filled']",
 ]
+# After a file is attached, WhatsApp opens a preview overlay with its OWN
+# caption box -- it is NOT inside <footer>, unlike the normal chat composer.
+# The regular _COMPOSER_SELECTORS' footer-scoped entry still matches the
+# background chat composer (Playwright's is_visible() checks CSS
+# visibility/size, not z-index occlusion, so a covered-but-present element
+# still reads as "visible"), so typing there sends a bare text message while
+# the actual attachment preview is left unconfirmed. These selectors target
+# the caption box specifically so the caption travels WITH the file.
+_CAPTION_SELECTORS = [
+    "xpath=//div[@data-testid='media-caption-input-container']",
+    "xpath=//div[@aria-label='Add a caption'][@contenteditable='true']",
+    "xpath=//div[@contenteditable='true'][@data-tab='10'][not(ancestor::footer)]",
+]
 _ATTACH_SELECTORS = [
     "xpath=//button[@aria-label='Attach']",
     "xpath=//span[@data-icon='plus-rounded']",
     "xpath=//span[@data-icon='clip']",
     "xpath=//button[@title='Attach']",
+]
+# Current WhatsApp Web opens a type-picker menu after Attach (Document /
+# Photos & videos / Camera / Audio / ...) instead of exposing the file input
+# directly -- "Document" must be clicked first for a generic file (e.g. the
+# distribution Excel) to activate the right <input type="file">.
+_ATTACH_DOCUMENT_SELECTORS = [
+    "xpath=//div[@aria-label='Document']",
+    "xpath=//li[@aria-label='Document']",
+    "xpath=//span[normalize-space(text())='Document']",
+    "xpath=//div[normalize-space(text())='Document']",
 ]
 
 
@@ -567,6 +618,23 @@ def _type_and_send(page: Any, settings: dict[str, Any], message: str) -> None:
     time.sleep(2)
 
 
+def _caption_and_send_attachment(page: Any, settings: dict[str, Any], message: str) -> None:
+    """Type the caption into the FILE PREVIEW's own caption box (not the
+    background chat composer -- see _CAPTION_SELECTORS) and click Send
+    explicitly. Must be called right after _attach_file, while the preview
+    overlay is still open."""
+    wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
+    caption = _first_locator(page, _CAPTION_SELECTORS, wait_seconds)
+    _safe_click(caption)
+    time.sleep(0.3)
+    if message:
+        caption.type(message, delay=8)
+        time.sleep(0.3)
+    send = _first_locator(page, _SEND_BUTTON_SELECTORS, wait_seconds)
+    _safe_click(send)
+    time.sleep(3)
+
+
 def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any], message: str = "") -> str:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     if target["target_kind"] == "contact":
@@ -592,10 +660,19 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
     search.type(query, delay=15)
     time.sleep(2)
 
+    # Case-insensitive fallbacks: WhatsApp group names are configured
+    # elsewhere (e.g. dbo.stores.w_group_name) and easily drift in case from
+    # the real chat title ("NMV GROUP" vs the actual "NMV Group") -- XPath 1.0
+    # has no case-insensitive contains(), so translate() both sides to
+    # lowercase before comparing.
+    _UPPER, _LOWER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+    label_lower = json.dumps(label.lower())
     chat_selectors = [
         f"xpath=//span[@title={json.dumps(label)}]",
         f"xpath=//*[@title={json.dumps(label)}]",
         f"xpath=//span[contains(@title, {json.dumps(label)})]",
+        f"xpath=//span[translate(@title, '{_UPPER}', '{_LOWER}')={label_lower}]",
+        f"xpath=//span[contains(translate(@title, '{_UPPER}', '{_LOWER}'), {label_lower})]",
     ]
     try:
         chat = _first_locator(page, chat_selectors, wait_seconds)
@@ -611,10 +688,25 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
 
 def _attach_file(page: Any, settings: dict[str, Any], attachment_path: str) -> None:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
+    resolved_path = str(Path(attachment_path).resolve())
     clip = _first_locator(page, _ATTACH_SELECTORS, wait_seconds)
     _safe_click(clip)
+
+    try:
+        doc_item = _first_locator(page, _ATTACH_DOCUMENT_SELECTORS, 5)
+        # expect_file_chooser intercepts the native/JS file dialog directly --
+        # more robust than hunting for a hidden <input type="file"> whose
+        # visibility/activation is menu-state-dependent in the current UI.
+        with page.expect_file_chooser(timeout=8000) as fc_info:
+            _safe_click(doc_item)
+        fc_info.value.set_files(resolved_path)
+        time.sleep(3)
+        return
+    except Exception:
+        pass  # fall through: older UI, or no menu/chooser appeared
+
     file_input = _first_locator(page, ["xpath=//input[@type='file']"], wait_seconds)
-    file_input.set_input_files(str(Path(attachment_path).resolve()))
+    file_input.set_input_files(resolved_path)
     time.sleep(3)
 
 
@@ -630,7 +722,9 @@ def _send_via_playwright(profile: dict[str, Any], settings: dict[str, Any], phon
             time.sleep(4)
             if attachment_path:
                 _attach_file(page, settings, attachment_path)
-            _type_and_send(page, settings, message)
+                _caption_and_send_attachment(page, settings, message)
+            else:
+                _type_and_send(page, settings, message)
             return {
                 "status": "sent",
                 "message": "Message sent in the background through WhatsApp automation.",
@@ -650,7 +744,9 @@ def _send_target_via_playwright(profile: dict[str, Any], target: dict[str, Any],
             url = _open_target_chat(page, target, settings, message)
             if attachment_path:
                 _attach_file(page, settings, attachment_path)
-            _type_and_send(page, settings, message)
+                _caption_and_send_attachment(page, settings, message)
+            else:
+                _type_and_send(page, settings, message)
             return {
                 "status": "sent",
                 "message": f"Message sent to {target['target_name'] or target['target_ref']}.",
@@ -725,16 +821,23 @@ def update_settings(browser_command: str, delivery_mode: str, launch_wait_second
     # Drop any live sessions so the new headless/visibility choice takes effect
     # on the next send instead of reusing an old-mode session.
     shutdown_all_drivers()
+    profiles = _load_profiles()
     return {
         "settings": settings,
-        "profiles": _load_profiles(),
-        "capabilities": _capabilities(settings, _load_profiles()),
+        "profiles": profiles,
+        "targets": _load_targets(),
+        "messages": _load_inbox()[:100],
+        "capabilities": _capabilities(settings, profiles),
     }
 
 
 def upsert_profile(payload: dict[str, Any]) -> dict[str, Any]:
     profiles = _load_profiles()
-    profile_id = str(payload.get("profile_id", "")).strip() or str(uuid.uuid4())
+    # `payload.get("profile_id", "")` returns the JSON `null` the Pydantic
+    # model sends for an unset optional field, not the "" default -- and
+    # str(None) == "None", a truthy string that skipped the uuid4()
+    # fallback below. `or ""` collapses None/""/missing to the same "".
+    profile_id = str(payload.get("profile_id") or "").strip() or str(uuid.uuid4())
     now = _now_iso()
     existing = next((row for row in profiles if row["profile_id"] == profile_id), None)
     if existing is None:
@@ -777,7 +880,7 @@ def delete_profile(profile_id: str) -> dict[str, Any]:
     remaining = [row for row in profiles if row["profile_id"] != profile_id]
     remaining_targets = [row for row in _load_targets() if row["profile_id"] != profile_id]
     remaining_messages = [row for row in _load_inbox() if row["profile_id"] != profile_id]
-    _shutdown_context(profile_id)
+    _run_on_driver_thread(_shutdown_context, profile_id)
     session_dir = Path(profile["session_dir"])
     if session_dir.exists():
         shutil.rmtree(session_dir, ignore_errors=True)
@@ -793,6 +896,10 @@ def delete_profile(profile_id: str) -> dict[str, Any]:
 
 
 def launch_qr(profile_id: str) -> dict[str, Any]:
+    return _run_on_driver_thread(_launch_qr_impl, profile_id)
+
+
+def _launch_qr_impl(profile_id: str) -> dict[str, Any]:
     """Open a visible Firefox window for QR login. Leaves it running so the
     user can scan the code; subsequent headless sends reuse the same profile
     dir once the headed window is closed (or explicitly relaunched)."""
@@ -816,6 +923,56 @@ def launch_qr(profile_id: str) -> dict[str, Any]:
         "message": "A WhatsApp Web window was opened for this profile. Scan the QR code with your phone to log in.",
         "mode": "playwright-visible",
         "url": "https://web.whatsapp.com/",
+    }
+
+
+def check_status(profile_id: str) -> dict[str, Any]:
+    return _run_on_driver_thread(_check_status_impl, profile_id)
+
+
+def _check_status_impl(profile_id: str) -> dict[str, Any]:
+    """Headless check of whether this profile's saved session is still logged
+    in to WhatsApp Web, without sending anything. Reuses a live background
+    context if one is already open; otherwise opens one just for the check."""
+    settings = _load_settings()
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    with _DRIVER_LOCK:
+        page = _acquire_context(profile, settings, want_headless=True)
+        try:
+            page.wait_for_timeout(1500)
+        except Exception:
+            pass
+        logged_in = _is_logged_in(page)
+    return {
+        "profile_id": profile_id,
+        "logged_in": logged_in,
+        "checked_at": _now_iso(),
+    }
+
+
+def logout_profile(profile_id: str) -> dict[str, Any]:
+    return _run_on_driver_thread(_logout_profile_impl, profile_id)
+
+
+def _logout_profile_impl(profile_id: str) -> dict[str, Any]:
+    """Clear this profile's WhatsApp Web session (cookies/local storage) so
+    the next send/launch requires a fresh QR scan. Unlike delete_profile,
+    the saved profile record (name, targets, message history) is kept."""
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    with _DRIVER_LOCK:
+        _shutdown_context(profile_id)
+        session_dir = _firefox_profile_dir(profile)
+        if session_dir.exists():
+            shutil.rmtree(session_dir, ignore_errors=True)
+    profile["last_used_at"] = _now_iso()
+    saved = _save_profiles(profiles)
+    return {
+        "profile_id": profile_id,
+        "logged_in": False,
+        "profiles": saved,
+        "capabilities": _capabilities(_load_settings(), saved),
     }
 
 
@@ -865,6 +1022,10 @@ def _visible_open(profile: dict[str, Any], settings: dict[str, Any], url: str) -
 
 
 def send_message(profile_id: str, phone: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
+    return _run_on_driver_thread(_send_message_impl, profile_id, phone, message, attachment_name, attachment_content)
+
+
+def _send_message_impl(profile_id: str, phone: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
     profiles = _load_profiles()
     settings = _load_settings()
     profile = _resolve_profile(profile_id, profiles)
@@ -909,12 +1070,14 @@ def send_message(profile_id: str, phone: str, message: str, attachment_name: str
 
 def upsert_target(payload: dict[str, Any]) -> dict[str, Any]:
     profiles = _load_profiles()
-    profile_id = str(payload.get("profile_id", "")).strip()
+    profile_id = str(payload.get("profile_id") or "").strip()
     if not profile_id:
         raise ValueError("Profile is required for a WhatsApp target.")
     _resolve_profile(profile_id, profiles)
     targets = _load_targets()
-    target_id = str(payload.get("target_id", "")).strip() or str(uuid.uuid4())
+    # See upsert_profile: None -> "" here too, so a fresh target actually
+    # gets a uuid4() instead of the literal string "None".
+    target_id = str(payload.get("target_id") or "").strip() or str(uuid.uuid4())
     now = _now_iso()
     existing = next((row for row in targets if row["target_id"] == target_id), None)
     if existing is None:
@@ -961,6 +1124,10 @@ def delete_target(target_id: str) -> dict[str, Any]:
 
 
 def send_target_message(target_id: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
+    return _run_on_driver_thread(_send_target_message_impl, target_id, message, attachment_name, attachment_content)
+
+
+def _send_target_message_impl(target_id: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
     profiles = _load_profiles()
     settings = _load_settings()
     target = _resolve_target(target_id)
@@ -1004,6 +1171,10 @@ def send_target_message(target_id: str, message: str, attachment_name: str | Non
 
 
 def sync_target_messages(target_id: str, limit: int = 20) -> dict[str, Any]:
+    return _run_on_driver_thread(_sync_target_messages_impl, target_id, limit)
+
+
+def _sync_target_messages_impl(target_id: str, limit: int = 20) -> dict[str, Any]:
     profiles = _load_profiles()
     settings = _load_settings()
     target = _resolve_target(target_id)

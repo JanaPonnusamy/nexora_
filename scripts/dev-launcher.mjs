@@ -64,6 +64,25 @@ function stopAll(exitCode = 0) {
 process.on('SIGINT', () => stopAll(0));
 process.on('SIGTERM', () => stopAll(0));
 
+function watchForUnexpectedExit(child) {
+  child.once('exit', code => {
+    if (!stopping) {
+      log(`${child.serviceName} stopped unexpectedly (exit code ${code}).`, process.stderr);
+      stopAll(code || 1);
+    }
+  });
+}
+
+async function ensureRunning(name, port, command, args, cwd, env) {
+  if (await portIsOpen(port)) {
+    log(`${name} already running on port ${port}, leaving it alone.`);
+    return;
+  }
+  const child = start(name, command, args, cwd, env);
+  await waitFor(name, port, child);
+  watchForUnexpectedExit(child);
+}
+
 async function main() {
   const venvPython = join(root, 'backend', '.venv', 'Scripts', 'python.exe');
   const python = existsSync(venvPython) ? venvPython : 'python.exe';
@@ -75,24 +94,13 @@ async function main() {
   console.log('Supplier client http://127.0.0.1:5180');
   console.log('Press Ctrl+C once to stop everything.\n');
 
-  const backend = start('backend', python, ['-m', 'uvicorn', 'api.app:app', '--host', '0.0.0.0', '--port', '8000', '--reload'], join(root, 'backend'));
-  await waitFor('Backend', 8000, backend);
+  await ensureRunning('backend', 8000, python, ['-m', 'uvicorn', 'api.app:app', '--host', '0.0.0.0', '--port', '8000', '--reload'], join(root, 'backend'));
 
-  const frontend = start('frontend', process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '5173', '--strictPort'], join(root, 'frontend'));
-  await waitFor('Frontend', 5173, frontend);
+  await ensureRunning('frontend', 5173, process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '5173', '--strictPort'], join(root, 'frontend'));
 
-  const supplier = start('supplier', process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', 'run', 'dev'], join(root, 'desktop', 'supplier-stock-client'), { NEXORA_DEV_PORT: '5180' });
-  await waitFor('Supplier client', 5180, supplier);
+  await ensureRunning('supplier', 5180, process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', 'run', 'dev'], join(root, 'desktop', 'supplier-stock-client'), { NEXORA_DEV_PORT: '5180' });
 
-  log('All three services are running.');
-  for (const child of children) {
-    child.once('exit', code => {
-      if (!stopping) {
-        log(`${child.serviceName} stopped unexpectedly (exit code ${code}).`, process.stderr);
-        stopAll(code || 1);
-      }
-    });
-  }
+  log('All services are running (started or already up).');
 }
 
 main().catch(error => {

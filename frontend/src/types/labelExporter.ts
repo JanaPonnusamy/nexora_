@@ -11,6 +11,8 @@ export interface LabelSearchRow {
   total_stock: number
   sale_days: number | null
   purchase_days: number | null
+  current_sublocation?: string | null
+  sale_unit?: number | null
 }
 
 export interface LabelSearchResult {

@@ -133,6 +133,10 @@
 .sa-dot--in { background: #16a34a; }
 .sa-dot--out { background: #dc2626; }
 
+/* Selection marker — one per store row, shown only on the active product. */
+.sa-dot--selected { background: #16a34a; }
+.sa-dot--hidden { visibility: hidden; }
+
 /* ===== Branch cards (colour-coded per store) — fill full width ===== */
 .sa-branches {
   flex: 0 0 auto;
@@ -172,25 +176,36 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* compact rows -> more visible, then scroll inside the card */
-.sa-branch__grid { max-height: 205px; overflow-y: auto; }
+/* Reserve space for a header + minimum 5 product rows (one of which may be
+   the taller active row) so every store card renders at a consistent
+   height, then scroll inside the card once real data exceeds that. */
+.sa-branch__grid {
+  --sa-row-h: 34px;
+  --sa-row-h-active: 48px;
+  --sa-header-h: 28px;
+  min-height: calc(var(--sa-header-h) + 4 * var(--sa-row-h) + var(--sa-row-h-active));
+  max-height: 320px;
+  overflow-y: auto;
+}
 .sa-branch__row {
   display: grid;
   grid-template-columns: 1fr 44px 52px;
   gap: 0.3rem;
   align-items: center;
   width: 100%;
+  min-height: var(--sa-row-h);
   text-align: left;
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--sx-border);
-  padding: 0.22rem 0.85rem 0.22rem 0.6rem;
-  font-size: 0.76rem;
+  padding: 0.34rem 0.85rem 0.34rem 0.6rem;
+  font-size: 0.8rem;
   color: var(--sx-text);
   cursor: pointer;
 }
 .sa-branch__row--head {
   position: sticky; top: 0; z-index: 1;
+  min-height: var(--sa-header-h);
   background: var(--sx-surface-2);
   color: var(--sx-faint);
   text-transform: uppercase;
@@ -200,7 +215,20 @@
   cursor: default;
 }
 .sa-branch__row:not(.sa-branch__row--head):hover { background: var(--sa-store-soft); }
-.sa-branch__row--active { background: var(--sa-store-soft); box-shadow: inset 3px 0 0 var(--sa-store); }
+.sa-branch__row--active {
+  min-height: var(--sa-row-h-active);
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+  background: var(--sa-store-soft);
+  box-shadow: inset 3px 0 0 var(--sa-store);
+  font-weight: 700;
+}
+.sa-branch__row--active .sa-dot--selected { width: 11px; height: 11px; }
+.sa-branch__row--empty {
+  min-height: var(--sa-row-h);
+  border-bottom: 1px solid var(--sx-border);
+  cursor: default;
+}
 .sa-branch__pname {
   display: inline-flex; align-items: center; gap: 0.45rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -392,36 +420,40 @@
 .sa-chart__tip-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.7rem; line-height: 1.5; }
 .sa-chart__tip-key { display: inline-flex; align-items: center; gap: 5px; color: var(--sx-muted); }
 .sa-chart__tip-val { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--sx-text); }
-.sa-chart__axis { fill: var(--sx-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
-.sa-chart__barval { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.sa-chart__month { fill: var(--sx-muted); font-size: 12px; font-weight: 650; }
+.sa-chart__axis { fill: var(--sx-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sa-chart__barval { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sa-chart__month { fill: var(--sx-muted); font-size: 13px; font-weight: 650; }
 .sa-chart__month--on { fill: var(--sx-accent); font-weight: 800; }
-/* "Glass" backing behind the bars — a fixed white gradient washed out the
-   bars/gridlines under it in dark mode. */
+/* "Glass" backing behind the bars — a subtle neutral panel tint, not a heavy
+   dark block: kept low-opacity and given a hairline stroke so it reads as a
+   soft plot surface in both themes instead of a flat wash. */
 .sa-chart__glass-a { stop-color: rgba(255, 255, 255, 0.55); }
 .sa-chart__glass-b { stop-color: rgba(255, 255, 255, 0.05); }
-[data-bs-theme="dark"] .sa-chart__glass-a { stop-color: rgba(255, 255, 255, 0.09); }
-[data-bs-theme="dark"] .sa-chart__glass-b { stop-color: rgba(255, 255, 255, 0.02); }
+[data-bs-theme="dark"] .sa-chart__glass-a { stop-color: rgba(148, 163, 184, 0.14); }
+[data-bs-theme="dark"] .sa-chart__glass-b { stop-color: rgba(148, 163, 184, 0.03); }
+.sa-chart__plotbg { stroke: rgba(148, 163, 184, 0.25); stroke-width: 1; }
+[data-bs-theme="dark"] .sa-chart__plotbg { stroke: rgba(148, 163, 184, 0.16); }
 
 /* one row: all six metrics across, value on top, code below */
 .sa-chart__readout {
   flex: 0 0 auto;
   display: flex;
-  gap: 0.4rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.6rem;
   border-top: 1px solid var(--sx-border);
-  padding-top: 0.45rem;
+  padding-top: 0.55rem;
 }
 .sa-chart__metric {
-  flex: 1 1 0; min-width: 0;
-  display: flex; flex-direction: column; align-items: center; gap: 0.05rem;
+  flex: 1 1 0; min-width: 44px;
+  display: flex; flex-direction: column; align-items: center; gap: 0.1rem;
 }
-.sa-chart__metric-val { font-weight: 800; font-size: 1rem; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sa-chart__metric-val { font-weight: 800; font-size: 1.05rem; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .sa-chart__metric-label {
-  display: inline-flex; align-items: center; gap: 0.25rem;
-  font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em;
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em;
   text-transform: uppercase; color: var(--sx-muted);
 }
-.sa-chart__swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.sa-chart__swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 
 /* ===== Toasts ===== */
 .sa-toasts {

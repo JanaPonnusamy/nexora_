@@ -250,6 +250,18 @@ export interface SupplierRow {
   last_grn_date: string | null
   last_grn_no: string | null
   last_purchase_rate: number | null
+  /** Item Cost (sync.PurchaseTrans.ItemCost) for this supplier's last purchase —
+   *  distinct from PTR (last_purchase_rate = PurchasePrice). */
+  last_item_cost?: number | null
+  /** Margin % as recorded on the purchase transaction itself
+   *  (sync.PurchaseTrans.Margin). Kept for reference/fallback only — this
+   *  legacy figure does not consistently reconcile against Cost vs PTR, so
+   *  display margin is derived from Cost/PTR first (see costMarginPercent). */
+  last_margin_percent?: number | null
+  /** MRP recorded on this supplier's last purchase transaction
+   *  (sync.PurchaseTrans.mrp) — per-supplier source, preferred over the
+   *  product-level VPL mrp when present. */
+  last_mrp?: number | null
   avg_lead_days: number | null
   /** Whether this supplier is eligible for Auto Assign Suppliers at all
    *  (sync.Suppliers.auto_assign, defaults true). */
@@ -468,12 +480,14 @@ export interface DistributionRunItemResult {
   store_code: string
   status: 'success' | 'failed'
   rows?: number
+  stock_status?: string
+  excel_status?: string
   whatsapp_status?: string
   error?: string
 }
 
 export interface DistributionRunResult {
-  run_id: string
+  run_id: string | null
   stores_total?: number
   stores_succeeded?: number
   stores_failed?: number
@@ -491,6 +505,9 @@ export interface DistributionRunSummary {
   stores_total: number
   stores_succeeded: number
   stores_failed: number
+  total_products: number | null
+  total_stock_qty: number | null
+  error_summary: string | null
 }
 
 export interface DistributionRunItemRow {
@@ -501,6 +518,11 @@ export interface DistributionRunItemRow {
   excel_path: string | null
   supplier_updated: boolean
   whatsapp_status: string
+  whatsapp_error: string | null
+  stock_status: string
+  stock_error: string | null
+  excel_status: string
+  excel_error: string | null
   status: string
   error_message: string | null
   duration_ms: number | null
@@ -509,4 +531,17 @@ export interface DistributionRunItemRow {
 export interface DistributionRunDetail {
   run: DistributionRunSummary | null
   items: DistributionRunItemRow[]
+}
+
+export interface DistributionRunItemProduct {
+  code: string
+  name: string
+  stock: number
+  rack: string | null
+}
+
+export interface DistributionRunItemProducts {
+  store_code: string | null
+  excel_path: string | null
+  rows: DistributionRunItemProduct[]
 }
