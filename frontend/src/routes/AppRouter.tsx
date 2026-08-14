@@ -11,7 +11,13 @@ import RoleWorkspacePage from '../pages/platform/RoleWorkspacePage'
 import PlatformManagementPage from '../pages/platform/PlatformManagementPage'
 import ModulesPage from '../pages/administration/ModulesPage'
 import ModuleWorkspacePage from '../pages/administration/ModuleWorkspacePage'
-import SyncAdministrationPage from '../pages/sync/SyncAdministrationPage'
+import SyncLivePage from '../pages/sync/SyncLivePage'
+import SyncSchedulesPage from '../pages/sync/SyncSchedulesPage'
+import SyncConfigPage from '../pages/sync/SyncConfigPage'
+import SyncMappingPage from '../pages/sync/SyncMappingPage'
+import SyncStoreHealthPage from '../pages/sync/SyncStoreHealthPage'
+import SyncHistoryPage from '../pages/sync/SyncHistoryPage'
+import SyncAgentsPage from '../pages/sync/SyncAgentsPage'
 import ProductMappingPage from '../pages/mapping/ProductMappingPage'
 import StockAvailabilityPage from '../pages/stock/StockAvailabilityPage'
 import StockCheckReportPage from '../pages/stock-check/StockCheckReportPage'
@@ -91,7 +97,16 @@ export const appRouter = createBrowserRouter(
         <Route path="/administration/modules" element={<RequireCapability cap="ADMINISTRATION"><ModulesPage /></RequireCapability>} />
         <Route path="/administration/modules/:moduleId" element={<RequireCapability cap="ADMINISTRATION"><ModuleWorkspacePage /></RequireCapability>} />
         <Route path="/administration/permissions" element={<RequireCapability cap="ADMINISTRATION"><PermissionsPage /></RequireCapability>} />
-        <Route path="/sync-administration" element={<RequireCapability cap="SYNC"><SyncAdministrationPage /></RequireCapability>} />
+        <Route path="/sync-administration" element={<Navigate to="/sync/live" replace />} />
+        <Route path="/sync/dashboard" element={<Navigate to="/sync/live" replace />} />
+        <Route path="/sync/tables" element={<Navigate to="/sync/live" replace />} />
+        <Route path="/sync/live" element={<RequireCapability cap="SYNC"><SyncLivePage /></RequireCapability>} />
+        <Route path="/sync/schedules" element={<RequireCapability cap="SYNC"><SyncSchedulesPage /></RequireCapability>} />
+        <Route path="/sync/config" element={<RequireCapability cap="SYNC"><SyncConfigPage /></RequireCapability>} />
+        <Route path="/sync/mapping" element={<RequireCapability cap="SYNC"><SyncMappingPage /></RequireCapability>} />
+        <Route path="/sync/store-health" element={<RequireCapability cap="SYNC"><SyncStoreHealthPage /></RequireCapability>} />
+        <Route path="/sync/history" element={<RequireCapability cap="SYNC"><SyncHistoryPage /></RequireCapability>} />
+        <Route path="/sync/agents" element={<RequireCapability cap="SYNC"><SyncAgentsPage /></RequireCapability>} />
         <Route path="/product-mapping" element={<RequireCapability cap="PRODUCT_MAPPING"><ProductMappingPage /></RequireCapability>} />
         <Route path="/stock-availability" element={<RequireCapability cap="INVENTORY"><StockAvailabilityPage /></RequireCapability>} />
         <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />

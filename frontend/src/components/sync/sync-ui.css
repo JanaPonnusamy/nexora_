@@ -191,14 +191,14 @@
 
 .sx-command__main {
   display: grid;
-  grid-template-columns: minmax(0, 8.35fr) minmax(300px, 3.25fr);
+  grid-template-columns: 1fr;
   gap: 0.45rem;
   align-items: stretch;
 }
 
 .sx-command__feeds {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 0.45rem;
   align-items: stretch;
 }
