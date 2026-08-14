@@ -2,98 +2,59 @@
 
 The distribution pipeline (see ``distribution_service.py``) does not care
 where a store's stock came from; it only needs a list of
-``{code, name, stock, disc_percent}`` rows for the source store. Two
+``{code, name, stock, disc_percent, rack}`` rows for the source store. Two
 providers implement that contract so the source can switch from Legacy to
 Nexora without touching the pipeline:
 
-- ``LegacyStockProvider``  — runs the master export SQL (unchanged) against
-  the legacy OrderNMC database.
+- ``LegacyStockProvider``  — delegates to
+  ``modules.legacy_order.repository.branch_stock()``, the already-proven
+  legacy port that connects to the SOURCE STORE'S OWN branch SQL Server
+  (server/database/credentials looked up per-store from the central
+  OrderNMC.dbo.Stores table) and runs the master PRODUCTS/BATCHES/
+  PURCHASETRANS export query there. IMPORTANT: this module used to run that
+  same query directly against the *central* OrderNMC database instead —
+  which has its OWN Products/Batches tables (a 220k-row combined mirror
+  across every store, not NMW's ~1.2k) — silently returning the wrong
+  store's/every store's stock and no rack data. Delegating to
+  ``branch_stock`` (which legacy_order already gets right, rack included)
+  fixes that at the source instead of maintaining a second, divergent copy
+  of the same query.
 - ``NexoraStockProvider``  — reads the same shape from the platform's own
   synced data (sync.Products / sync.ProductTrans / sync.PurchaseTrans) once
   Sync has already landed the source store's latest figures, avoiding a
   second connection to the legacy DB.
 """
 
-from config.database import get_connection, _connection_string
+from config.database import get_connection
 from modules.procurement._dbutil import store_stock_expr
-
-import os
-
-_LEGACY_DB = os.getenv("LEGACY_DB_DATABASE", "OrderNMC")
-
-# Master export query — business logic is fixed, do not change.
-_LEGACY_QUERY = """
-WITH LatestPT AS (
-    SELECT
-        pt.*,
-        ROW_NUMBER() OVER (
-            PARTITION BY pt.ProductCode
-            ORDER BY pt.ID DESC
-        ) AS rn
-    FROM PURCHASETRANS pt
-),
-TotalStockPerProduct AS (
-    SELECT
-        b.ProductCode,
-        SUM(b.Stock) AS TotalStock
-    FROM BATCHES b
-    GROUP BY b.ProductCode
-)
-SELECT
-    p.ProductCode,
-    p.ProductName,
-    tsp.TotalStock AS stock,
-    ROUND(
-        CASE
-            WHEN pt.PurchasePrice > 0
-            THEN ((pt.PurchasePrice - pt.ItemCost) * 100.0 / pt.PurchasePrice)
-            ELSE 0
-        END,
-        2
-    ) AS ProductDiscPercent
-FROM PRODUCTS p
-INNER JOIN TotalStockPerProduct tsp
-    ON tsp.ProductCode = p.ProductCode
-LEFT JOIN LatestPT pt
-    ON pt.ProductCode = p.ProductCode
-   AND pt.rn = 1
-WHERE tsp.TotalStock > 0
-ORDER BY p.ProductName
-"""
 
 
 class LegacyStockProvider:
-    """Reads the source store's stock straight from its OrderNMC database.
-
-    The platform's only legacy connection is the source ("HO") store's own
-    OrderNMC install (see ``supplier_stock_import._legacy_connection``) — the
-    master query needs no store filter because that database already holds
-    only that store's data.
-    """
+    """Reads the source store's stock straight from ITS OWN branch database
+    — never the central OrderNMC mirror — via the already-proven legacy port
+    (modules.legacy_order.repository), rack/SubLocation included."""
 
     name = "legacy"
 
     def fetch_stock(self, source_store_code):
-        import pyodbc
-        cs = _connection_string().replace(
-            "DATABASE=" + os.getenv("DB_DATABASE", "NEXORA_PLATFORM") + ";",
-            "DATABASE=" + _LEGACY_DB + ";",
-        )
-        conn = pyodbc.connect(cs)
-        try:
-            cur = conn.cursor()
-            cur.execute(_LEGACY_QUERY)
-            rows = []
-            for r in cur.fetchall():
-                rows.append({
-                    "code": r.ProductCode,
-                    "name": r.ProductName,
-                    "stock": float(r.stock or 0),
-                    "disc_percent": float(r.ProductDiscPercent or 0),
-                })
-            return rows
-        finally:
-            conn.close()
+        from modules.legacy_order import repository as legacy_repo
+
+        store = legacy_repo.get_store(source_store_code)
+        if not store:
+            raise ValueError(
+                f"'{source_store_code}' is not a configured branch in the legacy "
+                "OrderNMC console (dbo.Stores) — cannot read its live stock."
+            )
+        return [
+            {
+                "code": r["code"],
+                "name": r["name"],
+                "stock": r["stock"],
+                "disc_percent": r["disc_percent"],
+                "rack": r["rack"],
+            }
+            for r in legacy_repo.branch_stock(store)
+        ]
 
 
 class NexoraStockProvider:
@@ -112,6 +73,7 @@ class NexoraStockProvider:
                 SELECT
                     p.ProductCode  AS code,
                     p.ProductName  AS name,
+                    p.SubLocation  AS rack,
                     {store_stock_expr('p')} AS stock,
                     0 AS disc_percent
                 FROM sync.Products p
@@ -130,6 +92,7 @@ class NexoraStockProvider:
                     "name": r.name,
                     "stock": stock,
                     "disc_percent": float(r.disc_percent or 0),
+                    "rack": (r.rack or "").strip() or None,
                 })
             return rows
         finally:

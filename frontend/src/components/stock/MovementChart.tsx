@@ -125,7 +125,11 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
               <stop offset="100%" className="sa-chart__glass-b" />
             </linearGradient>
           </defs>
-          <rect x={padL - 8} y={barTopLimit - 4} width={plotW + 20} height={barAreaH + 8} rx={12} fill="url(#sa-chart-glass)" />
+          <rect
+            className="sa-chart__plotbg"
+            x={padL - 8} y={barTopLimit - 4} width={plotW + 20} height={barAreaH + 8}
+            rx={12} fill="url(#sa-chart-glass)"
+          />
 
           {[0, 0.25, 0.5, 0.75, 1].map((t) => {
             const y = baseY - t * barAreaH
@@ -156,9 +160,11 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
                             <rect x={x} y={top} width={Math.max(4, barW)} height={h} rx={4} fill={bar.color}>
                               <title>{`${row.period ?? ''} · ${bar.label}: ${num(value)}`}</title>
                             </rect>
-                            <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={bar.color}>
-                              {num(value)}
-                            </text>
+                            {value > 0 && (
+                              <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={bar.color}>
+                                {num(value)}
+                              </text>
+                            )}
                           </g>
                         )
                       }
@@ -176,9 +182,11 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
                               </rect>
                             )
                           })}
-                          <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={bar.color}>
-                            {num(value)}
-                          </text>
+                          {value > 0 && (
+                            <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={bar.color}>
+                              {num(value)}
+                            </text>
+                          )}
                         </g>
                       )
                     })
@@ -194,9 +202,11 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
                           <rect x={x} y={top} width={Math.max(3, barW)} height={h} rx={3} fill={series.color}>
                             <title>{`${row.period ?? ''} · ${series.label}: ${num(value)}`}</title>
                           </rect>
-                          <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={series.color}>
-                            {num(value)}
-                          </text>
+                          {value > 0 && (
+                            <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={series.color}>
+                              {num(value)}
+                            </text>
+                          )}
                         </g>
                       )
                     })}

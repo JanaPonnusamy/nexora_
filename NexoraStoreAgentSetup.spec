@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('E:\\Nexora\\dist\\NexoraStoreAgent.exe', 'agent'), ('E:\\Nexora\\dist\\NexoraStoreAgentWatchdog.exe', '.'), ('E:\\Nexora\\dist\\NexoraStoreAgentSettings.exe', '.')]
+binaries = []
+hiddenimports = []
+tmp_ret = collect_all('tkinter')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['E:\\Nexora\\store_agent_setup\\launch_wizard.py'],
     pathex=['E:\\Nexora'],
-    binaries=[],
-    datas=[('E:\\Nexora\\dist\\NexoraStoreAgent.exe', 'agent'), ('E:\\Nexora\\dist\\NexoraStoreAgentWatchdog.exe', '.'), ('E:\\Nexora\\dist\\NexoraStoreAgentSettings.exe', '.')],
-    hiddenimports=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

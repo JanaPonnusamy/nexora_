@@ -356,21 +356,135 @@ def list_candidates(tenant_id, mapping_id):
         conn.close()
 
 
+def _resolve_supplier(cur, tenant_id, source_store_id, target_store_id):
+    """Resolve the SOURCE store's own local SupplierCode/name for the TARGET
+    store, via procurement.store_supplier_map + sync.Suppliers — never
+    guessed, never hardcoded (e.g. NMA's local code for NMW is data-driven,
+    currently '94', but that is looked up fresh every time). Raises
+    ValueError — the caller rolls back — when either link is missing, so an
+    unverified SupplierCode can never reach sync.SupplierProductMatch."""
+    cur.execute("SELECT store_code FROM dbo.stores WHERE store_id = ?", (target_store_id,))
+    row = cur.fetchone()
+    if not row or not row[0]:
+        raise ValueError(f"Target store {target_store_id} has no store_code in dbo.stores.")
+    target_store_code = row[0]
+
+    cur.execute(
+        """
+        SELECT local_supplier_code FROM procurement.store_supplier_map
+        WHERE tenant_id = ? AND store_id = ? AND source_store_code = ?
+        """,
+        (tenant_id, source_store_id, target_store_code),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(
+            f"No procurement.store_supplier_map entry linking store {source_store_id} "
+            f"to source_store_code '{target_store_code}' — refusing to guess a SupplierCode."
+        )
+    supplier_code = row[0]
+
+    cur.execute(
+        """
+        SELECT suppliername FROM sync.Suppliers
+        WHERE store_id = ? AND CAST(suppliercode AS VARCHAR(50)) = CAST(? AS VARCHAR(50))
+          AND ISNULL(isActive, 1) = 1
+        """,
+        (source_store_id, supplier_code),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(
+            f"SupplierCode {supplier_code} is not an active supplier at store {source_store_id} "
+            f"in sync.Suppliers — refusing to insert an unverified SupplierProductMatch."
+        )
+    return supplier_code, row[0]
+
+
+def _upsert_supplier_product_match(cur, tenant_id, store_id, supplier_code,
+                                    supplier_product_code, supplier_product_name,
+                                    own_product_code, actor):
+    """Idempotent upsert into sync.SupplierProductMatch (PK: store_id,
+    SupplierCode, SupplierProductCode) — same shape as
+    supplier_stock_analysis.repository.upsert_mapping. Runs on the caller's
+    own cursor/transaction so an approval and its SupplierProductMatch row
+    commit or roll back together.
+
+    sync.SupplierProductMatch is populated by the legacy store agent's own
+    sync process, not just by this code path, so a (store, SupplierCode,
+    SupplierProductCode) key can already carry a DIFFERENT, legitimately
+    correct ProductCode (e.g. from the store's own GRN history). Silently
+    overwriting that would corrupt real invoice auto-resolution data, so a
+    conflicting existing row raises instead of being clobbered — the
+    approval fails and the mapping stays PENDING for a human to resolve."""
+    try:
+        own_code_int = int(own_product_code)
+    except (TypeError, ValueError):
+        raise ValueError(f"source_product_code {own_product_code!r} is not a numeric ProductCode.")
+
+    cur.execute(
+        """
+        SELECT ProductCode FROM sync.SupplierProductMatch
+        WHERE store_id = ? AND SupplierCode = ? AND SupplierProductCode = ?
+        """,
+        (store_id, supplier_code, supplier_product_code),
+    )
+    row = cur.fetchone()
+    if row and row[0] is not None and int(row[0]) != own_code_int:
+        raise ValueError(
+            f"sync.SupplierProductMatch already links SupplierCode {supplier_code} / "
+            f"SupplierProductCode {supplier_product_code} at store {store_id} to a DIFFERENT "
+            f"ProductCode {row[0]} — refusing to overwrite it with {own_code_int}."
+        )
+
+    if row:
+        cur.execute(
+            """
+            UPDATE sync.SupplierProductMatch
+            SET SupplierProductName = ?, ProductCode = ?, UserName = ?,
+                LastModifiedDate = GETDATE(), IsActive = 1, tenant_id = ?
+            WHERE store_id = ? AND SupplierCode = ? AND SupplierProductCode = ?
+            """,
+            (supplier_product_name, own_code_int, actor, tenant_id,
+             store_id, supplier_code, supplier_product_code),
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO sync.SupplierProductMatch
+                (store_id, tenant_id, SupplierCode, SupplierProductCode,
+                 SupplierProductName, ProductCode, UserName, LastModifiedDate, IsActive)
+            VALUES (?, ?, ?, ?, ?, ?, ?, GETDATE(), 1)
+            """,
+            (store_id, tenant_id, supplier_code, supplier_product_code,
+             supplier_product_name, own_code_int, actor),
+        )
+
+
 def set_status(tenant_id, mapping_id, new_status, actor=None,
                target_product_code=None, target_product_name=None,
                method=None, confidence=None):
-    """Approve / reject / remap a mapping and write an audit row."""
+    """Approve / reject / remap a mapping and write an audit row. An APPROVE
+    also upserts sync.SupplierProductMatch for the mapping's store pair in
+    the SAME transaction — the mapping only flips to APPROVED if that write
+    succeeds too, never leaving a status change with no matching
+    SupplierProductMatch row."""
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT status FROM dbo.product_mapping WHERE tenant_id = ? AND mapping_id = ? AND is_deleted = 0",
+            """
+            SELECT status, source_store_id, target_store_id,
+                   source_product_code, target_product_code, target_product_name
+            FROM dbo.product_mapping WHERE tenant_id = ? AND mapping_id = ? AND is_deleted = 0
+            """,
             (tenant_id, mapping_id),
         )
         row = cur.fetchone()
         if not row:
             return None
-        old_status = row[0]
+        (old_status, source_store_id, target_store_id,
+         source_product_code, cur_target_code, cur_target_name) = row
 
         sets = ["status = ?", "updated_at = GETDATE()", "updated_by = ?"]
         params = [new_status, as_uid(actor)]
@@ -382,6 +496,16 @@ def set_status(tenant_id, mapping_id, new_status, actor=None,
             sets.append("match_method = ?"); params.append(method)
         if confidence is not None:
             sets.append("confidence = ?"); params.append(confidence)
+
+        if new_status == "APPROVED":
+            final_target_code = target_product_code if target_product_code is not None else cur_target_code
+            final_target_name = target_product_name if target_product_name is not None else cur_target_name
+            supplier_code, _supplier_name = _resolve_supplier(cur, tenant_id, source_store_id, target_store_id)
+            _upsert_supplier_product_match(
+                cur, tenant_id, source_store_id, supplier_code,
+                final_target_code, final_target_name, source_product_code, as_uid(actor),
+            )
+
         params.extend([tenant_id, mapping_id])
         cur.execute(
             f"UPDATE dbo.product_mapping SET {', '.join(sets)} WHERE tenant_id = ? AND mapping_id = ?",
@@ -492,7 +616,7 @@ def bulk_review(tenant_id, action, items, source_store_id, target_store_id,
         placeholders = ",".join("?" * len(ids))
         cur.execute(
             f"""
-            SELECT CAST(mapping_id AS VARCHAR(50)), status,
+            SELECT CAST(mapping_id AS VARCHAR(50)), status, source_product_code,
                    target_product_code, target_product_name, confidence
             FROM dbo.product_mapping
             WHERE tenant_id = ? AND is_deleted = 0 AND mapping_id IN ({placeholders})
@@ -500,8 +624,8 @@ def bulk_review(tenant_id, action, items, source_store_id, target_store_id,
             tuple([tenant_id] + ids),
         )
         existing = {
-            r[0]: {"status": r[1], "old_code": r[2], "old_name": r[3],
-                   "confidence": float(r[4]) if r[4] is not None else None}
+            r[0]: {"status": r[1], "source_code": r[2], "old_code": r[3], "old_name": r[4],
+                   "confidence": float(r[5]) if r[5] is not None else None}
             for r in cur.fetchall()
         }
         actionable = [i for i in ids if existing.get(i, {}).get("status") == "PENDING"]
@@ -548,6 +672,16 @@ def bulk_review(tenant_id, action, items, source_store_id, target_store_id,
                 else:
                     plain.append(i)
 
+            # Resolve the store-pair's local SupplierCode/name ONCE — an
+            # approval writes both dbo.product_mapping AND
+            # sync.SupplierProductMatch in this same transaction, so a bad or
+            # missing resolution must abort the whole batch before any row is
+            # touched, not half-apply it.
+            supplier_code = None
+            if plain or overrides:
+                supplier_code, _supplier_name = _resolve_supplier(
+                    cur, tenant_id, source_store_id, target_store_id)
+
             # 2a. Plain approvals — one set-based, PENDING-guarded UPDATE. OUTPUT
             #     hands back exactly the rows we actually moved (concurrency-safe).
             if plain:
@@ -563,6 +697,10 @@ def bulk_review(tenant_id, action, items, source_store_id, target_store_id,
                 )
                 for (mid,) in cur.fetchall():
                     e = existing[mid]
+                    _upsert_supplier_product_match(
+                        cur, tenant_id, source_store_id, supplier_code,
+                        e["old_code"], e["old_name"], e["source_code"], actor_uid,
+                    )
                     approved += 1
                     audit_rows.append((str(uuid.uuid4()), tenant_id, mid, None, "APPROVE",
                                        "PENDING", "APPROVED", actor_uid,
@@ -588,6 +726,10 @@ def bulk_review(tenant_id, action, items, source_store_id, target_store_id,
                 )
                 if cur.fetchone():
                     e = existing[i]
+                    _upsert_supplier_product_match(
+                        cur, tenant_id, source_store_id, supplier_code,
+                        new_code, new_name, e["source_code"], actor_uid,
+                    )
                     approved += 1
                     audit_rows.append((str(uuid.uuid4()), tenant_id, i, None, "APPROVE",
                                        "PENDING", "APPROVED", actor_uid,

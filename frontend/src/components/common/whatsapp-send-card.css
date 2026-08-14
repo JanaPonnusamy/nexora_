@@ -35,6 +35,26 @@
   font-size: 0.86rem;
 }
 
+.wa-send__target-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.wa-send__target-row select {
+  flex: 1;
+}
+
+.wa-send__add-contact {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  align-items: center;
+}
+
+.wa-send__add-contact input {
+  flex: 1;
+}
+
 .wa-send__actions {
   margin-top: 0.85rem;
   display: flex;

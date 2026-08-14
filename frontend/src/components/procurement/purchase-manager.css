@@ -226,25 +226,23 @@
 .pm-iconbtn--danger:hover { color: #dc2626; border-color: #dc2626; }
 
 /* ---- Split (master grid + Supplier Recommendation + detail) -------------- */
-/* The three panels (spec §2/§3) are DockGroup/DockPanelItem/DockSeparator
+/* Three independent siblings — Product Grid | Supplier Recommendation |
+   Product Detail — as DockGroup/DockPanelItem/DockSeparator
    (react-resizable-panels, wrapped in frontend/src/platform/workspace/
    DockPanel.tsx) instead of a fixed CSS grid — default proportions come from
-   PmWorkspaceSplit's defaultSize props (~55/22/23), and the user can drag
+   PmWorkspaceSplit's defaultSize props (~60/21/19), and the user can drag
    the separators; sizes persist to localStorage automatically. Scoped under
    .pm so this doesn't affect other DockGroup consumers in the app. */
 .pm [data-group] { flex: 1; min-height: 0; gap: 10px; }
 .pm-split__grid { height: 100%; min-height: 0; overflow: auto; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; background: var(--bs-body-bg, #fff); }
-/* Supplier Recommendation + Product Details share one column (spec — merge
-   them so the combined right rail can stay narrower than two separate
-   panels). .pm-split__side is the DockPanelItem's own content div; the two
-   children stack and split its height, each independently scrollable. */
-.pm-split__side { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-.pm-split__suppliers { flex: 1 1 52%; min-height: 220px; min-width: 0; overflow: hidden; }
-.pm-split__detail { flex: 1 1 48%; min-height: 220px; min-width: 0; overflow: hidden; border-top: 1px solid var(--bs-border-color, #e5e7eb); padding-top: 8px; }
-/* The narrow-mode permanent detail panel and the floating supplier overlay
-   are still direct DockPanelItem content — full height there. */
-.pm-workspace-narrow .pm-split__detail,
-.pm-split__suppliers--floating { height: 100%; min-height: 0; border-top: 0; padding-top: 0; }
+/* Supplier Recommendation and Product Detail are each a full-height
+   DockPanelItem in their own right (not stacked) — each manages its own
+   internal scrolling via its own content (pm-srp__list / pm-dsec--scroll). */
+.pm-split__suppliers { height: 100%; min-height: 0; min-width: 0; overflow: hidden; }
+.pm-split__detail { height: 100%; min-height: 0; min-width: 0; overflow: hidden; }
+/* The floating supplier overlay (narrow-mode only) is direct DockPanelItem-
+   equivalent content — full height there too. */
+.pm-split__suppliers--floating { height: 100%; min-height: 0; }
 
 /* Narrow-workspace (<=1366px, spec §7) wrapper: 2 permanent panels (grid +
    detail) via their own DockGroup, plus the floating Supplier Recommendation
@@ -368,10 +366,10 @@
 /* Cost / PTR / Margin % / MRP — always all four visible, in that fixed
    order, as a 4-up grid that only drops to 2-up when the card is genuinely
    too narrow (§ mandatory pricing display) — never hidden/scrolled. */
-.pm-srpcard__stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 8px; margin-top: 6px; }
+.pm-srpcard__stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px 9px; margin-top: 7px; }
 .pm-srpcard__stat { display: flex; flex-direction: column; min-width: 0; }
-.pm-srpcard__stat b { font-weight: 700; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--ds-text-primary, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pm-srpcard__stat label { font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--ds-text-muted, #8a95a8); }
+.pm-srpcard__stat b { font-weight: 700; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--ds-text-primary, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-srpcard__stat label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--ds-text-muted, #8a95a8); }
 .pm-srpcard__margin { color: #16a34a; }
 [data-bs-theme="dark"] .pm-srpcard__margin { color: #4ade80; }
 .pm-srpcard__live { font-size: 9px; font-weight: 800; color: #16a34a; border: 1px solid #86efac; border-radius: 5px; padding: 0 3px; }
@@ -419,9 +417,11 @@
 .pm-grid__status { width: 150px; }
 .pm-grid__offer { width: 70px; white-space: nowrap; }
 .pm-grid__act { width: 44px; text-align: center; }
-/* Narrower Product column — the name ellipsises, full text on hover (title). */
-.pm-grid__prod { white-space: nowrap; max-width: 230px; }
-.pm-grid__prod .pm-prod__name { display: inline-block; max-width: 190px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+/* Narrower Product column — the name ellipsises, full text on hover (title).
+   Capped tighter still so the grid doesn't claim more width than it needs,
+   leaving Supplier Recommendation / Product Detail genuinely usable. */
+.pm-grid__prod { white-space: nowrap; max-width: 185px; }
+.pm-grid__prod .pm-prod__name { display: inline-block; max-width: 155px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .pm-grid__prod .pm-tag { margin-left: 6px; }
 /* Skip-Mode combobox (Planning State cell) — keyboard-driven: Enter/Down opens,
    Up/Down cycles, Enter confirms + advances. Shows the skip icon + actual mode. */
@@ -775,7 +775,6 @@
    wearing its own flat green/orange/purple wash. Icon + title alone carry the
    section identity now; the surface itself stays neutral and translucent so
    all three read as one modern panel, not three differently-tinted boxes. */
-.pm-dsec--trend,
 .pm-dsec--pur,
 .pm-dsec--sales {
   background: var(--ds-surface-elevated, #fff);
@@ -783,6 +782,36 @@
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
+/* Sales Trend stays a bright, light analysis card in BOTH app themes — a
+   near-black bar chart under the dark theme's elevated-surface token was
+   unreadable. The chart is the one section deliberately exempt from theme
+   adaptation; its own text/gridline colors below are fixed accordingly
+   rather than themed CSS vars. */
+.pm-dsec--trend,
+[data-bs-theme="dark"] .pm-dsec--trend {
+  background: #ffffff;
+  border-color: #e2e8f0;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, .06);
+}
+.pm-dsec--trend .pm-dsec__title { color: #475569; }
+.pm-dsec--trend .sa-chart__axis,
+.pm-dsec--trend .sa-chart__month { fill: #64748b; }
+.pm-dsec--trend .sa-chart__month--on { fill: #1d4ed8; }
+.pm-dsec--trend .sa-chart__readout { border-top-color: #e2e8f0; }
+.pm-dsec--trend .sa-chart__metric-label { color: #64748b; }
+.pm-dsec--trend .sa-chart__metric-val { color: #0f172a; }
+.pm-dsec--trend .sa-chart__glass-a { stop-color: rgba(148, 163, 184, .14); }
+.pm-dsec--trend .sa-chart__glass-b { stop-color: rgba(148, 163, 184, .03); }
+.pm-dsec--trend .sa-chart__plotbg { stroke: rgba(148, 163, 184, .3); }
+.pm-dsec--trend .sa-chart__hint { color: #94a3b8; }
+.pm-dsec--trend .sa-chart__tag { color: #94a3b8; }
+.pm-dsec--trend .sa-chart__tag strong { color: #1d4ed8; }
+.pm-dsec--trend .sa-chart__tip {
+  background: #ffffff; border-color: #e2e8f0; box-shadow: 0 8px 24px rgba(15, 23, 42, .14);
+}
+.pm-dsec--trend .sa-chart__tip-head { color: #0f172a; }
+.pm-dsec--trend .sa-chart__tip-key { color: #64748b; }
+.pm-dsec--trend .sa-chart__tip-val { color: #0f172a; }
 .pm-dsec--sup { background: var(--bs-body-bg, #fff); border-color: #e5e7eb; }
 
 /* View-mode switch (Summary / History) in the panel header */
@@ -805,6 +834,18 @@
    the stock page) instead of ~5-6; panel height itself is unchanged. */
 .pm-minitable-wrap { overflow-x: auto; }
 .pm-minitable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11px; }
+/* Purchase/Sales History (DetailColumn's compact panel only) — fixed column
+   widths (see the <colgroup> in DetailColumn.tsx) sized to fit every required
+   column at the Product Detail panel's normal width without horizontal
+   scrolling (spec §9-§11); other pm-minitable users (Bill Drawer / View All)
+   keep the browser's auto layout. */
+.pm-minitable--pur, .pm-minitable--sales { table-layout: fixed; }
+/* Fixed-width columns can't grow to fit an overlong header/value — clip with
+   ellipsis instead of spilling into the next column. */
+.pm-minitable--pur th, .pm-minitable--pur td,
+.pm-minitable--sales th, .pm-minitable--sales td {
+  overflow: hidden; text-overflow: ellipsis;
+}
 .pm-minitable thead th {
   text-align: left;
   font-weight: 700;
@@ -820,11 +861,19 @@
   border-bottom: 1px solid var(--bs-border-color, #eef2f7);
   white-space: nowrap;
 }
+/* Tighter horizontal padding in the fixed-width history tables — every px
+   counts toward fitting all 7 Purchase History columns without scrolling. */
+.pm-minitable--pur th, .pm-minitable--pur td,
+.pm-minitable--sales th, .pm-minitable--sales td { padding-left: 5px; padding-right: 5px; }
 .pm-minitable .sx-num { text-align: right; font-variant-numeric: tabular-nums; }
 .pm-minitable .sx-dim { color: #94a3b8; }
 .pm-minitable tbody tr:last-child td { border-bottom: 0; }
 .pm-minitable tbody tr:hover { background: var(--ds-surface-subtle, rgba(255,255,255,.6)); }
 .pm-mt__ellip { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+/* Fixed-width Supplier/Customer columns (see .pm-minitable--pur/--sales
+   colgroups above) are narrower than the general 130px default. */
+.pm-minitable--pur .pm-mt__ellip { max-width: 88px; }
+.pm-minitable--sales .pm-mt__ellip { max-width: 88px; }
 
 .pm-drow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
@@ -885,7 +934,7 @@
 /* Compact — the right rail is a secondary info panel (§3): Sales Trend gives
    up height so Purchase/Sales History can show >=5 rows without scrolling
    the whole panel. */
-.pm-chart-wrap { height: 120px; margin-top: 4px; }
+.pm-chart-wrap { height: 200px; min-height: 200px; margin-top: 6px; }
 
 /* Supplier recommendation cards */
 .pm-supcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
@@ -1708,12 +1757,14 @@
 [data-bs-theme="dark"] .pm-toolbar .pm-chk--offer:has(input:checked) { background: rgba(217, 119, 6, .16); color: #fcd34d; }
 [data-bs-theme="dark"] .pm-dsec--decision { background: rgba(59, 130, 246, .1); border-color: rgba(59, 130, 246, .3); }
 [data-bs-theme="dark"] .pm-dsec--batch { background: rgba(168, 85, 247, .1); border-color: rgba(168, 85, 247, .3); }
-[data-bs-theme="dark"] .pm-dsec--trend,
 [data-bs-theme="dark"] .pm-dsec--pur,
 [data-bs-theme="dark"] .pm-dsec--sales {
   background: var(--ds-surface-elevated, rgba(15, 23, 42, .86));
   border-color: var(--ds-border, rgba(148, 163, 184, .18));
 }
+/* Sales Trend intentionally NOT included above — it stays a bright light
+   card in dark mode too (spec §8; see the .pm-dsec--trend rules earlier in
+   this file for the forced-light chart surface). */
 [data-bs-theme="dark"] .pm-dsum__reason { background: rgba(59, 130, 246, .14); color: #93c5fd; }
 [data-bs-theme="dark"] .pm-supicon--assigned { background: rgba(34, 197, 94, .12); }
 [data-bs-theme="dark"] .pm-srpcard__preferred { background: rgba(217, 119, 6, .2); color: #fcd34d; }

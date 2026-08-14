@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { BranchCard as BranchCardData, StockProductRow } from '../../types/stock'
-import { num, stockState, storeColor } from './format'
+import { num, storeColor } from './format'
 
 interface BranchCardProps {
   card: BranchCardData
@@ -9,9 +9,12 @@ interface BranchCardProps {
   onSelect: (card: BranchCardData, product: StockProductRow) => void
 }
 
+const MIN_PRODUCT_ROWS = 5
+
 export function BranchCard({ card, activeProductCode, activeStoreId, onSelect }: BranchCardProps) {
   const label = card.store_code ?? card.store_name ?? 'Store'
   const color = storeColor(card.store_code ?? card.store_id)
+  const fillerRows = Math.max(0, MIN_PRODUCT_ROWS - card.products.length)
 
   return (
     <div className="sa-branch" style={{ '--sa-store': color.accent, '--sa-store-soft': color.soft } as CSSProperties}>
@@ -38,7 +41,7 @@ export function BranchCard({ card, activeProductCode, activeStoreId, onSelect }:
               onClick={() => onSelect(card, product)}
             >
               <span className="sa-branch__pname" role="cell">
-                <span className={`sa-dot sa-dot--${stockState(product.stock)}`} aria-hidden="true" />
+                <span className={`sa-dot${isActive ? ' sa-dot--selected' : ' sa-dot--hidden'}`} aria-hidden="true" />
                 {product.product_name ?? '—'}
               </span>
               <span className="sa-dim" role="cell">{product.sale_unit ?? '—'}</span>
@@ -46,6 +49,13 @@ export function BranchCard({ card, activeProductCode, activeStoreId, onSelect }:
             </button>
           )
         })}
+        {Array.from({ length: fillerRows }).map((_, index) => (
+          <div key={`filler-${index}`} className="sa-branch__row sa-branch__row--empty" role="row" aria-hidden="true">
+            <span className="sa-branch__pname">&nbsp;</span>
+            <span className="sa-dim" />
+            <span className="sa-num" />
+          </div>
+        ))}
       </div>
     </div>
   )

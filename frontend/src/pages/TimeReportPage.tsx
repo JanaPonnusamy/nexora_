@@ -173,6 +173,14 @@ export default function TimeReportPage() {
     }
   }, [date])
 
+  const buildDeptImageFile = useCallback(
+    async (deptIdForImage: string, deptName: string) => {
+      const blob = await api.blob(timeReportService.dailyImagePath({ date, dept_id: deptIdForImage }))
+      return new File([blob], `${deptName.replace(/[^a-zA-Z0-9 _-]/g, '_')}_${date}.png`, { type: 'image/png' })
+    },
+    [date],
+  )
+
   const def = useMemo(
     () => meta?.reports.find((r) => r.key === reportKey) ?? null,
     [meta, reportKey],
@@ -363,7 +371,12 @@ export default function TimeReportPage() {
       ) : !result ? (
         <EmptyState icon="bi-clock-history" title="Run a report" description="Choose a report and its options, then press Show." />
       ) : (
-        <ResultView result={result} onDeptImage={exportDeptImage} imageBusy={downloading} />
+        <ResultView
+          result={result}
+          onDeptImage={exportDeptImage}
+          imageBusy={downloading}
+          buildDeptImageFile={buildDeptImageFile}
+        />
       )}
     </div>
   )
@@ -373,14 +386,23 @@ function ResultView({
   result,
   onDeptImage,
   imageBusy,
+  buildDeptImageFile,
 }: {
   result: Result
   onDeptImage: (deptId: string, deptName: string) => void
   imageBusy: boolean
+  buildDeptImageFile: (deptId: string, deptName: string) => Promise<File>
 }) {
   switch (result.kind) {
     case 'daily':
-      return <DailyView data={result.data} onDeptImage={onDeptImage} imageBusy={imageBusy} />
+      return (
+        <DailyView
+          data={result.data}
+          onDeptImage={onDeptImage}
+          imageBusy={imageBusy}
+          buildDeptImageFile={buildDeptImageFile}
+        />
+      )
     case 'monthly':
       return <MonthlyView data={result.data} />
     case 'misspunch':
@@ -410,10 +432,12 @@ function DailyView({
   data,
   onDeptImage,
   imageBusy,
+  buildDeptImageFile,
 }: {
   data: DailyReport
   onDeptImage: (deptId: string, deptName: string) => void
   imageBusy: boolean
+  buildDeptImageFile: (deptId: string, deptName: string) => Promise<File>
 }) {
   if (data.departments.length === 0) {
     return <EmptyState icon="bi-inbox" title="No data" description="No attendance for that date." />
@@ -425,13 +449,22 @@ function DailyView({
         <div key={`${dept.dpt_id}-${dept.name}`}>
           <div className="trp-dept-head">
             <h2>{dept.name}</h2>
-            <button
-              className="btn btn-outline-secondary btn-sm"
-              disabled={imageBusy || dept.dpt_id === null}
-              onClick={() => dept.dpt_id !== null && onDeptImage(String(dept.dpt_id), dept.name)}
-            >
-              <i className="bi bi-image" /> Image
-            </button>
+            <div className="trp-dept-actions">
+              <button
+                className="btn btn-outline-secondary btn-sm"
+                disabled={imageBusy || dept.dpt_id === null}
+                onClick={() => dept.dpt_id !== null && onDeptImage(String(dept.dpt_id), dept.name)}
+              >
+                <i className="bi bi-image" /> Image
+              </button>
+              <WhatsAppSendCard
+                disabled={dept.dpt_id === null}
+                title={`Send ${dept.name} image to WhatsApp`}
+                buttonLabel="WhatsApp"
+                defaultCaption={`Nexora Time Report | ${dept.name} | ${data.period}`}
+                buildFile={() => buildDeptImageFile(String(dept.dpt_id), dept.name)}
+              />
+            </div>
           </div>
           <div className="trp-tablewrap">
             <table className="trp-table">

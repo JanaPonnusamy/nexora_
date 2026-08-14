@@ -109,12 +109,13 @@ export function ManualReviewTab({ ctx }: { ctx: MappingCtx }) {
   const searchRef = useRef<HTMLInputElement>(null)
   // The cursor of the batch currently on screen. Every reload — approve,
   // reject, or skip — continues forward from here rather than resetting to
-  // the front of the queue: a row left unchecked (reviewed but not approved)
-  // must not resurface at the top of the very next batch, it should just be
-  // passed over like anything else already seen.
+  // the front of the queue. A row left unchecked (reviewed but not approved)
+  // stays PENDING at its original confidence, a range the cursor is about to
+  // move past — load()'s `carryOver` param re-attaches those rows to the top
+  // of the next batch so they stay visible instead of getting stranded.
   const nextCursorRef = useRef<ReviewCursor | null>(null)
 
-  const load = useCallback((cursor: ReviewCursor | null, opts?: { keepToast?: boolean }) => {
+  const load = useCallback((cursor: ReviewCursor | null, opts?: { keepToast?: boolean; carryOver?: Mapping[] }) => {
     // Guard mirrors <RequireStorePair>: both store ids are required by the
     // backend, so an incomplete pair must not fetch at all.
     if (!ctx.sourceStoreId || !ctx.targetStoreId) {
@@ -133,10 +134,18 @@ export function ManualReviewTab({ ctx }: { ctx: MappingCtx }) {
       productMappingService.reviewProgress(ctx.tenantId, ctx.sourceStoreId, ctx.targetStoreId),
     ])
       .then(([batch, prog]) => {
-        setRows(batch.items)
+        // Rows left unchecked (still PENDING) in the batch just acted on sit
+        // inside a confidence range the cursor has already moved past — the
+        // keyset query below would never fetch them again. Carry them over
+        // to the top of the next batch instead of losing them (§ carry-over).
+        const carryOver = (opts?.carryOver ?? []).filter(
+          (c) => !batch.items.some((b) => b.mapping_id === c.mapping_id),
+        )
+        const nextRows = [...carryOver, ...batch.items]
+        setRows(nextRows)
         nextCursorRef.current = batch.next_cursor
         setProgress(prog)
-        setSelected(new Set(batch.items.map((m) => m.mapping_id))) // all selected by default
+        setSelected(new Set(nextRows.map((m) => m.mapping_id))) // all selected by default
         setOverrides({})
         setFocused(0)
         setLoading(false)
@@ -218,12 +227,15 @@ export function ManualReviewTab({ ctx }: { ctx: MappingCtx }) {
       const verb = action === 'APPROVE' ? 'Approved' : 'Rejected'
       const bits = [`${verb} ${n} product${n === 1 ? '' : 's'}.`]
       if (res.skipped > 0) bits.push(`${res.skipped} skipped.`)
+      // Rows left unchecked are still PENDING — they didn't go to the API at
+      // all, so they must ride along to the next batch's top rather than
+      // disappear behind the cursor (§ carry-over).
+      const leftBehind = rows.filter((r) => !idSet.has(r.mapping_id))
+      if (leftBehind.length > 0) bits.push(`${leftBehind.length} unchecked — carried to the top of the next batch.`)
       if (res.failed.length > 0) bits.push(`${res.failed.length} could not be applied — ${res.failed[0].reason}`)
       bits.push(res.remaining > 0 ? 'Loading next batch…' : 'Review queue is clear 🎉')
       setToast(bits.join(' '))
-      // Continue forward from this batch's cursor — any row left unchecked
-      // (reviewed, not approved) stays behind instead of reappearing at the top.
-      load(nextCursorRef.current, { keepToast: true })
+      load(nextCursorRef.current, { keepToast: true, carryOver: leftBehind })
     } catch (e) {
       setToast(e instanceof Error ? e.message : 'Bulk action failed. Nothing was changed.')
     } finally {
@@ -234,8 +246,9 @@ export function ManualReviewTab({ ctx }: { ctx: MappingCtx }) {
   const skipSelected = () => {
     const n = selected.size
     if (n === 0) return
-    setToast(`Skipped ${n} for now. Loading next batch…`)
-    load(nextCursorRef.current, { keepToast: true })
+    const skippedRows = rows.filter((r) => selected.has(r.mapping_id))
+    setToast(`Skipped ${n} for now — carried to the top of the next batch.`)
+    load(nextCursorRef.current, { keepToast: true, carryOver: skippedRows })
   }
 
   // keyboard-first workflow (ignored while typing in an input/textarea, except / and Ctrl+F)
