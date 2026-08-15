@@ -1,9 +1,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from services.user_service import UserService
 from dtos.user_request import UserRequest, UserStatusRequest
+from dependencies.auth import get_current_user
+from modules.audit.writer import record_audit
+from modules.audit.diff import compute_mutation_diff
+from modules.audit.context import AuditContext
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 relations_router = APIRouter(tags=["Users"])
@@ -58,7 +62,7 @@ def get_user(user_id: str):
     return _serialize_detail(r)
 
 @router.post("", status_code=201)
-def create_user(body: UserRequest):
+def create_user(body: UserRequest, request: Request, current_user: dict = Depends(get_current_user)):
     username = body.username.strip()
     full_name = body.full_name.strip()
     if not username:
@@ -71,30 +75,79 @@ def create_user(body: UserRequest):
         raise HTTPException(status_code=400, detail="Username already exists")
     new_id = UserService().create(username, full_name, body.password)
     r = UserService().get_by_id(str(new_id))
+
+    ctx = AuditContext.from_request(request, user=current_user)
+    record_audit(
+        ctx=ctx,
+        action="user.create",
+        target_type="user",
+        target_id=str(new_id),
+        target_label=username,
+        reason=f"Created user '{username}' ({full_name})",
+        metadata={"username": username, "full_name": full_name, "password": "[redacted]"},
+    )
+
     return _serialize_detail(r)
 
 @router.put("/{user_id}")
-def update_user(user_id: str, body: UserRequest):
+def update_user(user_id: str, body: UserRequest, request: Request, current_user: dict = Depends(get_current_user)):
     username = body.username.strip()
     full_name = body.full_name.strip()
     if not username:
         raise HTTPException(status_code=400, detail="Username is required")
     if not full_name:
         raise HTTPException(status_code=400, detail="Full name is required")
-    if not UserService().get_by_id(user_id):
+    existing_row = UserService().get_by_id(user_id)
+    if not existing_row:
         raise HTTPException(status_code=404, detail="User Not Found")
     if UserService().username_exists(username, user_id):
         raise HTTPException(status_code=400, detail="Username already exists")
+
+    before_snapshot = _serialize_detail(existing_row)
     UserService().update(user_id, username, full_name)
     r = UserService().get_by_id(user_id)
-    return _serialize_detail(r)
+    after_snapshot = _serialize_detail(r)
+
+    changed_fields, diff_details = compute_mutation_diff(
+        before_snapshot,
+        {"username": username, "full_name": full_name},
+    )
+    changed_str = ", ".join(changed_fields) if changed_fields else "no field changes"
+
+    ctx = AuditContext.from_request(request, user=current_user)
+    record_audit(
+        ctx=ctx,
+        action="user.update",
+        target_type="user",
+        target_id=user_id,
+        target_label=username,
+        reason=f"Updated user '{username}' (changed: {changed_str})",
+        metadata={"diff": diff_details, "changed_fields": changed_fields},
+    )
+
+    return after_snapshot
 
 @router.patch("/{user_id}/status")
-def set_user_status(user_id: str, body: UserStatusRequest):
-    if not UserService().get_by_id(user_id):
+def set_user_status(user_id: str, body: UserStatusRequest, request: Request, current_user: dict = Depends(get_current_user)):
+    existing_row = UserService().get_by_id(user_id)
+    if not existing_row:
         raise HTTPException(status_code=404, detail="User Not Found")
+    before = _serialize_detail(existing_row)
     UserService().set_active(user_id, body.is_active)
     r = UserService().get_by_id(user_id)
+
+    verb = "Activated" if body.is_active else "Deactivated"
+    ctx = AuditContext.from_request(request, user=current_user)
+    record_audit(
+        ctx=ctx,
+        action="user.status.update",
+        target_type="user",
+        target_id=user_id,
+        target_label=before["username"],
+        reason=f"{verb} user '{before['username']}'",
+        metadata={"is_active": body.is_active, "previous_is_active": before["is_active"]},
+    )
+
     return _serialize_detail(r)
 
 @relations_router.get("/api/tenants/{tenant_id}/users")

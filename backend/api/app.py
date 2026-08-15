@@ -104,6 +104,14 @@ from modules.automation_settings.router import (
 from modules.whatsapp.router import (
     router as whatsapp_router
 )
+from modules.audit.router import router as audit_router
+from modules.audit.middleware import AuditFailureMiddleware
+from modules.audit.repository import ensure_schema as ensure_audit_schema
+
+try:
+    ensure_audit_schema()
+except Exception:
+    pass
 
 app = FastAPI(title='NEXORA API')
 
@@ -215,6 +223,10 @@ async def require_auth(request: Request, call_next):
                 return _with_cors(JSONResponse(status_code=401, content={'detail': 'Invalid token'}), request)
     return await call_next(request)
 
+# AuditFailureMiddleware captures unhandled exceptions and HTTP 4xx/5xx failures
+# (including 401/403 authorization denials) on audited endpoints.
+app.add_middleware(AuditFailureMiddleware)
+
 # Added after require_auth so it wraps as the OUTERMOST middleware (Starlette
 # builds the stack in reverse registration order) - otherwise require_auth's
 # early 401 returns bypass this middleware entirely and reach the browser
@@ -230,6 +242,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(audit_router)
 app.include_router(tenant_router)
 app.include_router(store_router)
 app.include_router(role_router)

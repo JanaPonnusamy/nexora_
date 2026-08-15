@@ -709,25 +709,14 @@
   outline-offset: 1px;
 }
 
-/* ===== Control Center (operations console) ===== */
-.cc {
-  max-width: 1480px;
-  margin: 0 auto;
-  padding: 0.5rem;
-  border-radius: 1rem;
-  background:
-    radial-gradient(720px 320px at 0% -10%, color-mix(in srgb, var(--bs-primary) 16%, transparent), transparent 60%),
-    radial-gradient(720px 320px at 100% -10%, color-mix(in srgb, var(--bs-success) 12%, transparent), transparent 60%);
-}
+/* ===== Control Center (operations console) =====
+   `.cc` and `.cc-glass` were removed here: an earlier, unshipped glass pass
+   that no page ever referenced. The ambient ground now lives on `.app-shell`
+   and the frosted surface on the --nx-glass-* tokens, so keeping a second,
+   divergent definition of the same idea would only invite drift.
 
-.cc-glass {
-  border: 1px solid color-mix(in srgb, var(--bs-border-color) 65%, transparent);
-  border-radius: 0.85rem;
-  background: color-mix(in srgb, var(--bs-body-bg) 70%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 10px 26px -18px rgba(0, 0, 0, 0.45);
-}
+   Note: every remaining `.cc-*` rule below is also unreferenced by any
+   component. Left in place rather than swept up as part of a theming change. */
 
 /* KPI tiles */
 .cc-kpi {

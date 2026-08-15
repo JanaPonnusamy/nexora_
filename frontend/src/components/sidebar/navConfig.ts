@@ -71,8 +71,6 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Sync Schedules', to: '/sync/schedules', icon: 'bi-calendar-event', cap: 'SYNC' },
       { label: 'Sync Config', to: '/sync/config', icon: 'bi-table', cap: 'SYNC' },
       { label: 'Sync Mapping', to: '/sync/mapping', icon: 'bi-diagram-3', cap: 'SYNC' },
-      { label: 'Sync Store Health', to: '/sync/store-health', icon: 'bi-heart-pulse', cap: 'SYNC' },
-      { label: 'Sync History', to: '/sync/history', icon: 'bi-clock-history', cap: 'SYNC' },
       { label: 'Sync Agents', to: '/sync/agents', icon: 'bi-router', cap: 'SYNC' },
     ],
   },
@@ -84,6 +82,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     children: [
       { label: 'Modules', to: '/administration/modules', icon: 'bi-boxes', cap: 'ADMINISTRATION' },
       { label: 'Permissions', to: '/administration/permissions', icon: 'bi-shield-lock', cap: 'ADMINISTRATION' },
+      { label: 'Audit Logs', to: '/administration/audit-logs', icon: 'bi-journal-text', cap: 'ADMINISTRATION' },
     ],
   },
   {

@@ -15,15 +15,25 @@ body,
 
 body {
   margin: 0;
-  background: var(--nx-canvas);
+  background: var(--nx-glass-canvas);
   color: var(--nx-text);
 }
 
+/* The lit ground every glass surface in the app refracts.
+   It lives here rather than on .app-main because .app-main scrolls: anchoring
+   the wash to the shell keeps the light fixed to the viewport while content
+   moves under it, which is what reads as ambient light rather than a
+   background image. Nothing between here and a glass panel may create a
+   stacking context, or the panel would have nothing left to blur. */
 .app-shell {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--nx-canvas);
+  background:
+    radial-gradient(1100px 460px at 46% -8%, var(--nx-glass-glow), transparent 66%),
+    radial-gradient(760px 400px at 6% 14%, var(--nx-glass-glow-deep), transparent 70%),
+    radial-gradient(620px 420px at 92% 84%, var(--nx-glass-glow-counter), transparent 72%),
+    var(--nx-glass-canvas);
   color: var(--nx-text);
 }
 
@@ -70,8 +80,10 @@ body {
   gap: 1.15rem;
   height: var(--nx-header-height);
   padding: 0 1rem 0 1.25rem;
-  background: var(--nx-surface);
-  border-bottom: 1px solid var(--nx-rule);
+  background: var(--nx-glass-bg);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  border-bottom: 1px solid var(--nx-glass-border);
 }
 
 .app-header__zone {
@@ -502,8 +514,10 @@ body {
   flex: 0 0 var(--nx-sidebar-width);
   width: var(--nx-sidebar-width);
   padding: 0.7rem 0.4rem;
-  border-right: 1px solid var(--nx-rule);
-  background: var(--nx-surface);
+  border-right: 1px solid var(--nx-glass-border);
+  background: var(--nx-glass-bg);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -738,12 +752,14 @@ body {
 
 /* ===== Main canvas ======================================================= */
 
+/* Transparent on purpose — the shell's wash shows through, and painting a
+   surface here would give every panel above a flat backdrop to blur. */
 .app-main {
   flex: 1 1 auto;
   min-width: 0;
   overflow-y: auto;
   padding: var(--nx-gutter);
-  background: var(--nx-canvas);
+  background: transparent;
 }
 
 /* ===== Status bar ======================================================== */
@@ -755,8 +771,10 @@ body {
   gap: 1.1rem;
   height: var(--nx-statusbar-height);
   padding: 0 1rem;
-  border-top: 1px solid var(--nx-rule);
-  background: var(--nx-surface);
+  border-top: 1px solid var(--nx-glass-border);
+  background: var(--nx-glass-bg);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
   font-size: 0.73rem;
   color: var(--nx-text-muted);
 }
@@ -796,5 +814,40 @@ body {
   }
   .app-statusbar__item:not(.app-statusbar__item--live) {
     display: none;
+  }
+}
+
+/* ===== Reduced transparency ==============================================
+   Some users switch transparency off at the OS level, usually for
+   readability. Blur is decoration and never carries information here, so
+   every frosted surface falls back to the solid token it was built on and
+   the ambient wash drops to a flat canvas. Layout is untouched.
+   ========================================================================= */
+
+@media (prefers-reduced-transparency: reduce) {
+  .app-shell {
+    background: var(--nx-canvas);
+  }
+
+  .app-header,
+  .app-sidebar,
+  .app-statusbar {
+    background: var(--nx-surface);
+    border-color: var(--nx-rule);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .card,
+  .modal-content,
+  .dropdown-menu,
+  .table-responsive,
+  .ds-toolbar,
+  .ds-workspace-shell__status,
+  .empty-state {
+    background: var(--nx-surface);
+    border-color: var(--nx-rule);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }

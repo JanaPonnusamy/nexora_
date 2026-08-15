@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """HTTP routing for the Procurement module.
 
 Exposes tenant-scoped CRUD for Procurement Cycles, plus the mounted Refresh
@@ -63,7 +65,7 @@ def list_cycles(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    current_user: dict | None = Depends(get_current_user_optional),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     assert_tenant_access(current_user, tenant_id)
     return service.list_cycles(tenant_id, status, search, page, page_size, store_id)
@@ -73,7 +75,7 @@ def list_cycles(
 def get_cycle(
     cycle_id: str,
     tenant_id: str = Query(...),
-    current_user: dict | None = Depends(get_current_user_optional),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     assert_tenant_access(current_user, tenant_id)
     return service.get_cycle(tenant_id, cycle_id)

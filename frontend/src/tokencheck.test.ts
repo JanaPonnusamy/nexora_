@@ -7,6 +7,9 @@ const CSS_FILES = [
   'src/index.css',
   'src/design-system/styles.css',
   'src/components/mapping/mapping-ui.css',
+  // Consumes the --nx-glass-* tokens, so a renamed or dropped glass token
+  // fails here rather than silently rendering an unstyled Purchase Workspace.
+  'src/components/procurement/purchase-manager.css',
 ]
 
 function referencedTokens(): Map<string, string[]> {

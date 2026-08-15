@@ -132,6 +132,40 @@ export interface ThemeTokens {
   shadowSm: string
   shadowMd: string
   shadowLg: string
+
+  /* ---- Glass ------------------------------------------------------------ *
+   * Frosted-surface treatment. These are additive: nothing consumes them
+   * until a stylesheet opts in, so adding them changes no existing page.
+   * Currently piloted by the Purchase Workspace (purchase-manager.css).
+   * ----------------------------------------------------------------------- */
+
+  /** Deep ground the glass sits on — cooler and darker than `canvas`. */
+  glassCanvas: string
+  /** Primary indigo ambient wash. Blur has nothing to do without it. */
+  glassGlow: string
+  /** Deeper indigo wash, upper-left. */
+  glassGlowDeep: string
+  /** Cyan counterpoint, lower-right — stops the ground reading as a vignette. */
+  glassGlowCounter: string
+
+  /** Default translucent panel fill. Deliberately almost nothing. */
+  glassBg: string
+  /** Raised fill — pills, active tabs, dropdowns, popovers. */
+  glassBgRaised: string
+  /** Recessed fill — inputs, table headers, segmented wells. */
+  glassBgSunk: string
+
+  /** Panel edge. */
+  glassBorder: string
+  /** Softer edge for interior dividers and table rules. */
+  glassBorderSoft: string
+  /** Top-edge highlight — the detail that sells the material. */
+  glassSheen: string
+
+  /** Backdrop blur radius. */
+  glassBlur: string
+  /** Depth shadow lifting a panel off the ground. */
+  glassShadow: string
 }
 
 export const lightTheme: ThemeTokens = {
@@ -176,6 +210,25 @@ export const lightTheme: ThemeTokens = {
   shadowSm: '0 1px 2px rgba(15, 23, 42, 0.06)',
   shadowMd: '0 2px 4px rgba(15, 23, 42, 0.06), 0 8px 20px -12px rgba(15, 23, 42, 0.22)',
   shadowLg: '0 4px 8px rgba(15, 23, 42, 0.07), 0 20px 40px -20px rgba(15, 23, 42, 0.28)',
+
+  // Glass — light. Panels stay mostly opaque here: on a light ground the
+  // wash reads through a thin veil, where too much transparency just looks
+  // like a washed-out card.
+  glassCanvas: '#f5f6fb',
+  glassGlow: 'rgba(129, 122, 255, 0.30)',
+  glassGlowDeep: 'rgba(96, 112, 232, 0.19)',
+  glassGlowCounter: 'rgba(45, 200, 214, 0.14)',
+
+  glassBg: 'rgba(255, 255, 255, 0.58)',
+  glassBgRaised: 'rgba(255, 255, 255, 0.80)',
+  glassBgSunk: 'rgba(255, 255, 255, 0.38)',
+
+  glassBorder: 'rgba(16, 20, 40, 0.10)',
+  glassBorderSoft: 'rgba(16, 20, 40, 0.06)',
+  glassSheen: 'rgba(255, 255, 255, 0.92)',
+
+  glassBlur: '20px',
+  glassShadow: '0 20px 44px -26px rgba(28, 32, 70, 0.38)',
 }
 
 export const darkTheme: ThemeTokens = {
@@ -220,6 +273,25 @@ export const darkTheme: ThemeTokens = {
   shadowSm: '0 1px 2px rgba(0, 0, 0, 0.4)',
   shadowMd: '0 2px 4px rgba(0, 0, 0, 0.4), 0 8px 20px -12px rgba(0, 0, 0, 0.7)',
   shadowLg: '0 4px 8px rgba(0, 0, 0, 0.45), 0 20px 40px -20px rgba(0, 0, 0, 0.8)',
+
+  // Glass — dark. The fill is deliberately almost nothing (under 4%): nearly
+  // all the colour a panel shows is the wash behind it coming through. Raising
+  // this is what makes glass read as grey plastic.
+  glassCanvas: '#08080c',
+  glassGlow: 'rgba(108, 99, 255, 0.30)',
+  glassGlowDeep: 'rgba(72, 88, 214, 0.17)',
+  glassGlowCounter: 'rgba(34, 197, 214, 0.11)',
+
+  glassBg: 'rgba(255, 255, 255, 0.038)',
+  glassBgRaised: 'rgba(255, 255, 255, 0.065)',
+  glassBgSunk: 'rgba(255, 255, 255, 0.022)',
+
+  glassBorder: 'rgba(255, 255, 255, 0.075)',
+  glassBorderSoft: 'rgba(255, 255, 255, 0.045)',
+  glassSheen: 'rgba(255, 255, 255, 0.11)',
+
+  glassBlur: '22px',
+  glassShadow: '0 20px 44px -26px rgba(0, 0, 0, 0.95)',
 }
 
 export const themes = { light: lightTheme, dark: darkTheme } as const

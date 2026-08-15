@@ -1,4 +1,6 @@
 
+from __future__ import annotations
+
 from fastapi import APIRouter
 from services.user_role_service import UserRoleService
 

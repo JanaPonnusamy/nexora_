@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """HTTP routing for the Virtual Product List (VPL) — Sprint 2.
 
 This sub-router is mounted onto the module's main `router` (which carries the
@@ -35,7 +37,7 @@ def list_vpls(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    current_user: dict | None = Depends(get_current_user_optional),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     assert_tenant_access(current_user, tenant_id)
     return service.list_vpls(
@@ -48,7 +50,7 @@ def list_vpls(
 def get_vpl(
     vpl_id: str,
     tenant_id: str = Query(...),
-    current_user: dict | None = Depends(get_current_user_optional),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     assert_tenant_access(current_user, tenant_id)
     return service.get_vpl(tenant_id, vpl_id)
