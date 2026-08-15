@@ -38,6 +38,15 @@
   --ds-shadow-md: var(--nx-shadow-md);
   --ds-shadow-lg: var(--nx-shadow-lg);
 
+  /* Glass — the frosted surface treatment. Aliased here for consistency with
+     the names above; new styles should reach for --nx-glass-* directly. */
+  --ds-glass: var(--nx-glass-bg);
+  --ds-glass-raised: var(--nx-glass-bg-raised);
+  --ds-glass-sunk: var(--nx-glass-bg-sunk);
+  --ds-glass-border: var(--nx-glass-border);
+  --ds-glass-blur: var(--nx-glass-blur);
+  --ds-glass-shadow: var(--nx-glass-shadow);
+
   /* Type, space, radius and motion stay literal — they don't vary by theme. */
   --ds-font-sans: "Segoe UI Variable Text", "Segoe UI", "Inter", "Helvetica Neue", sans-serif;
   --ds-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -101,29 +110,49 @@ body {
   font-size: 0.95rem;
 }
 
-.empty-state,
+/* Glass surfaces.
+   These carry the frosted treatment to every page that uses a Bootstrap card,
+   modal, dropdown or table wrapper — which is most of them — without touching
+   a single page's markup.
+
+   The `!important` that used to sit on border-color and border-radius here is
+   gone. It was added to beat Bootstrap's own card rules, but it also beat any
+   later rule, so a page could never opt out of it. `.card` on its own already
+   outranks Bootstrap's `--bs-card-*` variable defaults, so the flags were
+   never needed. `.cc-glass` has been dropped from the list: it was dead code
+   referenced by no page, and its definition in index.css is deleted too. */
 .table-responsive,
 .card,
 .modal-content,
-.dropdown-menu,
-.cc-glass,
-.cc-storecard {
-  border-color: var(--ds-border) !important;
-  border-radius: var(--ds-radius-md) !important;
+.dropdown-menu {
+  border-color: var(--ds-glass-border);
+  border-radius: var(--ds-radius-lg);
 }
 
 .card,
 .modal-content,
 .dropdown-menu,
 .table-responsive {
-  background: color-mix(in srgb, var(--ds-surface) 92%, transparent);
-  box-shadow: var(--ds-shadow-sm);
+  background: var(--ds-glass);
+  -webkit-backdrop-filter: blur(var(--ds-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--ds-glass-blur)) saturate(135%);
+  box-shadow: var(--ds-glass-shadow);
+}
+
+/* Modals and dropdowns float over page content rather than the canvas, so
+   they take the raised fill — at the default the text behind them would
+   read straight through. */
+.modal-content,
+.dropdown-menu {
+  background: var(--ds-glass-raised);
 }
 
 .empty-state {
-  border: 1px dashed var(--ds-border);
+  border: 1px dashed var(--ds-glass-border);
   border-radius: var(--ds-radius-lg);
-  background: color-mix(in srgb, var(--ds-surface) 90%, transparent);
+  background: var(--ds-glass-sunk);
+  -webkit-backdrop-filter: blur(var(--ds-glass-blur));
+  backdrop-filter: blur(var(--ds-glass-blur));
 }
 
 .empty-state__icon {
@@ -162,10 +191,12 @@ body {
   gap: var(--ds-space-3);
   margin-bottom: var(--ds-space-5);
   padding: var(--ds-space-4);
-  border: 1px solid var(--ds-border);
+  border: 1px solid var(--ds-glass-border);
   border-radius: var(--ds-radius-lg);
-  background: color-mix(in srgb, var(--ds-surface) 88%, transparent);
-  box-shadow: var(--ds-shadow-sm);
+  background: var(--ds-glass);
+  -webkit-backdrop-filter: blur(var(--ds-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--ds-glass-blur)) saturate(135%);
+  box-shadow: var(--ds-glass-shadow);
 }
 
 .ds-search-field {
@@ -574,9 +605,11 @@ body {
   gap: var(--ds-space-3);
   align-items: center;
   padding: var(--ds-space-3) var(--ds-space-4);
-  border: 1px solid var(--ds-border);
+  border: 1px solid var(--ds-glass-border);
   border-radius: var(--ds-radius-lg);
-  background: color-mix(in srgb, var(--ds-surface) 90%, transparent);
+  background: var(--ds-glass);
+  -webkit-backdrop-filter: blur(var(--ds-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--ds-glass-blur)) saturate(135%);
   color: var(--ds-text-muted);
   box-shadow: var(--ds-shadow-sm);
   font-size: 0.82rem;

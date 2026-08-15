@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """HTTP routing for Purchase Manager operations (Sprint 2).
 
 Mounted onto the module's main `router` (/api/procurement). Covers Workspace,
@@ -60,7 +62,7 @@ def workspace(
     # internally. Raised from 500 so the workspace never truncates; true row
     # virtualization is the follow-up for very large cycles.
     page_size: int = Query(50, ge=1, le=5000),
-    current_user: dict | None = Depends(get_current_user_optional),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     assert_tenant_access(current_user, tenant_id)
     filters = {
@@ -81,7 +83,7 @@ def workspace_summary(
     tenant_id: str = Query(...),
     search: Optional[str] = Query(None),
     movement_class: Optional[str] = Query(None),
-    current_user: dict | None = Depends(get_current_user_optional),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     """Footer counts (Total Products / Pending Review / Assigned / Finalized /
     Skipped) for the whole refresh, computed in SQL. Scope matches the grid's

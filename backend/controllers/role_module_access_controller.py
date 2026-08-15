@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import APIRouter
 from services.role_module_access_service import RoleModuleAccessService
 

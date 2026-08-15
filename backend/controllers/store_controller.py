@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from services.store_service import StoreService
 from dtos.store_request import StoreRequest, StoreStatusRequest
-from dependencies.auth import get_current_user_optional
+from dependencies.auth import get_current_user_optional, get_current_user
 from dependencies.store_scope import has_unrestricted_scope
+from modules.audit.writer import record_audit
+from modules.audit.diff import compute_mutation_diff
+from modules.audit.context import AuditContext
 
 router = APIRouter(
     prefix="/api/stores",
@@ -127,7 +130,7 @@ def get_store(store_id: str):
 
 
 @router.post("", status_code=201)
-def create_store(body: StoreRequest):
+def create_store(body: StoreRequest, request: Request, current_user: dict = Depends(get_current_user)):
     svc = StoreService()
     store_code = body.store_code.strip()
     store_name = body.store_name.strip()
@@ -140,11 +143,23 @@ def create_store(body: StoreRequest):
     if svc.store_code_exists(store_code, body.tenant_id):
         raise HTTPException(status_code=400, detail="Store code already exists for this tenant")
     new_id = svc.create(body.tenant_id, store_code, store_name, body.server_name, body.database_name)
-    return _serialize(svc.get_by_id(str(new_id)))
+    r = svc.get_by_id(str(new_id))
+    serialized = _serialize(r)
+
+    record_audit(
+        ctx=AuditContext.from_request(request, user=current_user),
+        action="store.create",
+        target_type="store",
+        target_id=str(new_id),
+        target_label=f"{store_name} ({store_code})",
+        reason=f"Created store '{store_name}' ({store_code})",
+        metadata=serialized,
+    )
+    return serialized
 
 
 @router.put("/{store_id}")
-def update_store(store_id: str, body: StoreRequest):
+def update_store(store_id: str, body: StoreRequest, request: Request, current_user: dict = Depends(get_current_user)):
     svc = StoreService()
     store_code = body.store_code.strip()
     store_name = body.store_name.strip()
@@ -152,18 +167,54 @@ def update_store(store_id: str, body: StoreRequest):
         raise HTTPException(status_code=400, detail="Store code is required")
     if not store_name:
         raise HTTPException(status_code=400, detail="Store name is required")
-    if not svc.get_by_id(store_id):
+    existing = svc.get_by_id(store_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Store Not Found")
     if svc.store_code_exists(store_code, body.tenant_id, store_id):
         raise HTTPException(status_code=400, detail="Store code already exists for this tenant")
+
+    before = _serialize(existing)
     svc.update(store_id, body.tenant_id, store_code, store_name, body.server_name, body.database_name)
-    return _serialize(svc.get_by_id(store_id))
+    r = svc.get_by_id(store_id)
+    after = _serialize(r)
+
+    changed_fields, diff_details = compute_mutation_diff(
+        before,
+        {"store_code": store_code, "store_name": store_name, "server_name": body.server_name, "database_name": body.database_name},
+    )
+    changed_str = ", ".join(changed_fields) if changed_fields else "no field changes"
+
+    record_audit(
+        ctx=AuditContext.from_request(request, user=current_user),
+        action="store.update",
+        target_type="store",
+        target_id=store_id,
+        target_label=f"{store_name} ({store_code})",
+        reason=f"Updated store '{store_name}' (changed: {changed_str})",
+        metadata={"diff": diff_details, "changed_fields": changed_fields},
+    )
+    return after
 
 
 @router.patch("/{store_id}/status")
-def set_store_status(store_id: str, body: StoreStatusRequest):
+def set_store_status(store_id: str, body: StoreStatusRequest, request: Request, current_user: dict = Depends(get_current_user)):
     svc = StoreService()
-    if not svc.get_by_id(store_id):
+    existing = svc.get_by_id(store_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Store Not Found")
+    before = _serialize(existing)
     svc.set_active(store_id, body.is_active)
-    return _serialize(svc.get_by_id(store_id))
+    r = svc.get_by_id(store_id)
+    after = _serialize(r)
+
+    verb = "Activated" if body.is_active else "Deactivated"
+    record_audit(
+        ctx=AuditContext.from_request(request, user=current_user),
+        action="store.status.update",
+        target_type="store",
+        target_id=store_id,
+        target_label=before["store_name"],
+        reason=f"{verb} store '{before['store_name']}'",
+        metadata={"is_active": body.is_active},
+    )
+    return after

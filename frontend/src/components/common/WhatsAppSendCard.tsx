@@ -201,9 +201,17 @@ export function WhatsAppSendCard({
 
       {open && (
         <div className="wa-send__panel">
-          <div className="wa-send__head">
-            <h3>{title}</h3>
-            <small>Choose a profile, target number, and caption.</small>
+          <div className="wa-send__head d-flex justify-content-between align-items-start">
+            <div>
+              <h3>{title}</h3>
+              <small>Choose a profile, target number, and caption.</small>
+            </div>
+            <button
+              type="button"
+              className="btn-close btn-close-white"
+              aria-label="Close"
+              onClick={() => setOpen(false)}
+            />
           </div>
 
           {loading && <div className="text-body-secondary">Loading WhatsApp profiles...</div>}

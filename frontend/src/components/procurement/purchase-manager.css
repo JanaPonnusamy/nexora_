@@ -1926,3 +1926,357 @@
 [data-bs-theme="dark"] .pm-settings { background: #1a2030; border-color: rgba(255,255,255,.12); }
 [data-bs-theme="dark"] .pm-settings__reorder button { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }
 [data-bs-theme="dark"] .pm-settings__chip { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }
+
+/* ===========================================================================
+   NEXORA GLASS — frosted surfaces for the Purchase Workspace.
+
+   Everything here is scoped to `.pm`, which WorkspaceShell puts on the page
+   wrapper (header, body and status bar all sit inside it). No other page can
+   see these rules. Colours come from the --nx-glass-* tokens in
+   design-system/tokens/theme.ts, so both themes are covered by one block and
+   there is no [data-bs-theme] fork to keep in sync.
+
+   This is the pilot for the treatment. Once approved, the same tokens can be
+   pointed at the shared surfaces instead of one page's chrome.
+   ========================================================================= */
+
+/* ---- Ground ---------------------------------------------------------------
+   Deliberately transparent. This page used to paint its own wash back when it
+   was the only page with glass; the ground now lives on `.app-shell` so every
+   page shares one light source. Critically there is no `isolation` here
+   either — isolating would open a new stacking context and leave the panels
+   below with nothing but transparency to blur. */
+.pm {
+  background: transparent;
+}
+
+/* ---- The glass primitive --------------------------------------------------
+   Shared by every raised surface below. The top-edge sheen is what reads as
+   glass rather than dim plastic, so it travels with the fill. */
+.pm .pm-header,
+.pm .pm-toolbar,
+.pm .pm-split__grid,
+.pm .pm-stockmode,
+.pm .pm-srp,
+.pm .pm-selbar,
+.pm .pm-grn {
+  position: relative;
+  border: 1px solid var(--nx-glass-border);
+  border-radius: 14px;
+  background: var(--nx-glass-bg);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  box-shadow: var(--nx-glass-shadow);
+}
+
+.pm .pm-header::after,
+.pm .pm-toolbar::after,
+.pm .pm-split__grid::after,
+.pm .pm-stockmode::after,
+.pm .pm-srp::after,
+.pm .pm-selbar::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: 14px 14px 0 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--nx-glass-sheen) 24%,
+    var(--nx-glass-sheen) 76%,
+    transparent
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* The header had no surface of its own before — it was a bare flex column. */
+.pm .pm-header { padding: 10px 12px; }
+
+/* ---- Recessed controls ----------------------------------------------------
+   Inputs, selects and wells sit *below* the panel rather than on it, so they
+   take the sunk fill and drop the shadow. */
+.pm .pm-ctxbar .ds-filter-select,
+.pm .pm-toolbar .sx-search input,
+.pm .pm-toolbar .sx-select,
+.pm .pm-toolbar__modes {
+  border-color: var(--nx-glass-border);
+  background: var(--nx-glass-bg-sunk);
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+}
+
+.pm .pm-toolbar .sx-search input,
+.pm .pm-toolbar .sx-select { border-radius: 999px; }
+
+/* ---- Segmented mode switch ----------------------------------------------- */
+.pm .pm-toolbar__modes { border-radius: 999px; padding: 3px; }
+.pm .pm-mode { border-radius: 999px; color: var(--nx-text-muted); }
+.pm .pm-mode:hover:not(.pm-mode--on) {
+  background: var(--nx-glass-bg-raised);
+  color: var(--nx-text);
+}
+.pm .pm-mode--on {
+  background: var(--nx-accent);
+  color: var(--nx-text-on);
+  box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--nx-accent) 70%, transparent);
+}
+
+/* ---- Toggle chips ---------------------------------------------------------
+   The checked state used a baked-in indigo pastel (#eef2ff on #3730a3) that
+   went muddy on a dark ground. Tinting the accent keeps one rule for both
+   themes. */
+.pm .pm-toolbar .pm-chk {
+  border-color: var(--nx-glass-border);
+  background: var(--nx-glass-bg-sunk);
+  color: var(--nx-text-soft);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+}
+.pm .pm-toolbar .pm-chk:hover { border-color: var(--nx-rule-strong); }
+.pm .pm-toolbar .pm-chk:has(input:checked) {
+  background: color-mix(in srgb, var(--nx-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--nx-accent) 45%, transparent);
+  color: var(--nx-accent-ink);
+}
+/* Has Offer stays amber — it is a scope filter, not a planning state. */
+.pm .pm-toolbar .pm-chk--offer:has(input:checked) {
+  background: color-mix(in srgb, var(--nx-warning) 16%, transparent);
+  border-color: color-mix(in srgb, var(--nx-warning) 45%, transparent);
+  color: var(--nx-warning-ink);
+}
+
+/* ---- Buttons -------------------------------------------------------------- */
+.pm .pm-btn { border-radius: 999px; }
+.pm .pm-btn--ghost,
+.pm .pm-iconbtn {
+  border-color: var(--nx-glass-border);
+  background: var(--nx-glass-bg-raised);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+}
+.pm .pm-iconbtn { border-radius: 999px; }
+.pm .pm-btn--primary {
+  background: var(--nx-accent);
+  color: var(--nx-text-on);
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--nx-accent) 80%, transparent);
+}
+/* Import was a hardcoded indigo gradient that ignored the theme accent. */
+.pm .pm-btn--import {
+  background: var(--nx-accent);
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--nx-accent) 80%, transparent);
+}
+.pm .pm-btn--import:not(:disabled):hover { background: var(--nx-accent-hover); }
+
+/* ---- Banner ---------------------------------------------------------------
+   Was #dcfce7/#166534 and #fee2e2/#991b1b — fixed pale fills with dark text
+   baked in, so a save confirmation glared as a bright slab on a dark canvas.
+   Semantic tokens carry both themes without a fork. */
+.pm .pm-banner {
+  border-radius: 12px;
+  border: 1px solid transparent;
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+}
+.pm .pm-banner--success {
+  background: color-mix(in srgb, var(--nx-success) 15%, transparent);
+  border-color: color-mix(in srgb, var(--nx-success) 40%, transparent);
+  color: var(--nx-success-ink);
+}
+.pm .pm-banner--danger {
+  background: color-mix(in srgb, var(--nx-danger) 15%, transparent);
+  border-color: color-mix(in srgb, var(--nx-danger) 40%, transparent);
+  color: var(--nx-danger-ink);
+}
+
+/* ---- Read-only badge ------------------------------------------------------ */
+.pm .pm-ro-badge {
+  background: color-mix(in srgb, var(--nx-warning) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nx-warning) 38%, transparent);
+  color: var(--nx-warning-ink);
+}
+
+/* ---- Hairlines ------------------------------------------------------------ */
+.pm .pm-toolbar__sep { background: var(--nx-glass-border); }
+.pm .pm-toolbar__label { color: var(--nx-text-muted); }
+.pm .pm-toolbar__count { color: var(--nx-text-muted); }
+.pm .pm-toolbar__count b { color: var(--nx-text); }
+
+/* ---- Grid headers ---------------------------------------------------------
+   Sticky headers must stay legible over a scrolling body, so they get the
+   sunk fill plus their own blur rather than going fully transparent. */
+.pm .pm-grid thead th,
+.pm .pm-stocktable thead th {
+  background: var(--nx-glass-bg-sunk);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+  border-bottom-color: var(--nx-glass-border);
+  /* was a literal #64748b, which fell below readable contrast on dark glass */
+  color: var(--nx-text-muted);
+}
+
+/* Row rules recede over glass — a full-strength border reads as a grid of
+   boxes once the surface behind it is translucent. */
+.pm .pm-grid tbody td { border-bottom-color: var(--nx-glass-border-soft); }
+
+/* ---- Popovers and drawers -------------------------------------------------
+   These float above the page, so they use the raised fill: a panel at the
+   default 4% would be unreadable with content showing through it. */
+.pm .pm-settings,
+.pm .pm-drawer,
+.pm .pm-srpcard {
+  border-color: var(--nx-glass-border);
+  background: var(--nx-glass-bg-raised);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+}
+
+/* ---- Reduced transparency -------------------------------------------------
+   Some users disable transparency at the OS level. Blur is decoration, not
+   information — drop it and fall back to the solid surface. */
+@media (prefers-reduced-transparency: reduce) {
+  .pm .pm-header,
+  .pm .pm-toolbar,
+  .pm .pm-split__grid,
+  .pm .pm-stockmode,
+  .pm .pm-srp,
+  .pm .pm-selbar,
+  .pm .pm-grn {
+    background: var(--nx-surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ===========================================================================
+   NEXORA GLASS — admin lifecycle screens (Cycle & Refresh Console, Cycle
+   Management, Refresh Management).
+
+   These pages wrap in `.pm-admin`, not `.pm`, so the glass layer above never
+   reached them — they kept painting opaque panels while the shell behind them
+   had already gone frosted. Same tokens, same recipe, scoped to `.pm-admin`.
+
+   This block also retires the literal colours in the Console section. Those
+   were light-mode values with no dark counterpart (slate text on white, amber
+   pastel warnings), which is what made the table read as flat and washed out
+   on the dark canvas.
+   ========================================================================= */
+
+/* ---- Panels and the data table ------------------------------------------- */
+.pm-admin .pm-admin__panel,
+.pm-console .pm-admin__panel,
+.pm-admin .pm-admin__table {
+  border: 1px solid var(--nx-glass-border);
+  border-radius: 14px;
+  background: var(--nx-glass-bg);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  box-shadow: var(--nx-glass-shadow);
+}
+
+/* Header row sits below the panel surface, and keeps its own blur so rows
+   scrolling under a sticky header never bleed through it. */
+.pm-admin .pm-admin__table thead th,
+.pm-admin .pm-grid thead th,
+.pm-admin .pm-console__grid thead th {
+  background: var(--nx-glass-bg-sunk);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+  border-bottom: 1px solid var(--nx-glass-border);
+  color: var(--nx-text-muted);
+  font-weight: 600;
+}
+
+/* Row rules recede — at full strength they read as a grid of boxes once the
+   surface behind them is translucent. */
+.pm-admin .pm-admin__table tbody td,
+.pm-admin .pm-console__grid tbody td {
+  border-bottom: 1px solid var(--nx-glass-border-soft);
+}
+
+.pm-admin .pm-admin__table tbody tr:last-child td { border-bottom: 0; }
+
+.pm-admin .pm-admin__table tbody tr:hover td {
+  background: color-mix(in srgb, var(--nx-accent) 7%, transparent);
+}
+
+/* ---- Controls -------------------------------------------------------------
+   Inputs recede below the panel rather than sitting on it. */
+.pm-admin .pm-input,
+.pm-console__bar .pm-input,
+.pm-console__bar .sx-select,
+.pm-console__bar .ds-filter-select,
+.pm-console__bar .pm-console__opt {
+  border: 1px solid var(--nx-glass-border);
+  background: var(--nx-glass-bg-sunk);
+  color: var(--nx-text);
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+}
+
+.pm-console__bar .pm-console__opt:has(input:checked) {
+  background: color-mix(in srgb, var(--nx-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--nx-accent) 45%, transparent);
+  color: var(--nx-accent-ink);
+}
+
+.pm-admin .pm-btn--ghost {
+  border-color: var(--nx-glass-border);
+  background: var(--nx-glass-bg-raised);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+}
+
+/* ---- Summary strip -------------------------------------------------------- */
+.pm-admin .pm-console__summary {
+  border: 1px solid var(--nx-glass-border);
+  background: var(--nx-glass-bg-sunk);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur));
+  backdrop-filter: blur(var(--nx-glass-blur));
+}
+/* was #fffbeb on #fde68a — a light pastel with no dark counterpart */
+.pm-admin .pm-console__summary--warn {
+  background: color-mix(in srgb, var(--nx-warning) 13%, transparent);
+  border-color: color-mix(in srgb, var(--nx-warning) 38%, transparent);
+}
+
+/* ---- Text that had no dark value -----------------------------------------
+   Every colour below replaces a hardcoded light-mode literal. */
+.pm-admin .pm-admin__field,
+.pm-admin .pm-console__sumitem,
+.pm-admin .pm-console__cyclehint,
+.pm-admin .pm-console__msg,
+.pm-admin .pm-console__refreshcount { color: var(--nx-text-muted); }
+
+.pm-admin .pm-console__refreshname,
+.pm-admin .pm-console__cyclehint b,
+.pm-admin .pm-console__sumitem b { color: var(--nx-text); }
+
+.pm-admin .pm-admin__hint,
+.pm-admin .pm-console__warn { color: var(--nx-warning-ink); }
+
+.pm-admin .pm-console__msg--bad,
+.pm-admin .pm-console__sumitem--bad b { color: var(--nx-danger-ink); }
+
+.pm-admin .pm-console__setall:disabled { color: var(--nx-text-muted); opacity: .6; }
+
+/* was #dcfce7 / #166534 — invisible against a dark panel */
+.pm-admin .pm-badge--ok {
+  background: color-mix(in srgb, var(--nx-success) 18%, transparent);
+  color: var(--nx-success-ink);
+}
+
+/* ---- Reduced transparency ------------------------------------------------- */
+@media (prefers-reduced-transparency: reduce) {
+  .pm-admin .pm-admin__panel,
+  .pm-console .pm-admin__panel,
+  .pm-admin .pm-admin__table {
+    background: var(--nx-surface);
+    border-color: var(--nx-rule);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}

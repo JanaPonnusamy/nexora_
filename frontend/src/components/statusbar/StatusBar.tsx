@@ -3,14 +3,8 @@ import { useAuth } from '../../hooks/useAuth'
 import { useAccess } from '../../hooks/useAccess'
 import { APP_VERSION } from '../../utils/appInfo'
 
-const THEME_LABEL = {
-  light: 'Light',
-  dark: 'Dark',
-  system: 'System',
-} as const
-
 export function StatusBar() {
-  const { preference } = useTheme()
+  const { theme } = useTheme()
   const { user } = useAuth()
   const { currentRole } = useAccess()
 
@@ -38,8 +32,8 @@ export function StatusBar() {
       <span className="app-statusbar__spacer" />
 
       <span className="app-statusbar__item">
-        <i className="bi bi-circle-half" aria-hidden="true" />
-        {THEME_LABEL[preference]}
+        <i className={`bi ${theme === 'dark' ? 'bi-moon-stars' : 'bi-sun'}`} aria-hidden="true" />
+        {theme === 'dark' ? 'Dark' : 'Light'}
       </span>
       <span className="app-statusbar__item">
         <i className="bi bi-box-seam" aria-hidden="true" />
