@@ -49,14 +49,20 @@ class DepartmentDto {
   factory DepartmentDto.fromJson(Map<String, dynamic> json) {
     final code = stringField(json, ['code', 'department_code', 'dept_code']);
     return DepartmentDto(
-      id: stringField(json, ['id', 'department_id', 'code', 'department_code'],
-          fallback: code,),
+      id: stringField(
+        json,
+        ['id', 'department_id', 'code', 'department_code'],
+        fallback: code,
+      ),
       code: code,
       name: stringField(json, ['name', 'department_name', 'dept_name']),
       isActive: asBool(firstOf(json, ['is_active', 'isActive', 'active'])),
-      version: asIntOrNull(firstOf(json, ['version', 'row_version', 'rowversion'])),
+      version:
+          asIntOrNull(firstOf(json, ['version', 'row_version', 'rowversion'])),
       updatedAt: asDateOrNull(
-          firstOf(json, ['updated_at', 'updatedAt', 'modified_at', 'last_modified']),),
+        firstOf(
+            json, ['updated_at', 'updatedAt', 'modified_at', 'last_modified']),
+      ),
     );
   }
 }

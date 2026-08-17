@@ -2,223 +2,313 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import 'package:nexora_mobile/core/agent/agent_status.dart';
-import 'package:nexora_mobile/core/di/agent_providers.dart';
 import 'package:nexora_mobile/core/router/app_routes.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
-import 'package:nexora_mobile/features/agent/presentation/widgets/status_widgets.dart';
+import 'package:nexora_mobile/core/widgets/mobile_components.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
+import 'package:nexora_mobile/features/dashboard/application/dashboard_providers.dart';
+import 'package:nexora_mobile/features/dashboard/data/dashboard_summary.dart';
 
-/// Phase 1 landing surface after login + store selection.
+/// Home tab: the at-a-glance state of the active store.
 ///
-/// This is intentionally a thin shell — it only confirms the authenticated
-/// session and active store. Business modules (inventory, procurement, CRM, HR,
-/// education) are Phase 2+ and are deliberately NOT implemented here.
+/// Backed by a single aggregate call (`GET /api/mobile/v1/dashboard`) rather
+/// than one request per card. Sections the server could not build come back
+/// null and are simply not rendered.
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authControllerProvider);
-    final user = auth.user;
-    final store = auth.selectedStore;
+    final summary = ref.watch(dashboardSummaryProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Nexora'),
-        actions: [
-          IconButton(
-            tooltip: 'Change store',
-            icon: const Icon(Icons.swap_horiz),
-            onPressed: () =>
-                ref.read(authControllerProvider.notifier).clearStore(),
+      // Store switching and sign-out live in the More tab, so this stays
+      // focused on status rather than session chrome.
+      appBar: AppBar(title: const Text('Axythic')),
+      body: RefreshIndicator(
+        onRefresh: () async => ref.refresh(dashboardSummaryProvider.future),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            _Greeting(
+              name: auth.user?.displayName ?? '',
+              storeName: auth.selectedStore?.storeName,
+            ),
+            const SizedBox(height: 16),
+            summary.when(
+              loading: () => const _LoadingCards(),
+              error: (error, _) => _DashboardError(
+                message: '$error',
+                onRetry: () => ref.invalidate(dashboardSummaryProvider),
+              ),
+              data: (data) => _Sections(summary: data),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Greeting extends StatelessWidget {
+  const _Greeting({required this.name, this.storeName});
+
+  final String name;
+  final String? storeName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          name.isEmpty ? 'Welcome' : 'Hi $name',
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          storeName ?? 'No store selected',
+          style: const TextStyle(fontSize: 14, color: AppColors.textMuted),
+        ),
+      ],
+    );
+  }
+}
+
+class _Sections extends StatelessWidget {
+  const _Sections({required this.summary});
+
+  final DashboardSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final store = summary.store;
+    final sync = summary.sync;
+    final documents = summary.documents;
+    final procurement = summary.procurement;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (store != null) _StoreCard(store: store),
+        if (sync != null) ...[
+          const SizedBox(height: 20),
+          const SectionHeader(title: 'SYNC', icon: Icons.sync_rounded),
+          MetricRow(
+            tiles: [
+              MetricTile(
+                label: 'Online',
+                value: '${sync.storesOnline}',
+                icon: Icons.cloud_done_outlined,
+                color: AppColors.success,
+              ),
+              MetricTile(
+                label: 'Offline',
+                value: '${sync.storesOffline}',
+                icon: Icons.cloud_off_outlined,
+                color: sync.storesOffline > 0
+                    ? AppColors.warning
+                    : AppColors.textMuted,
+              ),
+              MetricTile(
+                label: 'Running',
+                value: '${sync.runningForStore}',
+                icon: Icons.autorenew_rounded,
+                color: AppColors.info,
+              ),
+            ],
           ),
-          IconButton(
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout),
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+        ],
+        if (documents != null) ...[
+          const SizedBox(height: 20),
+          const SectionHeader(
+            title: 'DOCUMENTS',
+            icon: Icons.document_scanner_outlined,
+          ),
+          MetricRow(
+            tiles: [
+              MetricTile(
+                label: 'To review',
+                value: '${documents.awaitingReview}',
+                icon: Icons.rate_review_outlined,
+                color: documents.awaitingReview > 0
+                    ? AppColors.accent
+                    : AppColors.textMuted,
+              ),
+              MetricTile(
+                label: 'Processing',
+                value: '${documents.processing}',
+                icon: Icons.hourglass_empty_rounded,
+                color: AppColors.info,
+              ),
+              MetricTile(
+                label: 'Failed',
+                value: '${documents.failed}',
+                icon: Icons.error_outline_rounded,
+                color: documents.failed > 0
+                    ? AppColors.danger
+                    : AppColors.textMuted,
+              ),
+            ],
+          ),
+        ],
+        if (procurement != null) ...[
+          const SizedBox(height: 20),
+          const SectionHeader(
+            title: 'PROCUREMENT',
+            icon: Icons.inventory_2_outlined,
+          ),
+          if (procurement.hasActiveCycle)
+            ActionTile(
+              title: 'Cycle ${procurement.cycleNo}',
+              subtitle: '${procurement.cycleStatus ?? 'OPEN'} · '
+                  '${procurement.pendingReview} awaiting review',
+              icon: Icons.autorenew_rounded,
+              onTap: () => context.go(AppRoutes.procurePath),
+            )
+          else
+            const EmptyState(
+              icon: Icons.inbox_outlined,
+              message: 'No open cycle for this store',
+            ),
+        ],
+        const SizedBox(height: 20),
+        const SectionHeader(title: 'SYSTEM', icon: Icons.settings_outlined),
+        ActionTile(
+          title: 'Device Status',
+          subtitle: 'Identity, connectivity and backend health',
+          icon: Icons.smartphone_outlined,
+          // `go`, not `push`: these screens belong to the More branch, so this
+          // crosses tabs rather than stacking onto Home.
+          onTap: () => context.go(AppRoutes.deviceStatusFullPath),
+        ),
+        ActionTile(
+          title: 'Configuration Status',
+          subtitle: 'Store configuration cached on this device',
+          icon: Icons.settings_ethernet_rounded,
+          onTap: () => context.go(AppRoutes.configurationStatusFullPath),
+        ),
+      ],
+    );
+  }
+}
+
+class _StoreCard extends StatelessWidget {
+  const _StoreCard({required this.store});
+
+  final DashboardStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final online = store.agentOnline;
+    return StatusCard(
+      accentColor: online ? AppColors.success : AppColors.textMuted,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  store.storeName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              StatusBadge(
+                label: online ? 'Agent online' : 'Agent offline',
+                color: online ? AppColors.success : AppColors.textMuted,
+                dense: true,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              InfoChip(label: store.storeCode, icon: Icons.tag),
+              if (store.lastSyncStatus != null)
+                InfoChip(
+                  label: store.lastSyncStatus!,
+                  icon: Icons.sync_rounded,
+                  color: store.lastSyncStatus == 'SUCCESS'
+                      ? AppColors.success
+                      : AppColors.warning,
+                ),
+              if (store.agentVersion != null)
+                InfoChip(label: 'v${store.agentVersion}'),
+            ],
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Welcome, ${user?.displayName ?? ''}',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleLarge
-                        ?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '@${user?.username ?? ''}',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: AppColors.slate),
-                  ),
-                  const Divider(height: 28),
-                  _InfoRow(
-                    icon: Icons.storefront_outlined,
-                    label: 'Active store',
-                    value: store?.storeName ?? '—',
-                  ),
-                  if (store?.storeCode != null)
-                    _InfoRow(
-                      icon: Icons.tag,
-                      label: 'Store code',
-                      value: store!.storeCode!,
-                    ),
-                  _InfoRow(
-                    icon: Icons.badge_outlined,
-                    label: 'Account type',
-                    value: (user?.isPlatformUser ?? false)
-                        ? 'Platform'
-                        : 'Store user',
-                  ),
-                  _InfoRow(
-                    icon: Icons.grid_view_rounded,
-                    label: 'Modules granted',
-                    value: '${user?.modules.length ?? 0}',
-                  ),
-                ],
+    );
+  }
+}
+
+class _LoadingCards extends StatelessWidget {
+  const _LoadingCards();
+
+  @override
+  Widget build(BuildContext context) {
+    // Skeletons rather than a spinner: the layout is known, so the page should
+    // not jump once data lands.
+    return Column(
+      children: [
+        for (var i = 0; i < 3; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Container(
+              height: i == 0 ? 96 : 76,
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.rule),
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          const _SystemCard(),
-        ],
-      ),
+      ],
     );
   }
 }
 
-/// Entry points to the Phase 2/3 store-agent + sync system screens.
-class _SystemCard extends ConsumerWidget {
-  const _SystemCard();
+class _DashboardError extends StatelessWidget {
+  const _DashboardError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final agentAsync = ref.watch(agentStateProvider);
-    return Card(
+  Widget build(BuildContext context) {
+    return StatusCard(
+      accentColor: AppColors.warning,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'System',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                agentAsync.maybeWhen(
-                  data: (s) => StatusPill(
-                    label: s.status.label,
-                    color: switch (s.status) {
-                      AgentStatus.ready => AppColors.success,
-                      AgentStatus.degraded => AppColors.warning,
-                      AgentStatus.error => AppColors.error,
-                      AgentStatus.offline => AppColors.slate,
-                      _ => AppColors.primary,
-                    },
-                  ),
-                  orElse: () => const SizedBox.shrink(),
-                ),
-              ],
-            ),
+          const Text(
+            'Could not load the dashboard',
+            style: TextStyle(fontWeight: FontWeight.w700),
           ),
-          const _SystemTile(
-            icon: Icons.sync_rounded,
-            label: 'Sync Status',
-            route: AppRoutes.syncStatus,
-          ),
-          const _SystemTile(
-            icon: Icons.smartphone_outlined,
-            label: 'Device Status',
-            route: AppRoutes.deviceStatus,
-          ),
-          const _SystemTile(
-            icon: Icons.settings_ethernet_rounded,
-            label: 'Configuration Status',
-            route: AppRoutes.configurationStatus,
-          ),
-          const _SystemTile(
-            icon: Icons.tune_rounded,
-            label: 'Agent Settings',
-            route: AppRoutes.agentSettings,
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
-}
-
-class _SystemTile extends StatelessWidget {
-  const _SystemTile({
-    required this.icon,
-    required this.label,
-    required this.route,
-  });
-
-  final IconData icon;
-  final String label;
-  final String route;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(icon, color: AppColors.primary),
-      title: Text(label),
-      trailing: const Icon(Icons.chevron_right, color: AppColors.slate),
-      onTap: () => context.pushNamed(route),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: AppColors.slate),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: AppColors.slate),
-            ),
-          ),
+          const SizedBox(height: 4),
           Text(
-            value,
-            style: const TextStyle(fontWeight: FontWeight.w600),
+            message,
+            style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry'),
+            ),
           ),
         ],
       ),

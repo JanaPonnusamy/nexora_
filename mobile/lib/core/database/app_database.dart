@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 
+import 'package:nexora_mobile/core/database/capture_tables.dart';
 import 'package:nexora_mobile/core/database/connection/connection.dart';
 import 'package:nexora_mobile/core/database/master_data_tables.dart';
 import 'package:nexora_mobile/core/database/tables.dart';
@@ -38,6 +39,9 @@ class AppKeyValue extends Table {
     Units,
     TaxMaster,
     Suppliers,
+    // Phase 2 (OCR) — offline document capture queue.
+    CaptureBatches,
+    CapturePages,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -47,7 +51,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.withExecutor(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -73,6 +77,11 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(units);
             await m.createTable(taxMaster);
             await m.createTable(suppliers);
+          }
+          if (from < 4) {
+            // v3 → v4: add the offline document-capture queue.
+            await m.createTable(captureBatches);
+            await m.createTable(capturePages);
           }
         },
         beforeOpen: (details) async {

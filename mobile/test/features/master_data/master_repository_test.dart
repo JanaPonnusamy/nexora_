@@ -15,8 +15,10 @@ AppDatabase _memDb() => AppDatabase.withExecutor(NativeDatabase.memory());
 const scope = MasterScope(tenantId: 't1', storeId: 's1', userId: 'u1');
 const otherTenant = MasterScope(tenantId: 't2', storeId: 's1');
 
-MasterDelta dept(List<Map<String, dynamic>> records,
-        {List<String> deleted = const [],}) =>
+MasterDelta dept(
+  List<Map<String, dynamic>> records, {
+  List<String> deleted = const [],
+}) =>
     MasterDelta(records: records, deletedIds: deleted);
 
 void main() {
@@ -46,15 +48,17 @@ void main() {
 
     test('incremental sync updates an existing record', () async {
       await repo.applyDelta(
-          dept([
-            {'id': 'd1', 'name': 'Grocery'},
-          ]),
-          scope,);
+        dept([
+          {'id': 'd1', 'name': 'Grocery'},
+        ]),
+        scope,
+      );
       await repo.applyDelta(
-          dept([
-            {'id': 'd1', 'name': 'Grocery & Food'},
-          ]),
-          scope,);
+        dept([
+          {'id': 'd1', 'name': 'Grocery & Food'},
+        ]),
+        scope,
+      );
       final d1 = await repo.getById(scope, 'd1');
       expect(d1!.name, 'Grocery & Food');
       expect(await repo.count(scope), 1);
@@ -62,11 +66,12 @@ void main() {
 
     test('deleted records are soft-deleted and hidden from reads', () async {
       await repo.applyDelta(
-          dept([
-            {'id': 'd1', 'name': 'A'},
-            {'id': 'd2', 'name': 'B'},
-          ]),
-          scope,);
+        dept([
+          {'id': 'd1', 'name': 'A'},
+          {'id': 'd2', 'name': 'B'},
+        ]),
+        scope,
+      );
       final removed = await repo.applyDelta(dept([], deleted: ['d2']), scope);
       expect(removed, 1);
       expect(await repo.count(scope), 1);
@@ -84,25 +89,28 @@ void main() {
 
     test('a locally-newer version is preserved (conflict handler)', () async {
       await repo.applyDelta(
-          dept([
-            {'id': 'd1', 'name': 'New', 'version': 5},
-          ]),
-          scope,);
+        dept([
+          {'id': 'd1', 'name': 'New', 'version': 5},
+        ]),
+        scope,
+      );
       // Older server version must not overwrite.
       await repo.applyDelta(
-          dept([
-            {'id': 'd1', 'name': 'Stale', 'version': 3},
-          ]),
-          scope,);
+        dept([
+          {'id': 'd1', 'name': 'Stale', 'version': 3},
+        ]),
+        scope,
+      );
       expect((await repo.getById(scope, 'd1'))!.name, 'New');
     });
 
     test('reads are tenant-scoped', () async {
       await repo.applyDelta(
-          dept([
-            {'id': 'd1', 'name': 'A'},
-          ]),
-          scope,);
+        dept([
+          {'id': 'd1', 'name': 'A'},
+        ]),
+        scope,
+      );
       expect(await repo.count(otherTenant), 0);
       expect(await repo.getAll(otherTenant), isEmpty);
     });
@@ -110,10 +118,11 @@ void main() {
     test('watchAll emits on change', () async {
       final future = repo.watchAll(scope).firstWhere((r) => r.isNotEmpty);
       await repo.applyDelta(
-          dept([
-            {'id': 'd1', 'name': 'A'},
-          ]),
-          scope,);
+        dept([
+          {'id': 'd1', 'name': 'A'},
+        ]),
+        scope,
+      );
       expect((await future).single.name, 'A');
     });
   });
@@ -158,7 +167,8 @@ void main() {
         scope,
       );
       expect(await repo.count(scope), 1);
-      expect((await repo.getByCode(scope, 'S1'))!.supplierName, 'Alpha Renamed');
+      expect(
+          (await repo.getByCode(scope, 'S1'))!.supplierName, 'Alpha Renamed');
       expect(await repo.getByCode(scope, 'S2'), isNull);
     });
 
@@ -186,25 +196,29 @@ void main() {
       final tax = TaxRateRepository(db);
 
       await cat.applyDelta(
-          dept([
-            {'id': 'c1', 'name': 'Beverages', 'parent_id': 'root'},
-          ]),
-          scope,);
+        dept([
+          {'id': 'c1', 'name': 'Beverages', 'parent_id': 'root'},
+        ]),
+        scope,
+      );
       await man.applyDelta(
-          dept([
-            {'id': 'm1', 'name': 'Acme'},
-          ]),
-          scope,);
+        dept([
+          {'id': 'm1', 'name': 'Acme'},
+        ]),
+        scope,
+      );
       await unit.applyDelta(
-          dept([
-            {'id': 'u1', 'name': 'Each', 'code': 'EA'},
-          ]),
-          scope,);
+        dept([
+          {'id': 'u1', 'name': 'Each', 'code': 'EA'},
+        ]),
+        scope,
+      );
       await tax.applyDelta(
-          dept([
-            {'id': 'tx1', 'name': 'GST 5%', 'rate_percent': 5.0},
-          ]),
-          scope,);
+        dept([
+          {'id': 'tx1', 'name': 'GST 5%', 'rate_percent': 5.0},
+        ]),
+        scope,
+      );
 
       expect(await cat.count(scope), 1);
       expect(await man.count(scope), 1);

@@ -37,7 +37,7 @@ class StoreSelectionScreen extends ConsumerWidget {
             child: Text(
               'Hi ${user?.displayName ?? ''}, choose the store you want to work in.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppColors.slate,
+                    color: AppColors.textMuted,
                   ),
             ),
           ),
@@ -80,17 +80,17 @@ class _StoreTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Card(
       child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         leading: CircleAvatar(
-          backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-          child: const Icon(Icons.storefront_outlined, color: AppColors.primary),
+          backgroundColor: AppColors.accent.withValues(alpha: 0.12),
+          child: const Icon(Icons.storefront_outlined, color: AppColors.accent),
         ),
         title: Text(
           store.storeName,
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
-        subtitle: store.storeCode != null ? Text('Code: ${store.storeCode}') : null,
+        subtitle:
+            store.storeCode != null ? Text('Code: ${store.storeCode}') : null,
         trailing: const Icon(Icons.chevron_right),
         onTap: () =>
             ref.read(authControllerProvider.notifier).selectStore(store),

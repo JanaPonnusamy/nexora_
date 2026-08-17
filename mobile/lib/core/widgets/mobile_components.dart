@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:nexora_mobile/core/theme/app_colors.dart';
+import 'package:nexora_mobile/core/theme/app_theme.dart';
 
 /// Compact, mobile-native building blocks shared across feature screens.
 /// Favor these over ad-hoc `Card` + `Row` trees so every screen reads as one
@@ -16,7 +17,7 @@ class InfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? AppColors.slate;
+    final c = color ?? AppColors.textMuted;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
@@ -33,7 +34,10 @@ class InfoChip extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-                fontSize: 11.5, fontWeight: FontWeight.w600, color: c,),
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: c,
+            ),
           ),
         ],
       ),
@@ -61,7 +65,9 @@ class StatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: EdgeInsets.symmetric(
-          horizontal: dense ? 8 : 12, vertical: dense ? 4 : 6,),
+        horizontal: dense ? 8 : 12,
+        vertical: dense ? 4 : 6,
+      ),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
@@ -148,7 +154,7 @@ class MetricTile extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             label,
-            style: const TextStyle(fontSize: 11, color: AppColors.slate),
+            style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -199,7 +205,7 @@ class SectionHeader extends StatelessWidget {
       child: Row(
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 16, color: AppColors.slate),
+            Icon(icon, size: 16, color: AppColors.textMuted),
             const SizedBox(width: 6),
           ],
           Expanded(
@@ -209,7 +215,7 @@ class SectionHeader extends StatelessWidget {
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.2,
-                color: AppColors.slate,
+                color: AppColors.textMuted,
               ),
             ),
           ),
@@ -243,7 +249,7 @@ class ActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? AppColors.primary;
+    final c = color ?? AppColors.accent;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -267,15 +273,19 @@ class ActionTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
-                        style: const TextStyle(fontWeight: FontWeight.w600),),
+                    Text(
+                      title,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                     if (subtitle != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
                           subtitle!,
                           style: const TextStyle(
-                              fontSize: 12, color: AppColors.slate,),
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -285,8 +295,11 @@ class ActionTile extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               trailing ??
-                  const Icon(Icons.chevron_right_rounded,
-                      color: AppColors.slate, size: 20,),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.textMuted,
+                    size: 20,
+                  ),
             ],
           ),
         ),
@@ -314,7 +327,7 @@ class ProgressRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? AppColors.primary;
+    final c = color ?? AppColors.accent;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(
@@ -323,16 +336,23 @@ class ProgressRow extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(label,
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w500,),
-                    overflow: TextOverflow.ellipsis,),
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               if (trailingText != null)
                 Text(
                   trailingText!,
                   style: TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w700, color: c,),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: c,
+                  ),
                 ),
             ],
           ),
@@ -372,21 +392,31 @@ class StatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // The accent is a child stripe, not a BorderSide. Flutter throws
+    // "A borderRadius can only be given on borders with uniform colors" if a
+    // Border mixes colours or widths across sides while a borderRadius is set,
+    // so the left edge cannot simply be a thicker, differently-coloured side.
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       decoration: BoxDecoration(
-        color: isDark ? AppColors.cardDark : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border(
-          left: BorderSide(color: accentColor, width: 4),
-          top: BorderSide(color: isDark ? Colors.white10 : AppColors.line),
-          right: BorderSide(color: isDark ? Colors.white10 : AppColors.line),
-          bottom: BorderSide(color: isDark ? Colors.white10 : AppColors.line),
-        ),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(color: AppColors.rule),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Padding(padding: padding, child: child),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 4,
+              color: accentColor,
+            ),
+            Expanded(child: Padding(padding: padding, child: child)),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -405,13 +435,16 @@ class EmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 18),
       child: Column(
         children: [
-          Icon(icon ?? Icons.inbox_outlined,
-              size: 26, color: AppColors.slate.withValues(alpha: 0.6),),
+          Icon(
+            icon ?? Icons.inbox_outlined,
+            size: 26,
+            color: AppColors.textMuted.withValues(alpha: 0.6),
+          ),
           const SizedBox(height: 8),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12.5, color: AppColors.slate),
+            style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
           ),
         ],
       ),

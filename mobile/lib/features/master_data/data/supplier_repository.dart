@@ -24,10 +24,12 @@ class SupplierRepository implements MasterWriter {
     bool includeInactive = false,
   }) async {
     final query = _db.select(_db.suppliers)
-      ..where((t) =>
-          t.tenantId.equals(scope.tenantId) &
-          t.storeId.equals(scope.storeId ?? '') &
-          t.isDeleted.equals(false),)
+      ..where(
+        (t) =>
+            t.tenantId.equals(scope.tenantId) &
+            t.storeId.equals(scope.storeId ?? '') &
+            t.isDeleted.equals(false),
+      )
       ..orderBy([(t) => OrderingTerm.asc(t.supplierName)]);
     if (!includeInactive) {
       query.where((t) => t.isActive.equals(true));
@@ -38,10 +40,12 @@ class SupplierRepository implements MasterWriter {
 
   Stream<List<Supplier>> watchAll(MasterScope scope) {
     return (_db.select(_db.suppliers)
-          ..where((t) =>
-              t.tenantId.equals(scope.tenantId) &
-              t.storeId.equals(scope.storeId ?? '') &
-              t.isDeleted.equals(false),)
+          ..where(
+            (t) =>
+                t.tenantId.equals(scope.tenantId) &
+                t.storeId.equals(scope.storeId ?? '') &
+                t.isDeleted.equals(false),
+          )
           ..orderBy([(t) => OrderingTerm.asc(t.supplierName)]))
         .watch()
         .map((rows) => rows.map(SupplierMapper.fromRow).toList());
@@ -49,11 +53,13 @@ class SupplierRepository implements MasterWriter {
 
   Future<Supplier?> getByCode(MasterScope scope, String supplierCode) async {
     final row = await (_db.select(_db.suppliers)
-          ..where((t) =>
-              t.tenantId.equals(scope.tenantId) &
-              t.storeId.equals(scope.storeId ?? '') &
-              t.supplierCode.equals(supplierCode) &
-              t.isDeleted.equals(false),))
+          ..where(
+            (t) =>
+                t.tenantId.equals(scope.tenantId) &
+                t.storeId.equals(scope.storeId ?? '') &
+                t.supplierCode.equals(supplierCode) &
+                t.isDeleted.equals(false),
+          ))
         .getSingleOrNull();
     return row == null ? null : SupplierMapper.fromRow(row);
   }
@@ -63,9 +69,11 @@ class SupplierRepository implements MasterWriter {
     final counter = _db.suppliers.supplierCode.count();
     final query = _db.selectOnly(_db.suppliers)
       ..addColumns([counter])
-      ..where(_db.suppliers.tenantId.equals(scope.tenantId) &
-          _db.suppliers.storeId.equals(scope.storeId ?? '') &
-          _db.suppliers.isDeleted.equals(false),);
+      ..where(
+        _db.suppliers.tenantId.equals(scope.tenantId) &
+            _db.suppliers.storeId.equals(scope.storeId ?? '') &
+            _db.suppliers.isDeleted.equals(false),
+      );
     return (await query.getSingle()).read(counter) ?? 0;
   }
 
@@ -83,10 +91,12 @@ class SupplierRepository implements MasterWriter {
         present.add(dto.supplierCode);
 
         final existing = await (_db.select(_db.suppliers)
-              ..where((t) =>
-                  t.tenantId.equals(scope.tenantId) &
-                  t.storeId.equals(storeId) &
-                  t.supplierCode.equals(dto.supplierCode),))
+              ..where(
+                (t) =>
+                    t.tenantId.equals(scope.tenantId) &
+                    t.storeId.equals(storeId) &
+                    t.supplierCode.equals(dto.supplierCode),
+              ))
             .getSingleOrNull();
 
         // Supplier records carry no server version; conflict handling falls back
@@ -100,8 +110,12 @@ class SupplierRepository implements MasterWriter {
         if (!apply) continue;
 
         await _db.into(_db.suppliers).insertOnConflictUpdate(
-              SupplierMapper.toCompanion(dto,
-                  tenantId: scope.tenantId, storeId: storeId, syncedAt: now,),
+              SupplierMapper.toCompanion(
+                dto,
+                tenantId: scope.tenantId,
+                storeId: storeId,
+                syncedAt: now,
+              ),
             );
         changed++;
       }
@@ -124,15 +138,19 @@ class SupplierRepository implements MasterWriter {
     DateTime now,
   ) =>
       (_db.update(_db.suppliers)
-            ..where((t) =>
-                t.tenantId.equals(scope.tenantId) &
-                t.storeId.equals(storeId) &
-                t.supplierCode.equals(code) &
-                t.isDeleted.equals(false),))
-          .write(SuppliersCompanion(
-            isDeleted: const Value(true),
-            syncedAt: Value(now),
-          ),);
+            ..where(
+              (t) =>
+                  t.tenantId.equals(scope.tenantId) &
+                  t.storeId.equals(storeId) &
+                  t.supplierCode.equals(code) &
+                  t.isDeleted.equals(false),
+            ))
+          .write(
+        SuppliersCompanion(
+          isDeleted: const Value(true),
+          syncedAt: Value(now),
+        ),
+      );
 
   Future<int> _softDeleteMissing(
     MasterScope scope,
@@ -141,10 +159,12 @@ class SupplierRepository implements MasterWriter {
     DateTime now,
   ) async {
     final rows = await (_db.select(_db.suppliers)
-          ..where((t) =>
-              t.tenantId.equals(scope.tenantId) &
-              t.storeId.equals(storeId) &
-              t.isDeleted.equals(false),))
+          ..where(
+            (t) =>
+                t.tenantId.equals(scope.tenantId) &
+                t.storeId.equals(storeId) &
+                t.isDeleted.equals(false),
+          ))
         .get();
     var removed = 0;
     for (final row in rows) {

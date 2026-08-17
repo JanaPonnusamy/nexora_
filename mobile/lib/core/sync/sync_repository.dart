@@ -163,20 +163,24 @@ class SyncRepository {
     final ts = now ?? DateTime.now();
     return _db.transaction(() async {
       final eligible = await (_db.select(_db.syncQueue)
-            ..where((t) =>
-                t.status.equals('pending') &
-                (t.nextAttemptAt.isNull() |
-                    t.nextAttemptAt.isSmallerOrEqualValue(ts)),)
+            ..where(
+              (t) =>
+                  t.status.equals('pending') &
+                  (t.nextAttemptAt.isNull() |
+                      t.nextAttemptAt.isSmallerOrEqualValue(ts)),
+            )
             ..orderBy([(t) => OrderingTerm.asc(t.createdAt)])
             ..limit(limit))
           .get();
 
       for (final row in eligible) {
         await (_db.update(_db.syncQueue)..where((t) => t.id.equals(row.id)))
-            .write(SyncQueueCompanion(
-          status: const Value('inFlight'),
-          updatedAt: Value(ts),
-        ),);
+            .write(
+          SyncQueueCompanion(
+            status: const Value('inFlight'),
+            updatedAt: Value(ts),
+          ),
+        );
       }
       return eligible;
     });
@@ -214,10 +218,12 @@ class SyncRepository {
   /// `pending` so it resumes. Returns the number of rows recovered.
   Future<int> recoverInFlight() =>
       (_db.update(_db.syncQueue)..where((t) => t.status.equals('inFlight')))
-          .write(SyncQueueCompanion(
-        status: const Value('pending'),
-        updatedAt: Value(DateTime.now()),
-      ),);
+          .write(
+        SyncQueueCompanion(
+          status: const Value('pending'),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
 
   Future<int> purge(String status) =>
       (_db.delete(_db.syncQueue)..where((t) => t.status.equals(status))).go();

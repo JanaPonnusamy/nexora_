@@ -5,7 +5,6 @@ import 'package:nexora_mobile/core/agent/agent_settings.dart';
 import 'package:nexora_mobile/core/di/agent_providers.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
 import 'package:nexora_mobile/core/widgets/mobile_components.dart';
-import 'package:nexora_mobile/features/agent/presentation/widgets/status_widgets.dart';
 
 /// Phase 2 — user-tunable agent runtime settings, persisted across restarts.
 class AgentSettingsScreen extends ConsumerStatefulWidget {
@@ -47,44 +46,51 @@ class _AgentSettingsScreenState extends ConsumerState<AgentSettingsScreen> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
           const SectionHeader(
-              title: 'SYNCHRONIZATION', icon: Icons.sync_rounded,),
+            title: 'SYNCHRONIZATION',
+            icon: Icons.sync_rounded,
+          ),
           StatusCard(
-            accentColor: AppColors.line,
+            accentColor: AppColors.rule,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Automatic background sync'),
-                subtitle: const Text('Sync on a schedule and on reconnect'),
-                value: _draft.autoSync,
-                onChanged: (v) =>
-                    setState(() => _draft = _draft.copyWith(autoSync: v)),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Sync on startup'),
-                subtitle: const Text('Run a sync as soon as the agent starts'),
-                value: _draft.syncOnStartup,
-                onChanged: (v) =>
-                    setState(() => _draft = _draft.copyWith(syncOnStartup: v)),
-              ),
-              _MinutesDropdown(
-                label: 'Sync interval',
-                value: _draft.syncInterval.inMinutes,
-                choices: _syncChoices,
-                enabled: _draft.autoSync,
-                onChanged: (m) => setState(() => _draft =
-                    _draft.copyWith(syncInterval: Duration(minutes: m)),),
-              ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Automatic background sync'),
+                  subtitle: const Text('Sync on a schedule and on reconnect'),
+                  value: _draft.autoSync,
+                  onChanged: (v) =>
+                      setState(() => _draft = _draft.copyWith(autoSync: v)),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Sync on startup'),
+                  subtitle:
+                      const Text('Run a sync as soon as the agent starts'),
+                  value: _draft.syncOnStartup,
+                  onChanged: (v) => setState(
+                      () => _draft = _draft.copyWith(syncOnStartup: v)),
+                ),
+                _MinutesDropdown(
+                  label: 'Sync interval',
+                  value: _draft.syncInterval.inMinutes,
+                  choices: _syncChoices,
+                  enabled: _draft.autoSync,
+                  onChanged: (m) => setState(
+                    () => _draft =
+                        _draft.copyWith(syncInterval: Duration(minutes: m)),
+                  ),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 16),
           const SectionHeader(
-              title: 'HEALTH & DIAGNOSTICS', icon: Icons.monitor_heart_outlined,),
+            title: 'HEALTH & DIAGNOSTICS',
+            icon: Icons.monitor_heart_outlined,
+          ),
           StatusCard(
-            accentColor: AppColors.line,
+            accentColor: AppColors.rule,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -93,8 +99,11 @@ class _AgentSettingsScreenState extends ConsumerState<AgentSettingsScreen> {
                   value: _draft.healthCheckInterval.inMinutes,
                   choices: _healthChoices,
                   enabled: true,
-                  onChanged: (m) => setState(() => _draft = _draft.copyWith(
-                      healthCheckInterval: Duration(minutes: m),),),
+                  onChanged: (m) => setState(
+                    () => _draft = _draft.copyWith(
+                      healthCheckInterval: Duration(minutes: m),
+                    ),
+                  ),
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -102,7 +111,8 @@ class _AgentSettingsScreenState extends ConsumerState<AgentSettingsScreen> {
                   subtitle: const Text('Record fine-grained sync activity'),
                   value: _draft.verboseLogging,
                   onChanged: (v) => setState(
-                      () => _draft = _draft.copyWith(verboseLogging: v),),
+                    () => _draft = _draft.copyWith(verboseLogging: v),
+                  ),
                 ),
               ],
             ),
@@ -116,7 +126,7 @@ class _AgentSettingsScreenState extends ConsumerState<AgentSettingsScreen> {
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
-                  ?.copyWith(color: AppColors.slate),
+                  ?.copyWith(color: AppColors.textMuted),
             ),
           ),
           const SizedBox(height: 8),
@@ -127,7 +137,9 @@ class _AgentSettingsScreenState extends ConsumerState<AgentSettingsScreen> {
                     height: 18,
                     width: 18,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2.2, color: Colors.white,),
+                      strokeWidth: 2.2,
+                      color: Colors.white,
+                    ),
                   )
                 : const Icon(Icons.save_outlined),
             label: Text(_saving ? 'Saving…' : 'Save settings'),
@@ -168,7 +180,7 @@ class _MinutesDropdown extends StatelessWidget {
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
-                  ?.copyWith(color: enabled ? null : AppColors.slate),
+                  ?.copyWith(color: enabled ? null : AppColors.textMuted),
             ),
           ),
           DropdownButton<int>(

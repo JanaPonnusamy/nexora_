@@ -89,10 +89,12 @@ class AgentManager {
       await _runHealthCheck();
 
       // 5) Configuration download / cache.
-      _emit(_state.copyWith(
-        status: AgentStatus.downloadingConfig,
-        storeName: _currentStoreName(),
-      ),);
+      _emit(
+        _state.copyWith(
+          status: AgentStatus.downloadingConfig,
+          storeName: _currentStoreName(),
+        ),
+      );
       await _loadConfiguration();
 
       // 6) Start periodic health monitor + scheduled sync.
@@ -103,10 +105,12 @@ class AgentManager {
       _log.info('Store agent ready (${_state.status.name})');
     } catch (e, st) {
       _log.severe('Agent bootstrap failed: $e', e, st);
-      _emit(_state.copyWith(
-        status: AgentStatus.error,
-        lastError: e.toString(),
-      ),);
+      _emit(
+        _state.copyWith(
+          status: AgentStatus.error,
+          lastError: e.toString(),
+        ),
+      );
     }
   }
 
@@ -143,12 +147,14 @@ class AgentManager {
       try {
         final store = await _storeConfig.download(storeId);
         if (store != null) {
-          _emit(_state.copyWith(
-            configLoaded: true,
-            storeName: store.storeName,
-            lastConfigSyncAt: DateTime.now(),
-            clearError: true,
-          ),);
+          _emit(
+            _state.copyWith(
+              configLoaded: true,
+              storeName: store.storeName,
+              lastConfigSyncAt: DateTime.now(),
+              clearError: true,
+            ),
+          );
           return;
         }
       } catch (e) {
@@ -157,23 +163,27 @@ class AgentManager {
     }
 
     final cached = await _storeConfig.readCached();
-    _emit(_state.copyWith(
-      configLoaded: cached != null,
-      storeName: cached?.store.storeName ?? _currentStoreName(),
-    ),);
+    _emit(
+      _state.copyWith(
+        configLoaded: cached != null,
+        storeName: cached?.store.storeName ?? _currentStoreName(),
+      ),
+    );
   }
 
   Future<void> _runHealthCheck() async {
     final result = await _health.check();
-    _emit(_state.copyWith(
-      backendReachable: result.reachable,
-      apiCompatible: result.apiCompatible,
-      backendLatencyMs: result.latencyMs,
-      clearLatency: result.latencyMs == null,
-      serverApiVersion: result.serverApiVersion,
-      lastHealthCheckAt: result.checkedAt,
-      status: _deriveStatus(reachable: result.reachable),
-    ),);
+    _emit(
+      _state.copyWith(
+        backendReachable: result.reachable,
+        apiCompatible: result.apiCompatible,
+        backendLatencyMs: result.latencyMs,
+        clearLatency: result.latencyMs == null,
+        serverApiVersion: result.serverApiVersion,
+        lastHealthCheckAt: result.checkedAt,
+        status: _deriveStatus(reachable: result.reachable),
+      ),
+    );
     await _deviceInfo.touch();
   }
 

@@ -27,18 +27,23 @@ class ConfigurationStatusScreen extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
             const SectionHeader(
-                title: 'STORE CONFIGURATION', icon: Icons.storefront_outlined,),
+              title: 'STORE CONFIGURATION',
+              icon: Icons.storefront_outlined,
+            ),
             cached.when(
               loading: () => const StatusCard(
-                  accentColor: AppColors.line, child: InlineLoading(),),
+                accentColor: AppColors.rule,
+                child: InlineLoading(),
+              ),
               error: (e, _) => StatusCard(
-                accentColor: AppColors.error,
-                child: Text('$e', style: const TextStyle(color: AppColors.error)),
+                accentColor: AppColors.danger,
+                child:
+                    Text('$e', style: const TextStyle(color: AppColors.danger)),
               ),
               data: (c) {
                 if (c == null) {
                   return const StatusCard(
-                    accentColor: AppColors.slate,
+                    accentColor: AppColors.textMuted,
                     child: EmptyState(
                       message:
                           'No store configuration cached yet. Pull to refresh once online.',
@@ -48,7 +53,8 @@ class ConfigurationStatusScreen extends ConsumerWidget {
                 }
                 final s = c.store;
                 return StatusCard(
-                  accentColor: s.isActive ? AppColors.success : AppColors.slate,
+                  accentColor:
+                      s.isActive ? AppColors.success : AppColors.textMuted,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -58,12 +64,14 @@ class ConfigurationStatusScreen extends ConsumerWidget {
                             child: Text(
                               s.storeName,
                               style: const TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.w800,),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
                           StatusBadge(
                             label: 'v${c.version}',
-                            color: AppColors.primary,
+                            color: AppColors.accent,
                             dense: true,
                           ),
                         ],
@@ -74,15 +82,17 @@ class ConfigurationStatusScreen extends ConsumerWidget {
                         runSpacing: 8,
                         children: [
                           InfoChip(
-                              label: s.storeCode,
-                              icon: Icons.storefront_outlined,),
+                            label: s.storeCode,
+                            icon: Icons.storefront_outlined,
+                          ),
                           InfoChip(
                             label: s.isActive ? 'Active' : 'Inactive',
                             icon: s.isActive
                                 ? Icons.check_circle_outline
                                 : Icons.remove_circle_outline,
-                            color:
-                                s.isActive ? AppColors.success : AppColors.slate,
+                            color: s.isActive
+                                ? AppColors.success
+                                : AppColors.textMuted,
                           ),
                         ],
                       ),
@@ -90,7 +100,9 @@ class ConfigurationStatusScreen extends ConsumerWidget {
                       InfoRow(label: 'Store ID', value: s.storeId),
                       InfoRow(label: 'Tenant ID', value: s.tenantId),
                       InfoRow(
-                          label: 'Downloaded', value: formatRelative(c.fetchedAt),),
+                        label: 'Downloaded',
+                        value: formatRelative(c.fetchedAt),
+                      ),
                     ],
                   ),
                 );
@@ -101,21 +113,26 @@ class ConfigurationStatusScreen extends ConsumerWidget {
               title: 'CACHE ENTRIES',
               icon: Icons.folder_open_outlined,
               trailing: entries.maybeWhen(
-                data: (rows) => Text('${rows.length}',
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.slate,),),
+                data: (rows) => Text(
+                  '${rows.length}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                  ),
+                ),
                 orElse: () => null,
               ),
             ),
             StatusCard(
-              accentColor: AppColors.line,
+              accentColor: AppColors.rule,
               child: entries.when(
                 loading: () => const InlineLoading(),
                 error: (e, _) => Text('$e'),
                 data: (rows) => rows.isEmpty
                     ? const EmptyState(
                         message: 'Nothing cached yet.',
-                        icon: Icons.folder_off_outlined,)
+                        icon: Icons.folder_off_outlined,
+                      )
                     : Column(
                         children: [
                           for (final r in rows)
@@ -124,13 +141,18 @@ class ConfigurationStatusScreen extends ConsumerWidget {
                               valueWidget: Column(
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
-                                  Text('v${r.version}',
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w600,),),
+                                  Text(
+                                    'v${r.version}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                   Text(
                                     formatRelative(r.updatedAt),
                                     style: const TextStyle(
-                                        fontSize: 12, color: AppColors.slate,),
+                                      fontSize: 12,
+                                      color: AppColors.textMuted,
+                                    ),
                                   ),
                                 ],
                               ),

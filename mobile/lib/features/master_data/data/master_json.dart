@@ -16,8 +16,11 @@ Object? firstOf(Map<String, dynamic> json, List<String> keys) {
 String asString(Object? v, {String fallback = ''}) =>
     v == null ? fallback : v.toString();
 
-String stringField(Map<String, dynamic> json, List<String> keys,
-        {String fallback = '',}) =>
+String stringField(
+  Map<String, dynamic> json,
+  List<String> keys, {
+  String fallback = '',
+}) =>
     asString(firstOf(json, keys), fallback: fallback);
 
 bool asBool(Object? v, {bool fallback = true}) {

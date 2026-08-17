@@ -22,7 +22,8 @@ class ManufacturerRepository implements MasterWriter {
     bool includeInactive = false,
   }) async {
     final query = _db.select(_db.manufacturers)
-      ..where((t) => t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false))
+      ..where(
+          (t) => t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false))
       ..orderBy([(t) => OrderingTerm.asc(t.name)]);
     if (!includeInactive) {
       query.where((t) => t.isActive.equals(true));
@@ -34,7 +35,9 @@ class ManufacturerRepository implements MasterWriter {
   Stream<List<Manufacturer>> watchAll(MasterScope scope) {
     return (_db.select(_db.manufacturers)
           ..where(
-              (t) => t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false),)
+            (t) =>
+                t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false),
+          )
           ..orderBy([(t) => OrderingTerm.asc(t.name)]))
         .watch()
         .map((rows) => rows.map(ManufacturerMapper.fromRow).toList());
@@ -42,10 +45,12 @@ class ManufacturerRepository implements MasterWriter {
 
   Future<Manufacturer?> getById(MasterScope scope, String id) async {
     final row = await (_db.select(_db.manufacturers)
-          ..where((t) =>
-              t.tenantId.equals(scope.tenantId) &
-              t.id.equals(id) &
-              t.isDeleted.equals(false),))
+          ..where(
+            (t) =>
+                t.tenantId.equals(scope.tenantId) &
+                t.id.equals(id) &
+                t.isDeleted.equals(false),
+          ))
         .getSingleOrNull();
     return row == null ? null : ManufacturerMapper.fromRow(row);
   }
@@ -55,8 +60,10 @@ class ManufacturerRepository implements MasterWriter {
     final counter = _db.manufacturers.id.count();
     final query = _db.selectOnly(_db.manufacturers)
       ..addColumns([counter])
-      ..where(_db.manufacturers.tenantId.equals(scope.tenantId) &
-          _db.manufacturers.isDeleted.equals(false),);
+      ..where(
+        _db.manufacturers.tenantId.equals(scope.tenantId) &
+            _db.manufacturers.isDeleted.equals(false),
+      );
     return (await query.getSingle()).read(counter) ?? 0;
   }
 
@@ -74,7 +81,8 @@ class ManufacturerRepository implements MasterWriter {
 
         final existing = await (_db.select(_db.manufacturers)
               ..where(
-                  (t) => t.tenantId.equals(scope.tenantId) & t.id.equals(dto.id),))
+                (t) => t.tenantId.equals(scope.tenantId) & t.id.equals(dto.id),
+              ))
             .getSingleOrNull();
 
         final apply = shouldApplyRemote(
@@ -88,8 +96,11 @@ class ManufacturerRepository implements MasterWriter {
         if (!apply) continue;
 
         await _db.into(_db.manufacturers).insertOnConflictUpdate(
-              ManufacturerMapper.toCompanion(dto,
-                  tenantId: scope.tenantId, syncedAt: now,),
+              ManufacturerMapper.toCompanion(
+                dto,
+                tenantId: scope.tenantId,
+                syncedAt: now,
+              ),
             );
         changed++;
       }
@@ -107,14 +118,18 @@ class ManufacturerRepository implements MasterWriter {
 
   Future<int> _markDeleted(MasterScope scope, String id, DateTime now) =>
       (_db.update(_db.manufacturers)
-            ..where((t) =>
-                t.tenantId.equals(scope.tenantId) &
-                t.id.equals(id) &
-                t.isDeleted.equals(false),))
-          .write(ManufacturersCompanion(
-            isDeleted: const Value(true),
-            syncedAt: Value(now),
-          ),);
+            ..where(
+              (t) =>
+                  t.tenantId.equals(scope.tenantId) &
+                  t.id.equals(id) &
+                  t.isDeleted.equals(false),
+            ))
+          .write(
+        ManufacturersCompanion(
+          isDeleted: const Value(true),
+          syncedAt: Value(now),
+        ),
+      );
 
   Future<int> _softDeleteMissing(
     MasterScope scope,
@@ -123,7 +138,9 @@ class ManufacturerRepository implements MasterWriter {
   ) async {
     final rows = await (_db.select(_db.manufacturers)
           ..where(
-              (t) => t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false),))
+            (t) =>
+                t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false),
+          ))
         .get();
     var removed = 0;
     for (final row in rows) {

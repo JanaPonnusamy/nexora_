@@ -46,8 +46,11 @@ class SyncQueue {
       payload: payload,
       maxAttempts: _retry.maxAttempts,
     );
-    await _logger.fine('Enqueued $operation $entity (#$id)',
-        category: 'queue', entity: entity,);
+    await _logger.fine(
+      'Enqueued $operation $entity (#$id)',
+      category: 'queue',
+      entity: entity,
+    );
     return id;
   }
 
@@ -56,10 +59,12 @@ class SyncQueue {
   /// row was created.
   Future<bool> enqueuePullOnce(String entity, {String payload = '{}'}) async {
     final pending = await _repo.queueByStatus('pending');
-    final exists = pending.any((r) =>
-        r.entity == entity &&
-        r.direction == SyncDirection.download.name &&
-        r.operation == 'pull',);
+    final exists = pending.any(
+      (r) =>
+          r.entity == entity &&
+          r.direction == SyncDirection.download.name &&
+          r.operation == 'pull',
+    );
     if (exists) return false;
     await enqueue(
       direction: SyncDirection.download,

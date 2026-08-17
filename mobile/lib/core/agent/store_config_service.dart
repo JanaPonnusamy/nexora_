@@ -8,8 +8,11 @@ import 'package:nexora_mobile/features/store_selection/data/store_repository.dar
 
 /// A cached store configuration plus the time it was fetched.
 class CachedStoreConfig {
-  const CachedStoreConfig(
-      {required this.store, required this.fetchedAt, required this.version,});
+  const CachedStoreConfig({
+    required this.store,
+    required this.fetchedAt,
+    required this.version,
+  });
   final Store store;
   final DateTime fetchedAt;
   final int version;

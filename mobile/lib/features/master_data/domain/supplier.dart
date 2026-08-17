@@ -58,16 +58,19 @@ class SupplierDto {
 
   factory SupplierDto.fromJson(Map<String, dynamic> json) {
     return SupplierDto(
-      supplierCode: stringField(json, ['supplier_code', 'supplierCode', 'code']),
+      supplierCode:
+          stringField(json, ['supplier_code', 'supplierCode', 'code']),
       supplierName:
           stringField(json, ['supplier_name', 'supplierName', 'name']),
       productCount: asInt(firstOf(json, ['product_count', 'productCount'])),
       availableCount:
           asInt(firstOf(json, ['available_count', 'availableCount'])),
       totalAvailableStock: asDouble(
-          firstOf(json, ['total_available_stock', 'totalAvailableStock']),),
+        firstOf(json, ['total_available_stock', 'totalAvailableStock']),
+      ),
       lastImportedAt: asDateOrNull(
-          firstOf(json, ['last_imported_at', 'lastImportedAt', 'imported_at']),),
+        firstOf(json, ['last_imported_at', 'lastImportedAt', 'imported_at']),
+      ),
     );
   }
 }

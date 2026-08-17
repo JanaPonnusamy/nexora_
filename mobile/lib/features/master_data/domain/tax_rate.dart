@@ -51,16 +51,19 @@ class TaxRateDto {
 
   factory TaxRateDto.fromJson(Map<String, dynamic> json) {
     final code = stringField(json, ['code', 'tax_code', 'taxcode']);
-    final rate = firstOf(json, ['rate_percent', 'ratePercent', 'rate', 'tax_percent', 'percentage']);
+    final rate = firstOf(json,
+        ['rate_percent', 'ratePercent', 'rate', 'tax_percent', 'percentage']);
     return TaxRateDto(
-      id: stringField(json, ['id', 'tax_id', 'code', 'tax_code'], fallback: code),
+      id: stringField(json, ['id', 'tax_id', 'code', 'tax_code'],
+          fallback: code),
       code: code,
       name: stringField(json, ['name', 'tax_name', 'description']),
       ratePercent: rate == null ? null : asDouble(rate),
       isActive: asBool(firstOf(json, ['is_active', 'isActive', 'active'])),
       version: asIntOrNull(firstOf(json, ['version', 'row_version'])),
       updatedAt: asDateOrNull(
-          firstOf(json, ['updated_at', 'updatedAt', 'modified_at']),),
+        firstOf(json, ['updated_at', 'updatedAt', 'modified_at']),
+      ),
     );
   }
 }

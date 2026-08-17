@@ -36,11 +36,15 @@ class AgentSettings {
     return AgentSettings(
       autoSync: autoSync ?? this.autoSync,
       syncInterval: _clampMinutes(
-          syncInterval ?? this.syncInterval, _minSyncMinutes, _maxSyncMinutes,),
+        syncInterval ?? this.syncInterval,
+        _minSyncMinutes,
+        _maxSyncMinutes,
+      ),
       healthCheckInterval: _clampMinutes(
-          healthCheckInterval ?? this.healthCheckInterval,
-          _minHealthMinutes,
-          _maxHealthMinutes,),
+        healthCheckInterval ?? this.healthCheckInterval,
+        _minHealthMinutes,
+        _maxHealthMinutes,
+      ),
       verboseLogging: verboseLogging ?? this.verboseLogging,
       syncOnStartup: syncOnStartup ?? this.syncOnStartup,
     );
@@ -64,8 +68,8 @@ class AgentSettings {
       ),
       healthCheckInterval: _clampMinutes(
         Duration(
-            minutes:
-                (json['healthCheckIntervalMinutes'] as num?)?.toInt() ?? 2,),
+          minutes: (json['healthCheckIntervalMinutes'] as num?)?.toInt() ?? 2,
+        ),
         _minHealthMinutes,
         _maxHealthMinutes,
       ),

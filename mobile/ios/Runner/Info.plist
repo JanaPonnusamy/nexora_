@@ -7,7 +7,16 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Nexora Mobile</string>
+	<string>Axythic</string>
+	<!-- Purpose strings must say WHY, naming the concrete user benefit. Vague
+	     wording ("this app needs camera access") is a routine App Store
+	     rejection under Guideline 5.1.1. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Axythic uses the camera to photograph supplier invoices so their details can be read automatically instead of typed in by hand.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Axythic lets you choose an existing photo or scan of a supplier invoice to extract its details.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Axythic saves exported invoice spreadsheets to your device so you can open them in Excel or share them.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

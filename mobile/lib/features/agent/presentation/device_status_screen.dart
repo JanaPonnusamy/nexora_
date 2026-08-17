@@ -34,12 +34,14 @@ class DeviceStatusScreen extends ConsumerWidget {
               AgentHealthCard(state: state),
               const SizedBox(height: 16),
               const SectionHeader(
-                  title: 'THIS DEVICE', icon: Icons.smartphone_outlined,),
+                title: 'THIS DEVICE',
+                icon: Icons.smartphone_outlined,
+              ),
               device.when(
                 loading: () => const InlineLoading(),
                 error: (e, _) => Text('$e'),
                 data: (id) => StatusCard(
-                  accentColor: AppColors.line,
+                  accentColor: AppColors.rule,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -48,14 +50,17 @@ class DeviceStatusScreen extends ConsumerWidget {
                         runSpacing: 8,
                         children: [
                           InfoChip(
-                              label: id?.platform ?? '—',
-                              icon: Icons.devices_other_rounded,),
+                            label: id?.platform ?? '—',
+                            icon: Icons.devices_other_rounded,
+                          ),
                           InfoChip(
-                              label: _orDash(id?.model) ?? 'Unknown model',
-                              icon: Icons.phone_android_rounded,),
+                            label: _orDash(id?.model) ?? 'Unknown model',
+                            icon: Icons.phone_android_rounded,
+                          ),
                           InfoChip(
-                              label: id?.versionLabel ?? '—',
-                              icon: Icons.info_outline_rounded,),
+                            label: id?.versionLabel ?? '—',
+                            icon: Icons.info_outline_rounded,
+                          ),
                         ],
                       ),
                       const SizedBox(height: 4),
@@ -63,11 +68,13 @@ class DeviceStatusScreen extends ConsumerWidget {
                       InfoRow(label: 'Device ID', value: id?.deviceId),
                       InfoRow(label: 'OS', value: _orDash(id?.osVersion)),
                       InfoRow(
-                          label: 'Registered',
-                          value: formatRelative(id?.registeredAt),),
+                        label: 'Registered',
+                        value: formatRelative(id?.registeredAt),
+                      ),
                       InfoRow(
-                          label: 'Last seen',
-                          value: formatRelative(id?.lastSeenAt),),
+                        label: 'Last seen',
+                        value: formatRelative(id?.lastSeenAt),
+                      ),
                     ],
                   ),
                 ),

@@ -1,6 +1,28 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Network access. INTERNET was previously declared only in the debug and
+         profile manifests, which meant release builds shipped without it and
+         every API call failed. It belongs here so all build types have it. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Read by connectivity_plus to drive online/offline sync transitions. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <!-- Document capture. Declared with the feature that uses them, so Play
+         Console review never sees a sensitive permission the app cannot
+         justify. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Picking an existing scan on Android 13+ (READ_EXTERNAL_STORAGE below
+         covers 12 and earlier). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+
+    <!-- A camera is not required to install: a user who only reviews and
+         exports documents on a tablet without one must still be able to. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
+
     <application
-        android:label="nexora_mobile"
+        android:label="Axythic"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

@@ -4,8 +4,12 @@ import 'package:nexora_mobile/core/theme/app_colors.dart';
 
 /// Small coloured status chip.
 class StatusPill extends StatelessWidget {
-  const StatusPill(
-      {super.key, required this.label, required this.color, this.icon,});
+  const StatusPill({
+    super.key,
+    required this.label,
+    required this.color,
+    this.icon,
+  });
 
   final String label;
   final Color color;
@@ -74,7 +78,7 @@ class SectionCard extends StatelessWidget {
             Row(
               children: [
                 if (icon != null) ...[
-                  Icon(icon, size: 18, color: AppColors.slate),
+                  Icon(icon, size: 18, color: AppColors.textMuted),
                   const SizedBox(width: 8),
                 ],
                 Expanded(
@@ -120,7 +124,7 @@ class InfoRow extends StatelessWidget {
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
-                  ?.copyWith(color: AppColors.slate),
+                  ?.copyWith(color: AppColors.textMuted),
             ),
           ),
           const SizedBox(width: 12),

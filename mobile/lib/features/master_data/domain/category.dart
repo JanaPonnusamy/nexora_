@@ -54,15 +54,19 @@ class CategoryDto {
     final parent =
         firstOf(json, ['parent_id', 'parentId', 'parent_code', 'parent']);
     return CategoryDto(
-      id: stringField(json, ['id', 'category_id', 'code', 'category_code'],
-          fallback: code,),
+      id: stringField(
+        json,
+        ['id', 'category_id', 'code', 'category_code'],
+        fallback: code,
+      ),
       code: code,
       name: stringField(json, ['name', 'category_name', 'cat_name']),
       parentId: parent == null ? null : asString(parent),
       isActive: asBool(firstOf(json, ['is_active', 'isActive', 'active'])),
       version: asIntOrNull(firstOf(json, ['version', 'row_version'])),
       updatedAt: asDateOrNull(
-          firstOf(json, ['updated_at', 'updatedAt', 'modified_at']),),
+        firstOf(json, ['updated_at', 'updatedAt', 'modified_at']),
+      ),
     );
   }
 }

@@ -57,20 +57,24 @@ class SyncManager {
     // 1) Recover rows abandoned mid-flight by a previous (killed) run.
     final recovered = await _queue.recoverInterrupted();
     if (recovered > 0) {
-      await _logger.warning('Recovered $recovered interrupted queue item(s)',
-          category: 'startup',);
+      await _logger.warning(
+        'Recovered $recovered interrupted queue item(s)',
+        category: 'startup',
+      );
     }
 
     // 2) Restore the last known engine state (for display continuity).
     final persisted = await _repo.readState();
     final pending = await _queue.pendingCount();
-    _emit(_state.copyWith(
-      status: SyncStatus.idle,
-      pending: pending,
-      lastRunAt: persisted?.lastRunAt,
-      lastSuccessAt: persisted?.lastSuccessAt,
-      lastError: persisted?.lastError,
-    ),);
+    _emit(
+      _state.copyWith(
+        status: SyncStatus.idle,
+        pending: pending,
+        lastRunAt: persisted?.lastRunAt,
+        lastSuccessAt: persisted?.lastSuccessAt,
+        lastError: persisted?.lastError,
+      ),
+    );
 
     // 3) Seed + subscribe to connectivity; a return-to-online triggers a sync.
     await _connectivity.start();
@@ -113,27 +117,33 @@ class SyncManager {
 
     if (!_connectivity.lastKnown.isOnline) {
       final pending = await _queue.pendingCount();
-      _emit(_state.copyWith(
-        status: SyncStatus.offline,
-        online: false,
-        pending: pending,
-        progress: 0,
-      ),);
-      await _logger.info('Offline — deferring sync (pending: $pending)',
-          category: 'connectivity',);
+      _emit(
+        _state.copyWith(
+          status: SyncStatus.offline,
+          online: false,
+          pending: pending,
+          progress: 0,
+        ),
+      );
+      await _logger.info(
+        'Offline — deferring sync (pending: $pending)',
+        category: 'connectivity',
+      );
       await _persist(SyncStatus.offline);
       return;
     }
 
     _eventController.add(SyncCycleStarted(trigger: trigger));
-    _emit(_state.copyWith(
-      status: SyncStatus.connecting,
-      online: true,
-      progress: 0,
-      completed: 0,
-      failed: 0,
-      clearError: true,
-    ),);
+    _emit(
+      _state.copyWith(
+        status: SyncStatus.connecting,
+        online: true,
+        progress: 0,
+        completed: 0,
+        failed: 0,
+        clearError: true,
+      ),
+    );
 
     var completed = 0;
     var failed = 0;
@@ -172,12 +182,14 @@ class SyncManager {
           final pending = await _queue.pendingCount();
           final total = completed + failed + pending;
           final progress = total == 0 ? 1.0 : completed / total;
-          _emit(_state.copyWith(
-            completed: completed,
-            failed: failed,
-            pending: pending,
-            progress: progress.clamp(0.0, 1.0),
-          ),);
+          _emit(
+            _state.copyWith(
+              completed: completed,
+              failed: failed,
+              pending: pending,
+              progress: progress.clamp(0.0, 1.0),
+            ),
+          );
           _eventController.add(SyncProgress(progress.clamp(0.0, 1.0)));
         }
       }
@@ -185,19 +197,21 @@ class SyncManager {
       final pending = await _queue.pendingCount();
       final now = DateTime.now();
       final status = failed > 0 ? SyncStatus.failed : SyncStatus.success;
-      _emit(_state.copyWith(
-        status: status,
-        pending: pending,
-        completed: completed,
-        failed: failed,
-        progress: 1.0,
-        currentEntity: null,
-        clearCurrentEntity: true,
-        lastRunAt: now,
-        lastSuccessAt: failed == 0 ? now : _state.lastSuccessAt,
-        lastError: failed > 0 ? 'One or more items failed' : null,
-        clearError: failed == 0,
-      ),);
+      _emit(
+        _state.copyWith(
+          status: status,
+          pending: pending,
+          completed: completed,
+          failed: failed,
+          progress: 1.0,
+          currentEntity: null,
+          clearCurrentEntity: true,
+          lastRunAt: now,
+          lastSuccessAt: failed == 0 ? now : _state.lastSuccessAt,
+          lastError: failed > 0 ? 'One or more items failed' : null,
+          clearError: failed == 0,
+        ),
+      );
       await _persist(status);
       await _logger.info(
         'Cycle done ($trigger): $completed ok, $failed failed, $pending pending',
@@ -206,25 +220,32 @@ class SyncManager {
       _eventController.add(SyncCycleCompleted(_state));
       await _queue.clearCompleted();
     } catch (e, st) {
-      _emit(_state.copyWith(
-        status: SyncStatus.failed,
-        lastError: e.toString(),
-        currentEntity: null,
-        clearCurrentEntity: true,
-      ),);
+      _emit(
+        _state.copyWith(
+          status: SyncStatus.failed,
+          lastError: e.toString(),
+          currentEntity: null,
+          clearCurrentEntity: true,
+        ),
+      );
       await _persist(SyncStatus.failed, error: e.toString());
-      await _logger.error('Cycle aborted: $e',
-          category: 'sync', detail: st.toString(),);
+      await _logger.error(
+        'Cycle aborted: $e',
+        category: 'sync',
+        detail: st.toString(),
+      );
       _eventController.add(SyncCycleFailed(e.toString()));
     }
   }
 
   void _setOnline(bool online) {
     if (_state.online == online) return;
-    _emit(_state.copyWith(
-      online: online,
-      status: online ? _state.status : SyncStatus.offline,
-    ),);
+    _emit(
+      _state.copyWith(
+        online: online,
+        status: online ? _state.status : SyncStatus.offline,
+      ),
+    );
   }
 
   void _emit(SyncState next) {

@@ -57,13 +57,31 @@ class SyncLogger {
   Future<void> info(String m, {String category = 'sync', String? entity}) =>
       log(SyncLogLevel.info, m, category: category, entity: entity);
 
-  Future<void> warning(String m,
-          {String category = 'sync', String? entity, String? detail,}) =>
-      log(SyncLogLevel.warning, m,
-          category: category, entity: entity, detail: detail,);
+  Future<void> warning(
+    String m, {
+    String category = 'sync',
+    String? entity,
+    String? detail,
+  }) =>
+      log(
+        SyncLogLevel.warning,
+        m,
+        category: category,
+        entity: entity,
+        detail: detail,
+      );
 
-  Future<void> error(String m,
-          {String category = 'sync', String? entity, String? detail,}) =>
-      log(SyncLogLevel.error, m,
-          category: category, entity: entity, detail: detail,);
+  Future<void> error(
+    String m, {
+    String category = 'sync',
+    String? entity,
+    String? detail,
+  }) =>
+      log(
+        SyncLogLevel.error,
+        m,
+        category: category,
+        entity: entity,
+        detail: detail,
+      );
 }

@@ -64,10 +64,14 @@ void main() {
         },
       ],
     });
-    dio.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
-      expect(options.path, ApiEndpoints.syncControlCenter);
-      handler.next(options);
-    },),);
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          expect(options.path, ApiEndpoints.syncControlCenter);
+          handler.next(options);
+        },
+      ),
+    );
 
     final result = await SyncAdminService(dio).fetchControlCenter();
 

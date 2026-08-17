@@ -15,8 +15,10 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.nexora.nexora_mobile"
+        // Store identity for Google Play. Distinct from `namespace` above, which
+        // is the Kotlin/R-class package and is deliberately left unchanged —
+        // renaming it would mean relocating MainActivity for no user-visible gain.
+        applicationId = "com.axythic.mobile"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

@@ -12,7 +12,12 @@ linter:
   rules:
     prefer_single_quotes: true
     always_use_package_imports: true
-    require_trailing_commas: true
+    # require_trailing_commas is deliberately OFF. It was written for the old
+    # formatter and contradicts `dart format`'s current style, which reflows
+    # argument lists and drops the very commas the rule demands — enabling both
+    # makes `dart format` and `flutter analyze` unable to pass simultaneously.
+    # `dart format` is the single authority on layout and is enforced in CI.
+    require_trailing_commas: false
     avoid_print: true
     prefer_const_constructors: true
     prefer_final_locals: true

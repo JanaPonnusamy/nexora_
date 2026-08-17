@@ -53,7 +53,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ..showSnackBar(
             SnackBar(
               content: Text(message),
-              backgroundColor: AppColors.error,
+              backgroundColor: AppColors.danger,
             ),
           );
         ref.read(authControllerProvider.notifier).clearError();
@@ -121,7 +121,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       'Connecting to ${config.apiBaseUrl}',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.slate,
+                            color: AppColors.textMuted,
                           ),
                     ),
                   ],
@@ -148,7 +148,7 @@ class _Header extends StatelessWidget {
           height: 64,
           width: 64,
           decoration: BoxDecoration(
-            color: AppColors.primary,
+            color: AppColors.accent,
             borderRadius: BorderRadius.circular(16),
           ),
           alignment: Alignment.center,
@@ -175,7 +175,7 @@ class _Header extends StatelessWidget {
           style: Theme.of(context)
               .textTheme
               .bodyMedium
-              ?.copyWith(color: AppColors.slate),
+              ?.copyWith(color: AppColors.textMuted),
         ),
         if (!config.isProd) ...[
           const SizedBox(height: 10),

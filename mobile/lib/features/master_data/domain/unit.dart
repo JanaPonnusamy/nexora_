@@ -48,14 +48,18 @@ class UnitDto {
   factory UnitDto.fromJson(Map<String, dynamic> json) {
     final code = stringField(json, ['code', 'unit_code', 'uom_code', 'uom']);
     return UnitDto(
-      id: stringField(json, ['id', 'unit_id', 'code', 'unit_code'],
-          fallback: code,),
+      id: stringField(
+        json,
+        ['id', 'unit_id', 'code', 'unit_code'],
+        fallback: code,
+      ),
       code: code,
       name: stringField(json, ['name', 'unit_name', 'uom_name', 'description']),
       isActive: asBool(firstOf(json, ['is_active', 'isActive', 'active'])),
       version: asIntOrNull(firstOf(json, ['version', 'row_version'])),
       updatedAt: asDateOrNull(
-          firstOf(json, ['updated_at', 'updatedAt', 'modified_at']),),
+        firstOf(json, ['updated_at', 'updatedAt', 'modified_at']),
+      ),
     );
   }
 }
