@@ -1,11 +1,16 @@
 /* Purchase Manager — desktop-dense workspace layout.
    Reuses sx-* (sync UI kit) + sa-* (stock) primitives; adds pm-* chrome. */
 
+/* Fills whatever real height .app-main (the app shell's flex:1 1 auto content
+   region, itself inside a genuine 100vh flex column) actually has — not a
+   guessed "100vh - Npx" chrome offset. That guess drifted at anything other
+   than the one resolution/zoom level it was tuned against, which is exactly
+   why Purchase/Sales History kept losing the fight for space below it. */
 .pm {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  height: calc(100vh - 96px);
+  height: 100%;
   min-height: 520px;
   font-size: 13px;
 }
@@ -726,18 +731,24 @@
    decision, with the two history sections flexing and scrolling internally so
    the page itself never scrolls because of the detail panel. */
 .pm-dpanel--fit { height: 100%; min-height: 0; overflow-y: auto; }
-.pm-dsec--fixed { flex: 0 0 auto; }
-/* Purchase and Sales History split the leftover height evenly and each scrolls
-   internally. The floor is one header + ~4 rows: any higher and the two floors
-   together exceeded the column, so Sales History was pushed out of the panel
-   and clipped away entirely (pm-split__detail is overflow:hidden). */
-/* min-height tuned so >=5 rows of .pm-minitable (~24px/row + sticky header)
-   are visible without opening History/View All (spec: Purchase/Sales History
-   must show >=5 rows) — a real minimum, not just a flex-grow floor: on a
-   short window flex-grow settles at this size and .pm-dpanel--fit (which
-   already scrolls) absorbs the rest, rather than history rows losing the
-   fight against the header/chart for whatever's left. */
-.pm-dsec--scroll { flex: 1 1 0; min-height: 195px; display: flex; flex-direction: column; }
+/* Sales Trend | Purchase History | Sales History — three EQUAL rows, each
+   flex:1 1 0, full panel width apiece (owner-directed: side-by-side history
+   columns forced 8-column Purchase History down to ~half width, which
+   truncated every cell to "…" regardless of the width:auto table fix —
+   there just wasn't enough horizontal room at the Product Detail panel's
+   real width. Stacking three equal-height rows keeps every column at full,
+   readable width; each row scrolls its own contents internally instead of
+   competing for someone else's space). */
+.pm-dsec--trend { flex: 1 1 0; min-height: 160px; display: flex; flex-direction: column; }
+.pm-dsec--trend .pm-chart-wrap { flex: 1; min-height: 0; height: auto; }
+/* min-height is section padding (12) + title row (~16) + sticky table header
+   (~25) + 5 rows (~16px each = 80, -20% per owner direction) = ~133px
+   content; 160px leaves real breathing room so 5 rows read as 5 rows, not a
+   razor-thin fit. This is a floor, not a target: flex-grow takes it well
+   past 5 rows on anything 1080p-and-up; on a short window it settles here
+   and .pm-dpanel--fit (which already scrolls) absorbs the rest, rather than
+   history rows losing the fight for whatever's left. */
+.pm-dsec--scroll { flex: 1 1 0; min-height: 160px; display: flex; flex-direction: column; }
 .pm-dsec--scroll .pm-minitable-wrap { flex: 1; min-height: 0; overflow-y: auto; }
 /* Column header stays put while the rows scroll under it — opaque + a hairline
    so rows never bleed through it. */
@@ -759,7 +770,7 @@
 .pm-dsec {
   border: 1px solid var(--bs-border-color, #e5e7eb);
   border-radius: 14px;
-  padding: 8px 10px;
+  padding: 6px 10px;
   box-shadow: 0 10px 28px rgba(15, 23, 42, .04);
 }
 .pm-dsec__title {
@@ -771,7 +782,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 .pm-dsec__titlebtn { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 11px; }
 .pm-dsec__hint {
@@ -860,42 +871,130 @@
    the stock page) instead of ~5-6; panel height itself is unchanged. */
 .pm-minitable-wrap { overflow-x: auto; }
 .pm-minitable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11px; }
-/* Purchase/Sales History (DetailColumn's compact panel only) — fixed column
-   widths (see the <colgroup> in DetailColumn.tsx) sized to fit every required
-   column at the Product Detail panel's normal width without horizontal
-   scrolling (spec §9-§11); other pm-minitable users (Bill Drawer / View All)
-   keep the browser's auto layout. */
-.pm-minitable--pur, .pm-minitable--sales { table-layout: fixed; }
+/* Purchase/Sales History (DetailColumn's compact panel only) — this panel's
+   real width can't fit 8 (or 6) fully-readable columns; owner-directed
+   tradeoff is to keep every column at a genuinely readable width and let the
+   excess scroll horizontally (.pm-minitable-wrap already has overflow-x:auto)
+   rather than truncating text to force a no-scroll fit. width:auto is the
+   part that matters — width:100% previously forced table-layout:fixed to
+   treat the colgroup's px as ratios and crush them to fit the container;
+   width:auto lets the table take its own real (colgroup-sum) width instead,
+   scrolling when that's wider than the panel. Other pm-minitable users (Bill
+   Drawer / View All) keep the browser's auto layout, unaffected. */
+.pm-minitable--pur, .pm-minitable--sales { width: auto; min-width: max-content; table-layout: fixed; }
 /* Fixed-width columns can't grow to fit an overlong header/value — clip with
    ellipsis instead of spilling into the next column. */
 .pm-minitable--pur th, .pm-minitable--pur td,
 .pm-minitable--sales th, .pm-minitable--sales td {
   overflow: hidden; text-overflow: ellipsis;
 }
+/* Belt-and-braces: per-cell min-width, not just <col> width. table-layout:
+   fixed's own width algorithm (col > first-row-cell width) kept computing
+   these narrower than specified in practice, truncating even short header
+   text like "Qty" to "Q…" — min-width on the actual cells is a hard floor
+   every browser enforces on top of that algorithm, so this wins regardless
+   of why the <col> value alone wasn't holding. */
+.pm-minitable--pur th:nth-child(1), .pm-minitable--pur td:nth-child(1) { min-width: 38px; }
+.pm-minitable--pur th:nth-child(2), .pm-minitable--pur td:nth-child(2) { min-width: 38px; }
+.pm-minitable--pur th:nth-child(3), .pm-minitable--pur td:nth-child(3) { min-width: 42px; }
+.pm-minitable--pur th:nth-child(4), .pm-minitable--pur td:nth-child(4) { min-width: 60px; }
+.pm-minitable--pur th:nth-child(5), .pm-minitable--pur td:nth-child(5) { min-width: 58px; }
+.pm-minitable--pur th:nth-child(6), .pm-minitable--pur td:nth-child(6) { min-width: 58px; }
+.pm-minitable--pur th:nth-child(7), .pm-minitable--pur td:nth-child(7) { min-width: 58px; }
+.pm-minitable--pur th:nth-child(8), .pm-minitable--pur td:nth-child(8) { min-width: 110px; }
+.pm-minitable--sales th:nth-child(1), .pm-minitable--sales td:nth-child(1) { min-width: 38px; }
+.pm-minitable--sales th:nth-child(2), .pm-minitable--sales td:nth-child(2) { min-width: 70px; }
+.pm-minitable--sales th:nth-child(3), .pm-minitable--sales td:nth-child(3) { min-width: 60px; }
+.pm-minitable--sales th:nth-child(4), .pm-minitable--sales td:nth-child(4) { min-width: 110px; }
+.pm-minitable--sales th:nth-child(5), .pm-minitable--sales td:nth-child(5) { min-width: 42px; }
+.pm-minitable--sales th:nth-child(6), .pm-minitable--sales td:nth-child(6) { min-width: 80px; }
 .pm-minitable thead th {
   text-align: left;
   font-weight: 700;
   color: var(--ds-text-secondary, #475569);
-  padding: 6px 8px;
-  line-height: 1.25;
+  padding: 5px 7px;
+  line-height: 1.2;
   white-space: nowrap;
   border-bottom: 1px solid var(--bs-border-color, #e5e7eb);
 }
 .pm-minitable tbody td {
-  padding: 5px 8px;
-  line-height: 1.3;
+  padding: 4px 7px;
+  line-height: 1.2;
   border-bottom: 1px solid var(--bs-border-color, #eef2f7);
   white-space: nowrap;
 }
+/* Every row — free or not — must be exactly the same height, badge included,
+   or "5 rows" silently drifts taller for free-qty rows. */
+.pm-minitable tbody tr { height: 25px; }
+/* Purchase/Sales History specifically — denser rows than the Bill Drawer's
+   own table (pm-billtable, kept roomier for readability there), since these
+   two panels need to fit 5+ rows in a fixed-height column.
+
+   The padding-top/bottom rule below was ALWAYS dead on arrival: every
+   thead/tbody cell in the whole app gets
+   `padding: var(--nx-table-cell-block) var(--nx-table-cell-inline) !important`
+   from #root table rules in data-tables.css. No non-!important padding
+   declaration — this one included — could ever have won against that,
+   confirmed by inspecting the live computed style (padding-left/right was
+   actually 12px the entire time, not the 3px/5px this file kept trying to
+   set). The only real lever is the CSS custom properties that !important
+   rule reads from — #root table.pm-minitable in data-tables.css already
+   sets those, but even denser than that is needed here to fit a 16px row,
+   so override them again with matching specificity (table.pm-minitable--pur,
+   not just .pm-minitable--pur — a bare class loses to #root table's ID). */
+/* .pm-minitable AND .pm-minitable--pur/--sales together — same element has
+   both classes, so this compound selector outranks data-tables.css's
+   single-class `#root table.pm-minitable` regardless of which CSS file the
+   bundler happens to place last (they tied on specificity at one class each,
+   and lost the tiebreak on file order — this makes the tie impossible). */
+/* --pm-mt-pad is set inline per <table> by DetailColumn.tsx from the ⚙ Grid
+   Settings panel (useMiniGridSettings) — falls back to 3.2px (the verified-
+   working default) when unset. */
+#root table.pm-minitable.pm-minitable--pur,
+#root table.pm-minitable.pm-minitable--sales {
+  --nx-table-cell-block: 0.06rem;
+  --nx-table-cell-inline: var(--pm-mt-pad, 0.2rem);
+}
+#root table.pm-minitable.pm-minitable--pur > thead > tr > :where(th, td):first-child,
+#root table.pm-minitable.pm-minitable--pur > tbody > tr > :where(th, td):first-child,
+#root table.pm-minitable.pm-minitable--sales > thead > tr > :where(th, td):first-child,
+#root table.pm-minitable.pm-minitable--sales > tbody > tr > :where(th, td):first-child {
+  padding-left: var(--pm-mt-pad, 0.2rem) !important;
+}
+#root table.pm-minitable.pm-minitable--pur > thead > tr > :where(th, td):last-child,
+#root table.pm-minitable.pm-minitable--pur > tbody > tr > :where(th, td):last-child,
+#root table.pm-minitable.pm-minitable--sales > thead > tr > :where(th, td):last-child,
+#root table.pm-minitable.pm-minitable--sales > tbody > tr > :where(th, td):last-child {
+  padding-right: var(--pm-mt-pad, 0.2rem) !important;
+}
+/* -20% from 20px (owner-directed). */
+.pm-dsec--pur .pm-minitable tbody tr,
+.pm-dsec--sales .pm-minitable tbody tr { height: 16px; }
 /* Tighter horizontal padding in the fixed-width history tables — every px
    counts toward fitting all 7 Purchase History columns without scrolling. */
 .pm-minitable--pur th, .pm-minitable--pur td,
-.pm-minitable--sales th, .pm-minitable--sales td { padding-left: 5px; padding-right: 5px; }
+.pm-minitable--sales th, .pm-minitable--sales td { padding-left: 3px; padding-right: 3px; }
 .pm-minitable .sx-num { text-align: right; font-variant-numeric: tabular-nums; }
 .pm-minitable .sx-dim { color: #94a3b8; }
 .pm-minitable tbody tr:last-child td { border-bottom: 0; }
 .pm-minitable tbody tr:hover { background: var(--ds-surface-subtle, rgba(255,255,255,.6)); }
 .pm-mt__ellip { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Free-Qty rows (spec §5) — a soft teal/green glow, not a flat fill, so it
+   reads as "purchase benefit" without fighting the dark theme for contrast.
+   Applied per-<td> (inset trick) rather than on the <tr> itself since the
+   table uses border-collapse:separate + border-spacing:0 — a <tr> background
+   alone doesn't reliably paint under every cell across browsers here. */
+.pm-mt__free td {
+  background: rgba(16, 185, 129, .07);
+  box-shadow: inset 0 0 10px rgba(16, 185, 129, .16);
+}
+.pm-mt__free:hover td { background: rgba(16, 185, 129, .13); }
+[data-bs-theme="dark"] .pm-mt__free td {
+  background: rgba(16, 185, 129, .12);
+  box-shadow: inset 0 0 12px rgba(16, 185, 129, .28);
+}
+[data-bs-theme="dark"] .pm-mt__free:hover td { background: rgba(16, 185, 129, .18); }
 /* Fixed-width Supplier/Customer columns (see .pm-minitable--pur/--sales
    colgroups above) are narrower than the general 130px default. */
 .pm-minitable--pur .pm-mt__ellip { max-width: 88px; }
@@ -903,17 +1002,31 @@
 
 .pm-drow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
-/* Header — name and the Summary/History/Info action row stack vertically
-   (not side-by-side) so the action row's fixed-width buttons can never
-   squeeze the product name into a near-zero-width column that wraps every
-   word onto its own line. The right rail is only ~15% of the workspace
-   width (spec §3/§4 "compact information rail"), narrow enough that a
-   side-by-side header doesn't reliably fit both. */
-.pm-dhead { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 0; }
-.pm-dhead__name { font-size: 15px; font-weight: 700; line-height: 1.25; overflow-wrap: break-word; color: var(--ds-text-primary, #0f172a); }
+/* Header is one row: name+meta on the left, Summary/History/Info on the
+   right — the separate action row below the name was pure vertical waste
+   once the name+meta themselves collapsed to one line (owner-directed).
+   flex-wrap is the safety net for a long product name at the panel's
+   narrowest width; min-width:0 on the title block lets it actually ellipsis/
+   wrap instead of forcing the row wider than the panel. */
+.pm-dhead { display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; padding: 0 2px; }
+.pm-dhead > .min-w-0 { min-width: 0; flex: 1 1 auto; }
+.pm-dhead__titleline { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.pm-dhead__name { font-size: 13px; font-weight: 700; line-height: 1.15; color: var(--ds-text-primary, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 40px; flex: 0 1 auto; }
 .pm-dhead__meta { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 3px; font-size: 11.5px; color: var(--ds-text-secondary, #64748b); }
 .pm-dhead__meta b { color: var(--ds-text-muted, #94a3b8); font-weight: 600; margin-right: 5px; text-transform: uppercase; font-size: 10px; letter-spacing: .02em; }
-.pm-dhead__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Single "code • unit • pack • stores • last rate" line — replaces two
+   stacked chip rows with one, so the header stops eating rows that should
+   go to Purchase/Sales History. */
+.pm-dhead__meta--compact {
+  flex: 1 1 auto;
+  min-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ds-text-muted, #94a3b8);
+}
+.pm-dhead__actions { display: flex; gap: 6px; flex-wrap: wrap; flex: 0 0 auto; }
 /* Inline Change Supplier (§4) — a soft glass badge (translucent green tint +
    thin border), not a solid flat-green block, so it sits visually with the
    rest of the glass workspace instead of reading as an old legacy chip. */
@@ -960,7 +1073,10 @@
 /* Compact — the right rail is a secondary info panel (§3): Sales Trend gives
    up height so Purchase/Sales History can show >=5 rows without scrolling
    the whole panel. */
-.pm-chart-wrap { height: 200px; min-height: 200px; margin-top: 6px; }
+/* Scales with viewport height instead of a flat 200px so short windows give
+   that space back to Purchase/Sales History (spec: trend stays readable, but
+   the history tables' 5-row floor takes priority on a small laptop screen). */
+.pm-chart-wrap { height: clamp(120px, 18vh, 200px); min-height: 120px; margin-top: 6px; }
 
 /* Supplier recommendation cards */
 .pm-supcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
@@ -1210,8 +1326,8 @@
 .pm-info-facts--decision { grid-template-columns: repeat(3, 1fr); margin-top: 10px; }
 .pm-info-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .pm-info-facts__cell { background: var(--bs-tertiary-bg, #f8fafc); border-radius: 8px; padding: 7px 10px; display: flex; justify-content: space-between; gap: 8px; }
-.pm-info-facts__lbl { color: #64748b; font-size: 12px; }
-.pm-info-facts__val { font-weight: 600; font-size: 12.5px; }
+.pm-info-facts__lbl { color: var(--bs-secondary-color, #64748b); font-size: 12px; }
+.pm-info-facts__val { font-weight: 600; font-size: 12.5px; color: var(--bs-body-color, #0f172a); }
 .pm-info-reason { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; padding: 10px 12px; }
 .pm-info-reason__title { font-size: 12.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .pm-info-reason__code { font-weight: 700; color: var(--bs-primary, #4f46e5); margin-bottom: 4px; }
@@ -1395,6 +1511,12 @@
   backdrop-filter: blur(4px);
 }
 
+/* Theme-token driven (not the light-only gradients this section used to
+   hardcode) — that forced-light card was fine for its own header title (set
+   its own dark text) but every OTHER label/value here reads --bs-*/--ds-*
+   text colors that resolve to their DARK-theme (light-gray/white) values in
+   this app, so on a card stuck permanently light they went near-invisible.
+   Real bug, reported against the actual rendered dialog. */
 .pm-drawer {
   top: 50%;
   left: 50%;
@@ -1403,33 +1525,35 @@
   max-height: 88vh;
   width: 760px;
   max-width: min(96vw, 1020px);
-  background: linear-gradient(180deg, rgba(255,255,255,.98) 0%, rgba(248,250,252,.98) 100%);
+  background: var(--bs-body-bg, #fff);
+  color: var(--bs-body-color, #0f172a);
   box-shadow: 0 28px 90px rgba(15,23,42,.32);
   border-radius: 22px;
-  border: 1px solid rgba(226,232,240,.9);
+  border: 1px solid var(--bs-border-color, #e2e8f0);
 }
 
 .pm-drawer--wide { width: 920px; }
 
 .pm-drawer__head {
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(226,232,240,.95);
-  background: linear-gradient(135deg, #ffffff 0%, #f8fbff 60%, #f2f7ff 100%);
+  border-bottom: 1px solid var(--bs-border-color, #e2e8f0);
+  background: var(--bs-tertiary-bg, #f8fbff);
 }
 
 .pm-drawer__tabs {
   gap: 4px;
   padding: 10px 16px 0;
-  background: rgba(255,255,255,.92);
+  background: var(--bs-body-bg, #fff);
 }
 
 .pm-drawer__tab {
   font-weight: 700;
   padding: 9px 14px;
   border-radius: 10px 10px 0 0;
+  color: var(--bs-secondary-color, #64748b);
 }
 
-.pm-drawer__tab--on { background: rgba(79,70,229,.08); }
+.pm-drawer__tab--on { background: rgba(79,70,229,.12); color: var(--bs-primary, #4f46e5); }
 
 .pm-drawer__body { padding: 16px 18px 18px; }
 
@@ -1440,14 +1564,14 @@
 
 .pm-billtable {
   font-size: 12px;
-  border: 1px solid rgba(226,232,240,.95);
+  border: 1px solid var(--bs-border-color, #e2e8f0);
   border-radius: 14px;
   overflow: hidden;
 }
 
 .pm-billtable thead th {
-  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
-  color: #334155;
+  background: var(--bs-tertiary-bg, #f8fafc);
+  color: var(--bs-body-color, #334155);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -1564,6 +1688,54 @@
 }
 .pm-console__run:hover:not(:disabled) { background: var(--nx-accent-hover, var(--bs-primary, #4338ca)); }
 .pm-console__opt { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--nx-text-soft, var(--bs-secondary-color, #475569)); cursor: pointer; white-space: nowrap; }
+.pm-console__reset { height: 36px; white-space: nowrap; }
+.pm-console__reset:disabled { opacity: .5; }
+
+/* Cards are a fixed min-height so opening one card's settings doesn't leave
+   the grid row uneven — every card reserves the space whether it's in use
+   or not, and the settings panel and Run button always stay in place. */
+.pm-console .lo-op-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 15.5rem;
+}
+.pm-console .lo-op-process { margin-top: auto; }
+.pm-console__settings-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: transparent;
+  cursor: default;
+}
+
+/* Effective (global-or-override) days, always visible on the card. */
+.pm-console__using { display: block; margin-top: 0.35rem; }
+.pm-console__using b { color: var(--bs-body-color, inherit); }
+.pm-console__overridebadge { margin-left: 0.4rem; vertical-align: middle; }
+
+.pm-console__newcycle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--bs-secondary-color);
+  cursor: pointer;
+}
+.pm-console__newcycle input { accent-color: var(--bs-primary, #4f46e5); cursor: pointer; }
+
+.pm-console__confirm { margin-top: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+.pm-console__confirmcheck {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--nx-warning-ink, #92400e);
+  cursor: pointer;
+}
+.pm-console__confirmcheck input { accent-color: var(--bs-warning, #f59e0b); cursor: pointer; }
+.pm-console__confirm .lo-op-process { margin-top: 0; }
 .pm-console__bar .pm-console__opt {
   min-height: 36px; padding: 0 11px;
   border: 1px solid var(--nx-rule, var(--bs-border-color, #e5e7eb));
@@ -1606,12 +1778,13 @@
 .pm-console__sumitem b { font-size: 15px; font-weight: 700; color: var(--bs-body-color, #0f172a); font-variant-numeric: tabular-nums; }
 .pm-console__sumitem--bad b { color: #b91c1c; }
 
-/* Tight grid — denser than the shared .pm-grid default */
-.pm-console__grid { font-size: 12px; }
-.pm-console__grid thead th { padding: 5px 8px; white-space: nowrap; }
-.pm-console__grid tbody td { padding: 4px 8px; vertical-align: middle; }
-.pm-console__grid .pm-prod__name { font-size: 12.5px; line-height: 1.25; }
-.pm-console__grid .pm-prod__meta { font-size: 10.5px; line-height: 1.2; }
+/* Roomier grid — legacy-order-style breathing room instead of a packed sheet */
+.pm-console__grid { font-size: 12.5px; }
+.pm-console__grid thead th { padding: 9px 12px; white-space: nowrap; }
+.pm-console__grid tbody td { padding: 12px; vertical-align: middle; }
+.pm-console__grid tbody tr:not(.pm-console__logrow) { border-bottom: 1px solid var(--nx-rule, var(--bs-border-color, #e5e7eb)); }
+.pm-console__grid .pm-prod__name { font-size: 13px; font-weight: 600; line-height: 1.3; }
+.pm-console__grid .pm-prod__meta { font-size: 11px; line-height: 1.3; }
 .pm-console__row--running { background: rgba(59,130,246,.04); }
 .pm-console__row--failed { background: rgba(239,68,68,.04); }
 .pm-console__row--confirm { background: rgba(245,158,11,.06); }
@@ -1624,14 +1797,14 @@
 .pm-console__cyclecol { width: 190px; }
 .pm-console__refreshcol { width: 140px; }
 .pm-console__cyclename {
-  font-size: 11.5px; font-weight: 600; color: #334155; line-height: 1.25;
+  font-size: 12px; font-weight: 600; color: #334155; line-height: 1.3;
   max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.pm-console__refreshname { font-size: 11.5px; font-weight: 600; color: #334155; display: flex; align-items: baseline; gap: 6px; }
-.pm-console__refreshcount { font-size: 10px; font-weight: 500; color: #94a3b8; }
+.pm-console__refreshname { font-size: 12px; font-weight: 600; color: #334155; display: flex; align-items: baseline; gap: 6px; }
+.pm-console__refreshcount { font-size: 10.5px; font-weight: 500; color: #94a3b8; }
 .pm-badge {
-  display: inline-block; margin-top: 2px; padding: 1px 7px; border-radius: 999px;
-  font-size: 9.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+  display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
 }
 .pm-badge--active { background: #dcfce7; color: #15803d; }
 .pm-console__rescol { width: 150px; }
@@ -1926,6 +2099,50 @@
 [data-bs-theme="dark"] .pm-settings { background: #1a2030; border-color: rgba(255,255,255,.12); }
 [data-bs-theme="dark"] .pm-settings__reorder button { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }
 [data-bs-theme="dark"] .pm-settings__chip { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }
+
+/* ---- Purchase/Sales History mini-grid settings (⚙ next to Info) --------
+   Same visual language as .pm-settings above (main Product Grid's own
+   settings popover) but portalled + positioned to open on the LEFT of the
+   Product Detail panel (MiniGridSettingsPanel computes anchorRect from the
+   panel itself, not the gear button) — owner-directed placement. */
+.pm-mgs {
+  z-index: 30;
+  width: 300px; overflow-y: auto;
+  background: var(--bs-body-bg, #fff); border: 1px solid var(--bs-border-color, #e5e7eb);
+  border-radius: 10px; box-shadow: 0 10px 32px rgba(15, 23, 42, .18);
+  padding: 10px; display: flex; flex-direction: column; gap: 12px;
+}
+.pm-mgs__section { display: flex; flex-direction: column; gap: 4px; }
+.pm-mgs__head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: #8a95a8; padding-bottom: 4px; border-bottom: 1px solid var(--bs-border-color, #eef1f5);
+}
+.pm-mgs__padding {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 12px; padding: 2px 0;
+}
+.pm-mgs__padding input {
+  width: 56px; height: 26px; border: 1px solid var(--bs-border-color, #d0d5dd);
+  border-radius: 6px; background: var(--bs-body-bg, #fff); color: inherit; padding: 0 6px; font-size: 12px;
+}
+.pm-mgs__cols { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.pm-mgs__col { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.pm-mgs__colname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-mgs__width {
+  width: 50px; height: 24px; border: 1px solid var(--bs-border-color, #d0d5dd);
+  border-radius: 6px; background: var(--bs-body-bg, #fff); color: inherit; padding: 0 4px; font-size: 11.5px;
+}
+.pm-mgs__movebtn {
+  width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--bs-border-color, #d0d5dd); background: var(--bs-body-bg, #fff);
+  border-radius: 5px; font-size: 10px; color: inherit; cursor: pointer; flex: 0 0 auto;
+}
+.pm-mgs__movebtn:disabled { opacity: .35; cursor: not-allowed; }
+[data-bs-theme="dark"] .pm-mgs { background: #1a2030; border-color: rgba(255,255,255,.12); }
+[data-bs-theme="dark"] .pm-mgs__padding input,
+[data-bs-theme="dark"] .pm-mgs__width,
+[data-bs-theme="dark"] .pm-mgs__movebtn { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }
 
 /* ===========================================================================
    NEXORA GLASS — frosted surfaces for the Purchase Workspace.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { tenantService } from '../../services/tenantService'
 import { storeService } from '../../services/storeService'
 import { procurementService } from '../../services/procurementService'
@@ -11,6 +11,7 @@ import type { Cycle } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
 import { num } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
+import '../legacy-order/legacy-order.css'
 import { FilterSelect } from '../../design-system/components/FilterBar'
 
 type Banner = { kind: 'success' | 'danger'; text: string } | null
@@ -50,9 +51,6 @@ type StoreRun = {
 }
 
 type Params = { rolling?: number; min: number; max: number }
-/** keep = refresh the active cycle · closeRefresh = lock the current refresh &
- *  start a fresh one in the SAME cycle · new = close the cycle & open a fresh one. */
-type CycleAction = 'keep' | 'closeRefresh' | 'new'
 type RefreshInfo = { count: number; latestName: string | null; latestNo: number | null; latestAt: string | null }
 
 const POLL_MS = 2500
@@ -66,6 +64,9 @@ const POLL_MS = 2500
 // in normal operation.
 const STALL_TIMEOUT_MS = 90_000
 const SYNC_MAX_MS = 30 * 60_000
+const DEFAULT_ROLLING = '90'
+const DEFAULT_MIN = '13'
+const DEFAULT_MAX = '18'
 const STAGES: StageKey[] = ['sync', 'cycle', 'refresh']
 const STAGE_LABEL: Record<StageKey, string> = { sync: 'Sync', cycle: 'Cycle', refresh: 'Refresh' }
 
@@ -202,6 +203,62 @@ const failStage = (r: StoreRun, k: StageKey, msg: string): StoreRun =>
     stages: { ...r.stages, [k]: { ...r.stages[k], status: 'failed', endedAt: Date.now() } },
   }, `${STAGE_LABEL[k]} failed — ${msg}`)
 
+// --- Cross-navigation run store ---------------------------------------------
+//
+// Sync/Cycle/Refresh keep running server-side once started; the earlier
+// version tracked their progress in plain component state, which React
+// destroys the instant you navigate to another screen — so switching away
+// mid-run and back showed a blank "Waiting" console even though the backend
+// was still (or already done) working. Module-scope state survives
+// navigation (it's not tied to a component instance), so this page's
+// subscribers just re-read whatever's still in flight when it remounts —
+// exactly like the legacy Sync screen's live status.
+type RunsState = Record<string, StoreRun>
+type BatchState = { start: number; end: number | null } | null
+type ConsoleSnapshot = { runs: RunsState; running: boolean; batch: BatchState }
+
+const consoleStore = (() => {
+  let snapshot: ConsoleSnapshot = { runs: {}, running: false, batch: null }
+  const listeners = new Set<() => void>()
+  const notify = () => listeners.forEach((l) => l())
+  // Reference-counted: a lone per-store action (Force close, Retry) can now
+  // run concurrently with a bulk batch. Without this, whichever one finishes
+  // first flips `running` off and re-enables the toolbar while the other is
+  // still working.
+  let inFlight = 0
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    getSnapshot: () => snapshot,
+    setRuns(updater: (prev: RunsState) => RunsState) {
+      snapshot = { ...snapshot, runs: updater(snapshot.runs) }
+      notify()
+    },
+    updateRun(id: string, fn: (r: StoreRun) => StoreRun) {
+      snapshot = { ...snapshot, runs: { ...snapshot.runs, [id]: fn(snapshot.runs[id] ?? blankRun(id)) } }
+      notify()
+    },
+    beginOp() {
+      inFlight += 1
+      if (!snapshot.running) { snapshot = { ...snapshot, running: true }; notify() }
+    },
+    endOp() {
+      inFlight = Math.max(0, inFlight - 1)
+      if (inFlight === 0 && snapshot.running) { snapshot = { ...snapshot, running: false }; notify() }
+    },
+    setBatch(updater: (prev: BatchState) => BatchState) {
+      snapshot = { ...snapshot, batch: updater(snapshot.batch) }
+      notify()
+    },
+    /** Stores whose VPL actually generated in the in-flight batch — survives
+     *  navigation the same way, so consolidation still fires correctly even
+     *  if the user wasn't watching when the batch finished. */
+    refreshedIds: new Set<string>(),
+  }
+})()
+
 function StageChip({ label, stage, now }: { label: string; stage: Stage; now: number }) {
   const icon: Record<StageStatus, string> = {
     waiting: 'bi-clock',
@@ -244,30 +301,60 @@ export default function CycleRefreshConsolePage() {
   const [banner, setBanner] = useState<Banner>(null)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  /** Branches flagged to close their cycle & open a fresh one on run (the "New
-   *  Cycle" checkbox column). Overrides the per-branch Cycle Action dropdown. */
+  /** Ticked = close the active cycle and open a fresh one on run; unticked =
+   *  refresh inside whichever cycle is already active. */
   const [newCycle, setNewCycle] = useState<Set<string>>(new Set())
-  /** Dropdown value per branch — only 'keep' | 'closeRefresh'; 'new' is driven
-   *  by the New Cycle checkbox above. */
-  const [cycleAction, setCycleAction] = useState<Record<string, CycleAction>>({})
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-
-  const [rollingDays, setRollingDays] = useState('90')
-  const [minDays, setMinDays] = useState('7')
-  const [maxDays, setMaxDays] = useState('21')
+  const [rollingDays, setRollingDays] = useState(DEFAULT_ROLLING)
+  const [minDays, setMinDays] = useState(DEFAULT_MIN)
+  const [maxDays, setMaxDays] = useState(DEFAULT_MAX)
   const [useExistingData, setUseExistingData] = useState(false)
+  const isDefaultParams = rollingDays === DEFAULT_ROLLING && minDays === DEFAULT_MIN && maxDays === DEFAULT_MAX
+  const resetParams = useCallback(() => {
+    setRollingDays(DEFAULT_ROLLING)
+    setMinDays(DEFAULT_MIN)
+    setMaxDays(DEFAULT_MAX)
+  }, [])
+
+  /** Per-store overrides of rolling/min/max — set via a store card's gear
+   *  panel. A store with no entry here just follows the global toolbar values. */
+  const [storeOverride, setStoreOverride] = useState<Record<string, { rolling: string; min: string; max: string }>>({})
+  const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null)
+  const [infoOpenFor, setInfoOpenFor] = useState<string | null>(null)
+  /** Must be ticked before "Force close" is clickable — the action is
+   *  destructive (pending items are cleared, not carried forward). */
+  const [forceConfirm, setForceConfirm] = useState<Set<string>>(new Set())
+
+  const effectiveDays = useCallback((storeId: string) => storeOverride[storeId] ?? {
+    rolling: rollingDays, min: minDays, max: maxDays,
+  }, [storeOverride, rollingDays, minDays, maxDays])
+
+  const patchOverride = (storeId: string, patch: Partial<{ rolling: string; min: string; max: string }>) => {
+    setStoreOverride((cur) => ({ ...cur, [storeId]: { ...effectiveDays(storeId), ...patch } }))
+  }
+  const clearOverride = (storeId: string) => {
+    setStoreOverride((cur) => {
+      const next = { ...cur }
+      delete next[storeId]
+      return next
+    })
+  }
+
+  const parseParamsFor = useCallback((storeId: string): Params | null => {
+    const { rolling, min, max } = effectiveDays(storeId)
+    const minN = Number(min), maxN = Number(max), rollN = Number(rolling)
+    if (Number.isNaN(minN) || Number.isNaN(maxN) || minN >= maxN) return null
+    return { rolling: Number.isNaN(rollN) ? undefined : rollN, min: minN, max: maxN }
+  }, [effectiveDays])
 
   /** The store the network purchase quantity is calculated FOR once every
    *  selected store's VPL is built. Empty = do not consolidate. */
   const [warehouseId, setWarehouseId] = useState('')
   const [consolidating, setConsolidating] = useState(false)
-  /** Stores whose VPL actually generated in this batch (runPipeline records a
-   *  failure on the store instead of throwing, so a settled promise proves nothing). */
-  const refreshed = useRef<Set<string>>(new Set())
 
-  const [running, setRunning] = useState(false)
-  const [runs, setRuns] = useState<Record<string, StoreRun>>({})
-  const [batch, setBatch] = useState<{ start: number; end: number | null } | null>(null)
+  // Subscribed to the module-level store (see consoleStore above) instead of
+  // component state, so an in-flight run's progress isn't lost when this page
+  // unmounts — navigate away and back and it's exactly where it left off.
+  const { runs, running, batch } = useSyncExternalStore(consoleStore.subscribe, consoleStore.getSnapshot)
 
   // Ticks only while work is in flight, so live durations count up without
   // re-rendering an idle page.
@@ -278,9 +365,10 @@ export default function CycleRefreshConsolePage() {
     return () => window.clearInterval(t)
   }, [running])
 
-  // Stops every in-flight poll the moment the page unmounts.
+  // Never flips true: polling and the pipeline itself are meant to keep going
+  // in the background across navigation now (see consoleStore) — this stays
+  // only as the signature pollSync/runPipeline already expect.
   const cancelled = useRef(false)
-  useEffect(() => () => { cancelled.current = true }, [])
 
   const say = useCallback((kind: 'success' | 'danger', text: string) => {
     setBanner({ kind, text })
@@ -332,12 +420,15 @@ export default function CycleRefreshConsolePage() {
 
   useEffect(() => { reloadContext() }, [reloadContext])
 
+  // Prunes selections/runs for stores that dropped out of this tenant's list —
+  // NOT a blanket reset. `tenantStores` gets a fresh array identity on every
+  // remount (stores are refetched), so wiping `runs` here would erase live
+  // progress just from navigating back to this page.
   useEffect(() => {
     const ids = new Set(tenantStores.map((s) => s.store_id))
     setSelected((cur) => new Set([...cur].filter((id) => ids.has(id))))
     setNewCycle((cur) => new Set([...cur].filter((id) => ids.has(id))))
-    setRuns({})
-    setBatch(null)
+    consoleStore.setRuns((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id))))
   }, [tenantStores])
 
   const activeCycleOf = useCallback(
@@ -346,17 +437,8 @@ export default function CycleRefreshConsolePage() {
   )
 
   const update = useCallback((id: string, fn: (r: StoreRun) => StoreRun) => {
-    setRuns((prev) => ({ ...prev, [id]: fn(prev[id] ?? blankRun(id)) }))
+    consoleStore.updateRun(id, fn)
   }, [])
-
-  const parseParams = (): Params | null => {
-    const min = Number(minDays), max = Number(maxDays), roll = Number(rollingDays)
-    if (Number.isNaN(min) || Number.isNaN(max) || min >= max) {
-      say('danger', 'Min days must be less than Max days')
-      return null
-    }
-    return { rolling: Number.isNaN(roll) ? undefined : roll, min, max }
-  }
 
   // --- Pipeline -------------------------------------------------------------
 
@@ -421,27 +503,25 @@ export default function CycleRefreshConsolePage() {
 
     // 2) Cycle — keep the ACTIVE one, or close it and open a fresh one.
     let cycleId = opts.cycleId
-    // The refresh to lock before generating the next one (Close Refresh action).
-    let refreshToClose: string | undefined
-    // New Cycle checkbox wins over the dropdown; otherwise keep / closeRefresh.
-    const action: CycleAction = newCycle.has(id) ? 'new' : (cycleAction[id] ?? 'keep')
+    // The refresh to lock before generating the next one — never set anymore
+    // since the "Close Refresh & New" action was dropped from the UI in favour
+    // of a plain New Cycle checkbox; kept so a future re-add doesn't need to
+    // touch the refresh stage below.
+    const refreshToClose: string | undefined = undefined
+    const wantNew = newCycle.has(id)
     if (startIdx <= STAGES.indexOf('cycle')) {
       update(id, (r) => beginStage(r, 'cycle', 'Resolving cycle…'))
       try {
-        const wantNew = action === 'new'
         const cycles = await procurementService.cycles(tenantId, id)
         const active = cycles.find((c) => (c.status ?? '').toUpperCase() === 'ACTIVE') ?? null
 
         let target: Cycle
         if (!wantNew) {
           if (!active) {
-            update(id, (r) => failStage(r, 'cycle', 'No active cycle — set Cycle Action to “Create New Cycle”'))
+            update(id, (r) => failStage(r, 'cycle', 'No active cycle — tick “Create new cycle” to open one'))
             return
           }
           target = active
-          // Close Refresh: lock the cycle's current refresh; the refresh stage
-          // then generates Refresh N+1 in this same open cycle.
-          if (action === 'closeRefresh') refreshToClose = active.active_refresh_id ?? undefined
         } else if (!active) {
           update(id, (r) => addLog(r, 'No cycle yet — opening the first one'))
           target = await procurementService.openCycle({
@@ -498,7 +578,7 @@ export default function CycleRefreshConsolePage() {
         workingItems: res.working_item_count ?? 0,
         carriedForward: res.carried_forward_count ?? 0,
       }
-      refreshed.current.add(id)
+      consoleStore.refreshedIds.add(id)
       update(id, (r) => {
         const next = doneStage({ ...r, result }, 'refresh',
           `Refresh completed — ${num(result.products)} products, ${num(result.workingItems)} working items`)
@@ -507,7 +587,7 @@ export default function CycleRefreshConsolePage() {
     } catch (e) {
       update(id, (r) => failStage(r, 'refresh', errMsg(e)))
     }
-  }, [tenantId, actingUser, cycleAction, newCycle, useExistingData, update])
+  }, [tenantId, actingUser, newCycle, useExistingData, update])
 
   /** Consolidate every refreshed store's VPL into the network Product
    *  Intelligence grid. Runs once, after the whole batch, so the intelligence can
@@ -528,27 +608,49 @@ export default function CycleRefreshConsolePage() {
     }
   }, [tenantId, warehouseId, actingUser, say])
 
+  /** Run every selected store, each with its own effective params (override,
+   *  or the global toolbar values when it has none). */
   const runBatch = async () => {
     const targets = tenantStores.filter((s) => selected.has(s.store_id))
     if (!targets.length) return say('danger', 'Select at least one store')
-    const params = parseParams()
-    if (!params) return
+    const invalid = targets.filter((s) => !parseParamsFor(s.store_id))
+    if (invalid.length) return say('danger', `Min days must be less than Max days — ${invalid.map((s) => s.store_name).join(', ')}`)
 
     cancelled.current = false
-    setRuns(Object.fromEntries(targets.map((s) => [s.store_id, blankRun(s.store_id)])))
-    setBatch({ start: Date.now(), end: null })
-    setRunning(true)
+    consoleStore.setRuns(() => Object.fromEntries(targets.map((s) => [s.store_id, blankRun(s.store_id)])))
+    consoleStore.setBatch(() => ({ start: Date.now(), end: null }))
+    consoleStore.beginOp()
     try {
       // Parallel, and isolated: one store's failure cannot reject the batch.
-      refreshed.current.clear()
-      await Promise.allSettled(targets.map((s) => runPipeline(s, 'sync', params)))
+      consoleStore.refreshedIds.clear()
+      await Promise.allSettled(targets.map((s) => runPipeline(s, 'sync', parseParamsFor(s.store_id)!)))
       // Consolidate only the stores whose VPL actually generated (runPipeline
       // records a failure on the store rather than throwing, so a settled promise
       // does NOT mean the store succeeded).
-      await consolidate([...refreshed.current])
+      await consolidate([...consoleStore.refreshedIds])
     } finally {
-      setRunning(false)
-      setBatch((b) => (b ? { ...b, end: Date.now() } : b))
+      consoleStore.endOp()
+      consoleStore.setBatch((b) => (b ? { ...b, end: Date.now() } : b))
+      reloadContext()
+    }
+  }
+
+  /** Run a single store from its own card's Run button — independent of the
+   *  checkbox selection used for a bulk run. */
+  const runOne = async (store: Store) => {
+    const params = parseParamsFor(store.store_id)
+    if (!params) return say('danger', `${store.store_name}: Min days must be less than Max days`)
+    cancelled.current = false
+    consoleStore.setRuns((prev) => ({ ...prev, [store.store_id]: blankRun(store.store_id) }))
+    consoleStore.setBatch(() => ({ start: Date.now(), end: null }))
+    consoleStore.beginOp()
+    try {
+      consoleStore.refreshedIds.delete(store.store_id)
+      await runPipeline(store, 'sync', params)
+      if (consoleStore.refreshedIds.has(store.store_id)) await consolidate([store.store_id])
+    } finally {
+      consoleStore.endOp()
+      consoleStore.setBatch((b) => (b ? { ...b, end: Date.now() } : b))
       reloadContext()
     }
   }
@@ -558,33 +660,34 @@ export default function CycleRefreshConsolePage() {
   const retry = async (store: Store) => {
     const run = runs[store.store_id]
     if (!run) return
-    const params = parseParams()
-    if (!params) return
+    const params = parseParamsFor(store.store_id)
+    if (!params) return say('danger', `${store.store_name}: Min days must be less than Max days`)
     const from: StageKey =
       run.stages.sync.status === 'failed' ? 'sync'
         : run.stages.cycle.status === 'failed' ? 'cycle'
           : 'refresh'
 
     cancelled.current = false
-    setRunning(true)
+    consoleStore.beginOp()
     try {
       await runPipeline(store, from, params, { cycleId: run.cycleId })
     } finally {
-      setRunning(false)
+      consoleStore.endOp()
       reloadContext()
     }
   }
 
   /** Confirmed close-with-pending: re-run the cycle stage with force. */
   const forceContinue = async (store: Store) => {
-    const params = parseParams()
-    if (!params) return
+    const params = parseParamsFor(store.store_id)
+    if (!params) return say('danger', `${store.store_name}: Min days must be less than Max days`)
     cancelled.current = false
-    setRunning(true)
+    consoleStore.beginOp()
     try {
       await runPipeline(store, 'cycle', params, { force: true })
+      setForceConfirm((cur) => { const next = new Set(cur); next.delete(store.store_id); return next })
     } finally {
-      setRunning(false)
+      consoleStore.endOp()
       reloadContext()
     }
   }
@@ -592,7 +695,6 @@ export default function CycleRefreshConsolePage() {
   // --- Derived --------------------------------------------------------------
 
   const allSelected = tenantStores.length > 0 && tenantStores.every((s) => selected.has(s.store_id))
-  const allNewCycle = tenantStores.length > 0 && tenantStores.every((s) => newCycle.has(s.store_id))
 
   /** Pre-run estimate, from each store's last refresh (when it has one). */
   const workload = useMemo(() => {
@@ -622,126 +724,124 @@ export default function CycleRefreshConsolePage() {
   }, [runs, batch])
 
   const showSummary = summary != null && !running && batch?.end != null
+  const runCounts = useMemo(() => {
+    const list = Object.values(runs)
+    return {
+      running: list.filter((r) => r.status === 'running').length,
+      failed: list.filter((r) => r.status === 'failed').length,
+      completed: list.filter((r) => r.status === 'completed').length,
+    }
+  }, [runs])
+  const sortedRuns = useMemo(
+    () => tenantStores.map((s) => ({ store: s, run: runs[s.store_id] })).filter((r): r is { store: Store; run: StoreRun } => Boolean(r.run)),
+    [tenantStores, runs],
+  )
+  const infoStore = infoOpenFor ? tenantStores.find((s) => s.store_id === infoOpenFor) : undefined
+  const infoRun = infoOpenFor ? runs[infoOpenFor] : undefined
 
   return (
-    <div className="pm-admin pm-console">
-      <header className="pm-admin__head">
-        <div className="pm-admin__title"><i className="bi bi-arrow-repeat" /> Cycle &amp; Refresh Console</div>
-        <div className="pm-admin__ctx">
+    <div className="legacy-order pm-console">
+      <header className="lo-header">
+        <div>
+          <h1><i className="bi bi-arrow-repeat" /> Cycle &amp; Refresh Console</h1>
+          <div className="lo-kpis">
+            <span>{tenantStores.length} Stores</span>
+            <span className="lo-kpi-ok"><span className="lo-dot lo-dot-ok" />{runCounts.completed} Completed</span>
+            <span><span className="lo-dot lo-dot-fail" />{runCounts.failed} Failed</span>
+            <span><span className="lo-dot lo-dot-run" />{runCounts.running} Running</span>
+          </div>
+        </div>
+        <div className="lo-actions">
           <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId} disabled={running}>
             {tenants.length === 0 && <option value="">Loading…</option>}
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
           </FilterSelect>
-          <button className="pm-btn pm-btn--ghost" onClick={reloadContext} disabled={running} title="Reload"><i className="bi bi-arrow-clockwise" /></button>
+          <button className="lo-btn" onClick={reloadContext} disabled={running} title="Reload"><i className="bi bi-arrow-clockwise" /></button>
+          <span className="lo-badge">Procurement</span>
         </div>
       </header>
 
-      {banner && <div className={`pm-banner pm-banner--${banner.kind}`}>{banner.text}</div>}
+      {banner && <div className={banner.kind === 'success' ? 'lo-success' : 'lo-error'} role="alert">{banner.text}</div>}
 
-      <section className="pm-admin__panel pm-console__bar">
-        <div className="pm-admin__form">
-          <label className="pm-admin__field"><span>Rolling days</span><input className="pm-input pm-input--sm" value={rollingDays} onChange={(e) => setRollingDays(e.target.value)} disabled={running} /></label>
-          <label className="pm-admin__field"><span>Min days</span><input className="pm-input pm-input--sm" value={minDays} onChange={(e) => setMinDays(e.target.value)} disabled={running} /></label>
-          <label className="pm-admin__field"><span>Max days</span><input className="pm-input pm-input--sm" value={maxDays} onChange={(e) => setMaxDays(e.target.value)} disabled={running} /></label>
+      <section className="lo-card">
+        <div className="lo-section-title">
+          <div>
+            <h2>Store operations</h2>
+            <p className="lo-note">
+              Sync → Cycle → Refresh (Decision Engine + VPL). Defaults: {DEFAULT_ROLLING} rolling / {DEFAULT_MIN} min days / {DEFAULT_MAX} max days —
+              override per store with the gear icon on its card.
+            </p>
+          </div>
+        </div>
+
+        <div className="lo-row" style={{ marginBottom: '0.85rem' }}>
+          <label><span>Rolling days</span><input value={rollingDays} onChange={(e) => setRollingDays(e.target.value)} disabled={running} /></label>
+          <label><span>Min days</span><input value={minDays} onChange={(e) => setMinDays(e.target.value)} disabled={running} /></label>
+          <label><span>Max days</span><input value={maxDays} onChange={(e) => setMaxDays(e.target.value)} disabled={running} /></label>
+          <button type="button" className="lo-btn" disabled={running || isDefaultParams} onClick={resetParams} title={`Restore Rolling/Min/Max to their defaults (${DEFAULT_ROLLING} / ${DEFAULT_MIN} / ${DEFAULT_MAX})`}>
+            <i className="bi bi-arrow-counterclockwise" /> Reset to default
+          </button>
           <label className="pm-console__opt" title="Skip the sync stage and refresh from the data already synced">
             <input type="checkbox" checked={useExistingData} onChange={(e) => setUseExistingData(e.target.checked)} disabled={running} />
             <span>Use Existing Store Data</span>
           </label>
-          <label
-            className="pm-admin__field"
-            title="Every store's VPL is merged into one network grid, and the purchase quantity is calculated FOR this store"
-          >
+          <label className="lo-grow" title="Every store's VPL is merged into one network grid, and the purchase quantity is calculated FOR this store">
             <span>Buying warehouse</span>
-            <FilterSelect
-              className="sx-select--sm"
-              ariaLabel="Buying warehouse"
-              value={warehouseId}
-              onChange={setWarehouseId}
-              disabled={running}
-            >
+            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} disabled={running}>
               <option value="">Skip consolidation</option>
-              {tenantStores.map((s) => (
-                <option key={s.store_id} value={s.store_id}>{s.store_name}</option>
-              ))}
-            </FilterSelect>
+              {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
+            </select>
           </label>
-          <button className="pm-btn pm-btn--primary pm-console__run" disabled={running || selected.size === 0} onClick={runBatch}>
-            <i className="bi bi-play-fill" /> {consolidating ? 'Consolidating…' : running ? 'Running…' : `Run ${selected.size || ''} store${selected.size === 1 ? '' : 's'}`.replace('  ', ' ')}
+        </div>
+
+        <div className="lo-row" style={{ marginBottom: '0.85rem' }}>
+          <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}>
+            <input
+              type="checkbox"
+              aria-label="Select all"
+              checked={allSelected}
+              disabled={running}
+              onChange={() => setSelected(allSelected ? new Set() : new Set(tenantStores.map((s) => s.store_id)))}
+            />
+            <span>Select all</span>
+          </label>
+          <span className="sx-dim"><b>{workload.stores}</b> selected{workload.withData > 0 && <> · ≈ <b>{num(workload.products)}</b> products</>}</span>
+          <button type="button" className="lo-btn lo-btn-primary" disabled={running || selected.size === 0} onClick={runBatch}>
+            <i className="bi bi-play-fill" /> {consolidating ? 'Consolidating…' : running ? 'Running…' : `Run ${selected.size || ''} selected`.replace('  ', ' ')}
           </button>
         </div>
 
-        <div className="pm-console__work">
-          <span><b>{workload.stores}</b> selected</span>
-          {workload.withData > 0 && (
-            <span title="Sum of each store's last refresh — an estimate, not a promise">
-              ≈ <b>{num(workload.products)}</b> products
-            </span>
-          )}
-          {workload.unknown > 0 && <span className="sx-dim">{workload.unknown} with no prior refresh</span>}
-          <span className="sx-dim pm-console__flow">Sync → Cycle → Refresh (Decision Engine + VPL)</span>
-        </div>
-      </section>
+        {showSummary && (
+          <section className={`pm-console__summary ${summary.failed ? 'pm-console__summary--warn' : ''}`} style={{ marginBottom: '0.85rem' }}>
+            <div className="pm-console__sumitem"><b>{summary.completed}</b><span>of {summary.selected} completed</span></div>
+            {summary.failed > 0 && <div className="pm-console__sumitem pm-console__sumitem--bad"><b>{summary.failed}</b><span>failed</span></div>}
+            <div className="pm-console__sumitem"><b>{num(summary.products)}</b><span>products</span></div>
+            <div className="pm-console__sumitem"><b>{num(summary.workingItems)}</b><span>working items</span></div>
+            <div className="pm-console__sumitem"><b>{num(summary.carried)}</b><span>carried forward</span></div>
+            <div className="pm-console__sumitem"><b>{dur(summary.duration)}</b><span>total</span></div>
+          </section>
+        )}
 
-      {showSummary && (
-        <section className={`pm-console__summary ${summary.failed ? 'pm-console__summary--warn' : ''}`}>
-          <div className="pm-console__sumitem"><b>{summary.completed}</b><span>of {summary.selected} completed</span></div>
-          {summary.failed > 0 && <div className="pm-console__sumitem pm-console__sumitem--bad"><b>{summary.failed}</b><span>failed</span></div>}
-          <div className="pm-console__sumitem"><b>{num(summary.products)}</b><span>products</span></div>
-          <div className="pm-console__sumitem"><b>{num(summary.workingItems)}</b><span>working items</span></div>
-          <div className="pm-console__sumitem"><b>{num(summary.carried)}</b><span>carried forward</span></div>
-          <div className="pm-console__sumitem"><b>{dur(summary.duration)}</b><span>total</span></div>
-        </section>
-      )}
+        {settingsOpenFor && (
+          <div className="pm-console__settings-scrim" onClick={() => setSettingsOpenFor(null)} />
+        )}
 
-      {tenantStores.length === 0 ? (
-        <EmptyState icon="bi-shop" title="No stores" description="This tenant has no active stores." />
-      ) : (
-        <table className="pm-grid pm-admin__table pm-console__grid">
-          <thead>
-            <tr>
-              <th className="pm-console__ck">
-                <input
-                  type="checkbox"
-                  aria-label="Select all"
-                  checked={allSelected}
-                  disabled={running}
-                  onChange={() => setSelected(allSelected ? new Set() : new Set(tenantStores.map((s) => s.store_id)))}
-                />
-              </th>
-              <th>Store</th>
-              <th className="pm-console__cyclecol">Current Cycle</th>
-              <th className="pm-console__refreshcol">Latest Refresh</th>
-              <th className="pm-console__newcol" title="Close each ticked branch's cycle and open a fresh one on run">
-                <label className="pm-console__newhead">
-                  <input
-                    type="checkbox"
-                    aria-label="New Cycle for all branches"
-                    checked={allNewCycle}
-                    disabled={running}
-                    onChange={() => setNewCycle(allNewCycle ? new Set() : new Set(tenantStores.map((s) => s.store_id)))}
-                  />
-                  New Cycle
-                </label>
-              </th>
-              <th className="pm-console__actioncol">Cycle Action</th>
-              <th>Pipeline</th>
-              <th className="pm-console__rescol">Result</th>
-              <th className="pm-console__timecol">Total</th>
-              <th className="pm-console__actcol" />
-            </tr>
-          </thead>
-          <tbody>
+        {tenantStores.length === 0 ? (
+          <EmptyState icon="bi-shop" title="No stores" description="This tenant has no active stores." />
+        ) : (
+          <div className="lo-store-cards">
             {tenantStores.map((s) => {
               const id = s.store_id
               const run = runs[id]
               const active = activeCycleOf(id)
               const info = refreshInfo[id]
               const wantsNewCycle = newCycle.has(id)
-              const action: CycleAction = wantsNewCycle ? 'new' : (cycleAction[id] ?? 'keep')
-              const isOpen = expanded.has(id)
-              return [
-                <tr key={id} className={run ? `pm-console__row pm-console__row--${run.status}` : 'pm-console__row'}>
-                  <td className="pm-console__ck">
+              const days = effectiveDays(id)
+              const hasOverride = Boolean(storeOverride[id])
+              const cardState = run?.status === 'running' ? 'running' : run?.status === 'failed' ? 'failed' : run?.status === 'completed' ? 'completed' : 'idle'
+              return (
+                <article className="lo-op-card" key={id} data-state={cardState}>
+                  <div className="lo-op-head">
                     <input
                       type="checkbox"
                       aria-label={`Select ${s.store_name}`}
@@ -749,40 +849,23 @@ export default function CycleRefreshConsolePage() {
                       disabled={running}
                       onChange={() => setSelected((cur) => {
                         const next = new Set(cur)
-                        if (next.has(id)) next.delete(id)
-                        else next.add(id)
+                        if (next.has(id)) next.delete(id); else next.add(id)
                         return next
                       })}
                     />
-                  </td>
-                  <td>
-                    <div className="pm-prod__name">{s.store_name}</div>
-                    <div className="pm-prod__meta">{s.store_code}</div>
-                  </td>
-                  <td className="pm-console__cyclecol">
-                    {active ? (
-                      <>
-                        <div className="pm-console__cyclename" title={active.name}>{active.name}</div>
-                        <span className="pm-badge pm-badge--active">Active</span>
-                      </>
-                    ) : (
-                      <span className="sx-dim">No open cycle</span>
-                    )}
-                  </td>
-                  <td className="pm-console__refreshcol">
-                    {info?.latestName ? (
-                      <>
-                        <div className="pm-console__refreshname">
-                          {info.latestNo != null ? `Refresh ${info.latestNo}` : info.latestName}
-                          <span className="pm-console__refreshcount">{info.count} total</span>
-                        </div>
-                        <div className="pm-prod__meta">{refreshWhen(info.latestAt)}</div>
-                      </>
-                    ) : (
-                      <span className="sx-dim">No refresh yet</span>
-                    )}
-                  </td>
-                  <td className="pm-console__newcol">
+                    <strong>{s.store_code}</strong>
+                    <span className="lo-op-icons">
+                      <button type="button" className="lo-icon-btn" title="Per-store days override" aria-label={`${s.store_name} settings`} onClick={() => setSettingsOpenFor(settingsOpenFor === id ? null : id)}><i className="bi bi-gear" /></button>
+                      <button type="button" className="lo-icon-btn" title="Store information" aria-label={`${s.store_name} info`} onClick={() => setInfoOpenFor(id)}><i className="bi bi-info-circle" /></button>
+                    </span>
+                  </div>
+                  <p className="lo-op-owner">{s.store_name}</p>
+
+                  <small className="lo-op-conn">
+                    {active ? <>{active.name} <span className="pm-badge pm-badge--active">Active</span></> : 'No open cycle'}
+                    {' · '}{info?.latestName ? <>{info.latestNo != null ? `Refresh ${info.latestNo}` : info.latestName} ({refreshWhen(info.latestAt)})</> : 'No refresh yet'}
+                  </small>
+                  <label className="pm-console__newcycle" title={wantsNewCycle ? 'Closes the active cycle and opens a fresh one' : 'Refreshes inside the currently active cycle'}>
                     <input
                       type="checkbox"
                       aria-label={`Create new cycle for ${s.store_name}`}
@@ -790,114 +873,154 @@ export default function CycleRefreshConsolePage() {
                       disabled={running}
                       onChange={() => setNewCycle((cur) => {
                         const next = new Set(cur)
-                        if (next.has(id)) next.delete(id)
-                        else next.add(id)
+                        if (next.has(id)) next.delete(id); else next.add(id)
                         return next
                       })}
                     />
-                  </td>
-                  <td className="pm-console__actioncol">
-                    <select
-                      className="sx-select sx-select--sm"
-                      aria-label={`Cycle action for ${s.store_name}`}
-                      value={wantsNewCycle ? 'keep' : action}
-                      disabled={running || wantsNewCycle}
-                      title={wantsNewCycle ? 'New Cycle is ticked — a fresh cycle will be opened' : undefined}
-                      onChange={(e) => setCycleAction((cur) => ({ ...cur, [id]: e.target.value as CycleAction }))}
-                    >
-                      <option value="keep">Keep Active</option>
-                      <option value="closeRefresh">Close Refresh &amp; New</option>
-                    </select>
-                    <div className="pm-console__cyclehint">
-                      {action === 'new'
-                        ? (active ? <>closes <b>{active.name}</b>, opens a fresh one</> : <>opens the first cycle</>)
-                        : action === 'closeRefresh'
-                          ? (active ? <>locks the current refresh, starts a new one in <b>{active.name}</b></> : <span className="pm-console__warn">no active cycle</span>)
-                          : (active ? <>refreshes <b>{active.name}</b></> : <span className="pm-console__warn">no active cycle</span>)}
+                    <span>New cycle</span>
+                  </label>
+
+                  {settingsOpenFor === id && (
+                    <div className="lo-op-settings">
+                      <label><span>Rolling</span><input aria-label={`${s.store_name} rolling days`} value={days.rolling} onChange={(e) => patchOverride(id, { rolling: e.target.value })} disabled={running} /></label>
+                      <label><span>Min days</span><input aria-label={`${s.store_name} minimum days`} value={days.min} onChange={(e) => patchOverride(id, { min: e.target.value })} disabled={running} /></label>
+                      <label><span>Max days</span><input aria-label={`${s.store_name} maximum days`} value={days.max} onChange={(e) => patchOverride(id, { max: e.target.value })} disabled={running} /></label>
+                      {!parseParamsFor(id) && <small className="lo-invalid">Min must be less than Max</small>}
+                      <div className="lo-op-settings-actions">
+                        <button type="button" className="lo-btn" disabled={!hasOverride} onClick={() => clearOverride(id)}>Reset to global</button>
+                      </div>
                     </div>
-                  </td>
-                  <td>
-                    {run ? (
+                  )}
+
+                  <div className="lo-op-progress">
+                    {run && (
                       <div className="pm-steps">
                         {STAGES.map((k) => <StageChip key={k} label={STAGE_LABEL[k]} stage={run.stages[k]} now={now} />)}
                       </div>
-                    ) : <span className="sx-dim">Waiting</span>}
-                    {run?.message && (
-                      <div className={`pm-console__msg ${run.status === 'failed' ? 'pm-console__msg--bad' : ''}`}>{run.message}</div>
                     )}
-                  </td>
-                  <td className="pm-console__rescol">
-                    {run?.result ? (
-                      <div className="pm-console__res">
-                        <span><b>{num(run.result.products)}</b> products</span>
-                        <span><b>{num(run.result.workingItems)}</b> items</span>
-                        {run.result.carriedForward > 0 && <span className="sx-dim">{num(run.result.carriedForward)} carried</span>}
-                      </div>
-                    ) : <span className="sx-dim">—</span>}
-                  </td>
-                  <td className="pm-console__timecol sx-num">{run ? dur(runMs(run, now)) : '—'}</td>
-                  <td className="pm-console__actcol">
-                    <div className="pm-console__acts">
-                      {run?.status === 'failed' && (
-                        <button className="pm-btn pm-btn--ghost pm-btn--sm" disabled={running} onClick={() => retry(s)} title="Retry from the failed stage">
-                          <i className="bi bi-arrow-clockwise" /> Retry
-                        </button>
-                      )}
-                      {run?.status === 'confirm' && (
-                        <button className="pm-btn pm-btn--ghost pm-btn--sm" disabled={running} onClick={() => forceContinue(s)} title="Clear pending items and open a fresh cycle">
-                          Force close
-                        </button>
-                      )}
-                      {run && run.log.length > 0 && (
-                        <button
-                          className="pm-console__chev"
-                          aria-label={isOpen ? 'Hide log' : 'Show log'}
-                          onClick={() => setExpanded((cur) => {
+                    {run?.status === 'failed' && <small className="lo-invalid">Failed — see info for details</small>}
+                    {run?.result && (
+                      <small className="lo-cell-sub">
+                        {num(run.result.products)} products · {num(run.result.workingItems)} items
+                        {run.result.carriedForward > 0 && <> · {num(run.result.carriedForward)} carried</>}
+                        {' · '}{dur(runMs(run, now))}
+                      </small>
+                    )}
+                  </div>
+
+                  {run?.status === 'failed' ? (
+                    <button type="button" className="lo-btn lo-op-process lo-op-retry" disabled={running} onClick={() => retry(s)}>
+                      <i className="bi bi-arrow-clockwise" /> Retry
+                    </button>
+                  ) : run?.status === 'confirm' ? (
+                    <div className="pm-console__confirm">
+                      <label className="pm-console__confirmcheck">
+                        <input
+                          type="checkbox"
+                          aria-label={`Confirm clearing pending items for ${s.store_name}`}
+                          checked={forceConfirm.has(id)}
+                          onChange={() => setForceConfirm((cur) => {
                             const next = new Set(cur)
-                            if (next.has(id)) next.delete(id)
-                            else next.add(id)
+                            if (next.has(id)) next.delete(id); else next.add(id)
                             return next
                           })}
-                        >
-                          <i className={`bi ${isOpen ? 'bi-chevron-up' : 'bi-chevron-down'}`} />
-                        </button>
-                      )}
+                        />
+                        <span>Clear pending items &amp; close (see info)</span>
+                      </label>
+                      <button type="button" className="lo-btn lo-op-process" disabled={!forceConfirm.has(id)} onClick={() => forceContinue(s)}>
+                        Force close
+                      </button>
                     </div>
-                  </td>
-                </tr>,
-                isOpen && run ? (
-                  <tr key={`${id}-log`} className="pm-console__logrow">
-                    <td colSpan={10}>
-                      <div className="pm-console__logwrap">
-                        <div className="pm-console__log">
-                          {run.log.map((l, i) => (
-                            <div className="pm-console__logline" key={`${l.at}-${i}`}>
-                              <span className="pm-console__logt">{clock(l.at)}</span>
-                              <span>{l.text}</span>
-                            </div>
-                          ))}
-                        </div>
-                        {run.result && (
-                          <div className="pm-console__breakdown">
-                            <div><span>Products</span><b>{num(run.result.products)}</b></div>
-                            <div><span>Included</span><b>{num(run.result.included)}</b></div>
-                            <div><span>Excluded</span><b>{num(run.result.excluded)}</b></div>
-                            <div><span>Working items</span><b>{num(run.result.workingItems)}</b></div>
-                            <div><span>Carried forward</span><b>{num(run.result.carriedForward)}</b></div>
-                            {STAGES.map((k) => (
-                              <div key={k}><span>{STAGE_LABEL[k]}</span><b>{dur(stageMs(run.stages[k], now))}</b></div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ) : null,
-              ]
+                  ) : run?.status === 'running' ? (
+                    <button type="button" className="lo-btn lo-op-process" disabled>
+                      <i className="bi bi-hourglass-split" /> Processing…
+                    </button>
+                  ) : (
+                    <button type="button" className="lo-btn lo-btn-primary lo-op-process" disabled={running || !parseParamsFor(id)} onClick={() => runOne(s)}>
+                      <i className="bi bi-play-fill" /> Run {s.store_code}
+                    </button>
+                  )}
+                </article>
+              )
             })}
-          </tbody>
-        </table>
+          </div>
+        )}
+      </section>
+
+      {infoStore && (
+        <div className="lo-drawer-backdrop" role="presentation" onClick={() => setInfoOpenFor(null)}>
+          <aside className="lo-drawer" role="dialog" aria-label={`${infoStore.store_name} information`} onClick={(e) => e.stopPropagation()}>
+            <div className="lo-drawer-head">
+              <h3>Store information — {infoStore.store_name}</h3>
+              <button type="button" className="lo-icon-btn" aria-label="Close" onClick={() => setInfoOpenFor(null)}>×</button>
+            </div>
+            <div className="lo-drawer-body">
+              <h4>Refresh window</h4>
+              <dl className="lo-meta">
+                <div><dt>Rolling</dt><dd>{effectiveDays(infoStore.store_id).rolling}</dd></div>
+                <div><dt>Min days</dt><dd>{effectiveDays(infoStore.store_id).min}</dd></div>
+                <div><dt>Max days</dt><dd>{effectiveDays(infoStore.store_id).max}</dd></div>
+                <div><dt>Source</dt><dd>{storeOverride[infoStore.store_id] ? 'Per-store override' : 'Global default'}</dd></div>
+              </dl>
+              <h4>Latest run</h4>
+              <dl className="lo-meta">
+                <div><dt>Status</dt><dd>{infoRun ? <span className={`lo-chip lo-chip-${infoRun.status === 'completed' ? 'success' : infoRun.status}`}>{infoRun.status}</span> : '—'}</dd></div>
+                <div><dt>Cycle</dt><dd>{infoRun?.cycleName ?? activeCycleOf(infoStore.store_id)?.name ?? '—'}</dd></div>
+                <div><dt>Duration</dt><dd>{infoRun ? dur(runMs(infoRun, now)) : '—'}</dd></div>
+                <div><dt>Message</dt><dd>{infoRun?.message ?? '—'}</dd></div>
+              </dl>
+              {infoRun?.result && (
+                <>
+                  <h4>Result</h4>
+                  <dl className="lo-meta">
+                    <div><dt>Products</dt><dd>{num(infoRun.result.products)}</dd></div>
+                    <div><dt>Included</dt><dd>{num(infoRun.result.included)}</dd></div>
+                    <div><dt>Excluded</dt><dd>{num(infoRun.result.excluded)}</dd></div>
+                    <div><dt>Working items</dt><dd>{num(infoRun.result.workingItems)}</dd></div>
+                    <div><dt>Carried forward</dt><dd>{num(infoRun.result.carriedForward)}</dd></div>
+                  </dl>
+                </>
+              )}
+              {infoRun?.log && infoRun.log.length > 0 && (
+                <>
+                  <h4>Log</h4>
+                  <ol className="lo-drawer-log">
+                    {infoRun.log.map((entry, index) => <li key={`${entry.at}-${index}`}><time>{clock(entry.at)}</time>{entry.text}</li>)}
+                  </ol>
+                </>
+              )}
+            </div>
+          </aside>
+        </div>
       )}
+
+      <section className="lo-card lo-activity">
+        <div className="lo-section-title">
+          <div><h2>Task log</h2><p className="lo-note">Live progress from every store run this session.</p></div>
+          <span className="lo-count">{runCounts.running} running</span>
+        </div>
+        <div className="lo-job-list">
+          {sortedRuns.map(({ store, run }) => (
+            <article className="lo-job" key={store.store_id}>
+              <div className="lo-job-head">
+                <strong>{store.store_name} · {STAGES.find((k) => run.stages[k].status === 'running') ? STAGE_LABEL[STAGES.find((k) => run.stages[k].status === 'running')!] : 'Pipeline'}</strong>
+                <span className={`lo-chip lo-chip-${run.status === 'completed' ? 'success' : run.status}`}>{run.status}</span>
+              </div>
+              <div className="pm-steps">
+                {STAGES.map((k) => <StageChip key={k} label={STAGE_LABEL[k]} stage={run.stages[k]} now={now} />)}
+              </div>
+              {run.message && <p>{run.message}</p>}
+              {run.log.length > 0 && (
+                <details className="lo-log">
+                  <summary>{run.log.length} log entries</summary>
+                  <ol>{run.log.map((entry, index) => <li key={`${entry.at}-${index}`}><time>{clock(entry.at)}</time>{entry.text}</li>)}</ol>
+                </details>
+              )}
+            </article>
+          ))}
+          {!sortedRuns.length && <div className="lo-empty">Run a store to see live task activity.</div>}
+        </div>
+      </section>
     </div>
   )
 }

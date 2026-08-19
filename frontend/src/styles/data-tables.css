@@ -99,15 +99,21 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Small detail, preview, and nested tables preserve their denser footprint. */
-#root :where(
-  table.table-sm,
-  table.pm-minitable,
-  table.pm-import__map,
-  table.pm-import__sample,
-  table.sx-subtable,
-  table.label-export-inline-table
-) {
+/* Small detail, preview, and nested tables preserve their denser footprint.
+   NOT :where(...) — :where() has zero specificity, so this whole block was
+   losing the cascade to the plain `#root table` rule above (same #root ID,
+   but that one also has a `table` type selector, making IT more specific)
+   and silently never applying. Real bug, found by inspecting computed
+   styles live: every one of these "denser" tables was rendering at the
+   default 0.75rem/0.58rem padding instead, not the 0.36rem/0.58rem meant for
+   them — a plain selector list matches the base rule's specificity and wins
+   on source order instead. */
+#root table.table-sm,
+#root table.pm-minitable,
+#root table.pm-import__map,
+#root table.pm-import__sample,
+#root table.sx-subtable,
+#root table.label-export-inline-table {
   --nx-table-cell-block: 0.36rem;
   --nx-table-cell-inline: 0.58rem;
   border-radius: var(--nx-radius-md);

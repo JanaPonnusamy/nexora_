@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { PurchaseRow, SalesRow } from '../../types/stock'
 import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
 import type { BillTarget } from './BillDrawer'
@@ -7,8 +7,23 @@ import { useStockResource } from '../stock/useStockResource'
 import { MovementChart } from '../stock/MovementChart'
 import { EmptyState } from '../common/EmptyState'
 import { SupplierPicker } from './SupplierPicker'
-import { money, num, date } from '../stock/format'
+import { money, num } from '../stock/format'
+import { useMiniGridSettings, type MiniGridColumn } from './useMiniGridSettings'
+import { MiniGridSettingsPanel } from './MiniGridSettingsPanel'
 import '../stock/stock-ui.css'
+
+/** dd-mm-yy — compact numeric date for the Purchase/Sales History mini
+ *  tables' narrow Date column (the shared date() util's "09 Jul 25" is wider
+ *  than these columns can spare; kept local rather than changed app-wide). */
+function shortDate(value: string | null | undefined): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yy = String(d.getFullYear()).slice(-2)
+  return `${dd}-${mm}-${yy}`
+}
 
 /** The item's current live (non-exported) assignment, if any — used to offer
  *  inline Change Supplier from the Review-All detail panel (§4), without
@@ -120,6 +135,11 @@ export function DetailColumn({
   )
   const availability = useStockResource(availabilityFetch, ctxKey, 'availability')
 
+  const purchaseGrid = useMiniGridSettings('pm.purchaseHistory', PURCHASE_COLUMNS, DEFAULT_MINITABLE_PADDING)
+  const salesGrid = useMiniGridSettings('pm.salesHistory', SALES_COLUMNS, DEFAULT_MINITABLE_PADDING)
+  const [gridSettingsOpen, setGridSettingsOpen] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+
   if (!item || !hasProduct) {
     return (
       <div className="pm-dpanel pm-dpanel--empty">
@@ -139,15 +159,36 @@ export function DetailColumn({
   const openInfo = onOpenInfo ? (tab: DrawerTab) => onOpenInfo(item, tab) : undefined
 
   return (
-    <div className="pm-dpanel pm-dpanel--fit" key={item.order_item_id}>
+    <div className="pm-dpanel pm-dpanel--fit" key={item.order_item_id} ref={panelRef}>
       {/* Product header + view-mode switch (no Mfr/Category/Location clutter) */}
       <header className="pm-dhead">
         <div className="min-w-0">
-          <div className="pm-dhead__name">{item.product_name ?? item.product_code ?? '—'}</div>
-          <div className="pm-dhead__meta">
-            {item.product_code && <span>{item.product_code}</span>}
-            {item.unit_description && <span><b>Unit</b>{item.unit_description}</span>}
-            {item.pack && <span><b>Pack</b>{item.pack}</span>}
+          {/* Name + code/unit/pack/stores/last-rate on ONE line (baseline-
+              aligned, name bold + meta muted) instead of two stacked rows —
+              and the whole header is a row now (see .pm-dhead), so Summary/
+              History/Info sit beside this instead of claiming their own row
+              below it. */}
+          <div className="pm-dhead__titleline">
+            <span className="pm-dhead__name">{item.product_name ?? item.product_code ?? '—'}</span>
+            {/* Store Count comes from Availability (same source the Bill
+                Drawer's own tab uses); Last rate is the top Purchase History row. */}
+            <span className="pm-dhead__meta pm-dhead__meta--compact">
+              {[
+                item.product_code,
+                item.unit_description,
+                item.pack ? `Pack ${item.pack}` : null,
+                availability.isLoading
+                  ? 'Stores …'
+                  : availability.data
+                    ? `${availability.data.filter((a) => (a.stock ?? 0) > 0).length}/${availability.data.length} Stores`
+                    : null,
+                purchases.isLoading
+                  ? 'Last …'
+                  : purchases.data && purchases.data.length > 0
+                    ? `Last ${money(purchases.data[0].ptr)}`
+                    : null,
+              ].filter(Boolean).join(' • ')}
+            </span>
           </div>
           {/* § OFFER SUPPORT — Supplier / Offer / Discount, when the caller has
               real per-supplier scheme data (Supplier Live Stock only). No
@@ -162,20 +203,9 @@ export function DetailColumn({
               )}
             </div>
           )}
-          {/* § PRODUCT DETAILS — Store Count (from Availability, same source
-              the Bill Drawer's own tab uses), Last Purchase Rate (top Purchase
-              History row) and Supplier Remarks, all inline — no popup. */}
-          <div className="pm-dhead__meta">
-            <span>
-              <b>Store Count</b>
-              {availability.isLoading ? '…' : availability.data ? `${availability.data.filter((a) => (a.stock ?? 0) > 0).length} / ${availability.data.length} stores` : '—'}
-            </span>
-            <span>
-              <b>Last Purchase Rate</b>
-              {purchases.isLoading ? '…' : purchases.data && purchases.data.length > 0 ? money(purchases.data[0].ptr) : '—'}
-            </span>
-            {supplierRemarks && <span><b>Remarks</b>{supplierRemarks}</span>}
-          </div>
+          {supplierRemarks && (
+            <div className="pm-dhead__meta"><span><b>Remarks</b>{supplierRemarks}</span></div>
+          )}
           {/* Inline Change Supplier (§4) — reassignment reachable from Review
               All mode too, not only Supplier Purchasing's own review panel. */}
           {assignedSupplier && onChangeSupplier && (
@@ -224,15 +254,60 @@ export function DetailColumn({
               <i className="bi bi-info-circle" /> Info
             </button>
           )}
+          <button
+            className="pm-btn pm-btn--ghost pm-btn--sm"
+            onClick={() => setGridSettingsOpen((v) => !v)}
+            title="Purchase/Sales History grid settings"
+            aria-expanded={gridSettingsOpen}
+          >
+            <i className="bi bi-gear" />
+          </button>
         </div>
       </header>
 
+      {gridSettingsOpen && panelRef.current && (
+        <MiniGridSettingsPanel
+          anchorRect={panelRef.current.getBoundingClientRect()}
+          onClose={() => setGridSettingsOpen(false)}
+          sections={[
+            {
+              title: 'Purchase History columns',
+              columns: PURCHASE_COLUMNS,
+              order: purchaseGrid.order,
+              widths: purchaseGrid.widths,
+              padding: purchaseGrid.padding,
+              onMove: purchaseGrid.moveColumn,
+              onWidth: purchaseGrid.setColumnWidth,
+              onPadding: purchaseGrid.setPadding,
+              onReset: purchaseGrid.reset,
+            },
+            {
+              title: 'Sales History columns',
+              columns: SALES_COLUMNS,
+              order: salesGrid.order,
+              widths: salesGrid.widths,
+              padding: salesGrid.padding,
+              onMove: salesGrid.moveColumn,
+              onWidth: salesGrid.setColumnWidth,
+              onPadding: salesGrid.setPadding,
+              onReset: salesGrid.reset,
+            },
+          ]}
+        />
+      )}
+
       {viewMode === 'history' ? (
-        <HistoryView purchases={purchases} sales={sales} onOpenPurchase={openPurchaseBill} onOpenSales={openSalesBill} />
+        <HistoryView
+          purchases={purchases} sales={sales} onOpenPurchase={openPurchaseBill} onOpenSales={openSalesBill}
+          purchaseGrid={purchaseGrid} salesGrid={salesGrid}
+        />
       ) : (
         <>
-          {/* Sales Trend — pinned, always visible */}
-          <section className="pm-dsec pm-dsec--trend pm-dsec--fixed">
+          {/* Sales Trend, Purchase History, Sales History — three equal-height
+              rows (each flex:1 1 0, see .pm-dsec--trend/.pm-dsec--scroll),
+              full panel width apiece so neither history table needs to
+              truncate/scroll horizontally to show its columns. */}
+          <section className="pm-dsec pm-dsec--trend">
             <div className="pm-dsec__title"><i className="bi bi-graph-up" /> Sales Trend</div>
             <div className="pm-chart-wrap">
               {movement.isLoading ? (
@@ -245,8 +320,6 @@ export function DetailColumn({
             </div>
           </section>
 
-          {/* Purchase History — fixed height, internal scroll. Click a row to
-              open its Purchase Bill Drawer. */}
           <section className={`pm-dsec pm-dsec--pur pm-dsec--scroll${!purchases.isLoading && (purchases.data?.length ?? 0) === 0 ? ' pm-dsec--empty' : ''}`}>
             <div className="pm-dsec__title">
               <i className="bi bi-truck" /> Purchase History
@@ -256,11 +329,9 @@ export function DetailColumn({
                 </button>
               )}
             </div>
-            <PurchaseMiniTable purchases={purchases} onRowClick={openPurchaseBill} />
+            <PurchaseMiniTable purchases={purchases} onRowClick={openPurchaseBill} order={purchaseGrid.order} widths={purchaseGrid.widths} padding={purchaseGrid.padding} />
           </section>
 
-          {/* Sales History — fixed height, internal scroll. Click a row to open
-              its Sales Bill Drawer. */}
           <section className={`pm-dsec pm-dsec--sales pm-dsec--scroll${!sales.isLoading && (sales.data?.length ?? 0) === 0 ? ' pm-dsec--empty' : ''}`}>
             <div className="pm-dsec__title">
               <i className="bi bi-cart-check" /> Sales History
@@ -270,7 +341,7 @@ export function DetailColumn({
                 </button>
               )}
             </div>
-            <SalesMiniTable sales={sales} onRowClick={openSalesBill} />
+            <SalesMiniTable sales={sales} onRowClick={openSalesBill} order={salesGrid.order} widths={salesGrid.widths} padding={salesGrid.padding} />
           </section>
         </>
       )}
@@ -287,21 +358,25 @@ function HistoryView({
   sales,
   onOpenPurchase,
   onOpenSales,
+  purchaseGrid,
+  salesGrid,
 }: {
   purchases: Res<PurchaseRow[]>
   sales: Res<SalesRow[]>
   onOpenPurchase: (r: PurchaseRow) => void
   onOpenSales: (r: SalesRow) => void
+  purchaseGrid: { order: string[]; widths: Record<string, number>; padding: number }
+  salesGrid: { order: string[]; widths: Record<string, number>; padding: number }
 }) {
   return (
     <>
       <section className="pm-dsec pm-dsec--pur pm-dsec--scroll pm-dsec--grow">
         <div className="pm-dsec__title"><i className="bi bi-truck" /> Purchase History</div>
-        <PurchaseMiniTable purchases={purchases} limit={100} onRowClick={onOpenPurchase} />
+        <PurchaseMiniTable purchases={purchases} limit={100} onRowClick={onOpenPurchase} order={purchaseGrid.order} widths={purchaseGrid.widths} padding={purchaseGrid.padding} />
       </section>
       <section className="pm-dsec pm-dsec--sales pm-dsec--scroll pm-dsec--grow">
         <div className="pm-dsec__title"><i className="bi bi-cart-check" /> Sales History</div>
-        <SalesMiniTable sales={sales} limit={100} onRowClick={onOpenSales} />
+        <SalesMiniTable sales={sales} limit={100} onRowClick={onOpenSales} order={salesGrid.order} widths={salesGrid.widths} padding={salesGrid.padding} />
       </section>
     </>
   )
@@ -309,41 +384,85 @@ function HistoryView({
 
 /* ---- Compact grids -------------------------------------------------------- */
 
+/** Default widths (px) — the floor from the earlier truncation fix, verified
+ *  live via DevTools to be genuinely wide enough for every header/value at
+ *  this panel's real width. User overrides (via the ⚙ settings panel) start
+ *  from these. */
+export const PURCHASE_COLUMNS: MiniGridColumn[] = [
+  { id: 'qty', label: 'Qty', width: 38 },
+  { id: 'free', label: 'Free', width: 38 },
+  { id: 'dis', label: 'Dis%', width: 42 },
+  { id: 'date', label: 'Date', width: 60 },
+  { id: 'cost', label: 'Cost', width: 58 },
+  { id: 'ptr', label: 'PTR', width: 58 },
+  { id: 'mrp', label: 'MRP', width: 58 },
+  { id: 'sup', label: 'Sup', width: 110 },
+]
+export const SALES_COLUMNS: MiniGridColumn[] = [
+  { id: 'qty', label: 'Qty', width: 38 },
+  { id: 'bill', label: 'Bill', width: 70 },
+  { id: 'date', label: 'Date', width: 60 },
+  { id: 'cust', label: 'Cust', width: 110 },
+  { id: 'dis', label: 'Dis%', width: 42 },
+  { id: 'rep', label: 'Rep', width: 80 },
+]
+export const DEFAULT_MINITABLE_PADDING = 3
+
 function PurchaseMiniTable({
-  purchases, limit = 50, onRowClick,
-}: { purchases: Res<PurchaseRow[]>; limit?: number; onRowClick?: (r: PurchaseRow) => void }) {
+  purchases, limit = 50, onRowClick, order, widths, padding,
+}: {
+  purchases: Res<PurchaseRow[]>; limit?: number; onRowClick?: (r: PurchaseRow) => void
+  order: string[]; widths: Record<string, number>; padding: number
+}) {
   if (purchases.isLoading) return <div className="pm-dsec__hint">Loading purchases…</div>
   const rows = purchases.data ?? []
   if (rows.length === 0) return <div className="pm-dsec__hint">No recent purchases.</div>
+
+  const cell: Record<string, { th: React.ReactNode; num?: boolean; td: (r: PurchaseRow) => React.ReactNode }> = {
+    qty: { th: 'Qty', num: true, td: (r) => num(r.qty) },
+    free: {
+      th: 'Free', num: true,
+      td: (r) => num(r.free),
+    },
+    dis: { th: 'Dis%', num: true, td: (r) => (r.dis != null ? `${num(r.dis)}%` : '—') },
+    date: { th: 'Date', td: (r) => <span className="sx-dim">{shortDate(r.date)}</span> },
+    cost: { th: 'Cost', num: true, td: (r) => money(r.cost) },
+    ptr: { th: 'PTR', num: true, td: (r) => money(r.ptr) },
+    mrp: { th: 'MRP', num: true, td: (r) => money(r.mrp) },
+    sup: { th: 'Sup', td: (r) => <span className="pm-mt__ellip">{r.supplier ?? '—'}</span> },
+  }
+
   return (
     <div className="pm-minitable-wrap">
-      <table className="pm-minitable pm-minitable--click pm-minitable--pur">
+      <table className="pm-minitable pm-minitable--click pm-minitable--pur" style={{ '--pm-mt-pad': `${padding}px` } as React.CSSProperties}>
+        {/* Real, readable px widths (user-adjustable via ⚙ settings) — this
+            panel's width can't fit every column without truncation no
+            matter how they're split, so the table takes its real
+            (wider-than-container) width and scrolls horizontally instead
+            (.pm-minitable-wrap has overflow-x:auto) rather than crushing
+            text to force a no-scroll fit. */}
         <colgroup>
-          <col style={{ width: '55px' }} /><col style={{ width: '100px' }} />
-          <col style={{ width: '32px' }} /><col style={{ width: '32px' }} />
-          <col style={{ width: '66px' }} /><col style={{ width: '66px' }} />
-          <col style={{ width: '66px' }} />
+          {order.map((id) => <col key={id} style={{ width: `${widths[id] ?? 50}px` }} />)}
         </colgroup>
         <thead>
           <tr>
-            <th>Date</th><th>Supplier</th>
-            <th className="sx-num">Qty</th><th className="sx-num">Free</th>
-            <th className="sx-num">Cost</th><th className="sx-num">PTR</th>
-            <th className="sx-num">MRP</th>
+            {order.map((id) => <th key={id} className={cell[id]?.num ? 'sx-num' : undefined}>{cell[id]?.th}</th>)}
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, limit).map((r, i) => (
-            <tr key={`${r.grn_no}-${i}`} onClick={() => onRowClick?.(r)} title="Open purchase bill">
-              <td className="sx-dim">{date(r.date)}</td>
-              <td className="pm-mt__ellip">{r.supplier ?? '—'}</td>
-              <td className="sx-num">{num(r.qty)}</td>
-              <td className="sx-num">{num(r.free)}</td>
-              <td className="sx-num">{money(r.cost)}</td>
-              <td className="sx-num">{money(r.ptr)}</td>
-              <td className="sx-num">{money(r.mrp)}</td>
-            </tr>
-          ))}
+          {rows.slice(0, limit).map((r, i) => {
+            const isFree = (r.free ?? 0) > 0
+            return (
+              <tr
+                key={`${r.grn_no}-${i}`}
+                className={isFree ? 'pm-mt__free' : undefined}
+                onClick={() => onRowClick?.(r)}
+                title={isFree ? `Open purchase bill · includes ${num(r.free)} free unit(s)` : 'Open purchase bill'}
+              >
+                {order.map((id) => <td key={id} className={cell[id]?.num ? 'sx-num' : undefined}>{cell[id]?.td(r)}</td>)}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -351,33 +470,39 @@ function PurchaseMiniTable({
 }
 
 function SalesMiniTable({
-  sales, limit = 50, onRowClick,
-}: { sales: Res<SalesRow[]>; limit?: number; onRowClick?: (r: SalesRow) => void }) {
+  sales, limit = 50, onRowClick, order, widths, padding,
+}: {
+  sales: Res<SalesRow[]>; limit?: number; onRowClick?: (r: SalesRow) => void
+  order: string[]; widths: Record<string, number>; padding: number
+}) {
   if (sales.isLoading) return <div className="pm-dsec__hint">Loading sales…</div>
   const rows = sales.data ?? []
   if (rows.length === 0) return <div className="pm-dsec__hint">No recent sales.</div>
+
+  const cell: Record<string, { th: React.ReactNode; num?: boolean; td: (r: SalesRow) => React.ReactNode }> = {
+    qty: { th: 'Qty', num: true, td: (r) => num(r.qty) },
+    bill: { th: 'Bill', td: (r) => r.bill_no ?? '—' },
+    date: { th: 'Date', td: (r) => <span className="sx-dim">{shortDate(r.date)}</span> },
+    cust: { th: 'Cust', td: (r) => <span className="pm-mt__ellip">{r.customer ?? '—'}</span> },
+    dis: { th: 'Dis%', num: true, td: (r) => (r.discount != null ? `${num(r.discount)}%` : '—') },
+    rep: { th: 'Rep', td: (r) => <span className="pm-mt__ellip">{r.salesman ?? '—'}</span> },
+  }
+
   return (
     <div className="pm-minitable-wrap">
-      <table className="pm-minitable pm-minitable--click pm-minitable--sales">
+      <table className="pm-minitable pm-minitable--click pm-minitable--sales" style={{ '--pm-mt-pad': `${padding}px` } as React.CSSProperties}>
         <colgroup>
-          <col style={{ width: '55px' }} /><col style={{ width: '65px' }} />
-          <col style={{ width: '100px' }} /><col style={{ width: '38px' }} />
-          <col style={{ width: '45px' }} />
+          {order.map((id) => <col key={id} style={{ width: `${widths[id] ?? 50}px` }} />)}
         </colgroup>
         <thead>
           <tr>
-            <th>Date</th><th>Bill</th><th>Customer</th>
-            <th className="sx-num">Qty</th><th>Rep</th>
+            {order.map((id) => <th key={id} className={cell[id]?.num ? 'sx-num' : undefined}>{cell[id]?.th}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.slice(0, limit).map((r, i) => (
             <tr key={`${r.bill_no}-${i}`} onClick={() => onRowClick?.(r)} title="Open sales bill">
-              <td className="sx-dim">{date(r.date)}</td>
-              <td>{r.bill_no ?? '—'}</td>
-              <td className="pm-mt__ellip">{r.customer ?? '—'}</td>
-              <td className="sx-num">{num(r.qty)}</td>
-              <td className="pm-mt__ellip">{r.salesman ?? '—'}</td>
+              {order.map((id) => <td key={id} className={cell[id]?.num ? 'sx-num' : undefined}>{cell[id]?.td(r)}</td>)}
             </tr>
           ))}
         </tbody>

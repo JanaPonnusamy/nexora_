@@ -8,11 +8,12 @@ import { groupStockCheckRows, isExpired } from './stockCheckGrouping'
 
 const CM_TO_IN = 1 / 2.54
 
-const DATA_ROW_HEIGHT = 20
 const HEADER_ROW_HEIGHT = 22
 const HEADER_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } }
-const thin = { style: 'thin' as const, color: { argb: 'FFD9D9D9' } }
+const thin = { style: 'thin' as const, color: { argb: 'FF808080' } }
 const border = { top: thin, left: thin, bottom: thin, right: thin }
+const countedStockLine = { style: 'medium' as const, color: { argb: 'FF000000' } }
+const countedStockBorder = { top: countedStockLine, left: countedStockLine, bottom: countedStockLine, right: countedStockLine }
 
 type ColumnKey =
   | 'productCode'
@@ -32,21 +33,22 @@ const COLUMNS: Array<{
   header: string
   key: ColumnKey
   minWidth: number
+  maxWidth: number
   alignment: Partial<ExcelJS.Alignment>
   numFmt?: string
 }> = [
-  { header: 'Product Code', key: 'productCode', minWidth: 12, alignment: { horizontal: 'left', vertical: 'middle' }, numFmt: '@' },
-  { header: 'Sublocation', key: 'sublocation', minWidth: 10, alignment: { horizontal: 'left', vertical: 'middle' } },
-  { header: 'Product Name', key: 'productName', minWidth: 45, alignment: { horizontal: 'left', vertical: 'middle' } },
-  { header: 'Total Stock', key: 'totalStock', minWidth: 12, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
-  { header: 'Stock', key: 'batchStock', minWidth: 10, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
-  { header: 'Counted Stock', key: 'countedStock', minWidth: 14, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
-  { header: 'Expiry Date', key: 'expiry', minWidth: 12, alignment: { horizontal: 'center', vertical: 'middle' }, numFmt: 'mmm-yyyy' },
-  { header: 'MRP', key: 'mrp', minWidth: 10, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0.00' },
-  { header: 'Sale Unit', key: 'saleUnit', minWidth: 8, alignment: { horizontal: 'center', vertical: 'middle' } },
-  { header: 'Batch', key: 'batchCode', minWidth: 12, alignment: { horizontal: 'center', vertical: 'middle' } },
-  { header: 'PDay', key: 'pday', minWidth: 8, alignment: { horizontal: 'right', vertical: 'top' }, numFmt: '0' },
-  { header: 'SDay', key: 'sday', minWidth: 8, alignment: { horizontal: 'right', vertical: 'top' }, numFmt: '0' },
+  { header: 'Product Code', key: 'productCode', minWidth: 8.3, maxWidth: 10, alignment: { horizontal: 'left', vertical: 'middle' }, numFmt: '@' },
+  { header: 'Sublocation', key: 'sublocation', minWidth: 8.4, maxWidth: 10, alignment: { horizontal: 'left', vertical: 'middle' } },
+  { header: 'Product Name', key: 'productName', minWidth: 21.9, maxWidth: 24, alignment: { horizontal: 'left', vertical: 'middle', wrapText: true } },
+  { header: 'Total Stock', key: 'totalStock', minWidth: 4.6, maxWidth: 6, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
+  { header: 'Stock', key: 'batchStock', minWidth: 4.3, maxWidth: 6, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
+  { header: 'Counted Stock', key: 'countedStock', minWidth: 5.3, maxWidth: 7, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
+  { header: 'Expiry Date', key: 'expiry', minWidth: 10.6, maxWidth: 11, alignment: { horizontal: 'center', vertical: 'middle' }, numFmt: 'mmm-yyyy' },
+  { header: 'MRP', key: 'mrp', minWidth: 7, maxWidth: 9, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0.00' },
+  { header: 'Sale Unit', key: 'saleUnit', minWidth: 4.4, maxWidth: 6, alignment: { horizontal: 'center', vertical: 'middle' } },
+  { header: 'Batch', key: 'batchCode', minWidth: 6, maxWidth: 8, alignment: { horizontal: 'center', vertical: 'middle' } },
+  { header: 'PDay', key: 'pday', minWidth: 5.4, maxWidth: 7, alignment: { horizontal: 'right', vertical: 'top' }, numFmt: '0' },
+  { header: 'SDay', key: 'sday', minWidth: 5.3, maxWidth: 7, alignment: { horizontal: 'right', vertical: 'top' }, numFmt: '0' },
 ]
 
 export async function exportStockCheckExcel({
@@ -105,7 +107,6 @@ export async function exportStockCheckExcel({
           pday: r.purchase_days,
           sday: r.sale_days,
         })
-        excelRow.height = DATA_ROW_HEIGHT
         applyRowStyles(excelRow)
         applyNumericTextMask(excelRow.getCell('saleUnit'), r.sale_unit)
         applyNumericTextMask(excelRow.getCell('batchCode'), batchCode)
@@ -121,8 +122,10 @@ export async function exportStockCheckExcel({
       const endRow = ws.rowCount
       if (endRow > startRow) {
         for (const key of ['productCode', 'sublocation', 'productName', 'totalStock', 'pday', 'sday'] as ColumnKey[]) {
+          for (let row = startRow; row <= endRow; row += 1) {
+            styleCell(ws.getCell(row, colIndex(key)), key)
+          }
           ws.mergeCells(startRow, colIndex(key), endRow, colIndex(key))
-          styleCell(ws.getCell(startRow, colIndex(key)), key)
         }
       }
     }
@@ -136,8 +139,9 @@ export async function exportStockCheckExcel({
     orientation: 'portrait',
     horizontalCentered: true,
     verticalCentered: false,
-    fitToPage: false,
-    scale: 100,
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
     margins: {
       // Top is taller than the legacy 0.9cm so a small header font (below)
       // never collides with row 1 — header text prints inside this gap.
@@ -188,8 +192,8 @@ function applyRowStyles(row: ExcelJS.Row) {
 function styleCell(cell: ExcelJS.Cell, key: ColumnKey) {
   const column = COLUMNS.find((item) => item.key === key)
   if (!column) return
-  cell.border = border
-  cell.alignment = { ...column.alignment, wrapText: false }
+  cell.border = key === 'countedStock' ? countedStockBorder : border
+  cell.alignment = { wrapText: false, ...column.alignment }
   if (column.numFmt && cell.value !== null && cell.value !== '') {
     cell.numFmt = column.numFmt
   }
@@ -206,7 +210,8 @@ function recordRowWidths(widthTracker: Record<ColumnKey, number>, row: ExcelJS.R
 function applyColumnWidths(ws: ExcelJS.Worksheet, widthTracker: Record<ColumnKey, number>) {
   COLUMNS.forEach((column, index) => {
     const padding = column.key === 'productName' ? 4 : 2
-    ws.getColumn(index + 1).width = Math.max(column.minWidth, widthTracker[column.key] + padding)
+    const desired = Math.max(column.minWidth, widthTracker[column.key] + padding)
+    ws.getColumn(index + 1).width = Math.min(desired, column.maxWidth)
   })
 }
 

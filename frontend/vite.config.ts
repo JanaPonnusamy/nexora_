@@ -36,7 +36,7 @@ export default defineConfig(({ mode }) => {
                 // the spawned Electron always boots as a real Electron app.
                 onstart({ startup }) {
                   const { ELECTRON_RUN_AS_NODE: _unused, ...cleanEnv } = process.env
-                  startup(['.', '--no-sandbox'], { env: cleanEnv })
+                  startup(['.', '--no-sandbox', '--remote-debugging-port=9222'], { env: cleanEnv })
                 },
                 vite: {
                   build: {

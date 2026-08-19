@@ -95,6 +95,9 @@ from modules.pass_gen.router import (
 from modules.legacy_order.router import (
     router as legacy_order_router
 )
+from modules.grid_settings.router import (
+    router as grid_settings_router
+)
 from modules.desktop_client.router import (
     router as desktop_client_router
 )
@@ -276,6 +279,7 @@ app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
 app.include_router(desktop_client_router)
 app.include_router(automation_settings_router)
+app.include_router(grid_settings_router)
 app.include_router(whatsapp_router)
 app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)

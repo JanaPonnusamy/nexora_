@@ -22,9 +22,25 @@ import './timeReport.css'
 
 const WHITE = 'FFFFFF'
 
-function statusStyle(hex?: string, text?: string): React.CSSProperties | undefined {
+// Backend sends fixed light-mode pastel hexes (config.STATUS in
+// time_report/config.py) meant to sit under black text. Rather than paint
+// those literally — illegible once the dark canvas dims them — map each
+// known status colour to a semantic --nx-* token pair, which already carries
+// a correct light/dark variant and swaps automatically with the theme.
+const STATUS_HEX_TOKEN: Record<string, { bg: string; ink: string }> = {
+  FFF3B0: { bg: 'var(--nx-warning-sunk)', ink: 'var(--nx-warning-ink)' }, // SHORT
+  BBDEFB: { bg: 'var(--nx-info-sunk)', ink: 'var(--nx-info-ink)' }, // LOW
+  F4A7A7: { bg: 'var(--nx-danger-sunk)', ink: 'var(--nx-danger-ink)' }, // MISS_PUNCH
+  FFD9A0: { bg: 'var(--nx-warning-sunk)', ink: 'var(--nx-warning-ink)' }, // LATE
+}
+
+function statusStyle(hex?: string): React.CSSProperties | undefined {
   if (!hex || hex.toUpperCase() === WHITE) return undefined
-  return { background: `#${hex}`, color: `#${text ?? '000000'}` }
+  const token = STATUS_HEX_TOKEN[hex.toUpperCase()]
+  if (token) return { background: token.bg, color: token.ink }
+  // Unknown/future status colour from the API — fall back to the literal
+  // hex with black text (the backend's own contract) rather than drop it.
+  return { background: `#${hex}`, color: '#000000' }
 }
 
 function Legend({ items }: { items: LegendItem[] }) {
@@ -483,7 +499,7 @@ function DailyView({
               </thead>
               <tbody>
                 {dept.rows.map((row, index) => (
-                  <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex, row.status_text)}>
+                  <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex)}>
                     <td>{row.user_id}</td>
                     <td className="trp-left">
                       {row.name.slice(0, 30)}
@@ -586,7 +602,7 @@ function MissPunchView({ data }: { data: MissPunchReport }) {
               </tr>
             ) : (
               data.rows.map((row, index) => (
-                <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex, row.status_text)}>
+                <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex)}>
                   <td>{row.pdate_str}</td>
                   <td>{row.user_id}</td>
                   <td className="trp-left">{row.name}</td>
@@ -683,7 +699,7 @@ function UserView({ data }: { data: UserReport }) {
               </tr>
             ) : (
               rows.map((row, index) => (
-                <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex, row.status_text)}>
+                <tr key={`${row.user_id}-${index}`} style={statusStyle(row.status_hex)}>
                   <td>{row.pdate_str}</td>
                   <td>{row.user_id}</td>
                   <td className="trp-left">{row.name}</td>
@@ -728,7 +744,7 @@ function InactiveView({ data }: { data: InactiveReport }) {
               </tr>
             ) : (
               data.rows.map((row, index) => (
-                <tr key={`${row.user_id}-${index}`} style={row.last_seen === 'Never' ? { background: '#F4A7A7', color: '#000' } : undefined}>
+                <tr key={`${row.user_id}-${index}`} style={row.last_seen === 'Never' ? { background: 'var(--nx-danger-sunk)', color: 'var(--nx-danger-ink)' } : undefined}>
                   <td>{row.user_id}</td>
                   <td className="trp-left">{row.name}</td>
                   <td className="trp-left">{row.department}</td>
