@@ -39,5 +39,20 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # permission_handler compiles EVERY permission handler unless this list is
+    # given — contacts, location, microphone, health and the rest. App Store
+    # review scans the binary for privacy-sensitive API usage and rejects a
+    # build that references APIs with no matching Info.plist purpose string.
+    # Listing a permission here opts it in; everything unlisted is compiled out.
+    # The app only ever asks for the camera (`Permission.camera` in
+    # camera_capture_screen.dart); image_picker handles the photo library
+    # itself and does not go through permission_handler.
+    target.build_configurations.each do |config|
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+        'PERMISSION_CAMERA=1',
+      ]
+    end
   end
 end

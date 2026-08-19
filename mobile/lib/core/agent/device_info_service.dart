@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
@@ -83,16 +81,18 @@ class DeviceInfoService {
       lastSeenAt: now,
     );
 
-    await _repo.upsertDevice(DeviceInformationCompanion(
-      deviceId: Value(identity.deviceId),
-      platform: Value(identity.platform),
-      model: Value(identity.model),
-      osVersion: Value(identity.osVersion),
-      appVersion: Value(identity.appVersion),
-      buildNumber: Value(identity.buildNumber),
-      registeredAt: Value(identity.registeredAt),
-      lastSeenAt: Value(identity.lastSeenAt),
-    ),);
+    await _repo.upsertDevice(
+      DeviceInformationCompanion(
+        deviceId: Value(identity.deviceId),
+        platform: Value(identity.platform),
+        model: Value(identity.model),
+        osVersion: Value(identity.osVersion),
+        appVersion: Value(identity.appVersion),
+        buildNumber: Value(identity.buildNumber),
+        registeredAt: Value(identity.registeredAt),
+        lastSeenAt: Value(identity.lastSeenAt),
+      ),
+    );
 
     _log.info('Device ${identity.deviceId} (${identity.platform}) refreshed');
     return identity;
@@ -100,13 +100,9 @@ class DeviceInfoService {
 
   Future<void> touch() => _repo.touchDeviceSeen(DateTime.now());
 
-  Future<String> _resolveDeviceId() async {
-    final existing = await _storage.readDeviceId();
-    if (existing != null && existing.isNotEmpty) return existing;
-    final generated = _generateUuidV4();
-    await _storage.writeDeviceId(generated);
-    return generated;
-  }
+  // Delegates so the agent and the login flow cannot mint different ids for
+  // the same install — a refresh-token chain is bound to this value.
+  Future<String> _resolveDeviceId() => _storage.ensureDeviceId();
 
   /// Returns (platform, model, osVersion).
   Future<(String, String, String)> _collectPlatformMeta() async {
@@ -173,17 +169,4 @@ class DeviceInfoService {
         registeredAt: row.registeredAt,
         lastSeenAt: row.lastSeenAt,
       );
-
-  /// RFC-4122 v4 UUID from a cryptographically-secure RNG (no extra deps).
-  static String _generateUuidV4() {
-    final rng = Random.secure();
-    final bytes = List<int>.generate(16, (_) => rng.nextInt(256));
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
-    String hex(int start, int end) => bytes
-        .sublist(start, end)
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
-    return '${hex(0, 4)}-${hex(4, 6)}-${hex(6, 8)}-${hex(8, 10)}-${hex(10, 16)}';
-  }
 }

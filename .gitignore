@@ -7,6 +7,12 @@ __pycache__/
 # Environment
 .env
 
+# Deployment secrets. ho.env holds the JWT signing secret and setup password;
+# it is generated per-install by ho_setup/ho_config.py and must never be
+# committed. `*.env` is the catch-all — .env.example and .env.template files
+# do not match it and stay tracked.
+*.env
+
 # Logs
 logs/
 *.log

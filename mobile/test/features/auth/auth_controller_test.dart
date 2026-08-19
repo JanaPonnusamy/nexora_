@@ -91,13 +91,14 @@ void main() {
         isActive: true,
       );
 
-      final container = ProviderContainer(overrides: [
-        secureStorageProvider.overrideWithValue(storage),
-        authRepositoryProvider
-            .overrideWithValue(FakeAuthRepository(platformUser())),
-        storeRepositoryProvider
-            .overrideWithValue(FakeStoreRepository(store)),
-      ],);
+      final container = ProviderContainer(
+        overrides: [
+          secureStorageProvider.overrideWithValue(storage),
+          authRepositoryProvider
+              .overrideWithValue(FakeAuthRepository(platformUser())),
+          storeRepositoryProvider.overrideWithValue(FakeStoreRepository(store)),
+        ],
+      );
       addTearDown(container.dispose);
 
       await container.read(authControllerProvider.notifier).bootstrap();
@@ -119,13 +120,14 @@ void main() {
       await storage.writeToken('tok');
       await storage.writeSelectedStoreId('gone');
 
-      final container = ProviderContainer(overrides: [
-        secureStorageProvider.overrideWithValue(storage),
-        authRepositoryProvider
-            .overrideWithValue(FakeAuthRepository(platformUser())),
-        storeRepositoryProvider
-            .overrideWithValue(FakeStoreRepository(null)),
-      ],);
+      final container = ProviderContainer(
+        overrides: [
+          secureStorageProvider.overrideWithValue(storage),
+          authRepositoryProvider
+              .overrideWithValue(FakeAuthRepository(platformUser())),
+          storeRepositoryProvider.overrideWithValue(FakeStoreRepository(null)),
+        ],
+      );
       addTearDown(container.dispose);
 
       await container.read(authControllerProvider.notifier).bootstrap();
@@ -141,12 +143,15 @@ void main() {
     await storage.writeToken('tok');
     await storage.writeSelectedStoreId('s1');
 
-    final container = ProviderContainer(overrides: [
-      secureStorageProvider.overrideWithValue(storage),
-      authRepositoryProvider.overrideWithValue(FakeAuthRepository(storeUser())),
-      // Should never be called for a role-matched store user.
-      storeRepositoryProvider.overrideWithValue(FakeStoreRepository(null)),
-    ],);
+    final container = ProviderContainer(
+      overrides: [
+        secureStorageProvider.overrideWithValue(storage),
+        authRepositoryProvider
+            .overrideWithValue(FakeAuthRepository(storeUser())),
+        // Should never be called for a role-matched store user.
+        storeRepositoryProvider.overrideWithValue(FakeStoreRepository(null)),
+      ],
+    );
     addTearDown(container.dispose);
 
     await container.read(authControllerProvider.notifier).bootstrap();

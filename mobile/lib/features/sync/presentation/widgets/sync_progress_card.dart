@@ -34,10 +34,10 @@ class _SyncProgressCardState extends State<SyncProgressCard>
 
   Color get _color => switch (widget.state.status) {
         SyncStatus.success => AppColors.success,
-        SyncStatus.failed => AppColors.error,
-        SyncStatus.offline => AppColors.slate,
+        SyncStatus.failed => AppColors.danger,
+        SyncStatus.offline => AppColors.textMuted,
         SyncStatus.paused => AppColors.warning,
-        _ => AppColors.primary,
+        _ => AppColors.accent,
       };
 
   IconData get _icon => switch (widget.state.status) {
@@ -88,7 +88,9 @@ class _SyncProgressCardState extends State<SyncProgressCard>
                         state.status.label,
                         key: ValueKey(state.status),
                         style: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.w800,),
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -96,8 +98,8 @@ class _SyncProgressCardState extends State<SyncProgressCard>
                       busy
                           ? (state.currentEntity ?? 'Syncing…')
                           : 'Last synced ${formatRelative(state.lastSuccessAt)}',
-                      style:
-                          const TextStyle(fontSize: 12, color: AppColors.slate),
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textMuted),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -107,7 +109,7 @@ class _SyncProgressCardState extends State<SyncProgressCard>
               StatusBadge(
                 dense: true,
                 label: state.online ? 'Online' : 'Offline',
-                color: state.online ? AppColors.success : AppColors.slate,
+                color: state.online ? AppColors.success : AppColors.textMuted,
               ),
             ],
           ),
@@ -139,7 +141,8 @@ class _SyncProgressCardState extends State<SyncProgressCard>
                 label: 'Failed',
                 value: '${state.failed}',
                 icon: Icons.error_outline_rounded,
-                color: state.failed > 0 ? AppColors.error : AppColors.slate,
+                color:
+                    state.failed > 0 ? AppColors.danger : AppColors.textMuted,
               ),
             ],
           ),
@@ -148,13 +151,16 @@ class _SyncProgressCardState extends State<SyncProgressCard>
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.error_outline, size: 15, color: AppColors.error),
+                const Icon(Icons.error_outline,
+                    size: 15, color: AppColors.danger),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     state.lastError!,
                     style: const TextStyle(
-                        fontSize: 12, color: AppColors.error,),
+                      fontSize: 12,
+                      color: AppColors.danger,
+                    ),
                   ),
                 ),
               ],

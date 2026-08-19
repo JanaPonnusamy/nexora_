@@ -1,7 +1,10 @@
 import 'package:drift/drift.dart';
 
+import 'package:nexora_mobile/core/database/capture_tables.dart';
 import 'package:nexora_mobile/core/database/connection/connection.dart';
 import 'package:nexora_mobile/core/database/master_data_tables.dart';
+import 'package:nexora_mobile/core/database/outbox_tables.dart';
+import 'package:nexora_mobile/core/database/report_cache_tables.dart';
 import 'package:nexora_mobile/core/database/tables.dart';
 
 part 'app_database.g.dart';
@@ -38,6 +41,13 @@ class AppKeyValue extends Table {
     Units,
     TaxMaster,
     Suppliers,
+    // Phase 2 (OCR) — offline document capture queue.
+    CaptureBatches,
+    CapturePages,
+    // Phase 3 — outgoing user edits made while offline.
+    OutboxEntries,
+    // Phase 3 — last-seen report results, readable without signal.
+    ReportCacheEntries,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -47,7 +57,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.withExecutor(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -73,6 +83,19 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(units);
             await m.createTable(taxMaster);
             await m.createTable(suppliers);
+          }
+          if (from < 4) {
+            // v3 → v4: add the offline document-capture queue.
+            await m.createTable(captureBatches);
+            await m.createTable(capturePages);
+          }
+          if (from < 5) {
+            // v4 → v5: add the outbox for edits made while offline.
+            await m.createTable(outboxEntries);
+          }
+          if (from < 6) {
+            // v5 → v6: add the report cache so results read offline.
+            await m.createTable(reportCacheEntries);
           }
         },
         beforeOpen: (details) async {

@@ -46,19 +46,24 @@ class ManufacturerDto {
   final DateTime? updatedAt;
 
   factory ManufacturerDto.fromJson(Map<String, dynamic> json) {
-    final code =
-        stringField(json, ['code', 'manufacturer_code', 'mfr_code', 'company_code']);
+    final code = stringField(
+        json, ['code', 'manufacturer_code', 'mfr_code', 'company_code']);
     return ManufacturerDto(
       id: stringField(
-          json, ['id', 'manufacturer_id', 'code', 'manufacturer_code'],
-          fallback: code,),
+        json,
+        ['id', 'manufacturer_id', 'code', 'manufacturer_code'],
+        fallback: code,
+      ),
       code: code,
       name: stringField(
-          json, ['name', 'manufacturer_name', 'mfr_name', 'company_name'],),
+        json,
+        ['name', 'manufacturer_name', 'mfr_name', 'company_name'],
+      ),
       isActive: asBool(firstOf(json, ['is_active', 'isActive', 'active'])),
       version: asIntOrNull(firstOf(json, ['version', 'row_version'])),
       updatedAt: asDateOrNull(
-          firstOf(json, ['updated_at', 'updatedAt', 'modified_at']),),
+        firstOf(json, ['updated_at', 'updatedAt', 'modified_at']),
+      ),
     );
   }
 }

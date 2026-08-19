@@ -167,8 +167,8 @@ void main() {
       final q = SyncQueue(
         repo,
         SyncLogger(repo),
-        retryPolicy:
-            const RetryPolicy(maxAttempts: 2, baseDelay: Duration.zero, jitter: false),
+        retryPolicy: const RetryPolicy(
+            maxAttempts: 2, baseDelay: Duration.zero, jitter: false),
       );
       await q.enqueue(
         direction: SyncDirection.download,

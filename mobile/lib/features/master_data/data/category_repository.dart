@@ -22,7 +22,8 @@ class CategoryRepository implements MasterWriter {
     bool includeInactive = false,
   }) async {
     final query = _db.select(_db.categories)
-      ..where((t) => t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false))
+      ..where(
+          (t) => t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false))
       ..orderBy([(t) => OrderingTerm.asc(t.name)]);
     if (!includeInactive) {
       query.where((t) => t.isActive.equals(true));
@@ -34,7 +35,9 @@ class CategoryRepository implements MasterWriter {
   Stream<List<Category>> watchAll(MasterScope scope) {
     return (_db.select(_db.categories)
           ..where(
-              (t) => t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false),)
+            (t) =>
+                t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false),
+          )
           ..orderBy([(t) => OrderingTerm.asc(t.name)]))
         .watch()
         .map((rows) => rows.map(CategoryMapper.fromRow).toList());
@@ -42,10 +45,12 @@ class CategoryRepository implements MasterWriter {
 
   Future<Category?> getById(MasterScope scope, String id) async {
     final row = await (_db.select(_db.categories)
-          ..where((t) =>
-              t.tenantId.equals(scope.tenantId) &
-              t.id.equals(id) &
-              t.isDeleted.equals(false),))
+          ..where(
+            (t) =>
+                t.tenantId.equals(scope.tenantId) &
+                t.id.equals(id) &
+                t.isDeleted.equals(false),
+          ))
         .getSingleOrNull();
     return row == null ? null : CategoryMapper.fromRow(row);
   }
@@ -55,8 +60,10 @@ class CategoryRepository implements MasterWriter {
     final counter = _db.categories.id.count();
     final query = _db.selectOnly(_db.categories)
       ..addColumns([counter])
-      ..where(_db.categories.tenantId.equals(scope.tenantId) &
-          _db.categories.isDeleted.equals(false),);
+      ..where(
+        _db.categories.tenantId.equals(scope.tenantId) &
+            _db.categories.isDeleted.equals(false),
+      );
     return (await query.getSingle()).read(counter) ?? 0;
   }
 
@@ -74,7 +81,8 @@ class CategoryRepository implements MasterWriter {
 
         final existing = await (_db.select(_db.categories)
               ..where(
-                  (t) => t.tenantId.equals(scope.tenantId) & t.id.equals(dto.id),))
+                (t) => t.tenantId.equals(scope.tenantId) & t.id.equals(dto.id),
+              ))
             .getSingleOrNull();
 
         final apply = shouldApplyRemote(
@@ -88,7 +96,8 @@ class CategoryRepository implements MasterWriter {
         if (!apply) continue;
 
         await _db.into(_db.categories).insertOnConflictUpdate(
-              CategoryMapper.toCompanion(dto, tenantId: scope.tenantId, syncedAt: now),
+              CategoryMapper.toCompanion(dto,
+                  tenantId: scope.tenantId, syncedAt: now),
             );
         changed++;
       }
@@ -106,14 +115,18 @@ class CategoryRepository implements MasterWriter {
 
   Future<int> _markDeleted(MasterScope scope, String id, DateTime now) =>
       (_db.update(_db.categories)
-            ..where((t) =>
-                t.tenantId.equals(scope.tenantId) &
-                t.id.equals(id) &
-                t.isDeleted.equals(false),))
-          .write(CategoriesCompanion(
-            isDeleted: const Value(true),
-            syncedAt: Value(now),
-          ),);
+            ..where(
+              (t) =>
+                  t.tenantId.equals(scope.tenantId) &
+                  t.id.equals(id) &
+                  t.isDeleted.equals(false),
+            ))
+          .write(
+        CategoriesCompanion(
+          isDeleted: const Value(true),
+          syncedAt: Value(now),
+        ),
+      );
 
   Future<int> _softDeleteMissing(
     MasterScope scope,
@@ -122,7 +135,9 @@ class CategoryRepository implements MasterWriter {
   ) async {
     final rows = await (_db.select(_db.categories)
           ..where(
-              (t) => t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false),))
+            (t) =>
+                t.tenantId.equals(scope.tenantId) & t.isDeleted.equals(false),
+          ))
         .get();
     var removed = 0;
     for (final row in rows) {

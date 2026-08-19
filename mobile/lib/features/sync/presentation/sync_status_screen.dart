@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:nexora_mobile/core/database/app_database.dart';
+import 'package:nexora_mobile/core/router/app_routes.dart';
 import 'package:nexora_mobile/core/di/agent_providers.dart';
 import 'package:nexora_mobile/core/sync/sync_status.dart';
 import 'package:nexora_mobile/core/theme/app_colors.dart';
@@ -44,19 +46,33 @@ class SyncStatusScreen extends ConsumerWidget {
                 const SizedBox(height: 16),
                 const SectionHeader(title: 'NETWORK', icon: Icons.hub_outlined),
                 const _NetworkOverviewCard(),
+                const SizedBox(height: 8),
+                StatusCard(
+                  accentColor: AppColors.info,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                  child: ActionTile(
+                    title: 'Live operations',
+                    subtitle: 'Per-store progress, pause and stop',
+                    icon: Icons.monitor_heart_outlined,
+                    color: AppColors.info,
+                    onTap: () => context.pushNamed<void>(AppRoutes.syncLive),
+                  ),
+                ),
               ],
               const SizedBox(height: 16),
               const SectionHeader(title: 'DETAILS', icon: Icons.tune_rounded),
               StatusCard(
-                accentColor: AppColors.line,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                accentColor: AppColors.rule,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                 child: Column(
                   children: [
                     ActionTile(
                       title: 'Entities',
                       subtitle: 'Record counts and last sync per entity',
                       icon: Icons.dataset_outlined,
-                      color: AppColors.primary,
+                      color: AppColors.accent,
                       onTap: () => _showEntitiesSheet(context, ref),
                     ),
                     const Divider(height: 1),
@@ -72,7 +88,7 @@ class SyncStatusScreen extends ConsumerWidget {
                       title: 'Activity log',
                       subtitle: 'Recent sync events',
                       icon: Icons.receipt_long_outlined,
-                      color: AppColors.accent,
+                      color: AppColors.info,
                       onTap: () => _showActivitySheet(context, ref),
                     ),
                   ],
@@ -116,11 +132,10 @@ Future<void> _showSheet(
       maxChildSize: 0.92,
       expand: false,
       builder: (context, scrollController) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
         return Container(
-          decoration: BoxDecoration(
-            color: isDark ? AppColors.cardDark : Colors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          decoration: const BoxDecoration(
+            color: AppColors.surfaceRaised,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: Column(
             children: [
@@ -129,7 +144,7 @@ Future<void> _showSheet(
                 width: 36,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppColors.line,
+                  color: AppColors.rule,
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
@@ -137,11 +152,15 @@ Future<void> _showSheet(
                 padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
                 child: Row(
                   children: [
-                    Icon(icon, size: 18, color: AppColors.slate),
+                    Icon(icon, size: 18, color: AppColors.textMuted),
                     const SizedBox(width: 8),
-                    Text(title,
-                        style: const TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w800,),),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -175,7 +194,8 @@ void _showEntitiesSheet(BuildContext context, WidgetRef ref) {
           data: (rows) => rows.isEmpty
               ? const EmptyState(
                   message: 'No entities have synced yet.',
-                  icon: Icons.dataset_outlined,)
+                  icon: Icons.dataset_outlined,
+                )
               : Column(
                   children: [
                     for (final r in rows)
@@ -184,13 +204,18 @@ void _showEntitiesSheet(BuildContext context, WidgetRef ref) {
                         valueWidget: Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text('${r.recordCount} records',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600,),),
+                            Text(
+                              '${r.recordCount} records',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                             Text(
                               '${r.lastStatus} · ${formatRelative(r.lastSyncAt)}',
                               style: const TextStyle(
-                                  fontSize: 12, color: AppColors.slate,),
+                                fontSize: 12,
+                                color: AppColors.textMuted,
+                              ),
                             ),
                           ],
                         ),
@@ -219,7 +244,9 @@ void _showQueueSheet(BuildContext context, WidgetRef ref) {
                 rows.where((r) => r.status != 'done').toList(growable: false);
             if (active.isEmpty) {
               return const EmptyState(
-                  message: 'Queue is empty.', icon: Icons.done_all_rounded,);
+                message: 'Queue is empty.',
+                icon: Icons.done_all_rounded,
+              );
             }
             return Column(
               children: [
@@ -250,7 +277,9 @@ void _showActivitySheet(BuildContext context, WidgetRef ref) {
           error: (e, _) => Text('$e'),
           data: (rows) => rows.isEmpty
               ? const EmptyState(
-                  message: 'No activity yet.', icon: Icons.history_rounded,)
+                  message: 'No activity yet.',
+                  icon: Icons.history_rounded,
+                )
               : Column(
                   children: [for (final r in rows.take(60)) _LogTile(row: r)],
                 ),
@@ -270,16 +299,18 @@ class _NetworkOverviewCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(syncControlCenterProvider);
     return StatusCard(
-      accentColor: AppColors.primary,
+      accentColor: AppColors.accent,
       child: async.when(
         loading: () => const InlineLoading(),
         error: (e, _) => Row(
           children: [
-            const Icon(Icons.error_outline, size: 18, color: AppColors.error),
+            const Icon(Icons.error_outline, size: 18, color: AppColors.danger),
             const SizedBox(width: 8),
             Expanded(
-              child: Text('Network data unavailable: $e',
-                  style: const TextStyle(color: AppColors.slate),),
+              child: Text(
+                'Network data unavailable: $e',
+                style: const TextStyle(color: AppColors.textMuted),
+              ),
             ),
             TextButton(
               onPressed: () => ref.invalidate(syncControlCenterProvider),
@@ -302,7 +333,7 @@ class _NetworkOverviewCard extends ConsumerWidget {
                   label: 'Running',
                   value: '${cc.kpis.syncRunning}',
                   icon: Icons.sync_rounded,
-                  color: AppColors.primary,
+                  color: AppColors.accent,
                 ),
                 MetricTile(
                   label: 'Queued',
@@ -314,15 +345,15 @@ class _NetworkOverviewCard extends ConsumerWidget {
                   label: 'Done today',
                   value: '${cc.kpis.completedToday}',
                   icon: Icons.check_circle_outline_rounded,
-                  color: AppColors.accent,
+                  color: AppColors.info,
                 ),
                 MetricTile(
                   label: 'Failed today',
                   value: '${cc.kpis.failedToday}',
                   icon: Icons.error_outline_rounded,
                   color: cc.kpis.failedToday > 0
-                      ? AppColors.error
-                      : AppColors.slate,
+                      ? AppColors.danger
+                      : AppColors.textMuted,
                 ),
               ],
             ),
@@ -343,9 +374,9 @@ class _StoreSyncRow extends StatelessWidget {
   final StoreSyncStatus store;
 
   Color get _statusColor => switch (store.status) {
-        'Syncing' => AppColors.primary,
+        'Syncing' => AppColors.accent,
         'Online' => AppColors.success,
-        _ => AppColors.slate,
+        _ => AppColors.textMuted,
       };
 
   @override
@@ -370,9 +401,9 @@ class _QueueBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = switch (row.status) {
-      'inFlight' => AppColors.primary,
-      'deadLetter' => AppColors.error,
-      _ => row.attempts > 0 ? AppColors.warning : AppColors.slate,
+      'inFlight' => AppColors.accent,
+      'deadLetter' => AppColors.danger,
+      _ => row.attempts > 0 ? AppColors.warning : AppColors.textMuted,
     };
     final label =
         row.attempts > 0 ? '${row.status} (×${row.attempts})' : row.status;
@@ -387,10 +418,10 @@ class _LogTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = switch (row.level) {
-      'error' => AppColors.error,
+      'error' => AppColors.danger,
       'warning' => AppColors.warning,
-      'fine' => AppColors.slate,
-      _ => AppColors.primary,
+      'fine' => AppColors.textMuted,
+      _ => AppColors.accent,
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -410,13 +441,17 @@ class _LogTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(row.message,
-                    style: const TextStyle(
-                        fontSize: 13.5, fontWeight: FontWeight.w500,),),
+                Text(
+                  row.message,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
                 Text(
                   '${row.category} · ${formatRelative(row.createdAt)}',
-                  style:
-                      const TextStyle(fontSize: 11.5, color: AppColors.slate),
+                  style: const TextStyle(
+                      fontSize: 11.5, color: AppColors.textMuted),
                 ),
               ],
             ),

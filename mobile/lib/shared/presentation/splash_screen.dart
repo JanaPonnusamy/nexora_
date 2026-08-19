@@ -39,14 +39,19 @@ class _Logo extends StatelessWidget {
           height: 72,
           width: 72,
           decoration: BoxDecoration(
-            color: AppColors.primary,
+            // The Axythic mark's blue face, angled to match the logo artwork.
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: AppColors.brandBlue,
+            ),
             borderRadius: BorderRadius.circular(18),
           ),
           alignment: Alignment.center,
           child: const Text(
-            'N',
+            'A',
             style: TextStyle(
-              color: Colors.white,
+              color: AppColors.textOn,
               fontSize: 40,
               fontWeight: FontWeight.w800,
             ),
@@ -54,7 +59,7 @@ class _Logo extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         Text(
-          'Nexora',
+          'Axythic',
           style: Theme.of(context)
               .textTheme
               .headlineSmall

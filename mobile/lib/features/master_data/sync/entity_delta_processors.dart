@@ -40,7 +40,8 @@ class SupplierDeltaProcessor extends MasterDeltaProcessor {
           entity: MasterEntities.suppliers,
           writer: repository,
           storeScoped: true,
-          fetch: (s, {watermark}) => api.fetchSuppliers(s, watermark: watermark),
+          fetch: (s, {watermark}) =>
+              api.fetchSuppliers(s, watermark: watermark),
         );
 }
 

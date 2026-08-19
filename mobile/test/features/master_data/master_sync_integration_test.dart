@@ -47,8 +47,10 @@ class FakeSupplierApi extends MasterDataApiService {
   int calls = 0;
 
   @override
-  Future<MasterDelta?> fetchSuppliers(MasterScope scope,
-      {String? watermark,}) async {
+  Future<MasterDelta?> fetchSuppliers(
+    MasterScope scope, {
+    String? watermark,
+  }) async {
     calls++;
     return next;
   }
@@ -133,8 +135,10 @@ void main() {
     await manager.syncNow();
 
     expect(await suppliers.count(scope), 1);
-    expect((await suppliers.getByCode(scope, 'S1'))!.supplierName,
-        'Alpha Renamed',);
+    expect(
+      (await suppliers.getByCode(scope, 'S1'))!.supplierName,
+      'Alpha Renamed',
+    );
     expect(await suppliers.getByCode(scope, 'S2'), isNull);
     await manager.dispose();
   });

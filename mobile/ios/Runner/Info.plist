@@ -7,7 +7,21 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Nexora Mobile</string>
+	<string>Axythic</string>
+	<!-- Purpose strings must say WHY, naming the concrete user benefit. Vague
+	     wording ("this app needs camera access") is a routine App Store
+	     rejection under Guideline 5.1.1. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Axythic uses the camera to photograph supplier invoices so their details can be read automatically instead of typed in by hand.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Axythic lets you choose an existing photo or scan of a supplier invoice to extract its details.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Axythic saves exported invoice spreadsheets to your device so you can open them in Excel or share them.</string>
+	<!-- Required whenever LocalAuthentication can reach Face ID. Without it iOS
+	     kills the process the first time the prompt is raised, rather than
+	     denying it — so a missing string is a crash, not a refusal. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Axythic can use Face ID to confirm it is you before reopening the app, so invoices and store data are not exposed if your phone is left unattended.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

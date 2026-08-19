@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:nexora_mobile/core/di/providers.dart';
@@ -59,8 +60,22 @@ class AuthController extends Notifier<AuthState> {
       final res = await _repo.login(
         username: username.trim(),
         password: password,
+        device: DeviceDescriptor(
+          deviceId: await _storage.ensureDeviceId(),
+          platform: defaultTargetPlatform.name,
+        ),
       );
       await _storage.writeToken(res.token);
+      // Absent when talking to a server without the mobile BFF — the session
+      // then simply cannot be refreshed (see AuthRepository.login).
+      final refreshToken = res.refreshToken;
+      if (refreshToken != null && refreshToken.isNotEmpty) {
+        await _storage.writeRefreshToken(refreshToken);
+      } else {
+        _log.warning(
+          'No refresh token issued — session will end at access-token expiry',
+        );
+      }
       final selected = await _restoreSelectedStore(res.user);
       state = state.copyWith(
         status: AuthStatus.authenticated,
@@ -88,8 +103,17 @@ class AuthController extends Notifier<AuthState> {
     state = state.copyWith(selectedStore: null);
   }
 
-  /// Full logout: wipe token + selection and drop to the login screen.
+  /// Full logout: revoke the refresh chain server-side, then wipe local state.
+  ///
+  /// The server call is best-effort — a user signing out on a train must still
+  /// end up signed out locally. The access token stays valid until it expires
+  /// either way; there is no denylist.
   Future<void> logout() async {
+    final refreshToken = await _storage.readRefreshToken();
+    final deviceId = await _storage.readDeviceId();
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      await _repo.logout(refreshToken: refreshToken, deviceId: deviceId);
+    }
     await _storage.clear();
     state = const AuthState(status: AuthStatus.unauthenticated);
   }

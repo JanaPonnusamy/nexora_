@@ -89,8 +89,7 @@ class Suppliers extends Table {
   TextColumn get supplierName => text().withDefault(const Constant(''))();
   IntColumn get productCount => integer().withDefault(const Constant(0))();
   IntColumn get availableCount => integer().withDefault(const Constant(0))();
-  RealColumn get totalAvailableStock =>
-      real().withDefault(const Constant(0))();
+  RealColumn get totalAvailableStock => real().withDefault(const Constant(0))();
   DateTimeColumn get lastImportedAt => dateTime().nullable()();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
   IntColumn get version => integer().nullable()();

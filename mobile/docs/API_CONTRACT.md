@@ -125,8 +125,19 @@ processor cleanly no-ops on `pull()` instead of calling a URL that doesn't
 exist, so the app still works fully offline on whatever is cached (empty, for
 now, until a real endpoint is added).
 
-### `GET /api/supplier-stock-analysis/suppliers?tenant_id=&store_id=` — bearer, tenant+store scoped
-The only entity with a real download. **Consumed with a documented caveat**:
+### `GET /api/mobile/v1/suppliers?store_id=` — bearer, tenant resolved from the token
+The only entity with a real download.
+
+**Why the BFF route and not `/api/supplier-stock-analysis/suppliers`:** that
+one is behind `require_admin_role`, which 403s any login whose roles are all
+purchase-manager and/or salesman — the exact field roles this app targets, who
+were therefore seeing an empty supplier list with no explanation. The BFF route
+serves the *same query and the same payload* with scope resolved from the JWT
+(so a client cannot widen it) instead of a role gate. Nothing else from that
+module is exposed: supplier products, stock, matching, reports and the
+cross-store dashboards stay admin-only.
+
+**Consumed with a documented caveat**:
 this is a *procurement-analysis* endpoint, not a supplier master route — it
 returns suppliers that have **imported stock** for the store (via
 `procurement.supplier_stock` joined to `sync.Suppliers`), each with

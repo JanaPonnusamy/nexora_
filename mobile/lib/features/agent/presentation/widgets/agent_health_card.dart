@@ -18,9 +18,9 @@ class AgentHealthCard extends StatelessWidget {
   Color get _color => switch (state.status) {
         AgentStatus.ready => AppColors.success,
         AgentStatus.degraded => AppColors.warning,
-        AgentStatus.error => AppColors.error,
-        AgentStatus.offline => AppColors.slate,
-        _ => AppColors.primary,
+        AgentStatus.error => AppColors.danger,
+        AgentStatus.offline => AppColors.textMuted,
+        _ => AppColors.accent,
       };
 
   IconData get _icon => switch (state.status) {
@@ -55,14 +55,20 @@ class AgentHealthCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(state.status.label,
-                        style: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.w800,),),
+                    Text(
+                      state.status.label,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       state.storeName ?? 'No store bound',
                       style: const TextStyle(
-                          fontSize: 12, color: AppColors.slate,),
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -78,27 +84,40 @@ class AgentHealthCard extends StatelessWidget {
             children: [
               _CheckChip(label: 'Registered', ok: state.registered),
               _CheckChip(label: 'Config loaded', ok: state.configLoaded),
-              _CheckChip(label: 'Backend reachable', ok: state.backendReachable),
+              _CheckChip(
+                label: 'Backend reachable',
+                ok: state.backendReachable,
+              ),
               _CheckChip(label: 'API compatible', ok: state.apiCompatible),
             ],
           ),
           const SizedBox(height: 12),
           Row(
             children: [
-              Icon(Icons.speed_rounded, size: 14, color: AppColors.slate),
+              const Icon(
+                Icons.speed_rounded,
+                size: 14,
+                color: AppColors.textMuted,
+              ),
               const SizedBox(width: 6),
               Text(
                 state.backendLatencyMs == null
                     ? 'Latency —'
                     : 'Latency ${state.backendLatencyMs} ms',
-                style: const TextStyle(fontSize: 12, color: AppColors.slate),
+                style:
+                    const TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
               const SizedBox(width: 14),
-              Icon(Icons.schedule_rounded, size: 14, color: AppColors.slate),
+              const Icon(
+                Icons.schedule_rounded,
+                size: 14,
+                color: AppColors.textMuted,
+              ),
               const SizedBox(width: 6),
               Text(
                 'Checked ${formatRelative(state.lastHealthCheckAt)}',
-                style: const TextStyle(fontSize: 12, color: AppColors.slate),
+                style:
+                    const TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
             ],
           ),
@@ -107,12 +126,20 @@ class AgentHealthCard extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.error_outline, size: 15, color: AppColors.error),
+                const Icon(
+                  Icons.error_outline,
+                  size: 15,
+                  color: AppColors.danger,
+                ),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: Text(state.lastError!,
-                      style: const TextStyle(
-                          fontSize: 12, color: AppColors.error,),),
+                  child: Text(
+                    state.lastError!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.danger,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -130,7 +157,7 @@ class _CheckChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = ok ? AppColors.success : AppColors.slate;
+    final color = ok ? AppColors.success : AppColors.textMuted;
     return InfoChip(
       label: label,
       icon: ok ? Icons.check_circle_rounded : Icons.remove_circle_outline,

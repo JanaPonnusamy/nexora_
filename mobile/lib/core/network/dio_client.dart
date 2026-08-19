@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:nexora_mobile/core/config/app_config.dart';
 import 'package:nexora_mobile/core/network/auth_interceptor.dart';
 import 'package:nexora_mobile/core/network/logging_interceptor.dart';
+import 'package:nexora_mobile/core/network/token_refresher.dart';
 import 'package:nexora_mobile/core/services/secure_storage_service.dart';
 
 /// Factory for the single, shared [Dio] instance used by every repository.
@@ -33,7 +34,18 @@ class DioClient {
     );
 
     dio.interceptors.addAll([
-      AuthInterceptor(storage: storage, onUnauthorized: onUnauthorized),
+      AuthInterceptor(
+        storage: storage,
+        onUnauthorized: onUnauthorized,
+        refresher: TokenRefresher(
+          storage: storage,
+          baseUrl: config.apiBaseUrl,
+        ),
+        // The same instance, so a replayed request keeps this client's base
+        // URL, timeouts and logging. Safe from recursion because the retry is
+        // flagged and a second 401 ends the session instead of refreshing.
+        retryClient: dio,
+      ),
       LoggingInterceptor(enabled: config.enableVerboseLogging),
     ]);
 

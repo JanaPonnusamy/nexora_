@@ -24,6 +24,11 @@ dependencies:
   # Secure storage (JWT token, selected store)
   flutter_secure_storage: ^9.2.2
 
+  # Biometric / device-credential unlock (Phase 1). Device credential is kept as
+  # a fallback rather than requiring biometrics, so a broken sensor or a removed
+  # fingerprint cannot strand a user holding a valid session.
+  local_auth: ^2.3.0
+
   # Local persistence / offline cache (foundation for Phase 2 sync)
   drift: ^2.18.0
   sqlite3_flutter_libs: ^0.5.24
@@ -42,11 +47,25 @@ dependencies:
   device_info_plus: ^12.4.0
   package_info_plus: ^9.0.1
 
+  # Document capture (Phase 2 OCR pipeline)
+  camera: ^0.11.0
+  image_picker: ^1.1.2
+  permission_handler: ^11.3.1
+  # Client-side downscale/compress before upload — invoice photos off a modern
+  # phone are 4-8 MB each and stores are frequently on poor connections.
+  image: ^4.2.0
+  # Hand the exported workbook to Excel / the share sheet.
+  share_plus: ^10.0.0
+  open_filex: ^4.5.0
+
   # Misc
   collection: ^1.18.0
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  # On-device/simulator end-to-end tests (integration_test/).
+  integration_test:
     sdk: flutter
   flutter_lints: ^4.0.0
 

@@ -60,7 +60,9 @@ class ApiException implements Exception {
       // FastAPI validation errors: detail is a list of {msg, loc}
       if (detail is List && detail.isNotEmpty) {
         final first = detail.first;
-        if (first is Map && first['msg'] is String) return first['msg'] as String;
+        if (first is Map && first['msg'] is String) {
+          return first['msg'] as String;
+        }
       }
     }
     if (data is String && data.trim().isNotEmpty) return data;

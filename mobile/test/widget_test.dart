@@ -25,7 +25,8 @@ void main() {
         (tester) async {
       var tapped = false;
       await tester.pumpWidget(
-        wrap(AppButton(label: 'Sign in', busy: true, onPressed: () => tapped = true)),
+        wrap(AppButton(
+            label: 'Sign in', busy: true, onPressed: () => tapped = true)),
       );
 
       expect(find.text('Sign in'), findsNothing);

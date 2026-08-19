@@ -34,8 +34,11 @@ class SessionProfileDeltaProcessor extends EntityDeltaProcessor {
       final user = await _auth.me();
       final existing = await _repo.getConfig(configKey);
       final version = (existing?.version ?? 0) + 1;
-      await _repo.putConfig(configKey, jsonEncode(user.toJson()),
-          version: version,);
+      await _repo.putConfig(
+        configKey,
+        jsonEncode(user.toJson()),
+        version: version,
+      );
       return DeltaResult(
         entity: entity,
         changed: 1,

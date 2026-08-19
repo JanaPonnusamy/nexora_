@@ -1,0 +1,112 @@
+name: Backend CI
+
+# Two-tier on purpose:
+#
+#   unit-tests   — backend/tests, currently 21 passing. Blocking.
+#   legacy-tests — the root tests/ directory: 153 pass, 23 fail and 1 module
+#                  fails to import (tests/test_table_creation_engine.py imports
+#                  modules.sync.table_creation_service, which does not exist).
+#                  Those failures predate this workflow, so the job reports
+#                  them without blocking. Flip continue-on-error off once the
+#                  suite is green — do not delete the job to make CI quiet.
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'backend/**'
+      - 'tests/**'
+      - 'store_agent/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'tests/**'
+      - 'store_agent/**'
+      - '.github/workflows/backend-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches backend/.venv locally (Python 3.9.6).
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  unit-tests:
+    name: Unit tests (backend/tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      # config/database.py imports pyodbc at module level and the audit tests
+      # pull it in transitively, so the ODBC headers must be present even
+      # though no test opens a connection.
+      - name: Install ODBC headers
+        run: sudo apt-get update && sudo apt-get install -y unixodbc-dev
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Run tests
+        working-directory: backend
+        run: python -m pytest tests/ -q
+
+  legacy-tests:
+    name: Legacy tests (root tests/, non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install ODBC headers
+        run: sudo apt-get update && sudo apt-get install -y unixodbc-dev
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest tests/ -q --continue-on-collection-errors
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # backend/config/ho.env shipped a live JWT signing secret to this public
+      # repo for ten days before it was caught by hand. This job is here so the
+      # next one is caught by a machine instead.
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail if an env file is tracked
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)[^/]*\.env$' || true)
+          if [ -n "$tracked" ]; then
+            echo "::error::Env files must never be tracked. Found:"
+            echo "$tracked"
+            exit 1
+          fi
+          echo "No tracked .env files."

@@ -110,9 +110,16 @@ from modules.whatsapp.router import (
 from modules.audit.router import router as audit_router
 from modules.audit.middleware import AuditFailureMiddleware
 from modules.audit.repository import ensure_schema as ensure_audit_schema
+from modules.mobile_bff.router import router as mobile_bff_router
+from modules.mobile_bff.repository import ensure_schema as ensure_mobile_bff_schema
 
 try:
     ensure_audit_schema()
+except Exception:
+    pass
+
+try:
+    ensure_mobile_bff_schema()
 except Exception:
     pass
 
@@ -144,7 +151,16 @@ _cors_regex_compiled = re.compile(_cors_regex)
 # Previously nothing enforced auth at all past the login screen - any client
 # that could reach the port could call every endpoint. This is the gate that
 # has to exist before the API is reachable from outside the LAN.
-_PUBLIC_API_PATHS = {'/api/auth/login', '/api/auth/setup-login'}
+_PUBLIC_API_PATHS = {
+    '/api/auth/login',
+    '/api/auth/setup-login',
+    # Mobile BFF. /handshake must answer before a client has any credential, and
+    # /auth/refresh authenticates with the refresh token in its body precisely
+    # because the bearer token has expired by the time it is called.
+    '/api/mobile/v1/handshake',
+    '/api/mobile/v1/auth/login',
+    '/api/mobile/v1/auth/refresh',
+}
 
 # Read-only provisioning lookups used by the store-agent setup/settings tool,
 # which runs unattended on store PCs with no user session to hold a JWT.
@@ -283,6 +299,7 @@ app.include_router(grid_settings_router)
 app.include_router(whatsapp_router)
 app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)
+app.include_router(mobile_bff_router)
 
 @app.get('/health')
 def health():

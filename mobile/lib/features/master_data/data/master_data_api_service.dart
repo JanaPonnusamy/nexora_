@@ -17,12 +17,21 @@ class MasterDataApiService {
 
   final Dio _dio;
 
-  /// `GET /api/supplier-stock-analysis/suppliers?tenant_id=&store_id=`
+  /// `GET /api/mobile/v1/suppliers?store_id=`
   ///
   /// Returns a FULL snapshot of suppliers that have imported stock for the
   /// store (with stock counts) — not the complete supplier master, and with no
   /// server-side delta/versioning. Absent rows are reconciled as deletions by
   /// the repository. Returns null when the scope is not store-resolved.
+  ///
+  /// Deliberately the BFF route rather than
+  /// `/api/supplier-stock-analysis/suppliers`: that one is behind
+  /// `require_admin_role`, which 403s purchase-manager and salesman logins —
+  /// the exact field roles this app targets — leaving them with an empty
+  /// supplier list and no explanation. The payload is identical, so nothing
+  /// downstream of here changes. Tenant comes from the token, so it is not
+  /// sent; `store_id` still is, because a user may hold more than one store
+  /// and the sync is per selected store.
   Future<MasterDelta?> fetchSuppliers(
     MasterScope scope, {
     String? watermark,
@@ -30,11 +39,8 @@ class MasterDataApiService {
     if (!scope.hasTenant || !scope.hasStore) return null;
     try {
       final res = await _dio.get<Map<String, dynamic>>(
-        ApiEndpoints.suppliersList,
-        queryParameters: {
-          'tenant_id': scope.tenantId,
-          'store_id': scope.storeId,
-        },
+        ApiEndpoints.mobileSuppliers,
+        queryParameters: {'store_id': scope.storeId},
       );
       final data = res.data ?? const {};
       final rawList = data['suppliers'];
