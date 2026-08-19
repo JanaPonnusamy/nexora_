@@ -159,7 +159,7 @@ export default function QtyCheckPage() {
                   return (
                     <tr
                       key={row.productcode}
-                      className={isSelected ? 'lo-supplier-row is-selected' : undefined}
+                      className={isSelected ? 'is-row-selected' : undefined}
                       onClick={() => focusRow(index)}
                     >
                       <td>{index + 1}</td>

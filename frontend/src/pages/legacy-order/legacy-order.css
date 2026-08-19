@@ -411,9 +411,14 @@
   max-width: 16rem;
 }
 
-.lo-table tbody tr:hover {
-  background: var(--bs-tertiary-bg);
-}
+/* DataGridView-style: cell gridlines + zebra striping. Backgrounds are set on
+   td (not tr) so the selected/assigned overrides below can win cleanly. */
+.lo-table th,
+.lo-table td { border-right: 1px solid var(--bs-border-color); }
+.lo-table th:last-child,
+.lo-table td:last-child { border-right: 0; }
+.lo-table tbody tr:nth-child(even) > td { background: color-mix(in srgb, var(--bs-tertiary-bg) 45%, transparent); }
+.lo-table tbody tr:hover > td { background: var(--bs-tertiary-bg); }
 
 .lo-num {
   text-align: right;
@@ -938,7 +943,13 @@
 }
 .lo-footer-totals strong { color: var(--bs-body-color); }
 
+/* Selected row — a table-safe highlight. NOT .lo-supplier-row, which is a CSS
+   grid used for the compare screen's supplier cards and would collapse a <tr>
+   into columns (cells wrapping onto multiple lines). */
+.lo-table tbody tr.is-row-selected > td { background: rgba(var(--bs-primary-rgb), 0.16); }
+.lo-table tbody tr.is-row-selected > td:first-child { box-shadow: inset 3px 0 0 var(--bs-primary); }
+
 /* Row assigned to a supplier this session (VB ForestGreen OrderQty cell). */
-.lo-row-assigned td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.13); }
-.lo-row-assigned td:nth-child(3) { color: var(--bs-success, #198754); font-weight: 700; }
-.lo-row-assigned.is-selected td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.2); }
+.lo-table tbody tr.lo-row-assigned > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.14); }
+.lo-table tbody tr.lo-row-assigned > td:nth-child(3) { color: var(--bs-success, #198754); font-weight: 700; }
+.lo-table tbody tr.lo-row-assigned.is-row-selected > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.24); }

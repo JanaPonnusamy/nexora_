@@ -253,7 +253,7 @@ export default function OrderWorkspacePage() {
                 <thead><tr><th>#</th><th>Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">MRP</th><th>Supplier</th><th>Remarks</th></tr></thead>
                 <tbody>
                   {assigned.map((row, i) => (
-                    <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'lo-supplier-row is-selected' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
+                    <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'is-row-selected' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
                       <td>{i + 1}</td>
                       <td><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td>
                       <td className="lo-num">{row.OrderQty}</td>
@@ -286,7 +286,7 @@ export default function OrderWorkspacePage() {
                     return (
                       <tr
                         key={row.ProductCode}
-                        className={`${selectedCode === row.ProductCode ? 'lo-supplier-row is-selected' : ''}${assignedRow ? ' lo-row-assigned' : ''}`}
+                        className={`${selectedCode === row.ProductCode ? 'is-row-selected' : ''}${assignedRow ? ' lo-row-assigned' : ''}`.trim() || undefined}
                         onClick={() => setSelectedCode(row.ProductCode)}
                         data-col-count={colCount}
                       >
