@@ -915,3 +915,30 @@
   white-space: nowrap;
   vertical-align: bottom;
 }
+
+/* ----- Order Workspace (supplier-assignment grid) ----- */
+.lo-supplier-pick { margin-bottom: 0.8rem; }
+.lo-supplier-picklist { max-height: 12rem; margin-top: 0.5rem; border: 1px solid var(--bs-border-color); border-radius: 0.5rem; }
+/* The picklist rows only have a name + chevron, so drop the 3-column layout
+   the compare screen's supplier rows use. */
+.lo-supplier-picklist .lo-supplier-row { grid-template-columns: minmax(0, 1fr) auto; }
+
+.lo-footer-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.25rem;
+  margin-top: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--bs-secondary-color);
+}
+.lo-footer-totals strong { color: var(--bs-body-color); }
+
+/* Row assigned to a supplier this session (VB ForestGreen OrderQty cell). */
+.lo-row-assigned td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.13); }
+.lo-row-assigned td:nth-child(3) { color: var(--bs-success, #198754); font-weight: 700; }
+.lo-row-assigned.is-selected td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.2); }

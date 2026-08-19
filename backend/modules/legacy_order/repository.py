@@ -215,6 +215,141 @@ def update_order_qty(store_name, product_code, order_qty):
         return updated
 
 
+# --------------------------------------------------------------------------
+# Supplier-assignment ordering workflow -- the VB dgvMain grid driven by the
+# dgvSupplierList search. A user picks a supplier, sees that supplier's
+# orderable OrderManagement rows (by purchase history OR by live supplier
+# stock), then assigns the supplier + the line's qty to each product.
+# --------------------------------------------------------------------------
+
+def list_suppliers(store_name, search=""):
+    """Port of Form1.txtSupplierSearch_TextChanged -- the supplier search list
+    (dgvSupplierList). UnifiedSupplierCODE may be a comma-joined set of the
+    branch's real SupplierCodes, which is why the by-supplier filters split it."""
+    sql = (
+        "SELECT UnifiedSupplierCODE, SupplierNAME FROM OrderSuppliers "
+        "WHERE SupplierNAME LIKE ? AND storename = ? ORDER BY SupplierNAME"
+    )
+    like = f"{(search or '').strip()}%"
+    with database.get_central_connection() as conn:
+        rows = conn.cursor().execute(sql, like, store_name).fetchall()
+        return [
+            {"supplier_code": str(r.UnifiedSupplierCODE), "supplier_name": r.SupplierNAME}
+            for r in rows
+        ]
+
+
+# Common OrderManagement projection for the workspace grid, PascalCase so the
+# rows are structurally compatible with the Review-All order_summary rows.
+_WORKSPACE_COLS = (
+    "om.ProductCode, om.ProductName, om.OrderQty, om.TotalStock, om.SLSQty, "
+    "om.UnitDescription, om.SaleUnit, om.MRP, om.WantedType, om.Remarks, "
+    "om.PurchasePrice, om.SubLocation, om.ProductTypeName, om.MaxQty, om.Status"
+)
+
+
+def orders_by_supplier(store_name, supplier_code, mode):
+    """mode='history' ports LoadDataForSupplier (products this supplier has
+    historically supplied, via OrderPurchaseTrans); mode='stock' ports
+    LoadDataForSupplierStock (products matched to the supplier's live
+    SupplierStock, with per-supplier stock/rack columns). Both only show
+    still-open rows (status=0, orderqty>0)."""
+    if mode == "stock":
+        sql = (
+            "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.TotalStock, "
+            "om.SLSQty, om.UnitDescription, om.SaleUnit, om.MRP, om.WantedType, "
+            "om.Remarks, om.PurchasePrice, om.SubLocation, om.ProductTypeName, "
+            "om.MaxQty, om.Status, "
+            "SS.Stock AS S_Stock, SS.discound AS Discount, SS.MINQTY AS MinQty, "
+            "SS.sch AS Sch, SS.free AS Free, SS.SupplierProductName, "
+            "SS.SupplierProductCode, ISNULL(SS.Rack, '') AS Rack "
+            "FROM OrderManagement om "
+            "INNER JOIN SupplierProductMatch SPM "
+            "  ON om.ProductCode = SPM.ProductCode AND SPM.StoreName = om.StoreName "
+            "  AND SPM.SupplierCode = ? "
+            "INNER JOIN SupplierStock SS "
+            "  ON SS.SupplierProductCode = SPM.SupplierProductCode "
+            "  AND SS.SupplierCode = ? AND SS.storename = ? "
+            "WHERE om.storename = ? AND om.status = 0 AND om.orderqty > 0 AND SS.Stock > 0 "
+            "ORDER BY om.ProductName"
+        )
+        params = (supplier_code, supplier_code, store_name, store_name)
+    else:
+        # EXISTS (not a JOIN) so a product with several historical purchase
+        # lines from this supplier still shows exactly once.
+        sql = (
+            f"SELECT {_WORKSPACE_COLS} FROM OrderManagement om "
+            "WHERE om.Status = 0 AND om.OrderQty > 0 "
+            "AND om.ProductTypeName IN ('Pharma', 'Non Pharma') AND om.StoreName = ? "
+            "AND EXISTS (SELECT 1 FROM OrderPurchaseTrans op "
+            "  WHERE op.ProductCode = om.ProductCode AND op.StoreName = om.StoreName "
+            "  AND op.SupplierCode IN (SELECT Value FROM dbo.SplitString(?, ','))) "
+            "ORDER BY om.ProductTypeName, om.ProductName"
+        )
+        params = (store_name, supplier_code)
+
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def assigned_orders(store_name, supplier_code):
+    """Port of Form1.FetchSupplierOrderDetails -- rows already assigned to this
+    supplier (status=1)."""
+    sql = (
+        "SELECT ProductCode, ProductName, OrderQty, SaleUnit, MRP, OrSupplier, "
+        "Remarks, PurchasePrice, TotalStock, WantedType, Status "
+        "FROM OrderManagement "
+        "WHERE status = 1 AND orderqty > 0 AND storename = ? "
+        "AND orsuppliercode IN (SELECT Value FROM dbo.SplitString(?, ',')) "
+        "ORDER BY ProductName"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, store_name, supplier_code)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def assign_supplier(store_name, product_code, supplier_code, supplier_name):
+    """Port of Form1.UpdateDatabase(productCode) -- the status 0<->1 assign
+    toggle. Assigning copies the line's current OrderQty into OrQty and stamps
+    the supplier (status 1). Toggling an assigned row clears supplier + OrQty
+    back to status 0. Rows already closed by Compare (status 2) are left alone.
+    Returns None if the product isn't in this store's OrderManagement."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        row = cur.execute(
+            "SELECT status, orderqty FROM ordermanagement "
+            "WHERE productcode = ? AND storename = ?",
+            product_code, store_name,
+        ).fetchone()
+        if not row:
+            return None
+        status = int(row[0]) if row[0] is not None else 0
+        if status == 0:
+            orqty = int(row[1]) if row[1] is not None else 0
+            cur.execute(
+                "UPDATE ordermanagement SET orqty = ?, orsupplier = ?, "
+                "orsuppliercode = ?, status = 1 "
+                "WHERE productcode = ? AND status = 0 AND storename = ?",
+                orqty, supplier_name, supplier_code, product_code, store_name,
+            )
+            conn.commit()
+            return {"product_code": product_code, "status": 1, "order_qty": orqty, "changed": True}
+        if status == 1:
+            cur.execute(
+                "UPDATE ordermanagement SET orqty = NULL, orsupplier = NULL, "
+                "orsuppliercode = NULL, status = 0 "
+                "WHERE productcode = ? AND status = 1 AND storename = ?",
+                product_code, store_name,
+            )
+            conn.commit()
+            return {"product_code": product_code, "status": 0, "order_qty": None, "changed": True}
+        # status 2 (already processed by a previous-order compare) -- untouched.
+        return {"product_code": product_code, "status": status, "order_qty": row[1], "changed": False}
+
+
 def qty_check_rows(store_name):
     """Port of Form1.GetQtyCheckQuery('All', 'All') -- the Qty Check screen's
     main grid: only rows not yet reviewed (qtycheck = 0, status = 0)."""

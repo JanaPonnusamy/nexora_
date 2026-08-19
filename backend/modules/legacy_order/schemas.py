@@ -41,6 +41,11 @@ class UpdateQtyCheckRequest(BaseModel):
     order_qty: int
 
 
+class AssignSupplierRequest(BaseModel):
+    supplier_code: str
+    supplier_name: str
+
+
 class EmergencyRepairRequest(BaseModel):
     # Guard rail: the destructive REPAIR_ALLOW_DATA_LOSS path only runs when the
     # caller explicitly opts in. The UI sends this from a confirmation dialog.

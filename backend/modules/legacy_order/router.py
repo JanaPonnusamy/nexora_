@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, repository, service, sync_engine
-from modules.legacy_order.schemas import ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest
+from modules.legacy_order.schemas import AssignSupplierRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -157,6 +157,50 @@ def update_order_qty(store_name: str, product_code: int, payload: UpdateOrderQty
         if not updated:
             raise HTTPException(status_code=404, detail="Order row not found")
         return {"store_name": store_name, "product_code": product_code, "order_qty": payload.order_qty}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# ---- Supplier-assignment ordering workflow (Purchase-Manager-style grid) ----
+
+@router.get("/suppliers/{store_name}")
+def list_suppliers(store_name: str, search: str = ""):
+    """Supplier search list for a store (VB dgvSupplierList)."""
+    try:
+        return repository.list_suppliers(store_name, search)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/by-supplier")
+def orders_by_supplier(store_name: str, supplier_code: str, mode: str = "history"):
+    """Orderable rows for a supplier -- mode='history' (purchase history) or
+    mode='stock' (live SupplierStock match, with stock/rack columns)."""
+    try:
+        return repository.orders_by_supplier(store_name, supplier_code, mode)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/assigned")
+def assigned_orders(store_name: str, supplier_code: str):
+    """Rows already assigned to a supplier (status=1)."""
+    try:
+        return repository.assigned_orders(store_name, supplier_code)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/{product_code}/assign")
+def assign_supplier(store_name: str, product_code: int, payload: AssignSupplierRequest):
+    """Assign/unassign a supplier to an order line (VB status 0<->1 toggle)."""
+    try:
+        result = repository.assign_supplier(
+            store_name, product_code, payload.supplier_code, payload.supplier_name
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Order row not found")
+        return result
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

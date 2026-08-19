@@ -1,5 +1,7 @@
 import { api } from './apiClient'
 import type {
+  AssignedOrderRow,
+  AssignResult,
   LegacyJob,
   LegacyStore,
   LegacyTable,
@@ -16,6 +18,9 @@ import type {
   SalesDetailRow,
   SupplierComparison,
   SupplierComparisonProduct,
+  SupplierListItem,
+  SupplierOrderMode,
+  WorkspaceOrderRow,
   LegacyDbHealth,
   LegacyDbRecovery,
 } from '../types/legacyOrder'
@@ -64,6 +69,31 @@ export const legacyOrderService = {
     api.patch<{ store_name: string; product_code: number; order_qty: number }>(
       `${BASE}/orders/${encodeURIComponent(storeName)}/${productCode}`,
       { order_qty: orderQty },
+    ),
+
+  suppliers: (storeName: string, search = '') =>
+    api.get<SupplierListItem[]>(
+      `${BASE}/suppliers/${encodeURIComponent(storeName)}?search=${encodeURIComponent(search)}`,
+    ),
+
+  ordersBySupplier: (storeName: string, supplierCode: string, mode: SupplierOrderMode) =>
+    api.get<WorkspaceOrderRow[]>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/by-supplier`
+      + `?supplier_code=${encodeURIComponent(supplierCode)}&mode=${mode}`,
+    ),
+
+  assignedOrders: (storeName: string, supplierCode: string) =>
+    api.get<AssignedOrderRow[]>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/assigned`
+      + `?supplier_code=${encodeURIComponent(supplierCode)}`,
+    ),
+
+  assignSupplier: (
+    storeName: string, productCode: number, supplierCode: string, supplierName: string,
+  ) =>
+    api.post<AssignResult>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/${productCode}/assign`,
+      { supplier_code: supplierCode, supplier_name: supplierName },
     ),
 
   previousOrders: (storeName: string) =>

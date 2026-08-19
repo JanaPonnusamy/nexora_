@@ -94,6 +94,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Time Report', to: '/time-report', icon: 'bi-clock-history', cap: 'TIME_REPORT' },
       { label: 'Pass Gen', to: '/pass-gen', icon: 'bi-key', cap: 'PASS_GEN' },
       { label: 'Legacy Order', to: '/legacy-order', icon: 'bi-database-gear', cap: 'LEGACY_ORDER' },
+      { label: 'Order Workspace', to: '/legacy-order/workspace', icon: 'bi-grid-3x3-gap', cap: 'LEGACY_ORDER' },
       { label: 'Settings', to: '/settings', icon: 'bi-gear', cap: 'SETTINGS' },
     ],
   },
