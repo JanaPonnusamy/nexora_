@@ -36,6 +36,12 @@ class _ReportRunnerScreenState extends ConsumerState<ReportRunnerScreen> {
   String? _error;
   bool _running = false;
 
+  /// True when the figures on screen came from the local cache because the
+  /// server could not be reached. Surfaced rather than tracked silently: a
+  /// stale stock figure shown as current is how someone orders against numbers
+  /// that moved yesterday.
+  bool _fromCache = false;
+
   /// How many rows to render at once. These reports return up to a few
   /// thousand rows; building every card would drop frames on the first scroll,
   /// and nobody reads past the first screenful without filtering anyway.
@@ -68,7 +74,7 @@ class _ReportRunnerScreenState extends ConsumerState<ReportRunnerScreen> {
       _error = null;
     });
     try {
-      final result = await ref.read(reportsApiProvider).run(
+      final outcome = await ref.read(reportsRepositoryProvider).run(
             def: widget.def,
             tenantId: scope.tenantId,
             storeId: scope.storeId,
@@ -76,7 +82,8 @@ class _ReportRunnerScreenState extends ConsumerState<ReportRunnerScreen> {
           );
       if (!mounted) return;
       setState(() {
-        _result = result;
+        _result = outcome.result;
+        _fromCache = outcome.fromCache;
         _visible = _pageSize;
       });
     } on ApiException catch (e) {
@@ -148,6 +155,10 @@ class _ReportRunnerScreenState extends ConsumerState<ReportRunnerScreen> {
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
+            if (_fromCache && result != null)
+              SliverToBoxAdapter(
+                child: _StaleBanner(fetchedAt: result.fetchedAt),
+              ),
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -352,5 +363,59 @@ class _FilterBar extends StatelessWidget {
     if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
     if (diff.inHours < 24) return '${diff.inHours} h ago';
     return '${diff.inDays} d ago';
+  }
+}
+
+/// Shown above a report served from the local cache.
+///
+/// It names the age rather than saying "offline", because the question a reader
+/// actually has is not "is there signal" but "how old are these numbers" — and
+/// that is the difference between a figure they can act on and one they cannot.
+class _StaleBanner extends StatelessWidget {
+  const _StaleBanner({required this.fetchedAt});
+
+  final DateTime? fetchedAt;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: AppColors.warningSunk,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.history_rounded,
+            size: 16,
+            color: AppColors.warningInk,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              fetchedAt == null
+                  ? 'Saved figures — could not reach the server.'
+                  : 'Saved figures from ${_age(fetchedAt!)} — could not reach '
+                      'the server. Pull down to try again.',
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.25,
+                color: AppColors.warningInk,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _age(DateTime at) {
+    final gap = DateTime.now().difference(at);
+    if (gap.inMinutes < 1) return 'a moment ago';
+    if (gap.inMinutes < 60) return '${gap.inMinutes} min ago';
+    if (gap.inHours < 24) {
+      return '${gap.inHours} hour${gap.inHours == 1 ? '' : 's'} ago';
+    }
+    return '${gap.inDays} day${gap.inDays == 1 ? '' : 's'} ago';
   }
 }

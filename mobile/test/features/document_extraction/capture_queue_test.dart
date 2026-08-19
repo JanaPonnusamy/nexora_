@@ -1,24 +1,27 @@
 import 'dart:io';
 
-import 'package:drift/drift.dart' show DatabaseConnection;
+import 'package:drift/drift.dart' show DatabaseConnection, Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:nexora_mobile/core/database/app_database.dart';
 import 'package:nexora_mobile/features/document_extraction/data/capture_queue_repository.dart';
+import 'package:nexora_mobile/features/document_extraction/data/capture_storage.dart';
 import 'package:nexora_mobile/features/document_extraction/domain/document_status.dart';
 
 void main() {
   late AppDatabase db;
   late CaptureQueueRepository queue;
+  late CaptureStorage storage;
   late Directory tmp;
 
   setUp(() async {
     db = AppDatabase.withExecutor(
       DatabaseConnection(NativeDatabase.memory()),
     );
-    queue = CaptureQueueRepository(db);
     tmp = await Directory.systemTemp.createTemp('capture_queue_test');
+    storage = CaptureStorage(root: tmp);
+    queue = CaptureQueueRepository(db, storage);
   });
 
   tearDown(() async {
@@ -258,6 +261,122 @@ void main() {
 
       final all = await queue.all();
       expect(all.map((j) => j.batch.id), [newer, older]);
+    });
+  });
+
+  group('page paths survive the app container moving', () {
+    /// Writes a page where the real capture flow writes it — inside the
+    /// captures directory — which is the only case where rebasing applies.
+    Future<CapturePageDraft> capturedPage(String name) async {
+      final base = await storage.baseDirectory();
+      final file = File('${base.path}/session-1/$name');
+      await file.parent.create(recursive: true);
+      await file.writeAsString('jpeg-bytes');
+      return CapturePageDraft(filePath: file.path, byteSize: 10);
+    }
+
+    test('a path is persisted relative, not absolute', () async {
+      final batchId = await queue.enqueue(
+        tenantId: 't-1',
+        pages: [await capturedPage('page_01.jpg')],
+      );
+
+      final stored = await (db.select(db.capturePages)
+            ..where((t) => t.batchId.equals(batchId)))
+          .getSingle();
+
+      expect(
+        stored.filePath,
+        'session-1/page_01.jpg',
+        reason: 'an absolute path here is what breaks across a reinstall',
+      );
+    });
+
+    test('reads come back absolute, so no caller has to know', () async {
+      final batchId = await queue.enqueue(
+        tenantId: 't-1',
+        pages: [await capturedPage('page_01.jpg')],
+      );
+
+      final job = await queue.byId(batchId);
+      expect(job!.files.single.path, startsWith(tmp.path));
+      expect(await job.files.single.exists(), isTrue);
+    });
+
+    test(
+      'a queued page still resolves after the container directory changes — '
+      'this is the iOS reinstall case the absolute path used to lose',
+      () async {
+        final batchId = await queue.enqueue(
+          tenantId: 't-1',
+          pages: [await capturedPage('page_01.jpg')],
+        );
+
+        // Simulate the container moving: the same captures tree, a new parent
+        // path, exactly as iOS does when it reassigns the app's UUID directory.
+        final moved = await Directory.systemTemp.createTemp('moved_container');
+        addTearDown(() async {
+          if (moved.existsSync()) await moved.delete(recursive: true);
+        });
+        await Directory('${moved.path}/captures/session-1')
+            .create(recursive: true);
+        await File('${moved.path}/captures/session-1/page_01.jpg')
+            .writeAsString('jpeg-bytes');
+
+        final relocated = CaptureQueueRepository(
+          db,
+          CaptureStorage(root: moved),
+        );
+
+        final job = await relocated.byId(batchId);
+        expect(await job!.files.single.exists(), isTrue,
+            reason: 'the uploader would otherwise fail the whole batch');
+        expect(job.files.single.path, startsWith(moved.path));
+      },
+    );
+
+    test(
+      'a legacy absolute row still resolves — old rows must not be orphaned '
+      'by the fix that stops new ones being written that way',
+      () async {
+        final legacy = File('${tmp.path}/legacy-page.jpg');
+        await legacy.writeAsString('jpeg-bytes');
+
+        final batchId = await db.into(db.captureBatches).insert(
+              CaptureBatchesCompanion.insert(
+                tenantId: 't-1',
+                pageCount: const Value(1),
+                capturedAt: DateTime.now(),
+              ),
+            );
+        await db.into(db.capturePages).insert(
+              CapturePagesCompanion.insert(
+                batchId: batchId,
+                filePath: legacy.path, // absolute, as written before this fix
+                pageNumber: 1,
+              ),
+            );
+
+        final job = await queue.byId(batchId);
+        expect(job!.files.single.path, legacy.path);
+        expect(await job.files.single.exists(), isTrue);
+      },
+    );
+
+    test('remove() deletes the image through the resolved path', () async {
+      final batchId = await queue.enqueue(
+        tenantId: 't-1',
+        pages: [await capturedPage('page_01.jpg')],
+      );
+      final job = await queue.byId(batchId);
+      final image = job!.files.single;
+      expect(await image.exists(), isTrue);
+
+      await queue.remove(batchId);
+
+      expect(await image.exists(), isFalse,
+          reason: 'a relative path that is not resolved would leak the file');
+      expect(await queue.byId(batchId), isNull);
     });
   });
 }

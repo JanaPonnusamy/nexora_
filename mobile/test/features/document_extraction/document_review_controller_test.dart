@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:drift/drift.dart' show DatabaseConnection;
 import 'package:drift/native.dart';
@@ -6,10 +8,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:nexora_mobile/core/database/app_database.dart';
 import 'package:nexora_mobile/core/di/capture_providers.dart';
+import 'package:nexora_mobile/core/di/outbox_providers.dart';
+import 'package:nexora_mobile/core/outbox/outbox_repository.dart';
 import 'package:nexora_mobile/core/di/providers.dart';
 import 'package:nexora_mobile/core/network/api_exception.dart';
 import 'package:nexora_mobile/features/document_extraction/application/document_review_controller.dart';
 import 'package:nexora_mobile/features/document_extraction/data/capture_queue_repository.dart';
+import 'package:nexora_mobile/features/document_extraction/data/capture_storage.dart';
 import 'package:nexora_mobile/features/document_extraction/data/document_extraction_api.dart';
 import 'package:nexora_mobile/features/document_extraction/domain/document_review.dart';
 import 'package:nexora_mobile/features/document_extraction/domain/document_status.dart';
@@ -106,13 +111,18 @@ class FakeReviewApi extends DocumentExtractionApi {
 void main() {
   late AppDatabase db;
   late FakeReviewApi api;
+  late Directory tmp;
 
-  setUp(() {
+  setUp(() async {
     db = AppDatabase.withExecutor(DatabaseConnection(NativeDatabase.memory()));
     api = FakeReviewApi();
+    tmp = await Directory.systemTemp.createTemp('review_ctl_test');
   });
 
-  tearDown(() => db.close());
+  tearDown(() async {
+    await db.close();
+    if (tmp.existsSync()) await tmp.delete(recursive: true);
+  });
 
   ProviderContainer container() {
     final c = ProviderContainer(
@@ -120,6 +130,9 @@ void main() {
         appDatabaseProvider.overrideWithValue(db),
         documentExtractionApiProvider.overrideWithValue(api),
         reviewActorProvider.overrideWithValue('kavitha'),
+        // The queue rebases page paths through storage; the real one reaches
+        // path_provider, which has no platform channel under `flutter test`.
+        captureStorageProvider.overrideWithValue(CaptureStorage(root: tmp)),
       ],
     );
     addTearDown(c.dispose);
@@ -209,16 +222,65 @@ void main() {
       expect(api.stagesRun, isEmpty);
     });
 
-    test('an offline edit says the change was not saved', () async {
+    test(
+      'an offline edit is queued rather than lost, and reported as a success '
+      'because from the user\'s side it is one',
+      () async {
+        api = FakeReviewApi(
+          editError: const ApiException(message: 'boom', isNetwork: true),
+        );
+        final c = container();
+
+        final result =
+            await controllerOf(c).patchHeader(42, {'net_amount': 10});
+
+        expect(result.ok, isTrue);
+        expect(result.queuedOffline, isTrue);
+        expect(result.message, contains('sync'));
+
+        final queued = await c.read(outboxRepositoryProvider).forScope(
+              reviewScope(42),
+            );
+        expect(queued, hasLength(1));
+        expect(queued.single.kind, ReviewOutboxKinds.header);
+        expect(queued.single.decodedPayload['fields'], {'net_amount': 10});
+      },
+    );
+
+    test(
+      'a server refusal is NOT queued — it will be refused again in an hour, '
+      'and queueing would turn a clear rejection into a silent dead letter',
+      () async {
+        api = FakeReviewApi(
+          editError: const ApiException(message: 'Quantity must be positive.'),
+        );
+        final c = container();
+
+        final result = await controllerOf(c).patchItem(42, 7, {'quantity': -1});
+
+        expect(result.ok, isFalse);
+        expect(result.queuedOffline, isFalse);
+        expect(result.message, 'Quantity must be positive.');
+        expect(
+          await c.read(outboxRepositoryProvider).forScope(reviewScope(42)),
+          isEmpty,
+        );
+      },
+    );
+
+    test('the queued edit carries the actor for the audit trail', () async {
       api = FakeReviewApi(
         editError: const ApiException(message: 'boom', isNetwork: true),
       );
       final c = container();
 
-      final result = await controllerOf(c).patchHeader(42, {'net_amount': 10});
+      await controllerOf(c).excludeItem(42, 7);
 
-      expect(result.ok, isFalse);
-      expect(result.message, contains('was not saved'));
+      final queued =
+          await c.read(outboxRepositoryProvider).forScope(reviewScope(42));
+      expect(queued.single.decodedPayload['actor'], 'kavitha');
+      expect(queued.single.summary, isNotNull,
+          reason: 'a pending change has to be describable later');
     });
 
     test('a re-check that fails does not undo an edit that worked', () async {

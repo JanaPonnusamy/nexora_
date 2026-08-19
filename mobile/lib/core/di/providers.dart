@@ -8,6 +8,8 @@ import 'package:nexora_mobile/core/agent/store_config_service.dart';
 import 'package:nexora_mobile/core/config/app_config.dart';
 import 'package:nexora_mobile/core/database/app_database.dart';
 import 'package:nexora_mobile/core/network/dio_client.dart';
+import 'package:nexora_mobile/core/observability/crash_reporter.dart';
+import 'package:nexora_mobile/core/security/biometric_service.dart';
 import 'package:nexora_mobile/core/services/secure_storage_service.dart';
 import 'package:nexora_mobile/core/sync/conflict_handler.dart';
 import 'package:nexora_mobile/core/sync/connectivity_service.dart';
@@ -40,6 +42,18 @@ final appConfigProvider = Provider<AppConfig>(
 /// Secure storage (Keychain / Keystore) for the JWT and selected store.
 final secureStorageProvider = Provider<SecureStorageService>(
   (ref) => SecureStorageService(),
+);
+
+/// Platform biometric / device-credential prompt, behind unlock-on-open.
+final biometricServiceProvider = Provider<BiometricService>(
+  (ref) => BiometricService(),
+);
+
+/// Where uncaught errors go. Overridden in `bootstrap` with the instance the
+/// crash handlers were installed against, so handler-captured errors and
+/// in-app reports land in the same buffer.
+final crashReporterProvider = Provider<CrashReporter>(
+  (ref) => LoggingCrashReporter(),
 );
 
 /// The single shared Dio instance. Its auth interceptor calls back into the
@@ -107,6 +121,31 @@ final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
   final service = ConnectivityService();
   ref.onDispose(service.dispose);
   return service;
+});
+
+/// Reactive network status for widgets.
+///
+/// [ConnectivityService.statusStream] carries *transitions* only — it emits
+/// when the status changes, not what it currently is. A widget watching it
+/// alone would show nothing on a phone that has been offline since launch,
+/// because from its point of view nothing has happened. So the current status
+/// is probed and yielded first, and the transitions follow.
+final networkStatusProvider = StreamProvider<NetworkStatus>((ref) async* {
+  final service = ref.watch(connectivityServiceProvider);
+  yield await service.check();
+  yield* service.statusStream;
+});
+
+/// Plain boolean form, for widgets that only need "can I reach anything".
+///
+/// Optimistic while the first probe is in flight: a banner that flashes
+/// "offline" for 200ms on every cold start is noise, and the cost of being a
+/// moment late is nothing.
+final isOnlineProvider = Provider<bool>((ref) {
+  return ref.watch(networkStatusProvider).maybeWhen(
+        data: (status) => status.isOnline,
+        orElse: () => true,
+      );
 });
 
 /// Delta dispatch coordinator; concrete entity processors are registered by the

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:nexora_mobile/core/di/capture_providers.dart';
+import 'package:nexora_mobile/core/di/outbox_providers.dart';
 import 'package:nexora_mobile/core/network/api_exception.dart';
 import 'package:nexora_mobile/core/services/app_logger.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
@@ -19,6 +20,27 @@ final documentReviewProvider =
   (ref, importId) => ref.watch(documentExtractionApiProvider).review(importId),
 );
 
+/// Outbox kinds for the review screen's four edit operations.
+///
+/// String constants rather than an enum because they are persisted: a row
+/// written by one build is read by the next, and renaming an enum value would
+/// silently orphan a user's queued edit.
+class ReviewOutboxKinds {
+  ReviewOutboxKinds._();
+
+  static const String header = 'document.header';
+  static const String item = 'document.item';
+  static const String exclude = 'document.exclude';
+  static const String supplier = 'document.supplier';
+
+  static const List<String> all = [header, item, exclude, supplier];
+}
+
+/// Ordering group for one document's queued edits. Everything touching import
+/// 42 shares `import:42`, so those edits are applied in the order they were
+/// made and never concurrently.
+String reviewScope(int importId) => 'import:$importId';
+
 /// Who the audit trail records for an edit. The server writes this into
 /// `doc_import_review` per changed field, so a blank actor makes a correction
 /// untraceable back to the person at the counter.
@@ -35,10 +57,17 @@ class ReviewActionResult {
     required this.message,
     this.ok = true,
     this.blockedByErrors = false,
+    this.queuedOffline = false,
   });
 
   const ReviewActionResult.failed(String message)
       : this(message: message, ok: false);
+
+  /// The change is safe on the device and will be sent when there is signal.
+  /// Reported as a success, because from the user's side it is one: they made
+  /// the correction and it is not going to be lost.
+  const ReviewActionResult.queued(String message)
+      : this(message: message, queuedOffline: true);
 
   /// The save was refused because unresolved errors remain. The screen offers
   /// to save anyway rather than retrying with `force` on the user's behalf —
@@ -49,6 +78,11 @@ class ReviewActionResult {
   final String message;
   final bool ok;
   final bool blockedByErrors;
+
+  /// True when the change was written to the outbox rather than sent. The
+  /// screen uses it to say so, and to keep showing the document as having
+  /// unsent work.
+  final bool queuedOffline;
 }
 
 /// Edits, re-checks and commits one import under review.
@@ -74,6 +108,9 @@ class DocumentReviewController {
         importId,
         () => _api.patchHeader(importId, fields, actor: _actor),
         'Saved.',
+        kind: ReviewOutboxKinds.header,
+        payload: {'importId': importId, 'fields': fields},
+        summary: 'Invoice details',
       );
 
   Future<ReviewActionResult> patchItem(
@@ -85,6 +122,9 @@ class DocumentReviewController {
         importId,
         () => _api.patchItem(importId, itemId, fields, actor: _actor),
         'Line updated.',
+        kind: ReviewOutboxKinds.item,
+        payload: {'importId': importId, 'itemId': itemId, 'fields': fields},
+        summary: 'A line on this invoice',
       );
 
   /// Takes a line out of the invoice. One-way: the server has no endpoint that
@@ -93,6 +133,9 @@ class DocumentReviewController {
         importId,
         () => _api.excludeItem(importId, itemId, actor: _actor),
         'Line removed from the invoice.',
+        kind: ReviewOutboxKinds.exclude,
+        payload: {'importId': importId, 'itemId': itemId},
+        summary: 'A line removed from this invoice',
       );
 
   Future<ReviewActionResult> assignSupplier(
@@ -103,6 +146,9 @@ class DocumentReviewController {
         importId,
         () => _api.assignSupplier(importId, fields, actor: _actor),
         'Supplier assigned.',
+        kind: ReviewOutboxKinds.supplier,
+        payload: {'importId': importId, 'fields': fields},
+        summary: 'Supplier for this invoice',
       );
 
   /// Finalises the review, and mirrors SAVED onto the local queue row.
@@ -159,17 +205,32 @@ class DocumentReviewController {
   Future<ReviewActionResult> _edit(
     int importId,
     Future<void> Function() apply,
-    String successMessage,
-  ) async {
+    String successMessage, {
+    required String kind,
+    required Map<String, dynamic> payload,
+    required String summary,
+  }) async {
     try {
       await apply();
     } on ApiException catch (e) {
+      // Only a *network* failure is queued. A server that refused the change —
+      // a bad value, a document already saved — will refuse it again in an
+      // hour, so queueing would turn a clear rejection into a change the user
+      // believes is on its way and that quietly dead-letters later.
+      if (e.isNetwork) {
+        await _ref.read(outboxRepositoryProvider).enqueue(
+              kind: kind,
+              scope: reviewScope(importId),
+              payload: {...payload, 'actor': _actor},
+              summary: summary,
+            );
+        _log.info('Edit on import $importId queued offline ($kind)');
+        return const ReviewActionResult.queued(
+          'Saved on this device. It will sync when you are back online.',
+        );
+      }
       _log.warning('Edit on import $importId failed: ${e.message}');
-      return ReviewActionResult.failed(
-        e.isNetwork
-            ? 'Cannot reach the server, so the change was not saved.'
-            : e.message,
-      );
+      return ReviewActionResult.failed(e.message);
     }
 
     try {

@@ -20,6 +20,11 @@ enum ReportFormat {
         'date' => ReportFormat.date,
         _ => ReportFormat.text,
       };
+
+  /// The server's spelling, not the Dart name — `int_` exists only because
+  /// `int` is a reserved word here, and writing that into the cache would not
+  /// read back.
+  String get wire => this == ReportFormat.int_ ? 'int' : name;
 }
 
 /// Horizontal alignment the server asks for. Numbers come back right-aligned,
@@ -58,6 +63,14 @@ class ReportColumn {
 
   bool get isNumeric =>
       format == ReportFormat.money || format == ReportFormat.int_;
+
+  /// Wire-shaped, so a cached column reads back through [fromJson] unchanged.
+  Map<String, dynamic> toCacheJson() => {
+        'key': key,
+        'label': label,
+        'align': align.name,
+        'format': format.wire,
+      };
 }
 
 /// One entry in the report catalog, including which filters it requires.
@@ -231,6 +244,31 @@ class ReportResult {
             .toList(growable: false),
         summary: json['summary'] as Map<String, dynamic>?,
         fetchedAt: fetchedAt ?? DateTime.now(),
+      );
+
+  /// Round-trip form for the offline cache.
+  ///
+  /// Mirrors the server's shape rather than inventing one, so a cached payload
+  /// reads back through [ReportResult.fromJson] unchanged — the catalogue is
+  /// server-driven and a report gains columns without an app release, so any
+  /// hand-written schema here would go stale by design. `fetchedAt` is not
+  /// included: it belongs to the cache row, and storing it twice invites the
+  /// two copies to disagree.
+  Map<String, dynamic> toCacheJson() => {
+        'report': report,
+        'title': title,
+        'columns': columns.map((c) => c.toCacheJson()).toList(growable: false),
+        'rows': rows,
+        if (summary != null) 'summary': summary,
+      };
+
+  ReportResult copyWithFetchedAt(DateTime at) => ReportResult(
+        report: report,
+        title: title,
+        columns: columns,
+        rows: rows,
+        summary: summary,
+        fetchedAt: at,
       );
 
   bool get isEmpty => rows.isEmpty;

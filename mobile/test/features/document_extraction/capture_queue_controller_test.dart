@@ -15,6 +15,7 @@ import 'package:nexora_mobile/core/sync/connectivity_service.dart';
 import 'package:nexora_mobile/features/document_extraction/application/capture_queue_controller.dart';
 import 'package:nexora_mobile/features/document_extraction/application/capture_queue_entry.dart';
 import 'package:nexora_mobile/features/document_extraction/data/capture_queue_repository.dart';
+import 'package:nexora_mobile/features/document_extraction/data/capture_storage.dart';
 import 'package:nexora_mobile/features/document_extraction/data/capture_uploader.dart';
 import 'package:nexora_mobile/features/document_extraction/data/document_extraction_api.dart';
 import 'package:nexora_mobile/features/document_extraction/domain/document_status.dart';
@@ -99,6 +100,10 @@ void main() {
         appDatabaseProvider.overrideWithValue(db),
         documentExtractionApiProvider.overrideWithValue(api),
         connectivityServiceProvider.overrideWithValue(connectivity),
+        // The queue rebases page paths through storage, and the real one asks
+        // path_provider for the documents directory — a platform channel that
+        // does not exist under `flutter test`.
+        captureStorageProvider.overrideWithValue(CaptureStorage(root: tmp)),
       ],
     );
     addTearDown(c.dispose);

@@ -85,23 +85,16 @@ class MoreScreen extends ConsumerWidget {
             title: 'SYSTEM',
             icon: Icons.settings_outlined,
           ),
+          // One entry rather than four. Device Status, Configuration Status and
+          // Agent Settings moved into Settings alongside security, server,
+          // storage and pending changes — this list had grown long enough that
+          // Sign out fell below the fold, and the fix for that is grouping.
           ActionTile(
-            title: 'Device Status',
-            subtitle: 'Identity, connectivity and backend health',
-            icon: Icons.smartphone_outlined,
-            onTap: () => context.go(AppRoutes.deviceStatusFullPath),
-          ),
-          ActionTile(
-            title: 'Configuration Status',
-            subtitle: 'Store configuration cached on this device',
-            icon: Icons.settings_ethernet_rounded,
-            onTap: () => context.go(AppRoutes.configurationStatusFullPath),
-          ),
-          ActionTile(
-            title: 'Agent Settings',
-            subtitle: 'Sync interval, logging and diagnostics',
-            icon: Icons.tune_rounded,
-            onTap: () => context.go(AppRoutes.agentSettingsFullPath),
+            title: 'Settings',
+            subtitle: 'Security, server, storage, pending changes and '
+                'diagnostics',
+            icon: Icons.settings_rounded,
+            onTap: () => context.go(AppRoutes.settingsFullPath),
           ),
           const SizedBox(height: 20),
           const SectionHeader(

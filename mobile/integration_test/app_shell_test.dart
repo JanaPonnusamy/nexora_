@@ -134,17 +134,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Procurement'), findsOneWidget);
     expect(find.text('Purchase Workspace'), findsOneWidget);
+    expect(find.text('Legacy Order Console'), findsOneWidget);
 
     await tester.tap(find.text('More'));
     await tester.pumpAndSettle();
     expect(find.text('Nathan Medicals A'), findsOneWidget);
-    // The workspace tiles (Reports, Suppliers, Time Report, Pass Gen) pushed
-    // sign-out below the fold, so it has to be scrolled to. If this list keeps
-    // growing it wants grouping rather than another entry.
     expect(find.text('Reports'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Sign out'), 200);
-    await tester.pumpAndSettle();
+    // Device Status, Configuration Status and Agent Settings moved behind
+    // Settings, so More is short enough again that Sign out is on screen
+    // without scrolling. That was the point of the grouping.
+    expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Sign out'), findsOneWidget);
+    expect(
+      tester.getRect(find.text('Sign out')).bottom,
+      lessThanOrEqualTo(
+          tester.view.physicalSize.height / tester.view.devicePixelRatio),
+      reason: 'grouping existed to bring Sign out back above the fold',
+    );
 
     // Back to Home, and the bar tracks the active branch.
     await tester.tap(find.text('Home'));

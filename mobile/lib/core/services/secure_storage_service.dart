@@ -23,6 +23,7 @@ class SecureStorageService {
   static const _kRefreshToken = 'nexora.auth.refresh_token';
   static const _kStoreId = 'nexora.session.store_id';
   static const _kDeviceId = 'nexora.device.id';
+  static const _kBiometricLock = 'nexora.security.biometric_lock';
 
   Future<String?> readToken() => _storage.read(key: _kToken);
   Future<void> writeToken(String token) =>
@@ -41,6 +42,18 @@ class SecureStorageService {
   Future<void> writeSelectedStoreId(String storeId) =>
       _storage.write(key: _kStoreId, value: storeId);
   Future<void> deleteSelectedStoreId() => _storage.delete(key: _kStoreId);
+
+  /// Whether the user has turned on unlock-on-open.
+  ///
+  /// Deliberately kept out of [clear]: it is a device preference, not session
+  /// state. Someone who locks this device expects it still locked after the
+  /// next sign-in, and re-enabling it on every login is exactly the friction
+  /// that makes people leave it off.
+  Future<bool> readBiometricLockEnabled() async =>
+      await _storage.read(key: _kBiometricLock) == 'true';
+
+  Future<void> writeBiometricLockEnabled(bool enabled) =>
+      _storage.write(key: _kBiometricLock, value: enabled ? 'true' : 'false');
 
   /// Stable per-installation device identity. Survives logout (only cleared on
   /// uninstall) so the agent keeps the same device id across sessions.

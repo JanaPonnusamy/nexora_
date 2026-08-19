@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 
 import 'package:nexora_mobile/core/database/app_database.dart';
+import 'package:nexora_mobile/features/document_extraction/data/capture_storage.dart';
 import 'package:nexora_mobile/features/document_extraction/domain/document_status.dart';
 
 /// A queued capture with its pages.
@@ -26,9 +27,15 @@ class CaptureJob {
 /// photographed in a basement stockroom survives the app being killed and
 /// uploads when signal returns.
 class CaptureQueueRepository {
-  CaptureQueueRepository(this._db);
+  CaptureQueueRepository(this._db, this._storage);
 
   final AppDatabase _db;
+
+  /// Owns the captures directory, and therefore the translation between the
+  /// relative path a row stores and the absolute one everything above this
+  /// class expects. Resolution happens here so no caller has to know that the
+  /// stored form differs at all.
+  final CaptureStorage _storage;
 
   /// Retry backoff, capped. Uploads are large and a store on a bad connection
   /// should not retry every few seconds.
@@ -65,7 +72,10 @@ class CaptureQueueRepository {
         await _db.into(_db.capturePages).insert(
               CapturePagesCompanion.insert(
                 batchId: batchId,
-                filePath: page.filePath,
+                // Stored relative to the captures directory — see
+                // CaptureStorage.relativize. An absolute path here is a queue
+                // that loses its images across an iOS reinstall.
+                filePath: await _storage.relativize(page.filePath),
                 pageNumber: i + 1,
                 byteSize: Value(page.byteSize),
                 qualityNote: Value(page.qualityNote),
@@ -243,11 +253,24 @@ class CaptureQueueRepository {
     return row?.attemptCount ?? 0;
   }
 
-  Future<List<CapturePage>> _pagesOf(int batchId) =>
-      (_db.select(_db.capturePages)
-            ..where((t) => t.batchId.equals(batchId))
-            ..orderBy([(t) => OrderingTerm.asc(t.pageNumber)]))
-          .get();
+  /// Reads a batch's pages with their paths already resolved to absolute.
+  ///
+  /// Every read goes through here, so callers above this class — the uploader,
+  /// the queue cards, the thumbnails — keep seeing usable paths and never learn
+  /// that the stored form is relative.
+  Future<List<CapturePage>> _pagesOf(int batchId) async {
+    final rows = await (_db.select(_db.capturePages)
+          ..where((t) => t.batchId.equals(batchId))
+          ..orderBy([(t) => OrderingTerm.asc(t.pageNumber)]))
+        .get();
+
+    return Future.wait(
+      rows.map(
+        (row) async =>
+            row.copyWith(filePath: await _storage.resolve(row.filePath)),
+      ),
+    );
+  }
 
   Future<CaptureJob> _withPages(CaptureBatch batch) async =>
       CaptureJob(batch: batch, pages: await _pagesOf(batch.id));

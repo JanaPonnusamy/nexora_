@@ -56,6 +56,18 @@ class AppRoutes {
   static String documentReviewLocation(int importId, {int? batchId}) =>
       '$capturePath/review/$importId${batchId == null ? '' : '?batch=$batchId'}';
 
+  // --- Screens nested under the Procure tab ----------------------------------
+
+  static const String cycleConsole = 'cycle-console';
+  static const String cycleConsolePath = 'cycles';
+
+  static const String legacyOrderConsole = 'legacy-order-console';
+  static const String legacyOrderConsolePath = 'legacy-order';
+
+  static const String cycleConsoleFullPath = '$procurePath/$cycleConsolePath';
+  static const String legacyOrderConsoleFullPath =
+      '$procurePath/$legacyOrderConsolePath';
+
   // --- Screens nested under the Sync tab -------------------------------------
 
   static const String syncLive = 'sync-live';
@@ -88,6 +100,12 @@ class AppRoutes {
   static const String configurationStatus = 'configuration-status';
   static const String configurationStatusPath = 'configuration-status';
 
+  static const String settings = 'settings';
+  static const String settingsPath = 'settings';
+
+  static const String pendingChanges = 'pending-changes';
+  static const String pendingChangesPath = 'pending-changes';
+
   /// Absolute paths for the More sub-routes, for callers that navigate by path.
   static const String reportsFullPath = '$morePath/$reportsPath';
   static const String suppliersFullPath = '$morePath/$suppliersPath';
@@ -97,4 +115,6 @@ class AppRoutes {
   static const String agentSettingsFullPath = '$morePath/$agentSettingsPath';
   static const String configurationStatusFullPath =
       '$morePath/$configurationStatusPath';
+  static const String settingsFullPath = '$morePath/$settingsPath';
+  static const String pendingChangesFullPath = '$morePath/$pendingChangesPath';
 }

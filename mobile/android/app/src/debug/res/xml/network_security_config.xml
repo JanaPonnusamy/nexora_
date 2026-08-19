@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug builds only. This file lives under src/debug, so it is never merged
+    into a release APK or AAB.
+
+    Android blocks cleartext by default from targetSdk 28, which is correct and
+    stays that way for release: the HO server currently serves plain HTTP, and a
+    release build that could talk to it would be sending bearer tokens in the
+    clear. Developers still need to reach that server today, and the hosts they
+    reach it at vary — the emulator's 10.0.2.2, a LAN IP, the static
+    122.252.246.181 — so the debug config permits cleartext generally rather
+    than enumerating hosts that would go stale.
+
+    When TLS is up on the HO server this file can be deleted outright.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Lets a developer trust a locally installed CA — a self-signed
+                 cert on the HO server, or a proxy like Charles/mitmproxy when
+                 debugging what the app actually sends. Release builds trust
+                 only the system store. -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -3,10 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nexora_mobile/core/di/providers.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 import 'package:nexora_mobile/features/reports/data/reports_api.dart';
+import 'package:nexora_mobile/features/reports/data/reports_repository.dart';
 import 'package:nexora_mobile/features/reports/domain/report_models.dart';
 
 final reportsApiProvider = Provider<ReportsApi>(
   (ref) => ReportsApi(ref.watch(dioProvider)),
+);
+
+/// Runs reports and remembers the answers, so a manager in a stockroom with no
+/// signal still gets the last figures rather than an error.
+final reportsRepositoryProvider = Provider<ReportsRepository>(
+  (ref) => ReportsRepository(
+    ref.watch(reportsApiProvider),
+    ref.watch(appDatabaseProvider),
+  ),
 );
 
 /// The report catalog. Cached for the session — it is static metadata that

@@ -14,6 +14,7 @@ import 'package:nexora_mobile/core/network/api_exception.dart';
 import 'package:nexora_mobile/features/document_extraction/application/document_export_controller.dart';
 import 'package:nexora_mobile/features/document_extraction/application/document_review_controller.dart';
 import 'package:nexora_mobile/features/document_extraction/data/capture_queue_repository.dart';
+import 'package:nexora_mobile/features/document_extraction/data/capture_storage.dart';
 import 'package:nexora_mobile/features/document_extraction/data/document_extraction_api.dart';
 import 'package:nexora_mobile/features/document_extraction/domain/document_status.dart';
 
@@ -93,6 +94,12 @@ void main() {
         appDatabaseProvider.overrideWithValue(db),
         documentExtractionApiProvider.overrideWithValue(api),
         exportDirectoryProvider.overrideWithValue(() async => tmp),
+
+        // The queue rebases page paths through storage; the real one reaches
+
+        // path_provider, which has no platform channel under `flutter test`.
+
+        captureStorageProvider.overrideWithValue(CaptureStorage(root: tmp)),
         fileSharerProvider.overrideWithValue(
           (File file, {String? subject, Rect? sharePositionOrigin}) async {
             if (shareError != null) throw shareError!;
@@ -195,6 +202,12 @@ void main() {
           appDatabaseProvider.overrideWithValue(db),
           documentExtractionApiProvider.overrideWithValue(api),
           exportDirectoryProvider.overrideWithValue(() async => tmp),
+
+          // The queue rebases page paths through storage; the real one reaches
+
+          // path_provider, which has no platform channel under `flutter test`.
+
+          captureStorageProvider.overrideWithValue(CaptureStorage(root: tmp)),
           fileSharerProvider.overrideWithValue(
             (File file, {String? subject, Rect? sharePositionOrigin}) async {},
           ),

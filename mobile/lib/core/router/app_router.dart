@@ -17,10 +17,14 @@ import 'package:nexora_mobile/features/document_extraction/presentation/capture_
 import 'package:nexora_mobile/features/document_extraction/presentation/document_review_screen.dart';
 import 'package:nexora_mobile/features/master_data/presentation/suppliers_screen.dart';
 import 'package:nexora_mobile/features/pass_gen/presentation/pass_gen_screen.dart';
+import 'package:nexora_mobile/features/procurement/presentation/cycle_console_screen.dart';
+import 'package:nexora_mobile/features/procurement/presentation/legacy_order_console_screen.dart';
 import 'package:nexora_mobile/features/procurement/presentation/procurement_hub_screen.dart';
 import 'package:nexora_mobile/features/reports/presentation/reports_catalog_screen.dart';
 import 'package:nexora_mobile/features/time_report/presentation/time_report_screen.dart';
 import 'package:nexora_mobile/features/settings/presentation/more_screen.dart';
+import 'package:nexora_mobile/features/settings/presentation/pending_changes_screen.dart';
+import 'package:nexora_mobile/features/settings/presentation/settings_screen.dart';
 import 'package:nexora_mobile/features/store_selection/presentation/store_selection_screen.dart';
 import 'package:nexora_mobile/features/sync/presentation/sync_live_screen.dart';
 import 'package:nexora_mobile/features/sync/presentation/sync_status_screen.dart';
@@ -166,6 +170,18 @@ final routerProvider = Provider<GoRouter>((ref) {
                 path: AppRoutes.procurePath,
                 name: AppRoutes.procure,
                 builder: (_, __) => const ProcurementHubScreen(),
+                routes: [
+                  GoRoute(
+                    path: AppRoutes.cycleConsolePath,
+                    name: AppRoutes.cycleConsole,
+                    builder: (_, __) => const CycleConsoleScreen(),
+                  ),
+                  GoRoute(
+                    path: AppRoutes.legacyOrderConsolePath,
+                    name: AppRoutes.legacyOrderConsole,
+                    builder: (_, __) => const LegacyOrderConsoleScreen(),
+                  ),
+                ],
               ),
             ],
           ),
@@ -228,6 +244,16 @@ final routerProvider = Provider<GoRouter>((ref) {
                     path: AppRoutes.agentSettingsPath,
                     name: AppRoutes.agentSettings,
                     builder: (_, __) => const AgentSettingsScreen(),
+                  ),
+                  GoRoute(
+                    path: AppRoutes.settingsPath,
+                    name: AppRoutes.settings,
+                    builder: (_, __) => const SettingsScreen(),
+                  ),
+                  GoRoute(
+                    path: AppRoutes.pendingChangesPath,
+                    name: AppRoutes.pendingChanges,
+                    builder: (_, __) => const PendingChangesScreen(),
                   ),
                 ],
               ),

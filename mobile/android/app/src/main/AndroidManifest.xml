@@ -6,6 +6,13 @@
     <!-- Read by connectivity_plus to drive online/offline sync transitions. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
+    <!-- Unlock-on-open (local_auth). Not a runtime permission: it is granted at
+         install and only lets the app ask BiometricPrompt to verify the user —
+         it never exposes the biometric itself. MainActivity extends
+         FlutterFragmentActivity for the same feature; BiometricPrompt is a
+         Fragment and fails at tap time under a plain FlutterActivity. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+
     <!-- Document capture. Declared with the feature that uses them, so Play
          Console review never sees a sensitive permission the app cannot
          justify. -->

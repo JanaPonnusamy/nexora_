@@ -27,6 +27,14 @@ class AppConfig {
 
   bool get isProd => environment == AppEnvironment.prod;
 
+  /// True when the backend is addressed over plain HTTP.
+  ///
+  /// Worth surfacing even where it is permitted: every request, including the
+  /// bearer token, is readable by anything on the path. Diagnostics screens show
+  /// it so "why is this dev build talking to a server the release build cannot
+  /// reach" has a visible answer.
+  bool get isCleartext => apiBaseUrl.startsWith('http://');
+
   static const String _envName =
       String.fromEnvironment('NEXORA_ENV', defaultValue: 'dev');
 
@@ -52,6 +60,13 @@ class AppConfig {
       };
 
   /// Builds the effective configuration for the current build.
+  ///
+  /// Throws if a production build is pointed at a cleartext URL. That is a
+  /// misconfiguration with no safe reading: the platforms block cleartext in a
+  /// release build anyway, so the alternative to failing here is an app that
+  /// installs, launches, and then fails every network call with a transport
+  /// error that names nothing. Failing at resolve time names the cause, and it
+  /// fails on the first launch of a bad build rather than in a user's hands.
   factory AppConfig.resolve() {
     final env = _resolveEnv();
     final baseUrl = _apiBaseUrlOverride.isNotEmpty
@@ -64,7 +79,19 @@ class AppConfig {
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 45),
       enableVerboseLogging: env != AppEnvironment.prod,
-    );
+    )..assertTransportSecurity();
+  }
+
+  /// Public so it is testable: [AppConfig.resolve] reads compile-time
+  /// `--dart-define`s, which a test cannot vary.
+  void assertTransportSecurity() {
+    if (isProd && isCleartext) {
+      throw StateError(
+        'Production builds must use HTTPS. NEXORA_API_BASE_URL is "$apiBaseUrl". '
+        'Android (targetSdk 28+) and iOS ATS both block cleartext in a release '
+        'build, so this configuration cannot reach the backend at all.',
+      );
+    }
   }
 
   static String _stripTrailingSlash(String url) =>

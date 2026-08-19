@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:nexora_mobile/core/navigation/app_capability.dart';
 import 'package:nexora_mobile/core/navigation/app_section.dart';
+import 'package:nexora_mobile/core/widgets/offline_banner.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 
 /// Capabilities of the currently signed-in user.
@@ -46,7 +47,16 @@ class AppShell extends ConsumerWidget {
     if (selectedIndex < 0) selectedIndex = 0;
 
     return Scaffold(
-      body: navigationShell,
+      // The banner sits above the branch content rather than inside each
+      // screen: offline is a property of the app, not of whichever tab happens
+      // to be open, and putting it here means a new screen gets it for free
+      // instead of remembering to add it.
+      body: Column(
+        children: [
+          const OfflineBanner(),
+          Expanded(child: navigationShell),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,
         onDestinationSelected: (index) => _onTap(visible[index]),

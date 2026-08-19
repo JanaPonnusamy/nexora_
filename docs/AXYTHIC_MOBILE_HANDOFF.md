@@ -1,7 +1,7 @@
 # Axythic Mobile — Session Handoff
 
 **Read this first when resuming work on the Axythic mobile app.**
-Last updated: 2026-08-16 · Branch: `bharath-develop`
+Last updated: 2026-08-19 · Branch: `bharath-develop`
 
 Full implementation plan: `~/.claude/plans/hiii-bro-atomic-pillow.md`
 
@@ -9,8 +9,8 @@ Full implementation plan: `~/.claude/plans/hiii-bro-atomic-pillow.md`
 
 ## ▶ RESUME HERE
 
-**Everything below is current as of the end of the last session. Nothing is
-committed — all the work lives in the working tree.**
+**Current as of 2026-08-19. Everything since commit `8fe5fd2` is uncommitted
+and lives in the working tree — see §5.**
 
 ### 60-second orientation
 
@@ -20,16 +20,17 @@ a *client* for existing server modules; the only backend code added so far is
 the additive `backend/modules/mobile_bff/`.
 
 Phases are **not sequential in practice**. Work was pushed forward at the
-user's direction while earlier phases were still open, so there are unfinished
-pieces in Phases 2, 3 and 4 at the same time. That is deliberate, not drift.
+user's direction while earlier phases were still open. As of 2026-08-18 they
+have been walked in order and closed: what remains open in Phases 0–3 is
+blocked on the user (§1), not on code.
 
 | Phase | State |
 |---|---|
-| 0 Setup | 🟡 CI done · **TLS / keystore / store accounts NOT done** |
-| 1 Foundation | ✅ ~90% (no biometrics, no Crashlytics) |
-| 2 OCR Capture | ✅ capture · queue · review · **export** — feature-complete; exit criterion needs a reachable server |
-| 3 Core Ops | 🟡 Sync Live, Reports, Supplier (+ **BFF endpoint**) done · **Settings + outbox missing** |
-| 4 Procurement | 🟡 Pass Gen, Time Report done · **Cycle Console + Legacy Order missing** |
+| 0 Setup | 🟡 CI, signing config, OpenAPI snapshot, HTTPS-only release done · **TLS / a real keystore / store accounts need you** |
+| 1 Foundation | ✅ unlock-on-open, offline banner and crash capture done · **Crashlytics needs Firebase** |
+| 2 OCR Capture | ✅ code-complete · **exit criterion blocked on a backend bug, §1.4** |
+| 3 Core Ops | ✅ Sync Live, Reports, Supplier, outbox, Settings, report cache · **workmanager tick deliberately skipped, see §2** |
+| 4 Procurement | ✅ Pass Gen, Time Report, Cycle Console and **Legacy Order Console** done |
 | 5, 6 | ⬜ not started |
 
 ### First commands to run in a new session
@@ -38,7 +39,7 @@ pieces in Phases 2, 3 and 4 at the same time. That is deliberate, not drift.
 cd mobile
 dart run build_runner build --delete-conflicting-outputs   # generated sources are gitignored
 flutter analyze --fatal-infos                              # expect: No issues found
-flutter test                                               # expect: 335 passed
+flutter test                                               # expect: 449 passed
 ```
 
 If `build_runner` is skipped the tree will not compile — `*.g.dart` and
@@ -48,34 +49,46 @@ If `build_runner` is skipped the tree will not compile — `*.g.dart` and
 
 1. **A themed button cannot be a direct child of a Row or Wrap** — §3.8. It
    asserts at *paint* time and `analyze` passes it. This has been hit twice.
-2. **`testWidgets` runs in fake async** — §3.11. Awaiting real file/Drift I/O
-   in a test body deadlocks the whole file with zero output at 0% CPU, which
-   looks exactly like a hung compile.
+2. **`testWidgets` runs in fake async** — §3.11 and §3.11a. Awaiting real
+   file/Drift I/O in a test body deadlocks the whole file with zero output at
+   0% CPU, and so does feeding a widget from a live Drift `watch()` stream.
+   Both look exactly like a hung compile. Feed screens plain rows through
+   provider overrides.
 3. **Verify by running, not analysing.** Every session so far, the integration
    test on a simulator caught something `analyze` and unit tests passed
-   straight through. Run it.
+   straight through. Run it — and boot the simulator fully first, or the
+   install fails with a misleading "malformed plist" error.
 
 ### Highest-value next steps, in order
 
-1. **Offline outbox + background sync.** The largest remaining MVP piece, and
-   Phase 5's Purchase Workspace depends on it. It is also what would let a
-   review correction be made offline — today edits go straight to the server
-   and simply report the failure when there is no signal.
-2. **Settings.** Server, theme, biometrics, cache, WhatsApp, diagnostics. The
-   More tab is already long enough that this wants grouping, not appending.
-3. **Run the Phase 2 exit criterion against a real server.** Everything in the
-   path is built and tested, but the HO server is unreachable from a dev
-   machine, so "photograph offline → reconnect → review → export → open in
-   Excel" has never been run end to end. The workbook builder is now covered by
-   a contract test (`backend/tests/test_document_export.py`), so what remains
-   unverified is the round trip, not the file format.
+1. **Decide on §1.4 — the missing column defaults.** One `--apply` unblocks the
+   Phase 2 exit criterion, which is otherwise finished and scripted. Until then
+   document capture cannot work against this database at all, and 93 other
+   tables carry the same latent fault.
+2. **Rotate the leaked JWT secret (§1.1).** Still outstanding, still the highest
+   severity item in this document.
+3. **Phase 5 — Purchase Workspace** (reduced field scope); the procurement
+   outbox extension point is already in place.
 
 **Nothing ships until TLS is up (§1.2), regardless of which of these is done.**
 
 ### Suggested opening message for the next chat
 
-> Read docs/AXYTHIC_MOBILE_HANDOFF.md and continue. Start with <the item you
-> want> from the "Highest-value next steps" list.
+Paste this, filling in the last line:
+
+> Read `docs/AXYTHIC_MOBILE_HANDOFF.md` end to end before doing anything — it is
+> the full state of this project and supersedes anything you infer from the
+> code. Then run the four commands in "First commands to run in a new session"
+> to confirm the tree is green (expect 449 tests passing, analyze clean).
+>
+> Context you need that is not obvious: a working backend runs on
+> `http://localhost:8000` (the HO host `122.252.246.181:8443` is the unreachable
+> one). Login `superadmin`. Tenant `a7eb45bd-bdd7-4ee6-bd7b-61d1c7f4305d`
+> (Nathan Medicals). Phases 0–4 are done bar the items in §1 and Firebase push.
+> Nothing since commit `8fe5fd2` is committed, and §7 says do not commit without
+> being asked.
+>
+> Continue with: <the item you want — see §6>.
 
 ---
 
@@ -144,25 +157,117 @@ Everything points at `http://122.252.246.181:8443`. Android 9+ and iOS ATS block
 cleartext. **No store release is possible until the HO server serves HTTPS.**
 This is the single biggest blocker in the whole plan.
 
+The client side of it is now done — release builds cannot speak cleartext at
+all, and a prod build configured with an `http://` URL fails at startup naming
+the URL instead of silently failing every request (§2, Phase 0). None of that
+substitutes for the server change; it only means the app stops pretending the
+configuration is viable. When TLS lands, point `NEXORA_API_BASE_URL` at the
+HTTPS host and delete
+`mobile/android/app/src/debug/res/xml/network_security_config.xml`.
+
 ### 1.3 Blocked on user input
 
-- **Release keystore** — Android still signs with debug keys
-  (`mobile/android/app/build.gradle.kts`). Needs a real keystore in CI secrets.
+- **Release keystore** — the signing config is now built and tested; what is
+  missing is the keystore itself. Generate one, fill in
+  `mobile/android/key.properties` from `key.properties.example`, and add
+  `AXYTHIC_KEYSTORE_BASE64` / `_PASSWORD` / `AXYTHIC_KEY_ALIAS` /
+  `AXYTHIC_KEY_PASSWORD` to the repo secrets — CI picks them up with no workflow
+  edit. **Back the keystore up off this machine**: lose it and the published app
+  can never be updated again, because Play matches the signing identity rather
+  than the package name.
 - **Play Console / App Store Connect** accounts.
-- **Crashlytics** — needs a Firebase project.
-- **Biometric unlock** — needs a decision: mandatory on launch, or opt-in?
+- **Crashlytics** — needs a Firebase project. The seam it plugs into is built
+  (`CrashReporter`, §2 Phase 1); what is missing is the project and the
+  `google-services.json` / `GoogleService-Info.plist` that come with it. The
+  same project unblocks Cycle & Refresh Console's push-on-completion.
+- ~~**Biometric unlock** — mandatory or opt-in?~~ **Resolved: opt-in.** Built.
+  Say so if you want it mandatory instead; the controller already holds the
+  preference, so it is a policy change rather than a rewrite — but note a
+  mandatory lock cannot be satisfied on a device with no credential enrolled.
 
 ---
+
+### 1.4 The restored database has no column defaults — document upload is broken
+
+Confirmed on 2026-08-18 against the local backend. **`sys.default_constraints`
+holds exactly 1 row for 94 user tables**, and `nexora_platform_dump (1).sql`
+contains the word `DEFAULT` **zero times**. The dump was generated without
+column defaults, so every database restored from it is missing all of them.
+
+The application was written against the module migrations, which *do* declare
+them. `modules/document_extraction/sql/0001_document_extraction_tables.sql:67`
+declares `import_guid UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()`; the live table
+has the NOT NULL and not the default. `repository.create_import` supplies 9
+columns and lets the schema fill 13 others (`import_guid`, the seven `is_*`
+flags, `validation_status`, `uploaded_at`, `created_at`, `is_deleted`), so the
+insert cannot succeed:
+
+    IntegrityError: Cannot insert the value NULL into column 'import_guid',
+    table 'nexora_platform.dbo.doc_import'; column does not allow nulls.
+
+**Mobile document capture cannot work at all against such a database** — the
+very first call of the pipeline 500s. This is almost certainly not confined to
+document extraction; 94 tables are affected and the 152 `DEFAULT` clauses across
+the 44 module migrations are all missing from the deployed schema.
+
+`backend/scripts/restore_column_defaults.py` reads the declared defaults back
+out of a migration file and emits the `ALTER TABLE` statements. It **prints and
+stops** unless `--apply` is passed, since it changes a live schema and parses
+hand-written SQL. For document extraction it produces 26 statements, verified
+against the migration. Constraints are named `DF_<table>_<column>` so any of it
+can be dropped again, and only columns currently missing a default are touched.
+
+    backend/.venv/bin/python scripts/restore_column_defaults.py \
+        modules/document_extraction/sql/0001_document_extraction_tables.sql
+
+**Not applied** — the user declined the schema change on 2026-08-18. Until it is
+applied (or the defaults are supplied explicitly in every INSERT), the Phase 2
+exit criterion cannot run and neither can document capture.
 
 ## 2. What has been built
 
 ### Phase 0 — Architecture & Setup 🟡 partial
 
 **Done**
+- **OpenAPI snapshot is current again** — `routes.json` went from **43 paths to
+  348**, i.e. it had been missing ~87% of the API including the entire mobile
+  BFF. `backend/scripts/dump_openapi.py` regenerates it **with no server
+  running** (`api.app` imports offline — its schema bootstraps are already
+  wrapped in try/except), and `--check` fails if the file has drifted. Paths are
+  sorted so a one-route change reads as a one-route diff, and it is now UTF-8;
+  the old file was UTF-16 from a PowerShell redirect.
+  Not wired into CI on purpose: importing the app pulls opencv, pymupdf,
+  playwright and friends, which is a large install for a snapshot that only
+  needs refreshing when routes change. Run it when they do.
+- **Release signing is configured** — `android/app/build.gradle.kts` reads a
+  keystore from `android/key.properties` (local, gitignored) *or*
+  `AXYTHIC_KEYSTORE_*` environment variables (CI secrets); see
+  `android/key.properties.example`. With neither it still falls back to debug
+  keys so `flutter run --release` works, but `AXYTHIC_REQUIRE_RELEASE_SIGNING=true`
+  turns that fallback into a build failure — set it on anything meant for
+  distribution. Both paths verified: the fallback builds a 69.8MB APK, the
+  guarded path fails naming the missing keystore.
+  The env-var route exists because `flutter build` does **not** forward `-P`
+  Gradle properties, so a property alone would be unreachable from CI.
+- **Release builds are HTTPS-only by construction.** Cleartext permission now
+  lives in `android/app/src/debug/` — a debug-only manifest and
+  `res/xml/network_security_config.xml` — so a developer can still reach the
+  plain-HTTP HO server while the release APK inherits the platform default and
+  cannot. Verified against the merged manifests: `networkSecurityConfig` is
+  present in the debug one and absent from the release one. The debug config
+  also trusts user CAs, which is what lets a proxy like Charles inspect traffic.
+- **A prod build pointed at `http://` now fails at `AppConfig.resolve()`** with
+  a message naming the URL, rather than installing and then failing every
+  request with an opaque transport error. `AppConfig.isCleartext` is exposed for
+  diagnostics.
 - `.github/workflows/mobile-ci.yml` — format gate, `analyze --fatal-infos`,
   tests, Android + iOS builds, integration tests on a booted simulator.
   Runs `build_runner` first: generated sources are gitignored, so without it the
-  tree does not compile.
+  tree does not compile. The Android job **upgrades itself**: with
+  `AXYTHIC_KEYSTORE_BASE64` set it decodes the keystore and builds a signed
+  release with signing enforced; without it, it builds debug as before. The
+  format gate now also covers `integration_test/`, which it previously skipped
+  while the documented local command did not.
 - `.github/workflows/backend-ci.yml` — three jobs:
   - `unit-tests` (`backend/tests`) — **blocking**
   - `legacy-tests` (root `tests/`) — **non-blocking** on purpose: 153 pass, 23
@@ -173,10 +278,19 @@ This is the single biggest blocker in the whole plan.
   paddlepaddle ~500MB that no test touches). Verified in a clean venv.
 - **Repo-wide `dart format`** applied (42 of 117 files were non-compliant).
 
-**Not done:** TLS, OpenAPI spec refresh (`routes.json` is stale — 43 of ~350
-paths), signing config, store accounts, Figma.
+**Not done — all of it needs you, not code:** TLS on the HO server, an actual
+release keystore to drop into the config above, Play Console / App Store Connect
+accounts, Figma.
 
-### Phase 1 — Foundation & Rebrand ✅ ~90%
+**iOS cleartext has no debug escape hatch, deliberately.** `Info.plist` is one
+file across configurations, so a dev-only ATS exception would mean either a
+second plist wired per-configuration in `project.pbxproj` or an exception that
+ships. Neither is worth it for a workaround that TLS deletes: an ATS exception
+for a hardcoded IP is also a routine App Review question. Until the HO server
+serves HTTPS, iOS development against it needs a temporary local `Info.plist`
+edit — do not commit one.
+
+### Phase 1 — Foundation & Rebrand ✅ (Crashlytics excepted)
 
 - **Axythic dark-only theme.** `app_colors.dart` now carries the real design-system
   dark tokens from `frontend/src/design-system/tokens/theme.ts` (the old palette
@@ -198,9 +312,67 @@ paths), signing config, store accounts, Figma.
 - **Launcher icons** — 20 generated from `axythic-mark.svg`, zero alpha.
 - Bundle IDs `com.axythic.mobile` on both platforms; label/display name `Axythic`.
 
-**Not done:** Crashlytics, biometric unlock, an offline-state component.
+- **Unlock on open** — `core/security/`. **Opt-in, not mandatory**, which was
+  the open question in §1.3: the Settings spec already lists biometrics as a
+  setting, and a mandatory lock is unsatisfiable on a phone with nothing
+  enrolled. Off by default, toggled from More → SESSION.
+  The design decisions that matter, each of which is a way this feature bricks
+  an app if it goes the other way:
+  - **Device credential stays allowed** (`biometricOnly: false`). A cut finger
+    or a failed sensor otherwise strands a user holding a valid session, whose
+    only exit is a sign-out they may have no signal to undo.
+  - **The lock screen always offers Sign out.** Same reason, one layer down.
+  - **The preference stands down by itself** if the device credential
+    disappears — at bootstrap and mid-session — rather than showing a prompt
+    that cannot succeed.
+  - **Enabling prompts before it persists**, so the toggle cannot arm a lock
+    the device will not open.
+  - **30-second grace period on resume** (`kAppLockGracePeriod`). Zero would
+    re-prompt after every share sheet and photo picker, which is how a security
+    feature gets switched off. `inactive` is ignored entirely (a notification
+    shade is not leaving the app), and only the *first* background stamp counts
+    — iOS emits hidden→paused on the way out, and restamping would push the
+    deadline forward forever.
+  - **Locking is not signing out.** The gate is a cover over the widget tree,
+    installed via `MaterialApp.router`'s `builder` rather than as a route, so
+    it also covers the camera on the root navigator and cannot be dismissed by
+    a back gesture. Sync and the capture upload queue keep running behind it,
+    which is the entire point of a queue that drains on reconnect.
+  - **Android `MainActivity` now extends `FlutterFragmentActivity`.** `local_auth`
+    shows AndroidX `BiometricPrompt`, a Fragment, which needs a FragmentActivity
+    host; under the plain `FlutterActivity` it throws `no_fragment_activity` at
+    the moment the user taps Unlock — clean build, clean analyze, clean unit
+    tests, fails on a real device.
+  - iOS needs `NSFaceIDUsageDescription`, now present. A missing string there is
+    a **process kill**, not a denial.
+  **20 tests.**
+- **Offline banner** — `core/widgets/offline_banner.dart`, mounted once in
+  `AppShell` above the branch content so every tab and every future screen gets
+  it without remembering to. It states what still works ("your work is saved
+  and will sync later") rather than only what is wrong, because in this app
+  that is true and a bare "No connection" makes people stop working when they
+  need not.
+  `networkStatusProvider` **probes the current status before following the
+  stream**: `ConnectivityService.statusStream` carries *transitions* only, so a
+  widget watching it alone would show nothing on a phone that has been offline
+  since launch — from its point of view nothing has happened. **5 tests.**
+- **Crash capture** — `core/observability/crash_reporter.dart`. Firebase is
+  still unprovisioned, so this is the seam Crashlytics drops into rather than
+  Crashlytics itself; but it closes a real gap that existed regardless.
+  **Nothing was catching uncaught errors at all.** All three doors are now
+  covered — `FlutterError.onError` (framework), `PlatformDispatcher.onError`
+  (uncaught async, which is most failures here) and a `runZonedGuarded` around
+  the whole of bootstrap. The async handler returns `true` deliberately: `false`
+  re-raises to the platform and ends the Android process, so one failed
+  background upload would take the app down. The default implementation logs and
+  keeps the **last 20 failures in memory** (RAM only — crash detail can contain
+  invoice values), so a device can answer "what went wrong earlier?" without a
+  server. Adding Crashlytics is a new `CrashReporter` implementation and one
+  line in `bootstrap`. **4 tests.**
 
-### Phase 2 — OCR Document Extraction 🟡 capture, queue and review done; export not started
+**Not done:** Crashlytics itself (needs the Firebase project, §1.3).
+
+### Phase 2 — OCR Document Extraction ✅ code-complete · exit criterion blocked on §1.4
 
 **Done — data layer**
 - Deps: `camera 0.11.4`, `image_picker 1.2.3`, `permission_handler 11.4.0`,
@@ -337,17 +509,25 @@ paths), signing config, store accounts, Figma.
 - **37 more tests** (298 → 335 mobile; 37 → 51 backend).
 
 **Not done (the remaining Phase 2 work):**
-- [ ] **Run the exit criterion end to end.** Every piece is built and covered,
-      but the HO server is unreachable from a dev machine, so the full round
-      trip — photograph offline, reconnect, review, export, open in Excel —
-      has not been done against a live server.
+- [ ] **Run the exit criterion end to end.** A harness now exists and the round
+      trip was attempted for the first time on 2026-08-18. It reached step 3 of
+      8 and stopped on a **backend bug, not a mobile one** — see §1.4. The
+      harness is `backend/scripts/verify_extraction_roundtrip.py`: it mirrors
+      `CaptureUploader.pipeline` and `DocumentExtractionApi` call for call,
+      generates a legible 200-DPI test invoice, and verifies the exported
+      workbook against the sheets and columns parsed **out of the frozen
+      contract document**. Its offline halves are verified — the contract parser
+      reads all 5 sheets, and the generated invoice renders correctly.
+      Note also that **the HO host is the unreachable one**: a full backend runs
+      on `localhost:8000` with the complete extraction pipeline, so this is
+      runnable the moment §1.4 is resolved.
 - [ ] **Calibrate the quality thresholds against real store captures.** They
       are currently tuned on synthetic pages and printed-invoice assumptions
       (`_sharpnessReject` and friends in `capture_processor.dart`). Leaning
       lenient is deliberate: a false "retake" on a good page teaches users to
       ignore the gate.
 
-### Phase 3 — Core Operations 🟡 3 of 5 pieces done
+### Phase 3 — Core Operations ✅ (workmanager tick skipped on judgment)
 
 Started ahead of finishing Phase 2, at the user's explicit direction.
 
@@ -368,13 +548,88 @@ Started ahead of finishing Phase 2, at the user's explicit direction.
   local cache so search works with no signal; pull-to-refresh asks the sync
   engine to run rather than fetching directly, keeping one path responsible.
 
-**Not done**
-- [ ] **Settings** — the plan's server/theme/biometrics/cache/WhatsApp/
-      diagnostics screen. `More` currently has Device Status, Configuration
-      Status and Agent Settings; the rest is unbuilt.
-- [ ] **Offline outbox + background sync** — no `outbox` table, no
-      `workmanager` tick. This is the largest remaining piece of Phase 3 and
-      the one Purchase Workspace (Phase 5) depends on.
+- **Offline outbox** — `core/outbox/` plus Drift **schema v5** (`OutboxEntries`).
+  Review edits no longer die when there is no signal: a network failure queues
+  the change and reports it as saved, because from the user's side it is.
+  The decisions that carry the weight:
+  - **Only a network failure is queued.** A server that *refused* an edit will
+    refuse it again in an hour, so queueing a rejection would convert a clear
+    error into a change the user believes is on its way and that quietly
+    dead-letters later.
+  - **Strict per-scope ordering.** `due()` returns at most one entry per scope
+    (`import:42`), so two edits of one document can never be sent concurrently
+    or out of order. A backed-off entry blocks its own scope and nothing else;
+    a dead-lettered one steps aside so it cannot strand every later change.
+  - **An offline retry does not burn an attempt.** Otherwise a tunnel marches a
+    perfectly good edit toward the dead-letter list.
+  - **Interrupted entries are recovered at start.** The app can be killed
+    between "mark in flight" and the response; those rows would otherwise sit
+    in `inFlight` forever, never sent and never reported as stuck.
+  - **An unknown kind dead-letters immediately** rather than retrying — it means
+    an older build queued something this one cannot send, and waiting cannot fix
+    that. Kinds are string constants precisely because they are persisted;
+    renaming an enum value would orphan a queued edit.
+  - **Queued edits re-run validation when they land**, for the same reason
+    online ones do (§3.12).
+  - **A concurrency bug was caught by its own test**: `drain()` set its
+    re-entrancy guard *after* awaiting the connectivity check, so two callers
+    both passed the guard and the same edit was sent twice. The guard is now
+    claimed synchronously before the first await.
+  - Three triggers — on start, on reconnect, and a 5-minute sweep that stops
+    when the outbox empties (a server that was down while the device was online
+    the whole time produces no connectivity event).
+  **36 tests.**
+- **Settings** — `settings_screen.dart` + `pending_changes_screen.dart`.
+  Security, server, storage, diagnostics and pending changes in one place, and
+  Device/Configuration/Agent Settings moved off More into it. That was the
+  actual fix for "Sign out is below the fold": the integration test now asserts
+  Sign out's rect is on screen without scrolling.
+  **No theme control** — the product is dark-only by decision, and a switch that
+  does nothing is worse than its absence because it invites a bug report.
+  **No WhatsApp section** — nothing in the mobile app touches WhatsApp, so there
+  is nothing to configure; the plan's mention refers to the web console.
+  Pending changes is the surface that makes the outbox honest: what is waiting,
+  what needs a person, retry, and a discard that names the loss. **11 tests.**
+
+- **Report results are cached and read offline** — Drift **schema v6**
+  (`ReportCacheEntries`) plus `reports_repository.dart`. The runner screen now
+  goes through the repository rather than the API directly.
+  - **Network-first, not cache-first.** A report is a question about *now*, so a
+    fresh answer always wins; the cache exists for the manager standing in a
+    stockroom with no signal, not to save a round trip.
+  - **Only a network failure falls back.** A 401 or a rejected filter is a real
+    answer, and replacing it with yesterday's numbers would hide the actual
+    problem.
+  - **Staleness is always visible** — a banner naming the age ("Saved figures
+    from 3 hours ago"), because the reader's real question is not "is there
+    signal" but "how old are these numbers".
+  - **Two days maximum.** A week-old stock figure is not an answer to "what do
+    we have", and showing one invites someone to act on it.
+  - The cache key includes tenant, store and only the filters the report
+    *declares*, so a store switch can never surface the previous store's
+    numbers and a stale supplier selection cannot split the cache for a report
+    that never sends it. `ReportFormat.int_` round-trips as the wire spelling
+    `int` — the Dart name exists only because `int` is reserved.
+  **37 tests.**
+- **The outbox also drains on app resume** (`AppLockGate`). A phone that was
+  offline in a pocket and is now on the shop wi-fi produces no connectivity
+  event — the OS reconnected while the app was suspended — so without this the
+  user waits out the five-minute sweep.
+
+**Not done — and a judgment call worth reading before reversing it**
+- [ ] **`workmanager` background tick.** Deliberately not shipped. It would run
+      in its own isolate, which cannot share the Riverpod graph *or the open
+      Drift connection* — a second SQLite connection to the same file from
+      another isolate is how databases get corrupted, and that risk lands on
+      users' devices. It also cannot be verified here: iOS `BGTaskScheduler` is
+      opportunistic, needs a capability entitlement, and a simulator does not
+      run background tasks.
+      What it would add over what now exists — drain on start, on reconnect, on
+      resume, and every five minutes while open — is sending edits while the app
+      is fully closed. For staff using the app actively on a shop floor that is
+      a small gain for a real hazard. If it is wanted, do it with Drift's
+      documented cross-isolate setup (`DriftIsolate`), not a second
+      `openDatabaseConnection()`, and verify on physical hardware.
 - [x] ~~Supplier BFF endpoint~~ — **done.** `GET /api/mobile/v1/suppliers`
       serves the same query and the same `{suppliers: [...]}` payload with
       scope resolved from the JWT instead of a role gate, so purchase-manager
@@ -382,11 +637,8 @@ Started ahead of finishing Phase 2, at the user's explicit direction.
       supplier products, stock, matching, reports and the cross-store
       dashboards stay behind `require_admin_role`. The mobile sync now points
       at it and no longer sends `tenant_id` at all.
-- [ ] Report results are not cached to Drift yet, so they are not readable
-      offline. The `fetchedAt` stamp the plan requires is already plumbed
-      through `ReportResult`; only the `report_cache` table is missing.
 
-### Phase 4 — Procurement & Admin 🟡 2 of 4 modules done
+### Phase 4 — Procurement & Admin ✅ 4 of 4 modules done
 
 Started at the user's explicit direction, with Phases 2 and 3 both incomplete.
 
@@ -407,12 +659,58 @@ Started at the user's explicit direction, with Phases 2 and 3 both incomplete.
   infrastructure and a generic error sends the support call to the wrong team.
 - **26 new tests** (232 → 258).
 
+- **Cycle & Refresh Console** — `procurement/` (`cycle_models.dart`,
+  `cycle_api.dart`, `cycle_providers.dart`, `cycle_console_screen.dart`), live
+  from the Procure tab.
+  **Scoped deliberately** to the three actions that block other people — see
+  where the cycle is, start the next refresh, close a refresh or a cycle. The
+  desktop console also edits order items line by line, which does not survive
+  phone width and is not what someone away from a desk needs.
+  The details that matter:
+  - **Field names were read off a live response**, not inferred from the
+    router. The row carries `cycle_id`, `active_refresh_id` and *nullable* end
+    counters; `active_refresh_id` is what decides whether the card offers
+    "Start refresh" or "Close refresh".
+  - **Unstamped counters render as "Not stamped", never 0.** These are counter
+    readings — a zero reads as a real one.
+  - **`pending_confirm` is a question, not a failure.** `close_cycle` returns it
+    when items remain and `force` was not set. The console puts that back to the
+    user naming the count, and only then retries with `force` — closing over
+    unresolved items is a decision, not a retry. `CloseOutcome` exists precisely
+    so this cannot be mistaken for an error.
+  - **An unrecognised status is shown as the server's own word**, not collapsed
+    to "Unknown" — a state this build has not heard of is information.
+  - **Starting a refresh warns that it is slow.** The server runs the engine and
+    generates working items before responding; a user who thinks the app has
+    frozen kills it mid-run.
+  - §3.8 again: the action buttons live in a `Wrap`, which has the same
+    unbounded-main-axis problem as a `Row`, so each carries an explicit
+    `minimumSize`.
+  **13 tests.**
+  **Push-on-completion is not built** — it needs Firebase (§1.3). Nothing else
+  in the console does.
+
+- **Legacy Order Console** — `procurement/` (`legacy_order_models.dart`,
+  `legacy_order_api.dart`, `legacy_order_providers.dart`,
+  `legacy_order_console_screen.dart`), live from the Procure tab for platform
+  and super-admin users only, matching the router's own gate.
+  - **Read-only OrderNMC health** remains visible even when `/stores` is 503,
+    so an outage explains itself. Database recovery and emergency repair are
+    deliberately not exposed on a field phone.
+  - Store cards show branch connection metadata and the last sync result.
+    Sync, Order Process and Stock Update use the existing server jobs; running
+    jobs poll every two seconds only while one is active and keep their recent
+    log visible.
+  - Order Process carries the server's 13/18 defaults and local/remote modes.
+    NMW cannot run Stock Update against itself because it is the source store.
+  - Qty Check is a card list rather than the desktop's 13-column grid. Review
+    accepts zero as the legacy “Don't want to order” decision, and Evidence
+    loads purchase, sales, monthly and previous-order history from the four
+    documented drill-down endpoints.
+  - The first rendered 390px test caught a 7px overflow in the local/remote
+    source control; it now wraps. **15 tests.**
+
 **Not done**
-- [ ] **Cycle & Refresh Console** (L) — the largest Phase 4 module, and the one
-      with push-notification-on-completion, which needs Firebase (still
-      unprovisioned, see §1.3).
-- [ ] **Legacy Order Console** (L) — ~20 endpoints under `/api/legacy-order/*`
-      covering store health, job trigger/monitor and qty check.
 - [ ] **Time Report's monthly muster grid.** Deliberately skipped: it is a
       day-by-day colour matrix per user, which does not survive phone width.
       The xlsx export covers the mobile need; the grid stays on desktop.
@@ -515,6 +813,26 @@ exactly like a hung compile. Feed screens plain data through provider
 overrides (`capture_screens_test.dart` does this), or wrap real work in
 `tester.runAsync`.
 
+### 3.11a A Drift `watch()` stream never settles under `testWidgets` either
+
+Same root cause as §3.11 and a separate trap. Feeding a widget from a live
+Drift query — `outboxOutstandingProvider`, `captureQueueStreamProvider` — means
+the stream needs real event-loop turns to deliver, which a fake-async body never
+grants. The file times out with **no output at all**, exactly like a hung
+compile, and `tester.runAsync` around the *seeding* does not fix it because the
+problem is the watch, not the write.
+
+Override the provider with plain rows instead:
+
+```dart
+outboxOutstandingProvider.overrideWith((ref) => Stream.value(rows))
+```
+
+`test/features/settings/settings_screens_test.dart` does this and runs in four
+seconds; the version that used a real database hung past seven minutes twice.
+Row classes are constructible directly (`OutboxEntry(...)`), so no database is
+needed to build a realistic fixture.
+
 ### 3.12 An edit must re-run validation, or the fix does not count
 
 `service.save` reads the **stored** `doc_import.validation_status`, and that
@@ -557,6 +875,20 @@ still being worked on. Any new server status needs the same treatment; the
 fallback is deliberately in-flight, which is safe for a *new* stage and wrong
 for a terminal one.
 
+### 3.15a A re-entrancy guard must be claimed before the first `await`
+
+`OutboxDispatcher.drain()` originally checked `_draining`, then awaited a
+connectivity probe, then set the flag. Two callers — a reconnect event and a
+manual retry arriving together — both passed the check, both suspended on the
+probe, and both proceeded. The same edit was sent twice, which for this API
+means **two audit rows for one correction**.
+
+The guard is now set synchronously immediately after the check, and the
+connectivity probe moved inside the `try` so the flag is still released. There
+is a test asserting two concurrent drains produce one send. The same shape
+exists in `TokenRefresher` (§3.1) and `CaptureUploader._draining` — check any
+new one against this.
+
 ### 3.16 Bar index ≠ branch index
 
 The shell always has all 5 branches; only the bar is filtered by capability.
@@ -577,6 +909,11 @@ With Capture and Procure hidden, Sync sits at bar position 1 but is branch 3.
 | **Save fell below the fold on a nine-field edit sheet** — with the whole form in one scroll view, a line edit put Cancel/Save ~50px past the bottom of the display. Found by the hit-test warning in the simulator run; every widget test passed | `document_extraction/presentation/widgets/review_edit_sheet.dart` | Fields scroll inside a `Flexible`; the actions are pinned. Regression test asserts Save's rect is on a 390×844 screen |
 | **A line count rendered as money** — "Line count 3.00". Found by *looking at* the screenshot; every assertion passed | `document_extraction/presentation/widgets/review_summary_card.dart` | `ReconcileCheck.money` distinguishes amounts from counts |
 
+| **The same edit sent twice** — `OutboxDispatcher.drain()` claimed its re-entrancy guard *after* awaiting a connectivity probe, so a reconnect event and a manual retry both got through. For this API that means two audit rows for one correction. See §3.15a | `core/outbox/outbox_dispatcher.dart` | Guard claimed synchronously before the first await; test asserts two concurrent drains produce one send |
+| **A queue that loses its images across an iOS reinstall** — `CapturePages.filePath` held an absolute path, and the app container UUID is reassigned on reinstall | `document_extraction/data/capture_queue_repository.dart` | Paths stored relative to the captures directory and resolved on read. Legacy absolute rows still resolve, so nothing is orphaned |
+| **The offline banner would never appear on a cold start that was already offline** — `ConnectivityService.statusStream` carries *transitions*, and from a widget's point of view nothing had happened | `core/di/providers.dart` | `networkStatusProvider` probes the current status, then follows the stream |
+| **Document upload 500s against any database restored from the dump** — 13 columns rely on schema defaults the dump did not carry. Backend, not mobile; see §1.4 | `nexora_platform_dump (1).sql` | Not applied — `backend/scripts/restore_column_defaults.py` is ready and awaiting a decision |
+
 **Lesson worth keeping:** static analysis and widget tests passed the
 `StatusCard` crash straight through. Run the app on a simulator as part of
 verification — and make sure the widget tests actually *render* the widget,
@@ -589,19 +926,33 @@ of verification, not a nicety.
 ## 5. Current state
 
 - **Branch:** `bharath-develop`
-- **Last commit:** `b192104` (the security fix — still the only committed work)
-- **Uncommitted: 93 modified files + 34 untracked paths.** Everything in
-  Phases 0–4 above lives in the working tree and nowhere else.
+- **Last commit:** `8fe5fd2` — everything up to and including the first
+  document-extraction/sync/dashboard push. The security fix `b192104` is behind
+  it.
+- **Uncommitted: 38 modified + 27 untracked.** All of the Phase 0–4 work
+  described in §2 lives in the working tree and nowhere else.
 
 ⚠️ **This is the single biggest continuity risk.** Several sessions of work sit
-in one uncommitted tree with no branch protecting it. Commit before doing
-anything else — the split below is a suggestion, `git add -A && git commit` is
-better than losing it.
+in one uncommitted tree with no branch protecting it. §7 says do not commit
+without being asked, so it has been left alone deliberately — but *ask*, early.
+`git add -A && git commit` beats losing it.
 
-New mobile feature code lives in:
-`features/document_extraction/` · `features/reports/` · `features/time_report/`
-· `features/pass_gen/` · `features/master_data/presentation/` ·
-`features/sync/` (live ops) · `core/di/capture_providers.dart`
+New this session (Phases 0–4), on top of what was already there:
+
+| Area | Where |
+|---|---|
+| Unlock on open | `core/security/` |
+| Crash capture | `core/observability/crash_reporter.dart` |
+| Offline banner | `core/widgets/offline_banner.dart` |
+| Offline outbox | `core/outbox/`, `core/database/outbox_tables.dart` |
+| Settings + pending changes | `features/settings/presentation/` |
+| Report cache | `core/database/report_cache_tables.dart`, `features/reports/data/reports_repository.dart` |
+| Cycle & Refresh Console | `features/procurement/` |
+| Legacy Order Console | `features/procurement/` |
+| Backend scripts | `backend/scripts/dump_openapi.py`, `restore_column_defaults.py`, `verify_extraction_roundtrip.py` |
+
+**Drift schema is now v6.** v5 added `OutboxEntries`, v6 added
+`ReportCacheEntries`. Both have `onUpgrade` steps; do not renumber them.
 
 ### Verification commands (all currently green)
 
@@ -610,18 +961,29 @@ cd mobile
 dart run build_runner build --delete-conflicting-outputs
 dart format --output=none --set-exit-if-changed lib test integration_test  # exit 0
 flutter analyze --fatal-infos                                              # No issues found
-flutter test                                                               # 335 passed
-flutter test integration_test -d <simulator-udid>                          # 5 passed
-flutter build apk --release                                                # 67.2MB
+flutter test                                                               # 449 passed
+flutter test integration_test -d <simulator-udid>                          # 6 passed
+flutter build apk --release                                                # 69.8MB (debug-signed)
 flutter build ios --debug --no-codesign                                    # ok
 
 cd ../backend
 .venv/bin/python -m pytest tests/ -q                                       # 61 passed
+.venv/bin/python scripts/dump_openapi.py --check                           # routes.json is current
 ```
 
-Run the app: `flutter run --dart-define=NEXORA_API_BASE_URL=http://122.252.246.181:8443`
+Run the app against the **local** backend, which is the one that works:
+
+```bash
+flutter run --dart-define=NEXORA_API_BASE_URL=http://localhost:8000
+```
+
+A simulator must be fully booted before `flutter test integration_test` — a
+`Shutdown` device fails at install with a misleading "malformed plist" error.
+`xcrun simctl boot <udid>` then `xcrun simctl bootstatus <udid> -b`.
 
 ### Suggested commit split
+
+The first twelve are the pre-existing work; 13 onward is this session.
 
 1. `feat(mobile): Axythic dark-only theme and native identity`
 2. `ci: add mobile and backend workflows; normalise dart formatting`
@@ -635,6 +997,17 @@ Run the app: `flutter run --dart-define=NEXORA_API_BASE_URL=http://122.252.246.1
 10. `feat(mobile): invoice review, correction and authenticated page viewer`
 11. `feat(mobile): workbook export and share from review and the queue`
 12. `feat(api): mobile supplier endpoint for field roles the admin gate blocks`
+13. `build(android): real release signing config, HTTPS-only release builds`
+14. `chore(backend): regenerate routes.json from the app (43 → 348 paths)`
+15. `feat(mobile): opt-in unlock on open with device-credential fallback`
+16. `feat(mobile): global crash capture and an offline state banner`
+17. `fix(mobile): store capture page paths relative to the documents directory`
+18. `feat(mobile): offline outbox for review edits made without signal`
+19. `feat(mobile): settings screen and a pending-changes surface`
+20. `feat(mobile): cache report results for offline reading`
+21. `feat(mobile): cycle and refresh console`
+22. `chore(backend): scripts to verify the extraction round trip and restore column defaults`
+23. `feat(mobile): legacy order operations and quantity-check console`
 
 ---
 
@@ -643,38 +1016,49 @@ Run the app: `flutter run --dart-define=NEXORA_API_BASE_URL=http://122.252.246.1
 The short list is in **▶ RESUME HERE** at the top. Everything still open,
 grouped by phase:
 
-**Phase 2 — one thing left, and it needs a server**
-1. **Run the exit criterion against a live HO server.** Photograph offline,
-   reconnect, review, export, open the workbook in Excel. Every piece is built
-   and covered by tests, including a contract test over the workbook itself
-   (`backend/tests/test_document_export.py`), but the round trip has never run
-   against a real server — 122.252.246.181:8443 is unreachable from a dev
-   machine.
+**Blocked on the user, not on code**
+1. **§1.4 — apply the missing column defaults.** One `--apply` unblocks Phase 2
+   entirely. Declined once (2026-08-18); re-raise it, because until then
+   document capture cannot work against this database at all.
+2. **§1.1 — rotate the leaked JWT secret.** Highest severity item in this file.
+3. **§1.2 — TLS**, **§1.3 — keystore, store accounts, Firebase.**
 
-**Phase 3 — reach the MVP milestone**
-2. **Offline outbox + background sync** — largest remaining MVP piece;
-   Phase 5's Purchase Workspace depends on it. Note that review edits go
-   straight to the server today and simply report the failure when offline;
-   the outbox is where they would become queueable.
-3. **Settings** — server, theme, biometrics, cache, WhatsApp, diagnostics.
-4. Cache report results to Drift so they read offline (`fetchedAt` is already
-   plumbed through `ReportResult`; only the `report_cache` table is missing).
+**Phase 2 — one thing left, and it is the item above**
+4. **Run the exit criterion.** The harness exists and is scripted:
+   `backend/scripts/verify_extraction_roundtrip.py`. It got to step 3 of 8 and
+   stopped on §1.4. Nothing about the mobile side is known to be wrong.
 
-**Phase 4 — the two large consoles**
-5. **Cycle & Refresh Console** — also needs Firebase for its
-   push-on-completion, still unprovisioned (§1.3).
-6. **Legacy Order Console** — ~20 endpoints under `/api/legacy-order/*`.
+**Phase 4 — complete except external push infrastructure**
+5. **Cycle Console push-on-completion** — needs Firebase (§1.3). Everything
+   else in that console is built.
+
+**Phase 5 — not started**
+6. Purchase Workspace (reduced scope), Refresh Compare, Stock Distribution
+   monitor, conflict-resolution UI for queued procurement edits. The outbox
+   that Purchase Workspace depends on is now in place (§2, Phase 3), and its
+   `OutboxDispatcher.register` is the extension point — a procurement kind is
+   registered the same way the four `document.*` kinds are.
+
+**Phase 6 — not started**
+7. Security audit, performance profiling, accessibility audit, store listings,
+   staged rollout. Note APK size (69.8MB) has never been addressed: R8/resource
+   shrinking is not enabled, which is Phase 6 work and wants device testing
+   because Flutter plugins vary in how well they survive minification.
 
 **Cross-cutting, do whenever the relevant code is next touched**
 
-- The **More tab is now long enough that Sign out is below the fold.** Another
-  entry wants grouping (or a submenu), not appending.
-- Two things when the camera is next on real hardware: calibrate the quality
-  thresholds (§2), and fix `CapturePages.filePath` holding an **absolute**
-  path — the iOS app container UUID changes across reinstalls, so a queue that
-  survives an app update finds its images missing. The uploader already fails
-  such a batch cleanly rather than sending a truncated invoice; the fix is to
-  store a path relative to the documents directory and resolve it at read time.
+- **Calibrate the capture quality thresholds** on real store captures
+  (`_sharpnessReject` and friends in `capture_processor.dart`). Still the one
+  Phase 2 item no amount of local work can substitute for.
+- **The outbox has no UI entry point from the review screen.** A user who makes
+  an offline correction is told it will sync, but only Settings → Pending
+  changes shows it afterwards. A per-document indicator on the review screen
+  would close that loop; `OutboxRepository.forScope('import:<id>')` already
+  returns exactly that list.
+- **`ReportsRepository.clear()` is written but never called.** It exists so a
+  store switch cannot surface the previous store's numbers. The cache key
+  includes the store id so this is not a correctness hole today, but wiring it
+  to `AuthController.clearStore` would stop the cache growing per store.
 
 ### What the camera work has NOT been verified against
 
@@ -701,8 +1085,16 @@ blurred page is actually flagged.
 
 ## 7. Working agreements observed this session
 
-- Verify by **running**, not just analysing — the `StatusCard` crash proves why.
-- Never invent an endpoint; read the router. `routes.json` is stale.
-- Report status honestly, including percentages and what is *not* done.
+- Verify by **running**, not just analysing — the `StatusCard` crash proves why,
+  and every session since has found something the same way.
+- Never invent an endpoint; read the router — or better, read a live response.
+  The Cycle Console's model was shaped from real JSON off `localhost:8000`, and
+  it carried nullable fields the router signature did not reveal.
+  **`routes.json` is now current** (348 paths) and regenerable, so it can be
+  trusted again — but it is a snapshot, so regenerate it rather than assuming.
+- Report status honestly, including percentages and what is *not* done. If a
+  thing is skipped on judgment rather than blocked, say which and why.
 - Comments explain **why**, not what.
-- Do not commit without being asked.
+- **Do not commit without being asked.**
+- Ask before writing to the user's database or changing its schema. Both came
+  up this session; the record write was approved, the schema change was not.

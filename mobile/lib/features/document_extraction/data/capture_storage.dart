@@ -24,6 +24,44 @@ class CaptureStorage {
     return dir;
   }
 
+  /// The captures directory itself. Exposed so the queue can convert between
+  /// the stored form of a page path and a usable one.
+  Future<Directory> baseDirectory() => _base();
+
+  /// Converts an absolute page path into the form that is safe to persist.
+  ///
+  /// **Absolute paths must never be stored.** On iOS the application container
+  /// is a UUID directory that the OS reassigns on reinstall and can change
+  /// across an app update, so an absolute path recorded yesterday can point at
+  /// nothing today — and the queue would fail a batch of invoices whose images
+  /// are sitting on disk a few directories away. Android is less volatile but
+  /// not guaranteed either.
+  ///
+  /// A path outside the captures directory is returned unchanged: it is not
+  /// ours to rebase, and silently mangling it would be worse than storing it
+  /// as-is.
+  Future<String> relativize(String absolutePath) async {
+    final base = await _base();
+    if (!p.isWithin(base.path, absolutePath)) return absolutePath;
+    return p.relative(absolutePath, from: base.path);
+  }
+
+  /// Turns a stored page path back into a usable absolute one.
+  ///
+  /// Absolute input is passed through untouched, which is what makes this
+  /// backward compatible: rows written before this change still hold absolute
+  /// paths, and they keep resolving until their batches age out. No migration
+  /// is needed, and none could be written anyway — the old container path is
+  /// exactly the thing that may no longer exist.
+  Future<String> resolve(String storedPath) async {
+    if (p.isAbsolute(storedPath)) return storedPath;
+    final base = await _base();
+    return p.join(base.path, storedPath);
+  }
+
+  Future<File> resolveFile(String storedPath) async =>
+      File(await resolve(storedPath));
+
   /// Writes one page of an in-progress capture session.
   ///
   /// Sessions get their own directory so an abandoned capture can be discarded

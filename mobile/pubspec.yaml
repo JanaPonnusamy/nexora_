@@ -24,6 +24,11 @@ dependencies:
   # Secure storage (JWT token, selected store)
   flutter_secure_storage: ^9.2.2
 
+  # Biometric / device-credential unlock (Phase 1). Device credential is kept as
+  # a fallback rather than requiring biometrics, so a broken sensor or a removed
+  # fingerprint cannot strand a user holding a valid session.
+  local_auth: ^2.3.0
+
   # Local persistence / offline cache (foundation for Phase 2 sync)
   drift: ^2.18.0
   sqlite3_flutter_libs: ^0.5.24
