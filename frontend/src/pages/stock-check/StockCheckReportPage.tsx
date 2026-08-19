@@ -209,7 +209,7 @@ export default function StockCheckReportPage() {
         <div className="table-responsive">
           <table className="table table-sm table-bordered align-middle mb-0">
             <thead>
-              <tr className="table-light">
+              <tr style={{ background: 'var(--nx-surface-sunk)', color: 'var(--nx-text)' }}>
                 <th style={{ whiteSpace: 'nowrap' }}>code</th>
                 <th style={{ whiteSpace: 'nowrap' }}>sublocation</th>
                 <th style={{ width: '100%' }}>PRODUCTNAME</th>

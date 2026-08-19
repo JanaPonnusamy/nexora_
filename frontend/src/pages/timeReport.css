@@ -62,6 +62,26 @@
 .trp-table tbody td { padding: 5px 10px; border-bottom: 1px solid var(--bs-border-color, #f1f5f9); white-space: nowrap; }
 .trp-table tbody tr:hover td { filter: brightness(0.98); }
 
+/* Status-coloured rows/cells carry their own explicit inline bg+text (see
+   statusStyle() in TimeReportPage.tsx) — they're meant to read the same in
+   both themes. Guard against page-level filters/opacity/blend-modes leaking
+   in and washing them out against the dark canvas. */
+.trp-table tbody tr[style] {
+  opacity: 1 !important;
+  filter: none !important;
+  mix-blend-mode: normal !important;
+  isolation: isolate;
+}
+.trp-table tbody tr[style] td {
+  color: inherit;
+  opacity: 1 !important;
+  filter: none !important;
+}
+.trp-table tbody td[style] {
+  opacity: 1 !important;
+  filter: none !important;
+}
+
 .trp-left { text-align: left; }
 .trp-right { text-align: right; font-variant-numeric: tabular-nums; }
 .trp-center { text-align: center; }
@@ -80,8 +100,8 @@
   border-radius: 8px;
   font-size: 10px;
   font-weight: 700;
-  background: #ffd9a0;
-  color: #000;
+  background: var(--nx-warning-sunk, #ffd9a0);
+  color: var(--nx-warning-ink, #000);
 }
 
 /* Monthly muster: narrow coloured day cells with the status code letter. */

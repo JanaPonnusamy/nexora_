@@ -131,16 +131,19 @@
 .platform-nav-rail {
   flex: 0 0 var(--platform-nav-rail-width);
   width: var(--platform-nav-rail-width);
-  padding: 0.75rem;
-  border-right: 1px solid var(--bs-border-color);
-  background: var(--bs-tertiary-bg);
+  padding: 0.7rem 0.4rem;
+  border-right: 1px solid var(--nx-glass-border);
+  background: var(--nx-glass-bg);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .platform-nav-rail__empty {
   padding: 0.75rem;
   font-size: 0.8rem;
-  color: var(--bs-secondary-color);
+  color: var(--nx-text-muted);
 }
 
 .platform-nav-rail__group {
@@ -153,32 +156,47 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--bs-secondary-color);
+  color: var(--nx-text-muted);
 }
 
 .platform-nav-rail__link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.65rem;
   width: 100%;
   padding: 0.5rem 0.65rem;
   border: none;
-  border-radius: var(--nx-radius-md);
+  border-radius: var(--nx-radius-sm);
   background: transparent;
   font-size: 0.9rem;
-  color: var(--bs-body-color);
+  font-weight: 500;
+  color: var(--nx-text-soft);
   text-align: left;
   cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease;
 }
 
 .platform-nav-rail__link:hover {
-  background: var(--bs-secondary-bg);
-  color: var(--bs-emphasis-color);
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
 }
 
 .platform-nav-rail__link.active {
-  background: var(--bs-primary);
-  color: #fff;
+  background: var(--nx-accent-sunk);
+  color: var(--nx-accent-ink);
+  font-weight: 600;
+}
+
+.platform-nav-rail__link.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 15%;
+  bottom: 15%;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--nx-accent);
 }
 
 .platform-nav-rail__icon {

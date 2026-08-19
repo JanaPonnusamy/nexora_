@@ -417,8 +417,7 @@ BEGIN
             ISNULL(sr.Salesmanname, '-') AS SalesmanName
         FROM sync.SaleInformation si
         LEFT JOIN sync.SalesRep sr
-               ON sr.tenant_id   = si.tenant_id
-              AND sr.store_id    = si.store_id
+               ON sr.store_id    = si.store_id
               AND sr.Salesmancode = si.DeliverySalesRep
         WHERE si.tenant_id = @TenantId
           AND si.store_id  = @StoreId

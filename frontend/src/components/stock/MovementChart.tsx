@@ -251,17 +251,23 @@ export function MovementChart({ rows, flat = false }: { rows: MovementRow[]; fla
         )}
       </div>
 
-      <div className="sa-chart__readout">
-        {SERIES.map((series) => (
-          <div className="sa-chart__metric" key={series.key} title={series.label}>
-            <span className="sa-chart__metric-val" style={{ color: series.color }}>{num(Number(data[focus]?.[series.key]) || 0)}</span>
-            <span className="sa-chart__metric-label">
-              <span className="sa-chart__swatch" style={{ background: series.color }} />
-              {series.short}
-            </span>
-          </div>
-        ))}
-      </div>
+      {/* Purchase Manager's compact (flat) chart drops this readout row — it's
+          pure vertical cost there (Purchase/Sales History need the room, and
+          the same PUR/SAL/TIN/TOUT/ADJ/STK breakdown is already on hover via
+          sa-chart__tip). The full Stock Availability chart keeps it. */}
+      {!flat && (
+        <div className="sa-chart__readout">
+          {SERIES.map((series) => (
+            <div className="sa-chart__metric" key={series.key} title={series.label}>
+              <span className="sa-chart__metric-val" style={{ color: series.color }}>{num(Number(data[focus]?.[series.key]) || 0)}</span>
+              <span className="sa-chart__metric-label">
+                <span className="sa-chart__swatch" style={{ background: series.color }} />
+                {series.short}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
