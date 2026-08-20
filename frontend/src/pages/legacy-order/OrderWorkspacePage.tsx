@@ -5,6 +5,7 @@ import type {
   AssignedOrderRow,
   LegacyStore,
   OrderMode,
+  OrderWorkflowSummary,
   SupplierListItem,
   SupplierOrderMode,
   WorkspaceOrderRow,
@@ -12,6 +13,7 @@ import type {
 import './legacy-order.css'
 import { FilterBar, FilterSearch, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
 import { ProductDetailPanel } from './ProductDetailPanel'
+import { OrderWorkflowPanel } from './OrderWorkflowPanel'
 
 type View = 'review' | 'supplier' | 'assigned'
 
@@ -46,6 +48,8 @@ export default function OrderWorkspacePage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [banner, setBanner] = useState<string | null>(null)
+  const [workflow, setWorkflow] = useState<OrderWorkflowSummary | null>(null)
+  const [workflowRefresh, setWorkflowRefresh] = useState(0)
 
   const gridRef = useRef<HTMLDivElement | null>(null)
 
@@ -103,10 +107,17 @@ export default function OrderWorkspacePage() {
     }
   }, [store, view, supplier, supplierMode, resetGrid])
 
-  useEffect(() => { loadGrid() }, [loadGrid])
+  useEffect(() => {
+    const handle = window.setTimeout(loadGrid, 0)
+    return () => window.clearTimeout(handle)
+  }, [loadGrid])
 
-  // Switching store clears supplier context; switching away from review keeps it.
-  useEffect(() => { setSupplier(null); setSuppliers([]); setSupplierSearch('') }, [store])
+  const changeStore = (nextStore: string) => {
+    setSupplier(null)
+    setSuppliers([])
+    setSupplierSearch('')
+    setStore(nextStore)
+  }
 
   const statusOf = (row: WorkspaceOrderRow) => statusOverride[row.ProductCode] ?? row.Status
   const qtyOf = (row: WorkspaceOrderRow) => edits[row.ProductCode] ?? row.OrderQty
@@ -117,7 +128,7 @@ export default function OrderWorkspacePage() {
     legacyOrderService.updateOrderQty(store, row.ProductCode, value)
       .then(() => setRows((cur) => cur.map((r) => (r.ProductCode === row.ProductCode ? { ...r, OrderQty: value } : r))))
       .catch((e: Error) => setError(e.message))
-      .finally(() => setSavingQty(null))
+      .finally(() => { setSavingQty(null); setWorkflowRefresh((value) => value + 1) })
   }, [store])
 
   const toggleAssign = useCallback((row: WorkspaceOrderRow) => {
@@ -134,7 +145,7 @@ export default function OrderWorkspacePage() {
         )
       })
       .catch((e: Error) => setError(e.message))
-      .finally(() => setAssigningCode(null))
+      .finally(() => { setAssigningCode(null); setWorkflowRefresh((value) => value + 1) })
   }, [store, supplier])
 
   const isStock = view === 'supplier' && supplierMode === 'stock'
@@ -173,7 +184,7 @@ export default function OrderWorkspacePage() {
       <header className="lo-header">
         <div>
           <h1>Order Management · Workspace</h1>
-          <p className="lo-sub">Pick a supplier, review its orderable products by purchase history or live stock, edit quantities, and assign the supplier per line — the VB.NET dgvMain ordering screen.</p>
+          <p className="lo-sub">Review the generated order, allocate every positive line to a supplier, then finalize it for downstream processing.</p>
         </div>
         <div className="lo-actions">
           <Link to="/legacy-order/qty-check" className="lo-btn"><i className="bi bi-table" /> Qty Check Grid</Link>
@@ -184,10 +195,24 @@ export default function OrderWorkspacePage() {
       {error && <div className="lo-error" role="alert">{error}<button type="button" onClick={() => setError(null)} aria-label="Dismiss">×</button></div>}
       {banner && <div className="lo-success"><i className="bi bi-check-circle" /> {banner}<button type="button" onClick={() => setBanner(null)} aria-label="Dismiss" style={{ marginLeft: 'auto', background: 'none', border: 0, cursor: 'pointer' }}>×</button></div>}
 
+      <OrderWorkflowPanel
+        store={store}
+        refreshToken={workflowRefresh}
+        onError={setError}
+        onChange={setWorkflow}
+      />
+
+      {workflow && workflow.qty_pending > 0 && (
+        <div className="lo-attention">
+          <span><i className="bi bi-exclamation-circle" /> {workflow.qty_pending} products still need quantity review.</span>
+          <Link to="/legacy-order/qty-check" className="lo-btn lo-btn-primary">Continue qty review <i className="bi bi-arrow-right" /></Link>
+        </div>
+      )}
+
       <section className="lo-card">
         <div className="lo-section-title">
           <FilterBar compact className="lo-row" ariaLabel="Order workspace filters">
-            <FilterSelect label="Store" ariaLabel="Store" value={store} onChange={setStore}>
+            <FilterSelect label="Store" ariaLabel="Store" value={store} onChange={changeStore}>
               {stores.map((s) => <option key={s.store_name} value={s.store_name}>{s.store_name}</option>)}
             </FilterSelect>
             <FilterTabs
@@ -298,7 +323,7 @@ export default function OrderWorkspacePage() {
                             min={0}
                             aria-label={`${row.ProductName} order quantity`}
                             value={value}
-                            disabled={savingQty === row.ProductCode || assignedRow}
+                            disabled={savingQty === row.ProductCode || assignedRow || workflow?.status === 'FINALIZED'}
                             onClick={(e) => e.stopPropagation()}
                             onFocus={() => setSelectedCode(row.ProductCode)}
                             onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: Number(e.target.value) }))}
@@ -324,7 +349,7 @@ export default function OrderWorkspacePage() {
                             <button
                               type="button"
                               className={`lo-btn ${assignedRow ? 'lo-btn-danger' : 'lo-btn-primary'}`}
-                              disabled={assigningCode === row.ProductCode}
+                              disabled={assigningCode === row.ProductCode || workflow?.status === 'FINALIZED'}
                               onClick={(e) => { e.stopPropagation(); toggleAssign(row) }}
                             >
                               {assigningCode === row.ProductCode ? '…' : assignedRow ? 'Unassign' : 'Assign'}

@@ -23,6 +23,8 @@ import type {
   WorkspaceOrderRow,
   LegacyDbHealth,
   LegacyDbRecovery,
+  OrderWorkflowAuditEntry,
+  OrderWorkflowSummary,
 } from '../types/legacyOrder'
 
 const BASE = '/api/legacy-order'
@@ -69,6 +71,28 @@ export const legacyOrderService = {
     api.patch<{ store_name: string; product_code: number; order_qty: number }>(
       `${BASE}/orders/${encodeURIComponent(storeName)}/${productCode}`,
       { order_qty: orderQty },
+    ),
+
+  orderWorkflow: (storeName: string) =>
+    api.get<OrderWorkflowSummary>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/workflow`,
+    ),
+
+  orderWorkflowAudit: (storeName: string, limit = 30) =>
+    api.get<OrderWorkflowAuditEntry[]>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/workflow/audit?limit=${limit}`,
+    ),
+
+  finalizeOrder: (storeName: string, note?: string) =>
+    api.post<OrderWorkflowSummary>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/workflow/finalize`,
+      { note: note || null },
+    ),
+
+  reopenOrder: (storeName: string, note?: string) =>
+    api.post<OrderWorkflowSummary>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/workflow/reopen`,
+      { note: note || null },
     ),
 
   suppliers: (storeName: string, search = '') =>

@@ -26,16 +26,22 @@
 }
 
 .lo-badge {
+  display: inline-flex;
   flex: none;
-  padding: 0.25rem 0.6rem;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.75rem;
   border: 1px solid var(--bs-warning-border-subtle, #ffe69c);
   border-radius: 999px;
   background: var(--bs-warning-bg-subtle, #fff3cd);
   color: var(--bs-warning-text-emphasis, #664d03);
   font-size: 0.72rem;
   font-weight: 600;
+  line-height: 1;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 /* ----- cards ----- */
@@ -198,6 +204,7 @@
   color: inherit;
   font: inherit;
   font-weight: 500;
+  text-decoration: none;
   cursor: pointer;
 }
 
@@ -551,8 +558,18 @@
 
 .lo-actions {
   display: flex;
+  align-items: center;
   gap: 0.4rem;
   white-space: nowrap;
+}
+
+.lo-actions .lo-btn {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  line-height: 1;
 }
 
 .lo-running-dot {
@@ -866,51 +883,113 @@
   .lo-compare-controls label, .lo-compare-controls button { width: 100%; }
 }
 
-/* ----- Qty Check: everything fits the viewport, panels scroll internally ----- */
+/* ----- Qty Check workspace ----- */
 .qc-shell {
-  height: 100%;
-  min-height: 0;
+  min-height: 100%;
+  overflow: visible;
+}
+
+.qc-filter-panel {
+  padding: 0.8rem;
+  background: color-mix(in srgb, var(--bs-tertiary-bg) 44%, var(--bs-body-bg));
+}
+
+.qc-filter-panel .lo-section-title { align-items: flex-end; }
+.qc-filter-panel .ds-filter-bar { flex: 1 1 auto; }
+.qc-product-search { flex: 1 1 20rem; min-width: 15rem; }
+
+.qc-queue-count {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0 0.3rem;
+  min-width: 6.5rem;
+  padding: 0.35rem 0.65rem;
+  border-left: 1px solid var(--bs-border-color);
+  color: var(--bs-secondary-color);
+  font-size: 0.67rem;
+  line-height: 1.15;
+}
+
+.qc-queue-count strong { color: var(--bs-body-color); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.qc-queue-count i { display: none; }
+
+.qc-workspace {
+  display: grid;
+  grid-template-columns: minmax(38rem, 1.45fr) minmax(25rem, 0.85fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.qc-queue-card,
+.qc-detail-card {
   display: flex;
+  min-height: 29rem;
   flex-direction: column;
   overflow: hidden;
 }
 
-.qc-shell > * { flex: 0 0 auto; }
+.qc-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.65rem;
+}
 
-.qc-shell .lo-lower-grid {
+.qc-card-heading h2 { margin: 0.08rem 0 0; font-size: 1rem; }
+.qc-keyboard-help { display: flex; align-items: center; gap: 0.35rem; color: var(--bs-secondary-color); font-size: 0.66rem; white-space: nowrap; }
+.qc-keyboard-help kbd { padding: 0.16rem 0.35rem; border: 1px solid var(--bs-border-color); border-bottom-width: 2px; border-radius: 0.25rem; background: var(--bs-tertiary-bg); color: var(--bs-body-color); font: inherit; font-weight: 600; }
+.qc-product-code,
+.qc-history-count { padding: 0.25rem 0.5rem; border-radius: 999px; background: var(--bs-tertiary-bg); color: var(--bs-secondary-color); font-size: 0.68rem; font-weight: 600; }
+
+.qc-grid-scroll,
+.qc-detail-card .qc-detail-scroll {
   flex: 1 1 auto;
+  max-height: 36rem;
   min-height: 0;
 }
 
-.qc-shell .lo-lower-grid > .lo-card {
+.qc-detail-scroll { overflow-y: auto; }
+
+.qc-empty-state,
+.qc-detail-empty {
+  flex: 1 1 auto;
   display: flex;
+  min-height: 20rem;
+  align-items: center;
+  justify-content: center;
   flex-direction: column;
-  min-height: 0;
+  padding: 2.5rem;
+  border: 1px dashed var(--bs-border-color);
+  border-radius: 0.55rem;
+  background: linear-gradient(145deg, rgba(var(--bs-primary-rgb), 0.035), transparent);
+  text-align: center;
+}
+
+.qc-empty-icon,
+.qc-detail-empty > span {
+  display: grid;
+  width: 3.5rem;
+  height: 3.5rem;
+  margin-bottom: 0.8rem;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(var(--bs-primary-rgb), 0.11);
+  color: var(--bs-primary);
+  font-size: 1.35rem;
+}
+
+.qc-empty-state.is-complete .qc-empty-icon { background: var(--bs-success-bg-subtle); color: var(--bs-success); }
+.qc-empty-state h3 { margin: 0; font-size: 1rem; }
+.qc-empty-state p,
+.qc-detail-empty p { max-width: 32rem; margin: 0.35rem 0 1rem; color: var(--bs-secondary-color); font-size: 0.78rem; }
+.qc-detail-empty strong { font-size: 0.9rem; }
+
+.qc-history {
   overflow: hidden;
 }
 
-.qc-shell .lo-lower-grid > .lo-card > .lo-scroll,
-.qc-shell .lo-lower-grid > .lo-card > .qc-detail-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.qc-shell .qc-history {
-  flex: 0 0 14rem;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.qc-shell .qc-history .lo-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.qc-detail-scroll {
-  overflow-y: auto;
-}
+.qc-history-scroll { max-height: 18rem; }
 
 .qc-product-name {
   display: inline-block;
@@ -953,3 +1032,114 @@
 .lo-table tbody tr.lo-row-assigned > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.14); }
 .lo-table tbody tr.lo-row-assigned > td:nth-child(3) { color: var(--bs-success, #198754); font-weight: 700; }
 .lo-table tbody tr.lo-row-assigned.is-row-selected > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.24); }
+
+/* ----- Guided order workflow ----- */
+.lo-workflow {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--bs-primary) 24%, var(--bs-border-color));
+  border-radius: 0.7rem;
+  background: linear-gradient(135deg, rgba(var(--bs-primary-rgb), 0.06), var(--bs-body-bg) 46%);
+}
+
+.lo-workflow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.9rem 0.55rem;
+}
+
+.lo-workflow-head > div:first-child { display: flex; flex-direction: column; gap: 0.12rem; }
+.lo-workflow-head > div:first-child > strong { font-size: 0.92rem; }
+.lo-workflow-actions { display: flex; gap: 0.4rem; }
+
+.lo-workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(8rem, 1fr));
+  padding: 0 0.9rem 0.75rem;
+}
+
+.lo-workflow-steps a {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2.1rem 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.55rem;
+  padding: 0.55rem 0.65rem;
+  border-bottom: 3px solid var(--bs-border-color);
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+}
+
+.lo-workflow-steps a > span {
+  grid-row: 1 / 3;
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  align-self: center;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 50%;
+  background: var(--bs-body-bg);
+}
+
+.lo-workflow-steps a small { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.lo-workflow-steps a strong { font-size: 0.76rem; }
+.lo-workflow-steps a.is-done { border-color: var(--bs-success); color: var(--bs-success-text-emphasis); }
+.lo-workflow-steps a.is-done > span { border-color: var(--bs-success); background: var(--bs-success-bg-subtle); }
+.lo-workflow-steps a.is-current { border-color: var(--bs-primary); color: var(--bs-primary); }
+.lo-workflow-steps a.is-current > span { border-color: var(--bs-primary); background: rgba(var(--bs-primary-rgb), 0.12); }
+.lo-workflow-steps a.is-page { background: rgba(var(--bs-primary-rgb), 0.04); }
+
+.lo-workflow-metrics {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.55rem 0.9rem;
+  border-top: 1px solid var(--bs-border-color);
+  background: color-mix(in srgb, var(--bs-tertiary-bg) 68%, transparent);
+  font-size: 0.72rem;
+  color: var(--bs-secondary-color);
+}
+
+.lo-workflow-metrics span { white-space: nowrap; }
+.lo-workflow-metrics strong { color: var(--bs-body-color); font-size: 0.8rem; }
+.lo-workflow-progress { flex: 1 1 7rem; min-width: 5rem; height: 0.35rem; overflow: hidden; border-radius: 999px; background: var(--bs-border-color); }
+.lo-workflow-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--bs-primary); transition: width 180ms ease; }
+.lo-workflow-status { padding: 0.25rem 0.55rem; border-radius: 999px; background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-style: normal; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+.lo-workflow-status.is-finalized, .lo-workflow-status.is-ready { background: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); }
+.lo-workflow-finalized { margin: 0; padding: 0.45rem 0.9rem; border-top: 1px solid var(--bs-border-color); color: var(--bs-success-text-emphasis); font-size: 0.72rem; }
+
+.lo-workflow-audit { max-height: 12rem; overflow-y: auto; border-top: 1px solid var(--bs-border-color); background: var(--bs-body-bg); }
+.lo-workflow-audit > div { display: grid; grid-template-columns: auto 1fr auto; gap: 0.35rem; padding: 0.4rem 0.9rem; border-bottom: 1px solid var(--bs-border-color); font-size: 0.72rem; }
+.lo-workflow-audit small { color: var(--bs-secondary-color); }
+.lo-attention { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.6rem 0.75rem; border: 1px solid var(--bs-warning-border-subtle); border-radius: 0.5rem; background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.8rem; }
+
+/* Fast keyboard review controls; actions remain visible for mouse/touch users. */
+.qc-qty-editor { display: inline-flex; align-items: center; gap: 0.2rem; }
+.qc-qty-editor input { width: 3.8rem; padding: 0.25rem 0.35rem; border: 1px solid var(--bs-border-color); border-radius: 0.3rem; background: var(--bs-body-bg); color: inherit; text-align: right; }
+.qc-qty-editor button { display: grid; width: 1.7rem; height: 1.7rem; place-items: center; padding: 0; border: 1px solid var(--bs-border-color); border-radius: 0.3rem; background: var(--bs-tertiary-bg); color: inherit; cursor: pointer; }
+.qc-qty-editor button:first-of-type { color: var(--bs-success); }
+.qc-qty-editor button:last-of-type { color: var(--bs-danger); }
+.lo-filter-card { padding-block: 0.7rem; }
+
+@media (max-width: 960px) {
+  .lo-workflow-steps { grid-template-columns: repeat(2, 1fr); }
+  .lo-workflow-metrics { flex-wrap: wrap; }
+  .lo-workflow-progress { flex-basis: 100%; order: 2; }
+  .qc-workspace { grid-template-columns: 1fr; }
+  .qc-queue-card, .qc-detail-card { min-height: 24rem; }
+}
+
+@media (max-width: 680px) {
+  .lo-workflow-head { align-items: stretch; flex-direction: column; }
+  .lo-workflow-actions .lo-btn { flex: 1; }
+  .lo-workflow-steps { grid-template-columns: 1fr; }
+  .lo-attention { align-items: stretch; flex-direction: column; }
+  .qc-filter-panel .lo-section-title { align-items: stretch; flex-direction: column; }
+  .qc-product-search { flex-basis: auto; min-width: 100%; }
+  .qc-queue-count { display: flex; min-width: 0; border-top: 1px solid var(--bs-border-color); border-left: 0; }
+  .qc-queue-count i { display: inline; width: 1px; background: var(--bs-border-color); }
+  .qc-keyboard-help { display: none; }
+  .qc-empty-state, .qc-detail-empty { min-height: 16rem; padding: 1.5rem; }
+}
