@@ -87,6 +87,13 @@ class CaptureUploader {
   Future<bool> _process(CaptureJob job, {String? actor}) async {
     final batchId = job.batch.id;
 
+    // Counted before anything below can fail. Reading the local files is part
+    // of the attempt, and an attempt that is never recorded is one the backoff
+    // and the give-up cap never see: the batch stays under `maxAttempts`, comes
+    // back due on the next drain, and never reaches "Upload stopped" — the one
+    // state that tells the user their pages are gone and asks them to act.
+    await _queue.markUploading(batchId);
+
     // A file can vanish between capture and upload (OS cleanup, user clearing
     // storage). Failing loudly here beats sending a truncated invoice.
     for (final file in job.files) {
@@ -98,8 +105,6 @@ class CaptureUploader {
     }
 
     try {
-      await _queue.markUploading(batchId);
-
       final importIds = await _api.upload(
         files: job.files,
         tenantId: job.batch.tenantId,

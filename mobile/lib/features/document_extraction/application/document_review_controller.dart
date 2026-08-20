@@ -44,8 +44,15 @@ String reviewScope(int importId) => 'import:$importId';
 /// Who the audit trail records for an edit. The server writes this into
 /// `doc_import_review` per changed field, so a blank actor makes a correction
 /// untraceable back to the person at the counter.
+///
+/// The user **id**, not the username. Every audit column this reaches is a SQL
+/// `UNIQUEIDENTIFIER` — `doc_import.reviewed_by` on save, `corrected_by` on a
+/// correction — and `save` writes the value straight through. A display name
+/// there does not get recorded, it fails conversion and 500s the whole
+/// request. The web console sends a GUID for exactly this reason; see
+/// `frontend/src/hooks/useActingUser.ts`.
 final reviewActorProvider = Provider<String?>(
-  (ref) => ref.watch(authControllerProvider).user?.username,
+  (ref) => ref.watch(authControllerProvider).user?.userId,
 );
 
 final documentReviewControllerProvider =
