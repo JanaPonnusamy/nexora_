@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, repository, service, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest
+from modules.legacy_order.schemas import AssignSupplierRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, WorkflowActionRequest
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -148,12 +148,70 @@ def order_summary(store_name: str):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/orders/{store_name}/workflow")
+def order_workflow(store_name: str):
+    """Readiness and durable finalization state for the latest generated order."""
+    try:
+        if not repository.get_store(store_name):
+            raise HTTPException(status_code=404, detail="Store not found")
+        return repository.order_workflow_summary(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/workflow/audit")
+def order_workflow_audit(store_name: str, limit: int = 50):
+    try:
+        return repository.order_workflow_audit(store_name, limit)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/workflow/finalize")
+def finalize_order(
+    store_name: str,
+    payload: WorkflowActionRequest,
+    current_user: dict = Depends(require_admin),
+):
+    try:
+        return repository.set_order_workflow_finalized(
+            store_name, current_user.get("username") or current_user.get("sub"), payload.note
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/workflow/reopen")
+def reopen_order(
+    store_name: str,
+    payload: WorkflowActionRequest,
+    current_user: dict = Depends(require_admin),
+):
+    try:
+        return repository.set_order_workflow_finalized(
+            store_name, current_user.get("username") or current_user.get("sub"), payload.note,
+            reopen=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.patch("/orders/{store_name}/{product_code}")
-def update_order_qty(store_name: str, product_code: int, payload: UpdateOrderQtyRequest):
+def update_order_qty(
+    store_name: str, product_code: int, payload: UpdateOrderQtyRequest,
+    current_user: dict = Depends(require_admin),
+):
     """Manual review edit -- the VB grid's editable OrderQty cell. Setting 0
     marks a product 'no need' without requiring a supplier order."""
     try:
-        updated = repository.update_order_qty(store_name, product_code, payload.order_qty)
+        updated = repository.update_order_qty(
+            store_name, product_code, payload.order_qty,
+            current_user.get("username") or current_user.get("sub"),
+        )
         if not updated:
             raise HTTPException(status_code=404, detail="Order row not found")
         return {"store_name": store_name, "product_code": product_code, "order_qty": payload.order_qty}
@@ -192,11 +250,15 @@ def assigned_orders(store_name: str, supplier_code: str):
 
 
 @router.post("/orders/{store_name}/{product_code}/assign")
-def assign_supplier(store_name: str, product_code: int, payload: AssignSupplierRequest):
+def assign_supplier(
+    store_name: str, product_code: int, payload: AssignSupplierRequest,
+    current_user: dict = Depends(require_admin),
+):
     """Assign/unassign a supplier to an order line (VB status 0<->1 toggle)."""
     try:
         result = repository.assign_supplier(
-            store_name, product_code, payload.supplier_code, payload.supplier_name
+            store_name, product_code, payload.supplier_code, payload.supplier_name,
+            current_user.get("username") or current_user.get("sub"),
         )
         if result is None:
             raise HTTPException(status_code=404, detail="Order row not found")
@@ -264,9 +326,15 @@ def qty_check_rows(store_name: str):
 
 
 @router.patch("/qty-check/{store_name}/{product_code}")
-def update_qty_check(store_name: str, product_code: int, payload: UpdateQtyCheckRequest):
+def update_qty_check(
+    store_name: str, product_code: int, payload: UpdateQtyCheckRequest,
+    current_user: dict = Depends(require_admin),
+):
     try:
-        result = repository.update_qty_check(store_name, product_code, payload.order_qty)
+        result = repository.update_qty_check(
+            store_name, product_code, payload.order_qty,
+            current_user.get("username") or current_user.get("sub"),
+        )
         if result is None:
             raise HTTPException(status_code=404, detail="Order row not found")
         return result

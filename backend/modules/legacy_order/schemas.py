@@ -41,6 +41,10 @@ class UpdateQtyCheckRequest(BaseModel):
     order_qty: int
 
 
+class WorkflowActionRequest(BaseModel):
+    note: Optional[str] = None
+
+
 class AssignSupplierRequest(BaseModel):
     supplier_code: str
     supplier_name: str
