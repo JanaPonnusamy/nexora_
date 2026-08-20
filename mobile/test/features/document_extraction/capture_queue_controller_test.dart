@@ -314,4 +314,56 @@ void main() {
       expect((await repo.byId(kept.batchId))!.pages, hasLength(1));
     });
   });
+
+  group('a page missing from storage', () {
+    /// Deleting the image is how the OS reclaiming storage looks to the queue:
+    /// the row is still pending, the file it points at is not there.
+    Future<CaptureQueueEntry> orphaned(ProviderContainer c) async {
+      final entry = await queued(c);
+      final repo = c.read(captureQueueRepositoryProvider);
+      final job = await repo.byId(entry.batchId);
+      await File(job!.pages.first.filePath).delete();
+      return entry;
+    }
+
+    test('counts the attempt rather than failing for free', () async {
+      // An uncounted attempt is one the give-up cap never sees: the batch stays
+      // under maxAttempts for ever and comes back due on every drain.
+      final c = container();
+      final entry = await orphaned(c);
+      final repo = c.read(captureQueueRepositoryProvider);
+
+      final report = await c.read(captureUploaderProvider).drain();
+
+      expect(report.failed, 1);
+      final batch = (await repo.byId(entry.batchId))!.batch;
+      expect(batch.attemptCount, 1);
+      expect(batch.lastError, contains('missing from storage'));
+      // Nothing was sent — the point of the check is to not upload a
+      // half-present invoice.
+      expect(api.uploaded, isEmpty);
+    });
+
+    test('stops, and says so, once the attempts are spent', () async {
+      final c = container();
+      final entry = await orphaned(c);
+      final repo = c.read(captureQueueRepositoryProvider);
+      for (var i = 0; i < CaptureQueueRepository.maxAttempts - 1; i++) {
+        await repo.markUploading(entry.batchId);
+      }
+
+      await c.read(captureUploaderProvider).drain();
+
+      final job = await repo.byId(entry.batchId);
+      final settled = CaptureQueueEntry.from(job!);
+      expect(settled.stage, QueueStage.stopped);
+      expect(settled.detail, contains('missing from storage'));
+      // Not due again at any point in the future, so the user's retry button is
+      // now the only thing that moves it.
+      expect(
+        await repo.due(now: DateTime.now().add(const Duration(days: 1))),
+        isEmpty,
+      );
+    });
+  });
 }

@@ -308,6 +308,14 @@ _UPDATABLE_IMPORT_FIELDS = {
 # original_file_path/original_files_json/is_duplicate/duplicate_of_import_id
 # are intentionally NOT here — they're a one-time write via
 # set_original_files() at upload finalize, not a general PATCH target.
+# UNIQUEIDENTIFIER columns in the set above. A caller that passes a display
+# name ("superadmin") instead of a GUID would otherwise reach the driver and
+# raise a SQL conversion error, 500-ing the request instead of recording the
+# edit — the same failure as_uid() already guards every other actor write in
+# this file against. Coercing to NULL loses the identity, which is why callers
+# should still send a real user id; it does not lose the save.
+_UID_IMPORT_FIELDS = {"reviewed_by"}
+
 _JSON_IMPORT_FIELDS = {
     "validation_json", "gst_slab_breakup_json",
     "processed_files_json", "latest_export_json", "ocr_json",
@@ -328,7 +336,12 @@ def update_import_fields(import_id, fields: dict):
     params = []
     for key, value in fields.items():
         set_clauses.append(f"{key} = ?")
-        params.append(_dumps(value) if key in _JSON_IMPORT_FIELDS else value)
+        if key in _JSON_IMPORT_FIELDS:
+            params.append(_dumps(value))
+        elif key in _UID_IMPORT_FIELDS:
+            params.append(as_uid(value))
+        else:
+            params.append(value)
     set_clauses.append("updated_at = SYSUTCDATETIME()")
     params.append(import_id)
 

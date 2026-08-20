@@ -12,6 +12,9 @@ import 'package:nexora_mobile/core/di/outbox_providers.dart';
 import 'package:nexora_mobile/core/outbox/outbox_repository.dart';
 import 'package:nexora_mobile/core/di/providers.dart';
 import 'package:nexora_mobile/core/network/api_exception.dart';
+import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
+import 'package:nexora_mobile/features/auth/application/auth_state.dart';
+import 'package:nexora_mobile/features/auth/data/models/app_user.dart';
 import 'package:nexora_mobile/features/document_extraction/application/document_review_controller.dart';
 import 'package:nexora_mobile/features/document_extraction/data/capture_queue_repository.dart';
 import 'package:nexora_mobile/features/document_extraction/data/capture_storage.dart';
@@ -20,6 +23,14 @@ import 'package:nexora_mobile/features/document_extraction/domain/document_revie
 import 'package:nexora_mobile/features/document_extraction/domain/document_status.dart';
 
 final _unusedDio = Dio();
+
+class FakeAuthController extends AuthController {
+  FakeAuthController(this._state);
+  final AuthState _state;
+
+  @override
+  AuthState build() => _state;
+}
 
 /// Records what review asked the server to do, and can be told to refuse.
 class FakeReviewApi extends DocumentExtractionApi {
@@ -382,6 +393,48 @@ void main() {
       await controllerOf(c).refresh(42);
 
       expect(api.reviewCalls, 2);
+    });
+  });
+
+  group('the actor an edit is recorded against', () {
+    /// Every audit column the actor reaches is a SQL UNIQUEIDENTIFIER, and
+    /// `save` writes it through without coercing. A username there does not
+    /// get recorded as a name — it fails conversion and 500s the request, so
+    /// this has to be the id. Every other test in this file overrides the
+    /// provider with a literal, which is exactly how the wiring went unchecked.
+    test('is the user id, not the username', () {
+      final c = ProviderContainer(
+        overrides: [
+          authControllerProvider.overrideWith(
+            () => FakeAuthController(
+              const AuthState(
+                status: AuthStatus.authenticated,
+                user: AppUser(
+                  userId: '8f1d4b2a-0c73-4e59-9a61-2b7c5d0e3a44',
+                  username: 'superadmin',
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+      addTearDown(c.dispose);
+
+      expect(
+          c.read(reviewActorProvider), '8f1d4b2a-0c73-4e59-9a61-2b7c5d0e3a44');
+    });
+
+    test('is null when nobody is signed in', () {
+      final c = ProviderContainer(
+        overrides: [
+          authControllerProvider.overrideWith(() => FakeAuthController(
+                const AuthState(status: AuthStatus.unauthenticated),
+              )),
+        ],
+      );
+      addTearDown(c.dispose);
+
+      expect(c.read(reviewActorProvider), isNull);
     });
   });
 }
