@@ -2732,6 +2732,10 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const settings = settingsProp || loadSettings();
   const tenantId = settings.tenantId || '';
   const storeId = settings.storeId || '';
+  // Display-scope filter for the store/warehouse lists: '' = all tenants (super
+  // admin only), else a tenant_id. Separate from settings.tenantId, which is the
+  // actual query tenant and follows the selected warehouse (see effect below).
+  const [tenantFilter, setTenantFilter] = useState(() => settings.tenantId || '');
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [supplierStatus, setSupplierStatus] = useState({ state: 'idle', message: 'Loading suppliers...' });
@@ -2774,21 +2778,34 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const queryClient = useQueryClient();
 
   const [allStores, setAllStores] = useState([]);
-  // Supplier Stock Analysis is central (warehouse) ordering: scope the supplier
-  // list to each tenant's warehouse store (NMW) — not the device store (e.g. NMA)
-  // and not every store lumped together. A super admin picks the tenant via the
-  // toolbar filter; the warehouse is resolved from that tenant's store list
-  // (NMW by code, else the lowest store_order = warehouse per the seed convention).
-  const warehouseStore = useMemo(() => {
-    const inTenant = allStores.filter((s) => !tenantId || String(s.tenant_id) === String(tenantId));
-    return inTenant.find(isWarehouseStore)
-      || [...inTenant].sort((a, b) => (a.store_order ?? 9999) - (b.store_order ?? 9999))[0]
-      || null;
-  }, [allStores, tenantId]);
-  // '' until the tenant's stores load; api client omits an empty store_id, so we
-  // never fall back to the device store — the reload effect re-fires once the
-  // warehouse id resolves.
-  const scopeStoreId = warehouseStore?.store_id ?? '';
+  // Supplier Stock Analysis is central (warehouse) ordering. Stores/warehouses
+  // shown are scoped to tenantFilter ('' = all tenants). A store is a warehouse
+  // when flagged is_warehouse (dbo.stores column), falling back to the legacy
+  // 'NMW' code so this keeps working before the column is populated everywhere.
+  const isWarehouse = (s) => Boolean(s?.is_warehouse) || isWarehouseStore(s);
+  const scopedStores = useMemo(
+    () => (tenantFilter ? allStores.filter((s) => String(s.tenant_id) === String(tenantFilter)) : allStores),
+    [allStores, tenantFilter],
+  );
+  const warehouses = useMemo(() => scopedStores.filter(isWarehouse), [scopedStores]);
+  const [warehouseId, setWarehouseId] = useState('');
+  const selectedWarehouse = useMemo(
+    () => warehouses.find((w) => w.store_id === warehouseId) || warehouses[0] || null,
+    [warehouses, warehouseId],
+  );
+  // Keep a valid warehouse selected as the list changes (tenant switch / load).
+  useEffect(() => {
+    if (!warehouses.length) { if (warehouseId) setWarehouseId(''); return; }
+    if (!warehouses.some((w) => w.store_id === warehouseId)) setWarehouseId(warehouses[0].store_id);
+  }, [warehouses, warehouseId]);
+  // The actual query tenant follows the selected warehouse's tenant, so every
+  // downstream query stays scoped even in all-tenants mode without extra plumbing.
+  useEffect(() => {
+    const wtid = selectedWarehouse?.tenant_id;
+    if (wtid && String(wtid) !== String(tenantId)) onTenantChange?.(wtid);
+  }, [selectedWarehouse, tenantId, onTenantChange]);
+  // The supplier/product list is scoped to the selected warehouse store.
+  const scopeStoreId = selectedWarehouse?.store_id ?? '';
   // { searchKey, matchesFound, storesWithMatches, byStore: Map(store_id -> {storeMeta, candidates[]}) }
   const [similar, setSimilar] = useState(null);
   const [similarStatus, setSimilarStatus] = useState({ state: 'idle', message: '' });
@@ -3723,7 +3740,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
 
   const loginStoreId = session?.user?.roles?.[0]?.store_id;
   const similarGridStores = similar
-    ? orderStores(allStores.length ? allStores : Array.from(similar.byStore.values()).map((entry) => entry.storeMeta), loginStoreId, [])
+    ? orderStores(scopedStores.length ? scopedStores : Array.from(similar.byStore.values()).map((entry) => entry.storeMeta), loginStoreId, [])
     : [];
 
   const exactGridStores = useMemo(() => {
@@ -3913,10 +3930,23 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
         {tenants.length > 1 && (
           <label className="tenant-filter">
             Tenant
-            <select value={tenantId} onChange={(event) => onTenantChange?.(event.target.value)}>
+            <select value={tenantFilter} onChange={(event) => setTenantFilter(event.target.value)}>
+              <option value="">All tenants</option>
               {tenants.map((tenant) => (
                 <option key={tenant.tenant_id} value={tenant.tenant_id}>
                   {tenant.tenant_name || tenant.tenant_code}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {warehouses.length > 1 && (
+          <label className="tenant-filter">
+            Warehouse
+            <select value={selectedWarehouse?.store_id || ''} onChange={(event) => setWarehouseId(event.target.value)}>
+              {warehouses.map((w) => (
+                <option key={w.store_id} value={w.store_id}>
+                  {w.store_code}{!tenantFilter ? ` · ${w.store_name || ''}` : ''}
                 </option>
               ))}
             </select>

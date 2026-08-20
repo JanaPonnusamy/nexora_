@@ -7,9 +7,10 @@ class StoreRepository:
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-        SELECT store_id,tenant_id,store_code,store_name,server_name,database_name,is_active
+        SELECT store_id,tenant_id,store_code,store_name,server_name,database_name,is_active,
+               is_warehouse,store_order
         FROM dbo.stores
-        ORDER BY store_code
+        ORDER BY store_order,store_code
         """)
         rows = cur.fetchall()
         conn.close()
