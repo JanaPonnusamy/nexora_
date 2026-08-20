@@ -41,6 +41,7 @@ import TimeReportPage from '../pages/TimeReportPage'
 import PassGenPage from '../pages/pass-gen/PassGenPage'
 import LegacyOrderPage from '../pages/legacy-order/LegacyOrderPage'
 import QtyCheckPage from '../pages/legacy-order/QtyCheckPage'
+import OrderWorkspacePage from '../pages/legacy-order/OrderWorkspacePage'
 import SettingsPage from '../pages/SettingsPage'
 import PlatformShellPreviewPage from '../pages/PlatformShellPreviewPage'
 import DocumentExtractionReviewPage from '../pages/document-extraction/ReviewPage'
@@ -133,6 +134,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/pass-gen" element={<RequireCapability cap="PASS_GEN"><PassGenPage /></RequireCapability>} />
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />
         <Route path="/legacy-order/qty-check" element={<RequireCapability cap="LEGACY_ORDER"><QtyCheckPage /></RequireCapability>} />
+        <Route path="/legacy-order/workspace" element={<RequireCapability cap="LEGACY_ORDER"><OrderWorkspacePage /></RequireCapability>} />
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />
         <Route path="*" element={<RoleLanding />} />
       </Route>

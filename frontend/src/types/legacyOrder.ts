@@ -85,6 +85,67 @@ export interface OrderRow {
   Remarks: string | null
 }
 
+/** One row of the Purchase-Manager-style order workspace grid. The common
+ *  fields are a subset of OrderRow (so Review-All order_summary rows are
+ *  structurally compatible); the stock-* fields are only present in the
+ *  "Live Stock" supplier mode. */
+export interface WorkspaceOrderRow {
+  ProductCode: number
+  ProductName: string
+  OrderQty: number
+  TotalStock: number
+  SLSQty: number
+  UnitDescription: string
+  SaleUnit: number
+  MRP: number
+  WantedType: string | null
+  Remarks: string | null
+  PurchasePrice: number
+  SubLocation: string | null
+  Status: number
+  ProductTypeName?: string
+  MaxQty?: number
+  // "Live Stock" mode only:
+  S_Stock?: number
+  Discount?: number | string | null
+  MinQty?: number | null
+  Sch?: number | null
+  Free?: number | null
+  SupplierProductName?: string | null
+  SupplierProductCode?: string | null
+  Rack?: string | null
+}
+
+/** Rows already assigned to a supplier (VB FetchSupplierOrderDetails). */
+export interface AssignedOrderRow {
+  ProductCode: number
+  ProductName: string
+  OrderQty: number
+  SaleUnit: number
+  MRP: number
+  OrSupplier: string | null
+  Remarks: string | null
+  PurchasePrice: number
+  TotalStock: number
+  WantedType: string | null
+  Status: number
+}
+
+export interface SupplierListItem {
+  supplier_code: string
+  supplier_name: string
+}
+
+export interface AssignResult {
+  product_code: number
+  status: number
+  order_qty: number | null
+  changed: boolean
+}
+
+/** Which supplier filter the workspace applies for a chosen supplier. */
+export type SupplierOrderMode = 'history' | 'stock'
+
 export interface QtyCheckRow {
   productcode: number
   productname: string
