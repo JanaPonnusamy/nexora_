@@ -6,6 +6,7 @@ import 'package:nexora_mobile/core/di/providers.dart';
 import 'package:nexora_mobile/core/network/api_exception.dart';
 import 'package:nexora_mobile/core/sync/connectivity_service.dart';
 import 'package:nexora_mobile/core/theme/app_theme.dart';
+import 'package:nexora_mobile/core/widgets/mobile_components.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 import 'package:nexora_mobile/features/auth/application/auth_state.dart';
 import 'package:nexora_mobile/features/auth/data/models/app_user.dart';
@@ -172,6 +173,15 @@ void main() {
     );
     await tester.pump();
     expect(find.text('Legacy Order Console'), findsOneWidget);
+
+    final suppliersTile = tester.widget<ActionTile>(
+      find.ancestor(
+        of: find.text('Suppliers'),
+        matching: find.byType(ActionTile),
+      ),
+    );
+    expect(suppliersTile.onTap, isNotNull);
+    expect(find.text('Phase 3'), findsNothing);
 
     // Dispose the first ProviderContainer. Provider overrides are fixed for a
     // container's lifetime, so replacing one ProviderScope in-place would

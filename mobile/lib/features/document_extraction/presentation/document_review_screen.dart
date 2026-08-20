@@ -116,6 +116,24 @@ class _DocumentReviewScreenState extends ConsumerState<DocumentReviewScreen> {
           initial: header.orderNumber,
           maxLength: 50,
         ),
+        ReviewField(
+          name: 'transport',
+          label: 'Transport / delivery',
+          initial: header.transport,
+          maxLength: 100,
+        ),
+        ReviewField(
+          name: 'salesman',
+          label: 'Salesman',
+          initial: header.salesman,
+          maxLength: 100,
+        ),
+        ReviewField(
+          name: 'credit_days',
+          label: 'Credit days',
+          kind: ReviewFieldKind.integer,
+          initial: header.creditDays,
+        ),
       ],
     );
     if (patch == null || patch.isEmpty || !mounted) return;
@@ -144,6 +162,18 @@ class _DocumentReviewScreenState extends ConsumerState<DocumentReviewScreen> {
           initial: header.discountAmount,
         ),
         ReviewField(
+          name: 'scheme_discount',
+          label: 'Scheme discount',
+          kind: ReviewFieldKind.decimal,
+          initial: header.schemeDiscount,
+        ),
+        ReviewField(
+          name: 'cash_discount',
+          label: 'Cash discount',
+          kind: ReviewFieldKind.decimal,
+          initial: header.cashDiscount,
+        ),
+        ReviewField(
           name: 'taxable_amount',
           label: 'Taxable',
           kind: ReviewFieldKind.decimal,
@@ -166,6 +196,12 @@ class _DocumentReviewScreenState extends ConsumerState<DocumentReviewScreen> {
           label: 'IGST',
           kind: ReviewFieldKind.decimal,
           initial: header.igstAmount,
+        ),
+        ReviewField(
+          name: 'cess_amount',
+          label: 'CESS',
+          kind: ReviewFieldKind.decimal,
+          initial: header.cessAmount,
         ),
         ReviewField(
           name: 'round_off',
@@ -237,6 +273,18 @@ class _DocumentReviewScreenState extends ConsumerState<DocumentReviewScreen> {
           maxLength: 300,
         ),
         ReviewField(
+          name: 'pack',
+          label: 'Packing',
+          initial: item.pack,
+          maxLength: 50,
+        ),
+        ReviewField(
+          name: 'hsn_code',
+          label: 'HSN code',
+          initial: item.hsnCode,
+          maxLength: 20,
+        ),
+        ReviewField(
           name: 'batch_number',
           label: 'Batch',
           initial: item.batchNumber,
@@ -273,6 +321,12 @@ class _DocumentReviewScreenState extends ConsumerState<DocumentReviewScreen> {
           initial: item.purchaseRate,
         ),
         ReviewField(
+          name: 'ptr',
+          label: 'PTR',
+          kind: ReviewFieldKind.decimal,
+          initial: item.ptr,
+        ),
+        ReviewField(
           name: 'mrp',
           label: 'MRP',
           kind: ReviewFieldKind.decimal,
@@ -283,6 +337,18 @@ class _DocumentReviewScreenState extends ConsumerState<DocumentReviewScreen> {
           label: 'GST %',
           kind: ReviewFieldKind.decimal,
           initial: item.gstPercent,
+        ),
+        ReviewField(
+          name: 'discount_percent',
+          label: 'Purchase discount %',
+          kind: ReviewFieldKind.decimal,
+          initial: item.discountPercent,
+        ),
+        ReviewField(
+          name: 'discount_amount',
+          label: 'Purchase discount amount',
+          kind: ReviewFieldKind.decimal,
+          initial: item.discountAmount,
         ),
         ReviewField(
           name: 'amount',

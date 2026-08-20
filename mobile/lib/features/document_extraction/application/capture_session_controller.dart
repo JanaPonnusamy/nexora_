@@ -164,18 +164,21 @@ class CaptureSessionController extends Notifier<CaptureSessionState> {
   /// upload itself is deliberately not awaited: the user is done the moment
   /// the batch is durable, and the drain runs whenever there is signal.
   Future<int?> commit() async {
-    if (state.isEmpty) return null;
+    if (state.isEmpty || state.busy) return null;
 
+    state = state.copyWith(busy: true, clearError: true);
+    final authController = ref.read(authControllerProvider.notifier);
+    final tenantId = await authController.resolveActiveTenantId();
     final auth = ref.read(authControllerProvider);
-    final tenantId = auth.user?.tenantId ?? auth.selectedStore?.tenantId;
-    if (tenantId == null || tenantId.isEmpty) {
+    if (tenantId == null) {
       state = state.copyWith(
-        error: 'No tenant is associated with this session. Sign in again.',
+        busy: false,
+        error: 'The selected store has no tenant assigned. '
+            'Choose the store again and retry.',
       );
       return null;
     }
 
-    state = state.copyWith(busy: true, clearError: true);
     try {
       final batchId = await _queue.enqueue(
         tenantId: tenantId,

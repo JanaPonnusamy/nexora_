@@ -65,6 +65,15 @@ class ReviewHeaderCard extends StatelessWidget {
             ReviewDetailRow(label: 'Type', value: header.invoiceType),
           if (header.orderNumber != null)
             ReviewDetailRow(label: 'Order number', value: header.orderNumber),
+          if (header.transport != null)
+            ReviewDetailRow(label: 'Transport', value: header.transport),
+          if (header.salesman != null)
+            ReviewDetailRow(label: 'Salesman', value: header.salesman),
+          if (header.creditDays != null)
+            ReviewDetailRow(
+              label: 'Credit days',
+              value: '${header.creditDays}',
+            ),
           const _Divider(),
           _SectionRow(
             title: 'Amounts',
@@ -81,6 +90,16 @@ class ReviewHeaderCard extends StatelessWidget {
               label: 'Discount',
               value: ReportFormatter.money(header.discountAmount),
             ),
+          if (header.schemeDiscount != null)
+            ReviewDetailRow(
+              label: 'Scheme discount',
+              value: ReportFormatter.money(header.schemeDiscount),
+            ),
+          if (header.cashDiscount != null)
+            ReviewDetailRow(
+              label: 'Cash discount',
+              value: ReportFormatter.money(header.cashDiscount),
+            ),
           if (header.taxableAmount != null)
             ReviewDetailRow(
               label: 'Taxable',
@@ -88,6 +107,11 @@ class ReviewHeaderCard extends StatelessWidget {
             ),
           if (_tax(header) != null)
             ReviewDetailRow(label: 'GST', value: _tax(header)),
+          if (header.cessAmount != null)
+            ReviewDetailRow(
+              label: 'CESS',
+              value: ReportFormatter.money(header.cessAmount),
+            ),
           if (header.roundOff != null)
             ReviewDetailRow(
               label: 'Round off',

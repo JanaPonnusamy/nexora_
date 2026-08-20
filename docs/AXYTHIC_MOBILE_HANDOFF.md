@@ -27,11 +27,12 @@ blocked on the user (§1), not on code.
 | Phase | State |
 |---|---|
 | 0 Setup | 🟡 CI, signing config, OpenAPI snapshot, HTTPS-only release done · **TLS / a real keystore / store accounts need you** |
-| 1 Foundation | ✅ unlock-on-open, offline banner and crash capture done · **Crashlytics needs Firebase** |
+| 1 Foundation | ✅ unlock-on-open, offline banner and local crash capture done |
 | 2 OCR Capture | ✅ code-complete · **exit criterion blocked on a backend bug, §1.4** |
 | 3 Core Ops | ✅ Sync Live, Reports, Supplier, outbox, Settings, report cache · **workmanager tick deliberately skipped, see §2** |
 | 4 Procurement | ✅ Pass Gen, Time Report, Cycle Console and **Legacy Order Console** done |
-| 5, 6 | ⬜ not started |
+| 5 Field Procurement | ✅ Purchase Workspace, Refresh Compare, Stock Distribution and procurement conflict resolution done |
+| 6 Release Hardening | 🟡 in progress · platform security, R8/resource shrinking, shared-widget accessibility, store-copy drafts and CI readiness checks done · **profiling, hardware audit, signed distribution and staged rollout remain** |
 
 ### First commands to run in a new session
 
@@ -39,7 +40,7 @@ blocked on the user (§1), not on code.
 cd mobile
 dart run build_runner build --delete-conflicting-outputs   # generated sources are gitignored
 flutter analyze --fatal-infos                              # expect: No issues found
-flutter test                                               # expect: 449 passed
+flutter test                                               # expect: 470 passed
 ```
 
 If `build_runner` is skipped the tree will not compile — `*.g.dart` and
@@ -67,8 +68,9 @@ If `build_runner` is skipped the tree will not compile — `*.g.dart` and
    tables carry the same latent fault.
 2. **Rotate the leaked JWT secret (§1.1).** Still outstanding, still the highest
    severity item in this document.
-3. **Phase 5 — Purchase Workspace** (reduced field scope); the procurement
-   outbox extension point is already in place.
+3. **Continue Phase 6:** profile on representative phones, finish the screen-level
+   accessibility audit, validate minified plugin flows on hardware, then prepare
+   signed internal-distribution builds and store screenshots.
 
 **Nothing ships until TLS is up (§1.2), regardless of which of these is done.**
 
@@ -79,12 +81,13 @@ Paste this, filling in the last line:
 > Read `docs/AXYTHIC_MOBILE_HANDOFF.md` end to end before doing anything — it is
 > the full state of this project and supersedes anything you infer from the
 > code. Then run the four commands in "First commands to run in a new session"
-> to confirm the tree is green (expect 449 tests passing, analyze clean).
+> to confirm the tree is green (expect 470 tests passing, analyze clean).
 >
-> Context you need that is not obvious: a working backend runs on
-> `http://localhost:8000` (the HO host `122.252.246.181:8443` is the unreachable
-> one). Login `superadmin`. Tenant `a7eb45bd-bdd7-4ee6-bd7b-61d1c7f4305d`
-> (Nathan Medicals). Phases 0–4 are done bar the items in §1 and Firebase push.
+> Context you need that is not obvious: the mobile app uses the HO backend at
+> `http://122.252.246.181:8443`, including on physical Android devices. Login
+> `superadmin`. Tenant `a7eb45bd-bdd7-4ee6-bd7b-61d1c7f4305d`
+> (Nathan Medicals). Phases 0–5 are done bar the items in §1;
+> Phase 6 is in progress.
 > Nothing since commit `8fe5fd2` is committed, and §7 says do not commit without
 > being asked.
 >
@@ -176,10 +179,6 @@ HTTPS host and delete
   can never be updated again, because Play matches the signing identity rather
   than the package name.
 - **Play Console / App Store Connect** accounts.
-- **Crashlytics** — needs a Firebase project. The seam it plugs into is built
-  (`CrashReporter`, §2 Phase 1); what is missing is the project and the
-  `google-services.json` / `GoogleService-Info.plist` that come with it. The
-  same project unblocks Cycle & Refresh Console's push-on-completion.
 - ~~**Biometric unlock** — mandatory or opt-in?~~ **Resolved: opt-in.** Built.
   Say so if you want it mandatory instead; the controller already holds the
   preference, so it is a policy change rather than a rewrite — but note a
@@ -245,12 +244,14 @@ exit criterion cannot run and neither can document capture.
   `android/key.properties.example`. With neither it still falls back to debug
   keys so `flutter run --release` works, but `AXYTHIC_REQUIRE_RELEASE_SIGNING=true`
   turns that fallback into a build failure — set it on anything meant for
-  distribution. Both paths verified: the fallback builds a 69.8MB APK, the
+  distribution. Both paths verified: the fallback builds a 72.0MB universal
+  APK with R8/resource shrinking enabled, the
   guarded path fails naming the missing keystore.
   The env-var route exists because `flutter build` does **not** forward `-P`
   Gradle properties, so a property alone would be unreachable from CI.
-- **Release builds are HTTPS-only by construction.** Cleartext permission now
-  lives in `android/app/src/debug/` — a debug-only manifest and
+- **Release builds are HTTPS-only by construction.** The main manifest now
+  explicitly sets `usesCleartextTraffic=false`; development exceptions live in
+  `android/app/src/debug/` — a debug-only manifest and
   `res/xml/network_security_config.xml` — so a developer can still reach the
   plain-HTTP HO server while the release APK inherits the platform default and
   cannot. Verified against the merged manifests: `networkSecurityConfig` is
@@ -290,7 +291,7 @@ for a hardcoded IP is also a routine App Review question. Until the HO server
 serves HTTPS, iOS development against it needs a temporary local `Info.plist`
 edit — do not commit one.
 
-### Phase 1 — Foundation & Rebrand ✅ (Crashlytics excepted)
+### Phase 1 — Foundation & Rebrand ✅
 
 - **Axythic dark-only theme.** `app_colors.dart` now carries the real design-system
   dark tokens from `frontend/src/design-system/tokens/theme.ts` (the old palette
@@ -356,9 +357,8 @@ edit — do not commit one.
   stream**: `ConnectivityService.statusStream` carries *transitions* only, so a
   widget watching it alone would show nothing on a phone that has been offline
   since launch — from its point of view nothing has happened. **5 tests.**
-- **Crash capture** — `core/observability/crash_reporter.dart`. Firebase is
-  still unprovisioned, so this is the seam Crashlytics drops into rather than
-  Crashlytics itself; but it closes a real gap that existed regardless.
+- **Local crash capture** — `core/observability/crash_reporter.dart`. This
+  closes a real gap that existed regardless of any future remote reporting.
   **Nothing was catching uncaught errors at all.** All three doors are now
   covered — `FlutterError.onError` (framework), `PlatformDispatcher.onError`
   (uncaught async, which is most failures here) and a `runZonedGuarded` around
@@ -367,10 +367,8 @@ edit — do not commit one.
   background upload would take the app down. The default implementation logs and
   keeps the **last 20 failures in memory** (RAM only — crash detail can contain
   invoice values), so a device can answer "what went wrong earlier?" without a
-  server. Adding Crashlytics is a new `CrashReporter` implementation and one
-  line in `bootstrap`. **4 tests.**
-
-**Not done:** Crashlytics itself (needs the Firebase project, §1.3).
+  server. A remote reporter can be added through the existing `CrashReporter`
+  interface if the product chooses one in a future phase. **4 tests.**
 
 ### Phase 2 — OCR Document Extraction ✅ code-complete · exit criterion blocked on §1.4
 
@@ -687,8 +685,8 @@ Started at the user's explicit direction, with Phases 2 and 3 both incomplete.
     unbounded-main-axis problem as a `Row`, so each carries an explicit
     `minimumSize`.
   **13 tests.**
-  **Push-on-completion is not built** — it needs Firebase (§1.3). Nothing else
-  in the console does.
+  **Push-on-completion is deferred to a future phase.** Nothing else in the
+  console is pending.
 
 - **Legacy Order Console** — `procurement/` (`legacy_order_models.dart`,
   `legacy_order_api.dart`, `legacy_order_providers.dart`,
@@ -961,20 +959,23 @@ cd mobile
 dart run build_runner build --delete-conflicting-outputs
 dart format --output=none --set-exit-if-changed lib test integration_test  # exit 0
 flutter analyze --fatal-infos                                              # No issues found
-flutter test                                                               # 449 passed
+flutter test                                                               # 470 passed
 flutter test integration_test -d <simulator-udid>                          # 6 passed
-flutter build apk --release                                                # 69.8MB (debug-signed)
-flutter build ios --debug --no-codesign                                    # ok
+dart run tool/verify_release_readiness.dart                                # 8 files passed
+flutter build apk --release --dart-define=NEXORA_ENV=prod \
+  --dart-define=NEXORA_API_BASE_URL=https://example.invalid                # 72.0MB universal APK, R8 enabled, debug-signed
+flutter build ios --release --no-codesign --dart-define=NEXORA_ENV=prod \
+  --dart-define=NEXORA_API_BASE_URL=https://example.invalid                # 25.1MB Runner.app
 
 cd ../backend
 .venv/bin/python -m pytest tests/ -q                                       # 61 passed
 .venv/bin/python scripts/dump_openapi.py --check                           # routes.json is current
 ```
 
-Run the app against the **local** backend, which is the one that works:
+Run the app against the **HO** backend:
 
 ```bash
-flutter run --dart-define=NEXORA_API_BASE_URL=http://localhost:8000
+flutter run --dart-define=NEXORA_API_BASE_URL=http://122.252.246.181:8443
 ```
 
 A simulator must be fully booted before `flutter test integration_test` — a
@@ -1008,6 +1009,7 @@ The first twelve are the pre-existing work; 13 onward is this session.
 21. `feat(mobile): cycle and refresh console`
 22. `chore(backend): scripts to verify the extraction round trip and restore column defaults`
 23. `feat(mobile): legacy order operations and quantity-check console`
+24. `build(mobile): start Phase 6 release hardening and store readiness`
 
 ---
 
@@ -1021,29 +1023,42 @@ grouped by phase:
    entirely. Declined once (2026-08-18); re-raise it, because until then
    document capture cannot work against this database at all.
 2. **§1.1 — rotate the leaked JWT secret.** Highest severity item in this file.
-3. **§1.2 — TLS**, **§1.3 — keystore, store accounts, Firebase.**
+3. **§1.2 — TLS**, **§1.3 — keystore and store accounts.**
 
 **Phase 2 — one thing left, and it is the item above**
 4. **Run the exit criterion.** The harness exists and is scripted:
    `backend/scripts/verify_extraction_roundtrip.py`. It got to step 3 of 8 and
    stopped on §1.4. Nothing about the mobile side is known to be wrong.
 
-**Phase 4 — complete except external push infrastructure**
-5. **Cycle Console push-on-completion** — needs Firebase (§1.3). Everything
-   else in that console is built.
+**Phase 4 — complete**
+5. Push-on-completion is explicitly deferred to a future phase; it is not a
+   current release requirement.
 
-**Phase 5 — not started**
-6. Purchase Workspace (reduced scope), Refresh Compare, Stock Distribution
-   monitor, conflict-resolution UI for queued procurement edits. The outbox
-   that Purchase Workspace depends on is now in place (§2, Phase 3), and its
-   `OutboxDispatcher.register` is the extension point — a procurement kind is
-   registered the same way the four `document.*` kinds are.
+**Phase 5 — complete**
+6. Purchase Workspace (reduced field scope), Refresh Compare, Stock
+   Distribution monitor and conflict-resolution UI are implemented. Purchase
+   quantity, assignment, skip and restore mutations use ordered procurement
+   outbox kinds, and rejected mutations can be resolved against the latest
+   server quantities. Verified with 467 unit/widget tests plus the iOS app-shell
+   integration smoke test.
 
-**Phase 6 — not started**
-7. Security audit, performance profiling, accessibility audit, store listings,
-   staged rollout. Note APK size (69.8MB) has never been addressed: R8/resource
-   shrinking is not enabled, which is Phase 6 work and wants device testing
-   because Flutter plugins vary in how well they survive minification.
+**Phase 6 — in progress**
+7. **Done in the first release-hardening slice:** Android R8/resource shrinking;
+   backups and cleartext disabled in the merged release manifest; iOS protected
+   data entitlement and export-compliance declaration; semantic labels and tap
+   target tests for shared status, metric and action components; store listing,
+   privacy inventory and staged-rollout checklists; and a deterministic release
+   readiness check in mobile CI. A minified Android release APK and unsigned iOS
+   release app both compile successfully. All 470 unit/widget tests pass.
+8. **Still pending:** profile startup, scrolling, memory and capture processing
+   on representative Android/iOS hardware; audit every screen with TalkBack and
+   VoiceOver plus large text; exercise camera, biometrics, secure storage, file
+   opening/sharing and offline sync in a minified build; supply a real HTTPS
+   production URL, signing credentials, privacy-policy/support URLs, final copy
+   and screenshots; upload to internal testing/TestFlight; then execute and
+   monitor the staged rollout. The universal APK is 72.0MB, so use Play's AAB
+   delivery and capture download-size reports during internal testing before
+   deciding whether further asset/native-library reduction is warranted.
 
 **Cross-cutting, do whenever the relevant code is next touched**
 

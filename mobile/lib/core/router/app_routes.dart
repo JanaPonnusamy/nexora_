@@ -61,10 +61,34 @@ class AppRoutes {
   static const String cycleConsole = 'cycle-console';
   static const String cycleConsolePath = 'cycles';
 
+  static const String purchaseWorkspace = 'purchase-workspace';
+  static const String purchaseWorkspacePath = 'purchase-workspace';
+
+  static const String refreshCompare = 'refresh-compare';
+  static const String refreshComparePath = 'refresh-compare';
+
+  static const String stockDistribution = 'stock-distribution';
+  static const String stockDistributionPath = 'stock-distribution';
+
+  static const String procurementConflicts = 'procurement-conflicts';
+  static const String procurementConflictsPath = 'conflicts';
+
+  static const String suppliers = 'suppliers';
+  static const String suppliersPath = 'suppliers';
+
   static const String legacyOrderConsole = 'legacy-order-console';
   static const String legacyOrderConsolePath = 'legacy-order';
 
   static const String cycleConsoleFullPath = '$procurePath/$cycleConsolePath';
+  static const String purchaseWorkspaceFullPath =
+      '$procurePath/$purchaseWorkspacePath';
+  static const String refreshCompareFullPath =
+      '$procurePath/$refreshComparePath';
+  static const String stockDistributionFullPath =
+      '$procurePath/$stockDistributionPath';
+  static const String procurementConflictsFullPath =
+      '$procurePath/$procurementConflictsPath';
+  static const String suppliersFullPath = '$procurePath/$suppliersPath';
   static const String legacyOrderConsoleFullPath =
       '$procurePath/$legacyOrderConsolePath';
 
@@ -81,9 +105,6 @@ class AppRoutes {
 
   static const String reports = 'reports';
   static const String reportsPath = 'reports';
-
-  static const String suppliers = 'suppliers';
-  static const String suppliersPath = 'suppliers';
 
   static const String timeReport = 'time-report';
   static const String timeReportPath = 'time-report';
@@ -108,7 +129,6 @@ class AppRoutes {
 
   /// Absolute paths for the More sub-routes, for callers that navigate by path.
   static const String reportsFullPath = '$morePath/$reportsPath';
-  static const String suppliersFullPath = '$morePath/$suppliersPath';
   static const String passGenFullPath = '$morePath/$passGenPath';
   static const String timeReportFullPath = '$morePath/$timeReportPath';
   static const String deviceStatusFullPath = '$morePath/$deviceStatusPath';

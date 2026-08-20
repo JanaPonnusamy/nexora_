@@ -39,6 +39,20 @@ class AuthState with _$AuthState {
   bool get isAuthenticated => status == AuthStatus.authenticated;
   bool get hasStore => selectedStore != null;
 
+  /// Tenant for the store the user is actively working in.
+  ///
+  /// The selected store is authoritative for platform users, who may switch
+  /// between tenants.  Treat blank IDs as absent: older servers/session data
+  /// sometimes serialised an unassigned user tenant as `''`, which otherwise
+  /// prevents Dart's null-coalescing operator from reaching the store tenant.
+  String? get activeTenantId {
+    final storeTenant = selectedStore?.tenantId?.trim();
+    if (storeTenant != null && storeTenant.isNotEmpty) return storeTenant;
+
+    final userTenant = user?.tenantId?.trim();
+    return userTenant != null && userTenant.isNotEmpty ? userTenant : null;
+  }
+
   /// True once the user is authenticated AND has picked a store — the point at
   /// which the app shell (dashboard) becomes reachable.
   bool get isReady => isAuthenticated && hasStore;

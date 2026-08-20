@@ -10,9 +10,8 @@ import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
 
 /// Root of the Procure tab: a launcher for the procurement modules.
 ///
-/// Shipped as a hub from the start so the tab has a stable shape — each module
-/// swaps its `enabled: false` for a real destination as its phase lands,
-/// without the surrounding navigation changing.
+/// Shipped as a hub from the start so the tab has a stable shape as modules
+/// land without the surrounding navigation changing.
 class ProcurementHubScreen extends ConsumerWidget {
   const ProcurementHubScreen({super.key});
 
@@ -33,17 +32,23 @@ class ProcurementHubScreen extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           const SectionHeader(title: 'DAILY', icon: Icons.today_outlined),
-          const _ModuleTile(
+          const _LiveTile(
             title: 'Purchase Workspace',
             subtitle: 'Review products, set quantities, assign suppliers',
             icon: Icons.shopping_cart_outlined,
-            phase: 'Phase 5',
+            route: AppRoutes.purchaseWorkspaceFullPath,
           ),
-          const _ModuleTile(
+          const _LiveTile(
+            title: 'Procurement Conflicts',
+            subtitle: 'Resolve queued changes the server rejected',
+            icon: Icons.sync_problem_rounded,
+            route: AppRoutes.procurementConflictsFullPath,
+          ),
+          const _LiveTile(
             title: 'Suppliers',
             subtitle: 'Supplier master, stock and ranking',
             icon: Icons.local_shipping_outlined,
-            phase: 'Phase 3',
+            route: AppRoutes.suppliersFullPath,
           ),
           const SizedBox(height: 12),
           const SectionHeader(title: 'CYCLES', icon: Icons.autorenew_rounded),
@@ -53,19 +58,19 @@ class ProcurementHubScreen extends ConsumerWidget {
             icon: Icons.playlist_play_rounded,
             route: AppRoutes.cycleConsoleFullPath,
           ),
-          const _ModuleTile(
+          const _LiveTile(
             title: 'Refresh Compare',
             subtitle: 'Diff the final order between two refreshes',
             icon: Icons.compare_arrows_rounded,
-            phase: 'Phase 5',
+            route: AppRoutes.refreshCompareFullPath,
           ),
           const SizedBox(height: 12),
           const SectionHeader(title: 'DISTRIBUTION', icon: Icons.hub_outlined),
-          const _ModuleTile(
+          const _LiveTile(
             title: 'Stock Distribution',
             subtitle: 'Push warehouse stock out to stores',
             icon: Icons.warehouse_outlined,
-            phase: 'Phase 5',
+            route: AppRoutes.stockDistributionFullPath,
           ),
           if (canUseLegacy)
             const _LiveTile(
@@ -75,36 +80,6 @@ class ProcurementHubScreen extends ConsumerWidget {
               route: AppRoutes.legacyOrderConsoleFullPath,
             ),
         ],
-      ),
-    );
-  }
-}
-
-/// A module entry that is visible but not yet navigable. The phase badge is the
-/// point — it tells the user this is scheduled, not broken.
-class _ModuleTile extends StatelessWidget {
-  const _ModuleTile({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.phase,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final String phase;
-
-  @override
-  Widget build(BuildContext context) {
-    return Opacity(
-      opacity: 0.55,
-      child: ActionTile(
-        title: title,
-        subtitle: subtitle,
-        icon: icon,
-        color: AppColors.textMuted,
-        trailing: InfoChip(label: phase, color: AppColors.warning),
       ),
     );
   }

@@ -231,6 +231,11 @@ class ReviewItemCard extends StatelessWidget {
               ? null
               : ReportFormatter.money(item.purchaseRate ?? item.ptr),
         ),
+        if (item.ptr != null && item.purchaseRate != null)
+          _Fact(
+            label: 'PTR',
+            value: ReportFormatter.money(item.ptr),
+          ),
         _Fact(
           label: 'MRP',
           value: item.mrp == null ? null : ReportFormatter.money(item.mrp),
@@ -241,6 +246,11 @@ class ReviewItemCard extends StatelessWidget {
               value: '${ReportFormatter.integer(
                 item.gstPercent,
               )}%'),
+        if (item.discountPercent != null)
+          _Fact(
+            label: 'PDisc',
+            value: '${ReportFormatter.integer(item.discountPercent)}%',
+          ),
       ],
     );
   }
