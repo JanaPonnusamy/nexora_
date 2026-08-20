@@ -7,9 +7,13 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"node scripts/wait-and-launch.mjs\"",
+    "dev:stock": "concurrently -k \"vite --host 127.0.0.1\" \"node scripts/wait-and-launch.mjs --stock-only\"",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "start": "electron ."
+    "start": "electron .",
+    "start:stock": "electron . --stock-only",
+    "dist:stock": "vite build && electron-builder --win --config.extraMetadata.nexoraMode=stock --config.productName=\"Nexora Stock Check\" --config.artifactName=\"Nexora-Stock-Check-Setup-${version}.${ext}\"",
+    "dist:full": "vite build && electron-builder --win --config.extraMetadata.nexoraMode=full --config.productName=\"Nexora Supplier Stock\" --config.artifactName=\"Nexora-Supplier-Stock-Setup-${version}.${ext}\""
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
@@ -18,10 +22,36 @@
     "react-dom": "latest",
     "xlsx-js-style": "^1.2.0"
   },
+  "build": {
+    "appId": "com.nexora.desktop.stock",
+    "productName": "Nexora Supplier Stock",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
     "electron": "latest",
+    "electron-builder": "^24.13.3",
     "vite": "latest",
     "wait-on": "latest"
   }

@@ -143,11 +143,17 @@ def merge_keys(dest_table, columns):
         if has("ID", "StoreName"):
             return ["ID", "StoreName"]
     elif dest == "saleinformation":
-        if has("BillNumber", "BillDate", "StoreName"):
-            keys = ["BillNumber", "BillDate", "StoreName"]
-            if has("CustomerCode"):
-                keys.append("CustomerCode")
-            return keys
+        # The central table's PRIMARY KEY is (BillDate, BNumber, StoreName) --
+        # BNumber (the bill's own number), NOT BillNumber (an internal series id).
+        # The VB port keyed the MERGE on BillNumber (+ optional CustomerCode)
+        # instead, so when a bill already in central arrived with a changed
+        # BillNumber or CustomerCode the ON clause missed the existing row and
+        # the MERGE tried to INSERT a duplicate -- a PK violation VB swallowed
+        # but that now (correctly) fails the whole pre-order sync. Key on the
+        # real PK so the upsert's match predicate matches the uniqueness
+        # constraint; BillNumber/CustomerCode ride along as UPDATE-only columns.
+        if has("BNumber", "BillDate", "StoreName"):
+            return ["BillDate", "BNumber", "StoreName"]
     elif dest == "producttrans":
         if has("ProductCode", "MonthOfStatistics", "StoreName"):
             return ["ProductCode", "MonthOfStatistics", "StoreName"]
