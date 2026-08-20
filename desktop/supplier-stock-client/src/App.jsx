@@ -2732,13 +2732,6 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const settings = settingsProp || loadSettings();
   const tenantId = settings.tenantId || '';
   const storeId = settings.storeId || '';
-  // A super admin / platform user can see more than one tenant; every other
-  // login is locked to its own tenant by the API. For a broad user we list
-  // suppliers/products at tenant level (store_id omitted) so switching the
-  // tenant filter isn't silently filtered by the device's own-tenant store.
-  // Normal single-tenant users keep their existing per-store scope.
-  const isBroadTenant = tenants.length > 1;
-  const scopeStoreId = isBroadTenant ? '' : undefined;
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [supplierStatus, setSupplierStatus] = useState({ state: 'idle', message: 'Loading suppliers...' });
@@ -2776,6 +2769,21 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const queryClient = useQueryClient();
 
   const [allStores, setAllStores] = useState([]);
+  // Supplier Stock Analysis is central (warehouse) ordering: scope the supplier
+  // list to each tenant's warehouse store (NMW) — not the device store (e.g. NMA)
+  // and not every store lumped together. A super admin picks the tenant via the
+  // toolbar filter; the warehouse is resolved from that tenant's store list
+  // (NMW by code, else the lowest store_order = warehouse per the seed convention).
+  const warehouseStore = useMemo(() => {
+    const inTenant = allStores.filter((s) => !tenantId || String(s.tenant_id) === String(tenantId));
+    return inTenant.find(isWarehouseStore)
+      || [...inTenant].sort((a, b) => (a.store_order ?? 9999) - (b.store_order ?? 9999))[0]
+      || null;
+  }, [allStores, tenantId]);
+  // '' until the tenant's stores load; api client omits an empty store_id, so we
+  // never fall back to the device store — the reload effect re-fires once the
+  // warehouse id resolves.
+  const scopeStoreId = warehouseStore?.store_id ?? '';
   // { searchKey, matchesFound, storesWithMatches, byStore: Map(store_id -> {storeMeta, candidates[]}) }
   const [similar, setSimilar] = useState(null);
   const [similarStatus, setSimilarStatus] = useState({ state: 'idle', message: '' });
@@ -2984,15 +2992,20 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const similarDetailCacheRef = useRef(new Map());
 
   useEffect(() => {
-    // Reload for the active tenant on mount and whenever a super admin switches
-    // the tenant filter; clear any supplier/product selection from the old one.
+    // Clear any supplier/product selection when a super admin switches tenant.
     setSelectedSupplier('');
     setSelectedStockId('');
     setProducts([]);
     setShowSupplierPanel(true);
+  }, [tenantId]);
+
+  useEffect(() => {
+    // (Re)load the supplier list for the active tenant's warehouse — fires on
+    // mount, on tenant switch, and again once the warehouse store id resolves
+    // from the async store list.
     loadSuppliers('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
+  }, [tenantId, scopeStoreId]);
 
   useEffect(() => {
     api.listStores(session).then((rows) => setAllStores(asArray(rows))).catch(() => setAllStores([]));
