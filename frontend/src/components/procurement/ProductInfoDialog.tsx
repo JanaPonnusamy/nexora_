@@ -55,15 +55,15 @@ export function ProductInfoDialog({
   }, [tenantId, storeId, productCode, item.order_item_id])
   useEffect(load, [load])
 
-  const facts: { label: string; value: string }[] = [
-    { label: 'MRP', value: money(details?.mrp) },
-    { label: 'Sale Unit', value: details?.sale_unit ?? '—' },
-    { label: 'Packing', value: details?.packing != null ? num(details.packing) : '—' },
-    { label: 'Sub-Location', value: details?.sublocation ?? '—' },
-    { label: 'In Stock', value: num(details?.total_stock ?? item.current_stock_qty ?? 0) },
-    { label: 'Movement', value: item.movement_class ?? '—' },
-    { label: 'Last Sale', value: date(details?.last_sale) },
-    { label: 'Last Purchase', value: date(details?.last_purchase) },
+  const facts: { label: string; value: string; icon: string }[] = [
+    { label: 'MRP', value: money(details?.mrp), icon: 'bi-currency-rupee' },
+    { label: 'Sale Unit', value: details?.sale_unit ?? '—', icon: 'bi-rulers' },
+    { label: 'Packing', value: details?.packing != null ? num(details.packing) : '—', icon: 'bi-box-seam' },
+    { label: 'Sub-Location', value: details?.sublocation ?? '—', icon: 'bi-geo-alt' },
+    { label: 'In Stock', value: num(details?.total_stock ?? item.current_stock_qty ?? 0), icon: 'bi-boxes' },
+    { label: 'Movement', value: item.movement_class ?? '—', icon: 'bi-activity' },
+    { label: 'Last Sale', value: date(details?.last_sale), icon: 'bi-cart-check' },
+    { label: 'Last Purchase', value: date(details?.last_purchase), icon: 'bi-truck' },
   ]
 
   const hasCtx = Boolean(storeId && productCode)
@@ -71,13 +71,23 @@ export function ProductInfoDialog({
   return (
     <>
       <div className="pm-drawer__backdrop" onClick={onClose} />
-      <aside className="pm-drawer" role="dialog" aria-label="Product detail">
+      <aside className="pm-drawer pm-drawer--product" role="dialog" aria-modal="true" aria-labelledby="pm-product-detail-title">
         <header className="pm-drawer__head">
-          <div>
-            <h5 className="mb-0">{item.product_name ?? item.product_code}</h5>
-            <div className="small text-muted">{item.product_code}</div>
+          <span className="pm-product-dialog__mark"><i className="bi bi-capsule" aria-hidden="true" /></span>
+          <div className="pm-product-dialog__identity">
+            <span className="pm-product-dialog__eyebrow">Product details</span>
+            <h2 id="pm-product-detail-title">{item.product_name ?? item.product_code}</h2>
+            <div className="pm-product-dialog__meta">
+              <span>{item.product_code}</span>
+              <span className={`pm-product-dialog__stock${(details?.total_stock ?? item.current_stock_qty ?? 0) <= 0 ? ' is-out' : ''}`}>
+                <i className="bi bi-box-seam" aria-hidden="true" /> {num(details?.total_stock ?? item.current_stock_qty ?? 0)} in stock
+              </span>
+              {item.movement_class && <span><i className="bi bi-activity" aria-hidden="true" /> {item.movement_class}</span>}
+            </div>
           </div>
-          <button className="btn-close" aria-label="Close" onClick={onClose} />
+          <button className="pm-product-dialog__close" type="button" aria-label="Close product details" onClick={onClose}>
+            <i className="bi bi-x-lg" aria-hidden="true" />
+          </button>
         </header>
 
         <nav className="pm-drawer__tabs" role="tablist" aria-label="Product detail tabs">
@@ -100,8 +110,8 @@ export function ProductInfoDialog({
               <section className="pm-info-facts">
                 {facts.map((f) => (
                   <div className="pm-info-facts__cell" key={f.label}>
-                    <span className="pm-info-facts__lbl">{f.label}</span>
-                    <span className="pm-info-facts__val">{f.value}</span>
+                    <i className={`bi ${f.icon}`} aria-hidden="true" />
+                    <span><span className="pm-info-facts__lbl">{f.label}</span><span className="pm-info-facts__val">{f.value}</span></span>
                   </div>
                 ))}
               </section>
@@ -129,12 +139,15 @@ export function ProductInfoDialog({
           {tab === 'decision' && (
             <>
               {decision ? (
-                <section className="pm-info-reason">
-                  <h6 className="pm-info-reason__title">
-                    <i className="bi bi-lightbulb" aria-hidden="true" /> Decision Reason
-                  </h6>
-                  <div className="pm-info-reason__code">{decision.reason_code ?? '—'}</div>
-                  {decision.reason_text && <p className="small mb-2">{decision.reason_text}</p>}
+                <section className="pm-info-reason pm-info-reason--decision">
+                  <div className="pm-info-reason__head">
+                    <span className="pm-info-reason__mark"><i className="bi bi-lightbulb" aria-hidden="true" /></span>
+                    <div>
+                      <span>Decision reason</span>
+                      <strong>{decision.reason_code ?? 'Not available'}</strong>
+                    </div>
+                  </div>
+                  {decision.reason_text && <p className="pm-info-reason__text">{decision.reason_text}</p>}
 
                   <div className="pm-info-facts pm-info-facts--decision">
                     <Cell label="Suggested" value={num(decision.suggested_qty)} />
@@ -146,9 +159,15 @@ export function ProductInfoDialog({
                   </div>
 
                   {decision.business_rules_applied?.length > 0 && (
-                    <ul className="pm-info-reason__rules">
-                      {decision.business_rules_applied.map((r) => <li key={r}>{r}</li>)}
-                    </ul>
+                    <details className="pm-info-rules">
+                      <summary>
+                        <span><i className="bi bi-diagram-3" aria-hidden="true" /> Business rules applied</span>
+                        <b>{decision.business_rules_applied.length}</b>
+                      </summary>
+                      <ul className="pm-info-reason__rules">
+                        {decision.business_rules_applied.map((r) => <li key={r}><i className="bi bi-check2" aria-hidden="true" />{r}</li>)}
+                      </ul>
+                    </details>
                   )}
                 </section>
               ) : (
@@ -165,8 +184,7 @@ export function ProductInfoDialog({
 function Cell({ label, value }: { label: string; value: string }) {
   return (
     <div className="pm-info-facts__cell">
-      <span className="pm-info-facts__lbl">{label}</span>
-      <span className="pm-info-facts__val">{value}</span>
+      <span><span className="pm-info-facts__lbl">{label}</span><span className="pm-info-facts__val">{value}</span></span>
     </div>
   )
 }

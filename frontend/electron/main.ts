@@ -39,7 +39,7 @@ interface UniNexConfig {
 // intent as the web deployment's server-injected /config.js.
 function loadConfig(): UniNexConfig {
   const defaults: UniNexConfig = {
-    apiBase: process.env.UNINEX_API_BASE || 'http://localhost:8000',
+    apiBase: process.env.UNINEX_API_BASE || 'http://122.252.246.181:8443',
     env: app.isPackaged ? 'production' : 'development',
   }
   const configPath = path.join(app.getPath('userData'), 'uninex.config.json')

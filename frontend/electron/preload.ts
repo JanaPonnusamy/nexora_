@@ -9,7 +9,7 @@ const CONFIG_ARG_PREFIX = '--uninex-config='
 
 function readInjectedConfig(): UniNexConfig {
   const raw = process.argv.find((arg) => arg.startsWith(CONFIG_ARG_PREFIX))
-  const fallback: UniNexConfig = { apiBase: 'http://localhost:8000', env: 'development' }
+  const fallback: UniNexConfig = { apiBase: 'http://122.252.246.181:8443', env: 'development' }
   if (!raw) return fallback
   try {
     return JSON.parse(raw.slice(CONFIG_ARG_PREFIX.length)) as UniNexConfig
