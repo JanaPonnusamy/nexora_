@@ -309,7 +309,12 @@ function AppShell() {
         ) : activeScreen === 'settings' ? (
           <SettingsScreen settings={runtimeSettings} onSave={persistSettings} session={session} />
         ) : activeScreen === 'analysis' ? (
-          <SupplierStockAnalysis session={session} />
+          <SupplierStockAnalysis
+            session={session}
+            settings={runtimeSettings}
+            tenants={tenants}
+            onTenantChange={(tenantId) => persistSettings({ ...settings, tenantId })}
+          />
         ) : activeScreen === 'nmw_sales' ? (
           <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : (
@@ -2723,10 +2728,17 @@ function normalizeSupplierProductRows(rows) {
   return asArray(rows).map(normalizeSupplierProductRow);
 }
 
-function SupplierStockAnalysis({ session }) {
-  const settings = loadSettings();
+function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], onTenantChange }) {
+  const settings = settingsProp || loadSettings();
   const tenantId = settings.tenantId || '';
   const storeId = settings.storeId || '';
+  // A super admin / platform user can see more than one tenant; every other
+  // login is locked to its own tenant by the API. For a broad user we list
+  // suppliers/products at tenant level (store_id omitted) so switching the
+  // tenant filter isn't silently filtered by the device's own-tenant store.
+  // Normal single-tenant users keep their existing per-store scope.
+  const isBroadTenant = tenants.length > 1;
+  const scopeStoreId = isBroadTenant ? '' : undefined;
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [supplierStatus, setSupplierStatus] = useState({ state: 'idle', message: 'Loading suppliers...' });
@@ -2971,7 +2983,16 @@ function SupplierStockAnalysis({ session }) {
   // StockAvailability's detailCacheRef.
   const similarDetailCacheRef = useRef(new Map());
 
-  useEffect(() => { loadSuppliers(''); }, []);
+  useEffect(() => {
+    // Reload for the active tenant on mount and whenever a super admin switches
+    // the tenant filter; clear any supplier/product selection from the old one.
+    setSelectedSupplier('');
+    setSelectedStockId('');
+    setProducts([]);
+    setShowSupplierPanel(true);
+    loadSuppliers('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   useEffect(() => {
     api.listStores(session).then((rows) => setAllStores(asArray(rows))).catch(() => setAllStores([]));
@@ -3161,7 +3182,7 @@ function SupplierStockAnalysis({ session }) {
   async function loadSuppliers(search) {
     setSupplierStatus({ state: 'loading', message: 'Loading suppliers...' });
     try {
-      const response = await api.getSuppliers(session, { search });
+      const response = await api.getSuppliers(session, { search, storeId: scopeStoreId });
       const items = asArray(response);
       setSuppliers(items);
       setSupplierStatus({ state: 'ok', message: items.length ? `${items.length} supplier(s).` : 'No suppliers found. Import an Excel sheet to begin.' });
@@ -3192,7 +3213,7 @@ function SupplierStockAnalysis({ session }) {
       // Always fetch the full unfiltered set - search/in-stock filtering
       // happens client-side in visibleProducts, and the full set is what
       // gets cached and diffed against next time.
-      const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0 });
+      const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0, storeId: scopeStoreId });
       if (productRequestRef.current !== requestToken) return;
       const items = normalizeSupplierProductRows(response);
       setProducts(items);
@@ -3860,6 +3881,18 @@ function SupplierStockAnalysis({ session }) {
   return (
     <section className="screen-panel supplier-analysis-workbench">
       <div className="supplier-toolbar">
+        {tenants.length > 1 && (
+          <label className="tenant-filter">
+            Tenant
+            <select value={tenantId} onChange={(event) => onTenantChange?.(event.target.value)}>
+              {tenants.map((tenant) => (
+                <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                  {tenant.tenant_name || tenant.tenant_code}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button type="button" className="primary-button toolbar-import-btn" onClick={() => setImportOpen((open) => !open)}>
           {importOpen ? 'Close import' : 'Import Supplier Excel'}
         </button>

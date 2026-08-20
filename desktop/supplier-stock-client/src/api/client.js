@@ -263,7 +263,9 @@ export const api = {
     const settings = loadSettings();
     return request(`/api/supplier-stock-analysis/suppliers${toQuery({
       tenant_id: filters.tenantId || settings.tenantId,
-      store_id: filters.storeId || settings.storeId,
+      // Honor an explicit storeId even when it's '' (super admin lists at tenant
+      // level); only fall back to the device store when unspecified.
+      store_id: filters.storeId !== undefined ? filters.storeId : settings.storeId,
       search: filters.search || ''
     })}`, { session });
   },
@@ -272,7 +274,7 @@ export const api = {
     const settings = loadSettings();
     return request(`/api/supplier-stock-analysis/supplier-products${toQuery({
       tenant_id: filters.tenantId || settings.tenantId,
-      store_id: filters.storeId || settings.storeId,
+      store_id: filters.storeId !== undefined ? filters.storeId : settings.storeId,
       supplier_code: supplierCode,
       search: filters.search || '',
       only_available: filters.onlyAvailable ?? 1
