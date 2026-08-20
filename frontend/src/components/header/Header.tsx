@@ -113,10 +113,6 @@ export function Header({ onToggleNav }: HeaderProps) {
 
         <ThemeToggle />
 
-        <button type="button" className="app-iconbtn" aria-label="Notifications">
-          <i className="bi bi-bell" aria-hidden="true" />
-        </button>
-
         <span className="app-header__rule" aria-hidden="true" />
 
         <div className="app-usermenu" ref={menuRef}>

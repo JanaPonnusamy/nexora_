@@ -34,7 +34,7 @@ export function TableConfigTab() {
   const [page, setPage] = useState(0)
   const [scope, setScope] = useState<Scope>('configured')
 
-  const tables = data ?? []
+  const tables = useMemo(() => data ?? [], [data])
   const stats = {
     total: tables.length,
     enabled: tables.filter((t) => t.is_active).length,

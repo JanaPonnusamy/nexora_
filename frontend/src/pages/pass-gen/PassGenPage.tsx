@@ -315,7 +315,11 @@ export default function PassGenPage() {
                     disabled={rows.length === 1}
                     onClick={() => {
                       setRows((current) => current.filter((r) => r.row_id !== row.row_id))
-                      setResults(({ [row.row_id]: _dropped, ...rest }) => rest)
+                      setResults((current) => {
+                        const next = { ...current }
+                        delete next[row.row_id]
+                        return next
+                      })
                     }}
                   >
                     <i className="bi bi-trash" />

@@ -311,6 +311,8 @@ export const layout = {
   radiusSm: '6px',
   radiusMd: '8px',
   radiusLg: '12px',
+  tableCellBlock: '0.58rem',
+  tableCellInline: '0.75rem',
 } as const
 
 export const zLayers = {

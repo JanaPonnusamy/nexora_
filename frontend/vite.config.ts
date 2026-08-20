@@ -35,7 +35,8 @@ export default defineConfig(({ mode }) => {
                 // `app`/`BrowserWindow`, no window ever opens. Strip it here so
                 // the spawned Electron always boots as a real Electron app.
                 onstart({ startup }) {
-                  const { ELECTRON_RUN_AS_NODE: _unused, ...cleanEnv } = process.env
+                  const cleanEnv = { ...process.env }
+                  delete cleanEnv.ELECTRON_RUN_AS_NODE
                   startup(['.', '--no-sandbox', '--remote-debugging-port=9222'], { env: cleanEnv })
                 },
                 vite: {

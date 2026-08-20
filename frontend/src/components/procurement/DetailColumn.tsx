@@ -138,6 +138,7 @@ export function DetailColumn({
   const purchaseGrid = useMiniGridSettings('pm.purchaseHistory', PURCHASE_COLUMNS, DEFAULT_MINITABLE_PADDING)
   const salesGrid = useMiniGridSettings('pm.salesHistory', SALES_COLUMNS, DEFAULT_MINITABLE_PADDING)
   const [gridSettingsOpen, setGridSettingsOpen] = useState(false)
+  const [gridSettingsAnchor, setGridSettingsAnchor] = useState<DOMRect | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
   if (!item || !hasProduct) {
@@ -256,7 +257,12 @@ export function DetailColumn({
           )}
           <button
             className="pm-btn pm-btn--ghost pm-btn--sm"
-            onClick={() => setGridSettingsOpen((v) => !v)}
+            onClick={() => {
+              setGridSettingsOpen((open) => {
+                if (!open) setGridSettingsAnchor(panelRef.current?.getBoundingClientRect() ?? null)
+                return !open
+              })
+            }}
             title="Purchase/Sales History grid settings"
             aria-expanded={gridSettingsOpen}
           >
@@ -265,9 +271,9 @@ export function DetailColumn({
         </div>
       </header>
 
-      {gridSettingsOpen && panelRef.current && (
+      {gridSettingsOpen && gridSettingsAnchor && (
         <MiniGridSettingsPanel
-          anchorRect={panelRef.current.getBoundingClientRect()}
+          anchorRect={gridSettingsAnchor}
           onClose={() => setGridSettingsOpen(false)}
           sections={[
             {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../components/common/PageHeader'
 import { SegmentedTabs } from '../design-system/components/SegmentedTabs'
@@ -161,24 +161,24 @@ export default function SettingsPage() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
-  const hydrateAutomation = (payload: AutomationSettingsResponse) => {
+  const hydrateAutomation = useCallback((payload: AutomationSettingsResponse) => {
     setAutomationData(payload)
     setAutomationForm({
       repoPath: payload.settings.repo_path,
       pythonCommand: payload.settings.python_command,
     })
-  }
+  }, [])
 
-  const hydrateWhatsApp = (payload: WhatsAppState) => {
+  const hydrateWhatsApp = useCallback((payload: WhatsAppState) => {
     setWhatsAppData(payload)
     setWhatsAppSettingsForm({
       browserCommand: payload.settings.browser_command,
       deliveryMode: payload.settings.delivery_mode,
       launchWaitSeconds: String(payload.settings.launch_wait_seconds),
     })
-  }
+  }, [])
 
-  const loadAutomation = async () => {
+  const loadAutomation = useCallback(async () => {
     setAutomationLoading(true)
     try {
       const payload = await automationSettingsService.get()
@@ -186,9 +186,9 @@ export default function SettingsPage() {
     } finally {
       setAutomationLoading(false)
     }
-  }
+  }, [hydrateAutomation])
 
-  const loadWhatsApp = async () => {
+  const loadWhatsApp = useCallback(async () => {
     setWhatsAppLoading(true)
     try {
       const payload = await whatsappService.getState()
@@ -196,11 +196,11 @@ export default function SettingsPage() {
     } finally {
       setWhatsAppLoading(false)
     }
-  }
+  }, [hydrateWhatsApp])
 
   useEffect(() => {
     void Promise.allSettled([loadAutomation(), loadWhatsApp()]).catch(() => undefined)
-  }, [])
+  }, [loadAutomation, loadWhatsApp])
 
   const saveAutomation = async () => {
     setAutomationSaving(true)

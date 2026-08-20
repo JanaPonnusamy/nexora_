@@ -18,9 +18,9 @@ import { num } from '../../stock/format'
  * mapping edge is missing.
  */
 
-const SALES = '#16a34a'
-const PURCHASE = '#2563eb'
-const TRANSFER = '#0d9488'
+const SALES = 'var(--nx-success)'
+const PURCHASE = 'var(--nx-accent)'
+const TRANSFER = 'var(--nx-info)'
 
 function short(period: string) {
   const [, m] = period.split('-')
@@ -60,7 +60,7 @@ function StoreChart({
         <b>{series.store_code ?? '—'}{series.is_warehouse && <i className="bi bi-house-fill" />}</b>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="pi-storechart__svg" preserveAspectRatio="none">
-        <line x1={padX} y1={base} x2={W - padX} y2={base} stroke="rgba(148,163,184,.4)" strokeWidth={1} />
+        <line x1={padX} y1={base} x2={W - padX} y2={base} stroke="var(--nx-rule-strong)" strokeWidth={1} />
         {series.points.map((p, i) => {
           const cx = padX + i * slot + slot / 2
           const hPur = (p.purchase_qty / max) * plotH
