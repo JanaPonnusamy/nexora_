@@ -11,8 +11,12 @@ function isPreference(value: unknown): value is ThemePreference {
 }
 
 function getInitialPreference(): ThemePreference {
-  const saved = localStorage.getItem(STORAGE_KEYS.theme)
-  return isPreference(saved) ? saved : 'system'
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS.theme)
+    return isPreference(saved) ? saved : 'system'
+  } catch {
+    return 'system'
+  }
 }
 
 export const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
@@ -31,7 +35,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme])
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.theme, preference)
+    try {
+      localStorage.setItem(STORAGE_KEYS.theme, preference)
+    } catch {
+      // Storage can be denied by browser privacy or enterprise policies.
+      // The in-memory preference still works for the current session.
+    }
   }, [preference])
 
   // Track the OS the whole time, not just while `system` is selected, so

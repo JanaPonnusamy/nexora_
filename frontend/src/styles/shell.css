@@ -19,6 +19,16 @@ body {
   color: var(--nx-text);
 }
 
+.app-route-loading {
+  display: flex;
+  min-height: 100dvh;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  background: var(--nx-canvas);
+  color: var(--nx-text-soft);
+}
+
 /* The lit ground every glass surface in the app refracts.
    It lives here rather than on .app-main because .app-main scrolls: anchoring
    the wash to the shell keeps the light fixed to the viewport while content
@@ -586,6 +596,10 @@ body {
   text-align: center;
 }
 
+.app-nav__mobile-label {
+  display: none;
+}
+
 .app-nav__label {
   flex: 1 1 auto;
   min-width: 0;
@@ -662,6 +676,25 @@ body {
 
   .app-sidebar.is-open {
     transform: translateX(0);
+  }
+
+  .app-nav__row {
+    justify-content: flex-start;
+    gap: 0.7rem;
+    padding-inline: 0.8rem;
+    text-align: left;
+  }
+
+  .app-nav__mobile-label {
+    display: inline;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app-nav__sublink {
+    padding-block: 0.55rem;
   }
 }
 

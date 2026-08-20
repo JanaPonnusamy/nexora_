@@ -6,6 +6,7 @@ import { api, ApiError } from '../services/apiClient'
 import logoLockup from '../assets/axythic-logo-white.svg'
 import logoMark from '../assets/axythic-mark.svg'
 import { APP_NAME } from '../utils/appInfo'
+import { ThemeToggle } from '../components/common/ThemeToggle'
 import './login.css'
 
 interface LoginResponse {
@@ -65,6 +66,9 @@ export default function LoginPage() {
 
   return (
     <main className="login-page">
+      <div className="login-theme-toggle">
+        <ThemeToggle />
+      </div>
       <section className="login-showcase" aria-label={`${APP_NAME} platform introduction`}>
         <div className="login-showcase__orb login-showcase__orb--one" aria-hidden="true" />
         <div className="login-showcase__orb login-showcase__orb--two" aria-hidden="true" />

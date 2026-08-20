@@ -148,7 +148,10 @@ export function ProcessingQueuePanel({ tenantId, storeId, actor, disabled, onOpe
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const navigatedRef = useRef<Set<string>>(new Set())
   const jobsRef = useRef<PipelineJob[]>([])
-  jobsRef.current = jobs
+
+  useEffect(() => {
+    jobsRef.current = jobs
+  }, [jobs])
 
   const openFilePicker = useCallback(() => fileInputRef.current?.click(), [])
 

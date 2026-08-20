@@ -80,10 +80,8 @@ export function useStockResource<T>(fetcher: () => Promise<T>, key: string | nul
       } finally {
         if (activeKeyRef.current === cacheKey) setIsLoading(false)
       }
-      // fetcher is rebuilt by the caller for each key; cacheKey is the real dependency
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     },
-    [cacheKey],
+    [cacheKey, fetcher],
   )
 
   useEffect(() => {

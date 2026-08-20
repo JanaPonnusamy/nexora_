@@ -45,7 +45,6 @@ export function AvailableTablesPanel({ onChanged }: { onChanged: () => void }) {
       })
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [debounced])
 
   const act = async (table: AvailableTable) => {

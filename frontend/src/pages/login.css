@@ -8,6 +8,18 @@
   color: var(--nx-text);
 }
 
+.login-theme-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 2;
+  padding: 0.15rem;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-md);
+  background: var(--nx-surface-raised);
+  box-shadow: var(--nx-shadow-sm);
+}
+
 .login-showcase {
   position: relative;
   display: flex;

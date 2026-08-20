@@ -84,6 +84,10 @@ const STAGES: { key: Stage; label: string; icon: string }[] = [
 ]
 
 const MOVEMENT = ['', 'FAST', 'MEDIUM', 'SLOW', 'NONMOVING']
+const REVIEWED_STATES = new Set(['review', 'assigned', 'partial', 'skipped'])
+const FINALIZED_STATES = new Set(['review', 'assigned', 'partial'])
+const isFinalizedRow = (item: WorkspaceItem) =>
+  FINALIZED_STATES.has(item.item_status) && (item.final_qty ?? 0) > 0
 
 // Reject a request that opens a connection but never sends a response. `fetch`
 // (see apiClient) has no timeout, so a single hung/dropped connection would
@@ -953,10 +957,6 @@ export default function PurchaseWorkspacePage() {
     () => visibleItems.findIndex((i) => i.order_item_id === selectedId) + 1,
     [visibleItems, selectedId],
   )
-  const REVIEWED = new Set(['review', 'assigned', 'partial', 'skipped'])
-  const FINALIZED_STATES = new Set(['review', 'assigned', 'partial'])
-  const isFinalizedRow = (it: WorkspaceItem) => FINALIZED_STATES.has(it.item_status) && (it.final_qty ?? 0) > 0
-
   // Effective checkbox state (§ CHECKBOX RULE): ON by default the instant a
   // product is finalized, OFF while it isn't — `checkOverrides` only records a
   // deliberate Space Bar deviation from that default, and finalizing (or
@@ -971,8 +971,7 @@ export default function PurchaseWorkspacePage() {
   }, [items, checkOverrides])
 
   const pendingReview = useMemo(
-    () => items.filter((i) => !REVIEWED.has(i.item_status) && (i.final_qty ?? 0) === 0).length,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    () => items.filter((i) => !REVIEWED_STATES.has(i.item_status) && (i.final_qty ?? 0) === 0).length,
     [items],
   )
 

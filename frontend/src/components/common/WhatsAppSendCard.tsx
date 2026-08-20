@@ -82,7 +82,7 @@ export function WhatsAppSendCard({
         setError(err instanceof ApiError ? err.message : 'Unable to load WhatsApp profiles.')
       })
       .finally(() => setLoading(false))
-  }, [open, state])
+  }, [open, state, preferredPhone, preferredTargetName])
 
   const selectedProfile = useMemo(
     () => state?.profiles.find((profile) => profile.profile_id === profileId) ?? null,

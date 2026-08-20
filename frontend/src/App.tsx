@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { RouterProvider } from 'react-router-dom'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { AuthProvider } from './contexts/AuthContext'
@@ -11,7 +12,16 @@ export default function App() {
       <AuthProvider>
         <RoleProvider>
           <SessionProvider>
-            <RouterProvider router={appRouter} />
+            <Suspense
+              fallback={
+                <div className="app-route-loading" role="status" aria-live="polite">
+                  <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+                  Loading workspace…
+                </div>
+              }
+            >
+              <RouterProvider router={appRouter} />
+            </Suspense>
           </SessionProvider>
         </RoleProvider>
       </AuthProvider>

@@ -54,9 +54,7 @@ export async function buildDistributionImage(opts: {
   y += 20
 
   ctx.font = '13px Segoe UI, Arial'
-  let totalQty = 0
   visibleRows.forEach((row, i) => {
-    totalQty += Number(row.stock) || 0
     ctx.fillStyle = i % 2 === 0 ? '#111827' : '#374151'
     const name = row.name && row.name.length > 46 ? `${row.name.slice(0, 43)}...` : (row.name || row.code)
     ctx.fillText(name, 24, y)

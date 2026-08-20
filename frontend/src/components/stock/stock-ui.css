@@ -262,7 +262,7 @@
 }
 .sa-tag {
   display: inline-flex; align-items: center; gap: 0.35rem;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--sx-surface-2);
   border: 1px solid var(--sx-border);
   color: var(--sx-text);
   border-radius: 999px;

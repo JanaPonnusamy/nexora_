@@ -76,7 +76,6 @@ export default function StockCheckReportPage() {
         sync_mode: 'FULL',
       })
       const start = Date.now()
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         await new Promise((r) => setTimeout(r, POLL_MS))
         const sum = await syncService.executionSummary(task_id)

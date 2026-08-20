@@ -112,6 +112,7 @@ export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
                 aria-label={entry.label}
               >
                 <i className={`bi ${entry.icon} app-nav__icon`} aria-hidden="true" />
+                <span className="app-nav__mobile-label">{entry.label}</span>
               </NavLink>
             )
           }
@@ -170,6 +171,7 @@ export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
                 }}
               >
                 <i className={`bi ${entry.icon} app-nav__icon`} aria-hidden="true" />
+                <span className="app-nav__mobile-label">{entry.label}</span>
               </button>
 
               {/* Mobile has no hover and no room beside the drawer, so children
@@ -186,6 +188,7 @@ export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
                       aria-label={child.label}
                     >
                       <i className={`bi ${child.icon} app-nav__icon`} aria-hidden="true" />
+                      <span className="app-nav__mobile-label">{child.label}</span>
                     </NavLink>
                   ))}
                 </div>

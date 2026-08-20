@@ -1,56 +1,57 @@
+import { lazy } from 'react'
 import { createBrowserRouter, createRoutesFromElements, Navigate, Route } from 'react-router-dom'
 import { AppShell } from '../layouts/AppShell'
 import { ProtectedRoute } from './ProtectedRoute'
 import { RequireCapability } from './RequireCapability'
 import { useAccess } from '../hooks/useAccess'
-import PlatformOverviewPage from '../pages/PlatformOverviewPage'
-import TenantWorkspacePage from '../pages/platform/TenantWorkspacePage'
-import StoreWorkspacePage from '../pages/platform/StoreWorkspacePage'
-import UserWorkspacePage from '../pages/platform/UserWorkspacePage'
-import RoleWorkspacePage from '../pages/platform/RoleWorkspacePage'
-import PlatformManagementPage from '../pages/platform/PlatformManagementPage'
-import ModulesPage from '../pages/administration/ModulesPage'
-import ModuleWorkspacePage from '../pages/administration/ModuleWorkspacePage'
-import SyncLivePage from '../pages/sync/SyncLivePage'
-import SyncSchedulesPage from '../pages/sync/SyncSchedulesPage'
-import SyncConfigPage from '../pages/sync/SyncConfigPage'
-import SyncMappingPage from '../pages/sync/SyncMappingPage'
-import SyncAgentsPage from '../pages/sync/SyncAgentsPage'
-import ProductMappingPage from '../pages/mapping/ProductMappingPage'
-import StockAvailabilityPage from '../pages/stock/StockAvailabilityPage'
-import StockCheckReportPage from '../pages/stock-check/StockCheckReportPage'
-import LabelExporterPage from '../pages/label-export/LabelExporterPage'
-import BoxWorkspacePage from '../pages/label-export/BoxWorkspacePage'
-import NmwSalesReportPage from '../pages/nmw-sales/NmwSalesReportPage'
-import StockIntegrityReportPage from '../pages/stock-integrity/StockIntegrityReportPage'
-import PurchaseWorkspacePage from '../pages/procurement/PurchaseWorkspacePage'
-import ProductIntelligencePage from '../pages/procurement/ProductIntelligencePage'
-import RefreshLauncherPage from '../pages/procurement/RefreshLauncherPage'
-import CycleManagementPage from '../pages/procurement/CycleManagementPage'
-import RefreshManagementPage from '../pages/procurement/RefreshManagementPage'
-import CycleRefreshConsolePage from '../pages/procurement/CycleRefreshConsolePage'
-import RefreshComparePage from '../pages/procurement/RefreshComparePage'
-import ShelfSortingPage from '../pages/procurement/ShelfSortingPage'
-import ShelfCategoryTrainingPage from '../pages/procurement/ShelfCategoryTrainingPage'
-import PharmacyReportsPage from '../pages/procurement/PharmacyReportsPage'
-import SupplierStockDistributionPage from '../pages/procurement/SupplierStockDistributionPage'
-import PermissionsPage from '../pages/administration/PermissionsPage'
-import AuditLogsPage from '../pages/administration/AuditLogsPage'
-import ReportsPage from '../pages/ReportsPage'
-import TimeReportPage from '../pages/TimeReportPage'
-import PassGenPage from '../pages/pass-gen/PassGenPage'
-import LegacyOrderPage from '../pages/legacy-order/LegacyOrderPage'
-import QtyCheckPage from '../pages/legacy-order/QtyCheckPage'
-import OrderWorkspacePage from '../pages/legacy-order/OrderWorkspacePage'
-import SettingsPage from '../pages/SettingsPage'
-import PlatformShellPreviewPage from '../pages/PlatformShellPreviewPage'
-import DocumentExtractionReviewPage from '../pages/document-extraction/ReviewPage'
-import DocumentExtractionHistoryPage from '../pages/document-extraction/HistoryPage'
-import LoginPage from '../pages/LoginPage'
+
+const PlatformOverviewPage = lazy(() => import('../pages/PlatformOverviewPage'))
+const TenantWorkspacePage = lazy(() => import('../pages/platform/TenantWorkspacePage'))
+const StoreWorkspacePage = lazy(() => import('../pages/platform/StoreWorkspacePage'))
+const UserWorkspacePage = lazy(() => import('../pages/platform/UserWorkspacePage'))
+const RoleWorkspacePage = lazy(() => import('../pages/platform/RoleWorkspacePage'))
+const PlatformManagementPage = lazy(() => import('../pages/platform/PlatformManagementPage'))
+const ModulesPage = lazy(() => import('../pages/administration/ModulesPage'))
+const ModuleWorkspacePage = lazy(() => import('../pages/administration/ModuleWorkspacePage'))
+const SyncLivePage = lazy(() => import('../pages/sync/SyncLivePage'))
+const SyncSchedulesPage = lazy(() => import('../pages/sync/SyncSchedulesPage'))
+const SyncConfigPage = lazy(() => import('../pages/sync/SyncConfigPage'))
+const SyncMappingPage = lazy(() => import('../pages/sync/SyncMappingPage'))
+const SyncAgentsPage = lazy(() => import('../pages/sync/SyncAgentsPage'))
+const ProductMappingPage = lazy(() => import('../pages/mapping/ProductMappingPage'))
+const StockAvailabilityPage = lazy(() => import('../pages/stock/StockAvailabilityPage'))
+const StockCheckReportPage = lazy(() => import('../pages/stock-check/StockCheckReportPage'))
+const LabelExporterPage = lazy(() => import('../pages/label-export/LabelExporterPage'))
+const BoxWorkspacePage = lazy(() => import('../pages/label-export/BoxWorkspacePage'))
+const NmwSalesReportPage = lazy(() => import('../pages/nmw-sales/NmwSalesReportPage'))
+const StockIntegrityReportPage = lazy(() => import('../pages/stock-integrity/StockIntegrityReportPage'))
+const PurchaseWorkspacePage = lazy(() => import('../pages/procurement/PurchaseWorkspacePage'))
+const ProductIntelligencePage = lazy(() => import('../pages/procurement/ProductIntelligencePage'))
+const RefreshLauncherPage = lazy(() => import('../pages/procurement/RefreshLauncherPage'))
+const CycleManagementPage = lazy(() => import('../pages/procurement/CycleManagementPage'))
+const RefreshManagementPage = lazy(() => import('../pages/procurement/RefreshManagementPage'))
+const CycleRefreshConsolePage = lazy(() => import('../pages/procurement/CycleRefreshConsolePage'))
+const RefreshComparePage = lazy(() => import('../pages/procurement/RefreshComparePage'))
+const ShelfSortingPage = lazy(() => import('../pages/procurement/ShelfSortingPage'))
+const ShelfCategoryTrainingPage = lazy(() => import('../pages/procurement/ShelfCategoryTrainingPage'))
+const PharmacyReportsPage = lazy(() => import('../pages/procurement/PharmacyReportsPage'))
+const SupplierStockDistributionPage = lazy(() => import('../pages/procurement/SupplierStockDistributionPage'))
+const PermissionsPage = lazy(() => import('../pages/administration/PermissionsPage'))
+const AuditLogsPage = lazy(() => import('../pages/administration/AuditLogsPage'))
+const ReportsPage = lazy(() => import('../pages/ReportsPage'))
+const TimeReportPage = lazy(() => import('../pages/TimeReportPage'))
+const PassGenPage = lazy(() => import('../pages/pass-gen/PassGenPage'))
+const LegacyOrderPage = lazy(() => import('../pages/legacy-order/LegacyOrderPage'))
+const QtyCheckPage = lazy(() => import('../pages/legacy-order/QtyCheckPage'))
+const OrderWorkspacePage = lazy(() => import('../pages/legacy-order/OrderWorkspacePage'))
+const SettingsPage = lazy(() => import('../pages/SettingsPage'))
+const PlatformShellPreviewPage = lazy(() => import('../pages/PlatformShellPreviewPage'))
+const DocumentExtractionReviewPage = lazy(() => import('../pages/document-extraction/ReviewPage'))
+const DocumentExtractionHistoryPage = lazy(() => import('../pages/document-extraction/HistoryPage'))
+const LoginPage = lazy(() => import('../pages/LoginPage'))
 
 /** Sends the user to their role's landing page (Purchase Managers open directly
  *  into the Purchase Manager workspace). */
-// eslint-disable-next-line react-refresh/only-export-components
 function RoleLanding() {
   const { landingPath } = useAccess()
   return <Navigate to={landingPath} replace />

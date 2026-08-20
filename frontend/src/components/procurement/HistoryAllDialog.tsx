@@ -6,24 +6,25 @@ import { stockService } from '../../services/stockService'
 import { money, num, date } from '../stock/format'
 import '../stock/stock-ui.css'
 
-type Col = { key: string; label: string; num?: boolean; get: (r: any) => string | number | null }
+type HistoryRow = Partial<PurchaseRow & SalesRow>
+type Col = { key: string; label: string; num?: boolean; get: (r: HistoryRow) => string | number | null }
 
 const PURCHASE_COLS: Col[] = [
-  { key: 'date', label: 'Date', get: (r: PurchaseRow) => r.date },
-  { key: 'supplier', label: 'Supplier', get: (r: PurchaseRow) => r.supplier ?? '' },
-  { key: 'qty', label: 'Qty', num: true, get: (r: PurchaseRow) => r.qty ?? 0 },
-  { key: 'free', label: 'Free', num: true, get: (r: PurchaseRow) => r.free ?? 0 },
-  { key: 'cost', label: 'Item Cost', num: true, get: (r: PurchaseRow) => r.cost ?? 0 },
-  { key: 'ptr', label: 'PTR', num: true, get: (r: PurchaseRow) => r.ptr ?? 0 },
-  { key: 'mrp', label: 'MRP', num: true, get: (r: PurchaseRow) => r.mrp ?? 0 },
+  { key: 'date', label: 'Date', get: (r) => r.date ?? null },
+  { key: 'supplier', label: 'Supplier', get: (r) => r.supplier ?? '' },
+  { key: 'qty', label: 'Qty', num: true, get: (r) => r.qty ?? 0 },
+  { key: 'free', label: 'Free', num: true, get: (r) => r.free ?? 0 },
+  { key: 'cost', label: 'Item Cost', num: true, get: (r) => r.cost ?? 0 },
+  { key: 'ptr', label: 'PTR', num: true, get: (r) => r.ptr ?? 0 },
+  { key: 'mrp', label: 'MRP', num: true, get: (r) => r.mrp ?? 0 },
 ]
 const SALES_COLS: Col[] = [
-  { key: 'date', label: 'Date', get: (r: SalesRow) => r.date },
-  { key: 'bill_no', label: 'Bill', get: (r: SalesRow) => r.bill_no ?? '' },
-  { key: 'customer', label: 'Customer', get: (r: SalesRow) => r.customer ?? '' },
-  { key: 'qty', label: 'Qty', num: true, get: (r: SalesRow) => r.qty ?? 0 },
-  { key: 'mrp', label: 'MRP', num: true, get: (r: SalesRow) => r.mrp ?? 0 },
-  { key: 'salesman', label: 'Rep', get: (r: SalesRow) => r.salesman ?? '' },
+  { key: 'date', label: 'Date', get: (r) => r.date ?? null },
+  { key: 'bill_no', label: 'Bill', get: (r) => r.bill_no ?? '' },
+  { key: 'customer', label: 'Customer', get: (r) => r.customer ?? '' },
+  { key: 'qty', label: 'Qty', num: true, get: (r) => r.qty ?? 0 },
+  { key: 'mrp', label: 'MRP', num: true, get: (r) => r.mrp ?? 0 },
+  { key: 'salesman', label: 'Rep', get: (r) => r.salesman ?? '' },
 ]
 
 /** Full Purchase / Sales history in a centered dialog with Search, Sort and
@@ -46,7 +47,7 @@ export function HistoryAllDialog({
   onClose: () => void
 }) {
   const cols = kind === 'purchase' ? PURCHASE_COLS : SALES_COLS
-  const [rows, setRows] = useState<any[] | null>(null)
+  const [rows, setRows] = useState<HistoryRow[] | null>(null)
   const [q, setQ] = useState('')
   const [sortKey, setSortKey] = useState('date')
   const [asc, setAsc] = useState(false)
@@ -99,7 +100,7 @@ export function HistoryAllDialog({
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
   }
 
-  const openBill = (r: any) =>
+  const openBill = (r: HistoryRow) =>
     onOpenBill?.(kind === 'purchase'
       ? { kind: 'purchase', storeId, billId: r.grn_no ?? '', billDate: r.date, productCode, productName }
       : { kind: 'sales', storeId, billId: r.bill_no ?? '', billDate: r.date, productCode, productName })
