@@ -2788,6 +2788,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     [allStores, tenantFilter],
   );
   const warehouses = useMemo(() => scopedStores.filter(isWarehouse), [scopedStores]);
+  const tenantNameById = useMemo(() => {
+    const map = new Map();
+    tenants.forEach((t) => map.set(String(t.tenant_id), t.tenant_name || t.tenant_code || ''));
+    return map;
+  }, [tenants]);
   const [warehouseId, setWarehouseId] = useState('');
   const selectedWarehouse = useMemo(
     () => warehouses.find((w) => w.store_id === warehouseId) || warehouses[0] || null,
@@ -3946,7 +3951,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
             <select value={selectedWarehouse?.store_id || ''} onChange={(event) => setWarehouseId(event.target.value)}>
               {warehouses.map((w) => (
                 <option key={w.store_id} value={w.store_id}>
-                  {w.store_code}{!tenantFilter ? ` · ${w.store_name || ''}` : ''}
+                  {w.store_code}{!tenantFilter ? ` · ${tenantNameById.get(String(w.tenant_id)) || w.store_name || ''}` : ''}
                 </option>
               ))}
             </select>
