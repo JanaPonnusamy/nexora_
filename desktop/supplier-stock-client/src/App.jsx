@@ -19,6 +19,13 @@ const screens = [
   { id: 'settings', label: 'Settings', module: 'settings' }
 ];
 
+// "Stock Check" launch mode (electron/main.js passes `?mode=stock` when started
+// with --stock-only). Trims the whole app down to the Stock Availability screen
+// plus Settings so this same build can ship as a dedicated stock-lookup tool
+// for counter staff without a second codebase to maintain.
+const STOCK_ONLY = new URLSearchParams(window.location.search).get('mode') === 'stock';
+const APP_NAME = STOCK_ONLY ? 'Nexora Stock Check' : 'Nexora Supplier Stock';
+
 function asArray(value) {
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.items)) return value.items;
@@ -164,6 +171,9 @@ function AppShell() {
   const isConfigured = Boolean(effectiveTenantId && effectiveStoreId);
 
   const navItems = useMemo(() => {
+    // Stock Check build: only Stock Availability + Settings, regardless of what
+    // other modules this login is granted.
+    if (STOCK_ONLY) return screens.filter((s) => s.id === 'stock' || s.id === 'settings');
     const modules = userModules(session?.user);
     // Supplier Stock Analysis is admin-tier only - a purchase-manager-only or
     // salesman-only login must not see the tab at all (the API also 403s it
@@ -191,7 +201,7 @@ function AppShell() {
 
   useEffect(() => {
     const storeName = session?.user?.roles?.[0]?.store_name || settings.storeName;
-    document.title = storeName ? `Nexora Supplier Stock · ${storeName}` : 'Nexora Supplier Stock';
+    document.title = storeName ? `${APP_NAME} · ${storeName}` : APP_NAME;
   }, [session, settings.storeName]);
 
   function persistSettings(next) {
@@ -264,7 +274,7 @@ function AppShell() {
           <div className="brand-mark">N</div>
           <div>
             <h1>Nexora</h1>
-            <p>Supplier Stock Client</p>
+            <p>{STOCK_ONLY ? 'Stock Check' : 'Supplier Stock Client'}</p>
           </div>
         </div>
 
@@ -801,8 +811,10 @@ function LoginScreen({ onLogin, onOpenSettings }) {
     <section className="login-layout">
       <div className="login-copy">
         <span className="eyebrow">Nexora desktop</span>
-        <h2>Supplier stock workbench</h2>
-        <p>Use your Nexora credentials to open stock availability and supplier analysis modules.</p>
+        <h2>{STOCK_ONLY ? 'Stock check' : 'Supplier stock workbench'}</h2>
+        <p>{STOCK_ONLY
+          ? 'Use your Nexora credentials to look up live stock availability across your stores.'
+          : 'Use your Nexora credentials to open stock availability and supplier analysis modules.'}</p>
       </div>
       <form className="login-card" onSubmit={submit}>
         <label>
