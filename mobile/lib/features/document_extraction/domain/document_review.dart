@@ -79,15 +79,21 @@ class DocumentHeader {
     this.invoiceDate,
     this.invoiceType,
     this.orderNumber,
+    this.transport,
+    this.salesman,
+    this.creditDays,
     this.supplierName,
     this.gstNumber,
     this.dlNumber,
     this.grossAmount,
     this.discountAmount,
+    this.schemeDiscount,
+    this.cashDiscount,
     this.taxableAmount,
     this.cgstAmount,
     this.sgstAmount,
     this.igstAmount,
+    this.cessAmount,
     this.roundOff,
     this.netAmount,
     this.itemCount,
@@ -103,15 +109,21 @@ class DocumentHeader {
   final DateTime? invoiceDate;
   final String? invoiceType;
   final String? orderNumber;
+  final String? transport;
+  final String? salesman;
+  final int? creditDays;
   final String? supplierName;
   final String? gstNumber;
   final String? dlNumber;
   final double? grossAmount;
   final double? discountAmount;
+  final double? schemeDiscount;
+  final double? cashDiscount;
   final double? taxableAmount;
   final double? cgstAmount;
   final double? sgstAmount;
   final double? igstAmount;
+  final double? cessAmount;
   final double? roundOff;
   final double? netAmount;
   final int? itemCount;
@@ -127,15 +139,21 @@ class DocumentHeader {
         invoiceDate: _asDate(json['invoice_date']),
         invoiceType: _asString(json['invoice_type']),
         orderNumber: _asString(json['order_number']),
+        transport: _asString(json['transport']),
+        salesman: _asString(json['salesman']),
+        creditDays: _asInt(json['credit_days']),
         supplierName: _asString(json['supplier_name']),
         gstNumber: _asString(json['gst_number']),
         dlNumber: _asString(json['dl_number']),
         grossAmount: _asDouble(json['gross_amount']),
         discountAmount: _asDouble(json['discount_amount']),
+        schemeDiscount: _asDouble(json['scheme_discount']),
+        cashDiscount: _asDouble(json['cash_discount']),
         taxableAmount: _asDouble(json['taxable_amount']),
         cgstAmount: _asDouble(json['cgst_amount']),
         sgstAmount: _asDouble(json['sgst_amount']),
         igstAmount: _asDouble(json['igst_amount']),
+        cessAmount: _asDouble(json['cess_amount']),
         roundOff: _asDouble(json['round_off']),
         netAmount: _asDouble(json['net_amount']),
         itemCount: _asInt(json['item_count']),

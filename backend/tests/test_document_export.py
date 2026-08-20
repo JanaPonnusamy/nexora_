@@ -28,6 +28,7 @@ CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "Document_Extraction_E
 SHEET_TABS = [
     "Invoice Header",
     "Products",
+    "OCR Products",
     "GST Summary",
     "Validation",
     "OCR Metadata",
@@ -38,7 +39,7 @@ def contract_columns() -> list[list[str]]:
     """Column names per sheet, in order, read out of the frozen contract."""
     text = CONTRACT.read_text(encoding="utf-8")
     sections = re.split(r"^## Sheet \d+ — .*$", text, flags=re.MULTILINE)[1:]
-    assert len(sections) == 5, "the contract should describe exactly five sheets"
+    assert len(sections) == 6, "the contract should describe exactly six sheets"
 
     sheets = []
     for section in sections:
@@ -177,7 +178,7 @@ def workbook(batch):
     return load_workbook(io.BytesIO(content))
 
 
-def test_workbook_has_the_five_contract_sheets_in_order(workbook):
+def test_workbook_has_the_six_contract_sheets_in_order(workbook):
     assert workbook.sheetnames == SHEET_TABS
 
 
@@ -194,6 +195,9 @@ def test_every_sheet_leads_with_the_traceability_pair(workbook):
     # system." Sheet 1 carries the invoice number further along its own row.
     for tab in SHEET_TABS:
         header = [cell.value for cell in workbook[tab][1]]
+        if tab == "Products":
+            assert header[0] == "No"
+            continue
         assert header[0] == "Import ID", tab
         if tab != "Invoice Header":
             assert header[1] == "Invoice Number", tab
@@ -205,7 +209,7 @@ def test_one_row_per_invoice_on_the_header_sheet(workbook):
 
 
 def test_products_exclude_removed_lines_but_keep_every_invoice(workbook):
-    rows = list(workbook["Products"].iter_rows(min_row=2, values_only=True))
+    rows = list(workbook["OCR Products"].iter_rows(min_row=2, values_only=True))
 
     # Both invoices' lines, minus the one the reviewer removed.
     assert [(row[0], row[2]) for row in rows] == [(11, 1), (11, 2), (12, 1)]
@@ -213,13 +217,73 @@ def test_products_exclude_removed_lines_but_keep_every_invoice(workbook):
 
 
 def test_a_line_falls_back_to_the_raw_ocr_name_and_expiry(workbook):
-    rows = list(workbook["Products"].iter_rows(min_row=2, values_only=True))
+    rows = list(workbook["OCR Products"].iter_rows(min_row=2, values_only=True))
     unresolved = rows[1]
 
     assert unresolved[4] == "AMOXYCLLIN 625 TAB"
     # An expiry OCR could not parse still reaches the workbook as what was
     # read, rather than as a blank the accountant cannot chase.
     assert unresolved[8] == "13/26"
+
+
+def test_products_sheet_matches_the_pharmacy_import_mapping(workbook):
+    sheet = workbook["Products"]
+    headers = [cell.value for cell in sheet[1]]
+    values = dict(zip(headers, next(sheet.iter_rows(min_row=2, values_only=True))))
+
+    assert len(headers) == 79
+    assert values["No"] == 1
+    assert values["Product Name"] == "Dolo 650mg Tablet"
+    assert values["Packing"] == "15s"
+    assert values["Batch"] == "DL2411"
+    assert values["Qty"] == 40
+    assert values["Rate"] == 21.5
+    assert values["Goods Value"] == pytest.approx(860)
+    assert values["Prod. Code"] == "PRD-10041"
+    assert values["Exp.dt"] == "11/27"
+    assert values["Mrp"] == 30
+    assert values["MRP VALUE"] == pytest.approx(1200)
+    assert values["HSN Code"] == "30049099"
+    assert values["Rate Changable"] is False
+
+
+def test_pharmacy_rate_is_recovered_when_invoice_prints_ptr_and_gst_base_only():
+    item = {
+        "line_number": 1,
+        "quantity": 2,
+        "ptr": 38.43,
+        "gst_percent": 5,
+        "amount": 69.13,
+    }
+    row = dict(zip(export_excel._PRODUCT_COLUMNS, export_excel._product_row(
+        item, {"cgst_amount": 48.81, "sgst_amount": 48.81}
+    )))
+
+    assert row["Rate"] == pytest.approx(32.919, abs=0.001)
+    assert row["Goods Value"] == pytest.approx(65.838, abs=0.001)
+    assert row["CGST"] == pytest.approx(1.65)
+    assert row["SGST"] == pytest.approx(1.65)
+    assert row["Net Rate Amount"] == pytest.approx(69.13)
+
+
+def test_pharmacy_discount_and_net_values_follow_the_target_system_example():
+    item = {
+        "line_number": 1,
+        "quantity": 5,
+        "purchase_rate": 53.3,
+        "discount_percent": 12,
+        "gst_percent": 5,
+        "amount": 246.24,
+    }
+    row = dict(zip(export_excel._PRODUCT_COLUMNS, export_excel._product_row(
+        item, {"cgst_amount": 5.86, "sgst_amount": 5.86}
+    )))
+
+    assert row["PDisc.Amount"] == pytest.approx(31.98)
+    assert row["SGST"] == pytest.approx(5.86)
+    assert row["CGST"] == pytest.approx(5.86)
+    assert row["Net Rate Amount"] == pytest.approx(278.22)
+    assert row["Net Rate"] == pytest.approx(55.644)
 
 
 def test_gst_slabs_are_unpacked_one_row_per_slab(workbook):
@@ -255,12 +319,13 @@ def test_amounts_are_numeric_cells_not_text(workbook):
     assert isinstance(net_amount.value, (int, float))
 
     products = workbook["Products"]
-    assert isinstance(products.cell(row=2, column=18).value, (int, float))
+    assert isinstance(products.cell(row=2, column=10).value, (int, float))
 
 
 def test_dates_are_written_in_the_contract_format(workbook):
     assert workbook["Invoice Header"].cell(row=2, column=6).value == "2026-08-11"
-    assert workbook["Products"].cell(row=2, column=9).value == "2027-11-30"
+    assert workbook["Products"].cell(row=2, column=20).value == "11/27"
+    assert workbook["OCR Products"].cell(row=2, column=9).value == "2027-11-30"
 
 
 def test_header_rows_are_bold_and_frozen(workbook):

@@ -2,9 +2,9 @@
 
 Status: Frozen before Chunk 5 begins; **binding on Chunk 13 (Excel Export)** — `export_excel.py` must populate exactly these sheets/columns/order/types, not invent its own layout when it's eventually built.
 
-One workbook per export call. A batch export (`POST /exports` with multiple `import_ids`) produces **one workbook** containing all selected invoices — Sheets 1, 3, 4, 5 get one row per invoice (or per invoice × sub-item, e.g. one GST slab row per rate), Sheet 2 gets one row per product line across every included invoice. Every sheet carries `Import ID` and `Invoice Number` as its first two columns specifically so rows from different invoices in the same batch stay traceable after the file leaves this system.
+One workbook per export call. A batch export (`POST /exports` with multiple `import_ids`) produces **one workbook** containing all selected invoices. Sheet 2 is the exact pharmacy-import layout requested by the business. Sheet 3 retains the normalized OCR product rows with `Import ID` and `Invoice Number` so batch exports remain traceable.
 
-`csv` export format is Sheet 2 (Products) only, per the API doc's existing constraint — single-table format can't represent five sheets.
+`csv` export format is Sheet 2 (Products) only, per the API doc's existing constraint — single-table format can't represent six sheets.
 
 ---
 
@@ -45,6 +45,92 @@ One row per invoice in the export batch.
 
 ## Sheet 2 — Products
 
+One row per non-excluded invoice line, in the exact pharmacy-import column order supplied for this feature. Available reviewed OCR fields are mapped directly; unsupported numeric fields use `0`, boolean flags use `FALSE`, and unsupported identifiers remain blank. Expiry is exported as `MM/YY` for compatibility.
+
+| # | Column |
+|---:|---|
+| 1 | No |
+| 2 | Product Name |
+| 3 | Packing |
+| 4 | Batch |
+| 5 | Qty |
+| 6 | Free |
+| 7 | Rate |
+| 8 | Tax % |
+| 9 | PDisc. |
+| 10 | Amount |
+| 11 | Mfr |
+| 12 | DC |
+| 13 | PDisc.Amount |
+| 14 | CSt.Amount |
+| 15 | St.Amount |
+| 16 | Goods Value |
+| 17 | Prod. Code |
+| 18 | SDisAmt |
+| 19 | CashDiscAmt |
+| 20 | Exp.dt |
+| 21 | Mrp |
+| 22 | Sales |
+| 23 | Drugs |
+| 24 | PTR |
+| 25 | Batchid |
+| 26 | Net Rate |
+| 27 | Net Rate Amount |
+| 28 | OFFER |
+| 29 | OFFER RATE |
+| 30 | MRP VALUE |
+| 31 | PackCode |
+| 32 | PTS |
+| 33 | DC-REF |
+| 34 | OfferType |
+| 35 | Cdis |
+| 36 | Sdis |
+| 37 | Case |
+| 38 | GodownID |
+| 39 | Repl |
+| 40 | SchOfferId |
+| 41 | OfferSlno |
+| 42 | Sch.Dis |
+| 43 | Sch.DisAmt |
+| 44 | MixedCase |
+| 45 | Parentid |
+| 46 | autodisc |
+| 47 | volume |
+| 48 | SplOfferid |
+| 49 | SplDis |
+| 50 | SplDisAmt |
+| 51 | Pdisc% |
+| 52 | TotalVolume |
+| 53 | SO no |
+| 54 | SO Sno |
+| 55 | Gross Weight |
+| 56 | Edited-Spldisc |
+| 57 | Edited-Schdisc |
+| 58 | SpL Zero |
+| 59 | Sch Zero |
+| 60 | SplZeroId |
+| 61 | SchZeroID |
+| 62 | SGST |
+| 63 | CGST |
+| 64 | IGST |
+| 65 | GST Cess |
+| 66 | Abate Perc |
+| 67 | GST Based on |
+| 68 | HSN Code |
+| 69 | Rate Changable |
+| 70 | Mixed case(qty) |
+| 71 | Rate pack |
+| 72 | Alias Code |
+| 73 | Calamity CESS |
+| 74 | Remarks |
+| 75 | Calamity % |
+| 76 | Extra Cess / Base Unit |
+| 77 | Extra Cess Amt |
+| 78 | Tax Slab Code |
+| 79 | HQ Approval Status |
+
+## Sheet 3 — OCR Products
+
 One row per `doc_import_item` **excluding `is_excluded = 1` rows**, across every invoice in the batch.
 
 | # | Column | Source | Type | Required |
@@ -69,7 +155,7 @@ One row per `doc_import_item` **excluding `is_excluded = 1` rows**, across every
 | 18 | Amount | `amount` | decimal(18,2) | Yes |
 | 19 | Confidence | `confidence` | decimal(5,2) | No |
 
-## Sheet 3 — GST Summary
+## Sheet 4 — GST Summary
 
 One row per (invoice, GST slab) pair, unpacked from `doc_import.gst_slab_breakup_json`.
 
@@ -85,7 +171,7 @@ One row per (invoice, GST slab) pair, unpacked from `doc_import.gst_slab_breakup
 | 8 | Total GST Amount | slab `cgst + sgst + igst` (or slab `total` if present) | decimal(18,2) | Yes |
 | 9 | Net Amount | slab `net` | decimal(18,2) | No |
 
-## Sheet 4 — Validation Errors
+## Sheet 5 — Validation Errors
 
 One row per finding, unpacked from `doc_import.validation_json` across every invoice in the batch. An invoice with zero findings contributes zero rows (not a blank placeholder row).
 
@@ -101,7 +187,7 @@ One row per finding, unpacked from `doc_import.validation_json` across every inv
 | 8 | Expected Value | finding `expected_value` | text | No |
 | 9 | Actual Value | finding `actual_value` | text | No |
 
-## Sheet 5 — OCR Metadata
+## Sheet 6 — OCR Metadata
 
 One row per invoice — a confidence/audit summary, not a bounding-box dump (bounding boxes aren't persisted in V1; see Design doc §15).
 
@@ -125,4 +211,4 @@ One row per invoice — a confidence/audit summary, not a bounding-box dump (bou
 - Header row on every sheet: bold, frozen (Excel "freeze panes" on row 1) so it stays visible while scrolling.
 - Date columns: `YYYY-MM-DD`. Datetime columns: `YYYY-MM-DD HH:MM:SS` (local time of the exporting server — no timezone conversion asked for or performed).
 - Decimal columns: plain numeric Excel cells (not text), so the importing pharmacy software can sum/filter them directly — never format currency with a locale symbol baked into the cell text.
-- Column order above is fixed. Adding a column later is additive-only (append at the end of the relevant sheet); never reorder or remove a column without a new contract version, since the whole point of freezing this now is that downstream pharmacy-software import mappings can be built against it without breaking later.
+- Column order above is fixed. The 79-column Products layout must never be reordered; OCR Products remains the audit/traceability view for multi-invoice exports.
