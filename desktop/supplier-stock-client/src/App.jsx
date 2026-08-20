@@ -2822,10 +2822,12 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }, [selectedWarehouse, tenantId, onTenantChange]);
   // The supplier/product list is scoped to the selected warehouse store.
   const scopeStoreId = selectedWarehouse?.store_id ?? '';
-  // In all-tenants mode with no warehouse chosen yet, hold off loading suppliers
-  // (which would otherwise fall to a tenant-wide, all-stores list) until the
-  // user selects a warehouse.
-  const needWarehousePick = !tenantFilter && !selectedWarehouse;
+  // Suppliers are always warehouse-scoped, so a resolved warehouse is required
+  // before loading — in every mode, not just all-tenants. Without this, a tenant
+  // that has no warehouse (selectedWarehouse === null) would load with tenant_id
+  // undefined and the API would fall back to the previously-queried tenant,
+  // leaking another tenant's suppliers.
+  const needWarehousePick = !selectedWarehouse;
   // { searchKey, matchesFound, storesWithMatches, byStore: Map(store_id -> {storeMeta, candidates[]}) }
   const [similar, setSimilar] = useState(null);
   const [similarStatus, setSimilarStatus] = useState({ state: 'idle', message: '' });
@@ -3053,7 +3055,12 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
       setSelectedSupplier('');
       setProducts([]);
       setShowSupplierPanel(true);
-      setSupplierStatus({ state: 'idle', message: 'Select a warehouse to list its suppliers.' });
+      setSupplierStatus({
+        state: 'idle',
+        message: warehouses.length
+          ? 'Select a warehouse to list its suppliers.'
+          : 'No warehouse is configured for this tenant.',
+      });
       return;
     }
     // Warehouse/tenant scope changed: drop any supplier picked under the old
