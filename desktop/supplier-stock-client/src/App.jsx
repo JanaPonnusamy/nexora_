@@ -2794,15 +2794,26 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     return map;
   }, [tenants]);
   const [warehouseId, setWarehouseId] = useState('');
-  const selectedWarehouse = useMemo(
-    () => warehouses.find((w) => w.store_id === warehouseId) || warehouses[0] || null,
-    [warehouses, warehouseId],
-  );
+  const selectedWarehouse = useMemo(() => {
+    const found = warehouses.find((w) => w.store_id === warehouseId);
+    if (found) return found;
+    // In all-tenants mode (tenantFilter === '') the user must explicitly pick
+    // which tenant's warehouse to order for — never auto-fall-back to the first
+    // one. Scoped to a single tenant, auto-selecting its first warehouse is a
+    // convenience, not a cross-tenant surprise.
+    if (!tenantFilter) return null;
+    return warehouses[0] || null;
+  }, [warehouses, warehouseId, tenantFilter]);
   // Keep a valid warehouse selected as the list changes (tenant switch / load).
   useEffect(() => {
     if (!warehouses.length) { if (warehouseId) setWarehouseId(''); return; }
+    // All-tenants mode: wait for an explicit pick; only drop a now-stale id.
+    if (!tenantFilter) {
+      if (warehouseId && !warehouses.some((w) => w.store_id === warehouseId)) setWarehouseId('');
+      return;
+    }
     if (!warehouses.some((w) => w.store_id === warehouseId)) setWarehouseId(warehouses[0].store_id);
-  }, [warehouses, warehouseId]);
+  }, [warehouses, warehouseId, tenantFilter]);
   // The actual query tenant follows the selected warehouse's tenant, so every
   // downstream query stays scoped even in all-tenants mode without extra plumbing.
   useEffect(() => {
@@ -2811,6 +2822,10 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }, [selectedWarehouse, tenantId, onTenantChange]);
   // The supplier/product list is scoped to the selected warehouse store.
   const scopeStoreId = selectedWarehouse?.store_id ?? '';
+  // In all-tenants mode with no warehouse chosen yet, hold off loading suppliers
+  // (which would otherwise fall to a tenant-wide, all-stores list) until the
+  // user selects a warehouse.
+  const needWarehousePick = !tenantFilter && !selectedWarehouse;
   // { searchKey, matchesFound, storesWithMatches, byStore: Map(store_id -> {storeMeta, candidates[]}) }
   const [similar, setSimilar] = useState(null);
   const [similarStatus, setSimilarStatus] = useState({ state: 'idle', message: '' });
@@ -3032,9 +3047,18 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     // races (and can clobber) the warehouse-scoped one. Reloads on tenant switch
     // and once the warehouse id resolves.
     if (!allStores.length) return;
+    if (needWarehousePick) {
+      supplierRequestRef.current += 1; // supersede any in-flight load
+      setSuppliers([]);
+      setSelectedSupplier('');
+      setProducts([]);
+      setShowSupplierPanel(true);
+      setSupplierStatus({ state: 'idle', message: 'Select a warehouse to list its suppliers.' });
+      return;
+    }
     loadSuppliers('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, scopeStoreId, allStores.length]);
+  }, [tenantId, scopeStoreId, allStores.length, needWarehousePick]);
 
   useEffect(() => {
     api.listStores(session).then((rows) => setAllStores(asArray(rows))).catch(() => setAllStores([]));
@@ -3045,11 +3069,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     // current scopeStoreId, so running it before the warehouse resolves would
     // schedule a stale all-stores query that lands last. Re-runs (with a fresh
     // warehouse-scoped closure) once allStores loads.
-    if (!allStores.length) return;
+    if (!allStores.length || needWarehousePick) return;
     const timer = setTimeout(() => loadSuppliers(supplierSearch), 200);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supplierSearch, allStores.length, scopeStoreId]);
+  }, [supplierSearch, allStores.length, scopeStoreId, needWarehousePick]);
 
   // Products are fetched (and cached) once per supplier only - search and
   // "in stock only" are pure client-side filters below, so toggling them
@@ -3231,7 +3255,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     const token = ++supplierRequestRef.current;
     setSupplierStatus({ state: 'loading', message: 'Loading suppliers...' });
     try {
-      const response = await api.getSuppliers(session, { search, storeId: scopeStoreId });
+      const response = await api.getSuppliers(session, { search, storeId: scopeStoreId, tenantId: selectedWarehouse?.tenant_id });
       if (supplierRequestRef.current !== token) return; // superseded by a newer load
       const items = asArray(response);
       setSuppliers(items);
@@ -3935,7 +3959,16 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
         {tenants.length > 1 && (
           <label className="tenant-filter">
             Tenant
-            <select value={tenantFilter} onChange={(event) => setTenantFilter(event.target.value)}>
+            <select
+              value={tenantFilter}
+              onChange={(event) => {
+                // Switching tenant scope always forces a fresh warehouse choice:
+                // in all-tenants mode the user must pick; scoped to one tenant the
+                // effect above auto-selects that tenant's first warehouse.
+                setWarehouseId('');
+                setTenantFilter(event.target.value);
+              }}
+            >
               <option value="">All tenants</option>
               {tenants.map((tenant) => (
                 <option key={tenant.tenant_id} value={tenant.tenant_id}>
@@ -3945,10 +3978,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
             </select>
           </label>
         )}
-        {warehouses.length > 1 && (
+        {(warehouses.length > 1 || (!tenantFilter && warehouses.length > 0)) && (
           <label className="tenant-filter">
             Warehouse
             <select value={selectedWarehouse?.store_id || ''} onChange={(event) => setWarehouseId(event.target.value)}>
+              {!selectedWarehouse && <option value="">Select warehouse…</option>}
               {warehouses.map((w) => (
                 <option key={w.store_id} value={w.store_id}>
                   {w.store_code}{!tenantFilter ? ` · ${tenantNameById.get(String(w.tenant_id)) || w.store_name || ''}` : ''}
