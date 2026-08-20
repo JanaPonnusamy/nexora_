@@ -160,6 +160,45 @@ export interface QtyCheckRow {
   maxsaleqty: number
   Transactiondate: string | null
   wantedtype: string | null
+  producttypename: string | null
+}
+
+export type OrderWorkflowStatus =
+  | 'DRAFT'
+  | 'QTY_REVIEW'
+  | 'SUPPLIER_ASSIGNMENT'
+  | 'READY'
+  | 'FINALIZED'
+
+export interface OrderWorkflowSummary {
+  store_name: string
+  order_id: number | null
+  status: OrderWorkflowStatus
+  ready: boolean
+  total_lines: number
+  qty_pending: number
+  qty_reviewed: number
+  assigned_lines: number
+  unassigned_lines: number
+  closed_lines: number
+  assigned_qty: number
+  assigned_value: number
+  supplier_count: number
+  updated_at: string | null
+  updated_by: string | null
+  finalized_at: string | null
+  note: string | null
+}
+
+export interface OrderWorkflowAuditEntry {
+  AuditId: number
+  OrderId: number
+  ProductCode: number | null
+  Action: string
+  OldValue: string | null
+  NewValue: string | null
+  Actor: string | null
+  CreatedAt: string
 }
 
 export interface QtyCheckUpdateResult {

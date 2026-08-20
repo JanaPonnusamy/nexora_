@@ -8,13 +8,13 @@ import { logger } from '../platform/logging/Logger'
 // An explicitly-set EMPTY string means "same origin" (relative) — the SPA then
 // calls whichever host served it (LAN IP, domain, static IP), so one deployment
 // works over every route. It is only ignored when the property is absent (dev),
-// where we fall back to the build-time env or localhost.
+// where we fall back to the build-time env or the configured HO server.
 const runtimeBase =
   typeof window !== 'undefined'
     ? (window as unknown as { __UNINEX_API_BASE__?: string }).__UNINEX_API_BASE__
     : undefined
 // Build-time env. An explicitly-set value (including an empty string) wins; only
-// when the variable is entirely absent do we fall back to localhost. An empty
+// when the variable is entirely absent do we fall back to the HO server. An empty
 // string means "same origin" (relative), so in development requests go to the
 // Vite dev server and are proxied to the API (see vite.config.ts) — this avoids
 // cross-origin CORS and ERR_CONNECTION_REFUSED regardless of the host/IP used to
@@ -25,7 +25,7 @@ const BASE_URL =
     ? runtimeBase
     : buildBase !== undefined
       ? buildBase
-      : 'http://localhost:8000'
+      : 'http://122.252.246.181:8443'
 
 export class ApiError extends Error {
   status: number

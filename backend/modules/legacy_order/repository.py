@@ -2,6 +2,200 @@
 from modules.legacy_order import database
 
 
+_WORKFLOW_SCHEMA_SQL = """
+IF OBJECT_ID('dbo.LegacyOrderWorkflow', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LegacyOrderWorkflow (
+        WorkflowId UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+        StoreName NVARCHAR(100) NOT NULL,
+        OrderId BIGINT NOT NULL,
+        Status VARCHAR(24) NOT NULL DEFAULT 'DRAFT',
+        StartedAt DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME(),
+        UpdatedAt DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME(),
+        FinalizedAt DATETIME2(0) NULL,
+        UpdatedBy NVARCHAR(128) NULL,
+        Note NVARCHAR(500) NULL,
+        CONSTRAINT UQ_LegacyOrderWorkflow_Store_Order UNIQUE (StoreName, OrderId),
+        CONSTRAINT CK_LegacyOrderWorkflow_Status CHECK (
+            Status IN ('DRAFT', 'QTY_REVIEW', 'SUPPLIER_ASSIGNMENT', 'READY', 'FINALIZED')
+        )
+    );
+END;
+IF OBJECT_ID('dbo.LegacyOrderWorkflowAudit', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LegacyOrderWorkflowAudit (
+        AuditId BIGINT IDENTITY(1, 1) NOT NULL PRIMARY KEY,
+        StoreName NVARCHAR(100) NOT NULL,
+        OrderId BIGINT NOT NULL,
+        ProductCode BIGINT NULL,
+        Action VARCHAR(40) NOT NULL,
+        OldValue NVARCHAR(500) NULL,
+        NewValue NVARCHAR(500) NULL,
+        Actor NVARCHAR(128) NULL,
+        CreatedAt DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+END;
+"""
+
+
+def _ensure_workflow_schema(cur):
+    """Apply the additive workflow schema without changing legacy tables."""
+    cur.execute(_WORKFLOW_SCHEMA_SQL)
+    while cur.nextset():
+        pass
+
+
+def _latest_order_id(cur, store_name):
+    row = cur.execute(
+        "SELECT MAX(OrderId) FROM OrderManagement WHERE StoreName = ?", store_name
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def _workflow_counts(cur, store_name, order_id):
+    row = cur.execute(
+        """
+        SELECT COUNT(*) AS TotalLines,
+               SUM(CASE WHEN Status = 0 AND QtyCheck = 0 THEN 1 ELSE 0 END) AS QtyPending,
+               SUM(CASE WHEN Status = 0 AND QtyCheck = 1 THEN 1 ELSE 0 END) AS QtyReviewed,
+               SUM(CASE WHEN Status = 1 AND OrderQty > 0 THEN 1 ELSE 0 END) AS AssignedLines,
+               SUM(CASE WHEN Status = 0 AND OrderQty > 0 THEN 1 ELSE 0 END) AS UnassignedLines,
+               SUM(CASE WHEN Status = 2 OR OrderQty = 0 THEN 1 ELSE 0 END) AS ClosedLines,
+               SUM(CASE WHEN Status = 1 THEN ISNULL(OrQty, OrderQty) ELSE 0 END) AS AssignedQty,
+               SUM(CASE WHEN Status = 1 THEN ISNULL(OrQty, OrderQty) * ISNULL(PurchasePrice, 0) ELSE 0 END) AS AssignedValue,
+               COUNT(DISTINCT CASE WHEN Status = 1 THEN OrSupplierCode END) AS SupplierCount
+        FROM OrderManagement WHERE StoreName = ? AND OrderId = ?
+        """,
+        store_name, order_id,
+    ).fetchone()
+    values = [0 if value is None else value for value in row]
+    return {
+        "total_lines": int(values[0]),
+        "qty_pending": int(values[1]),
+        "qty_reviewed": int(values[2]),
+        "assigned_lines": int(values[3]),
+        "unassigned_lines": int(values[4]),
+        "closed_lines": int(values[5]),
+        "assigned_qty": int(values[6]),
+        "assigned_value": float(values[7]),
+        "supplier_count": int(values[8]),
+    }
+
+
+def _record_line_audit(cur, store_name, order_id, product_code, action, old_value, new_value, actor):
+    cur.execute(
+        "INSERT dbo.LegacyOrderWorkflowAudit "
+        "(StoreName, OrderId, ProductCode, Action, OldValue, NewValue, Actor) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        store_name, order_id, product_code, action,
+        None if old_value is None else str(old_value),
+        None if new_value is None else str(new_value), actor,
+    )
+
+
+def order_workflow_summary(store_name):
+    """Current order readiness plus the durable finalization state."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        conn.commit()
+        order_id = _latest_order_id(cur, store_name)
+        if order_id is None:
+            return {
+                "store_name": store_name, "order_id": None, "status": "DRAFT",
+                "ready": False, "total_lines": 0, "qty_pending": 0,
+                "qty_reviewed": 0, "assigned_lines": 0, "unassigned_lines": 0,
+                "closed_lines": 0, "assigned_qty": 0, "assigned_value": 0.0,
+                "supplier_count": 0, "updated_at": None, "updated_by": None,
+                "finalized_at": None, "note": None,
+            }
+        counts = _workflow_counts(cur, store_name, order_id)
+        state = cur.execute(
+            "SELECT Status, UpdatedAt, UpdatedBy, FinalizedAt, Note "
+            "FROM dbo.LegacyOrderWorkflow WHERE StoreName = ? AND OrderId = ?",
+            store_name, order_id,
+        ).fetchone()
+        ready = counts["total_lines"] > 0 and counts["qty_pending"] == 0 and counts["unassigned_lines"] == 0
+        if state and state.Status == "FINALIZED":
+            status = "FINALIZED"
+        elif counts["qty_pending"] > 0:
+            status = "QTY_REVIEW"
+        elif counts["unassigned_lines"] > 0:
+            status = "SUPPLIER_ASSIGNMENT"
+        elif ready:
+            status = "READY"
+        else:
+            status = "DRAFT"
+        return {
+            "store_name": store_name, "order_id": order_id, "status": status,
+            "ready": ready, **counts,
+            "updated_at": state.UpdatedAt if state else None,
+            "updated_by": state.UpdatedBy if state else None,
+            "finalized_at": state.FinalizedAt if state else None,
+            "note": state.Note if state else None,
+        }
+
+
+def set_order_workflow_finalized(store_name, actor, note=None, reopen=False):
+    """Finalize or reopen the latest order without changing legacy line semantics."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        order_id = _latest_order_id(cur, store_name)
+        if order_id is None:
+            raise ValueError("No generated order exists for this store.")
+        counts = _workflow_counts(cur, store_name, order_id)
+        ready = counts["total_lines"] > 0 and counts["qty_pending"] == 0 and counts["unassigned_lines"] == 0
+        if not reopen and not ready:
+            raise ValueError(
+                f"Order is not ready: {counts['qty_pending']} quantity checks and "
+                f"{counts['unassigned_lines']} supplier assignments remain."
+            )
+        status = "READY" if reopen else "FINALIZED"
+        finalized_at = None if reopen else "SYSUTCDATETIME()"
+        cur.execute(
+            f"""
+            MERGE dbo.LegacyOrderWorkflow AS target
+            USING (SELECT ? AS StoreName, ? AS OrderId) AS source
+              ON target.StoreName = source.StoreName AND target.OrderId = source.OrderId
+            WHEN MATCHED THEN UPDATE SET Status = ?, UpdatedAt = SYSUTCDATETIME(),
+                UpdatedBy = ?, Note = ?, FinalizedAt = {finalized_at if finalized_at else 'NULL'}
+            WHEN NOT MATCHED THEN INSERT
+                (StoreName, OrderId, Status, UpdatedBy, Note, FinalizedAt)
+                VALUES (?, ?, ?, ?, ?, {finalized_at if finalized_at else 'NULL'});
+            """,
+            store_name, order_id, status, actor, note,
+            store_name, order_id, status, actor, note,
+        )
+        cur.execute(
+            "INSERT dbo.LegacyOrderWorkflowAudit "
+            "(StoreName, OrderId, Action, NewValue, Actor) VALUES (?, ?, ?, ?, ?)",
+            store_name, order_id, "ORDER_REOPENED" if reopen else "ORDER_FINALIZED",
+            note, actor,
+        )
+        conn.commit()
+    return order_workflow_summary(store_name)
+
+
+def order_workflow_audit(store_name, limit=50):
+    limit = max(1, min(int(limit), 200))
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        conn.commit()
+        order_id = _latest_order_id(cur, store_name)
+        if order_id is None:
+            return []
+        cur.execute(
+            f"SELECT TOP {limit} AuditId, OrderId, ProductCode, Action, OldValue, "
+            "NewValue, Actor, CreatedAt FROM dbo.LegacyOrderWorkflowAudit "
+            "WHERE StoreName = ? AND OrderId = ? ORDER BY CreatedAt DESC, AuditId DESC",
+            store_name, order_id,
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
 def _row_to_store(row):
     return {
         "store_code": str(int(row.StoreCode)) if row.StoreCode is not None else "",
@@ -195,7 +389,7 @@ def order_summary(store_name):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def update_order_qty(store_name, product_code, order_qty):
+def update_order_qty(store_name, product_code, order_qty, actor=None):
     """Manual review edit to the live grid (Form1's editable OrderQty cell).
 
     Setting order_qty = 0 is how a user marks a product "no need" -- it stays
@@ -209,8 +403,20 @@ def update_order_qty(store_name, product_code, order_qty):
     )
     with database.get_central_connection() as conn:
         cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        row = cur.execute(
+            "SELECT OrderId, OrderQty FROM OrderManagement WHERE StoreName = ? AND ProductCode = ?",
+            store_name, product_code,
+        ).fetchone()
+        if not row:
+            return 0
         cur.execute(sql, order_qty, order_qty, store_name, product_code)
         updated = cur.rowcount
+        if updated:
+            _record_line_audit(
+                cur, store_name, int(row.OrderId), product_code, "ORDER_QTY_CHANGED",
+                row.OrderQty, order_qty, actor,
+            )
         conn.commit()
         return updated
 
@@ -311,7 +517,7 @@ def assigned_orders(store_name, supplier_code):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def assign_supplier(store_name, product_code, supplier_code, supplier_name):
+def assign_supplier(store_name, product_code, supplier_code, supplier_name, actor=None):
     """Port of Form1.UpdateDatabase(productCode) -- the status 0<->1 assign
     toggle. Assigning copies the line's current OrderQty into OrQty and stamps
     the supplier (status 1). Toggling an assigned row clears supplier + OrQty
@@ -319,8 +525,9 @@ def assign_supplier(store_name, product_code, supplier_code, supplier_name):
     Returns None if the product isn't in this store's OrderManagement."""
     with database.get_central_connection() as conn:
         cur = conn.cursor()
+        _ensure_workflow_schema(cur)
         row = cur.execute(
-            "SELECT status, orderqty FROM ordermanagement "
+            "SELECT status, orderqty, OrderId, OrSupplierCode FROM ordermanagement "
             "WHERE productcode = ? AND storename = ?",
             product_code, store_name,
         ).fetchone()
@@ -335,6 +542,10 @@ def assign_supplier(store_name, product_code, supplier_code, supplier_name):
                 "WHERE productcode = ? AND status = 0 AND storename = ?",
                 orqty, supplier_name, supplier_code, product_code, store_name,
             )
+            _record_line_audit(
+                cur, store_name, int(row.OrderId), product_code, "SUPPLIER_ASSIGNED",
+                row.OrSupplierCode, supplier_code, actor,
+            )
             conn.commit()
             return {"product_code": product_code, "status": 1, "order_qty": orqty, "changed": True}
         if status == 1:
@@ -343,6 +554,10 @@ def assign_supplier(store_name, product_code, supplier_code, supplier_name):
                 "orsuppliercode = NULL, status = 0 "
                 "WHERE productcode = ? AND status = 1 AND storename = ?",
                 product_code, store_name,
+            )
+            _record_line_audit(
+                cur, store_name, int(row.OrderId), product_code, "SUPPLIER_UNASSIGNED",
+                row.OrSupplierCode, None, actor,
             )
             conn.commit()
             return {"product_code": product_code, "status": 0, "order_qty": None, "changed": True}
@@ -355,7 +570,8 @@ def qty_check_rows(store_name):
     main grid: only rows not yet reviewed (qtycheck = 0, status = 0)."""
     sql = (
         "SELECT productcode, productname, orderqty, totalstock, saleunit, unitdescription, "
-        "slsqty, mrp, lastreceiveddate, lastsaledate, maxsaleqty, Transactiondate, wantedtype "
+        "slsqty, mrp, lastreceiveddate, lastsaledate, maxsaleqty, Transactiondate, wantedtype, "
+        "producttypename "
         "FROM ordermanagement WHERE qtycheck = 0 AND status = 0 AND storename = ? "
         "ORDER BY productname"
     )
@@ -365,7 +581,7 @@ def qty_check_rows(store_name):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def update_qty_check(store_name, product_code, order_qty):
+def update_qty_check(store_name, product_code, order_qty, actor=None):
     """Port of dgvMain_CellEndEdit -> UpdateDatabase(productCode, newQty, remark)
     -> UpdateValues. The remark mirrors the VB diff message; qtycheck flips to
     1 so the row drops off the Qty Check grid the moment it's reviewed --
@@ -373,8 +589,10 @@ def update_qty_check(store_name, product_code, order_qty):
     (Enter)."""
     with database.get_central_connection() as conn:
         cur = conn.cursor()
+        _ensure_workflow_schema(cur)
         row = cur.execute(
-            "SELECT orderqty FROM ordermanagement WHERE productcode = ? AND storename = ? AND status = 0",
+            "SELECT orderqty, OrderId FROM ordermanagement "
+            "WHERE productcode = ? AND storename = ? AND status = 0",
             product_code, store_name,
         ).fetchone()
         if not row:
@@ -394,6 +612,10 @@ def update_qty_check(store_name, product_code, order_qty):
             "UPDATE ordermanagement SET orderqty = ?, remarks = ?, qtycheck = 1 "
             "WHERE productcode = ? AND storename = ? AND status = 0",
             order_qty, remark, product_code, store_name,
+        )
+        _record_line_audit(
+            cur, store_name, int(row.OrderId), product_code, "QTY_REVIEWED",
+            old_qty, order_qty, actor,
         )
         conn.commit()
         return {"order_qty": order_qty, "remarks": remark}

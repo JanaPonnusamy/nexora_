@@ -1,5 +1,6 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { tenantService } from '../../services/tenantService'
 import { storeService } from '../../services/storeService'
@@ -63,6 +64,14 @@ type View = 'purchase' | 'pending' | 'grn'
 type Stage = 'review' | 'assign' | 'optimize' | 'export'
 type Banner = { kind: 'success' | 'danger'; text: string } | null
 type ContextResetScope = 'tenant' | 'store' | 'cycle' | 'refresh'
+type PlanningFilters = {
+  pending: boolean
+  finalized: boolean
+  assigned: boolean
+  deferred: boolean
+  skipped: boolean
+  manual: boolean
+}
 
 const STAGES: { key: Stage; label: string; icon: string }[] = [
   { key: 'review', label: 'Review Products', icon: 'bi-clipboard-check' },
@@ -93,9 +102,9 @@ function withTimeout<T>(p: Promise<T>, ms = REQUEST_TIMEOUT_MS): Promise<T> {
 }
 
 const MODE_OPTIONS: { label: string; value: PurchaseMode }[] = [
-  { label: 'Review All', value: 'review' },
-  { label: 'Supplier Purchasing', value: 'supplier' },
-  { label: 'Supplier Live Stock', value: 'supplier-stock' },
+  { label: 'All Products', value: 'review' },
+  { label: 'By Supplier', value: 'supplier' },
+  { label: 'Live Stock', value: 'supplier-stock' },
 ]
 
 export default function PurchaseWorkspacePage() {
@@ -112,6 +121,11 @@ export default function PurchaseWorkspacePage() {
   const [cycleId, setCycleId] = useState('')
   const [refreshes, setRefreshes] = useState<Refresh[]>([])
   const [refreshId, setRefreshId] = useState(urlRefresh)
+  // Context is chosen once, up front, instead of permanently consuming the
+  // most valuable row in the workspace. It can still be changed from the
+  // compact context summary in the header.
+  const [contextOpen, setContextOpen] = useState(true)
+  const [contextConfirmed, setContextConfirmed] = useState(false)
   const actingUser = useActingUser()
   const [banner, setBanner] = useState<Banner>(null)
 
@@ -150,6 +164,7 @@ export default function PurchaseWorkspacePage() {
   const [showSkipped, setShowSkipped] = useState(true)
   const [showDeferred, setShowDeferred] = useState(true)
   const [showManual, setShowManual] = useState(true)
+  const [statusFiltersOpen, setStatusFiltersOpen] = useState(false)
   // Product Type filter (Product Master ProductType): '' all, '1' Pharma,
   // '0' Non-Pharma, '2' Others. Client-side only — never recalculates the VPL.
   const [productType, setProductType] = useState('')
@@ -178,6 +193,7 @@ export default function PurchaseWorkspacePage() {
   const [pmZoom, setPmZoom] = useState(() => settingsService.get<number>('purchaseWorkspace.zoom', 100))
   const [pmDensity, setPmDensity] = useState(() => settingsService.get<'normal' | 'compact'>('purchaseWorkspace.density', 'normal'))
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [toolbarMenuOpen, setToolbarMenuOpen] = useState(false)
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
   const updateColumnConfig = useCallback((next: GridColumnConfig) => {
     setColumnConfig(next)
@@ -644,6 +660,8 @@ export default function PurchaseWorkspacePage() {
     return m
   }, [items, lockedIds])
   const canWork = Boolean(tenantId && refreshId)
+  const activeStatusFilterCount = [showPending, showFinalized, showAssigned, showDeferred, showSkipped, showManual]
+    .filter(Boolean).length
 
   const itemById = useMemo(() => {
     const m = new Map<string, WorkspaceItem>()
@@ -1904,96 +1922,11 @@ export default function PurchaseWorkspacePage() {
 
   const header = (
     <div className="pm-header">
-      {/* Title + context selectors share one row — no breadcrumb (the sidebar
-          nav already shows "Purchase Manager" as active) and no separate
-          label-over-select blocks. This is a working screen, not a dashboard:
-          every row here is height the product grid doesn't get. */}
-      <div className="pm-header__top">
-        <h1 className="pm-header__title">Purchase Workspace</h1>
-        <div className="pm-ctxbar">
-          <FilterSelect
-            compact
-            icon="bi-building"
-            title="Tenant"
-            ariaLabel="Tenant"
-            value={tenantId}
-            onChange={(next) => {
-                if (next === tenantId) return
-                resetWorkspaceContext('tenant')
-                setTenantId(next)
-            }}
-          >
-            {tenants.length === 0 && <option value="">Loading...</option>}
-            {tenants.map((tenant) => (
-              <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name}</option>
-            ))}
-          </FilterSelect>
-          <FilterSelect
-            compact
-            icon="bi-shop"
-            title="Store"
-            ariaLabel="Store"
-            value={selectedStoreId}
-            onChange={(next) => {
-                if (next === selectedStoreId) return
-                resetWorkspaceContext('store')
-                setSelectedStoreId(next)
-            }}
-          >
-            <option value="">Select store</option>
-            {tenantStores.map((store) => (
-              <option key={store.store_id} value={store.store_id}>{store.store_name}</option>
-            ))}
-          </FilterSelect>
-          <FilterSelect
-            compact
-            icon="bi-arrow-repeat"
-            title="Cycle"
-            ariaLabel="Cycle"
-            value={cycleId}
-            onChange={(next) => {
-                if (next === cycleId) return
-                resetWorkspaceContext('cycle')
-                setCycleId(next)
-            }}
-          >
-            <option value="">Select cycle</option>
-            {cycles.map((cycle) => (
-              <option key={cycle.cycle_id} value={cycle.cycle_id}>
-                {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? '' : ' - Closed'}
-              </option>
-            ))}
-          </FilterSelect>
-          <FilterSelect
-            compact
-            icon="bi-clock-history"
-            title="Refresh"
-            ariaLabel="Refresh"
-            value={refreshId}
-            onChange={(next) => {
-                if (next === refreshId) return
-                resetWorkspaceContext('refresh')
-                setRefreshId(next)
-            }}
-          >
-            <option value="">{refreshesInCycle.length ? 'Select refresh' : 'No refreshes'}</option>
-            {refreshesInCycle.map((refresh) => (
-              <option key={refresh.refresh_id} value={refresh.refresh_id}>
-                {refresh.snapshot_name} - {refresh.snapshot_status}
-              </option>
-            ))}
-          </FilterSelect>
-          {readOnly && (
-            <span className="pm-ro-badge">
-              <i className="bi bi-lock-fill me-1" aria-hidden="true" />
-              Read Only · {cycleClosed ? 'Closed Cycle' : 'Closed Refresh'}
-            </span>
-          )}
-        </div>
-      </div>
-      {/* View tabs (Purchase/Pending/GRN) and workflow stage tabs share one
-          row — both are compact pill tabs, not the card-style default. */}
+      {/* Keep only the working navigation in the page header. Tenant, store,
+          cycle and refresh are selected in the entry dialog and intentionally
+          stay out of this high-value vertical space. */}
       <div className="pm-header__tabs">
+        <h1 className="pm-header__title">Purchase Manager</h1>
         <SegmentedTabs
           items={[
             { value: 'purchase', label: 'Purchase', description: 'Review and assign products', icon: 'bi-cart-check' },
@@ -2025,6 +1958,21 @@ export default function PurchaseWorkspacePage() {
             />
           </>
         )}
+        {readOnly && (
+          <span className="pm-ro-badge pm-header__readonly">
+            <i className="bi bi-lock-fill" aria-hidden="true" />
+            {cycleClosed ? 'Closed cycle' : 'Closed refresh'}
+          </span>
+        )}
+        <button
+          className="pm-header__context"
+          type="button"
+          title="Change tenant, store, cycle or refresh"
+          aria-label="Change tenant, store, cycle or refresh"
+          onClick={() => setContextOpen(true)}
+        >
+          <i className="bi bi-sliders2" aria-hidden="true" />
+        </button>
       </div>
     </div>
   )
@@ -2039,7 +1987,7 @@ export default function PurchaseWorkspacePage() {
     <WorkspaceShell
       header={header}
       statusBar={statusBar}
-      className={`pm${pmDensity === 'compact' ? ' pm--compact' : ''}`}
+      className={`pm${pmDensity === 'compact' ? ' pm--compact' : ''}${canWork && view === 'purchase' && (stage === 'review' || stage === 'assign') ? ' pm--filters-in-header' : ''}`}
       style={{ zoom: pmZoom / 100 }}
       fullWidth
     >
@@ -2062,12 +2010,54 @@ export default function PurchaseWorkspacePage() {
         />
       ) : view === 'grn' ? (
         <div className="pm-grn">
-          <div className="pm-grn__row">
-            <span>Last GRN Number</span>
-            <input className="pm-top__user" value={grnNumber} placeholder="e.g. 4567" onChange={(e) => setGrnNumber(e.target.value)} />
-            <button className="pm-btn pm-btn--primary" onClick={submitGrn}>Submit &amp; Reconcile</button>
-          </div>
-          <p className="text-muted small mt-2">Entering the Last GRN triggers store sync and reconciles received quantities against assignments automatically.</p>
+          <section className="pm-grn__card" aria-labelledby="pm-grn-title">
+            <header className="pm-grn__head">
+              <span className="pm-grn__mark"><i className="bi bi-receipt" aria-hidden="true" /></span>
+              <div>
+                <span className="pm-grn__eyebrow">Goods receipt reconciliation</span>
+                <h2 id="pm-grn-title">Reconcile received stock</h2>
+                <p>Enter the latest GRN number to sync receipts and update purchase assignments.</p>
+              </div>
+            </header>
+
+            <div className="pm-grn__form">
+              <label htmlFor="pm-last-grn">
+                Last GRN number
+                <small>Use the most recent GRN available in the selected store.</small>
+              </label>
+              <div className="pm-grn__input-wrap">
+                <i className="bi bi-hash" aria-hidden="true" />
+                <input
+                  id="pm-last-grn"
+                  value={grnNumber}
+                  placeholder="Example: 4567"
+                  autoComplete="off"
+                  onChange={(e) => setGrnNumber(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && grnNumber.trim()) submitGrn() }}
+                />
+              </div>
+              <button className="pm-btn pm-btn--primary pm-grn__submit" disabled={!grnNumber.trim()} onClick={submitGrn}>
+                <i className="bi bi-arrow-repeat" aria-hidden="true" />
+                Sync and reconcile
+              </button>
+            </div>
+
+            <div className="pm-grn__process">
+              <h3>What happens next</h3>
+              <div className="pm-grn__steps">
+                <span><i className="bi bi-cloud-arrow-down" aria-hidden="true" /><b>Sync receipts</b><small>Load GRNs up to this number</small></span>
+                <i className="bi bi-chevron-right" aria-hidden="true" />
+                <span><i className="bi bi-intersect" aria-hidden="true" /><b>Match orders</b><small>Compare receipts with assignments</small></span>
+                <i className="bi bi-chevron-right" aria-hidden="true" />
+                <span><i className="bi bi-check2-circle" aria-hidden="true" /><b>Update status</b><small>Complete or retain pending lines</small></span>
+              </div>
+            </div>
+
+            <p className="pm-grn__note">
+              <i className="bi bi-info-circle" aria-hidden="true" />
+              This operation does not change exported purchase orders. It only reconciles received quantities.
+            </p>
+          </section>
         </div>
       ) : (
         <>
@@ -2110,7 +2100,7 @@ export default function PurchaseWorkspacePage() {
                 <div className="pm-slot pm-slot--select">
                   {mode !== 'supplier-stock' && (
                     <FilterSelect className={productType ? 'ds-filter-select--active' : ''} ariaLabel="Product Type filter" value={productType} onChange={setProductType}>
-                      <option value="">Product Type: all</option>
+                      <option value="">All</option>
                       <option value="1">Pharma</option>
                       <option value="0">Non-Pharma</option>
                       <option value="2">Others</option>
@@ -2129,7 +2119,7 @@ export default function PurchaseWorkspacePage() {
                     </label>
                   )}
                 </div>
-                <div className="pm-slot pm-slot--supplier">
+                <div className={`pm-slot pm-slot--supplier${mode === 'review' ? ' pm-slot--empty' : ''}`}>
                   {mode !== 'review' && (
                     <SupplierPicker
                       tenantId={tenantId}
@@ -2141,22 +2131,6 @@ export default function PurchaseWorkspacePage() {
                     />
                   )}
                 </div>
-                {mode !== 'supplier-stock' && (
-                  <>
-                    <span className="pm-toolbar__sep" aria-hidden="true" />
-                    <span className="pm-toolbar__label">Show</span>
-                    {/* The supplier workspace is assignment-based, not
-                        review-based (§18): default shows every state (all six
-                        stay checked), these are opt-in narrower views, never an
-                        automatic hide. */}
-                    <label className="pm-chk"><input type="checkbox" checked={showPending} onChange={(e) => setShowPending(e.target.checked)} /> Pending Review</label>
-                    <label className="pm-chk"><input type="checkbox" checked={showFinalized} onChange={(e) => setShowFinalized(e.target.checked)} /> Finalized</label>
-                    <label className="pm-chk"><input type="checkbox" checked={showAssigned} onChange={(e) => setShowAssigned(e.target.checked)} /> Assigned</label>
-                    <label className="pm-chk"><input type="checkbox" checked={showDeferred} onChange={(e) => setShowDeferred(e.target.checked)} /> Deferred</label>
-                    <label className="pm-chk"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Skipped</label>
-                    <label className="pm-chk"><input type="checkbox" checked={showManual} onChange={(e) => setShowManual(e.target.checked)} /> Manual</label>
-                  </>
-                )}
                 {mode === 'supplier-stock' && (
                   <>
                     <div className="pm-slot pm-slot--search">
@@ -2173,21 +2147,43 @@ export default function PurchaseWorkspacePage() {
                     <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" hidden onChange={(e) => onImportPick(e.target.files?.[0] ?? null)} />
                   </>
                 )}
-                <div className="pm-toolbar__right">
-                  {isReviewStage && (
-                    <button className="pm-btn pm-btn--ghost" onClick={() => setManualOpen(true)}><i className="bi bi-plus-lg" /> Manual</button>
-                  )}
-                  <button className="pm-btn pm-btn--ghost" onClick={loadWorkspace} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
+                <div className="pm-toolbar__right pm-toolbar-actions">
+                  <button
+                    className="pm-btn pm-btn--ghost pm-toolbar-actions__icon"
+                    type="button"
+                    onClick={loadWorkspace}
+                    title="Reload products"
+                    aria-label="Reload products"
+                  >
+                    <i className="bi bi-arrow-repeat" aria-hidden="true" />
+                  </button>
                   <div className="pm-settings-anchor">
                     <button
                       ref={settingsBtnRef}
-                      className="pm-btn pm-btn--ghost"
-                      onClick={() => setSettingsOpen((v) => !v)}
-                      title="Workspace settings"
-                      aria-expanded={settingsOpen}
+                      className={`pm-btn pm-btn--ghost pm-toolbar-actions__menu${toolbarMenuOpen || settingsOpen ? ' is-active' : ''}`}
+                      onClick={() => {
+                        setSettingsOpen(false)
+                        setToolbarMenuOpen((open) => !open)
+                      }}
+                      title="Workspace actions"
+                      aria-label="Open workspace actions"
+                      aria-haspopup="menu"
+                      aria-expanded={toolbarMenuOpen}
                     >
-                      <i className="bi bi-gear" /> Settings
+                      <i className="bi bi-three-dots-vertical" aria-hidden="true" />
                     </button>
+                    {toolbarMenuOpen && (
+                      <WorkspaceQuickActions
+                        anchorRef={settingsBtnRef}
+                        filterCount={activeStatusFilterCount}
+                        canAddProduct={isReviewStage}
+                        canFilter={mode !== 'supplier-stock'}
+                        onFilters={() => { setToolbarMenuOpen(false); setStatusFiltersOpen(true) }}
+                        onAddProduct={() => { setToolbarMenuOpen(false); setManualOpen(true) }}
+                        onSettings={() => { setToolbarMenuOpen(false); setSettingsOpen(true) }}
+                        onClose={() => setToolbarMenuOpen(false)}
+                      />
+                    )}
                     {settingsOpen && (
                       <WorkspaceSettings
                         anchorRef={settingsBtnRef}
@@ -2201,15 +2197,18 @@ export default function PurchaseWorkspacePage() {
                       />
                     )}
                   </div>
+                  {/* Makes every filter above accountable without reading like
+                      a sentence in the middle of an action group. */}
+                  {mode !== 'supplier-stock' && (
+                    <span className="pm-toolbar__count" title={`${visibleItems.length} of ${items.length} products visible`}>
+                      <i className="bi bi-box-seam" aria-hidden="true" />
+                      <b>{visibleItems.length}</b>
+                      {visibleItems.length !== items.length && <span> / {items.length}</span>}
+                      <span> products</span>
+                      {offerOnly && offerProductCodes && <span className="pm-toolbar__offer-count"><i className="bi bi-tag" /> {offerProductCodes.size}</span>}
+                    </span>
+                  )}
                 </div>
-                {/* Makes every filter above accountable — a filter that hides
-                    everything now says so instead of leaving a blank grid. */}
-                {mode !== 'supplier-stock' && (
-                  <span className="pm-toolbar__count">
-                    Showing <b>{visibleItems.length}</b> of {items.length}
-                    {offerOnly && offerProductCodes && <> · <i className="bi bi-tag" /> {offerProductCodes.size} on offer</>}
-                  </span>
-                )}
               </div>
             </div>
           )}
@@ -2758,7 +2757,353 @@ export default function PurchaseWorkspacePage() {
         />
       )}
 
+      {contextOpen && (
+        <PurchaseContextDialog
+          tenants={tenants}
+          tenantId={tenantId}
+          onTenantChange={(next) => {
+            if (next === tenantId) return
+            resetWorkspaceContext('tenant')
+            setTenantId(next)
+          }}
+          stores={tenantStores}
+          storeId={selectedStoreId}
+          onStoreChange={(next) => {
+            if (next === selectedStoreId) return
+            resetWorkspaceContext('store')
+            setSelectedStoreId(next)
+          }}
+          cycles={cycles}
+          cycleId={cycleId}
+          onCycleChange={(next) => {
+            if (next === cycleId) return
+            resetWorkspaceContext('cycle')
+            setCycleId(next)
+          }}
+          refreshes={refreshesInCycle}
+          refreshId={refreshId}
+          onRefreshChange={(next) => {
+            if (next === refreshId) return
+            resetWorkspaceContext('refresh')
+            setRefreshId(next)
+          }}
+          busy={contextLoading}
+          canOpen={canWork}
+          canDismiss={contextConfirmed}
+          onClose={() => setContextOpen(false)}
+          onOpen={() => {
+            setContextConfirmed(true)
+            setContextOpen(false)
+          }}
+        />
+      )}
+
+      {statusFiltersOpen && (
+        <PlanningStateFilterDialog
+          value={{
+            pending: showPending,
+            finalized: showFinalized,
+            assigned: showAssigned,
+            deferred: showDeferred,
+            skipped: showSkipped,
+            manual: showManual,
+          }}
+          onClose={() => setStatusFiltersOpen(false)}
+          onApply={(next) => {
+            setShowPending(next.pending)
+            setShowFinalized(next.finalized)
+            setShowAssigned(next.assigned)
+            setShowDeferred(next.deferred)
+            setShowSkipped(next.skipped)
+            setShowManual(next.manual)
+            setStatusFiltersOpen(false)
+          }}
+        />
+      )}
+
     </WorkspaceShell>
+  )
+}
+
+function PurchaseContextDialog({
+  tenants, tenantId, onTenantChange,
+  stores, storeId, onStoreChange,
+  cycles, cycleId, onCycleChange,
+  refreshes, refreshId, onRefreshChange,
+  busy, canOpen, canDismiss, onClose, onOpen,
+}: {
+  tenants: Tenant[]
+  tenantId: string
+  onTenantChange: (value: string) => void
+  stores: Store[]
+  storeId: string
+  onStoreChange: (value: string) => void
+  cycles: Cycle[]
+  cycleId: string
+  onCycleChange: (value: string) => void
+  refreshes: Refresh[]
+  refreshId: string
+  onRefreshChange: (value: string) => void
+  busy: boolean
+  canOpen: boolean
+  canDismiss: boolean
+  onClose: () => void
+  onOpen: () => void
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && canDismiss) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [canDismiss, onClose])
+
+  return (
+    <div className="pm-context-dialog__layer" role="presentation">
+      <div className="pm-context-dialog" role="dialog" aria-modal="true" aria-labelledby="pm-context-title">
+        <header className="pm-context-dialog__head">
+          <span className="pm-context-dialog__mark"><i className="bi bi-cart-check" aria-hidden="true" /></span>
+          <div>
+            <p className="pm-context-dialog__eyebrow">Purchase Manager</p>
+            <h2 id="pm-context-title">Choose your working context</h2>
+            <p>Select where you are purchasing and which refresh you want to review.</p>
+          </div>
+          {canDismiss && <button className="btn-close" type="button" aria-label="Close" onClick={onClose} />}
+        </header>
+
+        <div className="pm-context-dialog__body">
+          <div className="pm-context-dialog__progress" aria-hidden="true">
+            {['Tenant', 'Store', 'Cycle', 'Refresh'].map((label, index) => (
+              <span key={label} className={[
+                tenantId,
+                storeId,
+                cycleId,
+                refreshId,
+              ][index] ? 'is-complete' : ''}>
+                <i>{index + 1}</i>{label}
+              </span>
+            ))}
+          </div>
+
+          <div className="pm-context-dialog__grid">
+            <label>
+              <span><i className="bi bi-building" aria-hidden="true" /> Tenant</span>
+              <select autoFocus value={tenantId} onChange={(e) => onTenantChange(e.target.value)}>
+                <option value="">Select tenant</option>
+                {tenants.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name}</option>)}
+              </select>
+              <small>The business account you are purchasing for</small>
+            </label>
+            <label>
+              <span><i className="bi bi-shop" aria-hidden="true" /> Store</span>
+              <select value={storeId} disabled={!tenantId} onChange={(e) => onStoreChange(e.target.value)}>
+                <option value="">{tenantId && stores.length === 0 ? 'No stores available' : 'Select store'}</option>
+                {stores.map((store) => <option key={store.store_id} value={store.store_id}>{store.store_name}</option>)}
+              </select>
+              <small>The store whose stock will be reviewed</small>
+            </label>
+            <label>
+              <span><i className="bi bi-arrow-repeat" aria-hidden="true" /> Purchase cycle</span>
+              <select value={cycleId} disabled={!storeId} onChange={(e) => onCycleChange(e.target.value)}>
+                <option value="">{storeId && cycles.length === 0 ? 'No cycles available' : 'Select cycle'}</option>
+                {cycles.map((cycle) => (
+                  <option key={cycle.cycle_id} value={cycle.cycle_id}>
+                    {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? ' · Active' : ' · Closed'}
+                  </option>
+                ))}
+              </select>
+              <small>Active cycles are editable; closed cycles are view-only</small>
+            </label>
+            <label>
+              <span><i className="bi bi-clock-history" aria-hidden="true" /> Refresh</span>
+              <select value={refreshId} disabled={!cycleId} onChange={(e) => onRefreshChange(e.target.value)}>
+                <option value="">{cycleId && refreshes.length === 0 ? 'No refreshes available' : 'Select refresh'}</option>
+                {refreshes.map((refresh) => (
+                  <option key={refresh.refresh_id} value={refresh.refresh_id}>
+                    {refresh.snapshot_name} · {refresh.snapshot_status}
+                  </option>
+                ))}
+              </select>
+              <small>The latest refresh is selected automatically</small>
+            </label>
+          </div>
+        </div>
+
+        <footer className="pm-context-dialog__foot">
+          <span className={canOpen ? 'is-ready' : ''}>
+            <i className={`bi ${canOpen ? 'bi-check-circle-fill' : 'bi-info-circle'}`} aria-hidden="true" />
+            {canOpen ? 'Workspace is ready' : 'Complete all four selections to continue'}
+          </span>
+          {canDismiss && <button type="button" className="pm-btn pm-btn--ghost" onClick={onClose}>Close</button>}
+          <button type="button" className="pm-btn pm-btn--primary pm-context-dialog__open" disabled={!canOpen} onClick={onOpen}>
+            {busy ? <i className="bi bi-arrow-repeat" aria-hidden="true" /> : <i className="bi bi-box-arrow-in-right" aria-hidden="true" />}
+            {busy ? 'Loading workspace…' : 'Open workspace'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
+function WorkspaceQuickActions({
+  anchorRef,
+  filterCount,
+  canAddProduct,
+  canFilter,
+  onFilters,
+  onAddProduct,
+  onSettings,
+  onClose,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>
+  filterCount: number
+  canAddProduct: boolean
+  canFilter: boolean
+  onFilters: () => void
+  onAddProduct: () => void
+  onSettings: () => void
+  onClose: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState<{ top: number; right: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current
+    if (!anchor) return
+    const rect = anchor.getBoundingClientRect()
+    setPosition({ top: rect.bottom + 7, right: Math.max(8, window.innerWidth - rect.right) })
+  }, [anchorRef])
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (!menuRef.current?.contains(target) && !anchorRef.current?.contains(target)) onClose()
+    }
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [anchorRef, onClose])
+
+  if (!position) return null
+
+  return createPortal(
+    <div ref={menuRef} className="pm-quick-actions" role="menu" aria-label="Workspace actions" style={position}>
+      <div className="pm-quick-actions__head">
+        <span>Workspace actions</span>
+        <small>Tools for the current product view</small>
+      </div>
+      {canFilter && (
+        <button type="button" role="menuitem" onClick={onFilters}>
+          <i className="bi bi-funnel" aria-hidden="true" />
+          <span><b>Status filters</b><small>Choose visible planning states</small></span>
+          <em>{filterCount === 6 ? 'All' : `${filterCount}/6`}</em>
+        </button>
+      )}
+      {canAddProduct && (
+        <button type="button" role="menuitem" onClick={onAddProduct}>
+          <i className="bi bi-plus-square" aria-hidden="true" />
+          <span><b>Add product</b><small>Add a manual product to this refresh</small></span>
+          <i className="bi bi-chevron-right pm-quick-actions__arrow" aria-hidden="true" />
+        </button>
+      )}
+      <button type="button" role="menuitem" onClick={onSettings}>
+        <i className="bi bi-gear" aria-hidden="true" />
+        <span><b>Workspace settings</b><small>Columns, zoom and density</small></span>
+        <i className="bi bi-chevron-right pm-quick-actions__arrow" aria-hidden="true" />
+      </button>
+    </div>,
+    document.body,
+  )
+}
+
+const PLANNING_FILTER_OPTIONS: { key: keyof PlanningFilters; label: string; description: string; icon: string }[] = [
+  { key: 'pending', label: 'Pending Review', description: 'Products still waiting for a decision', icon: 'bi-hourglass-split' },
+  { key: 'finalized', label: 'Finalized', description: 'Quantity review has been completed', icon: 'bi-check2-circle' },
+  { key: 'assigned', label: 'Assigned', description: 'Products linked to a supplier', icon: 'bi-diagram-3' },
+  { key: 'deferred', label: 'Deferred', description: 'Products postponed for later review', icon: 'bi-clock-history' },
+  { key: 'skipped', label: 'Skipped', description: 'Products intentionally excluded', icon: 'bi-skip-forward' },
+  { key: 'manual', label: 'Manual', description: 'Products added manually by a buyer', icon: 'bi-plus-square' },
+]
+
+function PlanningStateFilterDialog({
+  value,
+  onClose,
+  onApply,
+}: {
+  value: PlanningFilters
+  onClose: () => void
+  onApply: (value: PlanningFilters) => void
+}) {
+  const [draft, setDraft] = useState(value)
+  const activeCount = Object.values(draft).filter(Boolean).length
+  const setAll = (checked: boolean) => setDraft({
+    pending: checked,
+    finalized: checked,
+    assigned: checked,
+    deferred: checked,
+    skipped: checked,
+    manual: checked,
+  })
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="pm-status-filter__layer" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <div className="pm-status-filter" role="dialog" aria-modal="true" aria-labelledby="pm-status-filter-title">
+        <header className="pm-status-filter__head">
+          <span className="pm-status-filter__mark"><i className="bi bi-funnel" aria-hidden="true" /></span>
+          <div>
+            <h2 id="pm-status-filter-title">Show planning states</h2>
+            <p>Choose which products are visible in the workspace.</p>
+          </div>
+          <button className="btn-close" type="button" aria-label="Close" onClick={onClose} />
+        </header>
+
+        <div className="pm-status-filter__body">
+          <div className="pm-status-filter__quick">
+            <span><b>{activeCount}</b> of 6 states selected</span>
+            <button type="button" onClick={() => setAll(true)}>Select all</button>
+            <button type="button" onClick={() => setAll(false)}>Clear all</button>
+          </div>
+          <div className="pm-status-filter__options">
+            {PLANNING_FILTER_OPTIONS.map((option) => (
+              <label key={option.key} className={draft[option.key] ? 'is-selected' : ''}>
+                <input
+                  type="checkbox"
+                  checked={draft[option.key]}
+                  onChange={(event) => setDraft((current) => ({ ...current, [option.key]: event.target.checked }))}
+                />
+                <i className={`bi ${option.icon}`} aria-hidden="true" />
+                <span><b>{option.label}</b><small>{option.description}</small></span>
+                <i className="bi bi-check-circle-fill pm-status-filter__check" aria-hidden="true" />
+              </label>
+            ))}
+          </div>
+          {activeCount === 0 && (
+            <p className="pm-status-filter__warning"><i className="bi bi-exclamation-circle" /> Select at least one state to show products.</p>
+          )}
+        </div>
+
+        <footer className="pm-status-filter__foot">
+          <button type="button" className="pm-btn pm-btn--ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="pm-btn pm-btn--primary" disabled={activeCount === 0} onClick={() => onApply(draft)}>
+            Apply filters <span>{activeCount}</span>
+          </button>
+        </footer>
+      </div>
+    </div>
   )
 }
 

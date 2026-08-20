@@ -5,9 +5,9 @@ import electron from 'vite-plugin-electron/simple'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  // The API the dev server proxies to. Defaults to the local backend; override
+  // The API the dev server proxies to. Defaults to the HO backend; override
   // with VITE_DEV_API_TARGET when the API runs on another host/port.
-  const apiTarget = env.VITE_DEV_API_TARGET || 'http://localhost:8000'
+  const apiTarget = env.VITE_DEV_API_TARGET || 'http://122.252.246.181:8443'
 
   // The Electron host only builds/launches under `vite --mode electron`
   // (see the `electron:dev` script) so the plain `npm run dev` / `npm run
