@@ -11,7 +11,7 @@ import type {
   WorkspaceOrderRow,
 } from '../../types/legacyOrder'
 import './legacy-order.css'
-import { FilterBar, FilterSearch, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
+import { FilterBar, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
 import { ProductDetailPanel } from './ProductDetailPanel'
 import { OrderWorkflowPanel } from './OrderWorkflowPanel'
 
@@ -30,8 +30,7 @@ export default function OrderWorkspacePage() {
   const [view, setView] = useState<View>('review')
   const [supplierMode, setSupplierMode] = useState<SupplierOrderMode>('history')
 
-  // Supplier search panel (dgvSupplierList).
-  const [supplierSearch, setSupplierSearch] = useState('')
+  // Supplier picker (dgvSupplierList → VB-style combo dropdown).
   const [suppliers, setSuppliers] = useState<SupplierListItem[]>([])
   const [supplier, setSupplier] = useState<SupplierListItem | null>(null)
 
@@ -69,17 +68,14 @@ export default function OrderWorkspacePage() {
     setSelectedCode(null)
   }, [])
 
-  // Debounced supplier search (VB txtSupplierSearch_TextChanged).
+  // Load the full supplier list for the store combo (empty search = all).
   useEffect(() => {
     if (view !== 'supplier' && view !== 'assigned') return
     if (!store) return
-    const handle = window.setTimeout(() => {
-      legacyOrderService.suppliers(store, supplierSearch)
-        .then(setSuppliers)
-        .catch((e: Error) => setError(e.message))
-    }, 250)
-    return () => window.clearTimeout(handle)
-  }, [store, supplierSearch, view])
+    legacyOrderService.suppliers(store, '')
+      .then(setSuppliers)
+      .catch((e: Error) => setError(e.message))
+  }, [store, view])
 
   // Load the grid for the active context.
   const loadGrid = useCallback(() => {
@@ -112,10 +108,10 @@ export default function OrderWorkspacePage() {
     return () => window.clearTimeout(handle)
   }, [loadGrid])
 
+  // Switching store clears supplier context and reloads the grid.
   const changeStore = (nextStore: string) => {
     setSupplier(null)
     setSuppliers([])
-    setSupplierSearch('')
     setStore(nextStore)
   }
 
@@ -181,10 +177,10 @@ export default function OrderWorkspacePage() {
 
   return (
     <div className="legacy-order">
-      <header className="lo-header">
+      <header className="lo-header lo-header-compact">
         <div>
           <h1>Order Management · Workspace</h1>
-          <p className="lo-sub">Review the generated order, allocate every positive line to a supplier, then finalize it for downstream processing.</p>
+          <p className="lo-sub" title="Pick a supplier, review its orderable products by purchase history or live stock, edit quantities, and assign the supplier per line — the VB.NET dgvMain ordering screen.">Pick a supplier, review orderable products, edit quantities, and assign per line.</p>
         </div>
         <div className="lo-actions">
           <Link to="/legacy-order/qty-check" className="lo-btn"><i className="bi bi-table" /> Qty Check Grid</Link>
@@ -225,6 +221,17 @@ export default function OrderWorkspacePage() {
               ]}
               onChange={(v) => setView(v as View)}
             />
+            {(view === 'supplier' || view === 'assigned') && (
+              <FilterSelect
+                label="Supplier"
+                ariaLabel="Supplier"
+                value={supplier?.supplier_code ?? ''}
+                onChange={(code) => setSupplier(suppliers.find((s) => s.supplier_code === code) ?? null)}
+              >
+                <option value="">Select supplier…</option>
+                {suppliers.map((s) => <option key={s.supplier_code} value={s.supplier_code}>{s.supplier_name}</option>)}
+              </FilterSelect>
+            )}
             {view === 'supplier' && (
               <FilterTabs
                 value={supplierMode}
@@ -246,30 +253,6 @@ export default function OrderWorkspacePage() {
 
       <div className="lo-lower-grid">
         <section className="lo-card">
-          {(view === 'supplier' || view === 'assigned') && (
-            <div className="lo-supplier-pick">
-              <FilterBar compact ariaLabel="Supplier search">
-                <FilterSearch value={supplierSearch} placeholder="Search supplier…" ariaLabel="Search suppliers" onChange={setSupplierSearch} />
-              </FilterBar>
-              <div className="lo-supplier-grid lo-supplier-picklist" role="listbox" aria-label="Suppliers">
-                {suppliers.map((s) => (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={supplier?.supplier_code === s.supplier_code}
-                    className={`lo-supplier-row${supplier?.supplier_code === s.supplier_code ? ' is-selected' : ''}`}
-                    key={s.supplier_code}
-                    onClick={() => setSupplier(s)}
-                  >
-                    <span><strong>{s.supplier_name}</strong><small>{s.supplier_code}</small></span>
-                    <span className="lo-review-link"><i className="bi bi-chevron-right" /></span>
-                  </button>
-                ))}
-                {!suppliers.length && <div className="lo-empty">{supplierSearch ? 'No matching suppliers.' : 'Type to search suppliers.'}</div>}
-              </div>
-            </div>
-          )}
-
           <h2>{view === 'assigned' ? 'Assigned order' : view === 'supplier' ? (supplier ? `${supplier.supplier_name} · orderable` : 'Select a supplier') : 'Order grid'}</h2>
 
           {view === 'assigned' ? (

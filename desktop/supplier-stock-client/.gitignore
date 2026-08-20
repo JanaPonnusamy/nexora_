@@ -1,0 +1,2 @@
+# electron-builder local cache (pre-seeded NSIS binaries; environment-specific)
+.eb-cache/
