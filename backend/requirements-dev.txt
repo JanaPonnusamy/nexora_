@@ -15,6 +15,7 @@
 # Keep in sync with requirements.txt when a test grows a new dependency.
 
 pytest
+openpyxl
 fastapi
 pydantic
 PyJWT

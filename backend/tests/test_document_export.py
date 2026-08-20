@@ -355,3 +355,109 @@ def test_csv_export_is_the_products_sheet_with_a_bom(batch):
     assert lines[0].split(",") == contract_columns()[1]
     assert len(lines) == 4, "header plus three non-excluded product lines"
     assert "SUB TOTAL" not in text
+
+
+def _word(text, center, y):
+    width = max(12, len(text) * 7)
+    return {
+        "text": text,
+        "confidence": 0.96,
+        "bbox": {"x1": center - width // 2, "y1": y, "x2": center + width // 2, "y2": y + 18},
+    }
+
+
+def _line(line_no, tokens, y):
+    words = [_word(text, center, y) for text, center in tokens]
+    return {
+        "line_no": line_no,
+        "text": " ".join(text for text, _center in tokens),
+        "confidence": 0.95,
+        "bbox": {
+            "x1": min(word["bbox"]["x1"] for word in words),
+            "y1": y,
+            "x2": max(word["bbox"]["x2"] for word in words),
+            "y2": y + 18,
+        },
+        "words": words,
+    }
+
+
+def _source_ocr_json():
+    headers = [
+        ("S", 15), ("No", 35), ("Description", 130), ("HSN", 260),
+        ("Batch", 340), ("Exp", 420), ("Qty", 500), ("Free", 580),
+        ("PTR", 660), ("Total", 740),
+    ]
+    first = [
+        ("1", 25), ("ACILOC", 110), ("150", 155), ("30049033", 260),
+        ("LD26003", 340), ("06/28", 420), ("2", 500),
+        # The Free cell is intentionally blank in the photographed row.
+        ("38.43", 660), ("69.13", 740),
+    ]
+    second = [
+        ("2", 25), ("ACITROM", 115), ("2MG", 160), ("30045010", 260),
+        ("SSL0213", 340), ("11/27", 420), ("1", 500), ("1", 580),
+        ("433.63", 660), ("409.78", 740),
+    ]
+    return {
+        "engine_name": "PaddleOCR",
+        "pages": [{
+            "page_no": 1,
+            "lines": [
+                _line(1, headers, 100),
+                _line(2, first, 140),
+                _line(3, second, 180),
+                _line(4, [("SUB", 620), ("TOTAL", 700)], 240),
+            ],
+        }],
+        "average_confidence": 0.95,
+    }
+
+
+def test_source_table_preserves_detected_columns_and_blank_cells(batch):
+    imports, items = batch
+    imports = [{**imports[0], "ocr_json": _source_ocr_json()}]
+    items = [item for item in items if item["import_id"] == 11]
+
+    content = export_excel.build_workbook(imports, items, datetime(2026, 8, 17))
+    workbook = load_workbook(io.BytesIO(content))
+    sheet = workbook["Source Table"]
+    headers = [cell.value for cell in sheet[1]]
+    first = list(next(sheet.iter_rows(min_row=2, max_row=2, values_only=True)))
+    values = dict(zip(headers, first))
+
+    assert headers == ["S No", "Description", "HSN", "Batch", "Exp", "Qty", "Free", "PTR", "Total"]
+    assert values["Description"] == "ACILOC 150"
+    assert values["Qty"] == "2"
+    assert values["Free"] is None
+    assert values["PTR"] == "38.43"
+    assert values["Total"] == "69.13"
+    assert workbook.active.title == "Source Table"
+    assert sheet.freeze_panes == "A2"
+    assert sheet.cell(row=2, column=headers.index("Total") + 1).alignment.horizontal == "right"
+
+
+def test_batch_export_creates_one_source_table_per_invoice(batch):
+    imports, items = batch
+    imports = [
+        {**imports[0], "ocr_json": _source_ocr_json()},
+        {**imports[1], "ocr_json": _source_ocr_json()},
+    ]
+
+    content = export_excel.build_workbook(imports, items, datetime(2026, 8, 17))
+    workbook = load_workbook(io.BytesIO(content))
+
+    assert "Source Table 11" in workbook.sheetnames
+    assert "Source Table 12" in workbook.sheetnames
+    assert workbook.active.title == "Source Table 11"
+
+
+def test_malformed_legacy_ocr_does_not_break_contracted_export(batch):
+    imports, items = batch
+    imports = [{**imports[0], "ocr_json": {"pages": [{"lines": "not-a-list"}]}}]
+    items = [item for item in items if item["import_id"] == 11]
+
+    content = export_excel.build_workbook(imports, items, datetime(2026, 8, 17))
+    workbook = load_workbook(io.BytesIO(content))
+
+    assert workbook.sheetnames == SHEET_TABS

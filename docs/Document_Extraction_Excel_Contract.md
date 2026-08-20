@@ -6,6 +6,14 @@ One workbook per export call. A batch export (`POST /exports` with multiple `imp
 
 `csv` export format is Sheet 2 (Products) only, per the API doc's existing constraint — single-table format can't represent six sheets.
 
+When the stored OCR result contains word bounding boxes, XLSX exports also
+append one **Source Table** sheet per invoice. This additive sheet preserves
+the photographed product table's detected column order, row boundaries, and
+blank cells; it does not replace or alter the six integration sheets below.
+For a single invoice the tab is `Source Table`; batch exports use
+`Source Table {import_id}`. The first source-table tab is the active sheet so
+mobile users see the image-aligned extraction when opening the workbook.
+
 ---
 
 ## Sheet 1 — Invoice Header

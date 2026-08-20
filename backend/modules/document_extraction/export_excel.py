@@ -13,14 +13,37 @@ caller (service.py) owns persisting the result via storage.export_path().
 
 import csv
 import io
+import json
+import logging
 from datetime import date, datetime
+from typing import Optional
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
+from modules.document_extraction.ocr.models import (
+    BoundingBox,
+    Confidence,
+    OCRDocument,
+    OCRLine,
+    OCRPage,
+    OCRWord,
+)
+from modules.document_extraction.parser.generic_invoice_parser import GenericInvoiceParser
+from modules.document_extraction.table_engine import geometry_columns
 
 _DATE_FMT = "%Y-%m-%d"
 _DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
+logger = logging.getLogger("document_extraction.export_excel")
+
+_SOURCE_HEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
+_SOURCE_BORDER = Border(
+    left=Side(style="thin", color="808080"),
+    right=Side(style="thin", color="808080"),
+    top=Side(style="thin", color="808080"),
+    bottom=Side(style="thin", color="808080"),
+)
 
 
 def _slab_get(slab: dict, *keys):
@@ -378,6 +401,183 @@ def _ocr_metadata_row(doc: dict, exported_at: datetime) -> list:
 
 
 # --------------------------------------------------------------------------
+# Source table — the product grid as it appeared in the uploaded image
+# --------------------------------------------------------------------------
+
+def _bbox(value) -> BoundingBox:
+    value = value or {}
+    return BoundingBox(
+        x1=int(value.get("x1", 0)), y1=int(value.get("y1", 0)),
+        x2=int(value.get("x2", 0)), y2=int(value.get("y2", 0)),
+    )
+
+
+def _score(value, default=0.0) -> Confidence:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        score = default
+    return Confidence(score=max(0.0, min(1.0, score)))
+
+
+def _ocr_document_from_stored(value) -> Optional[OCRDocument]:
+    """Rehydrate the geometry retained in ``doc_import.ocr_json``.
+
+    Export must use word boxes, not the reviewed/normalized item rows: item
+    rows deliberately omit blank cells and therefore cannot reproduce the
+    source column positions. This mirrors service._contract_to_ocr_document
+    locally to avoid an export_excel <-> service import cycle.
+    """
+    if not value:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(value, dict):
+        return None
+
+    pages = []
+    for page_value in value.get("pages") or []:
+        lines = []
+        for line_value in page_value.get("lines") or []:
+            words = [
+                OCRWord(
+                    text=str(word.get("text") or ""),
+                    confidence=_score(word.get("confidence")),
+                    bbox=_bbox(word.get("bbox")),
+                )
+                for word in (line_value.get("words") or [])
+            ]
+            lines.append(OCRLine(
+                line_no=int(line_value.get("line_no") or len(lines) + 1),
+                text=str(line_value.get("text") or ""),
+                confidence=_score(line_value.get("confidence"), 0.5),
+                bbox=_bbox(line_value.get("bbox")),
+                words=words,
+            ))
+        max_x = max((line.bbox.x2 for line in lines), default=0)
+        max_y = max((line.bbox.y2 for line in lines), default=0)
+        pages.append(OCRPage(
+            page_no=int(page_value.get("page_no") or len(pages) + 1),
+            width_px=max_x, height_px=max_y, lines=lines,
+        ))
+    if not pages:
+        return None
+    average = value.get("average_confidence")
+    return OCRDocument(
+        engine_name=str(value.get("engine_name") or "OCR"),
+        engine_version=value.get("engine_version"),
+        pages=pages,
+        average_confidence=_score(average) if average is not None else None,
+    )
+
+
+def _source_table(value):
+    """Return (headers, rows) positioned by the photographed table geometry.
+
+    A row is emitted with one element for every detected source column. Blank
+    printed cells remain blank, so a missing Free/PDis value cannot pull PTR,
+    MRP, GST, or Total one column to the left.
+    """
+    document = _ocr_document_from_stored(value)
+    if document is None:
+        return None
+    parsed = GenericInvoiceParser().parse(document)
+    if not parsed.products or not parsed.table_header_cells:
+        return None
+    bands = geometry_columns.build_bands(parsed.table_header_cells)
+    if not bands:
+        return None
+    bands = geometry_columns.fit_bands(bands, parsed.products)
+    headers = [band.column.header_text or "" for band in bands]
+    rows = []
+    for product in parsed.products:
+        assigned = geometry_columns.assign_row(product, bands)
+        rows.append([assigned.get(band.column.column_index) for band in bands])
+    return headers, rows
+
+
+def _unique_sheet_title(wb, preferred: str) -> str:
+    invalid = set('[]:*?/\\')
+    base = "".join("_" if char in invalid else char for char in preferred)[:31] or "Source Table"
+    title = base
+    suffix = 2
+    while title in wb.sheetnames:
+        marker = f" {suffix}"
+        title = f"{base[:31 - len(marker)]}{marker}"
+        suffix += 1
+    return title
+
+
+def _append_source_table_sheets(wb, imports: list) -> list:
+    created = []
+    multiple = len(imports) > 1
+    for doc in imports:
+        try:
+            source = _source_table(doc.get("ocr_json"))
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            # Source reconstruction is additive. A legacy/malformed OCR blob
+            # must not make the six contracted export sheets unavailable.
+            logger.warning(
+                "document_extraction.export source table skipped import_id=%s: %s",
+                doc.get("import_id"), exc,
+            )
+            continue
+        if source is None:
+            continue
+        headers, rows = source
+        preferred = (
+            f"Source Table {doc.get('import_id')}" if multiple else "Source Table"
+        )
+        ws = wb.create_sheet(_unique_sheet_title(wb, preferred))
+        ws.sheet_view.showGridLines = False
+        ws.freeze_panes = "A2"
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="000000")
+            cell.fill = _SOURCE_HEADER_FILL
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = _SOURCE_BORDER
+        ws.row_dimensions[1].height = 32
+
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = Alignment(
+                    horizontal="right" if _looks_numeric(cell.value) else "left",
+                    vertical="center", wrap_text=True,
+                )
+                cell.border = _SOURCE_BORDER
+
+        for col_idx, header in enumerate(headers, start=1):
+            values = [str(header or "")] + [
+                str(ws.cell(row=row_idx, column=col_idx).value or "")
+                for row_idx in range(2, ws.max_row + 1)
+            ]
+            longest = max((len(value) for value in values), default=0)
+            ws.column_dimensions[get_column_letter(col_idx)].width = min(34, max(8, longest + 2))
+        created.append(ws)
+    return created
+
+
+def _looks_numeric(value) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip().replace(",", "").replace("%", "")
+    if text.upper().endswith("G"):
+        text = text[:-1].strip()
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
+
+
+# --------------------------------------------------------------------------
 # Public builders
 # --------------------------------------------------------------------------
 
@@ -437,6 +637,13 @@ def build_workbook(imports: list, items: list, exported_at: datetime) -> bytes:
     for doc in imports:
         ws5.append(_ocr_metadata_row(doc, exported_at))
     _autosize(ws5, _OCR_METADATA_COLUMNS)
+
+    # Optional additive sheets: the six frozen integration sheets above keep
+    # their names/order/columns. When word geometry is available, accountants
+    # also get the original photographed product grid, and Excel opens there.
+    source_sheets = _append_source_table_sheets(wb, imports)
+    if source_sheets:
+        wb.active = wb.index(source_sheets[0])
 
     buffer = io.BytesIO()
     wb.save(buffer)
