@@ -170,12 +170,17 @@ function AppShell() {
     // server-side, this just keeps the nav honest). Checked before the
     // module-grant early-return below so it also applies to logins with no
     // module list.
-    const base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
+    let base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
+    // Salesman-only logins must not see NMW dispatch bills (warehouse->store
+    // billing). The API also 403s these endpoints server-side (see
+    // modules/nmw_sales_report/service.py); this just keeps the nav honest.
+    const nmwBlocked = isSalesmanOnly(session);
+    if (nmwBlocked) base = base.filter((s) => s.id !== 'nmw_sales');
     if (!modules.length) return base;
-    // 'settings' and 'nmw_sales' are always available: the NMW Sales Report is
-    // scoped server-side (store users see only their own approved bills), so it
-    // never depends on a per-user module grant.
-    const always = new Set(['settings', 'nmw_sales']);
+    // 'settings' is always available; 'nmw_sales' is too unless blocked above.
+    // The NMW Sales Report is scoped server-side (store users see only their
+    // own approved bills), so it never depends on a per-user module grant.
+    const always = new Set(nmwBlocked ? ['settings'] : ['settings', 'nmw_sales']);
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
 

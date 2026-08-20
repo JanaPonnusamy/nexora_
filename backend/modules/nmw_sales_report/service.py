@@ -1,11 +1,20 @@
 from fastapi import HTTPException
 
 from dependencies.auth import has_full_access
+from dependencies.store_scope import is_salesman_only
 from modules.nmw_sales_report import repository
 
 
 def _role_names(user):
     return [str(r or "").strip().lower() for r in (user.get("role_names") or [])]
+
+
+def _assert_can_view(user):
+    """Salesman-only logins may not view NMW dispatch bills at all. Everyone
+    else (store admin/manager/purchase manager, super admin) keeps their
+    store-scoped or network-wide view from list_bills()."""
+    if is_salesman_only(user):
+        raise HTTPException(status_code=403, detail="Salesman logins cannot view NMW dispatch bills.")
 
 
 def is_super_admin(user):
@@ -31,6 +40,7 @@ def can_view_all(user):
 
 
 def list_bills(user, tenant_id, store_id, status, date_from, date_to):
+    _assert_can_view(user)
     nmw_store_id = repository.get_nmw_store_id(tenant_id)
     if not nmw_store_id:
         return {"bills": [], "can_approve": is_super_admin(user), "scope": "all" if can_view_all(user) else "store"}
@@ -60,6 +70,7 @@ def list_bills(user, tenant_id, store_id, status, date_from, date_to):
 
 
 def get_bill_items(user, tenant_id, bill_no, bill_date):
+    _assert_can_view(user)
     nmw_store_id = repository.get_nmw_store_id(tenant_id)
     if not nmw_store_id:
         return {"items": []}

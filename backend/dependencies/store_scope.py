@@ -60,6 +60,17 @@ def is_supplier_analysis_blocked(user: dict) -> bool:
     return all(any(token in name for token in store_level) for name in names)
 
 
+def is_salesman_only(user: dict) -> bool:
+    """A login whose roles are ALL salesman (no admin/manager/purchase tier).
+    Such logins are barred from the NMW Sales Report (warehouse->store dispatch
+    billing) - see modules/nmw_sales_report/service.py. Super admin/platform
+    users never match this (their roles aren't salesman) and are unaffected."""
+    names = [str(r or "").strip().lower() for r in (user.get("role_names") or [])]
+    if not names:
+        return False
+    return all(("salesman" in name or "sales man" in name) for name in names)
+
+
 def assert_tenant_access(user: dict, tenant_id) -> None:
     """Raise 403 if a non-broad user asks for a tenant that isn't their own."""
     if has_unrestricted_scope(user):
