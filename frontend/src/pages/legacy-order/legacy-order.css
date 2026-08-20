@@ -571,8 +571,9 @@
 
 .lo-lower-grid {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(28rem, 1.1fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(18rem, 0.8fr);
   gap: 1rem;
+  align-items: start;
 }
 
 .lo-compare-controls {
@@ -922,6 +923,19 @@
 }
 
 /* ----- Order Workspace (supplier-assignment grid) ----- */
+/* Compact header so the grid + detail panel get the vertical space, not the
+   title block. Subtitle collapses to a single truncated line (full text in the
+   title tooltip). */
+.lo-header-compact h1 { font-size: 1.05rem; }
+.lo-header-compact .lo-sub {
+  margin-top: 0.1rem;
+  max-width: 68ch;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .lo-supplier-pick { margin-bottom: 0.8rem; }
 .lo-supplier-picklist { max-height: 12rem; margin-top: 0.5rem; border: 1px solid var(--bs-border-color); border-radius: 0.5rem; }
 /* The picklist rows only have a name + chevron, so drop the 3-column layout

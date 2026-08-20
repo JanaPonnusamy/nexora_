@@ -115,7 +115,7 @@ export function ProductDetailPanel({ store, productCode, productName, mode, onEr
       <p className="lo-note">{productName ?? ''} · {productCode}{loading ? ' · loading…' : ''}</p>
 
       <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Purchase / GRN history</h3>
-      <div className="lo-scroll" style={{ maxHeight: '9rem' }}>
+      <div className="lo-scroll" style={{ maxHeight: '7rem' }}>
         <table className="lo-table">
           <thead><tr><th className="lo-num">Stock</th><th className="lo-num">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
           <tbody>
@@ -128,7 +128,7 @@ export function ProductDetailPanel({ store, productCode, productName, mode, onEr
       </div>
 
       <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Bill / sales history</h3>
-      <div className="lo-scroll" style={{ maxHeight: '9rem' }}>
+      <div className="lo-scroll" style={{ maxHeight: '7rem' }}>
         <table className="lo-table">
           <thead><tr><th className="lo-num">Qty</th><th>Bill Time</th><th>Salesman</th><th>Customer</th><th className="lo-num">Dis</th><th>Type</th><th className="lo-num">MRP</th></tr></thead>
           <tbody>
