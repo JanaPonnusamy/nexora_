@@ -1,6 +1,6 @@
 {
   "name": "nexora-supplier-stock-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Nexora supplier stock desktop client scaffold",
   "main": "electron/main.js",
