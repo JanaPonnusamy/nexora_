@@ -1,6 +1,7 @@
-﻿import { contextBridge, ipcRenderer } from 'electron';
-import { createHash } from 'node:crypto';
-import os from 'node:os';
+// CommonJS preload (see main.cjs for why Electron 22 requires CJS here).
+const { contextBridge, ipcRenderer } = require('electron');
+const { createHash } = require('node:crypto');
+const os = require('node:os');
 
 const machineName = os.hostname();
 const fingerprint = createHash('sha256')

@@ -1,12 +1,10 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
-import http from 'node:http';
-
-// ESM `import` doesn't go through Electron's patched CommonJS `require`, so
-// `import ... from 'electron'` only ever yields the path to the binary, not
-// the app/BrowserWindow API. createRequire reaches the same patched require.
-const require = createRequire(import.meta.url);
+// CommonJS entry point. Electron 22 (the last release supporting Windows 7/8)
+// does not support ESM main-process entry points - that only arrived in
+// Electron 28 - so the main and preload scripts are plain CommonJS. The
+// renderer (dist/) is still an ES-module bundle loaded via file://, which is
+// fine on Electron 22's Chromium.
+const path = require('node:path');
+const http = require('node:http');
 const { app, BrowserWindow, shell, ipcMain } = require('electron');
 
 if (!app.isPackaged) {
@@ -18,8 +16,6 @@ app.commandLine.appendSwitch('disable-gpu-compositing');
 app.commandLine.appendSwitch('disable-software-rasterizer');
 app.disableHardwareAcceleration();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const isDev = !app.isPackaged;
 
 function canReachDevServer(port) {
@@ -68,7 +64,7 @@ async function createWindow() {
     title: 'Nexora Supplier Stock',
     backgroundColor: '#f5f7fb',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false

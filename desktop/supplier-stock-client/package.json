@@ -1,9 +1,9 @@
 {
   "name": "nexora-supplier-stock-client",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Nexora supplier stock desktop client scaffold",
-  "main": "electron/main.js",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"node scripts/wait-and-launch.mjs\"",
@@ -47,7 +47,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
-    "electron": "latest",
+    "electron": "22.3.27",
     "electron-builder": "^24.13.3",
     "vite": "latest",
     "wait-on": "latest"

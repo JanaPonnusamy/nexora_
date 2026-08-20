@@ -11,6 +11,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: true
+    emptyOutDir: true,
+    // Electron 22 (last Windows 7/8-capable release) ships Chromium 108, so the
+    // renderer bundle must not emit syntax newer than that.
+    target: 'chrome108'
   }
 });
