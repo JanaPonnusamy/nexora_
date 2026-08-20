@@ -40,11 +40,23 @@ Normalization notes (raw PaddleOCR -> OCRDocument):
     arrive in reading order from the engine.
   * Page order: preserved as given by the caller (see base.py); this
     module does not reorder pages.
+  * Orientation: PaddleOCR's angle classifier (cls=True) only corrects
+    0/180 upside-down text, not 90/270 sideways pages (a common case for
+    phone-photographed invoices held in portrait). After the first OCR
+    pass, _looks_sideways() checks for the tell-tale sign of a rotated
+    page — detected line boxes that are taller than they are wide, which
+    real horizontal invoice text never produces — or a near-empty page,
+    and only then retries at 90/180/270 and keeps whichever rotation
+    yields the highest text-yield score (_score_raw_lines). Well-oriented
+    pages (the common case) pay for exactly one OCR pass.
 """
 
 import re
 from pathlib import Path
 from typing import List, Tuple
+
+import cv2
+import numpy as np
 
 from modules.document_extraction.ocr.base import OCRProvider
 from modules.document_extraction.ocr.models import (
@@ -96,15 +108,32 @@ class PaddleOCRProvider(OCRProvider):
         all_scores: List[float] = []
 
         for page_no, image_path in enumerate(page_image_paths, start=1):
-            raw_result = self._ocr.ocr(str(image_path), cls=True)
-            raw_lines = (raw_result[0] if raw_result else []) or []
-            width_px, height_px = _image_dimensions(image_path)
+            image = cv2.imread(str(image_path))
+            if image is None:
+                raise ValueError(f"Could not read image for OCR: {image_path}")
+
+            raw_lines = self._ocr_array(image)
+            rotation = Rotation.NONE
+
+            if _looks_sideways(raw_lines):
+                best_score = _score_raw_lines(raw_lines)
+                for degrees in (90, 180, 270):
+                    candidate_image = _rotate_image(image, degrees)
+                    candidate_lines = self._ocr_array(candidate_image)
+                    candidate_score = _score_raw_lines(candidate_lines)
+                    if candidate_score > best_score:
+                        best_score = candidate_score
+                        raw_lines = candidate_lines
+                        image = candidate_image
+                        rotation = Rotation(degrees)
+
+            height_px, width_px = image.shape[:2]
             lines = _normalize_lines(raw_lines)
             pages.append(OCRPage(
                 page_no=page_no,
                 width_px=width_px,
                 height_px=height_px,
-                rotation=Rotation.NONE,
+                rotation=rotation,
                 language=_LANG_MAP.get(self._lang, Language.UNKNOWN),
                 lines=lines,
                 tables=[],
@@ -122,6 +151,10 @@ class PaddleOCRProvider(OCRProvider):
             pages=pages,
             average_confidence=average_confidence,
         )
+
+    def _ocr_array(self, image: np.ndarray) -> list:
+        raw_result = self._ocr.ocr(image, cls=True)
+        return (raw_result[0] if raw_result else []) or []
 
     def health_check(self) -> bool:
         try:
@@ -147,6 +180,60 @@ class PaddleOCRProvider(OCRProvider):
 
 def _normalize_whitespace(text: str) -> str:
     return _WHITESPACE_RE.sub(" ", (text or "")).strip()
+
+
+# --------------------------------------------------------------------------
+# Orientation retry (see module docstring "Orientation" note)
+# --------------------------------------------------------------------------
+
+_MIN_TEXT_YIELD = 20  # total recognized chars below this = treat page as unreadable
+_SIDEWAYS_ASPECT_RATIO = 1.3  # bbox height/width above this (median) = likely 90/270 rotated
+
+
+def _rotate_image(image: np.ndarray, degrees: int) -> np.ndarray:
+    if degrees == 90:
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    if degrees == 180:
+        return cv2.rotate(image, cv2.ROTATE_180)
+    if degrees == 270:
+        return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return image
+
+
+def _score_raw_lines(raw_lines) -> float:
+    """Text-yield score: total recognized characters weighted by
+    confidence. Correct orientation reliably yields more, longer,
+    higher-confidence lines than a sideways/upside-down attempt at the
+    same page, so the highest-scoring rotation wins."""
+    total = 0.0
+    for _quad, (text, score) in raw_lines:
+        text = _normalize_whitespace(text)
+        total += len(text) * max(0.0, min(1.0, float(score)))
+    return total
+
+
+def _looks_sideways(raw_lines) -> bool:
+    """True if this OCR pass looks like it hit a 90/270-rotated page —
+    either almost nothing was recognized, or the detected line boxes are
+    (on median) taller than they are wide, which real horizontal invoice
+    text never produces. PaddleOCR's cls=True already self-corrects 0/180
+    upside-down text, so this specifically catches what cls can't."""
+    total_chars = 0
+    ratios = []
+    for quad, (text, _score) in raw_lines:
+        total_chars += len(_normalize_whitespace(text))
+        bbox = _quad_to_bbox(quad)
+        width = bbox.x2 - bbox.x1
+        height = bbox.y2 - bbox.y1
+        if width > 0:
+            ratios.append(height / width)
+    if total_chars < _MIN_TEXT_YIELD:
+        return True
+    if not ratios:
+        return False
+    ratios.sort()
+    median_ratio = ratios[len(ratios) // 2]
+    return median_ratio > _SIDEWAYS_ASPECT_RATIO
 
 
 def _quad_to_bbox(quad) -> BoundingBox:
@@ -229,10 +316,3 @@ def _normalize_lines(raw_lines) -> List[OCRLine]:
             bbox=bbox, words=_split_words(text, bbox, confidence),
         ))
     return lines
-
-
-def _image_dimensions(path: Path) -> Tuple[int, int]:
-    from PIL import Image
-
-    with Image.open(path) as img:
-        return img.width, img.height

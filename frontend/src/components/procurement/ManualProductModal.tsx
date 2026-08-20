@@ -56,6 +56,11 @@ export function ManualProductModal({
   }, [tenantId, storeId, debounced])
 
   const submit = () => {
+    // `busy` disables the footer button, but the Qty field's Enter handler
+    // below bypasses that disabled state — without this check, keyboard
+    // auto-repeat (holding Enter) or a fast double-Enter fires a second
+    // onAdd/POST before the first request's busy flag can re-render in.
+    if (busy) return
     const n = Number(qty)
     if (!selected || Number.isNaN(n) || n <= 0) return
     onAdd(selected, n)
@@ -91,22 +96,35 @@ export function ManualProductModal({
     if (e.key === 'Enter') { e.preventDefault(); submit() }
   }
 
+  const stepQty = (amount: number) => {
+    const current = Number(qty)
+    setQty(String(Math.max(1, (Number.isFinite(current) ? current : 1) + amount)))
+  }
+
   return (
     <>
       <div className="pm-drawer__backdrop" onClick={onClose} />
-      <div className="pm-modal" role="dialog" aria-label="Add manual product">
+      <div className="pm-modal pm-modal--manual" role="dialog" aria-modal="true" aria-labelledby="pm-manual-title">
         <header className="pm-modal__head">
-          <h5 className="mb-0"><i className="bi bi-plus-square me-2" />Add Manual Product</h5>
-          <button className="btn-close" aria-label="Close" onClick={onClose} />
+          <div className="pm-manual__heading">
+            <span>Product master</span>
+            <h2 id="pm-manual-title">Add a product</h2>
+            <p>Find an item and add the required quantity to this refresh.</p>
+          </div>
+          <button className="pm-manual__close" type="button" aria-label="Close dialog" onClick={onClose}>
+            <i className="bi bi-x-lg" aria-hidden="true" />
+          </button>
         </header>
         <div className="pm-modal__body">
-          <span className="sx-search mb-2 d-flex">
+          <label className="pm-manual__search-label" htmlFor="pm-manual-search">Find a product</label>
+          <span className="sx-search pm-manual__search">
             <i className="bi bi-search" aria-hidden="true" />
             <input
+              id="pm-manual-search"
               autoFocus
               type="search"
               value={q}
-              placeholder="Search product name or code…"
+              placeholder="Search by product name or code"
               aria-label="Search product master"
               role="combobox"
               aria-expanded={rows.length > 0}
@@ -115,13 +133,22 @@ export function ManualProductModal({
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={onSearchKey}
             />
+            <kbd>Enter</kbd>
           </span>
 
           <div className="pm-modal__results">
             {loading ? (
-              <div className="pm-queue__hint">Searching…</div>
+              <div className="pm-manual__state">
+                <i className="bi bi-arrow-repeat pm-manual__spinner" aria-hidden="true" />
+                <b>Searching product master…</b>
+                <span>This will only take a moment.</span>
+              </div>
             ) : rows.length === 0 ? (
-              <div className="pm-queue__hint">{q.trim() ? 'No products found.' : 'Type to search the product master.'}</div>
+              <div className="pm-manual__state">
+                <i className={`bi ${q.trim() ? 'bi-search' : 'bi-box-seam'}`} aria-hidden="true" />
+                <b>{q.trim() ? 'No matching products' : 'Search the product master'}</b>
+                <span>{q.trim() ? 'Try another product name or code.' : 'Start typing above to find a product to add.'}</span>
+              </div>
             ) : (
               <table className="sx-table">
                 <thead>
@@ -155,22 +182,35 @@ export function ManualProductModal({
         </div>
         <footer className="pm-modal__foot">
           <div className="pm-modal__sel">
-            {selected ? <>Selected: <b>{selected.product_name ?? selected.product_code}</b></> : 'Select a product'}
+            <span className={`pm-manual__selected-icon${selected ? ' is-selected' : ''}`}>
+              <i className={`bi ${selected ? 'bi-check-lg' : 'bi-box'}`} aria-hidden="true" />
+            </span>
+            <span>
+              <small>{selected ? 'Selected product' : 'No product selected'}</small>
+              <b>{selected ? selected.product_name ?? selected.product_code : 'Choose a product from the results'}</b>
+              {selected && selected.product_name && <em>{selected.product_code}</em>}
+            </span>
           </div>
-          <label className="pm-modal__qty">
-            Qty
-            <input
-              ref={qtyRef}
-              className="pm-qty"
-              inputMode="numeric"
-              value={qty}
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => setQty(e.target.value)}
-              onKeyDown={onQtyKey}
-            />
-          </label>
+          <div className="pm-modal__qty">
+            <span>Quantity</span>
+            <div className="pm-manual__stepper">
+              <button type="button" aria-label="Decrease quantity" onClick={() => stepQty(-1)} disabled={Number(qty) <= 1}>−</button>
+              <input
+                ref={qtyRef}
+                className="pm-qty"
+                inputMode="numeric"
+                aria-label="Quantity"
+                value={qty}
+                onFocus={(e) => e.currentTarget.select()}
+                onChange={(e) => setQty(e.target.value)}
+                onKeyDown={onQtyKey}
+              />
+              <button type="button" aria-label="Increase quantity" onClick={() => stepQty(1)}>+</button>
+            </div>
+          </div>
           <button className="pm-btn pm-btn--primary" onClick={submit} disabled={!selected || busy}>
-            <i className="bi bi-plus-lg" /> {busy ? 'Adding…' : 'Add to Working Set'}
+            <i className={`bi ${busy ? 'bi-arrow-repeat pm-manual__spinner' : 'bi-plus-lg'}`} aria-hidden="true" />
+            {busy ? 'Adding product…' : 'Add product'}
           </button>
         </footer>
       </div>

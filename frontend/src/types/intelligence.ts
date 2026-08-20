@@ -5,40 +5,64 @@ export interface PiStoreColumn {
   store_id: string
   store_code: string | null
   store_name: string | null
-  product_count: number
+  is_warehouse: boolean
+  refresh_id: string | null
+  vpl_product_count: number | null
+  vpl_generated_on: string | null
 }
 
-/** One product × store cell (absent = blank cell: product not mapped there). */
+/** One product × store cell (absent = blank cell: the store does not have it). */
 export interface PiStoreCell {
   store_id: string
   product_code: string | null
   suggested_qty: number | null
   stock_qty: number | null
   avg_sale: number | null
+  sales_qty: number | null
+  purchase_qty: number | null
+  days_cover: number | null
+  /** 1 = the store's own VPL asked for this (real demand); 0 = stock only. */
+  in_vpl: number | null
   last_sale_date: string | null
   last_purchase_date: string | null
   non_moving_days: number | null
   match_method: string | null
 }
 
-/** One consolidated grid row (a product across all active stores). */
+/** One CANONICAL supplier product — the grid row. Quantities are network-wide:
+ *  consolidated_suggest_qty is the sum of EVERY store's own suggested qty, and
+ *  consolidated_purchase_qty is what the warehouse must buy for the network. */
 export interface PiRow {
   cache_id: string
   common_product_id: string
   product_code: string | null
   product_name: string | null
   manufacturer_id: string | null
+  supplier_code: string | null
+  supplier_product_code: string | null
+  supplier_product_name: string | null
   consolidated_suggest_qty: number
   consolidated_purchase_qty: number
   consolidated_stock_qty: number
   transfer_qty: number
   mapped_store_count: number
+  warehouse_stock_qty: number | null
+  /** null = the warehouse does not stock this product at all. */
+  warehouse_product_code: string | null
+  warehouse_suggest_qty: number | null
+  total_sales_qty: number | null
+  total_purchase_qty: number | null
+  priority: string | null
+  priority_rank: number | null
+  stockout_store_count: number | null
+  confidence: number | null
+  match_method: string | null
   mrp: number | null
   ptr_cost: number | null
   last_purchase_rate: number | null
   margin: number | null
   offer_text: string | null
-  /** Per-store cells keyed by store_id. Missing key = blank (unmapped) cell. */
+  /** Per-store cells keyed by store_id. Missing key = blank cell. */
   stores: Record<string, PiStoreCell>
 }
 
@@ -46,10 +70,12 @@ export interface PiBuild {
   build_id: string
   tenant_id: string
   refresh_id: string
+  warehouse_store_id: string | null
   anchor_store_id: string | null
   product_count: number
   store_count: number
   rolling_days: number | null
+  total_need_qty: number | null
   total_suggest_qty: number
   total_purchase_qty: number
   total_transfer_qty: number
@@ -59,11 +85,15 @@ export interface PiBuild {
 }
 
 export interface PiSummary {
+  build_id: string
+  warehouse_store_id: string | null
+  generated_on: string
   total_products: number
+  store_count: number
+  need_quantity: number
   purchase_quantity: number
   transfer_quantity: number
   stock_quantity: number
-  suggest_quantity: number
 }
 
 export interface PiGrid {
@@ -73,25 +103,10 @@ export interface PiGrid {
   summary: PiSummary
 }
 
-export interface PiProduct {
-  cache_id: string
+export type PiProduct = Omit<PiRow, 'stores'> & {
   build_id: string
   tenant_id: string
   refresh_id: string
-  common_product_id: string
-  product_code: string | null
-  product_name: string | null
-  manufacturer_id: string | null
-  consolidated_suggest_qty: number
-  consolidated_purchase_qty: number
-  consolidated_stock_qty: number
-  transfer_qty: number
-  mapped_store_count: number
-  mrp: number | null
-  ptr_cost: number | null
-  last_purchase_rate: number | null
-  margin: number | null
-  offer_text: string | null
 }
 
 export interface PiDetailStore {
@@ -106,6 +121,11 @@ export interface PiDetailStore {
   stock_qty: number | null
   suggested_qty: number | null
   avg_sale: number | null
+  sales_qty: number | null
+  purchase_qty: number | null
+  days_cover: number | null
+  in_vpl: number | null
+  is_warehouse: number | null
   last_sale_date: string | null
   last_purchase_date: string | null
   non_moving_days: number | null
@@ -116,27 +136,149 @@ export interface PiDetail {
   stores: PiDetailStore[]
 }
 
-export interface PiHover {
+/** One month of one store's movement (a bar in that store's chart).
+ *  Inventory ADDED = purchase + transfer_in (the stacked bar);
+ *  inventory REMOVED = sales (overlay) + transfer_out (indicator). */
+export interface PiChartPoint {
+  period: string
+  sales_qty: number
+  purchase_qty: number
+  transfer_in: number
+  transfer_out: number
+}
+
+/** One store's chart. The store is resolved BY PRODUCT NAME, independently of
+ *  every other store — the mapping is not used here. */
+export interface PiChartSeries {
+  store_id: string
+  store_code: string | null
+  store_name: string | null
+  is_warehouse: boolean
+  product_code: string | null
+  product_name: string | null
+  found: boolean
+  points: PiChartPoint[]
+}
+
+export interface PiCharts {
+  cache_id: string
+  product_name: string | null
+  months: number
+  /** Shared month axis — every series has one point per axis entry. */
+  axis: string[]
+  series: PiChartSeries[]
+}
+
+/** One store's transaction history (loaded only for the store the user opens). */
+export interface PiHistory {
   cache_id: string
   store_id: string
   mapped: boolean
   product_code?: string | null
   product_name?: string | null
-  last_sale_date: string | null
-  last_purchase_date: string | null
-  non_moving_days: number | null
+  stock_qty?: number | null
+  suggested_qty?: number | null
+  sales_qty?: number | null
+  purchase_qty?: number | null
+  avg_sale?: number | null
+  in_vpl?: number | null
+  last_sale_date?: string | null
+  last_purchase_date?: string | null
+  non_moving_days?: number | null
   sales_history: SalesRow[]
   purchase_history: PurchaseRow[]
+  monthly_sales: { period: string; qty: number }[]
 }
 
 export interface PiBuildResult {
   build_id: string
-  refresh_id: string
-  anchor_store_id: string | null
+  warehouse_store_id: string
   product_count: number
   store_count: number
-  total_suggest_qty: number
+  stores: { store_id: string; is_warehouse: boolean; vpl_product_count: number }[]
+  total_need_qty: number
   total_purchase_qty: number
   total_transfer_qty: number
   total_stock_qty: number
+  /** Present only for refresh-and-build: the stores whose VPL was regenerated. */
+  refreshed?: { store_id: string; refresh_id: string; vpl_product_count: number }[]
+  failed?: { store_id: string; error: string }[]
+}
+
+/* ---- Mode 2: Supplier Offer Intelligence --------------------------------- */
+
+export interface PiSupplier {
+  supplier_code: string
+  supplier_name: string | null
+  line_count: number
+  imported_at: string | null
+}
+
+/** One line the supplier is offering, read against the network. `mapped` = false
+ *  means the line has no warehouse ProductCode yet → the row shows Assign. */
+export interface PiOfferRow {
+  supplier_code: string
+  supplier_product_code: string | null
+  supplier_product_name: string | null
+  product_code: string | null
+  product_name: string | null
+  available_stock: number | null
+  ptr: number | null
+  mrp: number | null
+  discount: number | null
+  packing: string | null
+  free: number | null
+  minimum_qty: number | null
+  scheme: string | null
+  mapped: boolean
+  /** Mapped AND present in the build — i.e. the network actually needs it. */
+  in_network: boolean
+  cache_id: string | null
+  consolidated_suggest_qty: number
+  consolidated_purchase_qty: number
+  transfer_qty: number
+  consolidated_stock_qty: number
+  mapped_store_count: number
+  priority: string | null
+  confidence: number | null
+  stores: Record<string, PiStoreCell>
+}
+
+export interface PiOffers {
+  build: PiBuild
+  stores: PiStoreColumn[]
+  supplier_code: string
+  rows: PiOfferRow[]
+  summary: {
+    offered_lines: number
+    mapped_lines: number
+    unmapped_lines: number
+    purchase_quantity: number
+  }
+}
+
+/** One store in the Assign dialog: auto-resolved from the mapping, or awaiting a
+ *  manual pick. */
+export interface PiResolveStore {
+  store_id: string
+  store_code: string | null
+  store_name: string | null
+  is_warehouse: boolean
+  product_code: string | null
+  product_name: string | null
+  auto: boolean
+}
+
+export interface PiResolve {
+  product_code: string
+  stores: PiResolveStore[]
+}
+
+export interface PiAssignResult {
+  supplier_code: string
+  supplier_product_code: string
+  product_code: string
+  product_name: string | null
+  mapped_stores: { store_id: string; product_code: string; product_name: string | null }[]
+  rebuild_required: boolean
 }

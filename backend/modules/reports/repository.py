@@ -208,45 +208,67 @@ _NM_SELECT = """
     SELECT
         s.suppliername                        AS SupplierName,
         p.SubLocation,
-        pt.ProductCode,
+        p.ProductCode,
         p.ProductName,
-        p.TotalStock,
+        COALESCE((
+            SELECT TOP (1) pt4.StockInHand
+            FROM sync.ProductTrans pt4
+            WHERE pt4.tenant_id = p.tenant_id AND pt4.store_id = p.store_id AND pt4.ProductCode = p.ProductCode
+            ORDER BY pt4.MonthOfStatistics DESC
+        ), p.TotalStock, 0)                   AS TotalStock,
         b.Stock                               AS Batch_Stock,
-        ROUND(p.TotalStock / NULLIF(p.SaleUnit, 0), 0) AS StripQty,
+        ROUND(COALESCE((
+            SELECT TOP (1) pt5.StockInHand
+            FROM sync.ProductTrans pt5
+            WHERE pt5.tenant_id = p.tenant_id AND pt5.store_id = p.store_id AND pt5.ProductCode = p.ProductCode
+            ORDER BY pt5.MonthOfStatistics DESC
+        ), p.TotalStock, 0) / NULLIF(p.SaleUnit, 0), 0) AS StripQty,
         b.ExpiryDate,
-        MAX(p.SaleUnit)                       AS SaleUnit,
-        MAX(p.PurchasePrice)                  AS PurchasePrice,
-        MAX(p.MRP)                            AS MRP,
+        b.BatchCode                           AS BatchNo,
+        p.SaleUnit                            AS SaleUnit,
+        p.PurchasePrice                       AS PurchasePrice,
+        b.ItemCost                            AS PTR,
+        p.MRP                                 AS MRP,
         p.UnitDescription                     AS UnitDesc,
-        MAX(pt.LastBillDate)                  AS LastBillDate,
-        MAX(pt.LastGrnDate)                   AS LastGRNDate,
-        DATEDIFF(DAY, MAX(pt.LastBillDate), GETDATE()) AS SalesAge,
-        DATEDIFF(DAY, MAX(pt.LastGrnDate), GETDATE())  AS PurAge
+        pt.LastBillDate                       AS LastBillDate,
+        pt.LastGrnDate                        AS LastGRNDate,
+        DATEDIFF(DAY, pt.LastBillDate, GETDATE()) AS SalesAge,
+        DATEDIFF(DAY, pt.LastGrnDate, GETDATE())  AS PurAge
     FROM sync.Products p
-    INNER JOIN sync.ProductTrans pt
-        ON pt.tenant_id = p.tenant_id AND pt.store_id = p.store_id AND pt.ProductCode = p.ProductCode
+    INNER JOIN (
+        -- ProductTrans carries one row per product per statistics month, so it
+        -- must be collapsed to one row per product *before* joining to Batches —
+        -- joining the raw table fans every batch out across every monthly row
+        -- (confirmed: ~480k rows for ~15k qualifying products on a single store).
+        SELECT tenant_id, store_id, ProductCode,
+               MAX(LastBillDate) AS LastBillDate,
+               MAX(LastGrnDate)  AS LastGrnDate
+        FROM sync.ProductTrans
+        WHERE tenant_id = ? AND store_id = ?
+        GROUP BY tenant_id, store_id, ProductCode
+    ) pt ON pt.tenant_id = p.tenant_id AND pt.store_id = p.store_id AND pt.ProductCode = p.ProductCode
     INNER JOIN sync.Batches b
         ON b.tenant_id = p.tenant_id AND b.store_id = p.store_id AND b.ProductCode = p.ProductCode
     INNER JOIN sync.Suppliers s
         ON s.tenant_id = b.tenant_id AND s.store_id = b.store_id AND s.suppliercode = b.SupplierCode
     WHERE p.tenant_id = ? AND p.store_id = ?
-      AND p.TotalStock > 0 AND p.isActive = 1 AND b.Stock > 0
+      AND COALESCE((
+            SELECT TOP (1) pt6.StockInHand
+            FROM sync.ProductTrans pt6
+            WHERE pt6.tenant_id = p.tenant_id AND pt6.store_id = p.store_id AND pt6.ProductCode = p.ProductCode
+            ORDER BY pt6.MonthOfStatistics DESC
+          ), p.TotalStock, 0) > 0
+      AND p.isActive = 1 AND b.Stock > 0
 """
 
-_NM_GROUP = """
-    GROUP BY pt.ProductCode, p.ProductName, p.TotalStock, p.SaleUnit,
-             p.PurchasePrice, p.MRP, p.UnitDescription, p.SubLocation,
-             b.ExpiryDate, b.Stock, s.suppliername
-"""
 
-
-def _nm_query(tenant_id, store_id, dwell_days, supplier_code, having, order_by):
+def _nm_query(tenant_id, store_id, dwell_days, supplier_code, extra_where, order_by):
     sql = _NM_SELECT
-    params = [tenant_id, store_id]
+    params = [tenant_id, store_id, tenant_id, store_id]
     if supplier_code:
         sql += " AND b.SupplierCode = ? "
         params.append(supplier_code)
-    sql += _NM_GROUP + having + order_by
+    sql += extra_where + order_by
     params.append(int(dwell_days))
     return _run(sql, tuple(params))
 
@@ -254,7 +276,7 @@ def _nm_query(tenant_id, store_id, dwell_days, supplier_code, having, order_by):
 def non_moving(tenant_id, store_id, dwell_days, supplier_code=None):
     return _nm_query(
         tenant_id, store_id, dwell_days, supplier_code,
-        having=" HAVING (DATEDIFF(DAY, MAX(pt.LastBillDate), GETDATE()) > ? OR MAX(pt.LastBillDate) IS NULL) ",
+        extra_where=" AND (DATEDIFF(DAY, pt.LastBillDate, GETDATE()) > ? OR pt.LastBillDate IS NULL) ",
         order_by=" ORDER BY p.ProductName ",
     )
 
@@ -262,9 +284,23 @@ def non_moving(tenant_id, store_id, dwell_days, supplier_code=None):
 def purchased_not_sold(tenant_id, store_id, dwell_days, supplier_code=None):
     return _nm_query(
         tenant_id, store_id, dwell_days, supplier_code,
-        having=" HAVING (MAX(pt.LastBillDate) IS NULL AND DATEDIFF(DAY, MAX(pt.LastGrnDate), GETDATE()) < ?) ",
+        extra_where=" AND (pt.LastBillDate IS NULL AND DATEDIFF(DAY, pt.LastGrnDate, GETDATE()) < ?) ",
         order_by=" ORDER BY s.suppliername, p.ProductName ",
     )
+
+
+def non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age=10, limit=50):
+    """Lean variant of non_moving(): pushes the PurAge filter and a TOP N cap
+    into SQL so callers that only need a handful of high-value rows (e.g. a
+    rotating highlight panel) don't pay for the full unfiltered report."""
+    sql = _NM_SELECT.replace("SELECT", "SELECT TOP (%d)" % int(limit), 1)
+    sql += """
+        AND (DATEDIFF(DAY, pt.LastBillDate, GETDATE()) > ? OR pt.LastBillDate IS NULL)
+        AND DATEDIFF(DAY, pt.LastGrnDate, GETDATE()) >= ?
+        ORDER BY (ISNULL(b.Stock, 0) * ISNULL(b.ItemCost, 0)) DESC, p.ProductName
+    """
+    params = (tenant_id, store_id, tenant_id, store_id, int(dwell_days), int(min_pur_age))
+    return _run(sql, params)
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,6 @@ Runs the real-data pipeline for one store, stopping at Workspace generation
 
 import logging
 import time
-from datetime import date
 
 from fastapi import HTTPException
 
@@ -72,7 +71,7 @@ def run(tenant_id, store_id, rolling_days, min_days, max_days, created_by):
     cycle = orchestration_service.create_business_cycle({
         "tenant_id": tenant_id,
         "store_id": store_id,
-        "name": f"Pipeline {date.today().isoformat()}",
+        # name is server-authoritative (see orchestration_service.cycle_name).
         "start_grn_number": last_grn,
         "start_sale_bill_number": last_bill,
         "created_by": created_by,
@@ -85,7 +84,7 @@ def run(tenant_id, store_id, rolling_days, min_days, max_days, created_by):
         "rolling_days": rolling_days,
         "min_days": min_days,
         "max_days": max_days,
-        "snapshot_name": "Refresh 1",
+        # snapshot_name is server-authoritative (see orchestration_service.refresh_name).
         "snapshot_grn_number": last_grn,
         "snapshot_sale_bill_number": last_bill,
         "created_by": created_by,

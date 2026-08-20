@@ -311,8 +311,19 @@ def _accumulate_details(cursor, execution_id, table_name, sync_type,
 
 
 def report_table_metrics(execution_id, table_name, sync_type, rows_examined,
-                         rows_changed, rows_uploaded, rows_skipped, source_total):
-    """Agent-reported per-table delta metrics (examined/changed/skipped)."""
+                         rows_changed, rows_uploaded, rows_skipped, source_total,
+                         status="COMPLETED", error_message=None):
+    """Agent-reported per-table delta metrics (examined/changed/skipped).
+
+    This is the only signal HO gets that a table's sync actually finished.
+    Before status/error_message existed here, a per-table exception on the
+    agent (run_table_safe's except branch) reported the exact same all-zero
+    shape as a table with nothing to change, so a table that silently died
+    mid-run (e.g. ProductTrans's 600-day rescan hanging/crashing) was
+    indistinguishable in this table from a healthy empty sync — the summary
+    row was stamped 'RUNNING' once and never revisited. Recording the real
+    terminal status + error text makes a stalled table observable instead of
+    looking identical to "nothing changed"."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -321,11 +332,12 @@ def report_table_metrics(execution_id, table_name, sync_type, rows_examined,
             UPDATE dbo.sync_execution_details
             SET rows_examined = ?, rows_changed = ?, rows_skipped = ?,
                 source_total = ?, sync_type = COALESCE(?, sync_type),
+                status = ?, error_message = ?,
                 completed_at = GETDATE()
             WHERE execution_id = ? AND table_name = ? AND chunk_no = 0
             """,
             (rows_examined, rows_changed, rows_skipped, source_total,
-             sync_type, execution_id, table_name)
+             sync_type, status, error_message, execution_id, table_name)
         )
         if cursor.rowcount == 0:
             cursor.execute(
@@ -341,16 +353,17 @@ def report_table_metrics(execution_id, table_name, sync_type, rows_examined,
                 (execution_id, tenant_id, store_id, table_name, chunk_no, chunk_size,
                  rows_processed, rows_failed, rows_examined, rows_changed,
                  rows_uploaded, rows_skipped, source_total, sync_type, status,
-                 started_at, created_at)
-                VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 0, ?, ?, ?, 'RUNNING', GETDATE(), GETDATE())
+                 error_message, started_at, created_at, completed_at)
+                VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 0, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), GETDATE())
                 """,
                 (execution_id, tenant_id, store_id, table_name, rows_examined,
-                 rows_changed, rows_skipped, source_total, sync_type)
+                 rows_changed, rows_skipped, source_total, sync_type, status,
+                 error_message)
             )
         conn.commit()
         return {"execution_id": execution_id, "table_name": table_name,
                 "rows_examined": rows_examined, "rows_changed": rows_changed,
-                "rows_skipped": rows_skipped}
+                "rows_skipped": rows_skipped, "status": status}
     except Exception:
         conn.rollback()
         raise
@@ -867,15 +880,15 @@ def get_live_status():
                     rows_updated = int(drow[3])
 
             elapsed = int(elapsed or 0)
-            speed = round(exec_sent / elapsed, 1) if elapsed > 0 else 0.0
-            rows_remaining = max(exec_total - exec_sent, 0) if exec_total else None
+            speed = round(cur_sent / elapsed, 1) if elapsed > 0 else 0.0
+            rows_remaining = max(cur_total - cur_sent, 0) if cur_total else None
             eta_seconds = (
                 int(rows_remaining / speed)
                 if rows_remaining and speed > 0 else None
             )
             progress = (
-                min(100.0, round((exec_sent / exec_total) * 100, 2))
-                if exec_total else 0.0
+                min(100.0, round((cur_sent / cur_total) * 100, 2))
+                if cur_total else 0.0
             )
             avg_chunk = (cur_sent / chunks_sent) if chunks_sent else 0
             total_chunks = (
@@ -893,9 +906,11 @@ def get_live_status():
                 "chunk_no": chunk_no,
                 "total_chunks": total_chunks,
                 "chunk_size": int(avg_chunk) if avg_chunk else None,
-                "rows_processed": exec_sent,
-                "total_rows": exec_total or None,
+                "rows_processed": cur_sent,
+                "total_rows": cur_total or None,
                 "rows_remaining": rows_remaining,
+                "execution_rows_processed": exec_sent,
+                "execution_total_rows": exec_total or None,
                 "rows_changed": rows_changed,
                 "rows_uploaded": rows_uploaded,
                 "rows_inserted": rows_inserted,
@@ -937,6 +952,34 @@ def control_stores(store_ids, action):
             affected += cursor.rowcount
         conn.commit()
         return {"affected": affected, "action": action, "status": status}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def fail_execution(execution_id, message=None):
+    """Force a single execution (and its stuck chunks) to FAILED."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE dbo.sync_execution SET execution_status = 'FAILED', "
+            "completed_at = GETDATE() "
+            "WHERE execution_id = ? AND execution_status IN ('RUNNING','PAUSED','PENDING')",
+            (execution_id,)
+        )
+        affected = cursor.rowcount
+        cursor.execute(
+            "UPDATE dbo.sync_chunk_execution SET chunk_status = 'FAILED', "
+            "completed_at = GETDATE(), error_message = ? "
+            "WHERE execution_id = ? AND chunk_status IN ('RUNNING','PENDING')",
+            (message, execution_id)
+        )
+        _audit(cursor, execution_id, "MANUAL_FAIL", message)
+        conn.commit()
+        return {"affected": affected, "execution_id": execution_id, "status": "FAILED"}
     except Exception:
         conn.rollback()
         raise

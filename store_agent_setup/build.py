@@ -2,9 +2,11 @@
 
     python -m store_agent_setup.build            # build everything
     python -m store_agent_setup.build agent      # only the agent
+    python -m store_agent_setup.build watchdog   # only the watchdog
 
 Outputs in E:\\Nexora\\dist\\:
     NexoraStoreAgent.exe              (onefile: single self-contained binary)
+    NexoraStoreAgentWatchdog.exe      (onefile: remote start/stop/update companion)
     NexoraStoreAgentSettings.exe      (standalone settings utility)
     NexoraStoreAgentSetup.exe         (the wizard; bundles the two above)
 
@@ -44,7 +46,14 @@ _HIDDEN = [
 
 
 def _pyinstaller(*args):
-    cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", *args]
+    cmd = [
+        sys.executable,
+        "-m",
+        "store_agent_setup.pyinstaller_isolated",
+        "--noconfirm",
+        "--clean",
+        *args,
+    ]
     print(">>", subprocess.list2cmdline(cmd))
     subprocess.run(cmd, check=True, cwd=str(REPO))
 
@@ -63,11 +72,44 @@ def build_agent():
     _pyinstaller(*args)
 
 
+def build_watchdog():
+    """Standalone ONEFILE companion service. Embeds the same store_agent
+    config-loading + HO-URL logic as the main agent, plus store_agent_setup's
+    ServiceManager so it can sc stop/start NexoraStoreAgent and swap its exe."""
+    args = ["--onefile", "--name", "NexoraStoreAgentWatchdog", "--console",
+            "--paths", str(REPO),
+            "--collect-submodules", "store_agent",
+            "--hidden-import", "store_agent_setup.watchdog_service",
+            "--hidden-import", "store_agent_setup.service_manager",
+            "--exclude-module", "tkinter",
+            "--exclude-module", "_tkinter"]
+    for h in _HIDDEN:
+        args += ["--hidden-import", h]
+    args.append(str(PKG / "launch_watchdog_service.py"))
+    _pyinstaller(*args)
+
+
+def _require_tkinter():
+    """Fail loudly if the build Python lacks Tk, instead of silently shipping a
+    GUI exe that dies with 'No module named tkinter' on the target machine."""
+    try:
+        import tkinter  # noqa: F401
+        import _tkinter  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise SystemExit(
+            "Cannot build the GUI installer: this Python has no Tk "
+            f"({exc}). Rebuild with a Python that includes tkinter/_tkinter "
+            "(the standard python.org installer ships it)."
+        )
+
+
 def build_settings():
     """Standalone settings utility (onefile is fine for a manual tool)."""
+    _require_tkinter()
     _pyinstaller(
         "--onefile", "--windowed", "--name", "NexoraStoreAgentSettings",
         "--paths", str(REPO),
+        "--collect-all", "tkinter",
         str(PKG / "launch_settings.py"),
     )
 
@@ -75,13 +117,17 @@ def build_settings():
 def build_wizard():
     """The distributable wizard (onefile). Bundles the standalone agent exe
     and the settings exe as DATA so the installer can deploy them as-is."""
+    _require_tkinter()
     args = ["--onefile", "--windowed", "--name", "NexoraStoreAgentSetup",
-            "--paths", str(REPO)]
+            "--paths", str(REPO), "--collect-all", "tkinter"]
     agent_exe = DIST / "NexoraStoreAgent.exe"
+    watchdog_exe = DIST / "NexoraStoreAgentWatchdog.exe"
     settings_exe = DIST / "NexoraStoreAgentSettings.exe"
     if agent_exe.is_file():
         # Single agent binary -> _MEIPASS/agent/NexoraStoreAgent.exe.
         args += ["--add-data", f"{agent_exe}{SEP}agent"]
+    if watchdog_exe.is_file():
+        args += ["--add-data", f"{watchdog_exe}{SEP}."]
     if settings_exe.is_file():
         args += ["--add-data", f"{settings_exe}{SEP}."]
     args.append(str(PKG / "launch_wizard.py"))
@@ -105,6 +151,8 @@ def main(argv=None):
     DIST.mkdir(exist_ok=True)
     if target in ("all", "agent"):
         build_agent()
+    if target in ("all", "watchdog"):
+        build_watchdog()
     if target in ("all", "settings"):
         build_settings()
     if target in ("all", "wizard"):

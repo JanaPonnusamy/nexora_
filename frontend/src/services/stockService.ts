@@ -73,6 +73,16 @@ export const stockService = {
     api.get<SalesBillRow[]>(
       `${BASE}/bills/sale${qs({ tenant_id: tenantId, store_id: storeId, bill_no: billNo, bill_date: billDate ?? undefined })}`,
     ),
+  setSalesBillIgnoreOrder: (payload: {
+    tenant_id: string
+    store_id: string
+    bill_no: string
+    bill_date: string
+    product_code: string
+    batch?: string | null
+    dont_consider_in_order: boolean
+  }) =>
+    api.put<{ updated: number; dont_consider_in_order: boolean }>(`${BASE}/bills/sale/ignore-order`, payload),
   availability: (tenantId: string, storeId: string, product: string) =>
     api.get<AvailabilityRow[]>(
       `${BASE}/products/availability${qs({ tenant_id: tenantId, store_id: storeId, product })}`,

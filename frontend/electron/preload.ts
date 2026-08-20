@@ -9,7 +9,7 @@ const CONFIG_ARG_PREFIX = '--uninex-config='
 
 function readInjectedConfig(): UniNexConfig {
   const raw = process.argv.find((arg) => arg.startsWith(CONFIG_ARG_PREFIX))
-  const fallback: UniNexConfig = { apiBase: 'http://localhost:8000', env: 'development' }
+  const fallback: UniNexConfig = { apiBase: 'http://122.252.246.181:8443', env: 'development' }
   if (!raw) return fallback
   try {
     return JSON.parse(raw.slice(CONFIG_ARG_PREFIX.length)) as UniNexConfig
@@ -51,6 +51,17 @@ contextBridge.exposeInMainWorld('uninex', {
     error: (scope: string, message: string, data?: unknown) =>
       ipcRenderer.send('log:write', { level: 'error', scope, message, data }),
   },
+
+  // Export Document "save straight to a folder" (Purchase Manager) — native
+  // OS folder picker + a direct filesystem write, so a desktop export never
+  // touches the browser Downloads folder or a Save-As prompt.
+  pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-folder'),
+  saveFile: (
+    folderPath: string,
+    filename: string,
+    data: Uint8Array,
+  ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('fs:save-file', folderPath, filename, data),
 
   // Placeholder for when real authentication lands (today the backend issues
   // no token to persist — see auth exploration). Keeps the host's contract

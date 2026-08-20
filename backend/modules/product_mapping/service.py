@@ -103,6 +103,21 @@ def review_progress(tenant_id, source_store_id, target_store_id):
     return repository.review_progress(tenant_id, source_store_id, target_store_id)
 
 
+def review_batch(tenant_id, source_store_id, target_store_id, search=None,
+                  after_confidence=None, after_mapping_id=None, limit=100):
+    """Manual Review continuous batch (keyset pagination) — see
+    repository.list_review_batch for the pagination strategy."""
+    items = repository.list_review_batch(
+        tenant_id, source_store_id, target_store_id, search=search,
+        after_confidence=after_confidence, after_mapping_id=after_mapping_id, limit=limit)
+    last = items[-1] if items else None
+    return {
+        "items": items,
+        "has_more": len(items) == limit,
+        "next_cursor": {"confidence": last["confidence"], "mapping_id": last["mapping_id"]} if last else None,
+    }
+
+
 def bulk_review(tenant_id, action, items, source_store_id, target_store_id,
                 page=1, page_size=50, actor=None):
     """Approve/reject a whole selection in one transaction (Manual Review v2)."""

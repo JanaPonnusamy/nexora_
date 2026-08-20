@@ -1,13 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { BranchCard as BranchCardData, ProductContext, StockProductRow, StockSearchResult } from '../../types/stock'
-import type { Tenant } from '../../types/tenant'
-import { stockService } from '../../services/stockService'
-import { tenantService } from '../../services/tenantService'
-import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
+import { PageHeader } from '../../components/common/PageHeader'
 import { BranchCard } from '../../components/stock/BranchCard'
-import { ToastStack, useToasts } from '../../components/stock/Toast'
 import {
   BatchPanel,
   LatestBillPanel,
@@ -17,8 +12,19 @@ import {
   SalesPanel,
 } from '../../components/stock/DetailPanels'
 import type { SelectedBill } from '../../components/stock/DetailPanels'
+import { ToastStack, useToasts } from '../../components/stock/Toast'
 import { STOCK_LEGEND } from '../../components/stock/format'
 import '../../components/stock/stock-ui.css'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { InspectorPanel } from '../../design-system/components/InspectorPanel'
+import { SegmentedTabs } from '../../design-system/components/SegmentedTabs'
+import { KpiBar, StatCard } from '../../design-system/components/StatCard'
+import { WorkspaceShell } from '../../design-system/components/WorkspaceShell'
+import { FilterBar, FilterSearch } from '../../design-system/components/FilterBar'
+import { stockService } from '../../services/stockService'
+import { tenantService } from '../../services/tenantService'
+import type { BranchCard as BranchCardData, ProductContext, StockProductRow, StockSearchResult } from '../../types/stock'
+import type { Tenant } from '../../types/tenant'
 
 type SearchMode = 'product' | 'batch'
 
@@ -27,37 +33,30 @@ const EMPTY_RESULT: StockSearchResult = {
   summary: { total_stores: 0, total_products_found: 0, stores_with_stock: 0, total_stock_all_stores: 0 },
 }
 
+function WaitingPanel({ title, icon, description }: { title: string; icon: string; description: string }) {
+  return (
+    <InspectorPanel
+      title={title}
+      summary={<span className="text-muted">{description}</span>}
+      empty
+      emptyTitle="Waiting for data"
+      emptyDescription={description}
+    >
+      <EmptyState icon={icon} title="Waiting for data" description={description} />
+    </InspectorPanel>
+  )
+}
+
 export default function StockAvailabilityPage() {
   const { toasts, push, dismiss } = useToasts()
-
-  // ----- Tenant context -----------------------------------------------------
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState<string>('')
-
-  useEffect(() => {
-    tenantService
-      .list()
-      .then((rows) => {
-        const active = rows.filter((tenant) => tenant.is_active)
-        setTenants(active)
-        if (active.length) setTenantId((current) => current || active[0].tenant_id)
-      })
-      .catch((err) => push('danger', err instanceof Error ? err.message : 'Failed to load tenants'))
-  }, [push])
-
-  // ----- Search state -------------------------------------------------------
   const [mode, setMode] = useState<SearchMode>('product')
   const [productQuery, setProductQuery] = useState('')
   const [onlyStock, setOnlyStock] = useState(false)
   const [batchNo, setBatchNo] = useState('')
   const [mrp, setMrp] = useState('')
   const [batchProduct, setBatchProduct] = useState('')
-
-  const debProduct = useDebouncedValue(productQuery)
-  const debBatchNo = useDebouncedValue(batchNo)
-  const debMrp = useDebouncedValue(mrp)
-  const debBatchProduct = useDebouncedValue(batchProduct)
-
   const [result, setResult] = useState<StockSearchResult>(EMPTY_RESULT)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -65,12 +64,25 @@ export default function StockAvailabilityPage() {
   const [active, setActive] = useState<ProductContext | null>(null)
   const [selectedBill, setSelectedBill] = useState<SelectedBill | null>(null)
 
-  // Drop the active product whenever the tenant changes.
-  useEffect(() => setActive(null), [tenantId])
-  // Reset the chosen bill whenever the active product changes.
-  useEffect(() => setSelectedBill(null), [active])
-
+  const debProduct = useDebouncedValue(productQuery)
+  const debBatchNo = useDebouncedValue(batchNo)
+  const debMrp = useDebouncedValue(mrp)
+  const debBatchProduct = useDebouncedValue(batchProduct)
   const requestRef = useRef(0)
+
+  useEffect(() => {
+    tenantService
+      .list()
+      .then((rows) => {
+        const activeTenants = rows.filter((tenant) => tenant.is_active)
+        setTenants(activeTenants)
+        if (activeTenants.length) setTenantId((current) => current || activeTenants[0].tenant_id)
+      })
+      .catch((err) => push('danger', err instanceof Error ? err.message : 'Failed to load tenants'))
+  }, [push])
+
+  useEffect(() => setActive(null), [tenantId])
+  useEffect(() => setSelectedBill(null), [active])
 
   useEffect(() => {
     if (!tenantId) return
@@ -129,21 +141,28 @@ export default function StockAvailabilityPage() {
     [tenantId, push],
   )
 
-  return (
-    <div className="sa sx container-fluid px-0">
-      <ToastStack toasts={toasts} onDismiss={dismiss} />
+  const activeStoreCount = result.summary.total_stores
+  const activeProductCount = result.summary.total_products_found
+  const storesWithStock = result.summary.stores_with_stock
+  const totalStock = result.summary.total_stock_all_stores
 
-      <div className="sa-head">
-        <h1 className="sa-head__title"><i className="bi bi-box-seam" aria-hidden="true" /> Stock Availability</h1>
-        <label className="sa-tenant">
-          <span className="sa-tenant__lbl">Tenant</span>
+  const header = (
+    <div className="d-flex flex-column gap-3">
+      <PageHeader
+        title="Stock Availability"
+        breadcrumb={['Operations', 'Inventory', 'Stock Availability']}
+        description="Search products or batches across branches and inspect live stock, sales, purchase, and bill context."
+      />
+      <FilterBar compact ariaLabel="Stock availability context">
+        <label className="d-flex flex-column gap-1">
+          <span className="small text-muted">Tenant</span>
           <select
-            className="sx-select"
+            className="form-select"
             aria-label="Tenant"
             value={tenantId}
-            onChange={(e) => setTenantId(e.target.value)}
+            onChange={(event) => setTenantId(event.target.value)}
           >
-            {tenants.length === 0 && <option value="">Loading…</option>}
+            {tenants.length === 0 && <option value="">Loading...</option>}
             {tenants.map((tenant) => (
               <option key={tenant.tenant_id} value={tenant.tenant_id}>
                 {tenant.tenant_name}
@@ -151,138 +170,180 @@ export default function StockAvailabilityPage() {
             ))}
           </select>
         </label>
-      </div>
+      </FilterBar>
+    </div>
+  )
 
-      {/* Single-row search: mode tabs · fields · filter · legend */}
-      <div className="sa-search">
-        <div className="sa-search__tabs" role="tablist" aria-label="Search mode">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'product'}
-            className={`sa-search__tab${mode === 'product' ? ' sa-search__tab--active' : ''}`}
-            onClick={() => setMode('product')}
-          >
-            <i className="bi bi-search" aria-hidden="true" /> Product
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'batch'}
-            className={`sa-search__tab${mode === 'batch' ? ' sa-search__tab--active' : ''}`}
-            onClick={() => setMode('batch')}
-          >
-            <i className="bi bi-upc-scan" aria-hidden="true" /> Batch / MRP
-          </button>
-        </div>
+  const kpis = (
+    <KpiBar>
+      <StatCard label="Branches Scanned" value={activeStoreCount.toLocaleString()} icon="bi-shop" loading={isLoading} />
+      <StatCard label="Products Found" value={activeProductCount.toLocaleString()} icon="bi-box-seam" tone="primary" loading={isLoading} />
+      <StatCard label="Branches With Stock" value={storesWithStock.toLocaleString()} icon="bi-check2-circle" tone="success" loading={isLoading} />
+      <StatCard label="Total Stock" value={totalStock.toLocaleString()} icon="bi-archive" sub={mode === 'batch' ? 'Batch search results' : 'Product search results'} loading={isLoading} />
+    </KpiBar>
+  )
 
+  const filters = (
+    <div className="d-flex flex-column gap-3">
+      <SegmentedTabs
+        items={[
+          { value: 'product', label: 'Product', description: 'Search by product name', icon: 'bi-search' },
+          { value: 'batch', label: 'Batch / MRP', description: 'Search by batch attributes', icon: 'bi-upc-scan' },
+        ]}
+        activeValue={mode}
+        ariaLabel="Search mode"
+        onChange={setMode}
+      />
+      <FilterBar ariaLabel="Stock search filters">
         {mode === 'product' ? (
           <>
-            <span className="sa-field sa-field--grow">
-              <i className="bi bi-search" aria-hidden="true" />
+            <FilterSearch
+              autoFocus
+              value={productQuery}
+              placeholder="Search product name"
+              ariaLabel="Product name"
+              onChange={setProductQuery}
+            />
+            <label className="form-check d-flex align-items-center gap-2 m-0">
               <input
-                type="search"
-                autoFocus
-                value={productQuery}
-                placeholder="Search product name…"
-                aria-label="Product name"
-                onChange={(e) => setProductQuery(e.target.value)}
+                className="form-check-input"
+                type="checkbox"
+                checked={onlyStock}
+                onChange={(event) => setOnlyStock(event.target.checked)}
               />
-            </span>
-            <label className="sa-check">
-              <input type="checkbox" checked={onlyStock} onChange={(e) => setOnlyStock(e.target.checked)} />
-              In-stock only
+              <span className="form-check-label">In-stock only</span>
             </label>
           </>
         ) : (
           <>
-            <span className="sa-field">
-              <i className="bi bi-upc" aria-hidden="true" />
-              <input type="search" value={batchNo} placeholder="Batch number" aria-label="Batch number" onChange={(e) => setBatchNo(e.target.value)} />
-            </span>
-            <span className="sa-field">
-              <i className="bi bi-tag" aria-hidden="true" />
-              <input type="search" inputMode="decimal" value={mrp} placeholder="MRP" aria-label="MRP" onChange={(e) => setMrp(e.target.value)} />
-            </span>
-            <span className="sa-field sa-field--grow">
-              <i className="bi bi-search" aria-hidden="true" />
-              <input type="search" value={batchProduct} placeholder="Product name" aria-label="Product name" onChange={(e) => setBatchProduct(e.target.value)} />
-            </span>
+            <FilterSearch icon="bi-upc" value={batchNo} placeholder="Batch number" ariaLabel="Batch number" onChange={setBatchNo} />
+            <FilterSearch icon="bi-tag" value={mrp} placeholder="MRP" ariaLabel="MRP" onChange={setMrp} />
+            <FilterSearch value={batchProduct} placeholder="Product name" ariaLabel="Product name" onChange={setBatchProduct} />
           </>
         )}
-
-        <span className="sa-legend">
-          {STOCK_LEGEND.map((item) => (
-            <span className="sa-legend__item" key={item.state}>
-              <span className={`sa-dot sa-dot--${item.state}`} aria-hidden="true" />
-              {item.label}
-            </span>
-          ))}
-        </span>
-      </div>
-
-      {/* Results */}
-      <div className="sa-body">
-        {error ? (
-          <ErrorState description={error} onRetry={() => requestRef.current++} />
-        ) : !hasSearched && !isLoading ? (
-          <EmptyState
-            icon="bi-search"
-            title="Search to begin"
-            description={
-              mode === 'product'
-                ? 'Type a product name to see availability across every branch.'
-                : 'Enter a batch number, MRP or product name to search.'
-            }
-          />
-        ) : (
-          <>
-            <div className="sa-branches">
-              {isLoading && result.stores.length === 0
-                ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="sa-branch sa-branch--skeleton" />)
-                : result.stores.length === 0
-                  ? (
-                    <EmptyState icon="bi-shop" title="No matches" description="No products matched your search in any branch." />
-                  )
-                  : result.stores.map((card) => (
-                      <BranchCard
-                        key={card.store_id}
-                        card={card}
-                        activeStoreId={active?.storeId ?? null}
-                        activeProductCode={active?.productCode ?? null}
-                        onSelect={onSelectProduct}
-                      />
-                    ))}
-            </div>
-
-            {/* Detail panels — active product context */}
-            {active ? (
-              <div className="sa-detail">
-                <ProductContextBar ctx={active} />
-                <div className="sa-detail__layout">
-                  <div className="sa-area sa-area--batch"><BatchPanel ctx={active} /></div>
-                  <div className="sa-area sa-area--sales">
-                    <SalesPanel
-                      ctx={active}
-                      activeBillNo={selectedBill?.billNo ?? null}
-                      onSelect={(row) => setSelectedBill({ billNo: row.bill_no ?? '', billDate: row.date ?? null, customer: row.customer ?? null })}
-                    />
-                  </div>
-                  <div className="sa-area sa-area--purch"><PurchasePanel ctx={active} /></div>
-                  <div className="sa-area sa-area--bill"><LatestBillPanel ctx={active} selected={selectedBill} /></div>
-                  <div className="sa-area sa-area--chart"><MovementPanel ctx={active} /></div>
-                </div>
-              </div>
-            ) : (
-              hasSearched && result.stores.length > 0 && (
-                <div className="sa-detail__hint">
-                  <i className="bi bi-hand-index" aria-hidden="true" /> Select a product to view batch, sales, purchase and movement details.
-                </div>
-              )
-            )}
-          </>
-        )}
-      </div>
+      </FilterBar>
     </div>
+  )
+
+  const statusBar = (
+    <div className="d-flex flex-wrap align-items-center gap-3">
+      {STOCK_LEGEND.map((item) => (
+        <span className="sa-legend__item" key={item.state}>
+          <span className={`sa-dot sa-dot--${item.state}`} aria-hidden="true" />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+
+  const branchResults = useMemo(() => {
+    if (error) return <ErrorState description={error} onRetry={() => requestRef.current++} />
+
+    if (!hasSearched && !isLoading) {
+      return (
+        <div className="sa-branches">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div key={index} className="sa-branch sa-branch--skeleton" />
+          ))}
+        </div>
+      )
+    }
+
+    if (isLoading && result.stores.length === 0) {
+      return (
+        <div className="sa-branches">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="sa-branch sa-branch--skeleton" />
+          ))}
+        </div>
+      )
+    }
+
+    if (result.stores.length === 0) {
+      return (
+        <EmptyState
+          icon="bi-shop"
+          title="No matches"
+          description="No products matched your current search across the selected branches."
+        />
+      )
+    }
+
+    return (
+      <div className="sa-branches">
+        {result.stores.map((card) => (
+          <BranchCard
+            key={card.store_id}
+            card={card}
+            activeStoreId={active?.storeId ?? null}
+            activeProductCode={active?.productCode ?? null}
+            onSelect={onSelectProduct}
+          />
+        ))}
+      </div>
+    )
+  }, [active?.productCode, active?.storeId, error, hasSearched, isLoading, onSelectProduct, result.stores])
+
+  return (
+    <>
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
+      <WorkspaceShell
+        header={header}
+        kpis={kpis}
+        filters={filters}
+        statusBar={statusBar}
+        fullWidth
+      >
+        <div className="d-flex flex-column gap-4">
+          {branchResults}
+
+          {active ? (
+            <div className="d-flex flex-column gap-3">
+              <ProductContextBar ctx={active} />
+              <div className="sa-detail__layout">
+                <div className="sa-area sa-area--batch"><BatchPanel ctx={active} /></div>
+                <div className="sa-area sa-area--sales">
+                  <SalesPanel
+                    ctx={active}
+                    activeBillNo={selectedBill?.billNo ?? null}
+                    onSelect={(row) =>
+                      setSelectedBill({ billNo: row.bill_no ?? '', billDate: row.date ?? null, customer: row.customer ?? null })}
+                  />
+                </div>
+                <div className="sa-area sa-area--purch"><PurchasePanel ctx={active} /></div>
+                <div className="sa-area sa-area--bill"><LatestBillPanel ctx={active} selected={selectedBill} /></div>
+                <div className="sa-area sa-area--chart"><MovementPanel ctx={active} /></div>
+              </div>
+            </div>
+          ) : hasSearched && result.stores.length > 0 ? (
+            <InspectorPanel
+              title="Select a product"
+              summary="Choose a branch result to open batch, sales, purchase, bill, and movement details."
+              empty
+              emptyTitle="No product selected"
+              emptyDescription="Select a row from the branch cards above to inspect product activity."
+            />
+          ) : (
+            <div className="sa-detail__layout">
+              <div className="sa-area sa-area--batch">
+                <WaitingPanel title="Batch Details" icon="bi-layers" description="Batch rows will appear here once a product is selected." />
+              </div>
+              <div className="sa-area sa-area--sales">
+                <WaitingPanel title="Recent Sales" icon="bi-cart-check" description="Sales history will appear here after the first product is opened." />
+              </div>
+              <div className="sa-area sa-area--purch">
+                <WaitingPanel title="Recent Purchases" icon="bi-truck" description="Purchase history will appear here after the first product is opened." />
+              </div>
+              <div className="sa-area sa-area--bill">
+                <WaitingPanel title="Bill Details" icon="bi-receipt" description="Bill line items will appear here after a sale is selected." />
+              </div>
+              <div className="sa-area sa-area--chart">
+                <WaitingPanel title="Monthly Movement" icon="bi-bar-chart-line" description="Monthly movement will appear here once a product is loaded." />
+              </div>
+            </div>
+          )}
+        </div>
+      </WorkspaceShell>
+    </>
   )
 }

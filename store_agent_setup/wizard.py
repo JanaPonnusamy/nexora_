@@ -186,6 +186,7 @@ class SetupWizard(tk.Tk):
             self.set_status("")
             return
         # Use the first reachable route to talk to HO during install.
+        errors = []
         for url in routes:
             try:
                 HoClient(url).test_connection()
@@ -196,11 +197,15 @@ class SetupWizard(tk.Tk):
                     fg=PRIMARY)
                 self.set_status("")
                 return
-            except HoConnectionError:
-                continue
+            except HoConnectionError as ex:
+                errors.append(f"{url} -> {ex}")
         SetupWizard._ho_tested = False
+        # Surface the real per-route failure so a misconfigured URL, closed
+        # port, or unhealthy HO is diagnosable instead of a blank "unreachable".
+        detail = "\n".join(errors) if errors else ""
         self.ho_result.config(
-            text="None of the URLs are reachable from this machine.", fg="#b00020")
+            text="None of the URLs are reachable from this machine.\n" + detail,
+            fg="#b00020", justify="left")
         self.set_status("")
 
     # ---- STEP 3 -----------------------------------------------------------

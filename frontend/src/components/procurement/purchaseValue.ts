@@ -1,5 +1,11 @@
 import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
 
+/** How many supplier cards the Supplier Recommendation panel shows — and
+ *  therefore exactly how many the keyboard cursor may reach. Both sides read
+ *  this: while the grid capped its cursor at 5 and the panel drew 8, the bottom
+ *  cards were unreachable by keyboard. */
+export const SUPPLIER_REC_LIMIT = 8
+
 /** Rank suppliers cheapest-first (owner-directed): ascending Last Purchase Rate
  *  (PTR), suppliers with no recorded rate last, ties broken by purchase
  *  frequency (desc). The cheapest supplier is always the top card. */
@@ -34,6 +40,78 @@ export function preferredSupplier(suppliers: SupplierRow[] | undefined): string 
   return best?.supplier_code ?? null
 }
 
+/**
+ * Ranks suppliers for the Supplier Recommendation panel's display + keyboard
+ * order — a weighted blend of purchase recency, frequency and PTR (lower
+ * PTR = better), not price alone. Previously this used sortSuppliersByCost
+ * (pure cheapest-first), which meant "BEST" was always just the lowest PTR
+ * regardless of how stale or infrequent that supplier's history was
+ * (owner-directed fix).
+ *
+ * Weights are the SAME ratios already approved for Auto Assign supplier
+ * selection (AA_WEIGHTS.lastPurchase/frequency/ptr, defined below) — reused
+ * here rather than invented, so "the system's top pick" means the same thing
+ * in both the Auto Assign engine and the manual recommendation panel.
+ *
+ * MRP-based margin % is intentionally NOT part of this ranking: for one
+ * product, MRP is identical across every one of its suppliers, so ranking by
+ * margin-descending and ranking by PTR-ascending produce the exact same
+ * ORDER (margin is a monotonic function of PTR when MRP is fixed) — margin %
+ * only adds information as a DISPLAYED figure, which the caller derives from
+ * item.mrp per supplier, not as a further sort key.
+ */
+export function rankSuppliersForRecommendation(suppliers: SupplierRow[]): SupplierRow[] {
+  if (suppliers.length <= 1) return [...suppliers]
+  const maxFreq = Math.max(1, ...suppliers.map((s) => s.purchase_frequency ?? 0))
+  const times = suppliers.map((s) => (s.last_grn_date ? Date.parse(s.last_grn_date) : NaN)).filter((t) => !Number.isNaN(t))
+  const newest = times.length ? Math.max(...times) : NaN
+  const oldest = times.length ? Math.min(...times) : NaN
+  const rates = suppliers.map((s) => s.last_purchase_rate).filter((x): x is number => x != null)
+  const minRate = rates.length ? Math.min(...rates) : NaN
+  const maxRate = rates.length ? Math.max(...rates) : NaN
+
+  const score = (s: SupplierRow) => {
+    let sc = 0
+    if (s.last_grn_date && !Number.isNaN(newest)) {
+      const t = Date.parse(s.last_grn_date)
+      const span = newest - oldest
+      sc += AA_WEIGHTS.lastPurchase * (span > 0 ? (t - oldest) / span : 1)
+    }
+    sc += AA_WEIGHTS.frequency * ((s.purchase_frequency ?? 0) / maxFreq)
+    if (s.last_purchase_rate != null && !Number.isNaN(minRate)) {
+      const span = maxRate - minRate
+      sc += AA_WEIGHTS.ptr * (span > 0 ? (maxRate - s.last_purchase_rate) / span : 1)
+    }
+    return sc
+  }
+  // Stable-ish tie-break: equal score keeps original (cheapest-first) relative
+  // order, since Array.prototype.sort is stable and ties are rare in practice.
+  return [...suppliers].sort((a, b) => score(b) - score(a))
+}
+
+/** Margin % for one supplier's PTR against the product's MRP — display only,
+ *  not a ranking input (see rankSuppliersForRecommendation). null when either
+ *  figure is missing/non-positive. */
+export function marginPercent(mrp: number | null | undefined, ptr: number | null | undefined): number | null {
+  if (mrp == null || mrp <= 0 || ptr == null) return null
+  return ((mrp - ptr) / mrp) * 100
+}
+
+/** Trade margin % between what the supplier was paid (Item Cost) and PTR —
+ *  the SAME formula NEXORA's own Margin Report already uses as the
+ *  authoritative "Margin %" definition (reports/repository.py's margin():
+ *  MarginPercentage = (Profit / Cost) * 100, i.e. markup on cost, NOT
+ *  legacy_order's ProductDiscPercent — that field is a *discount* % off PTR,
+ *  a different named metric, and does not reconcile against real Cost/PTR
+ *  pairs). Applied here to the same Cost -> PTR relationship:
+ *  ((PTR - Cost) / Cost) * 100. Reused rather than invented; owner-verified
+ *  against real data (e.g. Cost 101.92 / PTR 108.43 -> ~6.39%). null when
+ *  either figure is missing/non-positive. */
+export function costMarginPercent(ptr: number | null | undefined, cost: number | null | undefined): number | null {
+  if (cost == null || cost <= 0 || ptr == null) return null
+  return ((ptr - cost) / cost) * 100
+}
+
 /** Optional per-product signals for Auto Assign scoring that are not carried in
  *  the batched recommendation feed (kept optional so the caller adds no extra
  *  per-product query). */
@@ -66,7 +144,12 @@ export function autoAssignSupplier(
   recs: SupplierRow[] | undefined,
   signals?: AutoAssignSignals,
 ): string | null {
-  if (!recs || recs.length === 0) return null
+  // A supplier opted out of Auto Assign (sync.Suppliers.auto_assign = 0) is
+  // never a candidate here — manual assignment (Right-Arrow -> Enter) still
+  // reaches them, only the automatic path is gated.
+  const candidates = (recs ?? []).filter((r) => r.auto_assign !== false)
+  if (candidates.length === 0) return null
+  recs = candidates
 
   const maxFreq = Math.max(1, ...recs.map((r) => r.purchase_frequency ?? 0))
   const times = recs.map((r) => (r.last_grn_date ? Date.parse(r.last_grn_date) : NaN)).filter((t) => !Number.isNaN(t))
@@ -98,6 +181,83 @@ export function autoAssignSupplier(
     }
   }
   return best
+}
+
+/** Auto Assign eligibility, shared by Cost mode, Rank mode, and the Supplier
+ *  Rank panel's live counts. A product qualifies only if it's genuinely
+ *  Reviewed (not just carrying a pre-seeded nonzero Final Qty from refresh
+ *  generation — that alone used to let Auto Assign silently pick up rows the
+ *  buyer never actually reviewed), not skipped/locked/deferred, not already
+ *  owned by a supplier, and — when Pharma Only is on — Pharma-classified. */
+export function eligibleForAutoAssign(
+  items: WorkspaceItem[],
+  lockedIds: Set<string>,
+  pharmaOnly: boolean,
+): WorkspaceItem[] {
+  const REVIEWED_STATES = new Set(['review', 'assigned', 'partial'])
+  return items.filter((it) => {
+    if (it.item_status === 'skipped' || lockedIds.has(it.order_item_id)) return false
+    if (it.item_status === 'deferred') return false
+    if (!REVIEWED_STATES.has(it.item_status) || (it.final_qty ?? 0) <= 0) return false
+    if ((it.remaining_qty ?? 0) <= 0) return false
+    if (pharmaOnly && it.product_type !== 1) return false
+    return true
+  })
+}
+
+export interface RankAssignmentResult {
+  /** supplier_code -> claimed order_item_ids, in claim order. */
+  assignedItems: Record<string, string[]>
+  /** Suppliers considered, in claim order (ranked first ascending, then every
+   *  other eligible unranked supplier). */
+  order: string[]
+}
+
+/**
+ * Greedy rank-based allocation (Auto Assign "Rank" mode + the Supplier Rank
+ * panel's live "Possible Products" preview — same function, so the preview
+ * always matches what committing would actually do). Suppliers ranked 1..N
+ * claim first (ascending — rank 1 gets every eligible product it can supply),
+ * then every other eligible-but-unranked supplier claims from what's left, in
+ * a stable order. A higher-priority supplier claiming a shared product (e.g.
+ * one 6 suppliers all sell) removes it from every lower-priority supplier's
+ * pool for the rest of this run — that's the "possible count auto-reduces"
+ * behaviour the panel shows live as ranks change.
+ *
+ * min_products / auto_assign(=false already filtered here) are NOT applied
+ * inside the claim loop — dropping a supplier's whole claim because it's
+ * below their minimum happens once, as a final filter, at commit time (same
+ * two-pass shape Cost mode already uses) so the live preview always shows the
+ * raw claim, and the buyer sees exactly which claims get released back.
+ */
+export function computeRankAssignment(
+  eligibleItems: WorkspaceItem[],
+  recommendations: Record<string, SupplierRow[]>,
+  ranks: Record<string, number | null | undefined>,
+  autoAssignFlags: Record<string, boolean>,
+): RankAssignmentResult {
+  const allCodes = new Set<string>()
+  eligibleItems.forEach((it) => (recommendations[it.order_item_id] ?? []).forEach((r) => allCodes.add(r.supplier_code)))
+  const eligible = [...allCodes].filter((c) => autoAssignFlags[c] !== false)
+  const ranked = eligible.filter((c) => (ranks[c] ?? 0) > 0).sort((a, b) => (ranks[a] ?? 0) - (ranks[b] ?? 0))
+  const unranked = eligible.filter((c) => !((ranks[c] ?? 0) > 0))
+  const order = [...ranked, ...unranked]
+
+  const claimed = new Set<string>()
+  const assignedItems: Record<string, string[]> = {}
+  for (const code of order) {
+    const ids: string[] = []
+    for (const it of eligibleItems) {
+      if (claimed.has(it.order_item_id)) continue
+      const recs = recommendations[it.order_item_id] ?? []
+      if (recs.some((r) => r.supplier_code === code)) {
+        ids.push(it.order_item_id)
+        claimed.add(it.order_item_id)
+      }
+    }
+    assignedItems[code] = ids
+  }
+  return { assignedItems, order }
 }
 
 /** Purchase value for a working line: Final Qty × Last Purchase Rate (PTR),

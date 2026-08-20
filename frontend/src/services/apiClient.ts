@@ -8,13 +8,13 @@ import { logger } from '../platform/logging/Logger'
 // An explicitly-set EMPTY string means "same origin" (relative) — the SPA then
 // calls whichever host served it (LAN IP, domain, static IP), so one deployment
 // works over every route. It is only ignored when the property is absent (dev),
-// where we fall back to the build-time env or localhost.
+// where we fall back to the build-time env or the configured HO server.
 const runtimeBase =
   typeof window !== 'undefined'
     ? (window as unknown as { __UNINEX_API_BASE__?: string }).__UNINEX_API_BASE__
     : undefined
 // Build-time env. An explicitly-set value (including an empty string) wins; only
-// when the variable is entirely absent do we fall back to localhost. An empty
+// when the variable is entirely absent do we fall back to the HO server. An empty
 // string means "same origin" (relative), so in development requests go to the
 // Vite dev server and are proxied to the API (see vite.config.ts) — this avoids
 // cross-origin CORS and ERR_CONNECTION_REFUSED regardless of the host/IP used to
@@ -25,7 +25,7 @@ const BASE_URL =
     ? runtimeBase
     : buildBase !== undefined
       ? buildBase
-      : 'http://localhost:8000'
+      : 'http://122.252.246.181:8443'
 
 export class ApiError extends Error {
   status: number
@@ -109,7 +109,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (response.status === 204) {
       return undefined as T
     }
-    return (await response.json()) as T
+    try {
+      return (await response.json()) as T
+    } catch {
+      logger.error('api-client', `${method} ${path} returned a non-JSON body`, response.status)
+      throw new ApiError(
+        `${path} did not return JSON (got status ${response.status}) — the route may not exist or was intercepted.`,
+        response.status,
+      )
+    }
   }
 }
 
@@ -149,5 +157,83 @@ export const api = {
       throw new ApiError(response.statusText || 'Download failed', response.status)
     }
     return response.blob()
+  },
+  // Same as `blob`, but POSTs a JSON body first — for server-generated
+  // documents whose content depends on caller-chosen options (columns,
+  // format, sort) rather than just the URL.
+  postBlob: async (path: string, body: unknown): Promise<Blob> => {
+    const token = tokenStorage.get()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+    let response: Response
+    try {
+      response = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: JSON.stringify(body) })
+    } catch {
+      throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Download failed'
+      try {
+        const parsed = await response.json()
+        detail = parsed.detail ?? parsed.error ?? detail
+      } catch {
+        // response had no JSON body
+      }
+      throw new ApiError(detail, response.status)
+    }
+    return response.blob()
+  },
+  // Same as `postBlob`, but also surfaces the response headers — for downloads
+  // whose metadata (e.g. product / file counts, server-chosen filename) is
+  // returned alongside the binary body rather than in a JSON envelope.
+  postBlobMeta: async (path: string, body: unknown): Promise<{ blob: Blob; headers: Headers }> => {
+    const token = tokenStorage.get()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+    let response: Response
+    try {
+      response = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: JSON.stringify(body) })
+    } catch {
+      throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Download failed'
+      try {
+        const parsed = await response.json()
+        detail = parsed.detail ?? parsed.error ?? detail
+      } catch {
+        // response had no JSON body
+      }
+      throw new ApiError(detail, response.status)
+    }
+    return { blob: await response.blob(), headers: response.headers }
+  },
+  // Multipart upload that returns a binary body + response headers — for
+  // endpoints that take a file and stream a generated document back (with
+  // metadata in headers), e.g. Shelf Sorting from a disk Excel.
+  uploadBlobMeta: async (path: string, form: FormData): Promise<{ blob: Blob; headers: Headers }> => {
+    const token = tokenStorage.get()
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+    let response: Response
+    try {
+      response = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: form })
+    } catch {
+      throw new ApiError('Unable to reach the server. Check that the API is running.', 0)
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Upload failed'
+      try {
+        const parsed = await response.json()
+        detail = parsed.detail ?? parsed.error ?? detail
+      } catch {
+        // response had no JSON body
+      }
+      throw new ApiError(detail, response.status)
+    }
+    return { blob: await response.blob(), headers: response.headers }
   },
 }

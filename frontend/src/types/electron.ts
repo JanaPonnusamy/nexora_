@@ -17,6 +17,16 @@ export interface UniNexHostApi {
     get: (key: string) => Promise<string | null>
     set: (key: string, value: string) => Promise<void>
   }
+  /** Native OS folder picker — returns the chosen absolute path, or null if
+   *  the user cancelled. Desktop-only (Purchase Manager Export Document). */
+  pickFolder: () => Promise<string | null>
+  /** Writes `data` directly to `folderPath/filename` via the main process —
+   *  bypasses the browser download/Save-As flow entirely. */
+  saveFile: (
+    folderPath: string,
+    filename: string,
+    data: Uint8Array,
+  ) => Promise<{ ok: boolean; path?: string; error?: string }>
 }
 
 declare global {

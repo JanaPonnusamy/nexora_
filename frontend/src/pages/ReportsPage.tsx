@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/common/PageHeader'
 import { EmptyState } from '../components/common/EmptyState'
 import { ErrorState } from '../components/common/ErrorState'
+import { WhatsAppSendCard } from '../components/common/WhatsAppSendCard'
 import { tenantService } from '../services/tenantService'
 import { storeService } from '../services/storeService'
 import { reportsService } from '../services/reportsService'
@@ -9,6 +10,7 @@ import type { Tenant } from '../types/tenant'
 import type { Store } from '../types/store'
 import type { ReportColumn, ReportDef, ReportResult, SupplierOption } from '../types/reports'
 import { money, num, date } from '../components/stock/format'
+import { FilterBar } from '../design-system/components/FilterBar'
 import './reports.css'
 
 const iso = (d: Date) => d.toISOString().slice(0, 10)
@@ -57,12 +59,12 @@ export default function ReportsPage() {
     tenantService.list().then((rows) => {
       const active = rows.filter((t) => t.is_active)
       setTenants(active)
-      if (active.length) setTenantId((c) => c || active[0].tenant_id)
+      if (active.length) setTenantId((current) => current || active[0].tenant_id)
     }).catch(() => setTenants([]))
     storeService.list().then(setStores).catch(() => setStores([]))
     reportsService.catalog().then((rows) => {
       setDefs(rows)
-      if (rows.length) setReportKey((c) => c || rows[0].key)
+      if (rows.length) setReportKey((current) => current || rows[0].key)
     }).catch(() => setDefs([]))
   }, [])
 
@@ -70,26 +72,28 @@ export default function ReportsPage() {
     () => stores.filter((s) => s.tenant_id === tenantId && s.is_active),
     [stores, tenantId],
   )
+
   useEffect(() => {
-    // Keep a valid store selected as the tenant changes.
-    setStoreId((c) => (tenantStores.some((s) => s.store_id === c) ? c : tenantStores[0]?.store_id ?? ''))
+    setStoreId((current) => (tenantStores.some((s) => s.store_id === current) ? current : tenantStores[0]?.store_id ?? ''))
   }, [tenantStores])
 
   const def = useMemo(() => defs.find((d) => d.key === reportKey) ?? null, [defs, reportKey])
 
-  // Supplier lookup for the Non-Moving / Purchased-Not-Sold filters.
   useEffect(() => {
     if (!def?.needs_supplier || !tenantId || !storeId) {
       setSupplierOptions([])
       return
     }
     let live = true
-    const t = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       reportsService.suppliers(tenantId, storeId, supplierQuery, 50)
         .then((rows) => live && setSupplierOptions(rows))
         .catch(() => live && setSupplierOptions([]))
     }, 250)
-    return () => { live = false; window.clearTimeout(t) }
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+    }
   }, [def, tenantId, storeId, supplierQuery])
 
   const run = useCallback(() => {
@@ -104,7 +108,10 @@ export default function ReportsPage() {
       division_code: def.needs_division ? division || undefined : undefined,
     })
       .then(setResult)
-      .catch((e) => { setResult(null); setError(e instanceof Error ? e.message : 'Failed to run report') })
+      .catch((err) => {
+        setResult(null)
+        setError(err instanceof Error ? err.message : 'Failed to run report')
+      })
       .finally(() => setLoading(false))
   }, [def, tenantId, storeId, from, to, dwellDays, supplierCode, division])
 
@@ -120,13 +127,22 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url)
   }
 
+  const buildCsvFile = async () => {
+    if (!result) {
+      throw new Error('Run a report before sending it to WhatsApp.')
+    }
+    const storeCode = tenantStores.find((s) => s.store_id === storeId)?.store_code ?? 'store'
+    const fileName = `${storeCode}_${result.report}_${iso(today)}.csv`
+    return new File([toCsv(result)], fileName, { type: 'text/csv;charset=utf-8;' })
+  }
+
   const canRun = Boolean(def && tenantId && storeId)
 
   return (
     <div className="container-fluid px-0 rpt">
       <PageHeader title="Reports" breadcrumb={['Reports']} />
 
-      <div className="rpt-bar">
+      <FilterBar compact className="rpt-bar" ariaLabel="Report filters">
         <select className="form-select form-select-sm" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
           {tenants.length === 0 && <option value="">Loading…</option>}
           {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
@@ -167,7 +183,13 @@ export default function ReportsPage() {
         <button className="btn btn-outline-secondary btn-sm" disabled={!result || result.rows.length === 0} onClick={exportCsv}>
           <i className="bi bi-download" /> Export CSV
         </button>
-      </div>
+        <WhatsAppSendCard
+          disabled={!result || result.rows.length === 0}
+          title="Send report to WhatsApp"
+          defaultCaption={`Nexora ${def?.label ?? 'Report'} | ${from}${to ? ` to ${to}` : ''}`}
+          buildFile={buildCsvFile}
+        />
+      </FilterBar>
 
       {error ? (
         <ErrorState description={error} onRetry={run} />

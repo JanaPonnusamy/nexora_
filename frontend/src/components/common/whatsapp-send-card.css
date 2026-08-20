@@ -1,0 +1,150 @@
+/* ============================================================================
+   WhatsApp Send Card — Theme-Aware Popover for Light & Dark Mode
+   ========================================================================= */
+
+.wa-send {
+  position: relative;
+  display: inline-block;
+}
+
+.wa-send__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1050;
+  min-width: min(34rem, 90vw);
+  padding: 1.25rem;
+  background: var(--nx-surface-raised, #1e293b);
+  color: var(--nx-text, #f8fafc);
+  border: 1px solid var(--nx-rule, rgba(255, 255, 255, 0.12));
+  border-radius: var(--nx-radius-lg, 14px);
+  box-shadow: var(--nx-shadow-lg, 0 16px 40px rgba(0, 0, 0, 0.45));
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.wa-send__head {
+  border-bottom: 1px solid var(--nx-rule, rgba(255, 255, 255, 0.08));
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.wa-send__head h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--nx-text, #f8fafc);
+}
+
+.wa-send__head small {
+  color: var(--nx-text-soft, #94a3b8);
+  font-size: 0.825rem;
+}
+
+.wa-send__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.wa-send__grid label {
+  color: var(--nx-text-soft, #94a3b8);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.3rem;
+  display: block;
+}
+
+.wa-send__panel input.form-control,
+.wa-send__panel select.form-select,
+.wa-send__panel textarea.form-control {
+  background-color: var(--nx-surface-sunk, #0f172a) !important;
+  color: var(--nx-text, #f8fafc) !important;
+  border: 1px solid var(--nx-rule, rgba(255, 255, 255, 0.14)) !important;
+  border-radius: var(--nx-radius-md, 8px) !important;
+  font-size: 0.85rem;
+  color-scheme: inherit;
+}
+
+[data-theme='dark'] .wa-send__panel input.form-control,
+[data-theme='dark'] .wa-send__panel select.form-select,
+[data-theme='dark'] .wa-send__panel textarea.form-control,
+.dark .wa-send__panel input.form-control,
+.dark .wa-send__panel select.form-select,
+.dark .wa-send__panel textarea.form-control {
+  color-scheme: dark;
+}
+
+.wa-send__panel input.form-control:focus,
+.wa-send__panel select.form-select:focus,
+.wa-send__panel textarea.form-control:focus {
+  border-color: var(--nx-accent, #3b82f6) !important;
+  box-shadow: 0 0 0 2px var(--nx-focus, rgba(59, 130, 246, 0.25)) !important;
+}
+
+.wa-send__meta {
+  margin-top: 0.85rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--nx-rule, rgba(255, 255, 255, 0.08));
+  color: var(--nx-text-soft, #94a3b8);
+  font-size: 0.8rem;
+}
+
+.wa-send__target-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.wa-send__target-row select {
+  flex: 1;
+}
+
+.wa-send__target-row .btn {
+  background: var(--nx-surface-sunk, #0f172a);
+  color: var(--nx-text, #f8fafc);
+  border: 1px solid var(--nx-rule, rgba(255, 255, 255, 0.14));
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.wa-send__target-row .btn:hover {
+  background: var(--nx-surface-hover, #1e293b);
+}
+
+.wa-send__add-contact {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  align-items: center;
+}
+
+.wa-send__add-contact input {
+  flex: 1;
+}
+
+.wa-send__actions {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.wa-send__actions .btn-success {
+  background-color: var(--nx-success, #10b981) !important;
+  border-color: var(--nx-success, #10b981) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+}
+
+@media (max-width: 767.98px) {
+  .wa-send__panel {
+    right: auto;
+    left: 0;
+    min-width: calc(100vw - 2rem);
+  }
+  .wa-send__grid {
+    grid-template-columns: 1fr;
+  }
+}

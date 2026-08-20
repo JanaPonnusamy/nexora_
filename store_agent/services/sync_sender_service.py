@@ -26,7 +26,8 @@ class SyncSenderService:
 
     def report_table_metrics(self, execution_id, table_name, sync_type,
                              rows_examined, rows_changed, rows_uploaded,
-                             rows_skipped, source_total):
+                             rows_skipped, source_total, status="COMPLETED",
+                             error_message=None):
         response = requests.post(
             self.base + "/api/sync/tables/report",
             json={
@@ -38,6 +39,8 @@ class SyncSenderService:
                 "rows_uploaded": rows_uploaded,
                 "rows_skipped": rows_skipped,
                 "source_total": source_total,
+                "status": status,
+                "error_message": error_message,
             },
             timeout=60,
         )

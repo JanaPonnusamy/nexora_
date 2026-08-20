@@ -311,7 +311,16 @@ BEGIN
 
         PRIMARY KEY (item_id),
         FOREIGN KEY (import_id) REFERENCES dbo.doc_import (import_id),
-        FOREIGN KEY (product_code) REFERENCES dbo.doc_product_mapping (product_code),
+        /* No FK on product_code to doc_product_mapping: (1) the two columns'
+           lengths never actually matched — doc_product_mapping.product_code
+           is a computed NVARCHAR(12) ('DOC' + 9 digits) but this column was
+           declared NVARCHAR(20), which SQL Server rejects for FK columns
+           regardless of one being wider, so this constraint could never be
+           created as originally written; (2) it would be wrong even if
+           fixed — migration 0002 documents that product_code legitimately
+           references EITHER doc_product_mapping OR the platform's real
+           sync.Products depending on product_code_source, so a single-table
+           FK here was never correct. */
         UNIQUE (import_id, line_number)
     );
 

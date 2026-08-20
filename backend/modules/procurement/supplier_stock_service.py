@@ -51,3 +51,15 @@ def list_supplier_stock(tenant_id, refresh_id, supplier_code, search=None, only_
         store_id=refresh.get("store_id"), search=search, only_available=only_available,
     )
     return {"items": items}
+
+
+def products_with_offers(tenant_id, refresh_id):
+    """Product codes in this refresh's VPL that the store has bought with free
+    qty at least once (sync.PurchaseTrans, FreeQty > 0), scoped to this
+    refresh's store. "Has Offer" filter (Review All / Supplier Purchasing)."""
+    refresh = reconciliation_repository.get_refresh(tenant_id, refresh_id)
+    if not refresh:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Refresh not found")
+    codes = repo.products_with_offers(tenant_id, refresh_id, store_id=refresh.get("store_id"))
+    return {"product_codes": codes}

@@ -30,9 +30,9 @@ export function MethodChip({ method }: { method: MatchMethod }) {
   return <SxChip tone={tone}>{method}</SxChip>
 }
 
-export function ConfidenceChip({ value }: { value: number }) {
+export function ConfidenceChip({ value, dot }: { value: number; dot?: boolean }) {
   const tone = value >= 98 ? 'success' : value >= 96 ? 'indigo' : value >= 94 ? 'warning' : 'muted'
-  return <SxChip tone={tone}>{value.toFixed(0)}%</SxChip>
+  return <SxChip tone={tone} dot={dot}>{value.toFixed(0)}%</SxChip>
 }
 
 export function ProductCell({ code, name }: { code: string | null; name: string | null }) {

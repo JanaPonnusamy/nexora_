@@ -74,7 +74,7 @@ BEGIN
           AND si.BNumber = psi.Bnumber
           AND CAST(si.BillDate AS DATE) = CAST(psi.TransactionDate AS DATE)
     LEFT JOIN sync.SalesRep sr
-           ON sr.tenant_id = si.tenant_id AND sr.store_id = si.store_id
+           ON sr.store_id = si.store_id
           AND sr.Salesmancode = si.DeliverySalesRep
     WHERE psi.tenant_id = @TenantId AND psi.store_id = @StoreId
       AND psi.ProductCode = @ProductCode
@@ -152,7 +152,7 @@ BEGIN
             ISNULL(NULLIF(RTRIM(sr.Salesmanname), ''), '-') AS SalesmanName
         FROM sync.SaleInformation si
         LEFT JOIN sync.SalesRep sr
-               ON sr.tenant_id = si.tenant_id AND sr.store_id = si.store_id
+               ON sr.store_id = si.store_id
               AND sr.Salesmancode = si.DeliverySalesRep
         WHERE si.tenant_id = @TenantId AND si.store_id = @StoreId AND si.BNumber = @BillNo
           AND (@BillDate IS NULL OR CAST(si.BillDate AS DATE) = @BillDate)

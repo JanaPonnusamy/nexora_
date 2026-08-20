@@ -1,0 +1,7 @@
+{
+  "browser_command": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "delivery_mode": "selenium",
+  "launch_wait_seconds": 15,
+  "headless": true,
+  "manual_fallback": false
+}

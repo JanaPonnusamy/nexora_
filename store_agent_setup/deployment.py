@@ -3,6 +3,7 @@
 The wizard GUI drives this; keeping the logic here makes it independently
 testable and reusable by the settings utility.
 """
+from . import WATCHDOG_DISPLAY_NAME, WATCHDOG_EXE_NAME, WATCHDOG_SERVICE_NAME
 from .agent_config import build_config
 from .ho_client import HoClient, HoConnectionError
 from .installer import Installer
@@ -38,6 +39,18 @@ class Deployment:
         self.ho = HoClient(self.ho_url)
         self.installer = Installer(install_path, log=self.log)
         self.service = ServiceManager(install_path, log=self.log)
+        self.watchdog = ServiceManager(
+            install_path,
+            log=self.log,
+            service_name=WATCHDOG_SERVICE_NAME,
+            service_display_name=WATCHDOG_DISPLAY_NAME,
+            exe_name=WATCHDOG_EXE_NAME,
+            module_name="store_agent_setup.watchdog_service",
+            description=(
+                "Keeps NexoraStoreAgent on the version and run-state HO wants, "
+                "so it can be updated/started/stopped remotely."
+            ),
+        )
         self.ho_agent_config = None
 
     # ---- STEP 6: download -------------------------------------------------
@@ -60,7 +73,9 @@ class Deployment:
         )
         self.installer.install(agent_cfg, self.ho_agent_config)
         self.service.install()
+        self.watchdog.install()
         self.service.start()
+        self.watchdog.start()
         return agent_cfg
 
     # ---- STEP 10: validation ---------------------------------------------
@@ -78,16 +93,19 @@ class Deployment:
         # Config downloaded
         from .agent_config import config_path
         cfg_ok = config_path(self.install_path).is_file()
-        ho_cfg_ok = (self.installer.runtime / "ho_agent_config.json").is_file()
+        ho_cfg_ok = (self.installer.root / "cache" / "ho_agent_config.json").is_file()
         result.add("Config downloaded", cfg_ok and ho_cfg_ok,
                    str(config_path(self.install_path)))
 
         # Service installed
         result.add("Service installed", self.service.is_installed())
+        result.add("Watchdog installed", self.watchdog.is_installed())
 
         # Service running
         running = self.service.status() == "running"
         result.add("Service running", running, self.service.status())
+        watchdog_running = self.watchdog.status() == "running"
+        result.add("Watchdog running", watchdog_running, self.watchdog.status())
 
         # Heartbeat successful
         try:

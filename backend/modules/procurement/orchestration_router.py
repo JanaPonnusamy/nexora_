@@ -30,6 +30,14 @@ def create_refresh(
     return service.create_refresh(tenant_id, cycle_id, payload.dict())
 
 
+@router.post("/refreshes/{refresh_id}/close")
+def close_refresh(refresh_id: str, payload: CycleClose, tenant_id: str = Query(...)):
+    """Lock a Refresh as read-only ('Closed') without closing its cycle. The
+    console pairs this with a follow-up create_refresh to roll to Refresh N+1
+    in the same open cycle."""
+    return service.close_refresh(tenant_id, refresh_id, payload.closed_by)
+
+
 @router.post("/cycles/{cycle_id}/close")
 def close_cycle(cycle_id: str, payload: CycleClose, tenant_id: str = Query(...)):
     """Reconcile from synced purchases, auto-stamp End GRN / End Sale Bill, close

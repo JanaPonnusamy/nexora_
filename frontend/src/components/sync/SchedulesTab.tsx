@@ -110,19 +110,19 @@ export function SchedulesTab() {
 
   return (
     <div className="sx-stack">
-      <div className="row row-cols-2 row-cols-md-4 g-3">
+      <div className="row row-cols-2 row-cols-md-4 g-2">
         <div className="col"><SxStat icon="bi-calendar-event" tone="indigo" value={stats.total} label="Total Schedules" /></div>
         <div className="col"><SxStat icon="bi-play-circle" tone="success" value={stats.active} label="Active" /></div>
         <div className="col"><SxStat icon="bi-pause-circle" tone="warning" value={stats.suspended} label="Suspended" /></div>
         <div className="col"><SxStat icon="bi-1-circle" tone="teal" value={stats.once} label="One-time" /></div>
       </div>
 
-      <SxCard>
+      <SxCard className="sx-pane">
         <SxCardHead title="Schedules" icon="bi-calendar-event" sub={`${schedules.length} configured`}
           action={
             <div className="d-flex gap-2">
-              <SxButton variant="ghost" icon="bi-stars" busy={seeding} onClick={seedDefaults}>Seed defaults</SxButton>
-              <SxButton variant="primary" icon="bi-plus-lg" onClick={() => setModal({ kind: 'create' })}>Add Schedule</SxButton>
+              <SxButton sm variant="ghost" icon="bi-stars" busy={seeding} onClick={seedDefaults}>Seed</SxButton>
+              <SxButton sm variant="primary" icon="bi-plus-lg" onClick={() => setModal({ kind: 'create' })}>Add</SxButton>
             </div>
           } />
         <SxCardBody>

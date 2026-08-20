@@ -73,12 +73,14 @@ _FROM = (
 # (was duplicated in the frontend as a JS function run over every loaded row on
 # every render). Identical rule, computed once in the query instead: a skipped
 # item is always 'skipped'; anything with a live assigned quantity is
-# 'assigned'; a reviewed/partial item carrying a real Final Qty is 'finalized';
-# everything else is still 'pending'.
+# 'assigned'; a deferred item (Space Bar — kept its Final Qty, just excluded
+# from Auto/Bulk Assignment) is 'deferred'; a reviewed/partial item carrying a
+# real Final Qty is 'finalized'; everything else is still 'pending'.
 _PLANNING_STATE_CASE = """
     CASE
         WHEN oi.item_status = 'skipped' THEN 'skipped'
         WHEN ISNULL(oi.assigned_qty, 0) > 0 THEN 'assigned'
+        WHEN oi.item_status = 'deferred' THEN 'deferred'
         WHEN oi.item_status IN ('review', 'partial') AND ISNULL(oi.final_qty, 0) > 0 THEN 'finalized'
         ELSE 'pending'
     END
@@ -237,7 +239,7 @@ def get_summary(tenant_id, refresh_id, filters):
             """,
             params,
         )
-        counts = {"pending": 0, "finalized": 0, "assigned": 0, "skipped": 0}
+        counts = {"pending": 0, "finalized": 0, "assigned": 0, "skipped": 0, "deferred": 0}
         for state, cnt in cursor.fetchall():
             if state in counts:
                 counts[state] = cnt
@@ -263,6 +265,7 @@ def get_summary(tenant_id, refresh_id, filters):
             "assigned": counts["assigned"],
             "finalized": counts["finalized"],
             "skipped": counts["skipped"],
+            "deferred": counts["deferred"],
         }
     finally:
         conn.close()
@@ -344,12 +347,30 @@ def skip_item(tenant_id, order_item_id, skip_reason, reviewed_by):
     )
 
 
-def restore_item(tenant_id, order_item_id, reviewed_by):
-    """Un-skip back to Reviewed, keeping quantities.
+def defer_item(tenant_id, order_item_id, reviewed_by):
+    """Assignment Deferred (Space Bar): excludes the row from Auto/Bulk
+    Assignment while keeping its Final Qty intact — unlike skip_item, this
+    never touches final_qty/remaining_qty/skip_reason. Un-defer reuses
+    restore_item (it unconditionally sets item_status back to 'review')."""
+    reviewed_by = _as_uid(reviewed_by)  # NULL for a non-GUID display name
+    return _run(
+        """
+        UPDATE procurement.procurement_order_items
+        SET item_status = 'deferred',
+            reviewed_by = ?, reviewed_at = GETDATE(),
+            updated_by = ?, updated_at = GETDATE()
+        WHERE tenant_id = ? AND order_item_id = ? AND is_deleted = 0
+        """,
+        (reviewed_by, reviewed_by, tenant_id, order_item_id),
+    )
 
-    The PM workflow is Reviewed <-> Skipped (toggle freely until export), so a
-    restore lands on 'review' regardless of override — the buyer sees the row
-    return to Reviewed, not to an un-reviewed draft.
+
+def restore_item(tenant_id, order_item_id, reviewed_by):
+    """Un-skip / un-defer back to Reviewed, keeping quantities.
+
+    The PM workflow is Reviewed <-> Skipped/Deferred (toggle freely until
+    export), so a restore lands on 'review' regardless of the prior status —
+    the buyer sees the row return to Reviewed, not to an un-reviewed draft.
     """
     reviewed_by = _as_uid(reviewed_by)  # NULL for a non-GUID display name
     return _run(

@@ -1,0 +1,21 @@
+# Minimal dependency set for running the backend unit tests in CI.
+#
+# The full requirements.txt pulls paddlepaddle/paddleocr (~500 MB) and
+# playwright, which the unit tests never touch. Installing those in CI would
+# cost several minutes per run for no coverage, so this file lists only what
+# the test import chain actually needs:
+#
+#   modules.audit.repository -> config.database -> pyodbc  (module-level import)
+#   modules.audit.repository -> config.security -> jwt
+#   modules.audit.models                        -> pydantic
+#   modules.audit.router/middleware             -> fastapi / starlette
+#
+# pyodbc needs system headers on Linux: apt-get install -y unixodbc-dev
+#
+# Keep in sync with requirements.txt when a test grows a new dependency.
+
+pytest
+fastapi
+pydantic
+PyJWT
+pyodbc

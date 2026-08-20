@@ -1,0 +1,244 @@
+.settings-page {
+  --settings-surface: var(--nx-surface);
+  --settings-border: var(--nx-rule);
+  --settings-shadow: var(--nx-shadow-lg);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 1rem;
+}
+
+.settings-card {
+  padding: 1.25rem;
+  background: var(--settings-surface);
+  border: 1px solid var(--settings-border);
+  border-radius: 1rem;
+  box-shadow: var(--settings-shadow);
+  color: var(--nx-text);
+}
+
+.settings-card--stack {
+  margin-top: 1rem;
+}
+
+.settings-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.settings-card__header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--nx-text);
+}
+
+.settings-card__header p {
+  margin: 0.25rem 0 0;
+  color: var(--nx-text-soft);
+}
+
+.settings-form {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.settings-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.settings-meta {
+  display: grid;
+  gap: 0.85rem;
+  margin: 1.25rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--nx-rule);
+}
+
+.settings-meta dt {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--nx-text-muted);
+}
+
+.settings-meta dd {
+  margin: 0.2rem 0 0;
+  word-break: break-word;
+  color: var(--nx-text);
+}
+
+.health-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.health-item {
+  padding: 1rem;
+  border-radius: 0.85rem;
+  border: 1px solid var(--nx-rule);
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text);
+}
+
+.health-item.is-ok {
+  border-color: rgb(var(--nx-success-rgb) / 0.3);
+  background: linear-gradient(180deg, rgb(var(--nx-success-rgb) / 0.1), var(--nx-surface-sunk));
+}
+
+.health-item.is-error {
+  border-color: rgb(var(--nx-danger-rgb) / 0.3);
+  background: linear-gradient(180deg, rgb(var(--nx-danger-rgb) / 0.1), var(--nx-surface-sunk));
+}
+
+.health-item__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.health-item__title h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  color: var(--nx-text);
+}
+
+.health-item p {
+  margin: 0 0 0.45rem;
+}
+
+.health-item small {
+  color: var(--nx-text-muted);
+}
+
+.settings-profile-list {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.settings-profile-card {
+  padding: 0.95rem 1rem;
+  border: 1px solid var(--nx-rule);
+  border-radius: 0.85rem;
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text);
+}
+
+.settings-profile-card p {
+  margin: 0.5rem 0;
+  color: var(--nx-text-soft);
+}
+
+.settings-profile-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.settings-profile-card__head strong {
+  color: var(--nx-text);
+}
+
+.settings-profile-card__head small {
+  display: block;
+  color: var(--nx-text-muted);
+}
+
+.settings-profile-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings-profile-card__path {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.settings-profile-card__path code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.5rem;
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-rule);
+  color: var(--nx-text-soft);
+  font-size: 0.78rem;
+}
+
+.settings-message-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.settings-message-card {
+  padding: 0.9rem 1rem;
+  border-radius: 0.85rem;
+  border: 1px solid var(--nx-rule);
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text);
+}
+
+.settings-message-card.is-incoming {
+  border-color: rgb(var(--nx-info-rgb) / 0.3);
+  background: linear-gradient(180deg, rgb(var(--nx-info-rgb) / 0.1), var(--nx-surface-sunk));
+}
+
+.settings-message-card.is-outgoing {
+  border-color: rgb(var(--nx-success-rgb) / 0.3);
+  background: linear-gradient(180deg, rgb(var(--nx-success-rgb) / 0.1), var(--nx-surface-sunk));
+}
+
+.settings-message-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.settings-message-card__head strong {
+  color: var(--nx-text);
+}
+
+.settings-message-card__head small {
+  color: var(--nx-text-muted);
+}
+
+.settings-message-card p {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--nx-text-soft);
+}
+
+@media (max-width: 991.98px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-inline-grid {
+    grid-template-columns: 1fr;
+  }
+}

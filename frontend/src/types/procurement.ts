@@ -1,5 +1,13 @@
 // Purchase Manager (Procurement Sprint 2) types.
 
+/** Shelf Sorting split files as a base64 manifest — for writing each file into
+ *  a chosen output folder (desktop app, supports UNC/network paths). */
+export interface ShelfSortManifest {
+  files: { name: string; content_b64: string }[]
+  total_products: number
+  file_count: number
+}
+
 export interface Refresh {
   refresh_id: string
   cycle_id: string
@@ -14,6 +22,27 @@ export interface Refresh {
   generated_product_count?: number | null
   created_at?: string | null
   store_id?: string | null
+}
+
+/** One product's diff between two refreshes of the same cycle. */
+export type CompareChange = 'Added' | 'Removed' | 'Increased' | 'Decreased' | 'NoChange'
+export interface CompareItem {
+  product_id: string | null
+  product_code: string | null
+  product_name: string | null
+  source_qty: number | null
+  target_qty: number | null
+  qty_difference: number | null
+  change_type: CompareChange
+}
+export interface CompareResult {
+  source_vpl_id: string
+  target_vpl_id: string
+  cycle_id: string
+  items: CompareItem[]
+  total: number
+  page: number
+  page_size: number
 }
 
 /** A Procurement (Business) Cycle — Admin lifecycle screens. */
@@ -47,6 +76,25 @@ export type CloseCycleResult =
       end_grn_number: string | null
       end_sale_bill_number: string | null
     }
+
+/** What POST /cycles/{id}/refreshes actually returns — the Decision Engine +
+ *  VPL + working-item generation counts, exactly as the orchestration service
+ *  already reports them. Note there is deliberately no supplier / deferred /
+ *  skipped count here: a freshly generated Refresh has no reviewed items yet. */
+export interface RefreshRunResult {
+  refresh_id: string
+  cycle_id: string
+  status: string
+  previous_refresh_id: string | null
+  /** Products that need procurement — the VPL size. */
+  generated_product_count: number
+  included_count: number
+  excluded_count: number
+  /** Working order items generated from the VPL (suggested_qty > 0). */
+  working_item_count: number
+  /** Pending items carried over from the previous Refresh. */
+  carried_forward_count: number
+}
 
 /** Batched supplier recommendations for a working item (Product Grid icons). */
 export interface SupplierRecommendation {
@@ -153,6 +201,7 @@ export interface WorkspaceSummary {
   assigned: number
   finalized: number
   skipped: number
+  deferred: number
 }
 
 export interface Assignment {
@@ -169,6 +218,29 @@ export interface Assignment {
    *  fallback display field so a Supplier Queue line is never dropped just
    *  because its order item isn't in the currently-loaded workspace page. */
   product_code: string | null
+  /** This exact supplier's real scheme/free/discount for this exact product
+   *  (procurement.supplier_stock, when a Live Stock import has mapped it) —
+   *  a fresher manual feed, so it wins over pt_offer below when present.
+   *  `discount` is a VARCHAR column that holds messy free-text in practice
+   *  (not a clean percentage) — treat it as untrusted/best-effort. */
+  offer_scheme?: number | null
+  offer_free?: number | null
+  offer_discount?: string | null
+  /** Real purchase history from sync.PurchaseTrans — this row's own
+   *  (product, supplier) pair's most recent purchase. */
+  pt_ptr?: number | null
+  pt_cost?: number | null
+  pt_mrp?: number | null
+  pt_last_purchase_date?: string | null
+  /** The product's overall most recent purchase from ANY supplier — offer +
+   *  discount are read from whoever sold it last, not necessarily this row's
+   *  own supplier. "Buy X get Y" ratio string (e.g. "10+1"), never a percent —
+   *  a flat discount only ever shows in pt_discount_pct. */
+  pt_offer?: string | null
+  pt_discount_pct?: number | null
+  /** Identifies the overall-last purchase above, for the hover tooltip. */
+  pt_offer_source_supplier_name?: string | null
+  pt_offer_source_date?: string | null
 }
 
 export interface SupplierRow {
@@ -178,7 +250,57 @@ export interface SupplierRow {
   last_grn_date: string | null
   last_grn_no: string | null
   last_purchase_rate: number | null
+  /** Item Cost (sync.PurchaseTrans.ItemCost) for this supplier's last purchase —
+   *  distinct from PTR (last_purchase_rate = PurchasePrice). */
+  last_item_cost?: number | null
+  /** Margin % as recorded on the purchase transaction itself
+   *  (sync.PurchaseTrans.Margin). Kept for reference/fallback only — this
+   *  legacy figure does not consistently reconcile against Cost vs PTR, so
+   *  display margin is derived from Cost/PTR first (see costMarginPercent). */
+  last_margin_percent?: number | null
+  /** MRP recorded on this supplier's last purchase transaction
+   *  (sync.PurchaseTrans.mrp) — per-supplier source, preferred over the
+   *  product-level VPL mrp when present. */
+  last_mrp?: number | null
   avg_lead_days: number | null
+  /** Whether this supplier is eligible for Auto Assign Suppliers at all
+   *  (sync.Suppliers.auto_assign, defaults true). */
+  auto_assign?: boolean
+  /** Auto Assign only commits a batch to this supplier if it would include at
+   *  least this many products (sync.Suppliers.min_products, default 2). */
+  min_products?: number
+}
+
+/** One supplier's Auto Assign settings (sync.Suppliers.auto_assign/
+ *  min_products/export_rank) — Supplier Rank & Settings panel row. */
+export interface SupplierSettingsRow {
+  supplier_code: string
+  supplier_name: string | null
+  auto_assign: boolean
+  min_products: number
+  /** null = unranked. Rank 1 = highest priority in Rank-mode Auto Assign. */
+  export_rank: number | null
+}
+
+/** One row of a parsed Supplier Reply Excel (Export Monitor overhaul) —
+ *  matched back to a live assignment via the sheet's hidden Assignment ID
+ *  column. `applicable` is false when the row can't be applied (no matching
+ *  assignment, or an unrecognized Status value) — surfaced via `warning`. */
+export interface SupplierReplyPreviewRow {
+  assignment_id: string
+  product_name: string | null
+  product_code: string | null
+  supplier_code: string | null
+  assigned_qty: number | null
+  status: 'available' | 'partial' | 'not_available' | null
+  available_qty: number | null
+  warning: string | null
+  applicable: boolean
+}
+
+export interface SupplierReplyPreview {
+  filename: string
+  rows: SupplierReplyPreviewRow[]
 }
 
 export interface SupplierQueue {
@@ -314,6 +436,14 @@ export interface OptimizationMoveResult {
   results: { assignment_id: string; status: string; reason?: string }[]
 }
 
+/** Per-supplier Minimum Order config — the raw configured value plus whether
+ *  the supplier is actually opted into Optimization (§10/§11: a configured
+ *  value alone no longer enrolls a supplier). */
+export interface SupplierMinOrderConfig {
+  min_order_value: number
+  consider_minimum_order: boolean
+}
+
 /** An audit row for a product moved between suppliers (§12). */
 export interface OptimizationAuditRow {
   move_id: string
@@ -327,4 +457,91 @@ export interface OptimizationAuditRow {
   reason: 'auto' | 'manual'
   moved_by: string | null
   moved_at: string | null
+}
+
+/** Internal Supplier Stock Distribution — one store's own stock (HO, e.g.
+ *  NMW) generated out to every other store's supplier_stock feed. */
+export interface DistributionConfigRow {
+  store_id: string
+  store_code: string
+  store_name: string
+  whatsapp_group: string | null
+  phone_number: string | null
+  enabled: boolean
+  local_supplier_code: string | null
+}
+
+export interface DistributionSupplierMapImportResult {
+  imported: { store_code: string; local_supplier_code: string }[]
+  skipped: string[]
+}
+
+export interface DistributionRunItemResult {
+  store_code: string
+  status: 'success' | 'failed'
+  rows?: number
+  stock_status?: string
+  excel_status?: string
+  whatsapp_status?: string
+  error?: string
+}
+
+export interface DistributionRunResult {
+  run_id: string | null
+  stores_total?: number
+  stores_succeeded?: number
+  stores_failed?: number
+  items: DistributionRunItemResult[]
+  error?: string
+}
+
+export interface DistributionRunSummary {
+  run_id: string
+  source_store_code: string
+  provider: string
+  started_at: string
+  finished_at: string | null
+  status: string
+  stores_total: number
+  stores_succeeded: number
+  stores_failed: number
+  total_products: number | null
+  total_stock_qty: number | null
+  error_summary: string | null
+}
+
+export interface DistributionRunItemRow {
+  run_item_id: string
+  store_code: string
+  rows_exported: number | null
+  rows_imported: number | null
+  excel_path: string | null
+  supplier_updated: boolean
+  whatsapp_status: string
+  whatsapp_error: string | null
+  stock_status: string
+  stock_error: string | null
+  excel_status: string
+  excel_error: string | null
+  status: string
+  error_message: string | null
+  duration_ms: number | null
+}
+
+export interface DistributionRunDetail {
+  run: DistributionRunSummary | null
+  items: DistributionRunItemRow[]
+}
+
+export interface DistributionRunItemProduct {
+  code: string
+  name: string
+  stock: number
+  rack: string | null
+}
+
+export interface DistributionRunItemProducts {
+  store_code: string | null
+  excel_path: string | null
+  rows: DistributionRunItemProduct[]
 }

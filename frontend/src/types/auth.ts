@@ -3,12 +3,18 @@ export interface AuthUser {
   username: string
   fullName: string
   tenant: string
+  isPlatformUser: boolean
+  roleNames: string[]
+  storeId: string
+  storeCode: string
 }
 
 export interface AuthContextValue {
   user: AuthUser | null
   token: string | null
   isAuthenticated: boolean
+  /** True only while a page-reload restore of a stored token is in flight. */
+  restoring: boolean
   login: (token: string, user: AuthUser) => void
   logout: () => void
 }

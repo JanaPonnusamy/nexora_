@@ -10,6 +10,7 @@ export type Capability =
   | 'SYNC'
   | 'ADMINISTRATION'
   | 'REPORTS'
+  | 'TIME_REPORT'
   | 'SETTINGS'
   | 'PRODUCT_MAPPING'
   | 'PROCUREMENT_WORKSPACE'
@@ -17,12 +18,16 @@ export type Capability =
   | 'PROCUREMENT_EXPORT'
   | 'PROCUREMENT_PENDING'
   | 'PROCUREMENT_GRN'
+  | 'DOCUMENT_EXTRACTION'
+  | 'PASS_GEN'
+  | 'LEGACY_ORDER'
 
 export const ALL_CAPABILITIES: Capability[] = [
-  'PLATFORM', 'INVENTORY', 'SYNC', 'ADMINISTRATION', 'REPORTS', 'SETTINGS',
+  'PLATFORM', 'INVENTORY', 'SYNC', 'ADMINISTRATION', 'REPORTS', 'TIME_REPORT', 'SETTINGS',
   'PRODUCT_MAPPING',
   'PROCUREMENT_WORKSPACE', 'PROCUREMENT_ADMIN',
   'PROCUREMENT_EXPORT', 'PROCUREMENT_PENDING', 'PROCUREMENT_GRN',
+  'DOCUMENT_EXTRACTION', 'PASS_GEN', 'LEGACY_ORDER',
 ]
 
 const PROCUREMENT_CAPS: Capability[] = [
@@ -35,6 +40,9 @@ const PROCUREMENT_CAPS: Capability[] = [
 function capForCode(code: string | null | undefined): Capability | null {
   const c = (code ?? '').toUpperCase()
   if (!c) return null
+  // Checked before PROCUREMENT so a code like "LEGACY_PURCHASE_ORDER" still
+  // resolves to the legacy console rather than the new procurement workspace.
+  if (c.includes('LEGACY')) return 'LEGACY_ORDER'
   if (c.includes('PROCUREMENT') || c.includes('PURCHASE')) {
     // Lifecycle administration (Cycle / Refresh management) is a separate,
     // elevated grant from the Purchase Manager workspace.
@@ -44,9 +52,14 @@ function capForCode(code: string | null | undefined): Capability | null {
     if (c.includes('GRN')) return 'PROCUREMENT_GRN'
     return 'PROCUREMENT_WORKSPACE'
   }
+  if (c.includes('PASS')) return 'PASS_GEN'
+  if (c.includes('DOCUMENT') || c.includes('EXTRACTION') || c.includes('INVOICE_OCR')) return 'DOCUMENT_EXTRACTION'
   if (c.includes('MAPPING')) return 'PRODUCT_MAPPING'
   if (c.includes('SYNC')) return 'SYNC'
   if (c.includes('STOCK') || c.includes('INVENTORY')) return 'INVENTORY'
+  // Checked before the generic REPORT branch — a "TIME_REPORT" module code
+  // contains "REPORT" and would otherwise collapse into the pharmacy Reports.
+  if (c.includes('TIME') || c.includes('ATTENDANCE') || c.includes('COSEC')) return 'TIME_REPORT'
   if (c.includes('REPORT')) return 'REPORTS'
   if (c.includes('SETTING')) return 'SETTINGS'
   if (c.includes('MODULE') || c.includes('PERMISSION') || c.includes('ADMIN')) return 'ADMINISTRATION'

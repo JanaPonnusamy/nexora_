@@ -5,9 +5,9 @@ import electron from 'vite-plugin-electron/simple'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  // The API the dev server proxies to. Defaults to the local backend; override
+  // The API the dev server proxies to. Defaults to the HO backend; override
   // with VITE_DEV_API_TARGET when the API runs on another host/port.
-  const apiTarget = env.VITE_DEV_API_TARGET || 'http://localhost:8000'
+  const apiTarget = env.VITE_DEV_API_TARGET || 'http://122.252.246.181:8443'
 
   // The Electron host only builds/launches under `vite --mode electron`
   // (see the `electron:dev` script) so the plain `npm run dev` / `npm run
@@ -28,6 +28,17 @@ export default defineConfig(({ mode }) => {
             electron({
               main: {
                 entry: 'electron/main.ts',
+                // Terminals hosted inside an Electron app (VS Code's integrated
+                // terminal, this one included) set ELECTRON_RUN_AS_NODE=1 for
+                // their own child processes. If that leaks into the spawned
+                // dev Electron process it runs as plain Node — no Chromium, no
+                // `app`/`BrowserWindow`, no window ever opens. Strip it here so
+                // the spawned Electron always boots as a real Electron app.
+                onstart({ startup }) {
+                  const cleanEnv = { ...process.env }
+                  delete cleanEnv.ELECTRON_RUN_AS_NODE
+                  startup(['.', '--no-sandbox', '--remote-debugging-port=9222'], { env: cleanEnv })
+                },
                 vite: {
                   build: {
                     outDir: 'dist-electron',

@@ -29,6 +29,9 @@ import os
 import threading
 from pathlib import Path
 
+VERSION_MARKER_NAME = "agent_version_installed.txt"
+DEFAULT_AGENT_VERSION = "1.0.0"
+
 # Development fallbacks (used only when no agent_config.json is deployed).
 _DEFAULTS = {
     "store_id": "FCBE8B35-B1A1-463E-80C6-73161CDC8F32",
@@ -49,6 +52,15 @@ def _candidate_paths():
     yield here.parent / "agent_config.json"
 
 
+def _candidate_version_marker_paths():
+    install = os.environ.get("NEXORA_INSTALL_PATH")
+    if install:
+        yield Path(install) / VERSION_MARKER_NAME
+    here = Path(__file__).resolve().parent
+    yield here / VERSION_MARKER_NAME
+    yield here.parent / VERSION_MARKER_NAME
+
+
 def _load_agent_config():
     for path in _candidate_paths():
         try:
@@ -57,6 +69,18 @@ def _load_agent_config():
         except (OSError, ValueError):
             continue
     return {}
+
+
+def installed_agent_version():
+    for path in _candidate_version_marker_paths():
+        try:
+            if path.is_file():
+                value = path.read_text(encoding="utf-8").strip()
+                if value:
+                    return value
+        except OSError:
+            continue
+    return DEFAULT_AGENT_VERSION
 
 
 def _normalize_url(value):

@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { SupplierRow, WorkspaceItem } from '../../types/procurement'
+import type { SupplierRow, SupplierStockRow, WorkspaceItem } from '../../types/procurement'
 import { num } from '../stock/format'
 import { DEFAULT_SKIP_MODE } from './skipModes'
 import { SkipModeCell } from './SkipModeCell'
-import { preferredSupplier } from './purchaseValue'
+import { SUPPLIER_REC_LIMIT } from './purchaseValue'
+import { formatOffer, offerTooltip } from './SupplierStockTable'
+import type { GridColumnId } from './gridColumns'
+import { DEFAULT_COLUMN_ORDER, DEFAULT_VISIBLE_COLUMNS, MANDATORY_COLUMNS } from './gridColumns'
 
 const REVIEWED_STATES = ['review', 'assigned', 'partial']
 
@@ -36,7 +39,6 @@ export function ProductGrid({
   checked,
   recommendations,
   selectedSupplier,
-  collapseToSupplier,
   onSelectSupplier,
   onCommitSupplier,
   onSupplierFocusChange,
@@ -47,6 +49,11 @@ export function ProductGrid({
   onRestore,
   onToggle,
   onToggleAll,
+  offerByProductCode,
+  remarks,
+  onRemarksChange,
+  columnOrder = DEFAULT_COLUMN_ORDER,
+  columnVisible = DEFAULT_VISIBLE_COLUMNS,
 }: {
   items: WorkspaceItem[]
   selectedId: string | null
@@ -59,8 +66,6 @@ export function ProductGrid({
   recommendations?: Record<string, SupplierRow[]>
   /** Locally-selected supplier per row (not yet committed). */
   selectedSupplier?: Record<string, string>
-  /** In Supplier Purchasing mode, collapse recommendations to just this supplier. */
-  collapseToSupplier?: string | null
   onSelectSupplier?: (orderItemId: string, supplierCode: string) => void
   onCommitSupplier?: (item: WorkspaceItem, supplierCode: string) => void
   /** Fires when the keyboard enters/leaves the Supplier Recommendation zone, so
@@ -71,9 +76,23 @@ export function ProductGrid({
   onSaveRow?: (item: WorkspaceItem) => void
   onSelect: (item: WorkspaceItem) => void
   onSkip: (item: WorkspaceItem, reason: string) => void
+  /** Restores a Skipped or (previously) Deferred row back to review. */
   onRestore: (item: WorkspaceItem) => void
   onToggle?: (id: string) => void
   onToggleAll?: (ids: string[], on: boolean) => void
+  /** Real per-supplier offer facts keyed by mapped ProductCode, sourced from
+   *  supplier_stock (same rows Supplier Live Stock shows) — replaces the
+   *  unpopulated WorkspaceItem.offer field this grid used to read. */
+  offerByProductCode?: Map<string, SupplierStockRow>
+  /** Free-text Remarks per row (keyed by order_item_id), owned by the page so
+   *  values survive re-renders / row navigation. */
+  remarks?: Record<string, string>
+  onRemarksChange?: (orderItemId: string, value: string) => void
+  /** Order/visibility of the columns between the locked Product and Planning
+   *  State columns (spec §5/§6) — Settings-driven, defaults to the standard
+   *  layout when the caller doesn't pass a saved preference. */
+  columnOrder?: GridColumnId[]
+  columnVisible?: GridColumnId[]
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -142,13 +161,13 @@ export function ProductGrid({
     setSkipFocusId(null)
   }
 
-  // Up to five ranked suppliers for a row, honouring the Supplier-Purchasing
-  // collapse. Same shape the row renders, so keyboard and mouse agree.
-  const recsFor = (item: WorkspaceItem): SupplierRow[] => {
-    const recs = recommendations?.[item.order_item_id] ?? []
-    const shown = collapseToSupplier ? recs.filter((s) => s.supplier_code === collapseToSupplier) : recs
-    return shown.slice(0, 5)
-  }
+  // The ranked suppliers the keyboard cursor can reach — EXACTLY the cards the
+  // Supplier Recommendation panel draws. Never collapsed to the Supplier-
+  // Purchasing supplier: that left the cursor a single card, so Up/Down did
+  // nothing and a product could not be moved to a different supplier from the
+  // panel.
+  const recsFor = (item: WorkspaceItem): SupplierRow[] =>
+    (recommendations?.[item.order_item_id] ?? []).slice(0, SUPPLIER_REC_LIMIT)
 
   // Land keyboard focus for the active row: the Final Qty cell in the qty zone
   // (editable rows) or the grid container otherwise — in the supplier zone the
@@ -156,7 +175,13 @@ export function ProductGrid({
   // caret never interferes. This effect only moves DOM focus — it never calls
   // setState, so it cannot itself re-trigger the render-time reset above.
   useEffect(() => {
-    if (selectedIndex < 0) return
+    // Root cause of "Up/Down scrolls the page": with no row selected yet
+    // (index transiently -1 — e.g. right after a mode/supplier switch, before
+    // the selection-repair effect lands) NOTHING used to claim keyboard focus,
+    // so arrow keys fell through to the browser's native page-scroll. The
+    // container still owns onKeyDown once it holds focus, so park focus on it
+    // here whenever there's a list to navigate but no row focus target yet.
+    if (selectedIndex < 0) { if (items.length > 0) wrapRef.current?.focus(); return }
     if (zone === 'supplier') { wrapRef.current?.focus(); return }
     const cur = items[selectedIndex]
     // A just-Esc-skipped row parks focus on its Skip-Mode selector; otherwise the
@@ -200,29 +225,40 @@ export function ProductGrid({
   // Right from Final Qty → Supplier Recommendation, starting on the currently
   // selected supplier, else the Preferred (latest-purchased) one, else the
   // top-ranked (cheapest) card — pre-selects visually only, never assigns (§3).
+  // Any pending qty edit is saved first — otherwise a supplier committed right
+  // after typing would assign against the stale, unsaved remaining_qty.
   const enterSupplierZone = () => {
     const cur = items[selectedIndex]
     if (!cur || !editable(cur)) return
+    // Unconditional like Enter/Down's saveAndNext — the parent's saveRow already
+    // no-ops when nothing changed, and dirtyIds excludes skipped rows, which
+    // would otherwise drop a re-quantify-and-assign done straight from a skip.
+    onSaveRow?.(cur)
     const recs = recsFor(cur)
     if (recs.length === 0) return
-    const selCode = selectedSupplier?.[cur.order_item_id] ?? preferredSupplier(recs)
-    const found = recs.findIndex((s) => s.supplier_code === selCode)
+    // Land on the supplier already chosen for this row, else the TOP card — the
+    // cheapest, i.e. the BEST supplier (the list is cost-sorted). Up/Down walk
+    // every other card from there.
+    const selCode = selectedSupplier?.[cur.order_item_id] ?? null
+    const found = selCode ? recs.findIndex((s) => s.supplier_code === selCode) : -1
     const idx = found < 0 ? 0 : found
     setSupIndex(idx)
     setZone('supplier')
     onSelectSupplier?.(cur.order_item_id, recs[idx].supplier_code)
   }
 
-  // Up/Down inside the (vertical) Supplier Recommendation panel. Up past the
-  // first supplier returns to Final Qty.
+  // Up/Down inside the (vertical) Supplier Recommendation panel. Clamps at the
+  // first/last card — focus stays inside the supplier panel until an explicit
+  // Left or Esc returns to Final Qty (previously Up at the first card silently
+  // kicked focus back to the grid, which read as "Up/Down don't move the
+  // cards" since the very first Up press after entering the zone always
+  // exited it immediately).
   const moveSupplier = (dir: 1 | -1) => {
     const cur = items[selectedIndex]
     if (!cur) return
     const recs = recsFor(cur)
-    if (recs.length === 0) { setZone('qty'); return }
-    const next = supIndex + dir
-    if (next < 0) { setZone('qty'); return }
-    const idx = Math.min(next, recs.length - 1)
+    if (recs.length === 0) return
+    const idx = Math.min(Math.max(supIndex + dir, 0), recs.length - 1)
     setSupIndex(idx)
     onSelectSupplier?.(cur.order_item_id, recs[idx].supplier_code)
   }
@@ -280,6 +316,20 @@ export function ProductGrid({
     setSkipFocusId(cur.order_item_id) // park focus on this row's Skip-Mode selector
   }
 
+  // Space Bar on the current row: toggle its "Included for export" checkbox
+  // (§ CHECKBOX RULE — never a selection state, never touches Final Qty or
+  // Planning State). Mirrors the checkbox cell's own disabled rule: a
+  // skipped or export-locked row has nothing to export, everything else
+  // (including an already-assigned/deferred row) stays toggleable. A no-op
+  // where there is no checkbox column (Review All, selectable=false).
+  const toggleCheckedCurrent = () => {
+    if (!selectable) return
+    const cur = items[selectedIndex]
+    if (!cur) return
+    if (skippedOf(cur) || lockedIds.has(cur.order_item_id)) return
+    onToggle?.(cur.order_item_id)
+  }
+
   // Grid-level keys. Caret editing keys inside the number input are handed back
   // to the browser; everything else drives spreadsheet-style navigation split
   // across the Final Qty and Supplier Recommendation zones.
@@ -330,13 +380,111 @@ export function ProductGrid({
     } else if (e.key === 'Escape') {
       e.preventDefault()
       skipCurrent()
+    } else if (e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault()
+      toggleCheckedCurrent()
     }
+  }
+
+  // Real offer label for a row — supplier_stock (offerByProductCode) first,
+  // falling back to WorkspaceItem.offer if the caller passed neither (Review
+  // All, which has no per-supplier stock context).
+  const offerFor = (item: WorkspaceItem): { label: string; tooltip?: string } | null => {
+    const row = item.product_code ? offerByProductCode?.get(item.product_code) : undefined
+    if (row) {
+      const label = formatOffer(row) ?? (row.discount != null && Number(row.discount) > 0 ? `${num(Number(row.discount))}%` : null)
+      return label ? { label, tooltip: offerTooltip(row) } : null
+    }
+    return item.offer ? { label: item.offer } : null
   }
 
   // Auto-hide columns that carry no data for the whole list (§13 — never show a
   // column of only "—"). Unit/Pack now live in the detail panel; the grid keeps
   // Offer only when at least one row carries it.
-  const hasOffer = items.some((i) => i.offer != null && i.offer !== '')
+  const hasOffer = items.some((i) => offerFor(i) != null)
+
+  // Middle-section columns (between the locked Product and Planning State
+  // columns) driven by the Settings-configured order/visibility (§5/§6).
+  // finalQty is always included regardless of `columnVisible` (never
+  // hideable); pack/unit/offer/remarks respect the user's choice; offer is
+  // additionally gated by hasOffer (§13); remarks by whether the caller wired
+  // onRemarksChange at all (Supplier Purchasing mode only).
+  const visibleSet = new Set(columnVisible)
+  const activeColumns = columnOrder.filter((id) => {
+    if (id === 'finalQty') return true
+    if (id === 'offer') return hasOffer && visibleSet.has(id)
+    if (id === 'remarks') return Boolean(onRemarksChange) && visibleSet.has(id)
+    if (MANDATORY_COLUMNS.has(id)) return true
+    return visibleSet.has(id)
+  })
+
+  const headCell = (id: GridColumnId) => {
+    switch (id) {
+      case 'pack': return <th key={id} className="pm-grid__pack">Pack</th>
+      case 'unit': return <th key={id} className="pm-grid__unit">Unit</th>
+      case 'stock': return <th key={id} className="sx-num pm-col70">Stock</th>
+      case 'suggested': return <th key={id} className="sx-num pm-col70">Sugg.</th>
+      case 'finalQty': return <th key={id} className="sx-num pm-grid__final">Order Qty</th>
+      case 'offer': return <th key={id} className="pm-grid__offer">Offer</th>
+      case 'remarks': return <th key={id}>Remarks</th>
+      default: return null
+    }
+  }
+
+  const bodyCell = (id: GridColumnId, item: WorkspaceItem, i: number, dirty: boolean, locked: boolean) => {
+    switch (id) {
+      case 'pack':
+        return <td key={id} className="pm-grid__pack sx-dim">{item.pack || '—'}</td>
+      case 'unit':
+        return <td key={id} className="pm-grid__unit sx-dim">{item.unit_description || '—'}</td>
+      case 'stock':
+        return <td key={id} className="sx-num pm-col70">{num(item.current_stock_qty ?? 0)}</td>
+      case 'suggested':
+        return <td key={id} className="sx-num pm-col70 sx-dim">{num(item.suggested_qty ?? 0)}</td>
+      case 'finalQty':
+        return (
+          <td key={id} className="sx-num pm-grid__final">
+            {locked ? (
+              <span className="fw-semibold">{num(item.final_qty ?? 0)}</span>
+            ) : (
+              <input
+                id={`pm-qty-${i}`}
+                className={`pm-qty${dirty ? ' pm-qty--dirty' : ''}`}
+                inputMode="numeric"
+                maxLength={5}
+                value={qtyValue(item)}
+                onFocus={(e) => e.currentTarget.select()}
+                onDoubleClick={(e) => e.currentTarget.select()}
+                onChange={(e) => onQtyChange(item.order_item_id, e.target.value)}
+                onBlur={() => { if (dirty) onSaveRow?.(item) }}
+              />
+            )}
+          </td>
+        )
+      case 'offer':
+        return (
+          <td key={id} className="pm-grid__offer">
+            {(() => {
+              const offer = offerFor(item)
+              return offer ? <span className="pm-offer" title={offer.tooltip}>{offer.label}</span> : null
+            })()}
+          </td>
+        )
+      case 'remarks':
+        return (
+          <td key={id} onClick={(e) => e.stopPropagation()}>
+            <input
+              className="pm-remarks-input"
+              placeholder="—"
+              value={remarks?.[item.order_item_id] ?? ''}
+              onChange={(e) => onRemarksChange?.(item.order_item_id, e.target.value)}
+            />
+          </td>
+        )
+      default:
+        return null
+    }
+  }
 
   return (
     <div className="pm-grid-wrap" ref={wrapRef} tabIndex={-1} onKeyDown={onGridKey}>
@@ -355,18 +503,14 @@ export function ProductGrid({
             )}
             <th className="pm-grid__sno">#</th>
             <th className="pm-grid__prod">Product</th>
-            <th className="pm-grid__pack">Pack</th>
-            <th className="pm-grid__unit">Unit</th>
-            <th className="sx-num pm-col70">Stock</th>
-            <th className="sx-num pm-col70">Sugg.</th>
-            <th className="sx-num pm-grid__final">Final Qty</th>
+            {activeColumns.map(headCell)}
             <th className="pm-grid__status">Planning State</th>
-            {hasOffer && <th className="pm-grid__offer">Offer</th>}
           </tr>
         </thead>
         <tbody>
           {items.map((item, i) => {
             const skipped = item.item_status === 'skipped'
+            const deferred = item.item_status === 'deferred'
             const locked = lockedIds.has(item.order_item_id)
             const isSel = selectedId === item.order_item_id
             const dirty = dirtyIds.has(item.order_item_id)
@@ -378,7 +522,7 @@ export function ProductGrid({
             return (
               <tr
                 key={item.order_item_id}
-                className={`pm-row${isSel ? ' pm-row--sel' : ''}${assigned ? ' pm-row--assigned' : ''}${finalized ? ' pm-row--finalized' : ''}${skipped ? ' pm-row--skip' : ''}${locked ? ' pm-row--locked' : ''}`}
+                className={`pm-row${isSel ? ' pm-row--sel' : ''}${assigned ? ' pm-row--assigned' : ''}${finalized ? ' pm-row--finalized' : ''}${skipped ? ' pm-row--skip' : ''}${deferred ? ' pm-row--deferred' : ''}${locked ? ' pm-row--locked' : ''}`}
                 onClick={() => onSelect(item)}
               >
                 {selectable && (
@@ -388,11 +532,12 @@ export function ProductGrid({
                       aria-label="Select row"
                       checked={checked?.has(item.order_item_id) ?? false}
                       onChange={() => onToggle?.(item.order_item_id)}
-                      // A product already owned by a supplier can never be bulk
-                      // re-assigned from here (§1/§2) — reassignment is explicit
-                      // (Change Supplier in the Assign stage's review panel).
-                      disabled={skipped || locked || assigned}
-                      title={assigned ? 'Already assigned — use Change Supplier to reassign' : undefined}
+                      // Included-for-export toggle (§ CHECKBOX RULE), not a
+                      // selection state — a skipped or export-locked row has
+                      // nothing to export; everything else (assigned or not)
+                      // stays toggleable, and is ON by default once finalized.
+                      disabled={skipped || locked}
+                      title={locked ? 'Already exported' : skipped ? 'Skipped — nothing to export' : 'Included for export — Space to toggle'}
                     />
                   </td>
                 )}
@@ -402,27 +547,7 @@ export function ProductGrid({
                   {item.is_manual && <span className="pm-tag pm-tag--manual">manual</span>}
                   {locked && <span className="pm-tag pm-tag--exported">exported</span>}
                 </td>
-                <td className="pm-grid__pack sx-dim">{item.pack || '—'}</td>
-                <td className="pm-grid__unit sx-dim">{item.unit_description || '—'}</td>
-                <td className="sx-num pm-col70">{num(item.current_stock_qty ?? 0)}</td>
-                <td className="sx-num pm-col70 sx-dim">{num(item.suggested_qty ?? 0)}</td>
-                <td className="sx-num pm-grid__final" onClick={(e) => e.stopPropagation()}>
-                  {locked ? (
-                    <span className="fw-semibold">{num(item.final_qty ?? 0)}</span>
-                  ) : (
-                    <input
-                      id={`pm-qty-${i}`}
-                      className={`pm-qty${dirty ? ' pm-qty--dirty' : ''}`}
-                      inputMode="numeric"
-                      maxLength={5}
-                      value={qtyValue(item)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onDoubleClick={(e) => e.currentTarget.select()}
-                      onChange={(e) => onQtyChange(item.order_item_id, e.target.value)}
-                      onBlur={() => { if (dirty) onSaveRow?.(item) }}
-                    />
-                  )}
-                </td>
+                {activeColumns.map((id) => bodyCell(id, item, i, dirty, locked))}
                 <td className="pm-grid__status">
                   {locked ? (
                     <span className="pm-status pm-status--reviewed"><i className="bi bi-lock-fill" /> Reviewed</span>
@@ -438,6 +563,20 @@ export function ProductGrid({
                     />
                   ) : assigned ? (
                     <span className="pm-status pm-status--assigned">Assigned</span>
+                  ) : deferred ? (
+                    <span className="pm-status-wrap">
+                      <span className="pm-status pm-status--deferred" title="Excluded from Auto Assign / Assign Selected — assign manually or restore">
+                        Assignment Deferred
+                      </span>
+                      <button
+                        className="pm-linkbtn pm-linkbtn--icon"
+                        title="Restore to review"
+                        aria-label="Restore to review"
+                        onClick={(e) => { e.stopPropagation(); onRestore(item) }}
+                      >
+                        <i className="bi bi-arrow-counterclockwise" aria-hidden="true" />
+                      </button>
+                    </span>
                   ) : (
                     <span className="pm-status-wrap">
                       {finalized ? (
@@ -459,11 +598,6 @@ export function ProductGrid({
                     </span>
                   )}
                 </td>
-                {hasOffer && (
-                  <td className="pm-grid__offer">
-                    {item.offer ? <span className="pm-offer">{item.offer}</span> : null}
-                  </td>
-                )}
               </tr>
             )
           })}

@@ -9,6 +9,7 @@ import type { Cycle } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
 import { date } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
+import { FilterSelect } from '../../design-system/components/FilterBar'
 
 type Banner = { kind: 'success' | 'danger'; text: string } | null
 
@@ -134,14 +135,14 @@ export default function CycleManagementPage() {
       <header className="pm-admin__head">
         <div className="pm-admin__title"><i className="bi bi-diagram-3" /> Cycle Management</div>
         <div className="pm-admin__ctx">
-          <select className="sx-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+          <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId}>
             {tenants.length === 0 && <option value="">Loading…</option>}
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
-          <select className="sx-select" aria-label="Store" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+          </FilterSelect>
+          <FilterSelect ariaLabel="Store" value={storeId} onChange={setStoreId}>
             <option value="">Select store…</option>
             {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-          </select>
+          </FilterSelect>
           <button className="pm-btn pm-btn--ghost" onClick={load} title="Refresh"><i className="bi bi-arrow-repeat" /></button>
         </div>
       </header>

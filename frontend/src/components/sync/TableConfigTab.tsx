@@ -12,6 +12,7 @@ import type { SyncTable } from '../../types/sync'
 import {
   SxCard, SxCardHead, SxCardBody, SxStat, SxButton, SxSearch, SxSegmented, SxPager, SxTable,
 } from './ui'
+import { FilterBar } from '../../design-system/components/FilterBar'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; table: SyncTable } | null
 type StatusFilter = 'all' | 'enabled' | 'disabled'
@@ -33,7 +34,7 @@ export function TableConfigTab() {
   const [page, setPage] = useState(0)
   const [scope, setScope] = useState<Scope>('configured')
 
-  const tables = data ?? []
+  const tables = useMemo(() => data ?? [], [data])
   const stats = {
     total: tables.length,
     enabled: tables.filter((t) => t.is_active).length,
@@ -97,7 +98,7 @@ export function TableConfigTab() {
 
   return (
     <div className="sx-stack">
-      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-3">
+      <div className="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-2">
         <div className="col"><SxStat icon="bi-table" tone="indigo" value={stats.total} label="Total Tables" /></div>
         <div className="col"><SxStat icon="bi-check-circle" tone="success" value={stats.enabled} label="Enabled" /></div>
         <div className="col"><SxStat icon="bi-pause-circle" tone="muted" value={stats.disabled} label="Disabled" /></div>
@@ -105,7 +106,7 @@ export function TableConfigTab() {
         <div className="col"><SxStat icon="bi-clock-history" tone="violet" value={stats.rolling} label="Rolling Window" /></div>
       </div>
 
-      <SxCard>
+      <SxCard className="sx-pane">
         <SxCardHead title="Sync Tables" icon="bi-table"
           sub={scope === 'configured' ? `${filtered.length} shown` : 'browse the full source catalog'}
           action={
@@ -115,9 +116,9 @@ export function TableConfigTab() {
                 options={[{ label: 'Configured', value: 'configured' }, { label: 'All Tables', value: 'available' }]} />
               {scope === 'configured' && (
                 <>
-                  <SxButton variant="ghost" icon="bi-arrow-down-up" busy={workflowBusy === 'populate'} disabled={workflowBusy !== null} onClick={runPopulate}>Populate</SxButton>
-                  <SxButton variant="ghost" icon="bi-arrow-up-circle" busy={workflowBusy === 'promote'} disabled={workflowBusy !== null} onClick={runPromote}>Promote</SxButton>
-                  <SxButton variant="primary" icon="bi-plus-lg" onClick={() => setModal({ mode: 'create' })}>Add Table</SxButton>
+                  <SxButton sm variant="ghost" icon="bi-arrow-down-up" busy={workflowBusy === 'populate'} disabled={workflowBusy !== null} onClick={runPopulate}>Populate</SxButton>
+                  <SxButton sm variant="ghost" icon="bi-arrow-up-circle" busy={workflowBusy === 'promote'} disabled={workflowBusy !== null} onClick={runPromote}>Promote</SxButton>
+                  <SxButton sm variant="primary" icon="bi-plus-lg" onClick={() => setModal({ mode: 'create' })}>Add</SxButton>
                 </>
               )}
             </div>
@@ -129,7 +130,7 @@ export function TableConfigTab() {
         ) : (
         <>
         <SxCardBody>
-          <div className="sx-toolbar mb-3">
+          <FilterBar compact className="mb-3" ariaLabel="Configured table filters">
             <SxSearch value={search} onChange={(v) => { setSearch(v); resetPage() }} placeholder="Search tables…" ariaLabel="Search tables" />
             <SxSegmented ariaLabel="Status" value={statusFilter}
               onChange={(v) => { setStatusFilter(v); resetPage() }}
@@ -137,7 +138,7 @@ export function TableConfigTab() {
             <SxSegmented ariaLabel="Mode" value={modeFilter}
               onChange={(v) => { setModeFilter(v); resetPage() }}
               options={[{ label: 'All', value: 'all' }, { label: 'Upsert', value: 'UPSERT' }, { label: 'Rolling', value: 'ROLLING_WINDOW' }]} />
-          </div>
+          </FilterBar>
 
           {workflowMessage && <div className="sx-alert sx-alert--info">{workflowMessage}</div>}
           {actionError && <div className="sx-alert sx-alert--danger">{actionError}</div>}

@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { WorkspaceContainer } from '../../design-system/components/WorkspaceContainer'
 import { StoreToolbar } from '../../components/stores/StoreToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { StoreTable } from '../../components/stores/StoreTable'
@@ -16,7 +17,7 @@ import type { Store } from '../../types/store'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; store: Store } | null
 
-export default function StoresPage() {
+export default function StoresPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate()
   const { stores, isLoading, error, reload } = useStores()
   const { tenants } = useTenants()
@@ -101,8 +102,8 @@ export default function StoresPage() {
   }
 
   return (
-    <div className="container-fluid px-0">
-      <PageHeader title="Stores" breadcrumb={['Platform', 'Stores']} />
+    <WorkspaceContainer>
+      {!embedded && <PageHeader title="Stores" breadcrumb={['Platform', 'Stores']} />}
       {!isLoading && !error && stores.length > 0 && <StoreSummary stores={stores} />}
       <StoreToolbar
         search={search}
@@ -127,6 +128,6 @@ export default function StoresPage() {
           }}
         />
       )}
-    </div>
+    </WorkspaceContainer>
   )
 }

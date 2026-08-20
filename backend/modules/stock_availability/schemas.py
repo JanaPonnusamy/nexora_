@@ -37,3 +37,24 @@ class SearchSummary(BaseModel):
 class SearchResult(BaseModel):
     stores: List[BranchCard] = []
     summary: SearchSummary
+
+
+class CoreBulkItem(BaseModel):
+    store_id: str
+    product_code: str
+
+
+class CoreBulkRequest(BaseModel):
+    tenant_id: str
+    months: int = 3
+    items: List[CoreBulkItem] = []
+
+
+class SalesOrderIgnoreUpdate(BaseModel):
+    tenant_id: str
+    store_id: str
+    bill_no: str
+    bill_date: str
+    product_code: str
+    batch: Optional[str] = None
+    dont_consider_in_order: bool

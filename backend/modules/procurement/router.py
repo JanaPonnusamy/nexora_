@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """HTTP routing for the Procurement module.
 
 Exposes tenant-scoped CRUD for Procurement Cycles, plus the mounted Refresh
@@ -7,8 +9,10 @@ Exposes tenant-scoped CRUD for Procurement Cycles, plus the mounted Refresh
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from dependencies.auth import get_current_user_optional
+from dependencies.store_scope import assert_tenant_access
 from modules.procurement import service
 from modules.procurement.schemas import CycleCreate, CycleUpdate
 from modules.procurement.vpl_router import router as vpl_router
@@ -19,6 +23,7 @@ from modules.procurement.pm_router import router as pm_router
 from modules.procurement.pipeline_router import router as pipeline_router
 from modules.procurement.intelligence_router import router as intelligence_router
 from modules.procurement.optimization_router import router as optimization_router
+from modules.procurement.reports.reports_router import router as reports_router
 
 router = APIRouter(prefix="/api/procurement", tags=["Procurement"])
 
@@ -32,6 +37,8 @@ router.include_router(pm_router)
 router.include_router(optimization_router)
 # Product Intelligence — consolidated cross-store grid built from Refresh + VPL.
 router.include_router(intelligence_router)
+# Legacy Pharmacy Reports — read-only store business dashboard + monthly analysis.
+router.include_router(reports_router)
 # Comparison (runtime) — mounted FIRST so /vpl/compare resolves before the
 # /vpl/{vpl_id} catch-all in the VPL router.
 router.include_router(compare_router)
@@ -58,12 +65,19 @@ def list_cycles(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
+    assert_tenant_access(current_user, tenant_id)
     return service.list_cycles(tenant_id, status, search, page, page_size, store_id)
 
 
 @router.get("/cycles/{cycle_id}")
-def get_cycle(cycle_id: str, tenant_id: str = Query(...)):
+def get_cycle(
+    cycle_id: str,
+    tenant_id: str = Query(...),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    assert_tenant_access(current_user, tenant_id)
     return service.get_cycle(tenant_id, cycle_id)
 
 

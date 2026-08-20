@@ -1,8 +1,22 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+import type { BrowserWindow as BrowserWindowType, Tray as TrayType } from 'electron'
 import log from 'electron-log/main'
 import windowStateKeeper from 'electron-window-state'
+
+// The npm "electron" package only ever exports the path to the Electron
+// binary (used by tooling to spawn it) — the real app/BrowserWindow/etc API
+// is injected solely into Electron's patched CommonJS `require`, which ESM
+// `import` does not go through. Use createRequire to reach that same require.
+// (`import type` above is erased at compile time, so it never hits this issue.)
+const require = createRequire(import.meta.url)
+const { app, BrowserWindow, Menu, Tray, ipcMain, shell, dialog } = require('electron') as typeof import('electron')
+
+// main.ts builds to genuine ESM (see vite.config.ts), so CommonJS's __dirname
+// isn't available — derive the equivalent from import.meta.url instead.
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 log.initialize()
 log.transports.file.level = 'info'
@@ -25,7 +39,7 @@ interface UniNexConfig {
 // intent as the web deployment's server-injected /config.js.
 function loadConfig(): UniNexConfig {
   const defaults: UniNexConfig = {
-    apiBase: process.env.UNINEX_API_BASE || 'http://localhost:8000',
+    apiBase: process.env.UNINEX_API_BASE || 'http://122.252.246.181:8443',
     env: app.isPackaged ? 'production' : 'development',
   }
   const configPath = path.join(app.getPath('userData'), 'uninex.config.json')
@@ -40,8 +54,8 @@ function loadConfig(): UniNexConfig {
   return defaults
 }
 
-let mainWindow: BrowserWindow | null = null
-let tray: Tray | null = null
+let mainWindow: BrowserWindowType | null = null
+let tray: TrayType | null = null
 
 // A hung or missing renderer 'app:before-quit' listener must never block
 // shutdown — this bounds how long a window's close waits for the renderer's
@@ -200,6 +214,33 @@ ipcMain.on(
 )
 
 ipcMain.handle('config:get', () => loadConfig())
+
+// Export Document "save straight to a folder" (Purchase Manager) — a native
+// folder picker plus a direct filesystem write, so the desktop app never
+// routes an export through the browser's Downloads folder/Save-As prompt.
+ipcMain.handle('dialog:pick-folder', async () => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0]
+})
+
+ipcMain.handle(
+  'fs:save-file',
+  async (_event, folderPath: string, filename: string, data: Uint8Array) => {
+    try {
+      if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath, { recursive: true })
+      const fullPath = path.join(folderPath, filename)
+      fs.writeFileSync(fullPath, Buffer.from(data))
+      return { ok: true, path: fullPath }
+    } catch (err) {
+      log.error('[main] fs:save-file failed', err)
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+)
 
 function bootstrap() {
   const gotLock = app.requestSingleInstanceLock()

@@ -141,6 +141,12 @@ def analyze(tenant_id, refresh_id, price_tolerance=0.10, use_live_stock=True):
 
     store_id = next((a["store_id"] for a in assignments if a.get("store_id")), None)
     min_orders = repo.list_min_orders(tenant_id, store_id) if store_id else {}
+    # A supplier only participates in Optimization when explicitly opted in —
+    # a configured min_order_value alone is no longer enough (§10/§11).
+    consider = repo.list_consider_flags(tenant_id, store_id) if store_id else {}
+
+    def _effective_min(code):
+        return min_orders.get(code, 0) if consider.get(code) else 0
 
     # Candidate suppliers (who supplies each product + their last rate / history)
     # — one batched round-trip, reusing the supplier-recommendation query.
@@ -171,7 +177,6 @@ def analyze(tenant_id, refresh_id, price_tolerance=0.10, use_live_stock=True):
     def _movable_for(dest):
         """Candidate assignments movable into ``dest`` (all §2 rules applied)."""
         out = []
-        dest_min = min_orders.get(dest, 0)
         for a in assignments:
             src = a["supplier_code"]
             if src == dest or a["assignment_id"] in reserved:
@@ -216,14 +221,14 @@ def analyze(tenant_id, refresh_id, price_tolerance=0.10, use_live_stock=True):
     suggestions_by = {}  # dest -> [chosen candidate dicts]
     movable_by = {}      # dest -> [movable candidate dicts] (for Manual Move)
 
-    below = [s for s, v in value_by.items() if min_orders.get(s, 0) > 0 and v < min_orders[s] - _EPS]
+    below = [s for s, v in value_by.items() if _effective_min(s) > 0 and v < _effective_min(s) - _EPS]
     # Easiest wins first (smallest gap) so scarce donations satisfy the most suppliers.
-    below.sort(key=lambda s: min_orders[s] - value_by[s])
+    below.sort(key=lambda s: _effective_min(s) - value_by[s])
     for dest in below:
-        gap = min_orders[dest] - value_by[dest]
+        gap = _effective_min(dest) - value_by[dest]
         if gap <= _EPS:
             continue
-        slack_by_source = {s: value_by[s] - min_orders.get(s, 0) for s in value_by}
+        slack_by_source = {s: value_by[s] - _effective_min(s) for s in value_by}
         movable = _movable_for(dest)
         movable_by[dest] = movable
         chosen = _optimize_one(gap, movable, slack_by_source)
@@ -242,7 +247,7 @@ def analyze(tenant_id, refresh_id, price_tolerance=0.10, use_live_stock=True):
 
     suppliers = []
     for s in sorted(original_value, key=lambda x: -original_value[x]):
-        mn = min_orders.get(s, 0)
+        mn = _effective_min(s)
         cur = original_value[s]
         proj = value_by[s]
         sugg = suggestions_by.get(s, None)
@@ -391,3 +396,13 @@ def set_min_order(tenant_id, store_id, supplier_code, min_order_value, updated_b
     repo.upsert_min_order(tenant_id, store_id, supplier_code, min_order_value, updated_by)
     return {"supplier_code": supplier_code, "store_id": store_id,
             "min_order_value": min_order_value}
+
+
+def list_min_order_config(tenant_id, store_id):
+    return {"config": repo.list_min_order_config(tenant_id, store_id)}
+
+
+def set_consider_minimum_order(tenant_id, store_id, supplier_code, consider_minimum_order, updated_by):
+    repo.upsert_consider_flag(tenant_id, store_id, supplier_code, bool(consider_minimum_order), updated_by)
+    return {"supplier_code": supplier_code, "store_id": store_id,
+            "consider_minimum_order": bool(consider_minimum_order)}

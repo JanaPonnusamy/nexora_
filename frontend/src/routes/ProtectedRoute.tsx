@@ -1,21 +1,24 @@
 import type { ReactNode } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
 interface ProtectedRouteProps {
   children: ReactNode
 }
 
-/**
- * Route guard foundation. When auth is wired up, an unauthenticated user will
- * be redirected to the login route. For UI-01B `isAuthenticated` is always
- * true, so this renders its children unchanged.
- */
+/** Redirects to /login when there's no valid session. While a stored token is
+ *  being restored (page reload) renders nothing rather than bouncing to
+ *  /login and back. */
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, restoring } = useAuth()
+  const location = useLocation()
+
+  if (restoring) {
+    return null
+  }
 
   if (!isAuthenticated) {
-    return <Navigate to="/overview" replace />
+    return <Navigate to="/login" state={{ from: location.pathname }} replace />
   }
 
   return <>{children}</>

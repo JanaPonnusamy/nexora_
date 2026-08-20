@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { WorkspaceContainer } from '../../design-system/components/WorkspaceContainer'
 import { RoleToolbar } from '../../components/roles/RoleToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { RoleTable } from '../../components/roles/RoleTable'
@@ -14,7 +15,7 @@ import type { Role } from '../../types/role'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; role: Role } | null
 
-export default function RolesPage() {
+export default function RolesPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate()
   const { roles, isLoading, error, reload } = useRoles()
   const [search, setSearch] = useState('')
@@ -81,8 +82,8 @@ export default function RolesPage() {
   }
 
   return (
-    <div className="container-fluid px-0">
-      <PageHeader title="Roles" breadcrumb={['Platform', 'Roles']} />
+    <WorkspaceContainer>
+      {!embedded && <PageHeader title="Roles" breadcrumb={['Platform', 'Roles']} />}
       <RoleToolbar
         search={search}
         onSearchChange={setSearch}
@@ -102,6 +103,6 @@ export default function RolesPage() {
           }}
         />
       )}
-    </div>
+    </WorkspaceContainer>
   )
 }

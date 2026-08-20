@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      connect-src allows http/https/ws so the API base URL is configurable per
+      store PC (Settings screen) — a thin client points at the central HO
+      server (e.g. http://HO-SERVER:8000) instead of localhost. script-src stays
+      locked to 'self'; only network targets are widened for this internal LOB
+      tool. localhost is kept for the local-backend / dev case.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: ws: wss:;"
+    />
+    <title>Nexora Supplier Stock</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

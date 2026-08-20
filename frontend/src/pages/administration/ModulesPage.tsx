@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { WorkspaceContainer } from '../../design-system/components/WorkspaceContainer'
 import { ModuleToolbar } from '../../components/modules/ModuleToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { ModuleTable } from '../../components/modules/ModuleTable'
@@ -79,7 +80,7 @@ export default function ModulesPage() {
   }
 
   return (
-    <div className="container-fluid px-0">
+    <WorkspaceContainer>
       <PageHeader title="Modules" breadcrumb={['Administration', 'Modules']} />
       <ModuleToolbar
         search={search}
@@ -100,6 +101,6 @@ export default function ModulesPage() {
           }}
         />
       )}
-    </div>
+    </WorkspaceContainer>
   )
 }

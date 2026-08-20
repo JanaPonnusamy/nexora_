@@ -1,13 +1,14 @@
 interface PageHeaderProps {
   title: string
   breadcrumb: string[]
+  description?: string
 }
 
-export function PageHeader({ title, breadcrumb }: PageHeaderProps) {
+export function PageHeader({ title, breadcrumb, description }: PageHeaderProps) {
   return (
-    <div className="page-header mb-4">
+    <div className="page-header">
       <nav aria-label="breadcrumb">
-        <ol className="breadcrumb mb-2 small">
+        <ol className="breadcrumb">
           {breadcrumb.map((crumb, index) => {
             const isLast = index === breadcrumb.length - 1
             return (
@@ -22,7 +23,8 @@ export function PageHeader({ title, breadcrumb }: PageHeaderProps) {
           })}
         </ol>
       </nav>
-      <h1 className="h3 mb-0">{title}</h1>
+      <h1 className="page-header__title">{title}</h1>
+      {description && <p className="page-header__description">{description}</p>}
     </div>
   )
 }

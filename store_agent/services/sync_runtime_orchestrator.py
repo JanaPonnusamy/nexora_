@@ -46,6 +46,17 @@ class SyncRuntimeOrchestrator:
             config = self.catalog.download_configuration(task_id)
             # 028B: persist HO configuration into SQLite (single source = HO).
             tables = config.get("tables", [])
+            if not tables:
+                # An active production sync should never legitimately have zero
+                # tables configured. Treating this the same as "synced 0 tables
+                # successfully" hid a real problem: three stores each silently
+                # completed a task without processing anything, and it looked
+                # identical in HO's history to a normal quiet cycle. Fail loudly
+                # instead so a bad HO route / stale config surfaces immediately.
+                raise RuntimeError(
+                    "EMPTY_TABLE_CONFIG: HO returned zero active tables for this "
+                    "task; refusing to report a false COMPLETED"
+                )
             self.cache.save_sync_config(tables)
         except Exception as ex:
             # Only a failure to obtain the configuration aborts the whole task —
@@ -134,9 +145,12 @@ class SyncRuntimeOrchestrator:
             )
             # Record the per-table failure at HO so history never shows a silent
             # gap (best-effort; a reporting error must not abort the sequence).
+            # Without status/error_message this looked identical to a healthy
+            # empty sync in HO's dashboard, so a table that kept crashing every
+            # cycle (e.g. ProductTrans) went stale for days with no visible sign.
             try:
                 self._report(task_id, name, table.get("sync_mode"),
-                             0, 0, 0, 0, 0)
+                             0, 0, 0, 0, 0, status="FAILED", error_message=reason)
             except Exception:
                 pass
             try:
@@ -153,6 +167,7 @@ class SyncRuntimeOrchestrator:
 
     def run_table(self, task_id, table):
         sync_mode = (table.get("sync_mode") or "").upper()
+        table_name = table["table_name"]
         watermark = None
         if sync_mode in _WATERMARK_MODES and table.get("watermark_column"):
             # Rolling window: extract only rows in the window / past watermark.
@@ -174,7 +189,18 @@ class SyncRuntimeOrchestrator:
                 if prev_window is None or int(window) > prev_window:
                     watermark = None
                 self.cache.set_config(key, str(int(window)))
-        extracted = self.extractor.extract(table, watermark=watermark)
+        pk_cursor = None
+        linked_child_cursor = None
+        if table_name == "ProductSaleInformation":
+            pk_cursor = self.cache.get_config("source_max:ProductSaleInformation")
+        elif table_name == "SaleInformation":
+            linked_child_cursor = self.cache.get_config("source_max:ProductSaleInformation")
+        extracted = self.extractor.extract(
+            table,
+            watermark=watermark,
+            pk_cursor=pk_cursor,
+            linked_child_cursor=linked_child_cursor,
+        )
         return self._diff_and_upload(task_id, table, extracted, sync_mode)
 
     @staticmethod
@@ -208,6 +234,7 @@ class SyncRuntimeOrchestrator:
         skipped = examined - len(changed_rows)
         strategy = "WATERMARK_HASH" if sync_mode in _WATERMARK_MODES else "MASTER_HASH"
         source_max = self._source_max(table_name, pk_cols)
+        self._remember_source_max(table_name, pk_cols, source_max)
 
         print(
             "[SYNC] %-24s | %-14s | examined=%-7d changed=%-6d "
@@ -278,11 +305,13 @@ class SyncRuntimeOrchestrator:
                 break  # HO still unreachable; retry next cycle
 
     def _report(self, execution_id, table_name, sync_type, examined, changed,
-                uploaded, skipped, source_total):
+                uploaded, skipped, source_total, status="COMPLETED",
+                error_message=None):
         try:
             self.sender.report_table_metrics(
                 execution_id, table_name, sync_type, examined, changed,
                 uploaded, skipped, source_total,
+                status=status, error_message=error_message,
             )
         except Exception:
             pass  # metrics are best-effort, never fail a sync
@@ -300,6 +329,16 @@ class SyncRuntimeOrchestrator:
             return "NULL" if value is None else str(value)
         except Exception:
             return "err"
+
+    def _remember_source_max(self, table_name, pk_cols, source_max):
+        if not pk_cols or source_max in (None, "n/a", "err", "NULL"):
+            return
+        if len(pk_cols) == 1 and pk_cols[0].upper() == "ID":
+            try:
+                int(str(source_max))
+            except (TypeError, ValueError):
+                return
+            self.cache.set_config("source_max:" + table_name, str(source_max))
 
     @staticmethod
     def _pk_value(row, pk_cols):

@@ -4,6 +4,10 @@ One packaged application that deploys the Store Agent to **any** store. No
 `STORE_ID`, `TENANT_ID`, or `HO_URL` is hardcoded — all chosen at install time
 and downloaded from HO.
 
+Provisioning auth is separate from app auth: the setup/settings tools use an
+embedded `setupdeploy` credential only to mint a **setup-readonly** token for
+tenant, store, and agent-config pulls. It cannot be used for other APIs.
+
 ## Wizard flow
 1. Welcome
 2. Enter HO URL + **Test Connection** (`GET /health`)

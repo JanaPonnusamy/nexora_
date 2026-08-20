@@ -22,13 +22,99 @@ class UserRepository:
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-        SELECT user_id,username,password_hash,first_name,is_platform_user,is_active
+        SELECT user_id,username,password_hash,first_name,is_platform_user,is_active,tenant_id
         FROM dbo.users
         WHERE username = ?
         """, username)
         row = cur.fetchone()
         conn.close()
         return row
+
+    def get_user_core_by_id(self, user_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT user_id,username,password_hash,first_name,is_platform_user,is_active,tenant_id
+        FROM dbo.users
+        WHERE user_id = ?
+        """, user_id)
+        row = cur.fetchone()
+        conn.close()
+        return row
+
+    def get_user_modules(self, user_id):
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # SUPER_ADMIN / PLATFORM_OWNER bypass role_module_access entirely and
+        # get every active module with full rights, including modules added
+        # later that have no seeded permission rows yet.
+        cur.execute("""
+        SELECT COUNT(*)
+        FROM dbo.user_store_roles usr
+        INNER JOIN dbo.roles r ON r.role_id = usr.role_id
+        WHERE usr.user_id = ?
+          AND usr.is_active = 1
+          AND r.role_name IN ('SUPER_ADMIN','PLATFORM_OWNER')
+        """, user_id)
+        is_full_access = cur.fetchone()[0] > 0
+
+        if is_full_access:
+            cur.execute("""
+            SELECT module_code, module_name, 1, 1, 1, 1, 1
+            FROM dbo.modules
+            WHERE is_active = 1
+            ORDER BY module_name
+            """)
+            rows = cur.fetchall()
+            conn.close()
+            return rows
+
+        cur.execute("""
+        SELECT DISTINCT
+            m.module_code,
+            m.module_name,
+            ISNULL(rma.can_view, 0) AS can_view,
+            ISNULL(rma.can_create, 0) AS can_create,
+            ISNULL(rma.can_edit, 0) AS can_edit,
+            ISNULL(rma.can_delete, 0) AS can_delete,
+            ISNULL(rma.can_export, 0) AS can_export
+        FROM dbo.user_store_roles usr
+        INNER JOIN dbo.role_module_access rma
+            ON rma.role_id = usr.role_id
+           AND ISNULL(rma.is_active, 1) = 1
+        INNER JOIN dbo.modules m
+            ON m.module_id = rma.module_id
+           AND m.is_active = 1
+        WHERE usr.user_id = ?
+          AND usr.is_active = 1
+          AND ISNULL(rma.can_view, 0) = 1
+        ORDER BY m.module_name
+        """, user_id)
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+
+    def get_user_roles(self, user_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT DISTINCT
+            r.role_id,
+            r.role_name,
+            s.store_id,
+            s.store_code,
+            s.store_name
+        FROM dbo.user_store_roles usr
+        INNER JOIN dbo.roles r ON r.role_id = usr.role_id
+        INNER JOIN dbo.stores s ON s.store_id = usr.store_id
+        WHERE usr.user_id = ?
+          AND usr.is_active = 1
+        ORDER BY r.role_name, s.store_code
+        """, user_id)
+        rows = cur.fetchall()
+        conn.close()
+        return rows
 
     def update_last_login(self, user_id):
         conn = get_connection()

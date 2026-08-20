@@ -2,6 +2,7 @@ import { api } from './apiClient'
 import type {
   Assignment,
   CloseCycleResult,
+  CompareResult,
   Cycle,
   DecisionDetail,
   ExportBatch,
@@ -13,15 +14,26 @@ import type {
   OptimizationResult,
   PendingPage,
   Refresh,
+  RefreshRunResult,
+  SupplierMinOrderConfig,
   SupplierQueue,
   SupplierRecommendation,
+  SupplierReplyPreview,
+  ShelfSortManifest,
   SupplierRow,
+  SupplierSettingsRow,
   SupplierStockPreview,
   SupplierStockRow,
   WorkspaceFilters,
   WorkspaceItem,
   WorkspacePage,
   WorkspaceSummary,
+  DistributionConfigRow,
+  DistributionRunResult,
+  DistributionRunSummary,
+  DistributionRunDetail,
+  DistributionRunItemProducts,
+  DistributionSupplierMapImportResult,
 } from '../types/procurement'
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -93,6 +105,15 @@ export const procurementService = {
   restore: (tenantId: string, orderItemId: string, by: string | null) =>
     api.post<WorkspaceItem>(
       `/api/procurement/order-items/${orderItemId}/restore${qs({ tenant_id: tenantId })}`,
+      { reviewed_by: by },
+    ),
+
+  // Assignment Deferred (Space Bar) — excludes the row from Auto/Bulk
+  // Assignment while keeping its Final Qty. Un-defer reuses `restore` above
+  // (the backend's restore endpoint now accepts both skipped and deferred).
+  defer: (tenantId: string, orderItemId: string, by: string | null) =>
+    api.post<WorkspaceItem>(
+      `/api/procurement/order-items/${orderItemId}/defer${qs({ tenant_id: tenantId })}`,
       { reviewed_by: by },
     ),
 
@@ -168,12 +189,169 @@ export const procurementService = {
       { exported_by: by, assignment_ids: assignmentIds, supplier_code: supplierCode },
     ),
 
+  // Configurable Export Document (Excel default / PDF / Image) — returns the
+  // file as a Blob for the caller to download.
+  exportDocument: (
+    tenantId: string,
+    refreshId: string,
+    opts: {
+      items: { assignment_id: string; qty: number }[]
+      format: 'excel' | 'pdf' | 'image'
+      columns: string[]
+      order_qty_header: string
+      sort_by: 'product_name' | 'sub_location' | 'unit_description'
+      supplier_code?: string
+    },
+  ) =>
+    api.postBlob(
+      `/api/procurement/refreshes/${refreshId}/export-document${qs({ tenant_id: tenantId })}`,
+      opts,
+    ),
+
+  // Shelf Sorting & Excel Split — sort the whole order by shelf category and
+  // split it into pick-sized files (max 16 products each). Returns the file
+  // (single .xlsx or a .zip of several) plus the product / file counts the
+  // server reports in the X-Total-Products / X-File-Count headers.
+  shelfSort: (
+    tenantId: string,
+    refreshId: string,
+    opts: { store_name: string; columns?: string[]; order_qty_header?: string },
+  ) =>
+    api
+      .postBlobMeta(`/api/procurement/refreshes/${refreshId}/shelf-sort${qs({ tenant_id: tenantId })}`, {
+        store_name: opts.store_name,
+        columns: opts.columns ?? [],
+        order_qty_header: opts.order_qty_header ?? 'Order Qty',
+      })
+      .then(({ blob, headers }) => {
+        const disposition = headers.get('Content-Disposition') ?? ''
+        const match = /filename="?([^"]+)"?/.exec(disposition)
+        return {
+          blob,
+          filename: match?.[1] ?? 'Sorted.xlsx',
+          totalProducts: Number(headers.get('X-Total-Products') ?? 0),
+          fileCount: Number(headers.get('X-File-Count') ?? 1),
+        }
+      }),
+
+  // Shelf Sorting from a disk Excel — upload the file; the server joins
+  // UnitDescription/SubLocation from the master, sorts by shelf category and
+  // splits into pick-sized files, preserving the file's own columns. Returns
+  // the file (single .xlsx or a .zip) plus the product / file counts.
+  shelfSortFile: (tenantId: string, storeId: string, storeName: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api
+      .uploadBlobMeta(
+        `/api/procurement/shelf-sort/upload${qs({ tenant_id: tenantId, store_id: storeId, store_name: storeName })}`,
+        form,
+      )
+      .then(({ blob, headers }) => {
+        const disposition = headers.get('Content-Disposition') ?? ''
+        const match = /filename="?([^"]+)"?/.exec(disposition)
+        return {
+          blob,
+          filename: match?.[1] ?? 'Sorted.xlsx',
+          totalProducts: Number(headers.get('X-Total-Products') ?? 0),
+          fileCount: Number(headers.get('X-File-Count') ?? 1),
+        }
+      })
+  },
+
+  // Shelf Sorting manifests (as_files=true) — the split files as base64 so the
+  // desktop app can write each one INDIVIDUALLY into a chosen output folder
+  // (incl. a UNC/network path) instead of a single browser download.
+  shelfSortManifest: (
+    tenantId: string,
+    refreshId: string,
+    opts: { store_name: string; columns?: string[]; order_qty_header?: string },
+  ) =>
+    api.post<ShelfSortManifest>(
+      `/api/procurement/refreshes/${refreshId}/shelf-sort${qs({ tenant_id: tenantId, as_files: 'true' })}`,
+      {
+        store_name: opts.store_name,
+        columns: opts.columns ?? [],
+        order_qty_header: opts.order_qty_header ?? 'Order Qty',
+      },
+    ),
+
+  shelfSortFileManifest: (tenantId: string, storeId: string, storeName: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.upload<ShelfSortManifest>(
+      `/api/procurement/shelf-sort/upload${qs({ tenant_id: tenantId, store_id: storeId, store_name: storeName, as_files: 'true' })}`,
+      form,
+    )
+  },
+
+  // --- Shelf category training (learned dictionary + Claude LLM suggest) ---
+
+  // Products in an order that still resolve to "Others" — the review targets.
+  shelfSortReview: (tenantId: string, refreshId: string) =>
+    api
+      .get<{ products: { name: string; unit: string | null; product_code: string | null; category_code: string }[] }>(
+        `/api/procurement/refreshes/${refreshId}/shelf-sort/review${qs({ tenant_id: tenantId })}`,
+      )
+      .then((r) => r.products),
+
+  // Claude LLM auto-suggest categories for the given names (saved as unconfirmed
+  // suggestions). `units` (optional, index-aligned with `names`) gives Claude the
+  // pack-type signal. suggestions is empty + llm_available false when no API key.
+  shelfSortClassify: (tenantId: string, names: string[], units?: (string | null)[]) =>
+    api.post<{ suggestions: Record<string, string>; llm_available: boolean }>(
+      `/api/procurement/shelf-sort/classify${qs({ tenant_id: tenantId })}`,
+      { names, units },
+    ),
+
+  // Save human-confirmed product -> category corrections (trains the agent).
+  shelfSortSaveCategories: (
+    tenantId: string,
+    entries: { name: string; category: string }[],
+    by: string | null,
+  ) =>
+    api.post<{ saved: number }>(
+      `/api/procurement/shelf-sort/categories${qs({ tenant_id: tenantId })}`,
+      { entries, saved_by: by },
+    ),
+
+  // The fixed shelf-category vocabulary for the review dropdown.
+  shelfCategoryVocab: () =>
+    api
+      .get<{ categories: { category: string; code: string }[] }>(
+        `/api/procurement/shelf-sort/categories`,
+      )
+      .then((r) => r.categories),
+
   exportHistory: (tenantId: string, refreshId: string) =>
     api
       .get<{ batches: ExportBatch[] }>(
         `/api/procurement/refreshes/${refreshId}/export-history${qs({ tenant_id: tenantId })}`,
       )
       .then((r) => r.batches),
+
+  // Supplier Reply round-trip — the supplier's completed Excel (Status +
+  // Available Qty) comes back, gets parsed/matched by the hidden Assignment
+  // ID column, and — once confirmed — rolls any shortfall into the existing
+  // Pending tab (see supplier_reply_service on the backend).
+  previewSupplierReply: (tenantId: string, refreshId: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.upload<SupplierReplyPreview>(
+      `/api/procurement/refreshes/${refreshId}/supplier-reply/preview${qs({ tenant_id: tenantId })}`,
+      form,
+    )
+  },
+
+  importSupplierReply: (
+    tenantId: string,
+    refreshId: string,
+    rows: { assignment_id: string; status: string | null; available_qty: number | null }[],
+    by: string | null,
+  ) =>
+    api.post<{ applied: number; skipped: number }>(
+      `/api/procurement/refreshes/${refreshId}/supplier-reply/import${qs({ tenant_id: tenantId })}`,
+      { rows, imported_by: by },
+    ),
 
   // --- Sprint 3: GRN, pending, decision explorer, cycle close ---
   submitGrn: (tenantId: string, refreshId: string, lastGrn: string, by: string | null) =>
@@ -230,7 +408,7 @@ export const procurementService = {
     api.blob(`/api/procurement/refreshes/${refreshId}/pending/report${qs({ tenant_id: tenantId })}`),
 
   addManualItem: (tenantId: string, refreshId: string, code: string, name: string, qty: number, by: string | null) =>
-    api.post(
+    api.post<{ order_item_id: string; product_code: string; is_manual: boolean; already_exists?: boolean }>(
       `/api/procurement/refreshes/${refreshId}/manual-items${qs({ tenant_id: tenantId })}`,
       { product_code: code, product_name: name, qty, created_by: by },
     ),
@@ -272,6 +450,16 @@ export const procurementService = {
         })}`,
       )
       .then((r) => r.items),
+
+  // Product codes in this refresh's VPL bought with free qty at least once
+  // (sync.PurchaseTrans, FreeQty > 0) — "Has Offer" filter (Review All /
+  // Supplier Purchasing).
+  productsWithOffers: (tenantId: string, refreshId: string) =>
+    api
+      .get<{ product_codes: string[] }>(
+        `/api/procurement/refreshes/${refreshId}/products-with-offers${qs({ tenant_id: tenantId })}`,
+      )
+      .then((r) => r.product_codes),
 
   // --- Supplier Live Stock: Excel import + header mapping ---
   supplierStockMapping: (tenantId: string, storeId: string, supplierCode: string) =>
@@ -379,6 +567,77 @@ export const procurementService = {
       { store_id: storeId, min_order_value: minOrderValue, updated_by: by },
     ),
 
+  // Both min_order_value + consider_minimum_order per supplier, one round
+  // trip — powers the Minimum Order Settings panel.
+  minOrderConfig: (tenantId: string, storeId: string) =>
+    api
+      .get<{ config: Record<string, SupplierMinOrderConfig> }>(
+        `/api/procurement/suppliers/min-order-config${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      )
+      .then((r) => r.config),
+
+  // Auto Assign settings (auto_assign / min_products / export_rank) — every
+  // store supplier, one round trip. Distinct from minOrderConfig above (that
+  // is Supplier Optimization's Minimum Order Value, a different concept).
+  supplierSettings: (tenantId: string, storeId: string) =>
+    api
+      .get<{ suppliers: SupplierSettingsRow[] }>(
+        `/api/procurement/suppliers/settings${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      )
+      .then((r) => r.suppliers),
+
+  updateSupplierSettings: (
+    tenantId: string,
+    storeId: string,
+    supplierCode: string,
+    updates: { auto_assign?: boolean; min_products?: number; export_rank?: number },
+  ) =>
+    api.put(
+      `/api/procurement/suppliers/${supplierCode}/settings${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      updates,
+    ),
+
+  // Per-supplier Export Document memory (format/columns/header/sort/folder)
+  // — server-side so it's the same across every device/browser (§ Export
+  // Settings dialog).
+  supplierExportSettings: (tenantId: string, storeId: string, supplierCode: string) =>
+    api.get<{
+      format: 'excel' | 'pdf' | 'image'
+      columns: string[]
+      order_qty_header: string
+      sort_by: 'product_name' | 'sub_location' | 'unit_description'
+      export_folder_path: string | null
+    }>(`/api/procurement/suppliers/${supplierCode}/export-settings${qs({ tenant_id: tenantId, store_id: storeId })}`),
+
+  saveSupplierExportSettings: (
+    tenantId: string,
+    storeId: string,
+    supplierCode: string,
+    settings: {
+      format: string
+      columns: string[]
+      order_qty_header: string
+      sort_by: string
+      export_folder_path: string | null
+    },
+  ) =>
+    api.put(
+      `/api/procurement/suppliers/${supplierCode}/export-settings${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      settings,
+    ),
+
+  setConsiderMinimumOrder: (
+    tenantId: string,
+    supplierCode: string,
+    storeId: string,
+    considerMinimumOrder: boolean,
+    by: string | null,
+  ) =>
+    api.put(
+      `/api/procurement/suppliers/${supplierCode}/consider-minimum-order${qs({ tenant_id: tenantId })}`,
+      { store_id: storeId, consider_minimum_order: considerMinimumOrder, updated_by: by },
+    ),
+
   // Close a cycle. End GRN / End Sale Bill are auto-read from synced data on the
   // server (no manual entry). Pass force=true to confirm closing while pending
   // items still exist (they are cleared, not carried) — the first call without
@@ -414,6 +673,36 @@ export const procurementService = {
       )
       .then((r) => r.items),
 
+  // Compare two refreshes of the SAME cycle — Added / Removed / Increased /
+  // Decreased / NoChange per product. Read-only, never persisted.
+  compareVpls: (
+    tenantId: string,
+    sourceVplId: string,
+    targetVplId: string,
+    opts: { changedOnly?: boolean; action?: string; search?: string; page?: number; pageSize?: number } = {},
+  ) =>
+    api.get<CompareResult>(
+      `/api/procurement/vpl/compare${qs({
+        tenant_id: tenantId,
+        source_vpl_id: sourceVplId,
+        target_vpl_id: targetVplId,
+        changed_only: opts.changedOnly ? 'true' : undefined,
+        action_filter: opts.action,
+        search: opts.search,
+        page: opts.page,
+        page_size: opts.pageSize,
+      })}`,
+    ),
+
+  // Lock a refresh as read-only ('Closed') without closing its cycle — the
+  // console pairs this with generateRefresh to roll to Refresh N+1 in the same
+  // open cycle.
+  closeRefresh: (tenantId: string, refreshId: string, by: string | null) =>
+    api.post<Refresh>(
+      `/api/procurement/refreshes/${refreshId}/close${qs({ tenant_id: tenantId })}`,
+      { closed_by: by },
+    ),
+
   generateRefresh: (
     tenantId: string,
     cycleId: string,
@@ -425,8 +714,88 @@ export const procurementService = {
       created_by?: string | null
     },
   ) =>
-    api.post<{ refresh_id: string; generated_product_count: number; working_item_count: number }>(
+    api.post<RefreshRunResult>(
       `/api/procurement/cycles/${cycleId}/refreshes${qs({ tenant_id: tenantId })}`,
       payload,
     ),
+
+  // Internal Supplier Stock Distribution — one store's own stock (HO, e.g.
+  // NMW) generated out to every other store's supplier_stock feed.
+  distributionConfig: (tenantId: string, sourceStoreCode = 'NMW') =>
+    api.get<DistributionConfigRow[]>(
+      `/api/procurement/distribution/config${qs({ tenant_id: tenantId, source_store_code: sourceStoreCode })}`,
+    ),
+
+  saveDistributionSupplierMap: (
+    tenantId: string,
+    storeId: string,
+    sourceStoreCode: string,
+    localSupplierCode: string,
+  ) =>
+    api.put<{ saved: boolean }>(
+      `/api/procurement/distribution/supplier-map/${storeId}${qs({
+        tenant_id: tenantId,
+        source_store_code: sourceStoreCode,
+        local_supplier_code: localSupplierCode,
+      })}`,
+      {},
+    ),
+
+  importLegacySupplierMap: (tenantId: string, sourceStoreCode = 'NMW') =>
+    api.post<DistributionSupplierMapImportResult>(
+      `/api/procurement/distribution/supplier-map/import-legacy${qs({
+        tenant_id: tenantId,
+        source_store_code: sourceStoreCode,
+      })}`,
+      {},
+    ),
+
+  saveDistributionConfig: (
+    tenantId: string,
+    storeId: string,
+    payload: { whatsapp_group?: string; phone_number?: string; enabled: boolean },
+  ) =>
+    api.put<{ saved: boolean }>(
+      `/api/procurement/distribution/config/${storeId}${qs({
+        tenant_id: tenantId,
+        whatsapp_group: payload.whatsapp_group,
+        phone_number: payload.phone_number,
+        enabled: String(payload.enabled),
+      })}`,
+      {},
+    ),
+
+  generateDistribution: (
+    tenantId: string,
+    sourceStoreCode: string,
+    provider: 'legacy' | 'nexora',
+    opts?: { storeIds?: string[]; excelOnly?: boolean; supplierUpdateOnly?: boolean; startedBy?: string | null },
+  ) =>
+    api.post<DistributionRunResult>(
+      `/api/procurement/distribution/generate${qs({
+        tenant_id: tenantId,
+        source_store_code: sourceStoreCode,
+        provider,
+        store_ids: opts?.storeIds?.join(','),
+        excel_only: opts?.excelOnly ? 'true' : undefined,
+        supplier_update_only: opts?.supplierUpdateOnly ? 'true' : undefined,
+        started_by: opts?.startedBy ?? undefined,
+      })}`,
+      {},
+    ),
+
+  distributionRuns: (tenantId: string, limit = 20) =>
+    api.get<DistributionRunSummary[]>(`/api/procurement/distribution/runs${qs({ tenant_id: tenantId, limit })}`),
+
+  distributionRunDetail: (runId: string) =>
+    api.get<DistributionRunDetail>(`/api/procurement/distribution/runs/${runId}`),
+
+  retryDistribution: (runId: string, provider?: 'legacy' | 'nexora', startedBy?: string | null) =>
+    api.post<DistributionRunResult>(
+      `/api/procurement/distribution/runs/${runId}/retry${qs({ provider, started_by: startedBy ?? undefined })}`,
+      {},
+    ),
+
+  distributionRunItemProducts: (runItemId: string) =>
+    api.get<DistributionRunItemProducts>(`/api/procurement/distribution/run-items/${runItemId}/products`),
 }

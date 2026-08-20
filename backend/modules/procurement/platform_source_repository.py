@@ -6,7 +6,10 @@ store_id + tenant_id. Read-only.
 """
 
 from config.database import get_connection
-from modules.procurement._dbutil import rows_to_dicts as _rows_to_dicts
+from modules.procurement._dbutil import (
+    rows_to_dicts as _rows_to_dicts,
+    store_stock_expr as _store_stock_expr,
+)
 
 
 def read_last_grn(tenant_id, store_id):
@@ -80,7 +83,7 @@ def search_products(tenant_id, store_id, query, limit=25):
                 CAST(p.ProductCode AS VARCHAR(100)) AS product_code,
                 p.ProductName                       AS product_name,
                 p.UnitDescription                   AS unit,
-                ISNULL(p.TotalStock, 0)             AS current_stock,
+                {_store_stock_expr("p")}            AS current_stock,
                 ISNULL(p.MRP, 0)                    AS mrp
             FROM sync.Products p
             WHERE p.tenant_id = ? AND p.store_id = ? AND ISNULL(p.isActive, 1) = 1

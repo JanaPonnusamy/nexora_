@@ -7,6 +7,7 @@ N+1 queries. No database connection is opened.
 
 import os
 import sys
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -39,6 +40,9 @@ def _para500(**overrides):
         "pending_receivable": 50.0,
         "in_transit": 0.0,
         "reserved": 10.0,
+        # Eligible by the legacy date gates: sold today, last GRN a month ago.
+        "last_sale_date": datetime.now(),
+        "last_received_date": datetime.now() - timedelta(days=30),
     }
     src.update(overrides)
     return src
@@ -62,6 +66,15 @@ def test_para500_full_trace():
     assert out["procurement_action"] == rules.ACTION_INCLUDE
     assert out["reason_code"] == rules.INCLUDED_BELOW_MIN_DAYS
     assert out["trigger_reason"] == rules.COVERAGE
+
+
+def test_para500_strip_conversion():
+    # Same worked example, but the product sells in strips of 10 (SaleUnit=10):
+    # suggested_qty must come out in strips, not loose units.
+    out = rules.evaluate(_para500(sale_unit=10.0), _params())
+    assert out["final_required_qty"] == 13           # ceil(130/10)
+    assert out["suggested_qty"] == 13
+    assert out["procurement_action"] == rules.ACTION_INCLUDE
 
 
 # --------------------------------------------------------------------------
@@ -99,12 +112,21 @@ def test_stock_status_buckets():
 
 
 def test_final_required_determinants():
-    # coverage binding
-    assert rules.final_required(130, 40, 60) == (130, 130, rules.COVERAGE)
+    # coverage binding (no sale_unit -> strip qty falls back to loose qty)
+    assert rules.final_required(130, 40, 60) == (130, 130, 130, rules.COVERAGE)
     # spike floor binding
-    assert rules.final_required(10, 40, 20) == (40, 40, rules.SPIKE_PROTECTION)
+    assert rules.final_required(10, 40, 20) == (40, 40, 40, rules.SPIKE_PROTECTION)
     # max-bill floor binding
-    assert rules.final_required(10, 20, 55) == (55, 55, rules.MAX_BILL_TRIGGER)
+    assert rules.final_required(10, 20, 55) == (55, 55, 55, rules.MAX_BILL_TRIGGER)
+
+
+def test_final_required_strip_conversion():
+    # PR-BR-007/008/009 legacy parity: divide the loose shortfall by SaleUnit
+    # and ceiling it, mirroring order_local/remote.sql's Orderqty.
+    assert rules.final_required(130, 40, 60, sale_unit=10) == (130, 130, 13, rules.COVERAGE)
+    assert rules.final_required(121, 40, 60, sale_unit=10) == (121, 121, 13, rules.COVERAGE)
+    # SaleUnit <= 0 falls back to loose quantity instead of zeroing the order.
+    assert rules.final_required(130, 40, 60, sale_unit=0) == (130, 130, 130, rules.COVERAGE)
 
 
 # --------------------------------------------------------------------------
@@ -135,6 +157,38 @@ def test_excluded_zero_required():
     )
     assert out["reason_code"] == rules.EXCLUDED_ZERO_REQUIRED
     assert out["suggested_qty"] == 0
+
+
+def test_excluded_stale_sale():
+    # sells in the window but last bill is older than the 10-day recency floor
+    out = rules.evaluate(
+        _para500(last_sale_date=datetime.now() - timedelta(days=15)), _params()
+    )
+    assert out["procurement_action"] == rules.ACTION_EXCLUDE
+    assert out["reason_code"] == rules.EXCLUDED_STALE_SALE
+    assert out["suggested_qty"] == 0
+
+
+def test_excluded_recently_received():
+    # recently sold, but the last GRN is AFTER the last sale: purchased, not yet
+    # moved — the legacy `ps.lastsaledate >= ps.LastReceivedDate` gate.
+    out = rules.evaluate(
+        _para500(
+            last_sale_date=datetime.now() - timedelta(days=3),
+            last_received_date=datetime.now() - timedelta(days=1),
+        ),
+        _params(),
+    )
+    assert out["procurement_action"] == rules.ACTION_EXCLUDE
+    assert out["reason_code"] == rules.EXCLUDED_RECENTLY_RECEIVED
+    assert out["suggested_qty"] == 0
+
+
+def test_excluded_missing_grn_watermark():
+    # sold recently but no GRN watermark at all -> NULL comparison excludes,
+    # exactly as the legacy LEFT JOIN does.
+    out = rules.evaluate(_para500(last_received_date=None), _params())
+    assert out["reason_code"] == rules.EXCLUDED_RECENTLY_RECEIVED
 
 
 def test_excluded_inactive_and_flagged():

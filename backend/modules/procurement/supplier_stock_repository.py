@@ -88,3 +88,39 @@ def get_supplier_stock(tenant_id, refresh_id, supplier_code, store_id=None, sear
         return _rows_to_dicts(cursor)
     finally:
         conn.close()
+
+
+def products_with_offers(tenant_id, refresh_id, store_id=None):
+    """Distinct product codes IN THIS REFRESH'S VPL that the store has EVER
+    bought with free qty — the "Has Offer" filter source for Review All /
+    Supplier Purchasing.
+
+    The rule is exactly one thing, by owner ruling: at least one purchase of
+    this product in this store's sync.PurchaseTrans history has FreeQty > 0.
+    Not the latest purchase only, not ProductDiscPercent, and not a live
+    supplier_stock scheme — a flat discount is a price, a free-qty purchase is
+    the offer the buyer is hunting for. Read-only; returns nothing if
+    PurchaseTrans isn't provisioned."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if not store_id or not _object_exists(cursor, "sync.PurchaseTrans"):
+            return []
+        cursor.execute(
+            """
+            SELECT DISTINCT CAST(vp.product_code AS VARCHAR(100)) AS product_code
+            FROM procurement.procurement_virtual_products vp
+            WHERE vp.tenant_id = ? AND vp.refresh_id = ? AND vp.is_active = 1
+              AND EXISTS (
+                    SELECT 1
+                    FROM sync.PurchaseTrans pt
+                    WHERE pt.tenant_id = ? AND pt.store_id = ?
+                      AND pt.ProductCode = TRY_CAST(vp.product_code AS INT)
+                      AND ISNULL(pt.FreeQty, 0) > 0
+              )
+            """,
+            (tenant_id, refresh_id, tenant_id, store_id),
+        )
+        return sorted(r[0] for r in cursor.fetchall())
+    finally:
+        conn.close()

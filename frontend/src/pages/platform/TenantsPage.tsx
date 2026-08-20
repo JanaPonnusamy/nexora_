@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
+import { WorkspaceContainer } from '../../design-system/components/WorkspaceContainer'
 import { TenantToolbar } from '../../components/tenants/TenantToolbar'
 import type { StatusFilter } from '../../components/tenants/TenantToolbar'
 import { TenantTable } from '../../components/tenants/TenantTable'
@@ -15,7 +16,7 @@ import type { Tenant } from '../../types/tenant'
 
 type ModalState = { mode: 'create' } | { mode: 'edit'; tenant: Tenant } | null
 
-export default function TenantsPage() {
+export default function TenantsPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate()
   const { tenants, isLoading, error, reload } = useTenants()
   const [search, setSearch] = useState('')
@@ -80,8 +81,8 @@ export default function TenantsPage() {
   }
 
   return (
-    <div className="container-fluid px-0">
-      <PageHeader title="Tenants" breadcrumb={['Platform', 'Tenants']} />
+    <WorkspaceContainer>
+      {!embedded && <PageHeader title="Tenants" breadcrumb={['Platform', 'Tenants']} />}
       <TenantToolbar
         search={search}
         onSearchChange={setSearch}
@@ -101,6 +102,6 @@ export default function TenantsPage() {
           }}
         />
       )}
-    </div>
+    </WorkspaceContainer>
   )
 }

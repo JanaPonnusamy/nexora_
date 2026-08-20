@@ -16,11 +16,12 @@ import json
 import shutil
 from pathlib import Path
 
-from . import AGENT_EXE_NAME, SETTINGS_EXE_NAME
+from . import AGENT_EXE_NAME, AGENT_VERSION, SETTINGS_EXE_NAME, WATCHDOG_EXE_NAME
 from .agent_config import write_config
 from .paths import repo_root, resource_root
 
 SUBDIRS = ("cache", "logs", "updates", "backups")
+VERSION_MARKER_NAME = "agent_version_installed.txt"
 
 
 class Installer:
@@ -30,6 +31,18 @@ class Installer:
 
     def log(self, msg):
         self._log(msg)
+
+    def _installed_version_value(self):
+        releases_dir = repo_root() / "backend" / "agent_releases"
+        try:
+            release_dirs = [p for p in releases_dir.iterdir() if p.is_dir()]
+        except OSError:
+            release_dirs = []
+        if release_dirs:
+            latest = max(release_dirs, key=lambda p: p.stat().st_mtime)
+            if latest.name.strip():
+                return latest.name.strip()
+        return AGENT_VERSION
 
     # ---- STEP 5/7: directories -------------------------------------------
 
@@ -90,6 +103,9 @@ class Installer:
         exe_target = self.root / AGENT_EXE_NAME
         shutil.copy2(dist / AGENT_EXE_NAME, exe_target)
         copied.append(exe_target)
+        (self.root / VERSION_MARKER_NAME).write_text(
+            self._installed_version_value(), encoding="utf-8"
+        )
         internal_src = dist / "_internal"
         if internal_src.is_dir():
             internal_target = self.root / "_internal"
@@ -105,6 +121,15 @@ class Installer:
             if settings.is_file():
                 dst = self.root / SETTINGS_EXE_NAME
                 shutil.copy2(settings, dst)
+                copied.append(dst)
+                self.log(f"copied {dst.name}")
+                break
+
+        for base in (resource_root(), repo_root() / "dist"):
+            watchdog = base / WATCHDOG_EXE_NAME
+            if watchdog.is_file():
+                dst = self.root / WATCHDOG_EXE_NAME
+                shutil.copy2(watchdog, dst)
                 copied.append(dst)
                 self.log(f"copied {dst.name}")
                 break

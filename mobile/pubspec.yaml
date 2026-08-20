@@ -1,0 +1,82 @@
+name: nexora_mobile
+description: Nexora platform mobile client (Flutter). Additional frontend that consumes the existing FastAPI backend.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+  flutter: ">=3.27.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Networking
+  dio: ^5.5.0
+
+  # Routing
+  go_router: ^14.2.0
+
+  # Secure storage (JWT token, selected store)
+  flutter_secure_storage: ^9.2.2
+
+  # Biometric / device-credential unlock (Phase 1). Device credential is kept as
+  # a fallback rather than requiring biometrics, so a broken sensor or a removed
+  # fingerprint cannot strand a user holding a valid session.
+  local_auth: ^2.3.0
+
+  # Local persistence / offline cache (foundation for Phase 2 sync)
+  drift: ^2.18.0
+  sqlite3_flutter_libs: ^0.5.24
+  path_provider: ^2.1.3
+  path: ^1.9.0
+
+  # Models / serialization
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # Logging
+  logging: ^1.2.0
+
+  # Connectivity / device identity (Phase 2 agent + Phase 3 sync)
+  connectivity_plus: ^7.3.1
+  device_info_plus: ^12.4.0
+  package_info_plus: ^9.0.1
+
+  # Document capture (Phase 2 OCR pipeline)
+  camera: ^0.11.0
+  image_picker: ^1.1.2
+  permission_handler: ^11.3.1
+  # Client-side downscale/compress before upload — invoice photos off a modern
+  # phone are 4-8 MB each and stores are frequently on poor connections.
+  image: ^4.2.0
+  # Hand the exported workbook to Excel / the share sheet.
+  share_plus: ^10.0.0
+  open_filex: ^4.5.0
+
+  # Misc
+  collection: ^1.18.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # On-device/simulator end-to-end tests (integration_test/).
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+  # Code generation
+  build_runner: ^2.4.11
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
+  riverpod_generator: ^2.4.0
+  drift_dev: ^2.18.0
+
+flutter:
+  uses-material-design: true
+  # assets:
+  #   - assets/

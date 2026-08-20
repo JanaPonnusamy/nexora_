@@ -5,11 +5,13 @@ import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { TableSkeleton } from '../../components/common/TableSkeleton'
 import { StatusBadge } from '../../components/common/StatusBadge'
+import { DataTable, type DataTableColumn } from '../../components/common/DataTable'
 import { RoleFormModal } from '../../components/roles/RoleFormModal'
 import { useRole } from '../../hooks/useRole'
 import { useUsers } from '../../hooks/useUsers'
 import { roleService } from '../../services/roleService'
 import { formatDateTime } from '../../utils/format'
+import type { User } from '../../types/user'
 
 type WorkspaceTab = 'overview' | 'users'
 
@@ -32,6 +34,22 @@ export default function RoleWorkspacePage() {
   const [editing, setEditing] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
+
+  const userColumns: DataTableColumn<User>[] = [
+    {
+      key: 'username',
+      header: 'Username',
+      sortable: true,
+      accessor: (user) => <span className="fw-medium">{user.username}</span>,
+    },
+    { key: 'full_name', header: 'Full Name', sortable: true },
+    {
+      key: 'is_active',
+      header: 'Status',
+      sortable: true,
+      accessor: (user) => <StatusBadge active={user.is_active} />,
+    },
+  ]
 
   const tabParam = searchParams.get('tab')
   const activeTab: WorkspaceTab = tabParam === 'users' ? 'users' : 'overview'
@@ -183,32 +201,13 @@ export default function RoleWorkspacePage() {
               description="Users assigned to this role will appear here."
             />
           ) : (
-            <div className="table-responsive">
-              <table className="table table-hover align-middle data-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Username</th>
-                    <th scope="col">Full Name</th>
-                    <th scope="col">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((user) => (
-                    <tr
-                      key={user.user_id}
-                      className="data-row"
-                      onClick={() => navigate(`/platform/users/${user.user_id}`)}
-                    >
-                      <td className="fw-medium">{user.username}</td>
-                      <td>{user.full_name}</td>
-                      <td>
-                        <StatusBadge active={user.is_active} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={userColumns}
+              data={users}
+              getRowId={(user) => user.user_id}
+              onRowClick={(user) => navigate(`/platform/users/${user.user_id}`)}
+              pageSize={10}
+            />
           ))}
       </div>
 

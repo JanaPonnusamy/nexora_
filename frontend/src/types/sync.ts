@@ -267,6 +267,8 @@ export interface LiveStore {
   rows_processed: number
   total_rows: number | null
   rows_remaining: number | null
+  execution_rows_processed: number
+  execution_total_rows: number | null
   rows_changed: number
   rows_uploaded: number
   rows_inserted: number
@@ -319,4 +321,41 @@ export interface TablePromoteResult {
   promoted_tables: number
   existing_tables: number
   total_master_tables: number
+}
+
+export interface AgentOpsRow {
+  store_id: string
+  store_name: string
+  store_code: string
+  agent_version: string | null
+  connection_status: string | null
+  last_heartbeat: string | null
+  desired_state: 'RUNNING' | 'STOPPED'
+  desired_version: string | null
+  watchdog_version: string | null
+  installed_agent_version: string | null
+  service_state: string | null
+  last_action: string | null
+  watchdog_last_heartbeat: string | null
+}
+
+export interface AgentRelease {
+  version: string
+  file_name: string
+  sha256: string
+  file_size: number
+  is_current: boolean
+  notes: string | null
+  released_at: string | null
+}
+
+export interface AgentOpsLogRow {
+  audit_id: number
+  store_id: string
+  store_code: string | null
+  store_name: string | null
+  event_type: string
+  detail: string | null
+  target_version: string | null
+  created_at: string | null
 }

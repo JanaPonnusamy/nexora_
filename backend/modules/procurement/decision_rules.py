@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Procurement Decision Engine — business rules (pure Python, no I/O).
 
 Implements the ratified Decision Engine rules PR-BR-001..016 exactly as defined
@@ -9,10 +11,11 @@ No SQL and no side effects live in this module (mandatory: business rules are
 Python, SQL is only for reading source data and bulk persistence).
 """
 
-from __future__ import annotations
+from dataclasses import dataclass
 
 import math
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 
 # --------------------------------------------------------------------------
@@ -25,6 +28,11 @@ EXCLUDED_ADEQUATE_COVER = "EXCLUDED_ADEQUATE_COVER"
 EXCLUDED_FLAGGED = "EXCLUDED_FLAGGED"
 EXCLUDED_INACTIVE = "EXCLUDED_INACTIVE"
 EXCLUDED_ZERO_REQUIRED = "EXCLUDED_ZERO_REQUIRED"
+# Legacy VB.NET eligibility gates ported for parity with order_local/remote.sql:
+#   ps.lastsaledate >= DATEADD(day, -10, GETDATE())   (must have sold recently)
+#   ps.lastsaledate >= ps.LastReceivedDate            (must have sold since the last GRN)
+EXCLUDED_STALE_SALE = "EXCLUDED_STALE_SALE"
+EXCLUDED_RECENTLY_RECEIVED = "EXCLUDED_RECENTLY_RECEIVED"
 
 # Final-quantity determinant (PR-BR-009)
 COVERAGE = "COVERAGE"
@@ -50,6 +58,11 @@ class DecisionParameters:
     movement_medium_cut: float = 10.0
     stock_low_cut: float = 3.0
     stock_safe_cut: float = 15.0
+    # Legacy eligibility-gate constants (order_local/remote.sql). recency_days is
+    # the "sold in the last N days" floor; as_of is the reference "now" (defaults
+    # to wall-clock at evaluation) so the gate is deterministic under test.
+    recency_days: int = 10
+    as_of: datetime | None = None
 
     def validate(self):
         """PR-BR-005 exception: MaxDays >= MinDays > 0; RollingDays > 0."""
@@ -117,12 +130,19 @@ def coverage_required(target_stock_qty, effective_avail):
     return target_stock_qty - effective_avail
 
 
-def final_required(coverage_req, max_day_sale_qty, max_bill_qty):
+def final_required(coverage_req, max_day_sale_qty, max_bill_qty, sale_unit=0.0):
     """PR-BR-007/008/009: Required = MAX(coverage, floors); Final = CEILING(Required).
 
-    Returns (required, final_required_qty, determinant). The determinant is the
-    argument equal to the MAX, preferring COVERAGE, then SPIKE_PROTECTION, then
-    MAX_BILL_TRIGGER (PR-BR-009).
+    Legacy parity (order_local/remote.sql): the loose-unit shortfall is then
+    divided by the product's strip/pack size (``SaleUnit``) and ceiling'd —
+    ``CEILING((maxqty - TotalStock) / SaleUnit)`` — so the order quantity is
+    expressed in strips, not loose units. When SaleUnit is missing/<=0 the
+    strip quantity falls back to the loose quantity (legacy would zero it,
+    but that would silently drop the product from procurement here).
+
+    Returns (required, final_required_qty, suggested_strip_qty, determinant).
+    The determinant is the argument equal to the MAX, preferring COVERAGE,
+    then SPIKE_PROTECTION, then MAX_BILL_TRIGGER (PR-BR-009).
     """
     max_day_sale_qty = max_day_sale_qty or 0.0
     max_bill_qty = max_bill_qty or 0.0
@@ -134,7 +154,11 @@ def final_required(coverage_req, max_day_sale_qty, max_bill_qty):
         determinant = SPIKE_PROTECTION
     else:
         determinant = MAX_BILL_TRIGGER
-    return required, final_qty, determinant
+    if sale_unit and sale_unit > 0:
+        suggested_qty = math.ceil(final_qty / sale_unit)
+    else:
+        suggested_qty = final_qty
+    return required, final_qty, suggested_qty, determinant
 
 
 # --------------------------------------------------------------------------
@@ -160,6 +184,7 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
     reserved = src.get("reserved", 0.0) or 0.0
     max_day = src.get("max_day_sale_qty", 0.0) or 0.0
     max_bill = src.get("max_bill_qty", 0.0) or 0.0
+    sale_unit = src.get("sale_unit", 0.0) or 0.0
 
     # Stage 2 — metrics
     avg = average_daily_sales(src.get("window_sales_qty", 0.0), params.rolling_days)
@@ -215,6 +240,30 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         out["reason_code"] = EXCLUDED_NOT_SELLING
         out["reason_text"] = "Excluded: no eligible sales in the rolling window."
         return out
+
+    # Legacy eligibility gates (order_local/remote.sql final WHERE), applied
+    # before quantity sizing so an ineligible product never produces an order:
+    #   ps.lastsaledate >= today - 10 days   (recent movement)
+    #   ps.lastsaledate >= ps.LastReceivedDate  (sold since the latest GRN)
+    # The dates come from sync.ProductTrans (MAX LastBillDate / MAX LastGrnDate)
+    # within the legacy 20-day LastBillDate window. A NULL on either side fails
+    # the comparison in the VB SQL (LEFT JOIN → UNKNOWN), so it excludes here too.
+    last_sale = src.get("last_sale_date")
+    last_recv = src.get("last_received_date")
+    now = params.as_of or datetime.now()
+    if last_sale is None or last_sale < now - timedelta(days=params.recency_days):
+        out["reason_code"] = EXCLUDED_STALE_SALE
+        out["reason_text"] = (
+            f"Excluded: no sale in the last {params.recency_days} days."
+        )
+        return out
+    if last_recv is None or last_sale < last_recv:
+        out["reason_code"] = EXCLUDED_RECENTLY_RECEIVED
+        out["reason_text"] = (
+            "Excluded: no sale since the latest GRN (recently received, not yet moved)."
+        )
+        return out
+
     if cover >= params.min_days:
         out["reason_code"] = EXCLUDED_ADEQUATE_COVER
         out["reason_text"] = (
@@ -225,7 +274,9 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
     # Included candidate — Stages 6-9
     tgt = target_stock(avg, params.max_days)
     cov_req = coverage_required(tgt, eff)
-    required, final_qty, determinant = final_required(cov_req, max_day, max_bill)
+    required, final_qty, suggested_qty, determinant = final_required(
+        cov_req, max_day, max_bill, sale_unit
+    )
 
     out["target_days"] = params.max_days
     out["target_stock_qty"] = tgt
@@ -239,12 +290,12 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         return out
 
     out["procurement_action"] = ACTION_INCLUDE
-    out["suggested_qty"] = final_qty
-    out["final_required_qty"] = final_qty
+    out["suggested_qty"] = suggested_qty
+    out["final_required_qty"] = suggested_qty
     out["reason_code"] = INCLUDED_BELOW_MIN_DAYS
     out["reason_text"] = (
-        f"Included; {final_qty} units; cover {cover:.1f}d < min "
-        f"{params.min_days:g}d; driven by {determinant} "
+        f"Included; {suggested_qty} strip(s) ({final_qty} loose units); cover "
+        f"{cover:.1f}d < min {params.min_days:g}d; driven by {determinant} "
         f"(coverage {cov_req:.0f}, floors {max_day:g}/{max_bill:g})."
     )
     return out

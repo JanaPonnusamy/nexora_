@@ -132,6 +132,12 @@ def assign_bulk(tenant_id, supplier_code, specs, created_by):
                     raise ValueError("item not found")
                 if item.get("item_status") == "skipped":
                     raise ValueError("item is skipped")
+                # Assignment Deferred (Space Bar) is excluded from every bulk
+                # path (Auto Assign / Assign Remaining / Assign Selected all
+                # call assign_bulk) — a manual single-item assignment via
+                # assign_single is still allowed and clears the flag.
+                if item.get("item_status") == "deferred":
+                    raise ValueError("item is deferred")
                 qty = spec.get("qty")
                 if qty is None:
                     qty = item.get("remaining_qty") or 0

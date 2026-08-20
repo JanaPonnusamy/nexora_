@@ -1,5 +1,6 @@
 /* Desktop Platform shell — additive, scoped to platform/* components only.
-   Reuses index.css's --app-* variables and .app-statusbar/.empty-state
+   Reuses the --nx-* tokens from design-system/tokens/theme.ts, plus
+   .app-statusbar/.empty-state
    classes; nothing here touches the existing AppShell/Header/Sidebar. */
 :root {
   --platform-ribbon-height: 84px;
@@ -39,7 +40,7 @@
   font-size: 0.82rem;
   font-weight: 500;
   color: var(--bs-secondary-color);
-  border-radius: var(--app-radius) var(--app-radius) 0 0;
+  border-radius: var(--nx-radius-md) var(--nx-radius-md) 0 0;
   cursor: pointer;
 }
 
@@ -97,7 +98,7 @@
   min-width: 3.25rem;
   padding: 0.35rem 0.5rem;
   border: 1px solid transparent;
-  border-radius: var(--app-radius);
+  border-radius: var(--nx-radius-md);
   background: transparent;
   font-size: 0.72rem;
   color: var(--bs-body-color);
@@ -130,16 +131,19 @@
 .platform-nav-rail {
   flex: 0 0 var(--platform-nav-rail-width);
   width: var(--platform-nav-rail-width);
-  padding: 0.75rem;
-  border-right: 1px solid var(--bs-border-color);
-  background: var(--bs-tertiary-bg);
+  padding: 0.7rem 0.4rem;
+  border-right: 1px solid var(--nx-glass-border);
+  background: var(--nx-glass-bg);
+  -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .platform-nav-rail__empty {
   padding: 0.75rem;
   font-size: 0.8rem;
-  color: var(--bs-secondary-color);
+  color: var(--nx-text-muted);
 }
 
 .platform-nav-rail__group {
@@ -152,32 +156,47 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--bs-secondary-color);
+  color: var(--nx-text-muted);
 }
 
 .platform-nav-rail__link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.65rem;
   width: 100%;
   padding: 0.5rem 0.65rem;
   border: none;
-  border-radius: var(--app-radius);
+  border-radius: var(--nx-radius-sm);
   background: transparent;
   font-size: 0.9rem;
-  color: var(--bs-body-color);
+  font-weight: 500;
+  color: var(--nx-text-soft);
   text-align: left;
   cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease;
 }
 
 .platform-nav-rail__link:hover {
-  background: var(--bs-secondary-bg);
-  color: var(--bs-emphasis-color);
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
 }
 
 .platform-nav-rail__link.active {
-  background: var(--bs-primary);
-  color: #fff;
+  background: var(--nx-accent-sunk);
+  color: var(--nx-accent-ink);
+  font-weight: 600;
+}
+
+.platform-nav-rail__link.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 15%;
+  bottom: 15%;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--nx-accent);
 }
 
 .platform-nav-rail__icon {
@@ -215,7 +234,7 @@
   font-size: 0.8rem;
   color: var(--bs-secondary-color);
   background: transparent;
-  border-radius: var(--app-radius) var(--app-radius) 0 0;
+  border-radius: var(--nx-radius-md) var(--nx-radius-md) 0 0;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -296,7 +315,7 @@
 .platform-error-stack {
   position: fixed;
   right: 1rem;
-  bottom: calc(var(--app-statusbar-height) + 1rem);
+  bottom: calc(var(--nx-statusbar-height) + 1rem);
   z-index: 1080;
   display: flex;
   flex-direction: column;
@@ -311,7 +330,7 @@
   gap: 0.6rem;
   padding: 0.75rem;
   border: 1px solid var(--bs-danger-border-subtle, var(--bs-border-color));
-  border-radius: var(--app-radius);
+  border-radius: var(--nx-radius-md);
   background: var(--bs-body-bg);
   color: var(--bs-emphasis-color);
   box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.25);

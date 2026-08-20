@@ -35,9 +35,23 @@ class ServiceError(Exception):
 
 
 class ServiceManager:
-    def __init__(self, install_path, log=None):
+    def __init__(
+        self,
+        install_path,
+        log=None,
+        service_name=SERVICE_NAME,
+        service_display_name=SERVICE_DISPLAY_NAME,
+        exe_name=AGENT_EXE_NAME,
+        module_name="store_agent_setup.agent_service",
+        description=_DESCRIPTION,
+    ):
         self.root = Path(install_path)
         self._log = log or (lambda msg: None)
+        self.service_name = service_name
+        self.service_display_name = service_display_name
+        self.exe_name = exe_name
+        self.module_name = module_name
+        self.description = description
 
     def log(self, msg):
         self._log(msg)
@@ -45,12 +59,12 @@ class ServiceManager:
     # ---- mode detection ---------------------------------------------------
 
     def _exe(self):
-        exe = self.root / AGENT_EXE_NAME
+        exe = self.root / self.exe_name
         return exe if exe.is_file() else None
 
     def _agent_command(self):
         """Source/dev controller: the pywin32 service module via python."""
-        return [sys.executable, "-m", "store_agent_setup.agent_service"]
+        return [sys.executable, "-m", self.module_name]
 
     # ---- subprocess helpers ----------------------------------------------
 
@@ -102,62 +116,62 @@ class ServiceManager:
 
     def _install_source(self):
         if self.is_installed():
-            self.log(f"service {SERVICE_NAME} present; reconfiguring (source mode)")
+            self.log(f"service {self.service_name} present; reconfiguring (source mode)")
             self._run("update", "--startup", "auto", check=False)
         else:
             self._run("--startup", "auto", "install")
-        self.log(f"service {SERVICE_NAME} installed (startup=auto, source mode)")
+        self.log(f"service {self.service_name} installed (startup=auto, source mode)")
 
     def _install_sc(self, exe):
         # Clean slate: a stale/disabled service is exactly what breaks start.
         if self.is_installed():
-            self.log(f"service {SERVICE_NAME} present; recreating for a clean state")
+            self.log(f"service {self.service_name} present; recreating for a clean state")
             self._stop_quiet()
-            self._sc("delete", SERVICE_NAME, check=False)
+            self._sc("delete", self.service_name, check=False)
             self._wait_absent(timeout=15)
 
         bin_path = f'"{exe}"'  # SCM stores the command line; quote for spaces.
         self._sc(
-            "create", SERVICE_NAME,
+            "create", self.service_name,
             "binPath=", bin_path,
             "start=", "auto",
-            "DisplayName=", SERVICE_DISPLAY_NAME,
+            "DisplayName=", self.service_display_name,
             "obj=", "LocalSystem",
         )
         # Reassert start type so it can NEVER be left Disabled (error 1058).
-        self._sc("config", SERVICE_NAME, "start=", "auto", check=False)
-        self._sc("description", SERVICE_NAME, _DESCRIPTION, check=False)
+        self._sc("config", self.service_name, "start=", "auto", check=False)
+        self._sc("description", self.service_name, self.description, check=False)
         # Auto-restart on crash: 3 attempts, 60s apart, daily reset.
-        self._sc("failure", SERVICE_NAME, "reset=", "86400",
+        self._sc("failure", self.service_name, "reset=", "86400",
                  "actions=", "restart/60000/restart/60000/restart/60000",
                  check=False)
-        self.log(f"service {SERVICE_NAME} created (startup=auto)")
+        self.log(f"service {self.service_name} created (startup=auto)")
 
     # ---- STEP 9: start / stop / remove -----------------------------------
 
     def start(self):
         # Guarantee the start type before starting (defensive against 1058).
         if self._exe() is not None:
-            self._sc("config", SERVICE_NAME, "start=", "auto", check=False)
-            self._sc("start", SERVICE_NAME, check=False)
+            self._sc("config", self.service_name, "start=", "auto", check=False)
+            self._sc("start", self.service_name, check=False)
         else:
             self._run("start", check=False)
         if not self.wait_for_state("running", timeout=45):
             raise ServiceError(
-                f"service {SERVICE_NAME} did not reach RUNNING (state="
+                f"service {self.service_name} did not reach RUNNING (state="
                 f"{self.status()}). Check {self.root / 'logs'} and the Windows "
                 "Event Log (Application) for NexoraStoreAgent."
             )
-        self.log(f"service {SERVICE_NAME} running")
+        self.log(f"service {self.service_name} running")
 
     def stop(self):
         self._stop_quiet()
         self.wait_for_state("stopped", timeout=30)
-        self.log(f"service {SERVICE_NAME} stopped")
+        self.log(f"service {self.service_name} stopped")
 
     def _stop_quiet(self):
         if self._exe() is not None:
-            self._sc("stop", SERVICE_NAME, check=False)
+            self._sc("stop", self.service_name, check=False)
         else:
             self._run("stop", check=False)
 
@@ -165,10 +179,10 @@ class ServiceManager:
         self._stop_quiet()
         self.wait_for_state("stopped", timeout=30)
         if self._exe() is not None:
-            self._sc("delete", SERVICE_NAME, check=False)
+            self._sc("delete", self.service_name, check=False)
         else:
             self._run("remove", check=False)
-        self.log(f"service {SERVICE_NAME} removed")
+        self.log(f"service {self.service_name} removed")
 
     def restart(self):
         self.stop()
@@ -179,7 +193,7 @@ class ServiceManager:
     def is_installed(self):
         if _HAVE_PYWIN32:
             try:
-                win32serviceutil.QueryServiceStatus(SERVICE_NAME)
+                win32serviceutil.QueryServiceStatus(self.service_name)
                 return True
             except Exception:
                 return False
@@ -189,7 +203,7 @@ class ServiceManager:
         """Return 'running' | 'stopped' | 'pending' | 'not-installed' | 'unknown'."""
         if _HAVE_PYWIN32:
             try:
-                state = win32serviceutil.QueryServiceStatus(SERVICE_NAME)[1]
+                state = win32serviceutil.QueryServiceStatus(self.service_name)[1]
             except Exception:
                 return "not-installed"
             return {
@@ -218,7 +232,7 @@ class ServiceManager:
 
     def _sc_query(self):
         proc = subprocess.run(
-            ["sc", "query", SERVICE_NAME], capture_output=True, text=True
+            ["sc", "query", self.service_name], capture_output=True, text=True
         )
         if proc.returncode != 0:
             return None

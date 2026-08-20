@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """HTTP routing for the Virtual Product List (VPL) — Sprint 2.
 
 This sub-router is mounted onto the module's main `router` (which carries the
@@ -6,8 +8,10 @@ This sub-router is mounted onto the module's main `router` (which carries the
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from dependencies.auth import get_current_user_optional
+from dependencies.store_scope import assert_tenant_access
 from modules.procurement import vpl_service as service
 from modules.procurement import decision_service
 from modules.procurement.vpl_schemas import VplCreate, VpProductAdd
@@ -33,7 +37,9 @@ def list_vpls(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
+    assert_tenant_access(current_user, tenant_id)
     return service.list_vpls(
         tenant_id, cycle_id, store_id,
         status, search, page, page_size,
@@ -41,7 +47,12 @@ def list_vpls(
 
 
 @router.get("/{vpl_id}")
-def get_vpl(vpl_id: str, tenant_id: str = Query(...)):
+def get_vpl(
+    vpl_id: str,
+    tenant_id: str = Query(...),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    assert_tenant_access(current_user, tenant_id)
     return service.get_vpl(tenant_id, vpl_id)
 
 

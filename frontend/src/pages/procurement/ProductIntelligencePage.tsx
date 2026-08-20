@@ -2,34 +2,58 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { tenantService } from '../../services/tenantService'
 import { storeService } from '../../services/storeService'
-import { procurementService } from '../../services/procurementService'
 import { intelligenceService } from '../../services/intelligenceService'
-import { stockService } from '../../services/stockService'
 import { ApiError } from '../../services/apiClient'
 import { useActingUser } from '../../hooks/useActingUser'
 import type { Tenant } from '../../types/tenant'
 import type { Store } from '../../types/store'
-import type { Refresh } from '../../types/procurement'
-import type { PiDetail, PiGrid, PiRow } from '../../types/intelligence'
-import type { MovementRow, PurchaseRow } from '../../types/stock'
-import { EmptyState } from '../../components/common/EmptyState'
-import { ErrorState } from '../../components/common/ErrorState'
+import type {
+  PiDetail, PiGrid, PiHistory, PiOfferRow, PiOffers, PiRow, PiSupplier,
+} from '../../types/intelligence'
 import { IntelligenceGrid } from '../../components/procurement/intelligence/IntelligenceGrid'
+import { SupplierOfferGrid } from '../../components/procurement/intelligence/SupplierOfferGrid'
 import { IntelligenceDetail } from '../../components/procurement/intelligence/IntelligenceDetail'
 import { IntelligenceCharts } from '../../components/procurement/intelligence/IntelligenceCharts'
+import { AssignProductDialog } from '../../components/procurement/intelligence/AssignProductDialog'
 import { num } from '../../components/stock/format'
+import {
+  FilterAction, FilterBar, FilterBarEnd, FilterSearch, FilterSelect, FilterTabs,
+} from '../../design-system/components/FilterBar'
 import '../../components/procurement/purchase-manager.css'
 import '../../components/procurement/intelligence/product-intelligence.css'
 
-type Coverage = 'all' | 'purchase' | 'transfer' | 'multi'
+/**
+ * Product Intelligence — the NMW Purchase Manager's central procurement cockpit.
+ * The whole decision is made here, without opening another module:
+ *
+ *     selected stores -> Refresh every store -> Store VPL x N
+ *                     -> merged on the Common Product Mapping (never ProductCode)
+ *                     -> canonical product -> what NMW buys FOR THE NETWORK
+ *
+ * Mode 1 (Network Procurement) starts from the merged store VPLs; Mode 2
+ * (Supplier Offer Intelligence) starts from a supplier's live stock file and reads
+ * it against the same network intelligence, mapping unmapped lines in place.
+ */
+
+type Mode = 'network' | 'offers'
+type Filter = 'all' | 'purchase' | 'critical' | 'transfer' | 'unmapped'
 type Banner = { kind: 'success' | 'danger'; text: string } | null
 
-const COVERAGE: { value: Coverage; label: string }[] = [
-  { value: 'all', label: 'All products' },
-  { value: 'purchase', label: 'Purchase needed' },
-  { value: 'transfer', label: 'Transfer opportunities' },
-  { value: 'multi', label: 'Multi-store only' },
-]
+const FILTERS: Record<Mode, { value: Filter; label: string }[]> = {
+  network: [
+    { value: 'all', label: 'All' },
+    { value: 'purchase', label: 'To purchase' },
+    { value: 'critical', label: 'Critical' },
+    { value: 'transfer', label: 'Transfer only' },
+  ],
+  offers: [
+    { value: 'all', label: 'All' },
+    { value: 'purchase', label: 'Needed' },
+    { value: 'unmapped', label: 'Unmapped' },
+  ],
+}
+
+const offerKey = (r: PiOfferRow) => `${r.supplier_product_code ?? r.supplier_product_name}`
 
 export default function ProductIntelligencePage() {
   const [params] = useSearchParams()
@@ -38,31 +62,38 @@ export default function ProductIntelligencePage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState(params.get('tenant') ?? '')
   const [stores, setStores] = useState<Store[]>([])
-  const [storeId, setStoreId] = useState('')
-  const [refreshes, setRefreshes] = useState<Refresh[]>([])
-  const [refreshId, setRefreshId] = useState(params.get('refresh') ?? '')
+  /** The purchasing warehouse — the store the network purchase quantity is FOR. */
+  const [warehouseId, setWarehouseId] = useState(params.get('warehouse') ?? '')
+  /** The stores whose VPL feeds the network decision. */
+  const [selectedStores, setSelectedStores] = useState<string[]>([])
+  const [storePicker, setStorePicker] = useState(false)
 
+  const [mode, setMode] = useState<Mode>('network')
   const [grid, setGrid] = useState<PiGrid | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [needsBuild, setNeedsBuild] = useState(false)
-  const [building, setBuilding] = useState(false)
+  const [offers, setOffers] = useState<PiOffers | null>(null)
+  const [suppliers, setSuppliers] = useState<PiSupplier[]>([])
+  const [supplierCode, setSupplierCode] = useState('')
+
+  const [busy, setBusy] = useState(false)
   const [banner, setBanner] = useState<Banner>(null)
-
   const [search, setSearch] = useState('')
-  const [coverage, setCoverage] = useState<Coverage>('all')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [filter, setFilter] = useState<Filter>('all')
 
+  /** The focused row: a cache_id in Mode 1, a supplier line key in Mode 2. */
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<PiDetail | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [movement, setMovement] = useState<MovementRow[] | null>(null)
-  const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null)
+  /** The ONE store whose history + charts context is loaded. */
+  const [storeId, setStoreId] = useState<string | null>(null)
+  const [history, setHistory] = useState<PiHistory | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [assigning, setAssigning] = useState<PiOfferRow | null>(null)
 
   const searchRef = useRef<HTMLInputElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
 
   const say = useCallback((kind: 'success' | 'danger', text: string) => {
     setBanner({ kind, text })
-    window.setTimeout(() => setBanner(null), 4000)
+    window.setTimeout(() => setBanner(null), 6000)
   }, [])
   const fail = useCallback(
     (e: unknown) => say('danger', e instanceof Error ? e.message : 'Request failed'),
@@ -84,231 +115,353 @@ export default function ProductIntelligencePage() {
     () => stores.filter((s) => s.tenant_id === tenantId && s.is_active),
     [stores, tenantId],
   )
+
   useEffect(() => {
-    setStoreId((cur) => (tenantStores.some((s) => s.store_id === cur) ? cur : (tenantStores[0]?.store_id ?? '')))
+    setWarehouseId((cur) =>
+      tenantStores.some((s) => s.store_id === cur) ? cur : (tenantStores[0]?.store_id ?? ''))
+    setSelectedStores(tenantStores.map((s) => s.store_id))
   }, [tenantStores])
 
-  useEffect(() => {
-    if (!tenantId || !storeId) { setRefreshes([]); setRefreshId(''); return }
-    procurementService.refreshes(tenantId, storeId)
-      .then((rows) => {
-        const ready = rows.filter((r) => r.snapshot_status === 'Ready')
-        setRefreshes(ready)
-        setRefreshId((c) => (c && ready.some((r) => r.refresh_id === c) ? c : (ready[0]?.refresh_id ?? '')))
-      })
-      .catch(fail)
-  }, [tenantId, storeId, fail])
-
+  /* ---- Mode 1: the network grid (served from the build cache) -------------- */
   const loadGrid = useCallback(() => {
-    if (!tenantId || !refreshId) { setGrid(null); return }
-    setLoading(true)
-    setError(null)
-    setNeedsBuild(false)
-    intelligenceService.grid(tenantId, refreshId)
-      .then((g) => { setGrid(g); setSelectedId((c) => c ?? (g.rows[0]?.cache_id ?? null)) })
+    if (!tenantId || !warehouseId) { setGrid(null); return }
+    intelligenceService.grid(tenantId, warehouseId)
+      .then((g) => setGrid(g))
       .catch((e) => {
         setGrid(null)
-        if (e instanceof ApiError && e.status === 404) setNeedsBuild(true)
-        else setError(e instanceof Error ? e.message : 'Failed to load')
+        if (!(e instanceof ApiError && e.status === 404)) fail(e)
       })
-      .finally(() => setLoading(false))
-  }, [tenantId, refreshId])
+  }, [tenantId, warehouseId, fail])
 
   useEffect(() => { loadGrid() }, [loadGrid])
 
-  const rebuild = async () => {
-    if (!tenantId || !refreshId) return say('danger', 'Select a refresh first')
-    setBuilding(true)
+  /* ---- Mode 2: the supplier's offer, read against the network -------------- */
+  useEffect(() => {
+    if (!tenantId || !warehouseId) return
+    intelligenceService.suppliers(tenantId, warehouseId)
+      .then((r) => {
+        setSuppliers(r.suppliers)
+        setSupplierCode((c) => (r.suppliers.some((s) => s.supplier_code === c)
+          ? c : (r.suppliers[0]?.supplier_code ?? '')))
+      })
+      .catch(() => setSuppliers([]))
+  }, [tenantId, warehouseId])
+
+  const loadOffers = useCallback(() => {
+    if (mode !== 'offers' || !tenantId || !warehouseId || !supplierCode) { setOffers(null); return }
+    intelligenceService.offers(tenantId, warehouseId, supplierCode)
+      .then(setOffers)
+      .catch((e) => {
+        setOffers(null)
+        if (!(e instanceof ApiError && e.status === 404)) fail(e)
+      })
+  }, [mode, tenantId, warehouseId, supplierCode, fail])
+
+  useEffect(() => { loadOffers() }, [loadOffers])
+
+  /** Refresh EVERY selected store, rebuild every store VPL, consolidate. */
+  const refreshAndBuild = async () => {
+    if (!tenantId || !warehouseId) return
+    setBusy(true)
     try {
-      const res = await intelligenceService.build(tenantId, refreshId, actingUser || null)
-      say('success', `Built ${num(res.product_count)} products across ${res.store_count} stores`)
+      const res = await intelligenceService.refreshBuild(
+        tenantId, warehouseId, selectedStores, actingUser || null)
+      const failed = res.failed?.length ?? 0
+      say('success',
+        `${num(res.product_count)} products from ${res.store_count} store VPLs · ` +
+        `network need ${num(res.total_need_qty)} · purchase ${num(res.total_purchase_qty)}` +
+        (failed ? ` · ${failed} store refresh failed` : ''))
       setSelectedId(null)
       loadGrid()
+      loadOffers()
     } catch (e) {
       fail(e)
     } finally {
-      setBuilding(false)
+      setBusy(false)
     }
   }
 
-  // Load per-product detail + trend sources when the selection changes.
-  useEffect(() => {
-    if (!selectedId) { setDetail(null); setMovement(null); setPurchases(null); return }
-    let live = true
-    setDetailLoading(true)
-    setDetail(null); setMovement(null); setPurchases(null)
-    intelligenceService.detail(selectedId)
-      .then((d) => {
-        if (!live) return
-        setDetail(d)
-        const anchor = grid?.build.anchor_store_id
-        const code = d.product.product_code
-        if (anchor && code) {
-          stockService.monthlyMovement(tenantId, anchor, code, 6).then((m) => live && setMovement(m)).catch(() => live && setMovement([]))
-          stockService.purchaseHistory(tenantId, anchor, code).then((p) => live && setPurchases(p)).catch(() => live && setPurchases([]))
-        } else {
-          setMovement([]); setPurchases([])
-        }
-      })
-      .catch(() => live && setDetail(null))
-      .finally(() => live && setDetailLoading(false))
-    return () => { live = false }
-  }, [selectedId, grid, tenantId])
-
-  // Ctrl/⌘+F focuses search.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
-        e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  const visibleRows = useMemo(() => {
+  /* ---- Rows ---------------------------------------------------------------- */
+  const networkRows = useMemo(() => {
     if (!grid) return [] as PiRow[]
     const needle = search.trim().toLowerCase()
     return grid.rows.filter((r) => {
-      if (needle && !`${r.product_code ?? ''} ${r.product_name ?? ''}`.toLowerCase().includes(needle)) return false
-      if (coverage === 'purchase' && r.consolidated_purchase_qty <= 0) return false
-      if (coverage === 'transfer' && !(r.consolidated_purchase_qty === 0 && r.transfer_qty > 0)) return false
-      if (coverage === 'multi' && r.mapped_store_count <= 1) return false
+      if (needle && !`${r.product_name ?? ''} ${r.product_code ?? ''} ${r.supplier_product_name ?? ''}`
+        .toLowerCase().includes(needle)) return false
+      if (filter === 'purchase' && r.consolidated_purchase_qty <= 0) return false
+      if (filter === 'critical' && r.priority !== 'CRITICAL') return false
+      if (filter === 'transfer' && !(r.consolidated_purchase_qty === 0 && r.transfer_qty > 0)) return false
       return true
     })
-  }, [grid, search, coverage])
+  }, [grid, search, filter])
+
+  const offerRows = useMemo(() => {
+    if (!offers) return [] as PiOfferRow[]
+    const needle = search.trim().toLowerCase()
+    return offers.rows.filter((r) => {
+      if (needle && !`${r.supplier_product_name ?? ''} ${r.product_name ?? ''} ${r.supplier_product_code ?? ''}`
+        .toLowerCase().includes(needle)) return false
+      if (filter === 'purchase' && r.consolidated_purchase_qty <= 0) return false
+      if (filter === 'unmapped' && r.mapped) return false
+      return true
+    })
+  }, [offers, search, filter])
+
+  const rowIds = useMemo(
+    () => (mode === 'network' ? networkRows.map((r) => r.cache_id) : offerRows.map(offerKey)),
+    [mode, networkRows, offerRows],
+  )
+  const storeColumns = (mode === 'network' ? grid?.stores : offers?.stores) ?? []
 
   useEffect(() => {
-    if (visibleRows.length === 0) return
-    if (!visibleRows.some((r) => r.cache_id === selectedId)) setSelectedId(visibleRows[0].cache_id)
-  }, [visibleRows, selectedId])
+    if (rowIds.length && !rowIds.includes(selectedId ?? '')) setSelectedId(rowIds[0])
+    if (!rowIds.length) setSelectedId(null)
+  }, [rowIds, selectedId])
 
-  const exportCsv = () => {
-    if (!grid || visibleRows.length === 0) return say('danger', 'Nothing to export')
-    const cols = grid.stores
-    const header = ['Product Code', 'Product Name', 'Consolidated Suggested', 'Consolidated Purchase', 'Total Stock', 'Transfer']
-    cols.forEach((s) => { header.push(`${s.store_code ?? s.store_id} Suggested`, `${s.store_code ?? s.store_id} Stock`) })
-    const esc = (v: unknown) => {
-      const str = v == null ? '' : String(v)
-      return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str
-    }
-    const lines = [header.map(esc).join(',')]
-    for (const r of visibleRows) {
-      const row: (string | number)[] = [
-        r.product_code ?? '', r.product_name ?? '',
-        r.consolidated_suggest_qty, r.consolidated_purchase_qty, r.consolidated_stock_qty, r.transfer_qty,
-      ]
-      for (const s of cols) {
-        const cell = r.stores[s.store_id]
-        row.push(cell ? cell.suggested_qty ?? 0 : '', cell ? cell.stock_qty ?? 0 : '')
+  /** The cache_id behind the focused row — a Mode 2 line has one only once mapped. */
+  const cacheId = useMemo(() => {
+    if (mode === 'network') return selectedId
+    return offerRows.find((r) => offerKey(r) === selectedId)?.cache_id ?? null
+  }, [mode, selectedId, offerRows])
+
+  // The right panel: instant on selection, straight from the cache.
+  useEffect(() => {
+    if (!cacheId) { setDetail(null); return }
+    let live = true
+    intelligenceService.detail(cacheId)
+      .then((d) => { if (!live) return; setDetail(d) })
+      .catch(() => live && setDetail(null))
+    return () => { live = false }
+  }, [cacheId])
+
+  // The selected store defaults to the warehouse and survives row changes.
+  useEffect(() => { setStoreId((c) => c ?? warehouseId ?? null) }, [warehouseId])
+
+  // History for the SELECTED product + SELECTED store only. Nothing else.
+  useEffect(() => {
+    if (!cacheId || !storeId) { setHistory(null); return }
+    let live = true
+    setHistoryLoading(true)
+    intelligenceService.history(cacheId, storeId)
+      .then((h) => live && setHistory(h))
+      .catch(() => live && setHistory(null))
+      .finally(() => live && setHistoryLoading(false))
+    return () => { live = false }
+  }, [cacheId, storeId])
+
+  // Keyboard: ↑/↓ move the selection, Ctrl/⌘+F focuses search.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return
       }
-      lines.push(row.map(esc).join(','))
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA') return
+      if (!rowIds.length) return
+      e.preventDefault()
+      const i = rowIds.indexOf(selectedId ?? '')
+      const next = e.key === 'ArrowDown'
+        ? Math.min(rowIds.length - 1, i + 1)
+        : Math.max(0, i - 1)
+      setSelectedId(rowIds[next])
+      gridRef.current
+        ?.querySelector(`tr[data-cache="${CSS.escape(rowIds[next])}"]`)
+        ?.scrollIntoView({ block: 'nearest' })
     }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `product-intelligence-${refreshId.slice(0, 8)}.csv`
-    document.body.appendChild(a); a.click(); a.remove()
-    URL.revokeObjectURL(url)
-  }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [rowIds, selectedId])
 
-  const canWork = Boolean(tenantId && refreshId)
-  const summary = grid?.summary
+  const summary = mode === 'network' ? grid?.summary : null
+  const warehouseName = tenantStores.find((s) => s.store_id === warehouseId)?.store_name ?? 'Warehouse'
+  const storeLabel = selectedStores.length === tenantStores.length
+    ? `All ${tenantStores.length} stores`
+    : `${selectedStores.length} store${selectedStores.length === 1 ? '' : 's'}`
 
   return (
-    <div className="pm">
+    <div className="pm pi">
       <header className="pm-top">
         <div className="pm-top__ctx">
           <span className="pm-top__brand"><i className="bi bi-cpu" /> Product Intelligence</span>
-          <select className="sx-select" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
-            {tenants.length === 0 && <option value="">Loading…</option>}
+          <FilterSelect ariaLabel="Tenant" value={tenantId} onChange={setTenantId}>
             {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
-          <select className="sx-select" aria-label="Store" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
-            <option value="">Select store…</option>
-            {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-          </select>
-          <select className="sx-select" aria-label="Refresh" value={refreshId} onChange={(e) => setRefreshId(e.target.value)}>
-            <option value="">Select refresh…</option>
-            {refreshes.map((r) => <option key={r.refresh_id} value={r.refresh_id}>{r.snapshot_name} · {r.snapshot_status}</option>)}
-          </select>
+          </FilterSelect>
+          <FilterSelect
+            ariaLabel="Purchasing warehouse"
+            title="The store the network purchase quantity is calculated FOR"
+            value={warehouseId}
+            onChange={setWarehouseId}
+          >
+            {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>Buying for {s.store_name}</option>)}
+          </FilterSelect>
+
+          <div className="pi-storepick">
+            <button type="button" className="ds-filter-select pi-storepick__btn" onClick={() => setStorePicker((v) => !v)}>
+              <i className="bi bi-diagram-3" /> {storeLabel} <i className="bi bi-chevron-down" />
+            </button>
+            {storePicker && (
+              <div className="pi-storepick__menu">
+                {tenantStores.map((s) => (
+                  <label key={s.store_id}>
+                    <input
+                      type="checkbox"
+                      checked={selectedStores.includes(s.store_id)}
+                      disabled={s.store_id === warehouseId}
+                      onChange={(e) => setSelectedStores((cur) => e.target.checked
+                        ? [...cur, s.store_id]
+                        : cur.filter((id) => id !== s.store_id))}
+                    />
+                    {s.store_code} · {s.store_name}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <FilterTabs
+            value={mode}
+            ariaLabel="Intelligence mode"
+            options={[{ value: 'network', label: 'Network' }, { value: 'offers', label: 'Supplier Offer' }]}
+            onChange={(next) => { setMode(next); setFilter('all') }}
+          />
         </div>
+
         <div className="pi-buildbar">
-          {grid && <span className="pm-top__views" style={{ padding: '4px 10px', fontSize: 12 }}>Snapshot: {grid.build.generated_on ? new Date(grid.build.generated_on).toLocaleString('en-IN') : '—'}</span>}
-          <button className="pm-btn pm-btn--import" disabled={!canWork || building} onClick={rebuild}>
-            <i className="bi bi-cpu" /> {building ? 'Building…' : grid ? 'Rebuild' : 'Build Intelligence'}
-          </button>
+          {grid && (
+            <span className="pi-stamp">
+              {grid.stores.length} VPLs · {grid.build.generated_on
+                ? new Date(grid.build.generated_on).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                : '—'}
+            </span>
+          )}
+          <FilterAction
+            label={busy ? 'Refreshing…' : 'Refresh & Build'}
+            icon="bi-arrow-repeat"
+            disabled={busy || !warehouseId}
+            onClick={refreshAndBuild}
+          />
         </div>
       </header>
 
       {banner && <div className={`pm-banner pm-banner--${banner.kind}`}>{banner.text}</div>}
 
-      {!canWork ? (
-        <EmptyState icon="bi-cpu" title="Select a tenant, store and refresh" description="Product Intelligence consolidates a generated Refresh's VPL across every active store." />
-      ) : needsBuild ? (
-        <EmptyState
-          icon="bi-cpu"
-          title="No intelligence cache yet"
-          description="Build the Product Intelligence cache from the selected Refresh + VPL to see the consolidated cross-store grid."
+      <FilterBar compact stacked ariaLabel="Product intelligence filters">
+        <FilterSearch
+          inputRef={searchRef}
+          value={search}
+          placeholder="Search product…"
+          ariaLabel="Search product"
+          onChange={setSearch}
         />
-      ) : error ? (
-        <ErrorState description={error} onRetry={loadGrid} />
-      ) : (
-        <>
-          <div className="pm-toolbar">
-            <span className="sx-search">
-              <i className="bi bi-search" aria-hidden="true" />
-              <input ref={searchRef} type="search" value={search} placeholder="Search product…" aria-label="Search product" onChange={(e) => setSearch(e.target.value)} />
+        <FilterTabs
+          value={filter}
+          ariaLabel="Product filters"
+          options={FILTERS[mode]}
+          onChange={setFilter}
+        />
+        {mode === 'offers' && (
+          <FilterSelect
+            ariaLabel="Supplier"
+            value={supplierCode}
+            onChange={setSupplierCode}
+          >
+            {suppliers.map((s) => (
+              <option key={s.supplier_code} value={s.supplier_code}>
+                {s.supplier_name ?? s.supplier_code} ({s.line_count})
+              </option>
+            ))}
+          </FilterSelect>
+        )}
+        <FilterBarEnd>
+          {mode === 'offers' && offers && (
+            <span className="pi-stamp">
+              {offers.summary.unmapped_lines} unmapped of {offers.summary.offered_lines}
             </span>
-            <select className="sx-select" aria-label="Coverage filter" value={coverage} onChange={(e) => setCoverage(e.target.value as Coverage)}>
-              {COVERAGE.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-            <span className="pi-legend">
-              <span><i style={{ background: '#4338ca' }} />Suggested</span>
-              <span><i style={{ background: '#64748b' }} />Current Stock</span>
-              <span><i style={{ background: '#fef3c7', border: '1px solid #fde68a' }} />Transfer</span>
-            </span>
-            <div className="pm-toolbar__right">
-              <button className="pm-btn pm-btn--ghost" onClick={exportCsv}><i className="bi bi-download" /> Export</button>
-              <button className="pm-btn pm-btn--ghost" onClick={loadGrid} title="Reload"><i className="bi bi-arrow-repeat" /></button>
-            </div>
-          </div>
-
-          <div className="pi-layout">
-            <div className="pi-gridwrap">
-              {loading ? (
-                <div className="pi-chart__empty" style={{ height: '100%' }}>Loading grid…</div>
-              ) : visibleRows.length === 0 ? (
-                <EmptyState icon="bi-inbox" title="No products" description="No products match the current filters." />
-              ) : (
-                <IntelligenceGrid
-                  rows={visibleRows}
-                  stores={grid!.stores}
-                  selectedId={selectedId}
-                  onSelect={(r) => setSelectedId(r.cache_id)}
-                />
-              )}
-            </div>
-            <div className="pi-detailwrap">
-              <IntelligenceDetail detail={detail} loading={detailLoading} />
-            </div>
-            <div className="pi-chartswrap">
-              <IntelligenceCharts detail={detail} movement={movement} purchases={purchases} loading={detailLoading} />
-            </div>
-          </div>
-
-          {summary && (
-            <div className="pm-totals">
-              <span className="pm-stat"><span className="pm-stat__k">Total Products</span><b className="pm-stat__v">{num(summary.total_products)}</b></span>
-              <span className="pm-stat"><span className="pm-stat__k">Filtered</span><b className="pm-stat__v">{num(visibleRows.length)}</b></span>
-              <span className="pm-stat"><span className="pm-stat__k">Suggested Qty</span><b className="pm-stat__v">{num(summary.suggest_quantity)}</b></span>
-              <span className="pm-stat"><span className="pm-stat__k">Purchase Qty</span><b className="pm-stat__v pm-stat__v--warn">{num(summary.purchase_quantity)}</b></span>
-              <span className="pm-stat"><span className="pm-stat__k">Transfer Qty</span><b className="pm-stat__v">{num(summary.transfer_quantity)}</b></span>
-              <span className="pm-stat"><span className="pm-stat__k">Stock Qty</span><b className="pm-stat__v">{num(summary.stock_quantity)}</b></span>
-            </div>
           )}
-        </>
+          <FilterAction
+            label="Reload"
+            icon="bi-arrow-clockwise"
+            variant="secondary"
+            onClick={mode === 'network' ? loadGrid : loadOffers}
+          />
+        </FilterBarEnd>
+      </FilterBar>
+
+      <div className="pi-layout">
+        <div className="pi-gridwrap" ref={gridRef}>
+          {mode === 'network' ? (
+            <IntelligenceGrid
+              rows={networkRows}
+              stores={storeColumns}
+              selectedId={selectedId}
+              onSelect={(r) => setSelectedId(r.cache_id)}
+            />
+          ) : (
+            <SupplierOfferGrid
+              rows={offerRows}
+              stores={storeColumns}
+              selectedKey={selectedId}
+              onSelect={(r) => setSelectedId(offerKey(r))}
+              onAssign={setAssigning}
+            />
+          )}
+        </div>
+
+        <div className="pi-detailwrap">
+          <IntelligenceDetail
+            detail={detail}
+            selectedStoreId={storeId}
+            onSelectStore={setStoreId}
+            history={history}
+            historyLoading={historyLoading}
+          />
+        </div>
+
+        <div className="pi-chartswrap">
+          <IntelligenceCharts
+            cacheId={cacheId}
+            selectedStoreId={storeId}
+            onSelectStore={setStoreId}
+            months={4}
+          />
+        </div>
+      </div>
+
+      <div className="pm-totals">
+        <span className="pm-stat"><span className="pm-stat__k">Rows</span><b className="pm-stat__v">{num(rowIds.length)}</b></span>
+        {summary && (
+          <>
+            <span className="pm-stat"><span className="pm-stat__k">Products</span><b className="pm-stat__v">{num(summary.total_products)}</b></span>
+            <span className="pm-stat"><span className="pm-stat__k">Store VPLs</span><b className="pm-stat__v">{num(summary.store_count)}</b></span>
+            <span className="pm-stat"><span className="pm-stat__k">Network Need</span><b className="pm-stat__v">{num(summary.need_quantity)}</b></span>
+            <span className="pm-stat"><span className="pm-stat__k">{warehouseName} Purchase</span><b className="pm-stat__v pm-stat__v--warn">{num(summary.purchase_quantity)}</b></span>
+            <span className="pm-stat"><span className="pm-stat__k">Transfer</span><b className="pm-stat__v">{num(summary.transfer_quantity)}</b></span>
+            <span className="pm-stat"><span className="pm-stat__k">Network Stock</span><b className="pm-stat__v">{num(summary.stock_quantity)}</b></span>
+          </>
+        )}
+        {mode === 'offers' && offers && (
+          <span className="pm-stat">
+            <span className="pm-stat__k">Purchase from supplier</span>
+            <b className="pm-stat__v pm-stat__v--warn">{num(offers.summary.purchase_quantity)}</b>
+          </span>
+        )}
+      </div>
+
+      {assigning && (
+        <AssignProductDialog
+          tenantId={tenantId}
+          warehouseStoreId={warehouseId}
+          warehouseName={warehouseName}
+          row={assigning}
+          actor={actingUser || null}
+          onClose={() => setAssigning(null)}
+          onSaved={(msg) => {
+            setAssigning(null)
+            say('success', `${msg} · rebuild to fold it into the network numbers`)
+            loadOffers()
+          }}
+        />
       )}
     </div>
   )

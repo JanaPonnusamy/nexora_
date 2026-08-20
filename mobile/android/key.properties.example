@@ -1,0 +1,37 @@
+# Release signing for the Axythic Android build.
+#
+# Copy to `android/key.properties` and fill in. That file is gitignored and must
+# stay that way — it holds the passwords to the key that identifies this app to
+# Google Play forever. Losing the keystore means never being able to update the
+# published app again; back it up somewhere that is not this machine.
+#
+# Generate one:
+#
+#   keytool -genkey -v -keystore ~/axythic-upload.jks \
+#     -keyalg RSA -keysize 2048 -validity 10000 -alias axythic
+#
+# storeFile is resolved relative to the `android/` directory, so an absolute
+# path is usually clearest.
+
+storeFile=/absolute/path/to/axythic-upload.jks
+storePassword=
+keyAlias=axythic
+keyPassword=
+
+# CI reads the same values from repository secrets instead of this file:
+#
+#   AXYTHIC_KEYSTORE_PATH       path to the decoded .jks on the runner
+#   AXYTHIC_KEYSTORE_PASSWORD
+#   AXYTHIC_KEY_ALIAS
+#   AXYTHIC_KEY_PASSWORD
+#
+# Store the keystore itself as a base64 secret (AXYTHIC_KEYSTORE_BASE64) and
+# decode it into the workspace during the job:
+#
+#   echo "$AXYTHIC_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/axythic-upload.jks"
+#
+# Any build meant for distribution must set AXYTHIC_REQUIRE_RELEASE_SIGNING=true
+# (or pass -PrequireReleaseSigning=true when invoking Gradle directly), which
+# turns a missing keystore into a build failure rather than a debug-signed
+# artifact that Play will reject. `flutter build` does not forward -P properties
+# to Gradle, so the environment variable is the one to use from CI.

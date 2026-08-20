@@ -48,19 +48,19 @@ const STATUS_LABEL: Record<string, string> = {
   PARTIAL_SUCCESS: 'Partial Success',
 }
 
-export function SyncStatusBadge({ status }: { status: string | null }) {
-  if (!status) return <span className="sx-dim">—</span>
+export function SyncStatusBadge({ status, compact = false }: { status: string | null; compact?: boolean }) {
+  if (!status) return <span className="sx-dim">-</span>
   const tone = STATUS_TONE[status] ?? 'muted'
   const running = status === 'Syncing' || status === 'RUNNING'
   return (
-    <SxChip tone={tone} dot running={running}>
+    <SxChip tone={tone} dot running={running} compact={compact}>
       {STATUS_LABEL[status] ?? status}
     </SxChip>
   )
 }
 
 export function SyncTypeBadge({ value }: { value: string | null }) {
-  if (!value) return <span className="sx-dim">—</span>
+  if (!value) return <span className="sx-dim">-</span>
   const v = value.toUpperCase()
   if (v.includes('ROLL')) return <SxChip tone="violet">Rolling Window</SxChip>
   return <SxChip tone="teal">Upsert</SxChip>

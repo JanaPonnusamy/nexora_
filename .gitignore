@@ -7,6 +7,12 @@ __pycache__/
 # Environment
 .env
 
+# Deployment secrets. ho.env holds the JWT signing secret and setup password;
+# it is generated per-install by ho_setup/ho_config.py and must never be
+# committed. `*.env` is the catch-all — .env.example and .env.template files
+# do not match it and stay tracked.
+*.env
+
 # Logs
 logs/
 *.log
@@ -53,3 +59,37 @@ deploy/sharadha/ho.env.production
 
 # Database dumps (contain real supplier PII — names, mobile numbers, GST numbers)
 nexora_platform_dump.sql
+
+# Local runtime data + sample assets. Contain real supplier PII: scanned/uploaded
+# invoices (document extraction) and the local catalog cache. Never commit.
+# Anchored to repo root so it doesn't also match source folders named `data/`
+# (e.g. mobile/lib/features/*/data/) elsewhere in the tree.
+/data/
+assects/
+catalog.db
+
+# Editor/IDE scratch profiles (cache, local storage, machine id) — not project code
+.antigravity-*/
+
+# Node deps / build output (desktop Electron client)
+node_modules/
+desktop/supplier-stock-client/dist/
+
+# WhatsApp runtime data: browser session profiles, generated send debug
+# captures, and outbound file attachments. Regenerated at runtime; profiles/
+# can contain live session/auth cookies.
+backend/storage/whatsapp/profiles/
+backend/storage/whatsapp/profiles.json
+backend/storage/whatsapp/debug/
+backend/storage/whatsapp/files/
+
+# Generated Excel/legacy .xls exports (distribution runs, ad-hoc temp
+# exports) -- not source, regenerated on demand.
+*.xlsx
+*.xls
+temp/
+
+# Playwright's downloaded browser binaries (fixed shared path, see
+# backend/.env PLAYWRIGHT_BROWSERS_PATH) -- large, regenerated via
+# `playwright install firefox`, never source.
+/.ms-playwright/

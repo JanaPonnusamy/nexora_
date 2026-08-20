@@ -110,11 +110,18 @@ def add_manual(tenant_id, refresh_id, cycle_id, store_id,
         raise HTTPException(status_code=400, detail="product_code is required")
     if qty is None or qty <= 0:
         raise HTTPException(status_code=400, detail="qty must be > 0")
-    if repo.product_already_in_refresh(tenant_id, refresh_id, product_code):
-        raise HTTPException(
-            status_code=409,
-            detail="Product is already a working item in this refresh",
-        )
+    existing = repo.get_item_by_product(tenant_id, refresh_id, product_code)
+    if existing:
+        # Idempotent: a retried/duplicate submission for a product already
+        # working in this refresh returns the existing row instead of a 409 —
+        # callers (including a rapid double-submit from the UI) always land
+        # on the same order item rather than erroring or inserting a dupe.
+        return {
+            "order_item_id": existing["order_item_id"],
+            "product_code": product_code,
+            "is_manual": existing["is_manual"],
+            "already_exists": True,
+        }
     new_id = repo.add_manual_item(
         tenant_id, refresh_id, cycle_id, store_id,
         product_code, product_name, qty, created_by,

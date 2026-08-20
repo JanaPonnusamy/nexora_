@@ -49,6 +49,10 @@ def control_stores(store_ids, action):
     return runtime_repository.control_stores(store_ids, action)
 
 
+def fail_execution(execution_id, message=None):
+    return runtime_repository.fail_execution(execution_id, message)
+
+
 def ack_chunk(chunk_execution_id):
     return runtime_repository.ack_chunk(chunk_execution_id)
 
@@ -71,6 +75,8 @@ def report_table_metrics(payload):
         payload.get("rows_uploaded", 0),
         payload.get("rows_skipped", 0),
         payload.get("source_total", 0),
+        payload.get("status") or ("FAILED" if payload.get("error_message") else "COMPLETED"),
+        payload.get("error_message"),
     )
 
 

@@ -67,18 +67,19 @@ def create_vpl(data):
             """
             INSERT INTO procurement.procurement_refreshes
                 (tenant_id, cycle_id, store_id,
-                 snapshot_name, snapshot_status,
+                 snapshot_name, snapshot_status, refresh_no,
                  rolling_days, min_days, max_days, previous_refresh_id,
                  snapshot_grn_number, snapshot_sale_bill_number,
                  sync_execution_id, created_by)
             OUTPUT INSERTED.refresh_id
-            VALUES (?, ?, ?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["tenant_id"],
                 data["cycle_id"],
                 data.get("store_id"),
                 data["snapshot_name"],
+                data.get("refresh_no"),
                 data.get("rolling_days"),
                 data.get("min_days"),
                 data.get("max_days"),
@@ -95,6 +96,25 @@ def create_vpl(data):
     except Exception:
         conn.rollback()
         raise
+    finally:
+        conn.close()
+
+
+def next_refresh_no(tenant_id, cycle_id):
+    """Next sequential Refresh number WITHIN the cycle (1-based). Numbering
+    restarts at 1 for every new cycle — see the Refresh naming convention."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT MAX(refresh_no) FROM procurement.procurement_refreshes
+            WHERE tenant_id = ? AND cycle_id = ? AND is_deleted = 0
+            """,
+            (tenant_id, cycle_id),
+        )
+        row = cursor.fetchone()
+        return (row[0] or 0) + 1 if row else 1
     finally:
         conn.close()
 

@@ -29,28 +29,35 @@ from modules.procurement._dbutil import (
 )
 
 _SQL_DIR = os.path.join(os.path.dirname(__file__), "sql")
-_DDL_FILE = os.path.join(_SQL_DIR, "0012_supplier_optimization.sql")
+_DDL_FILES = (
+    os.path.join(_SQL_DIR, "0012_supplier_optimization.sql"),
+    # consider_minimum_order — added later, self-applies the same way.
+    os.path.join(_SQL_DIR, "0013_supplier_min_order_flag.sql"),
+)
 
 _schema_ready = False
 
 
 def ensure_schema():
-    """Create supplier_min_order + optimization_moves if absent (idempotent).
+    """Create supplier_min_order + optimization_moves if absent, and add any
+    later columns (idempotent).
 
-    Mirrors the supplier-stock provisioning pattern (splits the DDL on GO) so a
-    fresh environment self-provisions on first use — no manual migration step.
+    Mirrors the supplier-stock provisioning pattern (splits each DDL file on
+    GO) so a fresh environment self-provisions on first use — no manual
+    migration step.
     """
     global _schema_ready
     if _schema_ready:
         return
-    with open(_DDL_FILE, "r", encoding="utf-8") as fh:
-        script = fh.read()
-    batches = [b.strip() for b in script.split("\nGO") if b.strip()]
     conn = get_connection()
     try:
         cur = conn.cursor()
-        for batch in batches:
-            cur.execute(batch)
+        for ddl_file in _DDL_FILES:
+            with open(ddl_file, "r", encoding="utf-8") as fh:
+                script = fh.read()
+            for batch in (b.strip() for b in script.split("\nGO")):
+                if batch:
+                    cur.execute(batch)
         conn.commit()
     finally:
         conn.close()
@@ -104,6 +111,90 @@ def upsert_min_order(tenant_id, store_id, supplier_code, value, updated_by):
             """,
             (tenant_id, store_id, supplier_code,
              value, updated_by, value, updated_by),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def list_consider_flags(tenant_id, store_id):
+    """consider_minimum_order per supplier -> {supplier_code: bool}. Absent
+    rows are not "off" — they simply have no config yet; callers should treat
+    a missing key the same as False (nothing configured => not considered)."""
+    ensure_schema()
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT CAST(supplier_code AS VARCHAR(100)) AS supplier_code,
+                   consider_minimum_order
+            FROM procurement.supplier_min_order
+            WHERE tenant_id = ? AND store_id = ?
+            """,
+            (tenant_id, store_id),
+        )
+        return {r["supplier_code"]: bool(r["consider_minimum_order"])
+                for r in _rows_to_dicts(cur)}
+    finally:
+        conn.close()
+
+
+def list_min_order_config(tenant_id, store_id):
+    """Both columns in one round trip -> {supplier_code: {min_order_value,
+    consider_minimum_order}} — powers the Minimum Order Settings UI."""
+    ensure_schema()
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT CAST(supplier_code AS VARCHAR(100)) AS supplier_code,
+                   min_order_value, consider_minimum_order
+            FROM procurement.supplier_min_order
+            WHERE tenant_id = ? AND store_id = ?
+            """,
+            (tenant_id, store_id),
+        )
+        return {
+            r["supplier_code"]: {
+                "min_order_value": float(r["min_order_value"] or 0),
+                "consider_minimum_order": bool(r["consider_minimum_order"]),
+            }
+            for r in _rows_to_dicts(cur)
+        }
+    finally:
+        conn.close()
+
+
+def upsert_consider_flag(tenant_id, store_id, supplier_code, flag, updated_by):
+    """Set a supplier's Optimization opt-in flag for a store (min_order_value
+    defaults to 0 on first insert if the supplier has no row yet)."""
+    ensure_schema()
+    updated_by = _as_uid(updated_by)
+    flag_bit = 1 if flag else 0
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            MERGE procurement.supplier_min_order AS t
+            USING (SELECT ? AS tenant_id, ? AS store_id, ? AS supplier_code) AS s
+              ON  t.tenant_id = s.tenant_id
+              AND t.store_id = s.store_id
+              AND t.supplier_code = s.supplier_code
+            WHEN MATCHED THEN
+              UPDATE SET consider_minimum_order = ?, updated_by = ?, updated_at = GETDATE()
+            WHEN NOT MATCHED THEN
+              INSERT (tenant_id, store_id, supplier_code, min_order_value,
+                      consider_minimum_order, updated_by)
+              VALUES (s.tenant_id, s.store_id, s.supplier_code, 0, ?, ?);
+            """,
+            (tenant_id, store_id, supplier_code,
+             flag_bit, updated_by, flag_bit, updated_by),
         )
         conn.commit()
     except Exception:
