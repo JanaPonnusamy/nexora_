@@ -111,27 +111,22 @@ def product_core_bulk(user, tenant_id, items, months=3):
 
     def _load_one(item):
         core = repository.get_product_core(tenant_id, item["store_id"], item["product_code"], months)
-        sales = core.get("sales") or []
-        first_sale = sales[0] if sales else None
-        bill_items = []
-        active_bill_no = None
-        if first_sale and first_sale.get("bill_no"):
-            active_bill_no = first_sale.get("bill_no")
-            bill_items = repository.get_bill_items(
-                tenant_id,
-                item["store_id"],
-                first_sale.get("bill_no"),
-                first_sale.get("date"),
-            )
+        # NOTE: the latest bill's line items are intentionally NOT fetched here.
+        # get_bill_items is the slowest per-store query (200-700ms against the 3M
+        # row sync.ProductSaleInformation), and nothing consumes this eager copy:
+        # the bill drawer (BillDetailCard) fetches its own items on click via
+        # /products/bill-items. Fetching it for every store on every search was
+        # pure dead weight that dominated the multi-store load time. Keep the
+        # keys (empty) so the response shape stays stable for the client.
         return {
             "store_id": item["store_id"],
             "product_code": item["product_code"],
             "batches": core.get("batches") or [],
             "purchases": core.get("purchases") or [],
-            "sales": sales,
+            "sales": core.get("sales") or [],
             "movement": core.get("movement") or [],
-            "billItems": bill_items,
-            "activeBillNo": active_bill_no,
+            "billItems": [],
+            "activeBillNo": None,
         }
 
     if not unique_items:
