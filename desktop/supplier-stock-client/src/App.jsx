@@ -3255,7 +3255,12 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     const token = ++supplierRequestRef.current;
     setSupplierStatus({ state: 'loading', message: 'Loading suppliers...' });
     try {
-      const response = await api.getSuppliers(session, { search, storeId: scopeStoreId, tenantId: selectedWarehouse?.tenant_id });
+      // Central ordering is tenant-wide: supplier stock is imported under
+      // whichever store did the import (often a branch, not the warehouse), so
+      // the catalogue is scoped to the warehouse's TENANT, never its store_id.
+      // The warehouse pick chooses the tenant + order target; it must not filter
+      // the supplier list by import store (which would drop everything).
+      const response = await api.getSuppliers(session, { search, storeId: '', tenantId: selectedWarehouse?.tenant_id });
       if (supplierRequestRef.current !== token) return; // superseded by a newer load
       const items = asArray(response);
       setSuppliers(items);
@@ -3288,7 +3293,10 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
       // Always fetch the full unfiltered set - search/in-stock filtering
       // happens client-side in visibleProducts, and the full set is what
       // gets cached and diffed against next time.
-      const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0, storeId: scopeStoreId });
+      // Tenant-wide (see loadSuppliers): scope by the warehouse's tenant, not
+      // its store_id, so imported supplier products resolve regardless of which
+      // store performed the import.
+      const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0, storeId: '', tenantId: selectedWarehouse?.tenant_id || tenantId });
       if (productRequestRef.current !== requestToken) return;
       const items = normalizeSupplierProductRows(response);
       setProducts(items);
