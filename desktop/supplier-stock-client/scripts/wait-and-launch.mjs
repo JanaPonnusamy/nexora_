@@ -7,7 +7,4 @@ execSync(`wait-on http://127.0.0.1:${port}`, { stdio: 'inherit' });
 // never yields the app/BrowserWindow API. Must be entirely absent from the
 // child's env (not just falsy) or Electron still boots in Node mode.
 const { ELECTRON_RUN_AS_NODE, ...cleanEnv } = process.env;
-// Forward any extra args (e.g. --stock-only) through to the Electron app so
-// `dev:stock` can launch the Stock Check window.
-const extraArgs = process.argv.slice(2).join(' ');
-execSync(`electron .${extraArgs ? ' ' + extraArgs : ''}`, { stdio: 'inherit', env: cleanEnv });
+execSync('electron .', { stdio: 'inherit', env: cleanEnv });

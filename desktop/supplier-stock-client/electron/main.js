@@ -22,20 +22,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isDev = !app.isPackaged;
 
-// "Stock Check" launch mode: same app, but a window locked to only the Stock
-// Availability screen (plus Settings for first-run config). Resolved from, in
-// order: the `--stock-only` CLI flag (dev), NEXORA_STOCK_ONLY=1, or a baked
-// `nexoraMode: "stock"` in package.json (set by electron-builder's
-// extraMetadata for the store-PC installer). The mode is handed to the renderer
-// as a `?mode=stock` query param so App.jsx can trim its nav to match.
-let bakedMode = '';
-try { bakedMode = require(path.join(__dirname, '..', 'package.json')).nexoraMode || ''; } catch { /* dev */ }
-const stockOnly = process.argv.includes('--stock-only')
-  || process.env.NEXORA_STOCK_ONLY === '1'
-  || bakedMode === 'stock';
-const windowTitle = stockOnly ? 'Nexora Stock Check' : 'Nexora Supplier Stock';
-const loadQuery = stockOnly ? { mode: 'stock' } : {};
-
 function canReachDevServer(port) {
   return new Promise((resolve) => {
     const req = http.get(
@@ -79,7 +65,7 @@ async function createWindow() {
     height: 820,
     minWidth: 980,
     minHeight: 680,
-    title: windowTitle,
+    title: 'Nexora Supplier Stock',
     backgroundColor: '#f5f7fb',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -100,17 +86,15 @@ async function createWindow() {
     const devPort = process.env.NEXORA_DEV_PORT || 5173;
     const useDevServer = await canReachDevServer(devPort);
     if (useDevServer) {
-      const devUrl = new URL(`http://127.0.0.1:${devPort}`);
-      if (stockOnly) devUrl.searchParams.set('mode', 'stock');
       win.webContents.session.clearCache().finally(() => {
-        win.loadURL(devUrl.toString());
+        win.loadURL(`http://127.0.0.1:${devPort}`);
       });
       win.webContents.openDevTools({ mode: 'right' });
     } else {
-      win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query: loadQuery });
+      win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
     }
   } else {
-    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query: loadQuery });
+    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 }
 
