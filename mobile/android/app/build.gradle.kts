@@ -96,6 +96,16 @@ android {
 
     buildTypes {
         release {
+            // Phase 6 release hardening. R8 removes unreachable JVM/plugin
+            // code and resource shrinking drops Android resources that no
+            // release code references. Flutter's Dart AOT tree-shaking still
+            // runs separately as part of `flutter build`.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             signingConfig = if (hasReleaseSigning) {
                 signingConfigs.getByName("release")
             } else {

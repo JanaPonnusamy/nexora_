@@ -33,10 +33,10 @@ class CrashRecord {
 
 /// Where uncaught errors go.
 ///
-/// An interface rather than a direct Crashlytics call because Firebase is not
-/// provisioned yet (§1.3). Everything that reports an error already talks to
-/// this, so adding Crashlytics later is a new implementation and one line in
-/// bootstrap — not a hunt through the codebase for call sites.
+/// An interface keeps error capture independent from any future remote
+/// reporting provider. Everything that reports an error already talks to this,
+/// so a provider can be added later without hunting through the codebase for
+/// call sites.
 abstract class CrashReporter {
   /// Record a failure. Must never throw: it is called from error handlers, and
   /// an error handler that fails takes the original error down with it.
@@ -57,8 +57,8 @@ abstract class CrashReporter {
 
 /// The default: logs, and keeps the last few failures in memory.
 ///
-/// Without Crashlytics there is no server-side record, so the next best thing
-/// is that the device can answer "what went wrong earlier?" itself — otherwise
+/// There is no server-side record, so the device keeps enough information to
+/// answer "what went wrong earlier?" itself — otherwise
 /// a store user's only report is "it closed". The buffer is bounded and lives
 /// only in RAM: crash detail can contain invoice values, and a crash log that
 /// outlives the process is a data-retention question nobody has asked for.

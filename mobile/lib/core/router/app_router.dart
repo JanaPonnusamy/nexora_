@@ -20,6 +20,10 @@ import 'package:nexora_mobile/features/pass_gen/presentation/pass_gen_screen.dar
 import 'package:nexora_mobile/features/procurement/presentation/cycle_console_screen.dart';
 import 'package:nexora_mobile/features/procurement/presentation/legacy_order_console_screen.dart';
 import 'package:nexora_mobile/features/procurement/presentation/procurement_hub_screen.dart';
+import 'package:nexora_mobile/features/procurement/presentation/procurement_conflicts_screen.dart';
+import 'package:nexora_mobile/features/procurement/presentation/purchase_workspace_screen.dart';
+import 'package:nexora_mobile/features/procurement/presentation/refresh_compare_screen.dart';
+import 'package:nexora_mobile/features/procurement/presentation/stock_distribution_screen.dart';
 import 'package:nexora_mobile/features/reports/presentation/reports_catalog_screen.dart';
 import 'package:nexora_mobile/features/time_report/presentation/time_report_screen.dart';
 import 'package:nexora_mobile/features/settings/presentation/more_screen.dart';
@@ -30,12 +34,17 @@ import 'package:nexora_mobile/features/sync/presentation/sync_live_screen.dart';
 import 'package:nexora_mobile/features/sync/presentation/sync_status_screen.dart';
 import 'package:nexora_mobile/shared/presentation/splash_screen.dart';
 
+/// Keeps the branded Flutter splash visible long enough to read, even when
+/// session restoration completes almost instantly.
+final startupSplashProvider = StateProvider<bool>((_) => true);
+
 /// Bridges Riverpod's [AuthState] into a [Listenable] GoRouter can refresh on,
 /// and centralises the redirect (guard) logic for the whole app.
 class RouterNotifier extends ChangeNotifier {
   RouterNotifier(this._ref) {
     _ref.listen<AuthState>(
         authControllerProvider, (_, __) => notifyListeners());
+    _ref.listen<bool>(startupSplashProvider, (_, __) => notifyListeners());
   }
 
   final Ref _ref;
@@ -44,8 +53,9 @@ class RouterNotifier extends ChangeNotifier {
     final auth = _ref.read(authControllerProvider);
     final location = state.matchedLocation;
 
-    // 1) Still resolving a stored session → hold on the splash screen.
-    if (auth.status == AuthStatus.unknown) {
+    // 1) Keep the complete branded splash on screen for the startup window and
+    // while a stored session is still resolving.
+    if (_ref.read(startupSplashProvider) || auth.status == AuthStatus.unknown) {
       return location == AppRoutes.splashPath ? null : AppRoutes.splashPath;
     }
 
@@ -172,6 +182,31 @@ final routerProvider = Provider<GoRouter>((ref) {
                 builder: (_, __) => const ProcurementHubScreen(),
                 routes: [
                   GoRoute(
+                    path: AppRoutes.purchaseWorkspacePath,
+                    name: AppRoutes.purchaseWorkspace,
+                    builder: (_, __) => const PurchaseWorkspaceScreen(),
+                  ),
+                  GoRoute(
+                    path: AppRoutes.refreshComparePath,
+                    name: AppRoutes.refreshCompare,
+                    builder: (_, __) => const RefreshCompareScreen(),
+                  ),
+                  GoRoute(
+                    path: AppRoutes.stockDistributionPath,
+                    name: AppRoutes.stockDistribution,
+                    builder: (_, __) => const StockDistributionScreen(),
+                  ),
+                  GoRoute(
+                    path: AppRoutes.procurementConflictsPath,
+                    name: AppRoutes.procurementConflicts,
+                    builder: (_, __) => const ProcurementConflictsScreen(),
+                  ),
+                  GoRoute(
+                    path: AppRoutes.suppliersPath,
+                    name: AppRoutes.suppliers,
+                    builder: (_, __) => const SuppliersScreen(),
+                  ),
+                  GoRoute(
                     path: AppRoutes.cycleConsolePath,
                     name: AppRoutes.cycleConsole,
                     builder: (_, __) => const CycleConsoleScreen(),
@@ -214,11 +249,6 @@ final routerProvider = Provider<GoRouter>((ref) {
                     path: AppRoutes.reportsPath,
                     name: AppRoutes.reports,
                     builder: (_, __) => const ReportsCatalogScreen(),
-                  ),
-                  GoRoute(
-                    path: AppRoutes.suppliersPath,
-                    name: AppRoutes.suppliers,
-                    builder: (_, __) => const SuppliersScreen(),
                   ),
                   GoRoute(
                     path: AppRoutes.timeReportPath,

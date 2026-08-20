@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="288"
+    android:viewportHeight="288">
+    <!-- Android 12 renders this drawable inside a fixed, masked 288dp icon
+         area. The inset group keeps the visible mark near 54x60dp, matching
+         the Flutter splash instead of allowing the OS to crop an edge-to-edge
+         logo. -->
+    <group
+        android:scaleX="0.68"
+        android:scaleY="0.68"
+        android:translateX="117.5"
+        android:translateY="114">
+    <path android:pathData="M39,4 L3,84 L21,84 L39,57 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="3"
+                android:endY="84"
+                android:startX="39"
+                android:startY="4"
+                android:type="linear">
+                <item android:color="#FF42B4F5" android:offset="0" />
+                <item android:color="#FF1976D2" android:offset="0.45" />
+                <item android:color="#FF0D3A8A" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M39,4 L52,4 L73,84 L57,84 L39,57 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="73"
+                android:endY="84"
+                android:startX="39"
+                android:startY="4"
+                android:type="linear">
+                <item android:color="#FF00D4E8" android:offset="0" />
+                <item android:color="#FF8B3FD9" android:offset="0.28" />
+                <item android:color="#FFE82070" android:offset="0.62" />
+                <item android:color="#FFFF6010" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M52,4 L55,4 L75,84 L73,84 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="75"
+                android:endY="84"
+                android:startX="52"
+                android:startY="4"
+                android:type="linear">
+                <item android:color="#FFA8D4F0" android:offset="0" />
+                <item android:color="#FF4D7490" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M39,5 C42,2 49,2 53,5 C50,9 44,11 39,10 Z" />
+    </group>
+</vector>

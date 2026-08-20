@@ -26,7 +26,7 @@ final masterScopeProvider = Provider<MasterScope Function()>((ref) {
   return () {
     final auth = ref.read(authControllerProvider);
     final store = auth.selectedStore;
-    final tenantId = store?.tenantId ?? auth.user?.tenantId ?? '';
+    final tenantId = auth.activeTenantId ?? '';
     return MasterScope(
       tenantId: tenantId,
       storeId: store?.storeId,

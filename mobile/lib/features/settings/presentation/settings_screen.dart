@@ -173,8 +173,8 @@ class _ReadOnlyTile extends StatelessWidget {
 
 /// Recent crashes, read from the in-memory reporter.
 ///
-/// Present because Crashlytics is not: with no server-side record, this is the
-/// only way a store user's "it closed on me" becomes something actionable.
+/// With no server-side crash record, this is the way a store user's "it closed
+/// on me" becomes something actionable.
 class _RecentErrorsTile extends ConsumerWidget {
   const _RecentErrorsTile();
 

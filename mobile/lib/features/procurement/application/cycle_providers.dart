@@ -20,8 +20,8 @@ class CycleScope {
 final cycleScopeProvider = Provider<CycleScope?>((ref) {
   final auth = ref.watch(authControllerProvider);
   final store = auth.selectedStore;
-  final tenantId = store?.tenantId ?? auth.user?.tenantId;
-  if (store == null || tenantId == null || tenantId.isEmpty) return null;
+  final tenantId = auth.activeTenantId;
+  if (store == null || tenantId == null) return null;
   return CycleScope(tenantId: tenantId, storeId: store.storeId);
 });
 

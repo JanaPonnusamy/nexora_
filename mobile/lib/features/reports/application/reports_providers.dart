@@ -51,8 +51,8 @@ class ReportScope {
 final reportScopeProvider = Provider<ReportScope?>((ref) {
   final auth = ref.watch(authControllerProvider);
   final store = auth.selectedStore;
-  final tenantId = auth.user?.tenantId ?? store?.tenantId;
-  if (store == null || tenantId == null || tenantId.isEmpty) return null;
+  final tenantId = auth.activeTenantId;
+  if (store == null || tenantId == null) return null;
   return ReportScope(tenantId: tenantId, storeId: store.storeId);
 });
 

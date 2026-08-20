@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +13,7 @@ import 'package:nexora_mobile/core/security/app_lock_controller.dart';
 import 'package:nexora_mobile/core/security/presentation/app_lock_gate.dart';
 import 'package:nexora_mobile/core/theme/app_theme.dart';
 import 'package:nexora_mobile/features/auth/application/auth_controller.dart';
+import 'package:nexora_mobile/features/procurement/application/purchase_workspace_providers.dart';
 
 /// Root widget. Kicks off session restoration once, then hands routing to
 /// GoRouter (which redirects off [AuthState]).
@@ -22,18 +25,32 @@ class NexoraApp extends ConsumerStatefulWidget {
 }
 
 class _NexoraAppState extends ConsumerState<NexoraApp> {
+  static const _minimumSplashDuration = Duration(milliseconds: 1800);
+
   @override
   void initState() {
     super.initState();
     // Restore any persisted session after the first frame so provider reads are
     // safe. The splash screen is shown until this resolves.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(authControllerProvider.notifier).bootstrap();
-      // Reads the stored unlock preference and, if set, locks before the first
-      // frame of real content — otherwise a cold start paints the dashboard and
-      // then covers it.
-      ref.read(appLockControllerProvider.notifier).bootstrap();
-    });
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => unawaited(_bootstrap()));
+  }
+
+  Future<void> _bootstrap() async {
+    try {
+      await Future.wait<void>([
+        ref.read(authControllerProvider.notifier).bootstrap(),
+        // Reads the stored unlock preference and, if set, locks before the
+        // first frame of real content.
+        ref.read(appLockControllerProvider.notifier).bootstrap(),
+        // Avoid a one-frame branded splash when secure storage resolves fast.
+        Future<void>.delayed(_minimumSplashDuration),
+      ]);
+    } finally {
+      if (mounted) {
+        ref.read(startupSplashProvider.notifier).state = false;
+      }
+    }
   }
 
   @override
@@ -57,6 +74,7 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
         // or the first pass finds entries it has no handler for and gives up
         // on them permanently.
         ref.read(reviewOutboxHandlersProvider);
+        ref.read(purchaseOutboxHandlersProvider);
         ref.read(outboxCoordinatorProvider).start();
       }
     });

@@ -11,6 +11,7 @@ void main() {
 
     // No --dart-define supplied in a bare test run → dev environment.
     expect(config.environment, AppEnvironment.dev);
+    expect(config.apiBaseUrl, 'http://122.252.246.181:8443');
     expect(config.apiBaseUrl.endsWith('/'), isFalse);
     expect(config.apiBaseUrl, isNotEmpty);
     expect(config.enableVerboseLogging, isTrue);
@@ -56,7 +57,7 @@ void main() {
 
     test('cleartext outside prod is allowed — dev has no TLS yet', () {
       expect(
-        () => configFor(AppEnvironment.dev, 'http://localhost:8000')
+        () => configFor(AppEnvironment.dev, 'http://122.252.246.181:8443')
             .assertTransportSecurity(),
         returnsNormally,
       );
