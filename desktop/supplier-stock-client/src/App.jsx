@@ -2752,6 +2752,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const productListScrollRef = useRef(null);
   const productRequestRef = useRef(null);
+  // Monotonic guard so only the latest-initiated supplier load applies. Without
+  // it, the initial all-stores query (fired before the warehouse resolves) can
+  // resolve AFTER the warehouse-scoped query and clobber it with every store's
+  // suppliers.
+  const supplierRequestRef = useRef(0);
   // Session-visited-only 3rd/4th match state for the product list dot -
   // 'similar' | 'nomatch', keyed by supplier_stock_id. Populated lazily as
   // rows are opened (see loadSimilarSearch) rather than precomputed for the
@@ -3000,21 +3005,29 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }, [tenantId]);
 
   useEffect(() => {
-    // (Re)load the supplier list for the active tenant's warehouse — fires on
-    // mount, on tenant switch, and again once the warehouse store id resolves
-    // from the async store list.
+    // Wait until the store list has loaded so the warehouse (scopeStoreId) is
+    // resolved before the first fetch — otherwise the initial all-stores query
+    // races (and can clobber) the warehouse-scoped one. Reloads on tenant switch
+    // and once the warehouse id resolves.
+    if (!allStores.length) return;
     loadSuppliers('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, scopeStoreId]);
+  }, [tenantId, scopeStoreId, allStores.length]);
 
   useEffect(() => {
     api.listStores(session).then((rows) => setAllStores(asArray(rows))).catch(() => setAllStores([]));
   }, [session]);
 
   useEffect(() => {
+    // Gate on the store list too: this effect's timer closure captures the
+    // current scopeStoreId, so running it before the warehouse resolves would
+    // schedule a stale all-stores query that lands last. Re-runs (with a fresh
+    // warehouse-scoped closure) once allStores loads.
+    if (!allStores.length) return;
     const timer = setTimeout(() => loadSuppliers(supplierSearch), 200);
     return () => clearTimeout(timer);
-  }, [supplierSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplierSearch, allStores.length, scopeStoreId]);
 
   // Products are fetched (and cached) once per supplier only - search and
   // "in stock only" are pure client-side filters below, so toggling them
@@ -3193,13 +3206,16 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }, [similarSearchChars, selectedStockId, match, activeSupplierProductName]);
 
   async function loadSuppliers(search) {
+    const token = ++supplierRequestRef.current;
     setSupplierStatus({ state: 'loading', message: 'Loading suppliers...' });
     try {
       const response = await api.getSuppliers(session, { search, storeId: scopeStoreId });
+      if (supplierRequestRef.current !== token) return; // superseded by a newer load
       const items = asArray(response);
       setSuppliers(items);
       setSupplierStatus({ state: 'ok', message: items.length ? `${items.length} supplier(s).` : 'No suppliers found. Import an Excel sheet to begin.' });
     } catch (error) {
+      if (supplierRequestRef.current !== token) return;
       setSuppliers([]);
       setSupplierStatus({ state: 'error', message: error.message });
     }
