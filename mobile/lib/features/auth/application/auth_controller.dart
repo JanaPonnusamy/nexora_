@@ -97,6 +97,35 @@ class AuthController extends Notifier<AuthState> {
     _log.info('Active store set to ${store.storeName} (${store.storeId})');
   }
 
+  /// Returns the active tenant, repairing incomplete selected-store data when
+  /// necessary. Older cached sessions and slim store payloads may contain a
+  /// store id without its tenant id; the full store endpoint is the canonical
+  /// way to recover that association without making the user sign in again.
+  Future<String?> resolveActiveTenantId() async {
+    final current = state.activeTenantId;
+    if (current != null) return current;
+
+    final selected = state.selectedStore;
+    if (selected == null || selected.storeId.trim().isEmpty) return null;
+
+    try {
+      final fullStore = await _stores.getById(selected.storeId);
+      final tenantId = fullStore?.tenantId?.trim();
+      if (tenantId == null || tenantId.isEmpty) return null;
+
+      state = state.copyWith(
+        selectedStore: selected.copyWith(tenantId: tenantId),
+      );
+      _log.info('Recovered tenant scope for store ${selected.storeId}');
+      return tenantId;
+    } on ApiException catch (e) {
+      _log.warning(
+        'Could not resolve tenant for store ${selected.storeId}: ${e.message}',
+      );
+      return null;
+    }
+  }
+
   /// Clear the store selection (return to the store picker) without logging out.
   Future<void> clearStore() async {
     await _storage.deleteSelectedStoreId();

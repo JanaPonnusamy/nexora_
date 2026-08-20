@@ -102,7 +102,7 @@ flutter run
 Examples:
 
 ```bash
-flutter run --dart-define=NEXORA_API_BASE_URL=http://localhost:8000
+flutter run --dart-define=NEXORA_API_BASE_URL=http://122.252.246.181:8443
 flutter run --dart-define=NEXORA_API_BASE_URL=http://192.168.1.50:8000
 flutter run --dart-define=NEXORA_ENV=staging
 ```

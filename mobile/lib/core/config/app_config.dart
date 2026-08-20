@@ -17,7 +17,7 @@ class AppConfig {
   final AppEnvironment environment;
 
   /// Root of the FastAPI backend, WITHOUT a trailing slash, e.g.
-  /// `http://10.0.2.2:8000`. Endpoint paths (`/api/...`) are appended by the
+  /// `http://122.252.246.181:8443`. Endpoint paths (`/api/...`) are appended by the
   /// Dio client.
   final String apiBaseUrl;
 
@@ -43,12 +43,11 @@ class AppConfig {
 
   /// Default base URLs per environment.
   ///
-  /// NOTE: `10.0.2.2` is how the Android emulator reaches the host machine's
-  /// `localhost`. On a physical device use the HO's LAN IP via
-  /// `--dart-define=NEXORA_API_BASE_URL=...`. iOS simulator can use
-  /// `http://localhost:8000` directly.
+  /// The development and staging defaults use the remotely reachable HO host,
+  /// so physical Android devices do not try to connect to their own localhost.
+  /// Override this with `--dart-define=NEXORA_API_BASE_URL=...` when needed.
   static String _defaultBaseUrl(AppEnvironment env) => switch (env) {
-        AppEnvironment.dev => 'http://localhost:8000',
+        AppEnvironment.dev => 'http://122.252.246.181:8443',
         AppEnvironment.staging => 'http://122.252.246.181:8443',
         AppEnvironment.prod => 'https://ho.nexora.local',
       };

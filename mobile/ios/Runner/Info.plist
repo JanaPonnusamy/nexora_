@@ -8,6 +8,10 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Axythic</string>
+	<!-- The app only uses standard HTTPS transport encryption. Declaring this
+	     avoids an ambiguous export-compliance question on every upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<!-- Purpose strings must say WHY, naming the concrete user benefit. Vague
 	     wording ("this app needs camera access") is a routine App Store
 	     rejection under Guideline 5.1.1. -->

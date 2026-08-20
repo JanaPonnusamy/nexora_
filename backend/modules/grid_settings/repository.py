@@ -2,6 +2,8 @@
 widths, padding) — one table, keyed by an arbitrary grid_key string, reused
 by every grid in the app rather than one table per grid."""
 
+from __future__ import annotations
+
 from config.database import get_connection
 
 _SCHEMA_READY = False

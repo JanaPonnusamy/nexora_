@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:drift/drift.dart' show DatabaseConnection;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,8 @@ import 'package:nexora_mobile/features/document_extraction/application/capture_s
 import 'package:nexora_mobile/features/document_extraction/data/capture_processor.dart';
 import 'package:nexora_mobile/features/document_extraction/data/capture_storage.dart';
 import 'package:nexora_mobile/features/document_extraction/domain/capture_quality.dart';
+import 'package:nexora_mobile/features/store_selection/data/models/store.dart';
+import 'package:nexora_mobile/features/store_selection/data/store_repository.dart';
 
 /// Stands in for the isolate-backed decode so the session's own behaviour —
 /// file ownership, ordering, the hand-off to the queue — is what is under
@@ -47,6 +50,16 @@ class FakeAuthController extends AuthController {
   AuthState build() => _state;
 }
 
+class FakeStoreRepository extends StoreRepository {
+  FakeStoreRepository(this.store) : super(Dio());
+
+  final Store? store;
+
+  @override
+  Future<Store?> getById(String storeId) async =>
+      store?.storeId == storeId ? store : null;
+}
+
 const _blurred = CaptureQuality(
   sharpness: 12,
   glareRatio: 0,
@@ -74,6 +87,7 @@ void main() {
 
   ProviderContainer container({
     CaptureProcessor processor = const FakeProcessor(),
+    StoreRepository? storeRepository,
     AuthState auth = const AuthState(
       status: AuthStatus.authenticated,
       user: user,
@@ -85,6 +99,8 @@ void main() {
         captureStorageProvider.overrideWithValue(CaptureStorage(root: tmp)),
         captureProcessorProvider.overrideWithValue(processor),
         authControllerProvider.overrideWith(() => FakeAuthController(auth)),
+        if (storeRepository != null)
+          storeRepositoryProvider.overrideWithValue(storeRepository),
       ],
     );
     addTearDown(c.dispose);
@@ -268,6 +284,57 @@ void main() {
       final job = await c.read(captureQueueRepositoryProvider).byId(batchId!);
       expect(job!.batch.tenantId, 't-2');
       expect(job.batch.storeId, 's-9');
+    });
+
+    test('ignores a blank user tenant when the selected store has one',
+        () async {
+      final c = container(
+        auth: const AuthState(
+          status: AuthStatus.authenticated,
+          user: AppUser(userId: 'u1', username: 'field', tenantId: ''),
+          selectedStore: SelectedStore(
+            storeId: 's-9',
+            storeName: 'Nathan Medicals A',
+            tenantId: 't-2',
+          ),
+        ),
+      );
+      final session = c.read(captureSessionProvider.notifier);
+      await session.addPage(await shot('a.jpg'));
+
+      final batchId = await session.commit();
+
+      final job = await c.read(captureQueueRepositoryProvider).byId(batchId!);
+      expect(job!.batch.tenantId, 't-2');
+    });
+
+    test('recovers a missing tenant from the selected store', () async {
+      final c = container(
+        auth: const AuthState(
+          status: AuthStatus.authenticated,
+          user: AppUser(userId: 'u1', username: 'field'),
+          selectedStore: SelectedStore(
+            storeId: 's-9',
+            storeName: 'Nathan Medicals A',
+          ),
+        ),
+        storeRepository: FakeStoreRepository(
+          const Store(
+            storeId: 's-9',
+            tenantId: 't-2',
+            storeCode: 'NMA',
+            storeName: 'Nathan Medicals A',
+          ),
+        ),
+      );
+      final session = c.read(captureSessionProvider.notifier);
+      await session.addPage(await shot('a.jpg'));
+
+      final batchId = await session.commit();
+
+      final job = await c.read(captureQueueRepositoryProvider).byId(batchId!);
+      expect(job!.batch.tenantId, 't-2');
+      expect(c.read(authControllerProvider).selectedStore?.tenantId, 't-2');
     });
 
     test('refuses to queue a batch with no tenant to file it under', () async {

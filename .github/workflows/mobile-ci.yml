@@ -55,6 +55,9 @@ jobs:
       - name: Analyze
         run: flutter analyze --fatal-infos
 
+      - name: Release readiness checks
+        run: dart run tool/verify_release_readiness.dart
+
       - name: Test
         run: flutter test --reporter compact
 
@@ -85,7 +88,9 @@ jobs:
       # only prove the Android target compiles, so it builds debug. Add the
       # secrets and it upgrades itself to a signed release build with no edit
       # here — and AXYTHIC_REQUIRE_RELEASE_SIGNING makes a missing or malformed
-      # keystore fail the build rather than fall back to debug keys.
+      # keystore fail the build rather than fall back to debug keys. A signed
+      # artifact also requires an explicit HTTPS production URL; otherwise the
+      # app would compile with the development HTTP default that release blocks.
       - name: Decode keystore
         if: ${{ secrets.AXYTHIC_KEYSTORE_BASE64 != '' }}
         run: |
@@ -93,23 +98,50 @@ jobs:
             > "$RUNNER_TEMP/axythic-upload.jks"
           echo "AXYTHIC_KEYSTORE_PATH=$RUNNER_TEMP/axythic-upload.jks" >> "$GITHUB_ENV"
 
-      - name: Build APK (release, signed)
+      - name: Validate signed release inputs
+        if: ${{ secrets.AXYTHIC_KEYSTORE_BASE64 != '' }}
+        env:
+          AXYTHIC_API_BASE_URL: ${{ secrets.AXYTHIC_API_BASE_URL }}
+        run: |
+          case "$AXYTHIC_API_BASE_URL" in
+            https://*) ;;
+            *)
+              echo "::error::AXYTHIC_API_BASE_URL must be a non-empty HTTPS URL."
+              exit 1
+              ;;
+          esac
+
+      - name: Build AAB (release, signed)
         if: ${{ secrets.AXYTHIC_KEYSTORE_BASE64 != '' }}
         env:
           AXYTHIC_REQUIRE_RELEASE_SIGNING: 'true'
           AXYTHIC_KEYSTORE_PASSWORD: ${{ secrets.AXYTHIC_KEYSTORE_PASSWORD }}
           AXYTHIC_KEY_ALIAS: ${{ secrets.AXYTHIC_KEY_ALIAS }}
           AXYTHIC_KEY_PASSWORD: ${{ secrets.AXYTHIC_KEY_PASSWORD }}
-        run: flutter build apk --release
+          AXYTHIC_API_BASE_URL: ${{ secrets.AXYTHIC_API_BASE_URL }}
+        run: >-
+          flutter build appbundle --release
+          --dart-define=NEXORA_ENV=prod
+          --dart-define=NEXORA_API_BASE_URL="$AXYTHIC_API_BASE_URL"
 
       - name: Build APK (debug, unsigned)
         if: ${{ secrets.AXYTHIC_KEYSTORE_BASE64 == '' }}
         run: flutter build apk --debug
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload signed app bundle
+        if: ${{ secrets.AXYTHIC_KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
         with:
-          name: app-apk
-          path: mobile/build/app/outputs/flutter-apk/app-*.apk
+          name: app-release-aab
+          path: mobile/build/app/outputs/bundle/release/app-release.aab
+          retention-days: 7
+
+      - name: Upload debug APK
+        if: ${{ secrets.AXYTHIC_KEYSTORE_BASE64 == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 7
 
   build-ios:

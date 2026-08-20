@@ -1513,7 +1513,7 @@
 
 /* Theme-token driven (not the light-only gradients this section used to
    hardcode) — that forced-light card was fine for its own header title (set
-   its own dark text) but every OTHER label/value here reads --bs-*/--ds-*
+   its own dark text) but every OTHER label/value here reads --bs-* or --ds-*
    text colors that resolve to their DARK-theme (light-gray/white) values in
    this app, so on a card stuck permanently light they went near-invisible.
    Real bug, reported against the actual rendered dialog. */
