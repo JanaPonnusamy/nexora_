@@ -25,6 +25,7 @@ Never: writes a database, resolves a ProductCode, calls a repository,
 searches SupplierProductMapping (models.py docstring).
 """
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 from modules.document_extraction.ocr.models import Confidence
@@ -317,7 +318,15 @@ def _to_float(text: str) -> Optional[float]:
     try:
         return float(cleaned)
     except ValueError:
-        return None
+        # Printed GST cells often include a trailing tax marker (for example
+        # `5 % G`). Keep the number only when everything else is that marker;
+        # a misaligned product name such as `AMLODAC 5MG` must stay nonnumeric.
+        match = re.fullmatch(
+            r"\s*([-+]?\d+(?:\.\d+)?)\s*%?\s*(?:G(?:ST)?)?\s*",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        return float(match.group(1)) if match else None
 
 
 def _align_tokens_to_columns(

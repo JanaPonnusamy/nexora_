@@ -55,7 +55,10 @@ _FlatLine = Tuple[int, OCRLine]  # (page_no, line)
 # --------------------------------------------------------------------------
 
 _HEADER_FIELD_KEYWORDS: Dict[str, List[str]] = {
-    "invoice_number": ["invoice no", "invoice number", "inv no", "bill no", "invoice #"],
+    "invoice_number": [
+        "bill no & page no", "bill no and page no", "invoice no", "invoice number",
+        "inv no", "bill no", "invoice #",
+    ],
     "invoice_date": ["invoice date", "inv date", "bill date", "dated"],
     "order_number": ["order no", "po no", "purchase order"],
     "transport": ["transport", "carrier", "lr no", "vehicle no"],
@@ -209,6 +212,9 @@ class GenericInvoiceParser(InvoiceParser):
                 continue
             idx, page_no, line, keyword = hit
             value, value_line = _extract_labeled_value(flat, idx, keyword)
+            if not value:
+                continue
+            value = _clean_header_value(field_name, value)
             if not value:
                 continue
             setattr(header, field_name, value)
@@ -495,6 +501,15 @@ def _extract_labeled_value(flat: List[_FlatLine], idx: int, keyword: str):
         if candidate and not any(candidate.lower().startswith(k) for kws in _HEADER_FIELD_KEYWORDS.values() for k in kws):
             return candidate, (next_page_no, next_line)
     return None, None
+
+
+def _clean_header_value(field_name: str, value: str) -> str:
+    text = value.strip()
+    if field_name == "invoice_number":
+        # Many invoices label one box "Bill No & Page No" and OCR the value
+        # as `26-27D1312 1/1`. The page counter is not part of the bill number.
+        text = re.sub(r"\s+\d+\s*/\s*\d+\s*$", "", text)
+    return text.strip()
 
 
 def _extract_number_after_keyword(text: str, keyword: str) -> Optional[float]:

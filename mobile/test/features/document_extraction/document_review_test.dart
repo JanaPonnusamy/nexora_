@@ -67,6 +67,12 @@ void main() {
             'import_id': 12,
             'invoice_number': 'INV-9001',
             'invoice_date': '2026-08-01',
+            'transport': 'Counter',
+            'salesman': 'Jana',
+            'credit_days': 30,
+            'scheme_discount': 12.5,
+            'cash_discount': 2.5,
+            'cess_amount': 1.25,
             'net_amount': 1250.75,
             'ocr_confidence': 0.88,
             'page_count': 3,
@@ -92,6 +98,12 @@ void main() {
       expect(review.status, DocumentStatus.reviewPending);
       expect(review.header.invoiceNumber, 'INV-9001');
       expect(review.header.invoiceDate, DateTime(2026, 8, 1));
+      expect(review.header.transport, 'Counter');
+      expect(review.header.salesman, 'Jana');
+      expect(review.header.creditDays, 30);
+      expect(review.header.schemeDiscount, 12.5);
+      expect(review.header.cashDiscount, 2.5);
+      expect(review.header.cessAmount, 1.25);
       expect(review.header.netAmount, 1250.75);
       expect(review.supplier.supplierName, 'Acme Pharma');
       expect(review.supplier.isUnknown, isFalse);
