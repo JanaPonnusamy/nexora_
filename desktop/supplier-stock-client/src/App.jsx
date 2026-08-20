@@ -19,13 +19,6 @@ const screens = [
   { id: 'settings', label: 'Settings', module: 'settings' }
 ];
 
-// "Stock Check" launch mode (electron/main.js passes `?mode=stock` when started
-// with --stock-only). Trims the whole app down to the Stock Availability screen
-// plus Settings so this same build can ship as a dedicated stock-lookup tool
-// for counter staff without a second codebase to maintain.
-const STOCK_ONLY = new URLSearchParams(window.location.search).get('mode') === 'stock';
-const APP_NAME = STOCK_ONLY ? 'Nexora Stock Check' : 'Nexora Supplier Stock';
-
 function asArray(value) {
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.items)) return value.items;
@@ -171,9 +164,6 @@ function AppShell() {
   const isConfigured = Boolean(effectiveTenantId && effectiveStoreId);
 
   const navItems = useMemo(() => {
-    // Stock Check build: only Stock Availability + Settings, regardless of what
-    // other modules this login is granted.
-    if (STOCK_ONLY) return screens.filter((s) => s.id === 'stock' || s.id === 'settings');
     const modules = userModules(session?.user);
     // Supplier Stock Analysis is admin-tier only - a purchase-manager-only or
     // salesman-only login must not see the tab at all (the API also 403s it
@@ -201,7 +191,7 @@ function AppShell() {
 
   useEffect(() => {
     const storeName = session?.user?.roles?.[0]?.store_name || settings.storeName;
-    document.title = storeName ? `${APP_NAME} · ${storeName}` : APP_NAME;
+    document.title = storeName ? `Nexora Supplier Stock · ${storeName}` : 'Nexora Supplier Stock';
   }, [session, settings.storeName]);
 
   function persistSettings(next) {
@@ -274,7 +264,7 @@ function AppShell() {
           <div className="brand-mark">N</div>
           <div>
             <h1>Nexora</h1>
-            <p>{STOCK_ONLY ? 'Stock Check' : 'Supplier Stock Client'}</p>
+            <p>Supplier Stock Client</p>
           </div>
         </div>
 
@@ -319,7 +309,12 @@ function AppShell() {
         ) : activeScreen === 'settings' ? (
           <SettingsScreen settings={runtimeSettings} onSave={persistSettings} session={session} />
         ) : activeScreen === 'analysis' ? (
-          <SupplierStockAnalysis session={session} />
+          <SupplierStockAnalysis
+            session={session}
+            settings={runtimeSettings}
+            tenants={tenants}
+            onTenantChange={(tenantId) => persistSettings({ ...settings, tenantId })}
+          />
         ) : activeScreen === 'nmw_sales' ? (
           <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : (
@@ -811,10 +806,8 @@ function LoginScreen({ onLogin, onOpenSettings }) {
     <section className="login-layout">
       <div className="login-copy">
         <span className="eyebrow">Nexora desktop</span>
-        <h2>{STOCK_ONLY ? 'Stock check' : 'Supplier stock workbench'}</h2>
-        <p>{STOCK_ONLY
-          ? 'Use your Nexora credentials to look up live stock availability across your stores.'
-          : 'Use your Nexora credentials to open stock availability and supplier analysis modules.'}</p>
+        <h2>Supplier stock workbench</h2>
+        <p>Use your Nexora credentials to open stock availability and supplier analysis modules.</p>
       </div>
       <form className="login-card" onSubmit={submit}>
         <label>
@@ -2735,10 +2728,14 @@ function normalizeSupplierProductRows(rows) {
   return asArray(rows).map(normalizeSupplierProductRow);
 }
 
-function SupplierStockAnalysis({ session }) {
-  const settings = loadSettings();
+function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], onTenantChange }) {
+  const settings = settingsProp || loadSettings();
   const tenantId = settings.tenantId || '';
   const storeId = settings.storeId || '';
+  // Display-scope filter for the store/warehouse lists: '' = all tenants (super
+  // admin only), else a tenant_id. Separate from settings.tenantId, which is the
+  // actual query tenant and follows the selected warehouse (see effect below).
+  const [tenantFilter, setTenantFilter] = useState(() => settings.tenantId || '');
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [supplierStatus, setSupplierStatus] = useState({ state: 'idle', message: 'Loading suppliers...' });
@@ -2759,6 +2756,11 @@ function SupplierStockAnalysis({ session }) {
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const productListScrollRef = useRef(null);
   const productRequestRef = useRef(null);
+  // Monotonic guard so only the latest-initiated supplier load applies. Without
+  // it, the initial all-stores query (fired before the warehouse resolves) can
+  // resolve AFTER the warehouse-scoped query and clobber it with every store's
+  // suppliers.
+  const supplierRequestRef = useRef(0);
   // Session-visited-only 3rd/4th match state for the product list dot -
   // 'similar' | 'nomatch', keyed by supplier_stock_id. Populated lazily as
   // rows are opened (see loadSimilarSearch) rather than precomputed for the
@@ -2776,6 +2778,39 @@ function SupplierStockAnalysis({ session }) {
   const queryClient = useQueryClient();
 
   const [allStores, setAllStores] = useState([]);
+  // Supplier Stock Analysis is central (warehouse) ordering. Stores/warehouses
+  // shown are scoped to tenantFilter ('' = all tenants). A store is a warehouse
+  // when flagged is_warehouse (dbo.stores column), falling back to the legacy
+  // 'NMW' code so this keeps working before the column is populated everywhere.
+  const isWarehouse = (s) => Boolean(s?.is_warehouse) || isWarehouseStore(s);
+  const scopedStores = useMemo(
+    () => (tenantFilter ? allStores.filter((s) => String(s.tenant_id) === String(tenantFilter)) : allStores),
+    [allStores, tenantFilter],
+  );
+  const warehouses = useMemo(() => scopedStores.filter(isWarehouse), [scopedStores]);
+  const tenantNameById = useMemo(() => {
+    const map = new Map();
+    tenants.forEach((t) => map.set(String(t.tenant_id), t.tenant_name || t.tenant_code || ''));
+    return map;
+  }, [tenants]);
+  const [warehouseId, setWarehouseId] = useState('');
+  const selectedWarehouse = useMemo(
+    () => warehouses.find((w) => w.store_id === warehouseId) || warehouses[0] || null,
+    [warehouses, warehouseId],
+  );
+  // Keep a valid warehouse selected as the list changes (tenant switch / load).
+  useEffect(() => {
+    if (!warehouses.length) { if (warehouseId) setWarehouseId(''); return; }
+    if (!warehouses.some((w) => w.store_id === warehouseId)) setWarehouseId(warehouses[0].store_id);
+  }, [warehouses, warehouseId]);
+  // The actual query tenant follows the selected warehouse's tenant, so every
+  // downstream query stays scoped even in all-tenants mode without extra plumbing.
+  useEffect(() => {
+    const wtid = selectedWarehouse?.tenant_id;
+    if (wtid && String(wtid) !== String(tenantId)) onTenantChange?.(wtid);
+  }, [selectedWarehouse, tenantId, onTenantChange]);
+  // The supplier/product list is scoped to the selected warehouse store.
+  const scopeStoreId = selectedWarehouse?.store_id ?? '';
   // { searchKey, matchesFound, storesWithMatches, byStore: Map(store_id -> {storeMeta, candidates[]}) }
   const [similar, setSimilar] = useState(null);
   const [similarStatus, setSimilarStatus] = useState({ state: 'idle', message: '' });
@@ -2983,16 +3018,38 @@ function SupplierStockAnalysis({ session }) {
   // StockAvailability's detailCacheRef.
   const similarDetailCacheRef = useRef(new Map());
 
-  useEffect(() => { loadSuppliers(''); }, []);
+  useEffect(() => {
+    // Clear any supplier/product selection when a super admin switches tenant.
+    setSelectedSupplier('');
+    setSelectedStockId('');
+    setProducts([]);
+    setShowSupplierPanel(true);
+  }, [tenantId]);
+
+  useEffect(() => {
+    // Wait until the store list has loaded so the warehouse (scopeStoreId) is
+    // resolved before the first fetch — otherwise the initial all-stores query
+    // races (and can clobber) the warehouse-scoped one. Reloads on tenant switch
+    // and once the warehouse id resolves.
+    if (!allStores.length) return;
+    loadSuppliers('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, scopeStoreId, allStores.length]);
 
   useEffect(() => {
     api.listStores(session).then((rows) => setAllStores(asArray(rows))).catch(() => setAllStores([]));
   }, [session]);
 
   useEffect(() => {
+    // Gate on the store list too: this effect's timer closure captures the
+    // current scopeStoreId, so running it before the warehouse resolves would
+    // schedule a stale all-stores query that lands last. Re-runs (with a fresh
+    // warehouse-scoped closure) once allStores loads.
+    if (!allStores.length) return;
     const timer = setTimeout(() => loadSuppliers(supplierSearch), 200);
     return () => clearTimeout(timer);
-  }, [supplierSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplierSearch, allStores.length, scopeStoreId]);
 
   // Products are fetched (and cached) once per supplier only - search and
   // "in stock only" are pure client-side filters below, so toggling them
@@ -3171,13 +3228,16 @@ function SupplierStockAnalysis({ session }) {
   }, [similarSearchChars, selectedStockId, match, activeSupplierProductName]);
 
   async function loadSuppliers(search) {
+    const token = ++supplierRequestRef.current;
     setSupplierStatus({ state: 'loading', message: 'Loading suppliers...' });
     try {
-      const response = await api.getSuppliers(session, { search });
+      const response = await api.getSuppliers(session, { search, storeId: scopeStoreId });
+      if (supplierRequestRef.current !== token) return; // superseded by a newer load
       const items = asArray(response);
       setSuppliers(items);
       setSupplierStatus({ state: 'ok', message: items.length ? `${items.length} supplier(s).` : 'No suppliers found. Import an Excel sheet to begin.' });
     } catch (error) {
+      if (supplierRequestRef.current !== token) return;
       setSuppliers([]);
       setSupplierStatus({ state: 'error', message: error.message });
     }
@@ -3204,7 +3264,7 @@ function SupplierStockAnalysis({ session }) {
       // Always fetch the full unfiltered set - search/in-stock filtering
       // happens client-side in visibleProducts, and the full set is what
       // gets cached and diffed against next time.
-      const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0 });
+      const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0, storeId: scopeStoreId });
       if (productRequestRef.current !== requestToken) return;
       const items = normalizeSupplierProductRows(response);
       setProducts(items);
@@ -3685,7 +3745,7 @@ function SupplierStockAnalysis({ session }) {
 
   const loginStoreId = session?.user?.roles?.[0]?.store_id;
   const similarGridStores = similar
-    ? orderStores(allStores.length ? allStores : Array.from(similar.byStore.values()).map((entry) => entry.storeMeta), loginStoreId, [])
+    ? orderStores(scopedStores.length ? scopedStores : Array.from(similar.byStore.values()).map((entry) => entry.storeMeta), loginStoreId, [])
     : [];
 
   const exactGridStores = useMemo(() => {
@@ -3872,6 +3932,31 @@ function SupplierStockAnalysis({ session }) {
   return (
     <section className="screen-panel supplier-analysis-workbench">
       <div className="supplier-toolbar">
+        {tenants.length > 1 && (
+          <label className="tenant-filter">
+            Tenant
+            <select value={tenantFilter} onChange={(event) => setTenantFilter(event.target.value)}>
+              <option value="">All tenants</option>
+              {tenants.map((tenant) => (
+                <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                  {tenant.tenant_name || tenant.tenant_code}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {warehouses.length > 1 && (
+          <label className="tenant-filter">
+            Warehouse
+            <select value={selectedWarehouse?.store_id || ''} onChange={(event) => setWarehouseId(event.target.value)}>
+              {warehouses.map((w) => (
+                <option key={w.store_id} value={w.store_id}>
+                  {w.store_code}{!tenantFilter ? ` · ${tenantNameById.get(String(w.tenant_id)) || w.store_name || ''}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button type="button" className="primary-button toolbar-import-btn" onClick={() => setImportOpen((open) => !open)}>
           {importOpen ? 'Close import' : 'Import Supplier Excel'}
         </button>

@@ -38,7 +38,9 @@ def get_stores(current_user: dict | None = Depends(get_current_user_optional)):
             "store_name": r[3],
             "server_name": r[4],
             "database_name": r[5],
-            "is_active": bool(r[6])
+            "is_active": bool(r[6]),
+            "is_warehouse": bool(r[7]) if len(r) > 7 else False,
+            "store_order": r[8] if len(r) > 8 else None,
         }
         for r in rows
     ]

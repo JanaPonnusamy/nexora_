@@ -2995,6 +2995,10 @@ th {
 .store-product-grid-wrap .grid-row span.product-cell-main,
 .grid-row span.product-cell-main {
   display: block;
+  position: relative;
+  /* Reserve a small trailing gutter for the status dot (now corner-pinned,
+     not inline) so it never crowds or pushes the product name. */
+  padding-right: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3009,11 +3013,18 @@ th {
   border-radius: 4px;
 }
 
-/* §5: compact status badge in front of the product name - only known for
-   the currently selected/active row (its batches are already loaded). */
+/* §5: compact status badge for the currently selected/active row (its batches
+   are already loaded). Corner-pinned to the right edge of the product cell so
+   it reads as a small status marker without eating the name's horizontal room. */
 .product-status-badge {
-  margin-right: 4px;
-  font-size: 10px;
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  transform: translateY(-50%);
+  margin: 0;
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
 }
 
 /* §7: one legend row below all store grids, shown once for the whole page. */
