@@ -2738,7 +2738,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const [tenantFilter, setTenantFilter] = useState(() => settings.tenantId || '');
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
-  const [supplierStatus, setSupplierStatus] = useState({ state: 'idle', message: 'Loading suppliers...' });
+  const [supplierStatus, setSupplierStatus] = useState({ state: 'idle', message: '' });
   const [selectedSupplier, setSelectedSupplier] = useState('');
   // Auto-hidden once a supplier is picked (see selectSupplier) so the product
   // list gets the width back; "Change Supplier" flips it on again without
@@ -3047,8 +3047,13 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     // Wait until the store list has loaded so the warehouse (scopeStoreId) is
     // resolved before the first fetch — otherwise the initial all-stores query
     // races (and can clobber) the warehouse-scoped one. Reloads on tenant switch
-    // and once the warehouse id resolves.
-    if (!allStores.length) return;
+    // and once the warehouse id resolves. Show an honest "loading stores" status
+    // (not a stale "loading suppliers") so a failed/empty store list is visible
+    // rather than looking like a hung supplier fetch. Keep any store-load error.
+    if (!allStores.length) {
+      setSupplierStatus((s) => (s.state === 'error' ? s : { state: 'loading', message: 'Loading stores…' }));
+      return;
+    }
     if (needWarehousePick) {
       supplierRequestRef.current += 1; // supersede any in-flight load
       setSuppliers([]);
@@ -3074,7 +3079,18 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }, [tenantId, scopeStoreId, allStores.length, needWarehousePick]);
 
   useEffect(() => {
-    api.listStores(session).then((rows) => setAllStores(asArray(rows))).catch(() => setAllStores([]));
+    let alive = true;
+    api.listStores(session)
+      .then((rows) => { if (alive) setAllStores(asArray(rows)); })
+      .catch((err) => {
+        if (!alive) return;
+        setAllStores([]);
+        // Surface the real reason instead of silently swallowing it — otherwise
+        // the supplier panel just sits on a stale message with no way to tell
+        // that the store list (which the whole screen depends on) never loaded.
+        setSupplierStatus({ state: 'error', message: `Could not load stores: ${err.message}` });
+      });
+    return () => { alive = false; };
   }, [session]);
 
   useEffect(() => {
@@ -3996,7 +4012,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
             </select>
           </label>
         )}
-        {(warehouses.length > 1 || (!tenantFilter && warehouses.length > 0)) && (
+        {warehouses.length > 0 && (
           <label className="tenant-filter">
             Warehouse
             <select value={selectedWarehouse?.store_id || ''} onChange={(event) => setWarehouseId(event.target.value)}>
