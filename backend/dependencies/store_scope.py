@@ -23,9 +23,9 @@ Analysis additionally blocks purchase manager/salesman entirely regardless
 of tenant - see is_supplier_analysis_blocked.
 """
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
-from dependencies.auth import has_full_access
+from dependencies.auth import get_current_user, has_full_access
 
 
 def is_super_admin(user: dict) -> bool:
@@ -33,6 +33,15 @@ def is_super_admin(user: dict) -> bool:
         return True
     names = [str(r or "").strip().lower() for r in (user.get("role_names") or [])]
     return any("superadmin" in name or "super admin" in name for name in names)
+
+
+def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
+    """FastAPI dependency: 403 unless the caller is a super admin / platform
+    user. Used to lock admin-only endpoints (e.g. WhatsApp profile + QR login
+    setup) so store/purchase/salesman logins can't reach them."""
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Super admin access required")
+    return user
 
 
 def has_unrestricted_scope(user: dict | None) -> bool:
