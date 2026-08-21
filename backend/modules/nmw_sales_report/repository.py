@@ -282,7 +282,11 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
                 ISNULL(psi.Quantity, 0)                AS qty,
                 ISNULL(psi.Freequantity, 0)            AS free_qty,
                 ISNULL(psi.MRP, 0)                     AS mrp,
-                ISNULL(psi.Rate, 0)                    AS rate,
+                -- RATE column shows PTR (PurchasePrice = price-to-retailer), the
+                -- store's purchase price, NOT psi.Rate (the net/after-discount
+                -- charged figure). With the Dis% column below, the row reads
+                -- PTR - Dis% = Amount, e.g. 471.60 - 10% = 424.44.
+                ISNULL(psi.PurchasePrice, 0)           AS rate,
                 -- Dis% derived from PTR (PurchasePrice) vs the actual charged
                 -- Rate, NOT the raw DiscountPercentage column -- that field is
                 -- always 0 on NMW dispatch bills (verified against live data).
