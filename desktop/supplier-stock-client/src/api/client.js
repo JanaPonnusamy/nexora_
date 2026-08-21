@@ -88,6 +88,13 @@ export const api = {
     });
   },
 
+  // Release the server-side active session on explicit sign-out so the user can
+  // immediately sign in on another PC (single-session policy) instead of waiting
+  // for the lease to lapse. Best-effort - callers ignore failures.
+  logout(session) {
+    return request('/api/auth/logout', { method: 'POST', session });
+  },
+
   async testConnection({ apiBaseUrl, bootstrapUrl }) {
     const target = bootstrapUrl || apiBaseUrl;
     const response = await fetch(joinUrl(target, bootstrapUrl ? '' : '/health'), {

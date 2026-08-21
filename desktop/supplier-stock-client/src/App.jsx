@@ -227,6 +227,9 @@ function AppShell() {
   }
 
   function handleLogout() {
+    // Best-effort: tell the server to release this user's active session so
+    // they can sign in elsewhere right away (single-session policy).
+    if (session) api.logout(session).catch(() => {});
     clearSession();
     setSession(null);
   }
@@ -377,7 +380,9 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
 
   useEffect(() => setDraft(settings), [settings]);
   useEffect(() => {
-    if (!effectiveSession) return;
+    // WhatsApp profile/QR setup is super-admin only (backend 403s it for
+    // everyone else) - don't even load its state for other logins.
+    if (!effectiveSession || !isSuperAdmin(effectiveSession)) return;
     loadWhatsApp();
   }, [effectiveSession]);
 
@@ -718,6 +723,7 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
         ) : <div className="empty-state">No devices loaded.</div>}
       </div>
 
+      {isSuperAdmin(effectiveSession) && (
       <div className="table-wrap">
         <div className={`status-line ${waStatus.state}`}>{waStatus.message || 'WhatsApp settings and QR profiles.'}</div>
         <div className="form-grid">
@@ -799,6 +805,7 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
           </table>
         ) : <div className="empty-state">No WhatsApp profiles created yet.</div>}
       </div>
+      )}
     </section>
   );
 }
@@ -1286,7 +1293,7 @@ function nmwCsvCell(value) {
 
 const NMW_EXPORT_COLUMNS = [
   'Inv No', 'Type', 'Inv Date', 'Customer Code', 'Inv Amount',
-  'Product Code', 'Product', 'Batch', 'Expiry', 'Qty', 'Free', 'MRP', 'Rate', 'Dis%',
+  'Product Code', 'Product', 'Batch', 'Expiry', 'Qty', 'Free', 'MRP', 'PTR', 'Dis%',
   'Packing', 'Sublocation', 'Amount'
 ];
 
@@ -1625,7 +1632,7 @@ function NmwSalesReport({ session, settings }) {
                     <thead>
                       <tr>
                         <th>Product Code</th><th>Product</th><th>Batch</th><th>Expiry</th>
-                        <th>Qty</th><th>Free</th><th>MRP</th><th>Rate</th><th>Dis%</th><th>Amount</th>
+                        <th>Qty</th><th>Free</th><th>MRP</th><th>PTR</th><th>Dis%</th><th>Amount</th>
                       </tr>
                     </thead>
                     <tbody>
