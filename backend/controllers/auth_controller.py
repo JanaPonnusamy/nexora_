@@ -2,16 +2,23 @@
 from __future__ import annotations
 
 import os
+import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from dtos.login_request import LoginRequest
 from services.auth_service import AuthService
 from config.security import create_access_token, create_setup_token, setup_access_checksum
 from dependencies.auth import get_current_user
+from repositories.user_repository import UserRepository
 from modules.audit.writer import record_audit, record_audit_strict
 from modules.audit.models import ActorRole, AuditStatus
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+# Single active session per user: a login is blocked while another session is
+# still alive (heart-beating within this many minutes). A crashed/closed client
+# stops the heart-beat, so its session goes stale after the lease and no longer
+# blocks a fresh login - preventing a permanent lockout.
+_SESSION_LEASE_MINUTES = int(os.getenv("UNINEX_SESSION_LEASE_MINUTES", "5"))
 _SETUP_USERNAME = os.getenv("UNINEX_SETUP_USERNAME", "setupdeploy")
 _SETUP_PASSWORD = os.getenv("UNINEX_SETUP_PASSWORD", "")
 _SETUP_ALLOWED_PATHS = [
@@ -55,6 +62,27 @@ def login(req: LoginRequest, request: Request):
         )
         raise HTTPException(status_code=401, detail="Invalid Username Or Password")
 
+    # Single active session: block this login if the user is already signed in
+    # (and still active) on another system.
+    repo = UserRepository()
+    if repo.is_session_active(user["user_id"], _SESSION_LEASE_MINUTES):
+        record_audit(
+            ctx=request,
+            action="auth.login.denied",
+            category="auth",
+            target_type="user",
+            target_id=user["user_id"],
+            target_label=user["username"],
+            status=AuditStatus.FAILURE,
+            error_message="User already has an active session on another system",
+            reason=f"Blocked concurrent login for '{user['username']}' (single-session policy)",
+            actor_override={"actor_name": user["username"], "actor_email": user.get("username")},
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="This user is already signed in on another system. Sign out there first, or try again in a few minutes.",
+        )
+
     primary_role = user["roles"][0] if user["roles"] else {}
     role_names = [r["role_name"] for r in user["roles"]]
     actor_role = ActorRole.ADMIN if user.get("is_platform_user") or any(r in {"SUPER_ADMIN", "PLATFORM_OWNER"} for r in role_names) else ActorRole.CUSTOMER
@@ -81,6 +109,11 @@ def login(req: LoginRequest, request: Request):
         },
     )
 
+    # Claim this session (newest login owns it) and stamp the token with its id
+    # so every subsequent request can be validated against the active session.
+    session_id = str(uuid.uuid4())
+    repo.set_active_session(user["user_id"], session_id)
+
     token = create_access_token({
         "sub": user["user_id"],
         "username": user["username"],
@@ -89,9 +122,19 @@ def login(req: LoginRequest, request: Request):
         "role_names": role_names,
         "store_id": primary_role.get("store_id"),
         "store_code": primary_role.get("store_code"),
+        "sid": session_id,
     })
 
     return {"token": token, "token_type": "bearer", "user": user}
+
+
+@router.post("/logout")
+def logout(current_user: dict = Depends(get_current_user)):
+    """Release the active session immediately on explicit sign-out so the user
+    can sign in elsewhere without waiting for the lease to lapse. Only clears
+    the session this token owns (sid-guarded)."""
+    UserRepository().clear_active_session(current_user.get("sub"), current_user.get("sid"))
+    return {"ok": True}
 
 
 @router.post("/setup-login")

@@ -127,6 +127,77 @@ class UserRepository:
         conn.commit()
         conn.close()
 
+    # ----- single active session (one login per user at a time) -----
+
+    def is_session_active(self, user_id, lease_minutes):
+        """True when the user has a session whose last activity is within the
+        lease window - i.e. someone is currently signed in. A crashed/closed
+        client stops heart-beating, so its session goes stale after the lease
+        and no longer blocks a fresh login."""
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT CASE WHEN active_session_id IS NOT NULL
+                     AND active_session_at IS NOT NULL
+                     AND active_session_at >= DATEADD(MINUTE, -?, GETDATE())
+               THEN 1 ELSE 0 END
+        FROM dbo.users WHERE user_id = ?
+        """, lease_minutes, user_id)
+        row = cur.fetchone()
+        conn.close()
+        return bool(row and row[0])
+
+    def get_active_session_id(self, user_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT active_session_id FROM dbo.users WHERE user_id = ?", user_id)
+        row = cur.fetchone()
+        conn.close()
+        return row[0] if row and row[0] else None
+
+    def set_active_session(self, user_id, session_id):
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE dbo.users SET active_session_id = ?, active_session_at = GETDATE() WHERE user_id = ?",
+            session_id, user_id,
+        )
+        conn.commit()
+        conn.close()
+
+    def touch_active_session(self, user_id, session_id):
+        """Heart-beat: refresh last-activity so the lease stays alive while the
+        client keeps making requests. Guarded on session_id so a superseded
+        token can't keep a session it no longer owns alive."""
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE dbo.users SET active_session_at = GETDATE() "
+            "WHERE user_id = ? AND active_session_id = ?",
+            user_id, session_id,
+        )
+        conn.commit()
+        conn.close()
+
+    def clear_active_session(self, user_id, session_id=None):
+        """Release the session on explicit sign-out. Only clears when the caller
+        owns the current session (session_id match) unless session_id is None."""
+        conn = get_connection()
+        cur = conn.cursor()
+        if session_id:
+            cur.execute(
+                "UPDATE dbo.users SET active_session_id = NULL, active_session_at = NULL "
+                "WHERE user_id = ? AND active_session_id = ?",
+                user_id, session_id,
+            )
+        else:
+            cur.execute(
+                "UPDATE dbo.users SET active_session_id = NULL, active_session_at = NULL WHERE user_id = ?",
+                user_id,
+            )
+        conn.commit()
+        conn.close()
+
     # ----- user management (CRUD) -----
 
     def get_all(self, search=None, tenant_id=None, store_id=None, role_id=None, status=None):
