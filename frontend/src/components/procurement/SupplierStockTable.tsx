@@ -6,7 +6,6 @@ import { EmptyState } from '../common/EmptyState'
 import { preferredSupplier, SUPPLIER_REC_LIMIT } from './purchaseValue'
 import { DEFAULT_SKIP_MODE } from './skipModes'
 import { SkipModeCell } from './SkipModeCell'
-import { FilterBar, FilterTabs } from '../../design-system/components/FilterBar'
 
 const REVIEWED_STATES = ['review', 'assigned', 'partial']
 
@@ -391,19 +390,25 @@ export function SupplierStockTable({
 
   return (
     <div>
-      <FilterBar compact className="pm-quickfilters" ariaLabel="Supplier stock quick filters">
-        <FilterTabs
-          value={quickFilter}
-          ariaLabel="Supplier stock quick filters"
-          options={QUICK_FILTERS.map((filter) => ({ value: filter.id, label: filter.label }))}
-          onChange={(next) => setQuickFilter((current) => (current === next ? 'all' : next))}
-        />
+      <div className="pm-quickfilters" role="group" aria-label="Supplier stock quick filters">
+        {QUICK_FILTERS.map((filter) => {
+          const on = quickFilter === filter.id
+          return (
+            <button
+              key={filter.id}
+              type="button"
+              className={`pm-qf${on ? ' pm-qf--on' : ''}`}
+              aria-pressed={on}
+              onClick={() => setQuickFilter((current) => (current === filter.id ? 'all' : filter.id))}
+            >
+              {filter.label}
+            </button>
+          )
+        })}
         {quickFilter !== 'all' && (
-          <span className="sx-dim" style={{ alignSelf: 'center', fontSize: 11.5 }}>
-            {visibleRows.length} of {rows.length} shown
-          </span>
+          <span className="sx-dim pm-qf__count">{visibleRows.length} of {rows.length} shown</span>
         )}
-      </FilterBar>
+      </div>
       <div className="pm-grid-wrap" ref={wrapRef} tabIndex={-1} onKeyDown={onGridKey}>
       <table className="pm-grid pm-grid--stock">
         {/* Fixed layout so the whole grid fits its column with no horizontal

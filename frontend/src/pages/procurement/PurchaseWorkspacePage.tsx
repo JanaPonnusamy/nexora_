@@ -2082,12 +2082,16 @@ export default function PurchaseWorkspacePage() {
                   merged so the grid below gets that height back. */}
               <div className="pm-toolbar__row pm-toolbar__row--filters">
                 <FilterTabs value={mode} ariaLabel="Purchase workspace mode" options={MODE_OPTIONS} onChange={setMode} />
-                <div className="pm-slot pm-slot--search">
+                {/* Slots collapse to zero width when their control is hidden
+                    (pm-slot--empty) — otherwise the review-only filters reserve
+                    their fixed width in Live Stock mode and shove the live-stock
+                    search + Import button into the horizontal-scroll overflow. */}
+                <div className={`pm-slot pm-slot--search${!isReviewStage ? ' pm-slot--empty' : ''}`}>
                   {isReviewStage && (
                     <FilterSearch inputRef={searchRef} value={search} placeholder="Search product…" ariaLabel="Search product" onChange={setSearch} />
                   )}
                 </div>
-                <div className="pm-slot pm-slot--select">
+                <div className={`pm-slot pm-slot--select${!isReviewStage ? ' pm-slot--empty' : ''}`}>
                   {isReviewStage && (
                     <FilterSelect className={movement ? 'ds-filter-select--active' : ''} ariaLabel="Movement filter" value={movement} onChange={setMovement}>
                       {MOVEMENT.map((m) => <option key={m} value={m}>{m || 'Movement: all'}</option>)}
@@ -2096,7 +2100,7 @@ export default function PurchaseWorkspacePage() {
                 </div>
                 {/* Category filter is available in every mode/stage (§5) — it
                     only narrows the grid view, it never touches assignments. */}
-                <div className="pm-slot pm-slot--select">
+                <div className={`pm-slot pm-slot--select${mode === 'supplier-stock' ? ' pm-slot--empty' : ''}`}>
                   {mode !== 'supplier-stock' && (
                     <FilterSelect className={productType ? 'ds-filter-select--active' : ''} ariaLabel="Product Type filter" value={productType} onChange={setProductType}>
                       <option value="">All</option>
@@ -2110,7 +2114,7 @@ export default function PurchaseWorkspacePage() {
                     states below: it narrows WHICH products are worth buying
                     (ever purchased with free qty), it says nothing about how
                     far a product got through review. */}
-                <div className="pm-slot pm-slot--offer">
+                <div className={`pm-slot pm-slot--offer${mode === 'supplier-stock' ? ' pm-slot--empty' : ''}`}>
                   {mode !== 'supplier-stock' && (
                     <label className="pm-chk pm-chk--offer" title="Only products this store has bought with free qty at least once (purchase history)">
                       <input type="checkbox" checked={offerOnly} onChange={(e) => setOfferOnly(e.target.checked)} />

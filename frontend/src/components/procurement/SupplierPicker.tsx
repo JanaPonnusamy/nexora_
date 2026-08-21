@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { SupplierRow } from '../../types/procurement'
 import { procurementService } from '../../services/procurementService'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
@@ -45,6 +46,48 @@ export function SupplierPicker({
   // other search dropdown in this module (ManualProductModal's product
   // search) via useListNav, so the index/scroll mechanics aren't duplicated.
   const nav = useListNav(rows.length)
+
+  // The dropdown lives inside the toolbar's horizontally-scrolling row
+  // (overflow-x:auto), which would otherwise clip/scroll-trap an absolutely
+  // positioned menu — so it's rendered in a portal at the document root with
+  // fixed positioning anchored to the input. Recomputed while open so it tracks
+  // window scroll/resize.
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null)
+  const menuVisible = open && rows.length > 0
+
+  useLayoutEffect(() => {
+    if (!menuVisible) return
+    const place = () => {
+      const el = anchorRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setMenuStyle({
+        position: 'fixed',
+        top: Math.round(r.bottom + 4),
+        left: Math.round(r.left),
+        minWidth: Math.max(Math.round(r.width), 260),
+      })
+    }
+    place()
+    // A pointerdown outside the input and the (portaled) menu closes it — the
+    // menu no longer lives inside the input's DOM subtree, so a plain blur can't
+    // be relied on.
+    const onDocDown = (e: PointerEvent) => {
+      const t = e.target as Node | null
+      if (anchorRef.current?.contains(t)) return
+      if (t instanceof Element && t.closest('#pm-suppick-menu')) return
+      setOpen(false)
+    }
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    document.addEventListener('pointerdown', onDocDown, true)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+      document.removeEventListener('pointerdown', onDocDown, true)
+    }
+  }, [menuVisible, rows.length])
 
   useEffect(() => {
     const term = debounced.trim()
@@ -128,7 +171,7 @@ export function SupplierPicker({
   }
 
   return (
-    <div className="pm-suppick">
+    <div className="pm-suppick" ref={anchorRef}>
       <span className="sx-search">
         <i className="bi bi-truck" aria-hidden="true" />
         <input
@@ -145,8 +188,8 @@ export function SupplierPicker({
           onKeyDown={onKeyDown}
         />
       </span>
-      {open && rows.length > 0 && (
-        <ul className="pm-suppick__menu" id="pm-suppick-menu" role="listbox">
+      {menuVisible && menuStyle && createPortal(
+        <ul className="pm-suppick__menu pm-suppick__menu--float" id="pm-suppick-menu" role="listbox" style={menuStyle}>
           {rows.map((s, i) => {
             const m = metaOf?.(s.supplier_code)
             return (
@@ -173,7 +216,8 @@ export function SupplierPicker({
               </li>
             )
           })}
-        </ul>
+        </ul>,
+        document.body,
       )}
     </div>
   )
