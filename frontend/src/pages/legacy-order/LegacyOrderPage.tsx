@@ -239,7 +239,6 @@ export default function LegacyOrderPage() {
         </div>
         <div className="lo-actions">
           <Link to="/legacy-order/workspace" className="lo-btn lo-btn-primary"><i className="bi bi-grid-3x3-gap" /> Order Workspace</Link>
-          <Link to="/legacy-order/qty-check" className="lo-btn"><i className="bi bi-table" /> Qty Check Grid</Link>
           <span className="lo-badge">Legacy DB</span>
         </div>
       </header>

@@ -1137,6 +1137,89 @@
 .qc-qty-editor button:last-of-type { color: var(--bs-danger); }
 .lo-filter-card { padding-block: 0.7rem; }
 
+/* ===== Merged Order Management screen ==================================== */
+/* One VB.NET-style screen: slim header, small store/filter panel, the working
+   grid + product intelligence filling the viewport (internal scroll only), and
+   a short order-history strip pinned at the bottom. Fills the real height of
+   .app-main (a bounded, scrolling flex child) — same approach the Purchase
+   Manager uses — so the page itself never scrolls. */
+.lo-merged {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lo-merged-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.lo-merged-head h1 { margin: 0; font-size: 1.02rem; line-height: 1.15; }
+.lo-merged-head .lo-sub { margin: 0.05rem 0 0; color: var(--bs-secondary-color); font-size: 0.72rem; }
+
+/* Small store/filter panel. */
+.lo-merged-filter { flex: 0 0 auto; padding: 0.5rem 0.7rem; }
+.lo-merged-filter .lo-section-title { align-items: center; gap: 0.6rem; }
+.lo-merged-filter .ds-filter-bar { flex: 1 1 auto; }
+
+/* Working area fills whatever height is left after header + filter + history. */
+.lo-merged .qc-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0.6rem;
+  margin: 0;
+}
+.lo-merged .qc-queue-card,
+.lo-merged .qc-detail-card {
+  min-height: 0;
+  padding: 0.55rem 0.6rem;
+}
+.lo-merged .qc-card-heading { margin-bottom: 0.4rem; }
+.lo-merged .qc-card-heading h2 { font-size: 0.9rem; }
+
+/* Grid + detail scroll internally, no fixed max cap. */
+.lo-merged .qc-grid-scroll,
+.lo-merged .qc-detail-card .qc-detail-scroll {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+}
+.lo-merged .lo-scroll { max-height: none; }
+.lo-merged .lo-footer-totals { flex: 0 0 auto; }
+
+/* Short bottom history strip — heading + ~3-4 dense rows, then scroll. */
+.lo-merged-history { flex: 0 0 auto; padding: 0.45rem 0.6rem; }
+.lo-merged-history .qc-card-heading { margin-bottom: 0.35rem; }
+.lo-merged-history .qc-card-heading h2 { font-size: 0.9rem; }
+.lo-merged-history .qc-history-scroll { max-height: 7.4rem; }
+
+/* Dense DataGridView-style rows across every grid on this screen. */
+.lo-table.lo-dense { font-size: 0.78rem; }
+.lo-table.lo-dense thead th { padding: 0.22rem 0.5rem; font-size: 0.66rem; }
+.lo-table.lo-dense td { padding: 0.12rem 0.5rem; }
+
+/* Order-qty cell: plain right-aligned box, no browser spinner arrows. */
+.qc-qty-input {
+  width: 3.6rem;
+  padding: 0.12rem 0.35rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.3rem;
+  background: var(--bs-body-bg);
+  color: inherit;
+  text-align: right;
+  font: inherit;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.qc-qty-input::-webkit-outer-spin-button,
+.qc-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.qc-qty-input:disabled { opacity: 0.6; }
+
 @media (max-width: 960px) {
   .lo-workflow-steps { grid-template-columns: repeat(2, 1fr); }
   .lo-workflow-metrics { flex-wrap: wrap; }
