@@ -93,3 +93,5 @@ temp/
 # backend/.env PLAYWRIGHT_BROWSERS_PATH) -- large, regenerated via
 # `playwright install firefox`, never source.
 /.ms-playwright/
+# Desktop auto-update artifacts served by the backend (large binaries)
+backend/updates/

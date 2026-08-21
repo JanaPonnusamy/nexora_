@@ -6,6 +6,7 @@
 const path = require('node:path');
 const http = require('node:http');
 const { app, BrowserWindow, shell, ipcMain } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 if (!app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('temp'), 'nexora-supplier-stock-client-dev'));
@@ -94,8 +95,23 @@ async function createWindow() {
   }
 }
 
+// Remote auto-update: on launch, check the HO update feed (configured via
+// build.publish -> http://<HO>/updates), download a newer build silently, and
+// install it the next time the app quits (autoInstallOnAppQuit). Store PCs are
+// closed daily, so updates land without interrupting the user mid-session.
+function initAutoUpdates() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('error', () => { /* offline / feed unreachable - ignore */ });
+  autoUpdater.checkForUpdates().catch(() => {});
+  // Re-check every 6 hours in case a PC stays on for days.
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
+}
+
 app.whenReady().then(() => {
   createWindow();
+  initAutoUpdates();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

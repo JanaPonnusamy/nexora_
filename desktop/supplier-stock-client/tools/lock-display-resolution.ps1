@@ -6,14 +6,18 @@
       2. Hides the "Screen Resolution" / Display settings page (NoDispCPL policy)
          so the day-to-day user can't change it back.
 
-    Usage (run AS ADMINISTRATOR, while logged in as the store's normal user so
-    the per-user policy applies to them):
+    Runs both elevated and non-elevated:
+      - Not elevated (e.g. run by the app installer): sets the resolution and
+        locks the CURRENT user (HKCU). The machine-wide lock (HKLM) is skipped.
+      - Elevated (admin): also applies the machine-wide lock for all users.
+
+    Manual usage:
         powershell -ExecutionPolicy Bypass -File lock-display-resolution.ps1
-    To revert (admin):
+    Revert:
         powershell -ExecutionPolicy Bypass -File lock-display-resolution.ps1 -Unlock
 
     Notes:
-      - A local administrator can still undo this; it stops ordinary users, not admins.
+      - A local administrator can still undo this; it stops ordinary users.
       - Log off/on (or reboot) after running for the policy to take effect.
       - Tested pattern for Windows 7/8/10; try it on ONE PC first.
 #>
@@ -21,25 +25,32 @@ param([switch]$Unlock)
 
 $ErrorActionPreference = 'Stop'
 
-function Assert-Admin {
+function Test-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($id)
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'Please run this script as Administrator.'
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# HKCU = current user (always writable); HKLM = machine-wide (admin only).
+$policyKeys = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System')
+if (Test-Admin) {
+    $policyKeys += 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System'
+}
+
+function Set-DispPolicy([int]$value) {
+    foreach ($k in $policyKeys) {
+        try {
+            if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
+            Set-ItemProperty -Path $k -Name 'NoDispCPL' -Value $value -Type DWord -Force
+            Write-Host ("  {0} NoDispCPL={1}" -f $k, $value)
+        } catch {
+            Write-Host ("  (skipped {0}: {1})" -f $k, $_.Exception.Message)
+        }
     }
 }
-Assert-Admin
-
-# Both hives: HKLM for machine-wide, HKCU for the currently logged-in store user.
-$policyKeys = @(
-    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System',
-    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System'
-)
 
 if ($Unlock) {
-    foreach ($k in $policyKeys) {
-        if (Test-Path $k) { Set-ItemProperty -Path $k -Name 'NoDispCPL' -Value 0 -Type DWord -Force }
-    }
+    Set-DispPolicy 0
     Write-Host 'UNLOCKED: users can change the display resolution again. Log off/on to apply.'
     return
 }
@@ -93,8 +104,5 @@ if ($null -ne $best) {
 }
 
 # --- 2) Lock the Display settings page -------------------------------------
-foreach ($k in $policyKeys) {
-    if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
-    Set-ItemProperty -Path $k -Name 'NoDispCPL' -Value 1 -Type DWord -Force
-}
+Set-DispPolicy 1
 Write-Host 'LOCKED: Screen Resolution / Display settings hidden (NoDispCPL=1). Log off/on (or reboot) to apply.'

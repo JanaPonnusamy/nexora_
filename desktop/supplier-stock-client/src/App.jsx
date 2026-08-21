@@ -386,6 +386,14 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
     loadWhatsApp();
   }, [effectiveSession]);
 
+  useEffect(() => {
+    // Populate the "this device" store picker from the server so setup is a
+    // pick, not GUID typing. Silent/best-effort - the manual Load tenant/store
+    // button still exists.
+    if (!effectiveSession || stores.length) return;
+    api.listStores(effectiveSession).then((rows) => setStores(asArray(rows))).catch(() => {});
+  }, [effectiveSession]);
+
   async function unlockAdmin(event) {
     event.preventDefault();
     setAdminStatus({ state: 'loading', message: 'Checking admin credentials...' });
@@ -630,6 +638,28 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
         <label>
           Bootstrap URL
           <input value={draft.bootstrapUrl} onChange={(event) => setDraft({ ...draft, bootstrapUrl: event.target.value })} placeholder="Optional discovery URL" />
+        </label>
+        <label>
+          Store (this device)
+          <select
+            value={draft.storeId || ''}
+            onChange={(event) => {
+              const picked = stores.find((s) => s.store_id === event.target.value);
+              if (picked) {
+                setDraft({
+                  ...draft,
+                  storeId: picked.store_id,
+                  storeName: picked.store_name || picked.store_code || '',
+                  tenantId: picked.tenant_id || draft.tenantId,
+                });
+              }
+            }}
+          >
+            <option value="">{stores.length ? 'Select this device’s store…' : 'Loading stores… (or click Load tenant/store)'}</option>
+            {stores.map((s) => (
+              <option key={s.store_id} value={s.store_id}>{s.store_name || s.store_code || s.store_id}</option>
+            ))}
+          </select>
         </label>
         <label>
           Tenant ID

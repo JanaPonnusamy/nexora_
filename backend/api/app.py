@@ -314,6 +314,20 @@ def health_db():
     except Exception as ex:
         return {'status':'failed','error':str(ex)}
 
+# Desktop client auto-update feed (electron-updater "generic" provider). Serves
+# latest.yml + the packaged installer from UNINEX_UPDATES_DIR (default
+# backend/updates) so store clients pull new versions straight from HO. Mounted
+# before the SPA catch-all below so /updates/* is never swallowed by it.
+from fastapi.staticfiles import StaticFiles as _UpdatesStaticFiles
+
+_updates_dir = os.getenv(
+    'UNINEX_UPDATES_DIR',
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'updates'),
+)
+os.makedirs(_updates_dir, exist_ok=True)
+app.mount('/updates', _UpdatesStaticFiles(directory=_updates_dir), name='desktop-updates')
+
+
 # Optional single-origin production serving: when the HO installer sets
 # UNINEX_FRONTEND_DIR, this same service also serves the SPA build and a
 # generated /config.js that points the SPA at the configured API URL. API

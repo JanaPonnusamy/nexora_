@@ -3,7 +3,9 @@ const SESSION_KEY = 'nexora.desktop.session';
 
 const defaultSettings = {
   serverMode: 'LAN',
-  apiBaseUrl: 'http://localhost:8000',
+  // Default to the HO server on the LAN so a fresh install connects with no
+  // manual Settings step. Override per-PC in Settings for remote/static-IP stores.
+  apiBaseUrl: 'http://192.168.10.80:8000',
   bootstrapUrl: '',
   tenantId: '',
   storeId: '',
