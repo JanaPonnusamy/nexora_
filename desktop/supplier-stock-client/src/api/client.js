@@ -123,6 +123,12 @@ export const api = {
     });
   },
 
+  // Public (no session): a freshly-installed PC polls its own config by
+  // client_id to learn when HO has approved it and which store it was bound to.
+  getDesktopConfig(clientId) {
+    return request(`/api/desktop-client/config${toQuery({ client_id: clientId })}`);
+  },
+
   listDesktopDevices(session) {
     return request('/api/desktop-client/devices', { session });
   },

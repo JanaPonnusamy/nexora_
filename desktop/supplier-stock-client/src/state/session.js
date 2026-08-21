@@ -11,6 +11,9 @@ const defaultSettings = {
   storeId: '',
   storeName: '',
   storeOrder: [],
+  // Device-activation id (from POST /api/desktop-client/activate/request). The
+  // app polls /config by this id until HO approves and assigns the store.
+  clientId: '',
   similarSearchChars: 6
 };
 

@@ -2,8 +2,9 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from dependencies.store_scope import require_super_admin
 from modules.desktop_client import service
 from modules.desktop_client.schemas import (
     ActivateRequest,
@@ -38,10 +39,10 @@ def heartbeat(payload: HeartbeatRequest):
 
 
 @router.get("/devices", response_model=DeviceListResponse)
-def list_devices():
+def list_devices(_: dict = Depends(require_super_admin)):
     return service.list_devices()
 
 
 @router.post("/devices/{client_id}/approve", response_model=DeviceOut)
-def approve_device(client_id: str, payload: DeviceApproveRequest):
+def approve_device(client_id: str, payload: DeviceApproveRequest, _: dict = Depends(require_super_admin)):
     return service.approve(client_id, payload)

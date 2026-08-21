@@ -194,6 +194,12 @@ _PUBLIC_AGENT_PATTERNS = (
     re.compile(r'^/api/sync/chunks/status/[^/]+$'),
     re.compile(r'^/api/sync/tables/report$'),
     re.compile(r'^/api/desktop-client/activate/request$'),
+    # A fresh, un-activated PC has no user session: it polls /config (by its own
+    # client_id) to learn when HO has approved it and which store it was bound
+    # to, and /heartbeat to report liveness. Both are keyed by an opaque
+    # client_id UUID and return only that device's own binding.
+    re.compile(r'^/api/desktop-client/config$'),
+    re.compile(r'^/api/desktop-client/heartbeat$'),
     re.compile(r'^/api/stores/[^/]+/agent-config$'),
 )
 

@@ -240,6 +240,33 @@ function AppShell() {
     return () => window.removeEventListener('nexora:unauthorized', onUnauthorized);
   }, []);
 
+  // Device activation: once this PC has requested activation (settings.clientId)
+  // and a super admin approves it at HO, pick up the assigned tenant/store
+  // automatically - no manual entry, no sign-in needed. Polls the public
+  // /config endpoint until configured, then stops.
+  useEffect(() => {
+    const clientId = settings.clientId;
+    if (!clientId || (settings.tenantId && settings.storeId)) return;
+    let cancelled = false;
+    const check = () => {
+      api.getDesktopConfig(clientId).then((cfg) => {
+        if (cancelled || !cfg) return;
+        if (cfg.status === 'approved' && cfg.store_id) {
+          persistSettings({
+            ...loadSettings(),
+            tenantId: cfg.tenant_id || '',
+            storeId: cfg.store_id,
+            storeName: cfg.store_name || '',
+            ...(cfg.server_base_url ? { apiBaseUrl: cfg.server_base_url } : {})
+          });
+        }
+      }).catch(() => {});
+    };
+    check();
+    const timer = setInterval(check, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [settings.clientId, settings.tenantId, settings.storeId]);
+
   useEffect(() => {
     if (!session) return;
     if (settings.tenantId && settings.storeId && settings.storeName) return;
@@ -456,8 +483,11 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
         requested_store_code: draft.storeCode || '',
         install_code: ''
       }, effectiveSession);
-      setStatus({ state: 'ok', message: `Activation requested. Client ID: ${result.client_id} (${result.status})` });
+      setStatus({ state: 'ok', message: `Activation requested. Waiting for HO approval… (Client ID: ${result.client_id})` });
       setDraft({ ...draft, clientId: result.client_id });
+      // Persist immediately so the AppShell poller starts watching for approval
+      // even if the user never clicks Save.
+      onSave({ ...loadSettings(), clientId: result.client_id });
     } catch (error) {
       setStatus({ state: 'error', message: error.message });
     }
