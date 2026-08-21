@@ -138,6 +138,8 @@ function AppShell() {
   const [settings, setSettings] = useState(loadSettings);
   const [session, setSession] = useState(loadSession);
   const [activeScreen, setActiveScreen] = useState('stock');
+  // Guards the one-time "land on Settings on a fresh device" auto-route below.
+  const didAutoRoute = useRef(false);
   // Tenant list for the super-admin tenant filter on the Stock Availability
   // screen. The API already scopes this to the caller's own tenant for any
   // non-super-admin login (see backend/controllers/tenant_controller.py), so
@@ -185,7 +187,13 @@ function AppShell() {
   }, [session]);
 
   useEffect(() => {
-    if (!session && !isConfigured) {
+    // First run only: land on Settings when the device isn't set up yet, so a
+    // fresh store PC can enter its API base URL before signing in. Runs once
+    // (ref guard) so it never re-pins the user on Settings when they navigate
+    // back toward the login screen - otherwise an unconfigured PC could never
+    // reach login at all.
+    if (!didAutoRoute.current && !session && !isConfigured) {
+      didAutoRoute.current = true;
       setActiveScreen('settings');
       return;
     }
@@ -302,17 +310,21 @@ function AppShell() {
       </header>
 
       <main className="workspace">
-        {!session ? (
-          <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
-        ) : !isConfigured && activeScreen === 'settings' ? (
+        {activeScreen === 'settings' ? (
+          // Settings/API settings must be reachable BEFORE sign-in: a fresh
+          // store PC has to enter its API base URL here before login can even
+          // reach the HO server (checking this ahead of the !session branch is
+          // what makes the Settings tab / "API settings" link work logged out).
+          // The admin gate only applies once signed in on an unconfigured
+          // device (device activation); logged-out access shows the plain form.
           <SettingsScreen
             settings={runtimeSettings}
             onSave={persistSettings}
-            requireAdminGate={!canUnlockDeviceSetup(session)}
+            requireAdminGate={Boolean(session) && !isConfigured && !canUnlockDeviceSetup(session)}
             session={session}
           />
-        ) : activeScreen === 'settings' ? (
-          <SettingsScreen settings={runtimeSettings} onSave={persistSettings} session={session} />
+        ) : !session ? (
+          <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
         ) : activeScreen === 'analysis' ? (
           <SupplierStockAnalysis
             session={session}
