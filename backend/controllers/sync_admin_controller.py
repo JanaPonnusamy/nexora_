@@ -318,15 +318,30 @@ def get_table_columns(sync_table_id: str):
 def upsert_mapping(body: ColumnMappingRequest, request: Request, current_user: dict = Depends(get_current_user)):
     SyncAdminService().upsert_mapping(body)
 
+    flags = [f for f, on in (
+        ("selected", body.is_selected), ("pk", body.is_pk),
+        ("hash", body.is_hash), ("watermark", body.is_watermark),
+    ) if on]
+    flag_str = ", ".join(flags) if flags else "no flags"
+
     record_audit(
         ctx=AuditContext.from_request(request, user=current_user),
         action="sync.mapping.update",
         category="sync",
         target_type="sync_table",
         target_id=str(body.sync_table_id),
-        target_label=f"Table {body.sync_table_id} Column Mappings",
-        reason=f"Updated column mappings for sync table {body.sync_table_id}",
-        metadata={"sync_table_id": body.sync_table_id, "mapping_count": len(body.mappings)},
+        target_label=f"{body.table_name}.{body.column_name}",
+        reason=f"Updated column mapping '{body.table_name}.{body.column_name}' ({flag_str})",
+        metadata={
+            "sync_table_id": body.sync_table_id,
+            "table_name": body.table_name,
+            "column_name": body.column_name,
+            "is_selected": body.is_selected,
+            "is_pk": body.is_pk,
+            "is_hash": body.is_hash,
+            "is_watermark": body.is_watermark,
+            "column_order": body.column_order,
+        },
     )
 
     return {"success": True, "message": "Column mapping saved"}
