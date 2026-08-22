@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from dtos.login_request import LoginRequest
 from services.auth_service import AuthService
 from config.security import create_access_token, create_setup_token, setup_access_checksum
-from dependencies.auth import get_current_user
+from dependencies.auth import FULL_ACCESS_ROLES, get_current_user
 from repositories.user_repository import UserRepository
 from modules.audit.writer import record_audit, record_audit_strict
 from modules.audit.models import ActorRole, AuditStatus
@@ -62,10 +62,20 @@ def login(req: LoginRequest, request: Request):
         )
         raise HTTPException(status_code=401, detail="Invalid Username Or Password")
 
+    primary_role = user["roles"][0] if user["roles"] else {}
+    role_names = [r["role_name"] for r in user["roles"]]
+
+    # Super admins / platform owners are exempt from the single-session policy:
+    # they may be signed in on several systems at once (see dependencies/auth.py
+    # FULL_ACCESS_ROLES). Everyone else is limited to one active session.
+    is_full_access = bool(user.get("is_platform_user")) or any(
+        r in FULL_ACCESS_ROLES for r in role_names
+    )
+
     # Single active session: block this login if the user is already signed in
     # (and still active) on another system.
     repo = UserRepository()
-    if repo.is_session_active(user["user_id"], _SESSION_LEASE_MINUTES):
+    if not is_full_access and repo.is_session_active(user["user_id"], _SESSION_LEASE_MINUTES):
         record_audit(
             ctx=request,
             action="auth.login.denied",
@@ -83,8 +93,6 @@ def login(req: LoginRequest, request: Request):
             detail="This user is already signed in on another system. Sign out there first, or try again in a few minutes.",
         )
 
-    primary_role = user["roles"][0] if user["roles"] else {}
-    role_names = [r["role_name"] for r in user["roles"]]
     actor_role = ActorRole.ADMIN if user.get("is_platform_user") or any(r in {"SUPER_ADMIN", "PLATFORM_OWNER"} for r in role_names) else ActorRole.CUSTOMER
 
     # STRICT AUDIT: Log success before token credential is minted and returned
@@ -111,10 +119,10 @@ def login(req: LoginRequest, request: Request):
 
     # Claim this session (newest login owns it) and stamp the token with its id
     # so every subsequent request can be validated against the active session.
-    session_id = str(uuid.uuid4())
-    repo.set_active_session(user["user_id"], session_id)
-
-    token = create_access_token({
+    # Full-access users are exempt from single-session: their tokens carry no
+    # sid, so dependencies/auth.py:_enforce_active_session never rejects one for
+    # being superseded, letting several concurrent sessions coexist.
+    claims = {
         "sub": user["user_id"],
         "username": user["username"],
         "tenant_id": user["tenant_id"],
@@ -122,8 +130,13 @@ def login(req: LoginRequest, request: Request):
         "role_names": role_names,
         "store_id": primary_role.get("store_id"),
         "store_code": primary_role.get("store_code"),
-        "sid": session_id,
-    })
+    }
+    if not is_full_access:
+        session_id = str(uuid.uuid4())
+        repo.set_active_session(user["user_id"], session_id)
+        claims["sid"] = session_id
+
+    token = create_access_token(claims)
 
     return {"token": token, "token_type": "bearer", "user": user}
 
