@@ -116,11 +116,15 @@ export function ProductDetailPanel({ store, productCode, mode, onError }: Produc
         <h3 className="qc-pi-title">Purchase / GRN history</h3>
         <div className="lo-scroll qc-pi-scroll">
           <table className="lo-table lo-table--pi">
-            <thead><tr><th className="lo-num">Stock</th><th className="lo-num qc-pi-free">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
+            <thead><tr><th className="lo-num">Stock</th><th className="lo-num">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
             <tbody>
-              {purchaseDetails.map((row, i) => (
-                <tr key={i}><td className="lo-num">{row.RStock ?? '—'}</td><td className="lo-num qc-pi-free">{row.FreeQty ?? '—'}</td><td className="lo-num">{row.DIS ?? '—'}</td><td className="lo-num">{row.ItemCost ?? '—'}</td><td className="lo-num">{row.PTR ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{fmtDate(row.GRNDate)}</td><td>{row.SupplierName ?? '—'}</td></tr>
-              ))}
+              {purchaseDetails.map((row, i) => {
+                // Legacy: rows that came with free goods (free > 0) are highlighted.
+                const free = Number(row.FreeQty) || 0
+                return (
+                <tr key={i} className={free > 0 ? 'qc-pi-freerow' : undefined}><td className="lo-num">{row.RStock ?? '—'}</td><td className={`lo-num${free > 0 ? ' qc-pi-free' : ''}`}>{row.FreeQty ?? '—'}</td><td className="lo-num">{row.DIS ?? '—'}</td><td className="lo-num">{row.ItemCost ?? '—'}</td><td className="lo-num">{row.PTR ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{fmtDate(row.GRNDate)}</td><td>{row.SupplierName ?? '—'}</td></tr>
+                )
+              })}
               {!purchaseDetails.length && <tr><td colSpan={8} className="lo-empty">No purchase history.</td></tr>}
             </tbody>
           </table>
