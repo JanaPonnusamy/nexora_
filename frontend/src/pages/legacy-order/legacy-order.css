@@ -1335,16 +1335,18 @@
   font-size: 0.76rem;
   font-weight: 600;
 }
-/* Purchase + Sales each guarantee ~6 rows (min-height) and grow to show more
-   when the panel is tall; the chart keeps a compact natural size below them. */
+/* Purchase + Sales each guarantee ~6 rows (min-height ≈ 6 rows + header at the
+   ~18px PI row height below) and grow to show more when the panel is tall. The
+   chart is allowed to shrink so the two tables keep their 6 rows on short
+   viewports; on very short screens the media query caps it further. */
 .qc-pi-scroll {
   flex: 1 1 auto;
-  min-height: 10rem;
+  min-height: 9rem;
   max-height: none;
   overflow: auto;
 }
-.qc-pi-chart { flex: 0 0 auto; min-height: 8.5rem; }
-.qc-pi-chart svg { max-height: 10rem; }
+.qc-pi-chart { flex: 0 1 auto; min-height: 5.5rem; }
+.qc-pi-chart svg { max-height: 8rem; }
 
 /* Sales / Purchase readability: important numeric values at 16px, supporting
    text (dates, names, salesman, customer) stays compact at 12px. Rows remain
@@ -1375,7 +1377,7 @@
 }
 #root .lo-merged .lo-table--pi { font-size: 12px; }
 #root .lo-merged .lo-table--pi > thead > tr > th { padding: 0.12rem 0.45rem !important; font-size: 10px !important; }
-#root .lo-merged .lo-table--pi > tbody > tr > td { padding: 0.16rem 0.45rem !important; font-size: 12px; line-height: 1.2; }
+#root .lo-merged .lo-table--pi > tbody > tr > td { padding: 0.13rem 0.45rem !important; font-size: 12px; line-height: 1.15; }
 #root .lo-merged .lo-table--pi > tbody > tr > td.qc-pi-key { font-size: 16px; font-weight: 600; }
 
 /* Order-qty cell: plain right-aligned box, no browser spinner arrows. */
@@ -1414,4 +1416,27 @@
   .qc-queue-count i { display: inline; width: 1px; background: var(--bs-border-color); }
   .qc-keyboard-help { display: none; }
   .qc-empty-state, .qc-detail-empty { min-height: 16rem; padding: 1.5rem; }
+}
+
+/* ---- Short viewports (e.g. 1366x768 laptops) ----
+   Keep Purchase + Sales at their ~6 rows by giving the shared height back from
+   the chart, the history strip and the surrounding gutters — the two tables are
+   the priority, the chart just shrinks. */
+@media (max-height: 820px) {
+  .lo-merged { gap: 0.25rem; }
+  .lo-merged-head { min-height: 1.9rem; }
+  .app-main:has(> .lo-merged) { padding: 0.4rem 0.6rem; }
+  .qc-pi-chart { min-height: 4.5rem; }
+  .qc-pi-chart svg { max-height: 6rem; }
+  .lo-merged-history .qc-history-scroll { max-height: 3.2rem; }
+}
+
+/* Very short viewports (≤720px tall): trim the chart and history further and
+   drop the per-table floor slightly (rows are ~18px, so ~6 still fit) so the
+   two tables never lose their 6 rows. */
+@media (max-height: 720px) {
+  .qc-pi-scroll { min-height: 8rem; }
+  .qc-pi-chart { min-height: 3.5rem; }
+  .qc-pi-chart svg { max-height: 4.5rem; }
+  .lo-merged-history .qc-history-scroll { max-height: 2.6rem; }
 }
