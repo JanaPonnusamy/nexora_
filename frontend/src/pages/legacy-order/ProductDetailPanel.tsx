@@ -23,30 +23,40 @@ export function MonthlyStatsChart({ rows }: { rows: MonthlyStatRow[] }) {
   const max = Math.max(1, ...rows.flatMap((row) => CHART_SERIES.map((s) => Number(row[s.key]) || 0)))
   const W = 560
   const H = 200
-  const padL = 30
-  const padB = 20
-  const plotW = W - padL - 10
-  const plotH = H - padB - 10
+  const padL = 34
+  const padR = 8
+  const padT = 8
+  const padB = 22
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+  const baseY = padT + plotH
   const groupW = plotW / rows.length
-  const barW = Math.max(3, (groupW * 0.8) / CHART_SERIES.length)
+  // Bars fill 80% of each group's slot (10% gap each side); dividing that inner
+  // width evenly across the series guarantees the bars can never spill past the
+  // group and overlap the neighbouring month — the old Math.max(3, …) floor
+  // could, which is what made the bars overlap.
+  const groupInner = groupW * 0.8
+  const groupPad = (groupW - groupInner) / 2
+  const barW = groupInner / CHART_SERIES.length
 
   return (
     <div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Monthly statistics chart">
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Monthly statistics chart">
+        <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="currentColor" strokeOpacity="0.25" />
         {rows.map((row, i) => {
-          const groupX = padL + i * groupW + groupW * 0.1
+          const groupX = padL + i * groupW + groupPad
           return (
-            <g key={row.MonthOfStatistics}>
+            <g key={`${row.MonthOfStatistics}-${i}`}>
               {CHART_SERIES.map((series, j) => {
                 const value = Number(row[series.key]) || 0
                 // Negative values (e.g. stock/adjustment corrections) would make
                 // a negative <rect height>, which is invalid SVG — clamp to 0.
                 const h = Math.max(0, (value / max) * plotH)
                 const x = groupX + j * barW
-                const y = padB + (plotH - h)
-                return <rect key={series.key} x={x} y={y} width={barW - 1} height={h} fill={series.color}><title>{`${series.label}: ${value}`}</title></rect>
+                const y = baseY - h
+                return <rect key={series.key} x={x} y={y} width={Math.max(1, barW - 0.75)} height={h} fill={series.color}><title>{`${series.label}: ${value}`}</title></rect>
               })}
-              <text x={groupX + (barW * CHART_SERIES.length) / 2} y={H - 4} textAnchor="middle" fontSize="9" fill="currentColor">{row.MonthOfStatistics}</text>
+              <text x={groupX + groupInner / 2} y={H - 6} textAnchor="middle" fontSize="9" fill="currentColor">{row.MonthOfStatistics}</text>
             </g>
           )
         })}
