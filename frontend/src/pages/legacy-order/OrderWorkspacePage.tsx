@@ -15,6 +15,7 @@ import type {
 import './legacy-order.css'
 import { FilterBar, FilterSearch, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
 import { ProductDetailPanel } from './ProductDetailPanel'
+import { SupplierSearchSelect } from './SupplierSearchSelect'
 import { fmtDate } from './format'
 
 // The single VB.NET-style ordering screen: quantity review AND supplier
@@ -362,15 +363,10 @@ export default function OrderWorkspacePage() {
               onChange={(v) => setView(v as View)}
             />
             {(view === 'supplier' || view === 'assigned') && (
-              <FilterSelect
-                label="Supplier"
-                ariaLabel="Supplier"
-                value={supplier?.supplier_code ?? ''}
-                onChange={(code) => setSupplier(suppliers.find((s) => s.supplier_code === code) ?? null)}
-              >
-                <option value="">Select supplier…</option>
-                {suppliers.map((s) => <option key={s.supplier_code} value={s.supplier_code}>{s.supplier_name}</option>)}
-              </FilterSelect>
+              <label className="ds-filter-field lo-suppick-field">
+                <span>Supplier</span>
+                <SupplierSearchSelect suppliers={suppliers} value={supplier} onChange={setSupplier} />
+              </label>
             )}
             {view === 'supplier' && (
               <FilterTabs
