@@ -17,55 +17,42 @@ const CHART_SERIES: { key: keyof MonthlyStatRow; label: string; color: string }[
   { key: 'TransferOutQuantity', label: 'TOUT', color: '#a855f7' },
 ]
 
-/** Port of the VB Chart1 grouped-bar chart: last 3 months of ProductTrans. */
+/** Port of the VB Chart1 grouped-bar chart: last 3 months of ProductTrans.
+ *  Rendered as HTML/flex bars (not SVG) so it fills the panel width with no
+ *  letterbox gaps, shows each value, and takes a light card + glossy bars. */
 export function MonthlyStatsChart({ rows }: { rows: MonthlyStatRow[] }) {
   if (!rows.length) return <div className="lo-empty">No monthly statistics for this product.</div>
   const max = Math.max(1, ...rows.flatMap((row) => CHART_SERIES.map((s) => Number(row[s.key]) || 0)))
-  const W = 560
-  const H = 200
-  const padL = 34
-  const padR = 8
-  const padT = 8
-  const padB = 22
-  const plotW = W - padL - padR
-  const plotH = H - padT - padB
-  const baseY = padT + plotH
-  const groupW = plotW / rows.length
-  // Bars fill 80% of each group's slot (10% gap each side); dividing that inner
-  // width evenly across the series guarantees the bars can never spill past the
-  // group and overlap the neighbouring month — the old Math.max(3, …) floor
-  // could, which is what made the bars overlap.
-  const groupInner = groupW * 0.8
-  const groupPad = (groupW - groupInner) / 2
-  const barW = groupInner / CHART_SERIES.length
 
   return (
-    <div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Monthly statistics chart">
-        <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="currentColor" strokeOpacity="0.25" />
-        {rows.map((row, i) => {
-          const groupX = padL + i * groupW + groupPad
-          return (
-            <g key={`${row.MonthOfStatistics}-${i}`}>
-              {CHART_SERIES.map((series, j) => {
+    <div className="qc-chart">
+      <div className="qc-chart__plot" role="img" aria-label="Monthly statistics chart">
+        {rows.map((row, i) => (
+          <div className="qc-chart__group" key={`${row.MonthOfStatistics}-${i}`}>
+            <div className="qc-chart__bars">
+              {CHART_SERIES.map((series) => {
                 const value = Number(row[series.key]) || 0
-                // Negative values (e.g. stock/adjustment corrections) would make
-                // a negative <rect height>, which is invalid SVG — clamp to 0.
-                const h = Math.max(0, (value / max) * plotH)
-                const x = groupX + j * barW
-                const y = baseY - h
-                return <rect key={series.key} x={x} y={y} width={Math.max(1, barW - 0.75)} height={h} fill={series.color}><title>{`${series.label}: ${value}`}</title></rect>
+                const pct = Math.max(0, Math.min(100, (value / max) * 100))
+                return (
+                  <div
+                    key={series.key}
+                    className="qc-chart__bar"
+                    style={{ height: `${pct}%`, background: series.color }}
+                    title={`${series.label}: ${value}`}
+                  >
+                    {value !== 0 && <span className="qc-chart__val">{value}</span>}
+                  </div>
+                )
               })}
-              <text x={groupX + groupInner / 2} y={H - 6} textAnchor="middle" fontSize="9" fill="currentColor">{row.MonthOfStatistics}</text>
-            </g>
-          )
-        })}
-      </svg>
-      <div className="lo-actions" style={{ flexWrap: 'wrap', marginTop: '0.4rem' }}>
+            </div>
+            <div className="qc-chart__month">{row.MonthOfStatistics}</div>
+          </div>
+        ))}
+      </div>
+      <div className="qc-chart__legend">
         {CHART_SERIES.map((series) => (
-          <span key={series.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem' }}>
-            <span style={{ width: '0.6rem', height: '0.6rem', background: series.color, borderRadius: '2px', display: 'inline-block' }} />
-            {series.label}
+          <span key={series.key} className="qc-chart__leg">
+            <i style={{ background: series.color }} />{series.label}
           </span>
         ))}
       </div>

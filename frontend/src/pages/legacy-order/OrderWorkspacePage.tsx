@@ -200,7 +200,11 @@ export default function OrderWorkspacePage() {
         setQtyRows((cur) => cur.filter((r) => r.productcode !== productCode))
         setEdits((cur) => { const n = { ...cur }; delete n[productCode]; return n })
         setSelectedCode(nextCode)
-        requestAnimationFrame(() => qtyInputRefs.current[focusIndex]?.focus())
+        requestAnimationFrame(() => {
+          const input = qtyInputRefs.current[focusIndex]
+          input?.focus()
+          input?.closest('tr')?.scrollIntoView({ block: 'nearest' })
+        })
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => { setSavingQty(null); loadWorkflow() })
@@ -210,7 +214,11 @@ export default function OrderWorkspacePage() {
     const clamped = Math.max(0, Math.min(filteredQty.length - 1, index))
     const row = filteredQty[clamped]
     if (row) setSelectedCode(row.productcode)
-    requestAnimationFrame(() => qtyInputRefs.current[clamped]?.focus())
+    requestAnimationFrame(() => {
+      const input = qtyInputRefs.current[clamped]
+      input?.focus()
+      input?.closest('tr')?.scrollIntoView({ block: 'nearest' })
+    })
   }
 
   const onQtyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, index: number) => {
@@ -269,7 +277,15 @@ export default function OrderWorkspacePage() {
       const el = workspaceInputRefs.current[i]
       const row = list[i]
       if (row) setSelectedCode(row.ProductCode)
-      if (el && !el.disabled) { const at = i; requestAnimationFrame(() => workspaceInputRefs.current[at]?.focus()); return }
+      if (el && !el.disabled) {
+        const at = i
+        requestAnimationFrame(() => {
+          const input = workspaceInputRefs.current[at]
+          input?.focus()
+          input?.closest('tr')?.scrollIntoView({ block: 'nearest' })
+        })
+        return
+      }
       i += dir
     }
   }, [filteredRows])

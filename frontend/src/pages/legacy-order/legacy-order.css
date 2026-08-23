@@ -1363,8 +1363,9 @@
 .lo-merged-history { flex: 0 0 auto; padding: 0.15rem 0.5rem 0.3rem; }
 .lo-merged-history .qc-card-heading { margin-bottom: 0.2rem; }
 .lo-merged-history.is-collapsed .qc-card-heading { margin-bottom: 0; }
-/* ~5 dense rows visible (28px header + 5×29px), then scroll. */
-.lo-merged-history .qc-history-scroll { max-height: 10.5rem; }
+/* Fixed height = header + 5 dense rows, always (never resizes to the data);
+   more than 5 rows scroll inside. */
+.lo-merged-history .qc-history-scroll { height: 10.5rem; }
 
 /* Chevron toggle in the strip heading. */
 .lo-history-toggle {
@@ -1396,33 +1397,92 @@
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  /* y-scroll is only a fallback for very short windows; on normal desktops the
-     three sections fit and only the inner tables scroll. */
-  overflow: hidden auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .qc-pi-head { margin: 0; flex: 0 0 auto; }
-.qc-pi-section { display: flex; flex-direction: column; min-height: 0; }
-/* Purchase + Sales share the leftover height and stay readable; the chart sits
-   at its natural compact size at the bottom. */
-.qc-pi-section.qc-pi-grow { flex: 1 1 0; }
+/* Each section CLIPS its own content and scrolls internally — without this the
+   inner table can render taller than its flex slot and overlap the section
+   below (that was the Sales header landing on the Purchase rows). */
+.qc-pi-section { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+/* Purchase + Sales get a bit more of the panel than the chart, and all three
+   share the height via flex so nothing overflows. */
+.qc-pi-section.qc-pi-grow { flex: 1.25 1 0; }
 .qc-pi-title {
   margin: 0 0 0.2rem;
   flex: 0 0 auto;
   font-size: 0.76rem;
   font-weight: 600;
 }
-/* Purchase + Sales each guarantee ~6 rows (min-height ≈ 6 rows + header at the
-   ~18px PI row height below) and grow to show more when the panel is tall. The
-   chart is allowed to shrink so the two tables keep their 6 rows on short
-   viewports; on very short screens the media query caps it further. */
 .qc-pi-scroll {
   flex: 1 1 auto;
-  min-height: 9rem;
+  min-height: 0;
   max-height: none;
   overflow: auto;
 }
-.qc-pi-chart { flex: 0 1 auto; min-height: 5.5rem; }
-.qc-pi-chart svg { max-height: 8rem; }
+.qc-pi-chart { flex: 1 1 0; min-height: 4rem; }
+
+/* ----- Monthly statistics: light card + modern glossy HTML bars ----- */
+.qc-chart {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.45rem 0.5rem 0.3rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(180deg, #ffffff, #eef2f7);
+  color: #475569;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+.qc-chart__plot {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.12);
+}
+.qc-chart__group { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.qc-chart__bars {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  padding-top: 0.9rem; /* headroom for the value labels above short bars */
+}
+.qc-chart__bar {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 4px;
+  max-width: 18px;
+  min-height: 1px;
+  border-radius: 3px 3px 0 0;
+  /* glossy sheen: bright top edge + soft inner shading */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset -1px 0 0 rgba(0, 0, 0, 0.12),
+    0 1px 1px rgba(15, 23, 42, 0.18);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 42%, rgba(0, 0, 0, 0.16));
+}
+.qc-chart__val {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 1px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  color: #334155;
+  white-space: nowrap;
+}
+.qc-chart__month { flex: 0 0 auto; padding-top: 3px; text-align: center; font-size: 9px; font-weight: 600; color: #64748b; }
+.qc-chart__legend { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; }
+.qc-chart__leg { display: inline-flex; align-items: center; gap: 0.28rem; font-size: 0.64rem; color: #475569; }
+.qc-chart__leg i { width: 0.62rem; height: 0.62rem; border-radius: 2px; display: inline-block; box-shadow: inset 0 1px 0 rgba(255,255,255,0.5); }
 
 /* Sales / Purchase readability: important numeric values at 16px, supporting
    text (dates, names, salesman, customer) stays compact at 12px. Rows remain
@@ -1502,19 +1562,16 @@
    the priority, the chart just shrinks. */
 @media (max-height: 820px) {
   .lo-merged { gap: 0.25rem; }
-  .lo-merged-head { min-height: 1.9rem; }
+  .lo-merged-head { min-height: 1.7rem; }
   .app-main:has(> .lo-merged) { padding: 0.4rem 0.6rem; }
-  .qc-pi-chart { min-height: 4.5rem; }
-  .qc-pi-chart svg { max-height: 6rem; }
-  .lo-merged-history .qc-history-scroll { max-height: 3.2rem; }
+  .qc-pi-chart { min-height: 3.5rem; }
+  .lo-merged-history .qc-history-scroll { height: 7.5rem; }
 }
 
-/* Very short viewports (≤720px tall): trim the chart and history further and
-   drop the per-table floor slightly (rows are ~18px, so ~6 still fit) so the
-   two tables never lose their 6 rows. */
+/* Very short viewports (≤720px tall): give the chart even less so the two
+   tables keep the most rows. */
 @media (max-height: 720px) {
-  .qc-pi-scroll { min-height: 8rem; }
-  .qc-pi-chart { min-height: 3.5rem; }
-  .qc-pi-chart svg { max-height: 4.5rem; }
-  .lo-merged-history .qc-history-scroll { max-height: 2.6rem; }
+  .qc-pi-section.qc-pi-grow { flex: 1.6 1 0; }
+  .qc-pi-chart { min-height: 3rem; }
+  .lo-merged-history .qc-history-scroll { height: 5.5rem; }
 }
