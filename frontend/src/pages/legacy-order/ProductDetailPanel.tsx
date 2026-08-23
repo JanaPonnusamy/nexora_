@@ -39,7 +39,9 @@ export function MonthlyStatsChart({ rows }: { rows: MonthlyStatRow[] }) {
             <g key={row.MonthOfStatistics}>
               {CHART_SERIES.map((series, j) => {
                 const value = Number(row[series.key]) || 0
-                const h = (value / max) * plotH
+                // Negative values (e.g. stock/adjustment corrections) would make
+                // a negative <rect height>, which is invalid SVG — clamp to 0.
+                const h = Math.max(0, (value / max) * plotH)
                 const x = groupX + j * barW
                 const y = padB + (plotH - h)
                 return <rect key={series.key} x={x} y={y} width={barW - 1} height={h} fill={series.color}><title>{`${series.label}: ${value}`}</title></rect>
