@@ -130,27 +130,39 @@ def coverage_required(target_stock_qty, effective_avail):
     return target_stock_qty - effective_avail
 
 
-def final_required(coverage_req, max_day_sale_qty, max_bill_qty, sale_unit=0.0):
-    """PR-BR-007/008/009: Required = MAX(coverage, floors); Final = CEILING(Required).
+def final_required(target_stock_qty, effective_avail, max_day_sale_qty,
+                   max_bill_qty, sale_unit=0.0):
+    """PR-BR-007/008/009 (stock-netted): the demand floors are gross required
+    STOCK LEVELS, and current stock is subtracted exactly once at the end.
 
-    Legacy parity (order_local/remote.sql): the loose-unit shortfall is then
-    divided by the product's strip/pack size (``SaleUnit``) and ceiling'd —
-    ``CEILING((maxqty - TotalStock) / SaleUnit)`` — so the order quantity is
-    expressed in strips, not loose units. When SaleUnit is missing/<=0 the
-    strip quantity falls back to the loose quantity (legacy would zero it,
-    but that would silently drop the product from procurement here).
+    Legacy parity (order_local/remote.sql):
+
+        maxqty   = MAX((slsqty/90)*maxDays, MaxSalesQtyInBill)   -- gross target incl. spike
+        OrderQty = CEILING((maxqty - TotalStock) / SaleUnit)     -- ONE stock subtraction
+
+    A spike floor (max-day / max-bill) is therefore a required stock LEVEL, not
+    an extra order stacked on top of the stock already on hand. The previous
+    implementation applied the floors to the *net* coverage requirement, i.e.
+    ``MAX(target - stock, max_day, max_bill)``, which never subtracted stock from
+    the spike floors and so over-ordered spiky-but-stocked products (e.g. order
+    the full 300-unit single-day spike while 5 are already in stock). We now mirror
+    legacy: gross target first, subtract stock once.
 
     Returns (required, final_required_qty, suggested_strip_qty, determinant).
-    The determinant is the argument equal to the MAX, preferring COVERAGE,
-    then SPIKE_PROTECTION, then MAX_BILL_TRIGGER (PR-BR-009).
+    The determinant is the term that set the gross target, preferring COVERAGE
+    (days-cover), then SPIKE_PROTECTION (max-day), then MAX_BILL_TRIGGER.
+    When SaleUnit is missing/<=0 the strip quantity falls back to loose units.
     """
+    target_stock_qty = target_stock_qty or 0.0
+    effective_avail = effective_avail or 0.0
     max_day_sale_qty = max_day_sale_qty or 0.0
     max_bill_qty = max_bill_qty or 0.0
-    required = max(coverage_req, max_day_sale_qty, max_bill_qty)
-    final_qty = math.ceil(required)
-    if coverage_req >= required:
+    gross_target = max(target_stock_qty, max_day_sale_qty, max_bill_qty)
+    required = gross_target - effective_avail
+    final_qty = max(0, math.ceil(required))
+    if target_stock_qty >= gross_target:
         determinant = COVERAGE
-    elif max_day_sale_qty >= required:
+    elif max_day_sale_qty >= gross_target:
         determinant = SPIKE_PROTECTION
     else:
         determinant = MAX_BILL_TRIGGER
@@ -241,13 +253,18 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         out["reason_text"] = "Excluded: no eligible sales in the rolling window."
         return out
 
-    # Legacy eligibility gates (order_local/remote.sql final WHERE), applied
-    # before quantity sizing so an ineligible product never produces an order:
-    #   ps.lastsaledate >= today - 10 days   (recent movement)
-    #   ps.lastsaledate >= ps.LastReceivedDate  (sold since the latest GRN)
-    # The dates come from sync.ProductTrans (MAX LastBillDate / MAX LastGrnDate)
-    # within the legacy 20-day LastBillDate window. A NULL on either side fails
-    # the comparison in the VB SQL (LEFT JOIN → UNKNOWN), so it excludes here too.
+    # HARD SKIP RULES — terminal, applied BEFORE any quantity sizing so an
+    # ineligible product can never be re-introduced by a downstream calculation.
+    # Fed by PRECISE real transaction dates (decision_repository: MAX sale
+    # TransactionDate / MAX PurchaseTrans grndate), NOT month-level ProductTrans
+    # aggregates, which cannot resolve "sold after the latest GRN".
+    #
+    #   Rule 1 (no sale in last N days): last real sale older than the recency
+    #           floor → SKIP (legacy: ps.lastsaledate >= today-10).
+    #   Rule 2 (no sale after latest GRN): a GRN exists AND the last real sale is
+    #           strictly before it → just received, not yet moved → SKIP
+    #           (legacy: ps.lastsaledate >= ps.LastReceivedDate, so same-day
+    #           sale == GRN is KEPT). When no GRN exists the rule does not apply.
     last_sale = src.get("last_sale_date")
     last_recv = src.get("last_received_date")
     now = params.as_of or datetime.now()
@@ -257,7 +274,7 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
             f"Excluded: no sale in the last {params.recency_days} days."
         )
         return out
-    if last_recv is None or last_sale < last_recv:
+    if last_recv is not None and last_sale < last_recv:
         out["reason_code"] = EXCLUDED_RECENTLY_RECEIVED
         out["reason_text"] = (
             "Excluded: no sale since the latest GRN (recently received, not yet moved)."
@@ -271,11 +288,12 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         )
         return out
 
-    # Included candidate — Stages 6-9
+    # Included candidate — Stages 6-9. Gross target = MAX(days-cover target,
+    # spike floors); subtract stock ONCE (see final_required — stock-netted).
     tgt = target_stock(avg, params.max_days)
     cov_req = coverage_required(tgt, eff)
     required, final_qty, suggested_qty, determinant = final_required(
-        cov_req, max_day, max_bill, sale_unit
+        tgt, eff, max_day, max_bill, sale_unit
     )
 
     out["target_days"] = params.max_days
@@ -289,6 +307,7 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         out["reason_text"] = "Excluded: already sufficiently covered (required <= 0)."
         return out
 
+    gross_target = max(tgt, max_day, max_bill)
     out["procurement_action"] = ACTION_INCLUDE
     out["suggested_qty"] = suggested_qty
     out["final_required_qty"] = suggested_qty
@@ -296,6 +315,7 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
     out["reason_text"] = (
         f"Included; {suggested_qty} strip(s) ({final_qty} loose units); cover "
         f"{cover:.1f}d < min {params.min_days:g}d; driven by {determinant} "
-        f"(coverage {cov_req:.0f}, floors {max_day:g}/{max_bill:g})."
+        f"(gross target {gross_target:.0f} = max(cover {tgt:.0f}, "
+        f"maxDay {max_day:g}, maxBill {max_bill:g}) - stock {eff:.0f})."
     )
     return out
