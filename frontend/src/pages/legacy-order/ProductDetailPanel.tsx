@@ -129,10 +129,10 @@ export function ProductDetailPanel({ store, productCode, mode, onError }: Produc
         <h3 className="qc-pi-title">Purchase / GRN history</h3>
         <div className="lo-scroll qc-pi-scroll">
           <table className="lo-table lo-table--pi">
-            <thead><tr><th className="lo-num">Stock</th><th className="lo-num">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
+            <thead><tr><th className="lo-num">Stock</th><th className="lo-num qc-pi-free">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
             <tbody>
               {purchaseDetails.map((row, i) => (
-                <tr key={i}><td className="lo-num qc-pi-key">{row.RStock ?? '—'}</td><td className="lo-num">{row.FreeQty ?? '—'}</td><td className="lo-num">{row.DIS ?? '—'}</td><td className="lo-num">{row.ItemCost ?? '—'}</td><td className="lo-num qc-pi-key">{row.PTR ?? '—'}</td><td className="lo-num qc-pi-key">{row.MRP ?? '—'}</td><td>{fmtDate(row.GRNDate)}</td><td>{row.SupplierName ?? '—'}</td></tr>
+                <tr key={i}><td className="lo-num">{row.RStock ?? '—'}</td><td className="lo-num qc-pi-free">{row.FreeQty ?? '—'}</td><td className="lo-num">{row.DIS ?? '—'}</td><td className="lo-num">{row.ItemCost ?? '—'}</td><td className="lo-num">{row.PTR ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{fmtDate(row.GRNDate)}</td><td>{row.SupplierName ?? '—'}</td></tr>
               ))}
               {!purchaseDetails.length && <tr><td colSpan={8} className="lo-empty">No purchase history.</td></tr>}
             </tbody>
@@ -147,7 +147,7 @@ export function ProductDetailPanel({ store, productCode, mode, onError }: Produc
             <thead><tr><th className="lo-num">Qty</th><th>Bill Time</th><th>Salesman</th><th>Customer</th><th className="lo-num">Dis</th><th>Type</th><th className="lo-num">MRP</th></tr></thead>
             <tbody>
               {salesDetails.map((row, i) => (
-                <tr key={i}><td className="lo-num qc-pi-key">{row.TotalQuantity ?? '—'}</td><td>{fmtDate(row.Bill_Time)}</td><td>{row.Salesmanname ?? '—'}</td><td>{row.CUSTOMERNAME ?? '—'}</td><td className="lo-num">{row.dis ?? '—'}</td><td>{row.type ?? '—'}</td><td className="lo-num qc-pi-key">{row.mrp ?? '—'}</td></tr>
+                <tr key={i}><td className="lo-num">{row.TotalQuantity ?? '—'}</td><td>{fmtDate(row.Bill_Time)}</td><td>{row.Salesmanname ?? '—'}</td><td>{row.CUSTOMERNAME ?? '—'}</td><td className="lo-num">{row.dis ?? '—'}</td><td>{row.type ?? '—'}</td><td className="lo-num">{row.mrp ?? '—'}</td></tr>
               ))}
               {!salesDetails.length && <tr><td colSpan={7} className="lo-empty">No sales history.</td></tr>}
             </tbody>

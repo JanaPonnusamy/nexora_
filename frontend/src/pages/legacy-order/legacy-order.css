@@ -1039,13 +1039,15 @@
 /* Selected row — a table-safe highlight. NOT .lo-supplier-row, which is a CSS
    grid used for the compare screen's supplier cards and would collapse a <tr>
    into columns (cells wrapping onto multiple lines). */
-.lo-table tbody tr.is-row-selected > td { background: rgba(var(--bs-primary-rgb), 0.16); }
-.lo-table tbody tr.is-row-selected > td:first-child { box-shadow: inset 3px 0 0 var(--bs-primary); }
+/* Current/selected row — a bright green shade (VB DataGridView selection),
+   scoped under #root so it wins over the global row background. */
+#root .lo-table tbody tr.is-row-selected > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.32) !important; }
+#root .lo-table tbody tr.is-row-selected > td:first-child { box-shadow: inset 3px 0 0 var(--bs-success, #198754); }
 
 /* Row assigned to a supplier this session (VB ForestGreen OrderQty cell). */
 .lo-table tbody tr.lo-row-assigned > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.14); }
 .lo-table tbody tr.lo-row-assigned > td:nth-child(3) { color: var(--bs-success, #198754); font-weight: 700; }
-.lo-table tbody tr.lo-row-assigned.is-row-selected > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.24); }
+#root .lo-table tbody tr.lo-row-assigned.is-row-selected > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.4) !important; }
 
 /* ----- Guided order workflow ----- */
 .lo-workflow {
@@ -1161,7 +1163,7 @@
 }
 /* Compact order toolbar — one vertically-centred row, ~40px. Title, store,
    order #, live status chip and counts all sit inline; actions pushed right. */
-.lo-merged-head { min-height: 2.05rem; align-items: center; }
+.lo-merged-head { min-height: 1.7rem; align-items: center; }
 .lo-merged-title {
   display: flex;
   align-items: center;
@@ -1170,7 +1172,7 @@
   min-width: 0;
   overflow: hidden;
 }
-.lo-merged-app { margin: 0; flex: 0 0 auto; font-size: 0.875rem; line-height: 1.1; font-weight: 700; }
+.lo-merged-app { margin: 0; flex: 0 0 auto; font-size: 0.82rem; line-height: 1.1; font-weight: 700; }
 .lo-merged-store { flex: 0 0 auto; font-size: 0.78rem; font-weight: 600; }
 .lo-merged-store.lo-dim { color: var(--bs-secondary-color); font-weight: 500; }
 .lo-merged-order { flex: 0 0 auto; color: var(--bs-secondary-color); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
@@ -1358,12 +1360,11 @@
 /* Compact, collapsible previous-decisions strip — ~90px when open, ~30px when
    collapsed — so the product workspace above always keeps the vertical
    priority. */
-.lo-merged-history { flex: 0 0 auto; padding: 0.25rem 0.5rem; }
-.lo-merged-history .qc-card-heading { margin-bottom: 0.25rem; }
+.lo-merged-history { flex: 0 0 auto; padding: 0.15rem 0.5rem 0.3rem; }
+.lo-merged-history .qc-card-heading { margin-bottom: 0.2rem; }
 .lo-merged-history.is-collapsed .qc-card-heading { margin-bottom: 0; }
-/* ~2 dense rows (28px header + 29px rows) then scroll — keeps the strip ~100px
-   and stops the last row from being clipped at the window edge. */
-.lo-merged-history .qc-history-scroll { max-height: 5.2rem; }
+/* ~5 dense rows visible (28px header + 5×29px), then scroll. */
+.lo-merged-history .qc-history-scroll { max-height: 10.5rem; }
 
 /* Chevron toggle in the strip heading. */
 .lo-history-toggle {
@@ -1426,10 +1427,11 @@
 /* Sales / Purchase readability: important numeric values at 16px, supporting
    text (dates, names, salesman, customer) stays compact at 12px. Rows remain
    dense at ~27px. */
-.lo-table--pi { font-size: 12px; }
+.lo-table--pi { font-size: 13px; }
 .lo-table--pi thead th { padding: 0.15rem 0.45rem; font-size: 10px; }
-.lo-table--pi td { padding: 0.2rem 0.45rem; font-size: 12px; }
-.lo-table--pi td.qc-pi-key { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.lo-table--pi td { padding: 0.2rem 0.45rem; font-size: 13px; }
+/* Free-goods column stands out (VB highlights the 'free' cell). */
+.lo-table--pi .qc-pi-free { background: rgba(245, 158, 11, 0.2); font-weight: 600; }
 
 /* ---- Override the global #root table system for this console ----
    data-tables.css styles EVERY table under #root with 0.58rem !important cell
@@ -1450,10 +1452,11 @@
   padding: 0.08rem 0.45rem !important;
   line-height: 1.2;
 }
-#root .lo-merged .lo-table--pi { font-size: 12px; }
+#root .lo-merged .lo-table--pi { font-size: 13px; }
 #root .lo-merged .lo-table--pi > thead > tr > th { padding: 0.12rem 0.45rem !important; font-size: 10px !important; }
-#root .lo-merged .lo-table--pi > tbody > tr > td { padding: 0.13rem 0.45rem !important; font-size: 12px; line-height: 1.15; }
-#root .lo-merged .lo-table--pi > tbody > tr > td.qc-pi-key { font-size: 16px; font-weight: 600; }
+/* Uniform cell font across Purchase + Sales (no per-value size differences). */
+#root .lo-merged .lo-table--pi > tbody > tr > td { padding: 0.14rem 0.45rem !important; font-size: 13px; line-height: 1.15; }
+#root .lo-merged .lo-table--pi > tbody > tr > td.qc-pi-free { background: rgba(245, 158, 11, 0.2); font-weight: 600; }
 
 /* Order-qty cell: plain right-aligned box, no browser spinner arrows. */
 .qc-qty-input {
