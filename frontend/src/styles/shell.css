@@ -38,7 +38,12 @@ body {
 .app-shell {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* The single viewport anchor for the whole app (browser + Electron). dvh is
+     the viewport-safe unit; on desktop and inside the Electron BrowserWindow it
+     equals the full client area, so every page that chains height:100% off this
+     (e.g. the compact Order Management workspace) fills the window exactly and
+     never lets the page itself scroll. */
+  height: 100dvh;
   background:
     radial-gradient(1100px 460px at 46% -8%, var(--nx-glass-glow), transparent 66%),
     radial-gradient(760px 400px at 6% 14%, var(--nx-glass-glow-deep), transparent 70%),
