@@ -558,14 +558,14 @@ export default function OrderWorkspacePage() {
         </section>
 
         <section className="lo-card lo-activity qc-detail-card">
-          <div className="qc-card-heading">
-            <div><span className="lo-eyebrow">Selected product</span><h2>Product intelligence</h2></div>
+          <div className="qc-card-heading qc-detail-heading">
+            <span className="lo-eyebrow">Product intelligence</span>
+            {selectedName && <span className="qc-pi-name" title={selectedName}>{selectedName}</span>}
             {selectedCode != null && <span className="qc-product-code">#{selectedCode}</span>}
           </div>
           <ProductDetailPanel
             store={store}
             productCode={selectedCode}
-            productName={selectedName}
             mode={detailMode}
             onError={setError}
           />

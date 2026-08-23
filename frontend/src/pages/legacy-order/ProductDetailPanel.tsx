@@ -64,7 +64,6 @@ export function MonthlyStatsChart({ rows }: { rows: MonthlyStatRow[] }) {
 interface ProductDetailPanelProps {
   store: string
   productCode: number | null
-  productName?: string
   mode: OrderMode
   onError?: (message: string) => void
 }
@@ -74,7 +73,7 @@ interface ProductDetailPanelProps {
  *  Chart. Self-fetches so both the Qty-Check screen and the Order Workspace can
  *  drop it in. Order history (OrderManagementBackup) is intentionally left to
  *  the host page, which renders it in its own full-width section. */
-export function ProductDetailPanel({ store, productCode, productName, mode, onError }: ProductDetailPanelProps) {
+export function ProductDetailPanel({ store, productCode, mode, onError }: ProductDetailPanelProps) {
   const [purchaseDetails, setPurchaseDetails] = useState<PurchaseDetailRow[]>([])
   const [salesDetails, setSalesDetails] = useState<SalesDetailRow[]>([])
   const [monthlyStats, setMonthlyStats] = useState<MonthlyStatRow[]>([])
@@ -112,7 +111,7 @@ export function ProductDetailPanel({ store, productCode, productName, mode, onEr
 
   return (
     <div className="qc-detail-scroll">
-      <p className="lo-note qc-pi-head">{productName ?? ''} · {productCode}{loading ? ' · loading…' : ''}</p>
+      {loading && <p className="lo-note qc-pi-head">Loading…</p>}
 
       <section className="qc-pi-section qc-pi-grow">
         <h3 className="qc-pi-title">Purchase / GRN history</h3>
