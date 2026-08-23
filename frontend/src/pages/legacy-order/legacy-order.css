@@ -1286,9 +1286,9 @@
 .lo-merged-history { flex: 0 0 auto; padding: 0.25rem 0.5rem; }
 .lo-merged-history .qc-card-heading { margin-bottom: 0.25rem; }
 .lo-merged-history.is-collapsed .qc-card-heading { margin-bottom: 0; }
-/* Hug content up to ~2-3 rows so a single history line doesn't leave an empty
-   band below it. */
-.lo-merged-history .qc-history-scroll { max-height: 3.4rem; }
+/* ~2 dense rows (28px header + 29px rows) then scroll — keeps the strip ~100px
+   and stops the last row from being clipped at the window edge. */
+.lo-merged-history .qc-history-scroll { max-height: 5.2rem; }
 
 /* Chevron toggle in the strip heading. */
 .lo-history-toggle {
@@ -1353,6 +1353,30 @@
 .lo-table--pi thead th { padding: 0.15rem 0.45rem; font-size: 10px; }
 .lo-table--pi td { padding: 0.2rem 0.45rem; font-size: 12px; }
 .lo-table--pi td.qc-pi-key { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ---- Override the global #root table system for this console ----
+   data-tables.css styles EVERY table under #root with 0.58rem !important cell
+   padding and a 0.82rem id-specificity base font, which forced ~40px rows here
+   (only ~3 Purchase/Sales rows fit, grid capped at ~13 rows). Re-assert the
+   compact metrics with matching #root specificity + !important so the ~29px
+   grid rows, the 6-row Purchase/Sales tables and the 16px key values actually
+   take effect. */
+#root .lo-merged .lo-table.lo-dense { font-size: 12px; }
+#root .lo-merged .lo-table.lo-dense > thead > tr > th {
+  height: 28px;
+  padding: 0.1rem 0.45rem !important;
+  font-size: 11px !important;
+  text-transform: uppercase !important;
+}
+#root .lo-merged .lo-table.lo-dense > tbody > tr > td {
+  height: 29px;
+  padding: 0.08rem 0.45rem !important;
+  line-height: 1.2;
+}
+#root .lo-merged .lo-table--pi { font-size: 12px; }
+#root .lo-merged .lo-table--pi > thead > tr > th { padding: 0.12rem 0.45rem !important; font-size: 10px !important; }
+#root .lo-merged .lo-table--pi > tbody > tr > td { padding: 0.16rem 0.45rem !important; font-size: 12px; line-height: 1.2; }
+#root .lo-merged .lo-table--pi > tbody > tr > td.qc-pi-key { font-size: 16px; font-weight: 600; }
 
 /* Order-qty cell: plain right-aligned box, no browser spinner arrows. */
 .qc-qty-input {
