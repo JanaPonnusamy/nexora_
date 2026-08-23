@@ -76,6 +76,9 @@ export default function OrderWorkspacePage() {
 
   const gridRef = useRef<HTMLDivElement | null>(null)
   const qtyInputRefs = useRef<Array<HTMLInputElement | null>>([])
+  // Qty inputs for the Review-All / By-Supplier grid, indexed by row position,
+  // so the VB dgvMain Enter/Esc/↑↓ flow can move focus row-to-row.
+  const workspaceInputRefs = useRef<Array<HTMLInputElement | null>>([])
 
   useEffect(() => {
     legacyOrderService.listStores()
@@ -253,6 +256,75 @@ export default function OrderWorkspacePage() {
       .finally(() => { setAssigningCode(null); loadWorkflow() })
   }, [store, supplier, loadWorkflow])
 
+  const isStock = view === 'supplier' && supplierMode === 'stock'
+  const canAssign = view === 'supplier' && Boolean(supplier)
+
+  // Move focus to a row's qty box (VB SelectOnlyRow + MoveToNextRow). Skips the
+  // disabled (already-assigned) inputs so navigation never lands on a dead cell.
+  const focusWorkspaceRow = useCallback((index: number, dir: 1 | -1 = 1) => {
+    const list = filteredRows
+    if (!list.length) return
+    let i = Math.max(0, Math.min(list.length - 1, index))
+    while (i >= 0 && i < list.length) {
+      const el = workspaceInputRefs.current[i]
+      const row = list[i]
+      if (row) setSelectedCode(row.ProductCode)
+      if (el && !el.disabled) { const at = i; requestAnimationFrame(() => workspaceInputRefs.current[at]?.focus()); return }
+      i += dir
+    }
+  }, [filteredRows])
+
+  // Enter on the Review-All / By-Supplier grid = VB dgvMain Enter:
+  // UpdateDatabase(productCode). In By-Supplier that saves the current qty and
+  // assigns it to the selected supplier (status 0->1 toggle); in Review-All it
+  // just saves. Then advance to the next row — matching MoveToNextRow.
+  const commitWorkspaceRow = useCallback((row: WorkspaceOrderRow, value: number, index: number) => {
+    if (!store) return
+    const advance = () => focusWorkspaceRow(index + 1, 1)
+    if (canAssign && supplier && statusOverride[row.ProductCode] !== 1 && row.Status !== 1) {
+      setAssigningCode(row.ProductCode)
+      setBanner(null)
+      const saved = value !== row.OrderQty
+        ? legacyOrderService.updateOrderQty(store, row.ProductCode, value)
+          .then(() => setRows((cur) => cur.map((r) => (r.ProductCode === row.ProductCode ? { ...r, OrderQty: value } : r))))
+        : Promise.resolve()
+      saved
+        .then(() => legacyOrderService.assignSupplier(store, row.ProductCode, supplier.supplier_code, supplier.supplier_name))
+        .then((result) => {
+          setStatusOverride((cur) => ({ ...cur, [row.ProductCode]: result.status }))
+          setBanner(result.status === 1
+            ? `Assigned ${row.ProductName} → ${supplier.supplier_name} (qty ${result.order_qty}).`
+            : `Cleared supplier from ${row.ProductName}.`)
+        })
+        .catch((e: Error) => setError(e.message))
+        .finally(() => { setAssigningCode(null); loadWorkflow(); advance() })
+    } else {
+      if (value !== row.OrderQty) saveQty(row, value)
+      advance()
+    }
+  }, [store, canAssign, supplier, statusOverride, saveQty, focusWorkspaceRow, loadWorkflow])
+
+  // Escape = VB dgvMain Escape: set the qty to 0 ("Don't want to Order") and
+  // advance to the next row.
+  const skipWorkspaceRow = useCallback((row: WorkspaceOrderRow, index: number) => {
+    if (!store) return
+    setEdits((cur) => ({ ...cur, [row.ProductCode]: 0 }))
+    if (row.OrderQty !== 0) saveQty(row, 0)
+    focusWorkspaceRow(index + 1, 1)
+  }, [store, saveQty, focusWorkspaceRow])
+
+  const onWorkspaceQtyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, row: WorkspaceOrderRow, index: number, value: number) => {
+    if (!['Enter', 'Escape', 'ArrowDown', 'ArrowUp'].includes(e.key)) return
+    // Own these keys here so the grid div's onGridKey (which also moves the
+    // selection on ↑/↓) and the number input's native ↑/↓ increment don't fire.
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.key === 'Enter') commitWorkspaceRow(row, value, index)
+    else if (e.key === 'Escape') skipWorkspaceRow(row, index)
+    else if (e.key === 'ArrowDown') focusWorkspaceRow(index + 1, 1)
+    else if (e.key === 'ArrowUp') focusWorkspaceRow(index - 1, -1)
+  }
+
   const finalize = (reopen: boolean) => {
     if (!store) return
     const note = reopen
@@ -267,9 +339,6 @@ export default function OrderWorkspacePage() {
       .catch((e: Error) => setError(e.message))
       .finally(() => setWorkflowBusy(false))
   }
-
-  const isStock = view === 'supplier' && supplierMode === 'stock'
-  const canAssign = view === 'supplier' && Boolean(supplier)
 
   const footer = useMemo(() => {
     let qty = 0
@@ -498,6 +567,7 @@ export default function OrderWorkspacePage() {
                         <td><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td>
                         <td className="lo-num">
                           <input
+                            ref={(el) => { workspaceInputRefs.current[i] = el }}
                             className="qc-qty-input"
                             type="number"
                             min={0}
@@ -508,7 +578,7 @@ export default function OrderWorkspacePage() {
                             onFocus={() => setSelectedCode(row.ProductCode)}
                             onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: Number(e.target.value) }))}
                             onBlur={(e) => { const v = Number(e.target.value); if (v !== row.OrderQty) saveQty(row, v) }}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveQty(row, value) } }}
+                            onKeyDown={(e) => onWorkspaceQtyKeyDown(e, row, i, value)}
                           />
                         </td>
                         <td className="lo-num">{row.TotalStock}</td>
