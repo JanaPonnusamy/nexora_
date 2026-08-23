@@ -1162,15 +1162,37 @@
 .lo-merged-head h1 { margin: 0; font-size: 1.02rem; line-height: 1.15; }
 .lo-merged-head .lo-sub { margin: 0.05rem 0 0; color: var(--bs-secondary-color); font-size: 0.72rem; }
 
-/* Small store/filter panel. */
-.lo-merged-filter { flex: 0 0 auto; padding: 0.5rem 0.7rem; }
+/* Compact one-line header: title + subtitle + live workflow status side by
+   side so the whole strip stays ~56px, leaving the grid the vertical space. */
+.lo-merged-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.7rem;
+  min-width: 0;
+}
+.lo-merged-status { display: inline-flex; align-items: center; gap: 0.5rem; }
+.lo-merged-metrics { color: var(--bs-secondary-color); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+
+/* Small store/filter panel. Tighter control floors than the default filter bar
+   so Store · view tabs · supplier · search · product type · reason · DB tabs
+   collapse into one (or at most two) compact rows instead of a tall stack. */
+.lo-merged-filter { flex: 0 0 auto; padding: 0.45rem 0.6rem; }
 .lo-merged-filter .lo-section-title { align-items: center; gap: 0.6rem; }
 .lo-merged-filter .ds-filter-bar { flex: 1 1 auto; }
+.lo-merged-filter .ds-filter-select { min-width: 7.5rem; }
+.lo-merged-filter .qc-product-search { flex: 1 1 12rem; min-width: 9rem; }
+.lo-merged-filter .ds-filter-search > input,
+.lo-merged-filter .ds-filter-select { min-height: 2rem; }
 
-/* Working area fills whatever height is left after header + filter + history. */
+/* Working area fills whatever height is left after header + filter + history.
+   Left column may shrink to 0 (minmax(0, …)) so the grid never forces a
+   horizontal page scrollbar on narrower desktops; the intelligence panel keeps
+   a hard 320px floor. */
 .lo-merged .qc-workspace {
   flex: 1 1 auto;
   min-height: 0;
+  grid-template-columns: minmax(0, 2.1fr) minmax(320px, 0.9fr);
   gap: 0.6rem;
   margin: 0;
 }
@@ -1198,10 +1220,49 @@
 .lo-merged-history .qc-card-heading h2 { font-size: 0.9rem; }
 .lo-merged-history .qc-history-scroll { max-height: 7.4rem; }
 
-/* Dense DataGridView-style rows across every grid on this screen. */
-.lo-table.lo-dense { font-size: 0.78rem; }
-.lo-table.lo-dense thead th { padding: 0.22rem 0.5rem; font-size: 0.66rem; }
-.lo-table.lo-dense td { padding: 0.12rem 0.5rem; }
+/* Dense DataGridView-style rows across every grid on this screen. Fixed 29px
+   rows (≈28-30px target) give a readable 12px cell font while still showing
+   20-25+ product rows at 1080p. Height on the cell acts as a min so the qty
+   input still fits. */
+.lo-table.lo-dense { font-size: 12px; }
+.lo-table.lo-dense thead th { height: 28px; padding: 0 0.45rem; font-size: 11px; }
+.lo-table.lo-dense td { height: 29px; padding: 0 0.45rem; font-size: 12px; vertical-align: middle; }
+.lo-table.lo-dense .qc-product-name { font-size: 12px; }
+
+/* ----- Product intelligence panel: fill the card height, no fixed caps -----
+   Purchase and Sales share the leftover height and scroll internally; the
+   monthly chart sits at the bottom at its natural size. This replaces the old
+   fixed 7rem inline caps so the panel never leaves a large empty gap. */
+.lo-merged .qc-detail-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+.qc-pi-head { margin: 0; flex: 0 0 auto; }
+.qc-pi-section { display: flex; flex-direction: column; min-height: 0; }
+.qc-pi-section.qc-pi-grow { flex: 1 1 0; }
+.qc-pi-title {
+  margin: 0 0 0.25rem;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.qc-pi-scroll {
+  flex: 1 1 auto;
+  min-height: 3.4rem;
+  max-height: none;
+  overflow: auto;
+}
+.qc-pi-chart { flex: 0 0 auto; }
+
+/* Sales / Purchase readability: important numeric values at 16px, supporting
+   text (dates, names, salesman, customer) stays compact at 12px. Rows remain
+   dense at ~27px. */
+.lo-table--pi { font-size: 12px; }
+.lo-table--pi thead th { padding: 0.15rem 0.45rem; font-size: 10px; }
+.lo-table--pi td { padding: 0.2rem 0.45rem; font-size: 12px; }
+.lo-table--pi td.qc-pi-key { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* Order-qty cell: plain right-aligned box, no browser spinner arrows. */
 .qc-qty-input {

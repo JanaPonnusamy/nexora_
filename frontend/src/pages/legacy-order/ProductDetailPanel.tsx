@@ -112,36 +112,42 @@ export function ProductDetailPanel({ store, productCode, productName, mode, onEr
 
   return (
     <div className="qc-detail-scroll">
-      <p className="lo-note">{productName ?? ''} · {productCode}{loading ? ' · loading…' : ''}</p>
+      <p className="lo-note qc-pi-head">{productName ?? ''} · {productCode}{loading ? ' · loading…' : ''}</p>
 
-      <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Purchase / GRN history</h3>
-      <div className="lo-scroll" style={{ maxHeight: '7rem' }}>
-        <table className="lo-table">
-          <thead><tr><th className="lo-num">Stock</th><th className="lo-num">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
-          <tbody>
-            {purchaseDetails.map((row, i) => (
-              <tr key={i}><td className="lo-num">{row.RStock ?? '—'}</td><td className="lo-num">{row.FreeQty ?? '—'}</td><td className="lo-num">{row.DIS ?? '—'}</td><td className="lo-num">{row.ItemCost ?? '—'}</td><td className="lo-num">{row.PTR ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{fmtDate(row.GRNDate)}</td><td>{row.SupplierName ?? '—'}</td></tr>
-            ))}
-            {!purchaseDetails.length && <tr><td colSpan={8} className="lo-empty">No purchase history.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <section className="qc-pi-section qc-pi-grow">
+        <h3 className="qc-pi-title">Purchase / GRN history</h3>
+        <div className="lo-scroll qc-pi-scroll">
+          <table className="lo-table lo-table--pi">
+            <thead><tr><th className="lo-num">Stock</th><th className="lo-num">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
+            <tbody>
+              {purchaseDetails.map((row, i) => (
+                <tr key={i}><td className="lo-num qc-pi-key">{row.RStock ?? '—'}</td><td className="lo-num">{row.FreeQty ?? '—'}</td><td className="lo-num">{row.DIS ?? '—'}</td><td className="lo-num">{row.ItemCost ?? '—'}</td><td className="lo-num qc-pi-key">{row.PTR ?? '—'}</td><td className="lo-num qc-pi-key">{row.MRP ?? '—'}</td><td>{fmtDate(row.GRNDate)}</td><td>{row.SupplierName ?? '—'}</td></tr>
+              ))}
+              {!purchaseDetails.length && <tr><td colSpan={8} className="lo-empty">No purchase history.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-      <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Bill / sales history</h3>
-      <div className="lo-scroll" style={{ maxHeight: '7rem' }}>
-        <table className="lo-table">
-          <thead><tr><th className="lo-num">Qty</th><th>Bill Time</th><th>Salesman</th><th>Customer</th><th className="lo-num">Dis</th><th>Type</th><th className="lo-num">MRP</th></tr></thead>
-          <tbody>
-            {salesDetails.map((row, i) => (
-              <tr key={i}><td className="lo-num">{row.TotalQuantity ?? '—'}</td><td>{fmtDate(row.Bill_Time)}</td><td>{row.Salesmanname ?? '—'}</td><td>{row.CUSTOMERNAME ?? '—'}</td><td className="lo-num">{row.dis ?? '—'}</td><td>{row.type ?? '—'}</td><td className="lo-num">{row.mrp ?? '—'}</td></tr>
-            ))}
-            {!salesDetails.length && <tr><td colSpan={7} className="lo-empty">No sales history.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <section className="qc-pi-section qc-pi-grow">
+        <h3 className="qc-pi-title">Bill / sales history</h3>
+        <div className="lo-scroll qc-pi-scroll">
+          <table className="lo-table lo-table--pi">
+            <thead><tr><th className="lo-num">Qty</th><th>Bill Time</th><th>Salesman</th><th>Customer</th><th className="lo-num">Dis</th><th>Type</th><th className="lo-num">MRP</th></tr></thead>
+            <tbody>
+              {salesDetails.map((row, i) => (
+                <tr key={i}><td className="lo-num qc-pi-key">{row.TotalQuantity ?? '—'}</td><td>{fmtDate(row.Bill_Time)}</td><td>{row.Salesmanname ?? '—'}</td><td>{row.CUSTOMERNAME ?? '—'}</td><td className="lo-num">{row.dis ?? '—'}</td><td>{row.type ?? '—'}</td><td className="lo-num qc-pi-key">{row.mrp ?? '—'}</td></tr>
+              ))}
+              {!salesDetails.length && <tr><td colSpan={7} className="lo-empty">No sales history.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-      <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Monthly statistics</h3>
-      <MonthlyStatsChart rows={monthlyStats} />
+      <section className="qc-pi-section qc-pi-chart">
+        <h3 className="qc-pi-title">Monthly statistics</h3>
+        <MonthlyStatsChart rows={monthlyStats} />
+      </section>
     </div>
   )
 }

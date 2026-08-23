@@ -317,9 +317,15 @@ export default function OrderWorkspacePage() {
   return (
     <div className="legacy-order lo-merged">
       <header className="lo-merged-head">
-        <div>
+        <div className="lo-merged-title">
           <h1>Order Management</h1>
           <p className="lo-sub">{store ? `${store}${workflow?.order_id ? ` · order #${workflow.order_id}` : ''}` : 'Select a store'}</p>
+          {workflow && (
+            <span className="lo-merged-status">
+              <span className={`lo-chip lo-chip-${finalized ? 'success' : workflow.ready ? 'success' : 'running'}`}>{workflow.status.replace(/_/g, ' ')}</span>
+              <span className="lo-merged-metrics">{workflow.qty_pending} pending · {workflow.assigned_lines} assigned · {workflow.unassigned_lines} open</span>
+            </span>
+          )}
         </div>
         <div className="lo-actions">
           {finalized ? (
