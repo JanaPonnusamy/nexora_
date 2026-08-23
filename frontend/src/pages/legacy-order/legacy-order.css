@@ -1146,7 +1146,7 @@
 .lo-merged {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.4rem;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -1159,31 +1159,78 @@
   justify-content: space-between;
   gap: 1rem;
 }
-.lo-merged-head h1 { margin: 0; font-size: 1.02rem; line-height: 1.15; }
-.lo-merged-head .lo-sub { margin: 0.05rem 0 0; color: var(--bs-secondary-color); font-size: 0.72rem; }
-
-/* Compact one-line header: title + subtitle + live workflow status side by
-   side so the whole strip stays ~56px, leaving the grid the vertical space. */
+/* Compact order toolbar — one vertically-centred row, ~40px. Title, store,
+   order #, live status chip and counts all sit inline; actions pushed right. */
+.lo-merged-head { min-height: 2.4rem; align-items: center; }
 .lo-merged-title {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.7rem;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.55rem;
+  min-width: 0;
+  overflow: hidden;
+}
+.lo-merged-app { margin: 0; flex: 0 0 auto; font-size: 0.875rem; line-height: 1.1; font-weight: 700; }
+.lo-merged-store { flex: 0 0 auto; font-size: 0.78rem; font-weight: 600; }
+.lo-merged-store.lo-dim { color: var(--bs-secondary-color); font-weight: 500; }
+.lo-merged-order { flex: 0 0 auto; color: var(--bs-secondary-color); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.lo-merged-head .lo-chip { flex: 0 0 auto; font-size: 0.62rem; }
+.lo-merged-metrics {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bs-secondary-color);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+.lo-merged-metrics strong { color: var(--bs-body-color); }
+.lo-merged-head .lo-actions { flex: 0 0 auto; }
+
+/* Small header buttons keep the toolbar to a single ~40px row. */
+.lo-btn-sm { padding: 0.28rem 0.6rem; font-size: 0.75rem; }
+.lo-actions .lo-btn-sm { min-height: 1.9rem; }
+
+/* Compact filter toolbar — one vertically-centred row, ~40px. Labels sit INLINE
+   with their control (the default filter field stacks them, wasting a whole
+   row) and every control drops to ~30px so Store · view tabs · supplier ·
+   search · type · reason · DB tabs fit one line at desktop widths. */
+.lo-merged-filter { flex: 0 0 auto; padding: 0.35rem 0.55rem; }
+.lo-merged-filter .lo-section-title { align-items: center; gap: 0.5rem; }
+.lo-merged-filter .ds-filter-bar { flex: 1 1 auto; gap: 0.4rem 0.55rem; align-items: center; }
+
+/* Inline the stacked label → "STORE [NMC]" on one line. */
+.lo-merged-filter .ds-filter-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.3rem;
   min-width: 0;
 }
-.lo-merged-status { display: inline-flex; align-items: center; gap: 0.5rem; }
-.lo-merged-metrics { color: var(--bs-secondary-color); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.lo-merged-filter .ds-filter-field > span {
+  flex: 0 0 auto;
+  font-size: 0.6rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
 
-/* Small store/filter panel. Tighter control floors than the default filter bar
-   so Store · view tabs · supplier · search · product type · reason · DB tabs
-   collapse into one (or at most two) compact rows instead of a tall stack. */
-.lo-merged-filter { flex: 0 0 auto; padding: 0.45rem 0.6rem; }
-.lo-merged-filter .lo-section-title { align-items: center; gap: 0.6rem; }
-.lo-merged-filter .ds-filter-bar { flex: 1 1 auto; }
-.lo-merged-filter .ds-filter-select { min-width: 7.5rem; }
-.lo-merged-filter .qc-product-search { flex: 1 1 12rem; min-width: 9rem; }
+/* 30px control heights across the toolbar. */
 .lo-merged-filter .ds-filter-search > input,
-.lo-merged-filter .ds-filter-select { min-height: 2rem; }
+.lo-merged-filter .ds-filter-select,
+.lo-merged-filter .ds-filter-field > select,
+.lo-merged-filter .ds-filter-tabs button { min-height: 1.9rem; }
+.lo-merged-filter .ds-filter-tabs { padding: 1px; }
+.lo-merged-filter .ds-filter-tabs button { padding: 0.2rem 0.55rem; font-size: 0.72rem; }
+.lo-merged-filter .ds-filter-select,
+.lo-merged-filter .ds-filter-field > select { min-width: 6rem; font-size: 0.76rem; padding-block: 0.2rem; }
+.lo-merged-filter .qc-product-search { flex: 1 1 10rem; min-width: 8rem; }
+.lo-merged-filter .ds-filter-search > input { font-size: 0.76rem; padding-block: 0.2rem; }
+.lo-merged-filter .lo-count { flex: 0 0 auto; }
+
+/* Reclaim the app-main gutter for this dense console only (scoped via :has so
+   no other page changes). */
+.app-main:has(> .lo-merged) { padding: 0.55rem 0.7rem; }
 
 /* Working area fills whatever height is left after header + filter + history.
    Left column may shrink to 0 (minmax(0, …)) so the grid never forces a
@@ -1192,8 +1239,8 @@
 .lo-merged .qc-workspace {
   flex: 1 1 auto;
   min-height: 0;
-  grid-template-columns: minmax(0, 2.1fr) minmax(320px, 0.9fr);
-  gap: 0.6rem;
+  grid-template-columns: minmax(0, 1fr) minmax(400px, 34%);
+  gap: 0.5rem;
   margin: 0;
 }
 .lo-merged .qc-queue-card,
@@ -1214,11 +1261,26 @@
 .lo-merged .lo-scroll { max-height: none; }
 .lo-merged .lo-footer-totals { flex: 0 0 auto; }
 
-/* Short bottom history strip — heading + ~3-4 dense rows, then scroll. */
-.lo-merged-history { flex: 0 0 auto; padding: 0.45rem 0.6rem; }
-.lo-merged-history .qc-card-heading { margin-bottom: 0.35rem; }
-.lo-merged-history .qc-card-heading h2 { font-size: 0.9rem; }
-.lo-merged-history .qc-history-scroll { max-height: 7.4rem; }
+/* Compact, collapsible previous-decisions strip — ~90px when open, ~30px when
+   collapsed — so the product workspace above always keeps the vertical
+   priority. */
+.lo-merged-history { flex: 0 0 auto; padding: 0.3rem 0.55rem; }
+.lo-merged-history .qc-card-heading { margin-bottom: 0.3rem; }
+.lo-merged-history.is-collapsed .qc-card-heading { margin-bottom: 0; }
+.lo-merged-history .qc-history-scroll { max-height: 3.9rem; }
+
+/* Chevron toggle in the strip heading. */
+.lo-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.lo-history-toggle > i { color: var(--bs-secondary-color); font-size: 0.7rem; }
 
 /* Dense DataGridView-style rows across every grid on this screen. Fixed 29px
    rows (≈28-30px target) give a readable 12px cell font while still showing
@@ -1241,20 +1303,23 @@
 }
 .qc-pi-head { margin: 0; flex: 0 0 auto; }
 .qc-pi-section { display: flex; flex-direction: column; min-height: 0; }
+/* Purchase + Sales share the leftover height and stay readable; the chart sits
+   at its natural compact size at the bottom. */
 .qc-pi-section.qc-pi-grow { flex: 1 1 0; }
 .qc-pi-title {
-  margin: 0 0 0.25rem;
+  margin: 0 0 0.2rem;
   flex: 0 0 auto;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 600;
 }
 .qc-pi-scroll {
   flex: 1 1 auto;
-  min-height: 3.4rem;
+  min-height: 4.5rem;
   max-height: none;
   overflow: auto;
 }
-.qc-pi-chart { flex: 0 0 auto; }
+.qc-pi-chart { flex: 0 0 auto; min-height: 9.5rem; }
+.qc-pi-chart svg { max-height: 11rem; }
 
 /* Sales / Purchase readability: important numeric values at 16px, supporting
    text (dates, names, salesman, customer) stays compact at 12px. Rows remain

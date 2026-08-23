@@ -69,6 +69,9 @@ export default function OrderWorkspacePage() {
   const [workflowBusy, setWorkflowBusy] = useState(false)
 
   const [orderHistory, setOrderHistory] = useState<OrderHistoryRow[]>([])
+  // Previous-decisions strip is a compact, collapsible footer so the product
+  // grid + intelligence keep the vertical priority.
+  const [historyOpen, setHistoryOpen] = useState(true)
 
   const gridRef = useRef<HTMLDivElement | null>(null)
   const qtyInputRefs = useRef<Array<HTMLInputElement | null>>([])
@@ -318,22 +321,23 @@ export default function OrderWorkspacePage() {
     <div className="legacy-order lo-merged">
       <header className="lo-merged-head">
         <div className="lo-merged-title">
-          <h1>Order Management</h1>
-          <p className="lo-sub">{store ? `${store}${workflow?.order_id ? ` · order #${workflow.order_id}` : ''}` : 'Select a store'}</p>
+          <h1 className="lo-merged-app">Order Management</h1>
+          {store ? <span className="lo-merged-store">{store}</span> : <span className="lo-merged-store lo-dim">Select a store</span>}
+          {workflow?.order_id != null && <span className="lo-merged-order">#{workflow.order_id}</span>}
+          {workflow && <span className={`lo-chip lo-chip-${finalized || workflow.ready ? 'success' : 'running'}`}>{workflow.status.replace(/_/g, ' ')}</span>}
           {workflow && (
-            <span className="lo-merged-status">
-              <span className={`lo-chip lo-chip-${finalized ? 'success' : workflow.ready ? 'success' : 'running'}`}>{workflow.status.replace(/_/g, ' ')}</span>
-              <span className="lo-merged-metrics">{workflow.qty_pending} pending · {workflow.assigned_lines} assigned · {workflow.unassigned_lines} open</span>
+            <span className="lo-merged-metrics">
+              <strong>{workflow.qty_pending}</strong> pending · <strong>{workflow.assigned_lines}</strong> assigned · <strong>{workflow.unassigned_lines}</strong> open
             </span>
           )}
         </div>
         <div className="lo-actions">
           {finalized ? (
-            <button type="button" className="lo-btn" disabled={workflowBusy} onClick={() => finalize(true)}><i className="bi bi-unlock" /> Reopen</button>
+            <button type="button" className="lo-btn lo-btn-sm" disabled={workflowBusy} onClick={() => finalize(true)}><i className="bi bi-unlock" /> Reopen</button>
           ) : (
-            <button type="button" className="lo-btn lo-btn-primary" disabled={workflowBusy || !workflow?.ready} title={workflow?.ready ? 'Lock this order for downstream processing' : 'Complete quantity review and supplier assignment first'} onClick={() => finalize(false)}><i className="bi bi-lock" /> Finalize</button>
+            <button type="button" className="lo-btn lo-btn-sm lo-btn-primary" disabled={workflowBusy || !workflow?.ready} title={workflow?.ready ? 'Lock this order for downstream processing' : 'Complete quantity review and supplier assignment first'} onClick={() => finalize(false)}><i className="bi bi-lock" /> Finalize</button>
           )}
-          <Link to="/legacy-order" className="lo-btn"><i className="bi bi-arrow-left" /> Console</Link>
+          <Link to="/legacy-order" className="lo-btn lo-btn-sm"><i className="bi bi-arrow-left" /> Console</Link>
         </div>
       </header>
 
@@ -568,11 +572,15 @@ export default function OrderWorkspacePage() {
         </section>
       </div>
 
-      <section className="lo-card qc-history lo-merged-history">
+      <section className={`lo-card qc-history lo-merged-history${historyOpen ? '' : ' is-collapsed'}`}>
         <div className="qc-card-heading">
-          <div><span className="lo-eyebrow">Previous decisions</span><h2>Order history</h2></div>
+          <button type="button" className="lo-history-toggle" aria-expanded={historyOpen} onClick={() => setHistoryOpen((v) => !v)}>
+            <i className={`bi ${historyOpen ? 'bi-chevron-down' : 'bi-chevron-right'}`} />
+            <span className="lo-eyebrow">Previous decisions</span>
+          </button>
           <span className="qc-history-count">{selectedCode == null ? 'Select a product' : `Last ${Math.min(orderHistory.length, 25)} entries`}</span>
         </div>
+        {historyOpen && (
         <div className="lo-scroll qc-history-scroll">
           <table className="lo-table lo-dense">
             <thead><tr><th>Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Org Order</th><th className="lo-num">Pack</th><th className="lo-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
@@ -584,6 +592,7 @@ export default function OrderWorkspacePage() {
             </tbody>
           </table>
         </div>
+        )}
       </section>
     </div>
   )
