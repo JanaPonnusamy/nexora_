@@ -71,6 +71,56 @@ class LegacyOrderApi {
         },
       );
 
+  Future<List<PreviousOrder>> previousOrders(String storeName) => _getList(
+        '$_base/previous-orders/${Uri.encodeComponent(storeName)}',
+        PreviousOrder.fromJson,
+      );
+
+  Future<List<PreviousOrderSupplier>> previousOrderSuppliers({
+    required String storeName,
+    required int orderId,
+  }) =>
+      _getList(
+        '$_base/previous-orders/${Uri.encodeComponent(storeName)}/$orderId/suppliers',
+        PreviousOrderSupplier.fromJson,
+      );
+
+  Future<List<SupplierComparisonProduct>> previousOrderSupplierProducts({
+    required String storeName,
+    required int orderId,
+    required String supplierCode,
+  }) =>
+      _getList(
+        '$_base/previous-orders/${Uri.encodeComponent(storeName)}/$orderId/'
+        'suppliers/${Uri.encodeComponent(supplierCode)}/products',
+        SupplierComparisonProduct.fromJson,
+      );
+
+  Future<PreviousOrderComparison> comparePreviousOrder({
+    required String storeName,
+    required int orderId,
+  }) =>
+      _postObject(
+        '$_base/compare-previous-order',
+        {'store_name': storeName, 'order_id': orderId},
+        PreviousOrderComparison.fromJson,
+      );
+
+  Future<PreviousOrderComparison> comparePreviousOrderSupplier({
+    required String storeName,
+    required int orderId,
+    required String supplierCode,
+  }) =>
+      _postObject(
+        '$_base/compare-previous-order/supplier',
+        {
+          'store_name': storeName,
+          'order_id': orderId,
+          'supplier_code': supplierCode,
+        },
+        PreviousOrderComparison.fromJson,
+      );
+
   Future<List<QtyCheckRow>> qtyCheckRows(String storeName) => _getList(
         '$_base/qty-check/${Uri.encodeComponent(storeName)}',
         QtyCheckRow.fromJson,
@@ -135,6 +185,19 @@ class LegacyOrderApi {
   ) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(path);
+      return parse(response.data ?? const {});
+    } on DioException catch (error) {
+      throw ApiException.fromDio(error);
+    }
+  }
+
+  Future<T> _postObject<T>(
+    String path,
+    Map<String, dynamic> data,
+    T Function(Map<String, dynamic>) parse,
+  ) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(path, data: data);
       return parse(response.data ?? const {});
     } on DioException catch (error) {
       throw ApiException.fromDio(error);

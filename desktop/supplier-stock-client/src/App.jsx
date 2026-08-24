@@ -1,4 +1,5 @@
-﻿import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import axythicLogo from './assets/axythic-logo-mark.png';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from './api/client.js';
@@ -11,6 +12,7 @@ import {
 } from './state/session.js';
 import { buildBrandKey, buildPrefixSearchKey, normalizeForBadge, normalizeForLooseExact } from './lib/similarSearch.js';
 import { getCachedProducts, syncCachedProducts } from './lib/productCache.js';
+import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 
 const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
@@ -125,6 +127,21 @@ const PREFETCH_PREVIOUS_ROWS = 20;
 const PREFETCH_NEXT_ROWS = 20;
 const PREFETCH_CONCURRENCY = 4;
 const RECENT_ANALYSIS_ROWS = 20;
+const DEFAULT_STOCK_SECTIONS = { trend: true, batches: true, purchase: true, billing: true };
+const DEFAULT_STOCK_FIELDS = {
+  product: { name: true, unit: true, stock: true },
+  trend: { purchase: true, sales: true, stock: true },
+  batches: { expiry: true, stock: true, mrp: true, batchNo: true, purchaseAge: true, salesAge: true, status: true },
+  purchase: { qty: true, free: true, allDiscount: true, productDiscount: true, grnDate: true, grnNo: true, supplier: true },
+  billing: { qty: true, discount: true, date: true, billNo: true, mrp: true, amount: true }
+};
+const STOCK_FIELD_LABELS = {
+  product: { name: 'Product name', unit: 'Unit', stock: 'Stock' },
+  trend: { purchase: 'Purchase', sales: 'Sales', stock: 'Stock' },
+  batches: { expiry: 'Expiry', stock: 'Stock', mrp: 'MRP', batchNo: 'Batch No', purchaseAge: 'Purchase Age', salesAge: 'Sales Age', status: 'Status' },
+  purchase: { qty: 'Quantity', free: 'Free', allDiscount: 'All Discount', productDiscount: 'Product Discount', grnDate: 'GRN Date', grnNo: 'GRN No', supplier: 'Supplier' },
+  billing: { qty: 'Quantity', discount: 'Discount', date: 'Date', billNo: 'Bill No', mrp: 'MRP', amount: 'Amount' }
+};
 
 export default function App() {
   return (
@@ -147,6 +164,12 @@ function AppShell() {
   // user - it doubles as that role check for the UI without duplicating the
   // server's role logic here.
   const [tenants, setTenants] = useState([]);
+  const themePreference = normalizeThemePreference(settings.themePreference);
+  const [resolvedTheme, setResolvedTheme] = useState(() => applyTheme(themePreference));
+
+  useEffect(() => {
+    setResolvedTheme(applyTheme(themePreference));
+  }, [themePreference]);
 
   useEffect(() => {
     if (!session) { setTenants([]); return; }
@@ -204,11 +227,19 @@ function AppShell() {
 
   useEffect(() => {
     const storeName = session?.user?.roles?.[0]?.store_name || settings.storeName;
-    document.title = storeName ? `Nexora Supplier Stock · ${storeName}` : 'Nexora Supplier Stock';
+    document.title = storeName ? `Axythic Supplier Stock · ${storeName}` : 'Axythic Supplier Stock';
   }, [session, settings.storeName]);
 
   function persistSettings(next) {
     setSettings(saveSettings(next));
+  }
+
+  function cycleTheme() {
+    const index = THEME_PREFERENCES.indexOf(themePreference);
+    persistSettings({
+      ...settings,
+      themePreference: THEME_PREFERENCES[(index + 1) % THEME_PREFERENCES.length]
+    });
   }
 
   function handleLogin(loginPayload) {
@@ -231,6 +262,8 @@ function AppShell() {
     // they can sign in elsewhere right away (single-session policy).
     if (session) api.logout(session).catch(() => {});
     clearSession();
+    queryClient.clear();
+    setTenants([]);
     setSession(null);
   }
 
@@ -304,19 +337,20 @@ function AppShell() {
     <div className="app-shell">
       <header className="menubar">
         <div className="brand-block">
-          <div className="brand-mark">N</div>
+          <img src={axythicLogo} alt="Axythic" className="brand-logo" />
           <div>
-            <h1>Nexora</h1>
+            <h1>Axythic</h1>
             <p>Supplier Stock Client</p>
           </div>
         </div>
 
-        <nav className="menubar-nav">
+        <nav className="menubar-nav" aria-label="Main navigation">
           {navItems.map((screen) => (
             <button
               key={screen.id}
               className={activeScreen === screen.id ? 'active' : ''}
               onClick={() => setActiveScreen(screen.id)}
+              aria-current={activeScreen === screen.id ? 'page' : undefined}
             >
               {screen.label}
             </button>
@@ -324,6 +358,10 @@ function AppShell() {
         </nav>
 
         <div className="menubar-right">
+          <ThemeToggle
+            resolvedTheme={resolvedTheme}
+            onCycle={cycleTheme}
+          />
           {session ? (
             <div className="user-panel">
               <span>{session.user?.name || session.user?.username || 'Signed in user'}</span>
@@ -334,7 +372,18 @@ function AppShell() {
           )}
 
           {session && (
-            <button className="ghost-button" onClick={handleLogout}>Sign out</button>
+            <button
+              type="button"
+              className="logout-button"
+              onClick={handleLogout}
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5v-2H6V6h4V4Zm5.6 3.4L14.2 8.8l2.2 2.2H9v2h7.4l-2.2 2.2 1.4 1.4L20.2 12l-4.6-4.6Z" />
+              </svg>
+              <span>Sign out</span>
+            </button>
           )}
         </div>
       </header>
@@ -375,6 +424,28 @@ function AppShell() {
         )}
       </main>
     </div>
+  );
+}
+
+function ThemeToggle({ resolvedTheme, onCycle }) {
+  const label = resolvedTheme === 'dark' ? 'Dark' : 'Light';
+  const next = resolvedTheme === 'dark' ? 'light' : 'dark';
+
+  return (
+    <button
+      type="button"
+      className="theme-toggle"
+      onClick={onCycle}
+      aria-label={`${label} theme. Switch to ${next} theme`}
+      title={`${label} theme — click for ${next}`}
+    >
+      {resolvedTheme === 'dark' ? (
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.7 15.2A8.5 8.5 0 0 1 8.8 3.3 9 9 0 1 0 20.7 15.2ZM5 12a7 7 0 0 1 1.2-3.9 10.5 10.5 0 0 0 9.7 9.7A7 7 0 0 1 5 12Z" /></svg>
+      ) : (
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0-7h1v3h-2V2h1Zm0 17h1v3h-2v-3h1ZM2 11h3v2H2v-2Zm17 0h3v2h-3v-2ZM4.9 3.5 7 5.6 5.6 7 3.5 4.9l1.4-1.4Zm13.5 13.5 2.1 2.1-1.4 1.4-2.1-2.1 1.4-1.4Zm.7-13.5 1.4 1.4L18.4 7 17 5.6l2.1-2.1ZM5.6 17 7 18.4l-2.1 2.1-1.4-1.4L5.6 17Z" /></svg>
+      )}
+      <span>{label}</span>
+    </button>
   );
 }
 
@@ -644,7 +715,7 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
 
   return (
     <section className="screen-panel">
-      <ScreenHeader title="Settings" subtitle="Choose how this desktop client reaches the Nexora API." />
+      <ScreenHeader title="Settings" subtitle="Choose how this desktop client reaches the Axythic API." />
       <div className="form-grid">
         <label>
           Server mode
@@ -889,9 +960,9 @@ function LoginScreen({ onLogin, onOpenSettings }) {
   return (
     <section className="login-layout">
       <div className="login-copy">
-        <span className="eyebrow">Nexora desktop</span>
+        <span className="eyebrow">Axythic desktop</span>
         <h2>Supplier stock workbench</h2>
-        <p>Use your Nexora credentials to open stock availability and supplier analysis modules.</p>
+        <p>Use your Axythic credentials to open stock availability and supplier analysis modules.</p>
       </div>
       <form className="login-card" onSubmit={submit}>
         <label>
@@ -932,7 +1003,63 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   const [nonMovingIndex, setNonMovingIndex] = useState(0);
   const [nonMovingStoreFilter, setNonMovingStoreFilter] = useState('');
   const [isAutoQuery, setIsAutoQuery] = useState(false);
+  const [visibleSections, setVisibleSections] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('nexora.desktop.stockSections') || 'null');
+      return saved && typeof saved === 'object' ? { ...DEFAULT_STOCK_SECTIONS, ...saved } : DEFAULT_STOCK_SECTIONS;
+    } catch {
+      return DEFAULT_STOCK_SECTIONS;
+    }
+  });
+  const [visibleFields, setVisibleFields] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('nexora.desktop.stockFields') || 'null');
+      if (!saved || typeof saved !== 'object') return DEFAULT_STOCK_FIELDS;
+      return Object.fromEntries(Object.entries(DEFAULT_STOCK_FIELDS).map(([category, defaults]) => [
+        category,
+        { ...defaults, ...(saved[category] || {}) }
+      ]));
+    } catch {
+      return DEFAULT_STOCK_FIELDS;
+    }
+  });
   const searchInputRef = useRef(null);
+
+  const tenantStores = useMemo(() => {
+    const tenantId = settings?.tenantId;
+    if (!tenantId) return allStores;
+    return allStores.filter((store) => String(store?.tenant_id || '') === String(tenantId));
+  }, [allStores, settings?.tenantId]);
+
+  useEffect(() => {
+    try { localStorage.setItem('nexora.desktop.stockSections', JSON.stringify(visibleSections)); } catch { /* best effort */ }
+  }, [visibleSections]);
+
+  useEffect(() => {
+    try { localStorage.setItem('nexora.desktop.stockFields', JSON.stringify(visibleFields)); } catch { /* best effort */ }
+  }, [visibleFields]);
+
+  const stockGridColumns = [
+    '30px',
+    'minmax(205px, 1fr)',
+    visibleSections.trend && 'minmax(180px, .85fr)',
+    visibleSections.batches && 'minmax(335px, 1.5fr)',
+    visibleSections.purchase && 'minmax(335px, 1.5fr)',
+    visibleSections.billing && 'minmax(325px, 1.4fr)'
+  ].filter(Boolean).join(' ');
+
+  function toggleStockSection(section) {
+    setVisibleSections((current) => ({ ...current, [section]: !current[section] }));
+  }
+
+  function toggleStockField(category, field) {
+    setVisibleFields((current) => {
+      const group = current[category];
+      const enabledCount = Object.values(group).filter(Boolean).length;
+      if (group[field] && enabledCount === 1) return current;
+      return { ...current, [category]: { ...group, [field]: !group[field] } };
+    });
+  }
 
   const loginStoreId = session?.user?.roles?.[0]?.store_id || loadSettings().storeId;
   const visibility = historyVisibility(session);
@@ -959,12 +1086,20 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
     // this effect only depends on [allStores] - without the guard+dependency it
     // would fire once with tenant_id missing (422 on every store) and never
     // retry once the tenant actually resolves.
-    if (!allStores.length || !settings?.tenantId) return;
-    Promise.all(allStores.map((store) => api.getNonMovingStock(store.store_id, session, { tenantId: settings.tenantId, dwellDays: 120, minPurAge: 10, limit: 50 })
+    let cancelled = false;
+    if (!settings?.tenantId) return undefined;
+    if (!tenantStores.length) {
+      setNonMovingProducts([]);
+      setNonMovingLoading(false);
+      return undefined;
+    }
+    setNonMovingLoading(true);
+    Promise.all(tenantStores.map((store) => api.getNonMovingStock(store.store_id, session, { tenantId: settings.tenantId, dwellDays: 120, minPurAge: 10, limit: 50 })
       .then((result) => asArray(result?.rows)
         .map((row) => ({ ...row, __storeId: store.store_id, __storeName: store.store_name || store.store_code })))
       .catch(() => [])))
       .then((lists) => {
+        if (cancelled) return;
         const merged = lists.flat();
         merged.sort((a, b) => {
           const valueA = nonMovingCost(a);
@@ -974,13 +1109,29 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
         setNonMovingProducts(merged);
         setNonMovingLoading(false);
       });
-  }, [allStores, settings?.tenantId]);
+    return () => { cancelled = true; };
+  }, [tenantStores, settings?.tenantId, session]);
 
-  const filteredNonMoving = useMemo(
-    () => (nonMovingStoreFilter
-      ? nonMovingProducts.filter((row) => row.__storeId === nonMovingStoreFilter)
-      : nonMovingProducts),
-    [nonMovingProducts, nonMovingStoreFilter]
+  useEffect(() => {
+    setNonMovingStoreFilter('');
+    setNonMovingIndex(0);
+    setNonMovingProducts([]);
+    searchIdRef.current += 1;
+    setSearchStores([]);
+    setStoreDetails({});
+  }, [settings?.tenantId]);
+
+  const filteredNonMoving = useMemo(() => {
+    const tenantStoreIds = new Set(tenantStores.map((store) => String(store.store_id)));
+    const scopedRows = nonMovingProducts.filter((row) => tenantStoreIds.has(String(row.__storeId)));
+    return nonMovingStoreFilter
+      ? scopedRows.filter((row) => String(row.__storeId) === String(nonMovingStoreFilter))
+      : scopedRows;
+  }, [nonMovingProducts, nonMovingStoreFilter, tenantStores]);
+
+  const groupedNonMoving = useMemo(
+    () => groupNonMovingProducts(filteredNonMoving),
+    [filteredNonMoving]
   );
 
   // Switching the store filter can leave the carousel pointing past the end
@@ -988,16 +1139,16 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   useEffect(() => { setNonMovingIndex(0); }, [nonMovingStoreFilter]);
 
   useEffect(() => {
-    if (filteredNonMoving.length < 2) return;
+    if (groupedNonMoving.length < 2) return;
     const timer = setInterval(() => {
-      setNonMovingIndex((index) => (index + 1) % filteredNonMoving.length);
+      setNonMovingIndex((index) => (index + 1) % groupedNonMoving.length);
     }, 6000);
     return () => clearInterval(timer);
-  }, [filteredNonMoving]);
+  }, [groupedNonMoving]);
 
   function nonMovingStep(delta) {
-    if (!filteredNonMoving.length) return;
-    setNonMovingIndex((index) => (index + delta + filteredNonMoving.length) % filteredNonMoving.length);
+    if (!groupedNonMoving.length) return;
+    setNonMovingIndex((index) => (index + delta + groupedNonMoving.length) % groupedNonMoving.length);
   }
 
   useEffect(() => {
@@ -1018,13 +1169,13 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
       return;
     }
     // Cached term: render instantly on every keystroke, no debounce needed.
-    if (searchCacheRef.current.has(`${onlyStock ? '1' : '0'}|${value.toLowerCase()}`)) {
+    if (searchCacheRef.current.has(`${settings?.tenantId || ''}|${onlyStock ? '1' : '0'}|${value.toLowerCase()}`)) {
       runSearch(value);
       return;
     }
     const timer = setTimeout(() => runSearch(value), 150);
     return () => clearTimeout(timer);
-  }, [query, onlyStock]);
+  }, [query, onlyStock, settings?.tenantId]);
 
   async function loadStoreCore(storeId, product) {
     const cacheKey = `${storeId}:${product.product_code}`;
@@ -1084,7 +1235,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
     const searchId = ++searchIdRef.current;
     setHasSearched(true);
     const startedAt = performance.now();
-    const cacheKey = `${onlyStock ? '1' : '0'}|${value.toLowerCase()}`;
+    const cacheKey = `${settings?.tenantId || ''}|${onlyStock ? '1' : '0'}|${value.toLowerCase()}`;
     const cachedStores = searchCacheRef.current.get(cacheKey);
 
     try {
@@ -1212,32 +1363,36 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   // every tenant's branches into one grid. tenants.length > 1 is true only for
   // a broad login, since the API already locks everyone else to their own
   // tenant, so this filter is a no-op for regular store/purchase/salesman users.
-  const visibleStores = tenants.length > 1 && settings?.tenantId
-    ? visibleStoresUnfiltered.filter((store) => !store.tenant_id || store.tenant_id === settings.tenantId)
+  const visibleStores = allStores.length && settings?.tenantId
+    ? tenantStores
     : visibleStoresUnfiltered;
   const stores = orderStores(visibleStores, loginStoreId, settings?.storeOrder || []);
   const warehouseStore = stores.find(isWarehouseStore);
   const otherStores = stores.filter((store) => !isWarehouseStore(store));
 
   return (
-    <section className="store-workbench">
+    <section className="store-workbench" style={{ '--stock-grid-columns': stockGridColumns }}>
       <div className="global-search-row">
-        <input
-          ref={searchInputRef}
-          autoFocus
-          className={isAutoQuery ? 'auto-query' : ''}
-          value={query}
-          onChange={(event) => { setIsAutoQuery(false); setQuery(event.target.value); }}
-          onKeyDown={(event) => { if (event.key === 'Enter') runSearch(query.trim().replace(/\s+/g, ' ')); }}
-          placeholder="Enter Product or Batch..."
-        />
+        <div className="stock-search-field">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.7 19.3-4.2-4.2a7.5 7.5 0 1 0-1.4 1.4l4.2 4.2 1.4-1.4ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
+          <input
+            ref={searchInputRef}
+            autoFocus
+            aria-label="Search by product or batch"
+            className={isAutoQuery ? 'auto-query' : ''}
+            value={query}
+            onChange={(event) => { setIsAutoQuery(false); setQuery(event.target.value); }}
+            onKeyDown={(event) => { if (event.key === 'Enter') runSearch(query.trim().replace(/\s+/g, ' ')); }}
+            placeholder="Search product or batch number"
+          />
+        </div>
         <label className="stock-only-filter">
           <input type="checkbox" checked={onlyStock} onChange={(event) => setOnlyStock(event.target.checked)} />
-          Stock only
+          <span>In-stock only</span>
         </label>
         {tenants.length > 1 && (
           <label className="tenant-filter">
-            Tenant
+            <span>Tenant</span>
             <select value={settings?.tenantId || ''} onChange={(event) => onTenantChange?.(event.target.value)}>
               {tenants.map((tenant) => (
                 <option key={tenant.tenant_id} value={tenant.tenant_id}>
@@ -1247,10 +1402,19 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
             </select>
           </label>
         )}
-        <div className={`status-line ${status.state}`}>{status.message}</div>
+        <div className={`stock-search-status status-line ${status.state}`} title={status.message}>
+          <span className="stock-search-status-dot" aria-hidden="true" />
+          <span>{status.message}</span>
+        </div>
         <div className="current-store-badge">
-          <span>This device: {session?.user?.roles?.[0]?.store_name || settings?.storeName || 'Not registered'}</span>
-          <button type="button" className="link-button" onClick={onOpenSettings}>Store order settings</button>
+          <span className="current-store-copy">
+            <small>Current device store</small>
+            <strong>{session?.user?.roles?.[0]?.store_name || settings?.storeName || 'Not registered'}</strong>
+          </span>
+          <button type="button" className="store-order-button" onClick={onOpenSettings} title="Manage store display order">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10v2H4V6Zm0 5h7v2H4v-2Zm0 5h4v2H4v-2Zm14.6-6.4L21 12l-2.4 2.4-1.4-1.4.7-.7H13v-2h4.9l-.7-.7 1.4-1.4Z" /></svg>
+            <span>Store order</span>
+          </button>
         </div>
       </div>
 
@@ -1271,6 +1435,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
                 hideSupplierColumn={hideSupplierColumn}
                 visibility={visibility}
                 restrictWarehouse
+                visibleFields={visibleFields}
                 selected={selectedStoreId === warehouseStore.store_id}
                 onSelect={() => setSelectedStoreId(warehouseStore.store_id)}
               />
@@ -1279,7 +1444,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
         )}
 
         <NonMovingHighlightCard
-          nonMovingProducts={filteredNonMoving}
+          nonMovingGroups={groupedNonMoving}
           nonMovingLoading={nonMovingLoading}
           nonMovingIndex={nonMovingIndex}
           onPrev={() => nonMovingStep(-1)}
@@ -1289,7 +1454,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
             setIsAutoQuery(false);
             setQuery(productName);
           }}
-          allStores={allStores}
+          allStores={tenantStores}
           storeFilter={nonMovingStoreFilter}
           onStoreFilterChange={setNonMovingStoreFilter}
         />
@@ -1297,7 +1462,14 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
 
       <div className="store-row-workspace no-side-search">
         <section className="store-row-grid">
-          <StoreColumnHeaders hideSupplierColumn={hideSupplierColumn} sticky />
+          <StoreColumnHeaders
+            hideSupplierColumn={hideSupplierColumn}
+            sticky
+            visibleSections={visibleSections}
+            visibleFields={visibleFields}
+            onToggleSection={toggleStockSection}
+            onToggleField={toggleStockField}
+          />
           {otherStores.map((store, index) => (
             <StoreDataRow
               key={store.store_id || store.store_code}
@@ -1312,6 +1484,8 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
               hideSupplierColumn={hideSupplierColumn}
               visibility={visibility}
               restrictWarehouse={false}
+              visibleSections={visibleSections}
+              visibleFields={visibleFields}
               selected={selectedStoreId === store.store_id}
               onSelect={() => setSelectedStoreId(store.store_id)}
             />
@@ -1722,7 +1896,7 @@ function NmwSalesReport({ session, settings }) {
   );
 }
 
-const STORE_COLORS = ['#2563eb', '#15803d', '#b45309', '#7c3aed', '#be123c', '#0d9488'];
+const STORE_COLORS = ['#3b82f6', '#14b8a6', '#6366f1', '#0ea5e9', '#8b5cf6', '#06b6d4'];
 
 const STOCK_COLS = 'minmax(0, 1.35fr) 40px 44px';
 // Legacy 4-col batch layout, still used by the Supplier Stock Analysis
@@ -1730,57 +1904,153 @@ const STOCK_COLS = 'minmax(0, 1.35fr) 40px 44px';
 const BATCH_COLS = '68px 46px 58px 78px';
 // Stock Availability's enriched Batch grid (§2/§4/§5/§8): Exp (date +
 // days-remaining subtitle) | Stock | MRP | Batch No | Purchase Age |
-// Sales Age | Status | Priority icon
-const BATCH_DETAIL_COLS = '78px 40px 52px 62px 62px 62px 84px 22px';
+// Sales Age | Status
+const BATCH_DETAIL_COLS = '54px 30px 38px 52px 36px 36px minmax(58px, 1fr)';
 // Supplier gets the freed-up width (Qty/Free/GRN Date/GRN No trimmed) so
 // long supplier names stop truncating.
-const PURCHASE_COLS = '24px 22px 52px 56px 64px 52px minmax(132px, 1fr)';
-const PURCHASE_COLS_NO_SUPPLIER = '32px 32px 64px 58px 54px 54px 58px';
-// Merged Billing History summary grid: Qty | Dis% | Date | Bill No | Product | MRP | Amount | ▶
-const BILLING_COLS = '34px 44px 58px 64px 1fr 56px 64px 16px';
+const PURCHASE_COLS = '22px 20px 38px 42px 52px 44px minmax(86px, 1fr)';
+const PURCHASE_COLS_NO_SUPPLIER = '26px 26px 52px 48px 42px 42px 48px';
+// Product is already identified by the selected row, so repeating it here
+// only hid Amount on common desktop widths. Keep the useful bill fields.
+const BILLING_COLS = '30px 38px 58px minmax(76px, 1fr) 48px 62px';
 // Legacy per-store "Sales" tab in StoreDetailBody (Bill No/Date get more room, Qty/Dis%/MRP get less).
 const SALES_COLS = '26px 68px 104px 24px 1fr 38px';
 
-function StoreColumnHeaders({ hideSupplierColumn = false, restrictWarehouse = false, sticky = false, showBillingColumn = true }) {
-  const purchaseCols = hideSupplierColumn ? PURCHASE_COLS_NO_SUPPLIER : PURCHASE_COLS;
-  const purchaseHeaders = hideSupplierColumn
-    ? ['Qty', 'Free', 'GRN Date', 'GRN No', 'MRP', 'PTR', 'Cost']
-    : ['Qty', 'Free', 'All Dis', 'Prod Dis%', 'GRN Date', 'GRN No', 'Supplier'];
+function StoreColumnHeaders({
+  hideSupplierColumn = false,
+  restrictWarehouse = false,
+  sticky = false,
+  showBillingColumn = true,
+  visibleSections,
+  visibleFields,
+  onToggleSection,
+  onToggleField
+}) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const sections = visibleSections || DEFAULT_STOCK_SECTIONS;
+  const fields = visibleFields || DEFAULT_STOCK_FIELDS;
+  const productDefinitions = [
+    ['name', 'Product', 'minmax(0, 1.35fr)'], ['unit', 'Unit', '40px'], ['stock', 'Stock', '44px']
+  ].filter(([key]) => fields.product[key]);
+  const batchDefinitions = [
+    ['expiry', 'Exp', '54px'], ['stock', 'Stk', '30px'], ['mrp', 'MRP', '38px'], ['batchNo', 'Batch No', '52px'],
+    ['purchaseAge', 'Pur. Age', '36px'], ['salesAge', 'Sale Age', '36px'], ['status', 'Status', 'minmax(58px, 1fr)']
+  ].filter(([key]) => fields.batches[key]);
+  const purchaseDefinitions = (hideSupplierColumn ? [
+    ['qty', 'Qty', '26px'], ['free', 'Free', '26px'], ['grnDate', 'GRN Date', '52px'], ['grnNo', 'GRN No', '48px'],
+    ['mrp', 'MRP', '42px'], ['ptr', 'PTR', '42px'], ['cost', 'Cost', '48px']
+  ] : [
+    ['qty', 'Qty', '22px'], ['free', 'Free', '20px'], ['allDiscount', 'All Dis', '38px'], ['productDiscount', 'Prod Dis%', '42px'],
+    ['grnDate', 'GRN Date', '52px'], ['grnNo', 'GRN No', '44px'], ['supplier', 'Supplier', 'minmax(86px, 1fr)']
+  ]).filter(([key]) => fields.purchase[key] !== false);
+  const billingDefinitions = [
+    ['qty', 'Qty', '30px'], ['discount', 'Dis%', '38px'], ['date', 'Date', '58px'], ['billNo', 'Bill No', 'minmax(76px, 1fr)'],
+    ['mrp', 'MRP', '48px'], ['amount', 'Amount', '62px']
+  ].filter(([key]) => fields.billing[key]);
+  const definitionGrid = (definitions) => definitions.map(([, , width]) => width).join(' ');
 
   if (restrictWarehouse) {
     return (
-      <div className={`store-column-headers ${sticky ? 'sticky' : ''}`}>
+      <div className={`store-column-headers warehouse-column-headers ${sticky ? 'sticky' : ''}`}>
         <span className="store-header-cell" />
-        <div className="header-cell warehouse-only-header-cell">
-          <div className="header-cell-title">📦 Product</div>
-          <GridRow cols={STOCK_COLS} cells={['Product', 'Unit', 'Stock']} tag="span" />
+        <div className="header-cell header-cell--product warehouse-only-header-cell">
+          <div className="header-cell-title">Product</div>
+          <GridRow cols={definitionGrid(productDefinitions)} cells={productDefinitions.map(([, label]) => label)} tag="span" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`store-column-headers ${sticky ? 'sticky' : ''} ${showBillingColumn ? '' : 'no-bill-column'}`}>
+    <div className={`store-column-headers ${sticky ? 'sticky' : ''} ${!visibleSections && !showBillingColumn ? 'no-bill-column' : ''} ${onToggleSection ? 'has-settings' : ''}`}>
       <span className="store-header-cell" />
-      <div className="header-cell">
-        <div className="header-cell-title">📦 Product</div>
-        <GridRow cols={STOCK_COLS} cells={['Product', 'Unit', 'Stock']} tag="span" />
+      <div className="header-cell header-cell--product">
+        <div className="header-cell-title">Product</div>
+        <GridRow cols={definitionGrid(productDefinitions)} cells={productDefinitions.map(([, label]) => label)} tag="span" />
       </div>
-      <div className="header-cell">
-        <div className="header-cell-title">📈 Sales Trend</div>
-      </div>
-      <div className="header-cell">
-        <div className="header-cell-title">🗓 Batches</div>
-        <GridRow cols={BATCH_DETAIL_COLS} cells={['Exp', 'Stk', 'MRP', 'Batch No', 'Pur. Age', 'Sale Age', 'Status', '']} tag="span" />
-      </div>
-      <div className="header-cell">
-        <div className="header-cell-title">🛒 Purchase History</div>
-        <GridRow cols={purchaseCols} cells={purchaseHeaders} tag="span" />
-      </div>
-      {showBillingColumn && (
-        <div className="header-cell">
-          <div className="header-cell-title">🧾 Billing History</div>
-          <GridRow cols={BILLING_COLS} cells={['Qty', 'Dis%', 'Date', 'Bill No', 'Product', 'MRP', 'Amount', '']} tag="span" />
+      {sections.trend && (
+        <div className="header-cell header-cell--trend">
+          <div className="header-cell-title">Sales Trend</div>
+          <div className="trend-header-legend" aria-label="Sales trend series">
+            {fields.trend.purchase && <span className="trend-key trend-key--purchase">Purchase</span>}
+            {fields.trend.sales && <span className="trend-key trend-key--sales">Sales</span>}
+            {fields.trend.stock && <span className="trend-key trend-key--stock">Stock</span>}
+          </div>
+        </div>
+      )}
+      {sections.batches && (
+        <div className="header-cell header-cell--batches">
+          <div className="header-cell-title">Batches</div>
+          <GridRow cols={definitionGrid(batchDefinitions)} cells={batchDefinitions.map(([, label]) => label)} tag="span" />
+        </div>
+      )}
+      {sections.purchase && (
+        <div className="header-cell header-cell--purchase">
+          <div className="header-cell-title">Purchase History</div>
+          <GridRow cols={definitionGrid(purchaseDefinitions)} cells={purchaseDefinitions.map(([, label]) => label)} tag="span" />
+        </div>
+      )}
+      {showBillingColumn && sections.billing && (
+        <div className="header-cell header-cell--billing">
+          <div className="header-cell-title">Billing History</div>
+          <GridRow cols={definitionGrid(billingDefinitions)} cells={billingDefinitions.map(([, label]) => label)} tag="span" />
+        </div>
+      )}
+      {onToggleSection && (
+        <div className="header-settings">
+          <button
+            type="button"
+            className="header-settings-button"
+            onClick={() => setSettingsOpen((open) => !open)}
+            aria-label="Configure visible columns"
+            aria-expanded={settingsOpen}
+            title="Configure visible columns"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a8 8 0 0 0-1.7-1L15 3.5h-4L10.7 6A8 8 0 0 0 9 7L6.6 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4L9 17a8 8 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM13 18.5h-2l-.3-2-1-.4-1.9.8-1-1.7 1.6-1.3-.2-1v-1.8l.2-1-1.6-1.3 1-1.7 1.9.8 1-.4.3-2h2l.3 2 1 .4 1.9-.8 1 1.7-1.6 1.3.2 1v1.8l-.2 1 1.6 1.3-1 1.7-1.9-.8-1 .4-.3 2ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z" /></svg>
+          </button>
+          {settingsOpen && (
+            <div className="header-settings-menu" role="group" aria-label="Visible data sections">
+              <strong>Visible columns</strong>
+              {[
+                ['product', 'Product'],
+                ['trend', 'Sales Trend'],
+                ['batches', 'Batches'],
+                ['purchase', 'Purchase History'],
+                ['billing', 'Billing History']
+              ].map(([category, label]) => {
+                const isProduct = category === 'product';
+                const categoryVisible = isProduct || sections[category];
+                return (
+                  <section className="header-settings-category" key={category}>
+                    <label className="header-settings-category-title">
+                      <input
+                        type="checkbox"
+                        checked={categoryVisible}
+                        disabled={isProduct}
+                        onChange={() => !isProduct && onToggleSection(category)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                    {categoryVisible && (
+                      <div className="header-settings-fields">
+                        {Object.entries(STOCK_FIELD_LABELS[category]).map(([field, fieldLabel]) => (
+                          <label key={field}>
+                            <input
+                              type="checkbox"
+                              checked={fields[category][field] !== false}
+                              disabled={isProduct && field === 'name'}
+                              onChange={() => onToggleField(category, field)}
+                            />
+                            <span>{fieldLabel}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1790,12 +2060,19 @@ function StoreColumnHeaders({ hideSupplierColumn = false, restrictWarehouse = fa
 function GridRow({ cols, cells, tag: Tag = 'div', className = '', onClick }) {
   return (
     <div className={`grid-row ${className}`} style={{ gridTemplateColumns: cols }} onClick={onClick}>
-      {cells.map((cell, index) => <Tag key={index}>{cell}</Tag>)}
+      {cells.map((cell, index) => (
+        <Tag
+          key={index}
+          title={typeof cell === 'string' || typeof cell === 'number' ? String(cell) : undefined}
+        >
+          {cell}
+        </Tag>
+      ))}
     </div>
   );
 }
 
-function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, onProductSelect, onSaleSelect, onPurchaseSelect, hideSupplierColumn, restrictWarehouse, selected, onSelect, showBillingColumn = true, visibility = 'SUMMARY', rowRef }) {
+function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, onProductSelect, onSaleSelect, onPurchaseSelect, hideSupplierColumn, restrictWarehouse, selected, onSelect, showBillingColumn = true, visibleSections, visibleFields, visibility = 'SUMMARY', rowRef }) {
   const batches = detail?.batches || [];
   const purchases = detail?.purchases || [];
   const sales = detail?.sales || [];
@@ -1804,6 +2081,16 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
   const currentProduct = detail?.product?.product_name;
   const pending = hasSearched && searchProducts.length > 0 && detail === undefined;
   const batchSummary = summarizeProductBatches(batches);
+  const sections = visibleSections || DEFAULT_STOCK_SECTIONS;
+  const fields = visibleFields || DEFAULT_STOCK_FIELDS;
+  const purchaseFieldWidths = hideSupplierColumn
+    ? { qty: '26px', free: '26px', grnDate: '52px', grnNo: '48px', mrp: '42px', ptr: '42px', cost: '48px' }
+    : { qty: '22px', free: '20px', allDiscount: '38px', productDiscount: '42px', grnDate: '52px', grnNo: '44px', supplier: 'minmax(86px, 1fr)' };
+  const purchaseFieldKeys = Object.keys(purchaseFieldWidths).filter((key) => fields.purchase[key] !== false);
+  const purchaseGrid = purchaseFieldKeys.map((key) => purchaseFieldWidths[key]).join(' ');
+  const billingFieldWidths = { qty: '30px', discount: '38px', date: '58px', billNo: 'minmax(76px, 1fr)', mrp: '48px', amount: '62px' };
+  const billingFieldKeys = Object.keys(billingFieldWidths).filter((key) => fields.billing[key]);
+  const billingGrid = billingFieldKeys.map((key) => billingFieldWidths[key]).join(' ');
 
   const statusText = currentProduct
     ? `${restrictWarehouse ? '' : 'Showing: '}${currentProduct}`
@@ -1831,10 +2118,11 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
           hideSupplierColumn={hideSupplierColumn}
           restrictWarehouse={restrictWarehouse}
           showBillingColumn={showBillingColumn}
+          visibleFields={fields}
         />
       )}
 
-      <div className={`store-row-grid-body ${showBillingColumn ? '' : 'no-bill-column'}`} onClick={onSelect}>
+      <div className={`store-row-grid-body ${restrictWarehouse ? 'warehouse-row-body' : ''} ${!visibleSections && !showBillingColumn ? 'no-bill-column' : ''}`} onClick={onSelect}>
         <div className="store-row-label" title={store.store_name || 'Loading store...'}>
           {store.store_code ? (
             store.store_code.split('').map((char, index) => <strong key={index}>{char}</strong>)
@@ -1855,46 +2143,42 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
             hasSearched={hasSearched}
             selectedProductCode={detail?.product?.product_code}
             onProductSelect={onProductSelect}
-            activeSummary={batchSummary}
+            visibleFields={fields.product}
           />
         </section>
 
         {restrictWarehouse ? null : (
           <>
-            <section className="row-cell trend-cell">
-              {pending ? <SkeletonBlock lines={1} /> : <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} />}
-            </section>
+            {sections.trend && (
+              <section className="row-cell trend-cell">
+                {pending ? <SkeletonBlock lines={1} /> : <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} visibleFields={fields.trend} />}
+              </section>
+            )}
 
-            <BatchTable rows={batches} pending={pending} />
+            {sections.batches && <BatchTable rows={batches} pending={pending} visibleFields={fields.batches} />}
 
-            <RowDataCell
-              className={`purchase-table ${hideSupplierColumn ? 'summary-cols' : ''} ${onPurchaseSelect ? 'clickable' : ''}`}
-              cols={hideSupplierColumn ? PURCHASE_COLS_NO_SUPPLIER : PURCHASE_COLS}
-              emptyMessage="No purchase details."
-              pending={pending}
-              rows={purchases.slice(0, 20).map((row) => (hideSupplierColumn
-                ? [
-                  formatQty(row.qty),
-                  formatQty(row.free ?? 0),
-                  formatDate(row.date),
-                  row.grn_no || '-',
-                  formatMoney(row.mrp),
-                  formatMoney(row.ptr ?? row.purchase_price),
-                  formatMoney(row.cost)
-                ]
-                : [
-                  formatQty(row.qty),
-                  formatQty(row.free ?? 0),
-                  formatMoney(row.overall_discount ?? row.discount_amount),
-                  formatMoney(row.discount ?? row.dis),
-                  formatDate(row.date),
-                  row.grn_no || '-',
-                  visibility === 'FULL' ? (row.supplier || '-') : abbreviateSupplierName(row.supplier)
-                ]))}
-              onRowClick={onPurchaseSelect ? (index) => onPurchaseSelect(purchases[index]) : undefined}
-            />
+            {sections.purchase && (
+              <RowDataCell
+                className={`purchase-table ${hideSupplierColumn ? 'summary-cols' : ''} ${onPurchaseSelect ? 'clickable' : ''}`}
+                cols={purchaseGrid}
+                emptyMessage="No"
+                pending={pending}
+                rows={purchases.slice(0, 20).map((row) => {
+                  const values = hideSupplierColumn ? {
+                    qty: formatQty(row.qty), free: formatQty(row.free ?? 0), grnDate: formatDate(row.date), grnNo: row.grn_no || '-',
+                    mrp: formatMoney(row.mrp), ptr: formatMoney(row.ptr ?? row.purchase_price), cost: formatMoney(row.cost)
+                  } : {
+                    qty: formatQty(row.qty), free: formatQty(row.free ?? 0), allDiscount: formatMoney(row.overall_discount ?? row.discount_amount),
+                    productDiscount: formatMoney(row.discount ?? row.dis), grnDate: formatDate(row.date), grnNo: row.grn_no || '-',
+                    supplier: visibility === 'FULL' ? (row.supplier || '-') : abbreviateSupplierName(row.supplier)
+                  };
+                  return purchaseFieldKeys.map((key) => values[key]);
+                })}
+                onRowClick={onPurchaseSelect ? (index) => onPurchaseSelect(purchases[index]) : undefined}
+              />
+            )}
 
-            {showBillingColumn && (
+            {showBillingColumn && sections.billing && (
               <section className="row-cell row-data-cell bill-table">
                 {pending ? (
                   <SkeletonBlock lines={4} />
@@ -1905,32 +2189,23 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
                       const mrp = Number(row.mrp) || 0;
                       const discount = Number(row.discount) || 0;
                       const amount = qty * mrp * (1 - discount / 100);
-                      const productLabel = row.extra_item_count
-                        ? `${currentProduct || '-'} + ${row.extra_item_count} more`
-                        : (currentProduct || '-');
                       return (
                         <GridRow
                           key={index}
-                          cols={BILLING_COLS}
+                          cols={billingGrid}
                           tag="span"
                           className="num-row"
-                          cells={[
-                            formatQty(qty),
-                            formatMoney(discount),
-                            formatDate(row.date),
-                            row.bill_no || '-',
-                            <span className="product-cell-main" title={productLabel}>{productLabel}</span>,
-                            formatMoney(mrp),
-                            formatMoney(amount),
-                            '▶'
-                          ]}
+                          cells={billingFieldKeys.map((key) => ({
+                            qty: formatQty(qty), discount: formatMoney(discount), date: formatDate(row.date),
+                            billNo: row.bill_no || '-', mrp: formatMoney(mrp), amount: formatMoney(amount)
+                          })[key])}
                           onClick={onSaleSelect ? () => onSaleSelect(store, row) : undefined}
                         />
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="row-empty-state">No billing details.</div>
+                  <div className="row-empty-state">No</div>
                 )}
               </section>
             )}
@@ -1960,16 +2235,48 @@ const PURCHASE_FULL_ONLY_FIELDS = new Set(['supplier', 'dis_pct']);
 function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
   const { store, row } = detail;
   const fields = PURCHASE_DETAIL_FIELDS.filter(([key]) => visibility === 'FULL' || !PURCHASE_FULL_ONLY_FIELDS.has(key));
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="purchase-detail-card" onClick={(event) => event.stopPropagation()}>
+      <div
+        className="purchase-detail-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="purchase-detail-title"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="purchase-detail-header">
-          <strong>Purchase Details · {store.store_name || store.store_code}</strong>
-          <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+          <div className="purchase-detail-heading">
+            <span className="purchase-detail-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M7 3h10v2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2V3Zm2 2h6V4H9v1ZM5 8v11h14V8H5Zm3 3h8v2H8v-2Zm0 4h5v2H8v-2Z" /></svg>
+            </span>
+            <div>
+              <span className="purchase-detail-eyebrow">Purchase record</span>
+              <strong id="purchase-detail-title">{store.store_name || store.store_code}</strong>
+            </div>
+          </div>
+          <button type="button" className="purchase-detail-close" onClick={onClose} aria-label="Close purchase details">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.4 6 4.6 4.6L16.6 6 18 7.4 13.4 12l4.6 4.6-1.4 1.4-4.6-4.6L7.4 18 6 16.6l4.6-4.6L6 7.4 7.4 6Z" /></svg>
+          </button>
+        </div>
+        <div className="purchase-detail-summary">
+          <div>
+            <span>Purchase details</span>
+            <p>Invoice and pricing information for this stock entry.</p>
+          </div>
+          {row.grn_no && <span className="purchase-reference">GRN&nbsp; #{row.grn_no}</span>}
         </div>
         <div className="purchase-detail-grid">
           {fields.filter(([key]) => row[key] !== undefined && row[key] !== null && row[key] !== '').map(([key, label]) => (
-            <div className="purchase-detail-item" key={key}>
+            <div className={`purchase-detail-item purchase-detail-item--${key}`} key={key}>
               <span>{label}</span>
               <strong className={PURCHASE_MONEY_FIELDS.has(key) ? 'num-value' : ''}>
                 {key === 'date' ? formatDate(row[key])
@@ -2089,7 +2396,7 @@ function RowDataCell({ className, cols, rows, emptyMessage, highlightIndex, pend
 // §2/§3/§8: the Batch grid is the primary procurement-decision panel -
 // Status/Priority columns, expiry + days-remaining together, sorted worst
 // (Expired) first so the buyer never has to scan for risk.
-function BatchTable({ rows, pending }) {
+function BatchTable({ rows, pending, visibleFields = DEFAULT_STOCK_FIELDS.batches }) {
   if (pending) {
     return (
       <section className="row-cell row-data-cell batch-table">
@@ -2100,13 +2407,18 @@ function BatchTable({ rows, pending }) {
   if (!rows.length) {
     return (
       <section className="row-cell row-data-cell batch-table">
-        <div className="row-empty-state">No batch details.</div>
+        <div className="row-empty-state">No</div>
       </section>
     );
   }
   // §2: every batch is shown, including zero-stock ones - only the render
   // order changes (usable stock first), nothing is hidden or dropped.
   const sorted = sortedBatches(rows);
+  const definitions = [
+    ['expiry', '54px'], ['stock', '30px'], ['mrp', '38px'], ['batchNo', '52px'],
+    ['purchaseAge', '36px'], ['salesAge', '36px'], ['status', 'minmax(58px, 1fr)']
+  ].filter(([key]) => visibleFields[key]);
+  const grid = definitions.map(([, width]) => width).join(' ');
   return (
     <section className="row-cell row-data-cell batch-table">
       <div className="row-table-wrap">
@@ -2118,17 +2430,16 @@ function BatchTable({ rows, pending }) {
           const purchaseAge = ageInfo(row.last_purchase_date || row.grndate);
           const salesAge = ageInfo(row.last_sale_date || row.lastsaledate);
           return (
-            <div key={index} className={`grid-row batch-row batch-row--${status}`} style={{ gridTemplateColumns: BATCH_DETAIL_COLS }}>
-              <span className="batch-cell-expiry">
-                {formatDate(expiryDate)}
-              </span>
-              <span>{formatQty(row.stock)}</span>
-              <span>{formatMoney(row.mrp)}</span>
-              <span>{batchNo || '-'}</span>
-              <span className="batch-age batch-age--purchase">{purchaseAge.text}</span>
-              <span className="batch-age batch-age--sales">{salesAge.text}</span>
-              <span className="batch-cell-status">{meta.label}</span>
-              <span className="batch-cell-priority" title={meta.label}>{meta.icon}</span>
+            <div key={index} className={`grid-row batch-row batch-row--${status}`} style={{ gridTemplateColumns: grid }}>
+              {definitions.map(([key]) => ({
+                expiry: <span className="batch-cell-expiry">{formatDate(expiryDate)}</span>,
+                stock: <span>{formatQty(row.stock)}</span>,
+                mrp: <span>{formatMoney(row.mrp)}</span>,
+                batchNo: <span>{batchNo || '-'}</span>,
+                purchaseAge: <span className="batch-age batch-age--purchase">{purchaseAge.text}</span>,
+                salesAge: <span className="batch-age batch-age--sales">{salesAge.text}</span>,
+                status: <span className={`batch-cell-status batch-cell-status--${status}`}>{meta.label}</span>
+              })[key])}
             </div>
           );
         })}
@@ -2171,30 +2482,29 @@ function summarizeProductBatches(batches) {
   };
 }
 
-function StoreProductGrid({ products, hasSearched, selectedProductCode, onProductSelect, activeSummary }) {
+function StoreProductGrid({ products, hasSearched, selectedProductCode, onProductSelect, visibleFields = DEFAULT_STOCK_FIELDS.product }) {
   if (!products.length) {
-    return <div className={hasSearched ? 'not-found-card' : 'waiting-card'}>{hasSearched ? 'No matching products.' : 'Waiting.'}</div>;
+    return <div className={hasSearched ? 'not-found-card' : 'waiting-card'}>{hasSearched ? 'No' : 'Waiting'}</div>;
   }
+
+  const definitions = [
+    ['name', 'minmax(0, 1.35fr)'], ['unit', '40px'], ['stock', '44px']
+  ].filter(([key]) => visibleFields[key]);
+  const grid = definitions.map(([, width]) => width).join(' ');
 
   return (
     <div className="store-product-grid-wrap">
       {products.slice(0, 20).map((product, index) => {
         const isActive = product.product_code === selectedProductCode;
-        const summary = isActive ? activeSummary : null;
         const matchBadge = product.matchBadge;
         return (
           <GridRow
             key={`${product.product_code || product.product_name}-${index}`}
-            cols={STOCK_COLS}
+            cols={grid}
             tag="span"
             className={isActive ? 'active-row' : ''}
-            cells={[
-              <span className="product-cell-main" title={product.product_name || '-'}>
-                {summary && (
-                  <span className="product-status-badge" title={BATCH_STATUS_META[summary.status].label}>
-                    {BATCH_STATUS_META[summary.status].icon}
-                  </span>
-                )}
+            cells={definitions.map(([key]) => ({
+              name: <span className="product-cell-main" title={product.product_name || '-'}>
                 <span className="product-name-with-badge">
                   <span>{product.product_name || '-'}</span>
                   {matchBadge && (
@@ -2204,11 +2514,11 @@ function StoreProductGrid({ products, hasSearched, selectedProductCode, onProduc
                   )}
                 </span>
               </span>,
-              <span className="product-cell-unit">{product.sale_unit || product.unitdescription || '-'}</span>,
-              <span className={`product-cell-stock ${(Number(product.stock) || 0) > 0 ? 'product-cell-stock--available' : 'product-cell-stock--zero'}`}>
+              unit: <span className="product-cell-unit">{product.sale_unit || product.unitdescription || '-'}</span>,
+              stock: <span className={`product-cell-stock ${(Number(product.stock) || 0) > 0 ? 'product-cell-stock--available' : 'product-cell-stock--zero'}`}>
                 {product.stock ?? 0}
               </span>
-            ]}
+            })[key])}
             onClick={() => onProductSelect(product)}
           />
         );
@@ -2221,7 +2531,10 @@ function ProductStatusLegend() {
   return (
     <div className="product-status-legend">
       {Object.values(BATCH_STATUS_META).map((meta) => (
-        <span key={meta.label}>{meta.icon} {meta.label}</span>
+        <span key={meta.label}>
+          <i className={`status-dot status-dot--${meta.label.toLowerCase().replace(/\s+/g, '-')}`} aria-hidden="true" />
+          {meta.label}
+        </span>
       ))}
     </div>
   );
@@ -2453,15 +2766,15 @@ function buildChartRows(rows, purchases = [], sales = []) {
   return orderedKeys.slice(-4).map((key) => byMonth.get(key));
 }
 
-function MonthlyMovementChart({ rows, purchases = [], sales = [] }) {
+function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields = DEFAULT_STOCK_FIELDS.trend }) {
   const months = buildChartRows(rows, purchases, sales);
-  if (!months.length) return <div className="empty-state">No chart data yet.</div>;
+  if (!months.length) return <div className="row-empty-state">No</div>;
 
   const maxValue = Math.max(1, ...months.flatMap((row) => [
-    Number(row.pur || 0) + Number(row.tin || 0),
-    Number(row.sal || 0) + Number(row.tout || 0),
-    Number(row.stk || 0)
-  ]));
+    visibleFields.purchase && Number(row.pur || 0) + Number(row.tin || 0),
+    visibleFields.sales && Number(row.sal || 0) + Number(row.tout || 0),
+    visibleFields.stock && Number(row.stk || 0)
+  ].filter((value) => value !== false)));
 
   return (
     <div className="movement-chart">
@@ -2475,10 +2788,15 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [] }) {
         const stock = Number(row.stk || 0);
         return (
           <div className="movement-month" key={row.period}>
+            <div className="movement-month-values">
+              {visibleFields.purchase && <span className="movement-qty movement-qty--purchase" title={`Purchase: ${pur}`}>P {compactQuantity(pur)}</span>}
+              {visibleFields.sales && <span className="movement-qty movement-qty--sales" title={`Sales: ${sal}`}>S {compactQuantity(sal)}</span>}
+              {visibleFields.stock && <span className="movement-qty movement-qty--stock" title={`Stock: ${stock}`}>Q {compactQuantity(stock)}</span>}
+            </div>
             <div className="movement-bars">
-              <MovementBar segments={[{ value: pur, cls: 'pur' }]} max={maxValue} />
-              <MovementBar segments={[{ value: sal, cls: 'sale' }]} max={maxValue} />
-              <MovementBar segments={[{ value: stock, cls: 'stk' }]} max={maxValue} />
+              {visibleFields.purchase && <MovementBar label="Purchase" segments={[{ value: pur, cls: 'pur' }]} max={maxValue} />}
+              {visibleFields.sales && <MovementBar label="Sales" segments={[{ value: sal, cls: 'sale' }]} max={maxValue} />}
+              {visibleFields.stock && <MovementBar label="Stock" segments={[{ value: stock, cls: 'stk' }]} max={maxValue} />}
             </div>
             <strong>{row.period}</strong>
           </div>
@@ -2488,12 +2806,18 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [] }) {
   );
 }
 
-function MovementBar({ segments, max }) {
+function compactQuantity(value) {
+  const number = Number(value) || 0;
+  if (Math.abs(number) >= 1000000) return `${(number / 1000000).toFixed(1).replace(/\.0$/, '')}m`;
+  if (Math.abs(number) >= 1000) return `${(number / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(number);
+}
+
+function MovementBar({ label, segments, max }) {
   const total = segments.reduce((sum, seg) => sum + seg.value, 0);
   const height = total > 0 ? Math.max(6, (total / max) * 100) : 0;
   return (
-    <div className="movement-bar-set">
-      <em>{total}</em>
+    <div className="movement-bar-set" title={`${label}: ${total}`} aria-label={`${label}: ${total}`}>
       <div className="movement-bar-track">
         <div className="movement-bar-fill" style={{ height: `${height}%` }}>
           {segments.map((seg) => (seg.value > 0 ? (
@@ -2554,10 +2878,10 @@ const NON_MOVING_MIN_PURCHASE_AGE_DAYS = 10;
 // expired zero-stock batch is genuinely "Expired") - they're simply
 // excluded from PRODUCT-level aggregation (see summarizeProductBatches).
 const BATCH_STATUS_META = {
-  expired: { label: 'Expired', icon: '🔴', order: 0 },
-  'near-expiry': { label: 'Near Expiry', icon: '🟠', order: 1 },
-  'non-moving': { label: 'Non Moving', icon: '🟡', order: 2 },
-  healthy: { label: 'Healthy', icon: '🟢', order: 3 }
+  expired: { label: 'Expired', order: 0 },
+  'near-expiry': { label: 'Near Expiry', order: 1 },
+  'non-moving': { label: 'Non Moving', order: 2 },
+  healthy: { label: 'Healthy', order: 3 }
 };
 
 function batchStatus(row) {
@@ -2618,7 +2942,21 @@ function ageInfo(dateValue) {
   return { text: `${days}`, tier };
 }
 
-function NonMovingHighlightCard({ nonMovingProducts, nonMovingLoading, nonMovingIndex, onPrev, onNext, onSearch, allStores, storeFilter, onStoreFilterChange }) {
+function groupNonMovingProducts(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const name = String(row?.ProductName || '').trim();
+    const key = normalizeForLooseExact(name) || name.toLowerCase();
+    if (!key) return;
+    const current = groups.get(key) || { productName: name, rows: [], totalCost: 0 };
+    current.rows.push(row);
+    current.totalCost += nonMovingCost(row);
+    groups.set(key, current);
+  });
+  return [...groups.values()].sort((a, b) => b.totalCost - a.totalCost);
+}
+
+function NonMovingHighlightCard({ nonMovingGroups, nonMovingLoading, nonMovingIndex, onPrev, onNext, onSearch, allStores, storeFilter, onStoreFilterChange }) {
   const storeFilterControl = allStores?.length ? (
     <select
       className="non-moving-store-filter"
@@ -2633,7 +2971,7 @@ function NonMovingHighlightCard({ nonMovingProducts, nonMovingLoading, nonMoving
     </select>
   ) : null;
 
-  if (!nonMovingProducts?.length) {
+  if (!nonMovingGroups?.length) {
     return (
       <section className="non-moving-global-card">
         <div className="non-moving-wrap non-moving-wrap-empty">
@@ -2654,19 +2992,18 @@ function NonMovingHighlightCard({ nonMovingProducts, nonMovingLoading, nonMoving
     );
   }
 
-  const index = nonMovingIndex % nonMovingProducts.length;
-  const product = nonMovingProducts[index];
+  const index = nonMovingIndex % nonMovingGroups.length;
+  const group = nonMovingGroups[index];
 
   return (
     <section className="non-moving-global-card">
       <NonMovingDetailPanel
-        product={product}
+        group={group}
         onSearch={onSearch}
         storeFilterControl={storeFilterControl}
         nav={{
           index,
-          total: nonMovingProducts.length,
-          storeName: product?.__storeName,
+          total: nonMovingGroups.length,
           onPrev,
           onNext
         }}
@@ -2685,20 +3022,62 @@ function nonMovingCost(product) {
   return stock * mrp;
 }
 
-function NonMovingDetailPanel({ product, onSearch, nav, storeFilterControl }) {
-  const stock = Number(product.TotalStock ?? product.Batch_Stock ?? 0);
-  const stripQty = Number(product.StripQty ?? 0);
-  const mrp = Number(product.MRP ?? 0);
-  const totalCost = nonMovingCost(product);
-  const daysLeft = daysUntil(product.ExpiryDate);
-  const expired = daysLeft !== null && daysLeft < 0;
-  const nearExpiry = !expired && daysLeft !== null && daysLeft <= 60;
+function nonMovingStoreSummaries(rows) {
+  const stores = new Map();
+  rows.forEach((row) => {
+    const key = row.__storeId || row.__storeName || 'unknown';
+    const current = stores.get(key) || {
+      storeId: row.__storeId,
+      storeName: row.__storeName || 'Unknown store',
+      stockCost: 0,
+      expiryDate: null,
+      stock: 0,
+      stripQty: 0,
+      ptr: 0,
+      mrp: 0,
+      suppliers: new Set(),
+      lastReceived: null,
+      lastSale: null
+    };
+    current.stockCost += nonMovingCost(row);
+    current.stock += Number(row.TotalStock ?? row.Batch_Stock ?? 0);
+    current.stripQty += Number(row.StripQty ?? 0);
+    current.ptr ||= Number(row.PurchasePrice ?? row.PTR ?? 0);
+    current.mrp ||= Number(row.MRP ?? 0);
+    if (row.SupplierName) current.suppliers.add(row.SupplierName);
+    const expiry = row.ExpiryDate;
+    if (expiry && (!current.expiryDate || new Date(expiry) < new Date(current.expiryDate))) {
+      current.expiryDate = expiry;
+    }
+    if (row.LastGRNDate && (!current.lastReceived || new Date(row.LastGRNDate) > new Date(current.lastReceived))) {
+      current.lastReceived = row.LastGRNDate;
+    }
+    if (row.LastBillDate && (!current.lastSale || new Date(row.LastBillDate) > new Date(current.lastSale))) {
+      current.lastSale = row.LastBillDate;
+    }
+    stores.set(key, current);
+  });
+  return [...stores.values()].map((store) => ({
+    ...store,
+    supplier: [...store.suppliers].join(', ') || '-'
+  }));
+}
+
+function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl }) {
+  const storeSummaries = nonMovingStoreSummaries(group.rows);
+  const [selectedStoreKey, setSelectedStoreKey] = useState('');
   const clickable = typeof onSearch === 'function';
-  const expiryNote = expired
-    ? `expired ${Math.abs(daysLeft)}d ago`
-    : nearExpiry
-      ? `expires in ${daysLeft}d`
-      : null;
+  const selectedStore = storeSummaries.find((store) => String(store.storeId || store.storeName) === selectedStoreKey)
+    || storeSummaries[0];
+
+  useEffect(() => {
+    setSelectedStoreKey(String(storeSummaries[0]?.storeId || storeSummaries[0]?.storeName || ''));
+  }, [group.productName]);
+
+  const selectedDaysLeft = daysUntil(selectedStore?.expiryDate);
+  const selectedExpiryState = selectedDaysLeft !== null && selectedDaysLeft < 0
+    ? 'expired'
+    : selectedDaysLeft !== null && selectedDaysLeft <= 60 ? 'near-expiry' : 'healthy';
 
   return (
     <div className="non-moving-wrap">
@@ -2710,13 +3089,8 @@ function NonMovingDetailPanel({ product, onSearch, nav, storeFilterControl }) {
         </div>
         <div className="non-moving-block-header">
           {nav && <span className="non-moving-block-position">({nav.index + 1}/{nav.total})</span>}
-          <span className="non-moving-block-store">{nav?.storeName || ''}</span>
-          {product.ProductName && (
-            <>
-              <span className="non-moving-block-sep">·</span>
-              <span className="non-moving-block-product">{product.ProductName}</span>
-            </>
-          )}
+          <span className="non-moving-block-product">{group.productName}</span>
+          <span className="non-moving-store-count">{storeSummaries.length} {storeSummaries.length === 1 ? 'store' : 'stores'}</span>
           {nav && (
             <span className="non-moving-block-nav-buttons">
               <button type="button" className="non-moving-block-nav" onClick={nav.onPrev}>‹</button>
@@ -2726,29 +3100,61 @@ function NonMovingDetailPanel({ product, onSearch, nav, storeFilterControl }) {
           {storeFilterControl}
         </div>
       </div>
-      <div
-        className={`non-moving-panel-row ${expired ? 'expired' : nearExpiry ? 'near-expiry' : ''} ${clickable ? 'clickable' : ''}`}
-        role={clickable ? 'button' : undefined}
-        tabIndex={clickable ? 0 : undefined}
-        title={clickable ? 'Search this product across all stores' : undefined}
-        onClick={clickable ? () => onSearch(product.ProductName) : undefined}
-        onKeyDown={clickable ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSearch(product.ProductName); } } : undefined}
-      >
-        <div><span>Stock Cost</span><strong className="non-moving-value-highlight">{totalCost ? totalCost.toFixed(2) : '-'}</strong></div>
-        <div className={expired ? 'expiry-dead' : nearExpiry ? 'expiry-highlight' : ''}>
-          <span>Expiry</span>
-          <strong>
-            {formatDate(product.ExpiryDate)}
-            {expiryNote && <em className="non-moving-expiry-note">{expiryNote}</em>}
-          </strong>
-        </div>
-        <div><span>Stock Qty</span><strong>{stock}{stripQty > 0 ? ` (${stripQty} strips)` : ''}</strong></div>
-        <div><span>PTR (Cost)</span><strong>{Number(product.PurchasePrice ?? product.PTR ?? 0) ? formatMoney(product.PurchasePrice ?? product.PTR) : '-'}</strong></div>
-        <div><span>MRP</span><strong>{mrp ? formatMoney(mrp) : '-'}</strong></div>
-        <div><span>Supplier</span><strong title={product.SupplierName || ''}>{product.SupplierName || '-'}</strong></div>
-        <div><span>Last Received</span><strong>{formatDate(product.LastGRNDate)}</strong></div>
-        <div><span>Last Sale</span><strong>{formatDate(product.LastBillDate)}</strong></div>
+      <div className="non-moving-store-strip">
+        {storeSummaries.map((store) => {
+          const daysLeft = daysUntil(store.expiryDate);
+          const expiryState = daysLeft !== null && daysLeft < 0 ? 'expired' : daysLeft !== null && daysLeft <= 60 ? 'near-expiry' : 'healthy';
+          return (
+            <button
+              type="button"
+              className={`non-moving-store-card non-moving-store-card--${expiryState} ${selectedStore === store ? 'active' : ''}`}
+              key={store.storeId || store.storeName}
+              onClick={() => setSelectedStoreKey(String(store.storeId || store.storeName))}
+              title={`Show details for ${store.storeName}`}
+            >
+              <span className="non-moving-store-metrics">
+                <span>
+                  <small>Stock Cost</small>
+                  <strong>{store.stockCost ? store.stockCost.toFixed(2) : '-'}</strong>
+                </span>
+                <span>
+                  <small>Expiry</small>
+                  <strong>{formatDate(store.expiryDate)}</strong>
+                </span>
+              </span>
+              <span className="non-moving-store-card-footer">
+                <span className="non-moving-store-avatar" aria-hidden="true">{store.storeName.slice(0, 1).toUpperCase()}</span>
+                <strong>{store.storeName}</strong>
+                <span aria-hidden="true">›</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
+      {selectedStore && (
+        <div
+          className={`non-moving-overall-card non-moving-overall-card--${selectedExpiryState} ${clickable ? 'clickable' : ''}`}
+          role={clickable ? 'button' : undefined}
+          tabIndex={clickable ? 0 : undefined}
+          title={clickable ? `Search ${group.productName} across all stores` : undefined}
+          onClick={clickable ? () => onSearch(group.productName) : undefined}
+          onKeyDown={clickable ? (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              onSearch(group.productName);
+            }
+          } : undefined}
+        >
+          <div><span>Stock Cost</span><strong className="non-moving-value-highlight">{selectedStore.stockCost ? selectedStore.stockCost.toFixed(2) : '-'}</strong></div>
+          <div><span>Expiry</span><strong>{formatDate(selectedStore.expiryDate)}</strong></div>
+          <div><span>Stock Qty</span><strong>{formatQty(selectedStore.stock)}{selectedStore.stripQty > 0 ? ` (${formatQty(selectedStore.stripQty)} strips)` : ''}</strong></div>
+          <div><span>PTR (Cost)</span><strong>{selectedStore.ptr ? formatMoney(selectedStore.ptr) : '-'}</strong></div>
+          <div><span>MRP</span><strong>{selectedStore.mrp ? formatMoney(selectedStore.mrp) : '-'}</strong></div>
+          <div><span>Supplier</span><strong title={selectedStore.supplier}>{selectedStore.supplier}</strong></div>
+          <div><span>Last Received</span><strong>{formatDate(selectedStore.lastReceived)}</strong></div>
+          <div><span>Last Sale</span><strong>{formatDate(selectedStore.lastSale)}</strong></div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4782,38 +5188,6 @@ function DataTable({ columns, rows, status, emptyMessage = 'No data to show yet.
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

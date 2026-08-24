@@ -2,7 +2,7 @@
   "name": "nexora-supplier-stock-client",
   "version": "0.1.6",
   "private": true,
-  "description": "Nexora supplier stock desktop client scaffold",
+  "description": "Axythic supplier stock desktop client scaffold",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "electron .",
-    "dist": "vite build && electron-builder --win --config.artifactName=\"Nexora-Supplier-Stock-Setup-${version}.${ext}\""
+    "dist": "vite build && electron-builder --win --config.artifactName=\"Axythic-Supplier-Stock-Setup-${version}.${ext}\""
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
@@ -22,7 +22,7 @@
   },
   "build": {
     "appId": "com.nexora.desktop.stock",
-    "productName": "Nexora Supplier Stock",
+    "productName": "Axythic Supplier Stock",
     "directories": {
       "output": "release"
     },

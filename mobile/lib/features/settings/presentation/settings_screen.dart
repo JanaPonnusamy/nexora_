@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import 'package:nexora_mobile/core/di/capture_providers.dart';
 import 'package:nexora_mobile/core/di/outbox_providers.dart';
-import 'package:nexora_mobile/core/config/app_environment.dart';
 import 'package:nexora_mobile/core/di/providers.dart';
 import 'package:nexora_mobile/core/observability/crash_reporter.dart';
 import 'package:nexora_mobile/core/outbox/outbox_repository.dart';
@@ -27,7 +26,6 @@ class SettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final config = ref.watch(appConfigProvider);
     final pending = ref.watch(outboxOutstandingProvider);
 
     final outstanding = pending.valueOrNull ?? const [];
@@ -61,26 +59,6 @@ class SettingsScreen extends ConsumerWidget {
             icon: Icons.shield_outlined,
           ),
           const AppLockTile(),
-          const SizedBox(height: 20),
-          const SectionHeader(
-            title: 'SERVER',
-            icon: Icons.dns_outlined,
-          ),
-          _ReadOnlyTile(
-            title: 'Backend',
-            value: config.apiBaseUrl,
-            icon: Icons.link_rounded,
-            // Cleartext is worth naming rather than hiding: on this connection
-            // the session token is readable by anything on the path, and a
-            // release build cannot use it at all.
-            warning:
-                config.isCleartext ? 'Not encrypted — development only' : null,
-          ),
-          _ReadOnlyTile(
-            title: 'Environment',
-            value: config.environment.label,
-            icon: Icons.layers_outlined,
-          ),
           const SizedBox(height: 20),
           const SectionHeader(
             title: 'STORAGE',
@@ -142,31 +120,6 @@ class SettingsScreen extends ConsumerWidget {
               : 'Cleared $removed page image${removed == 1 ? '' : 's'}.',
         ),
       ),
-    );
-  }
-}
-
-class _ReadOnlyTile extends StatelessWidget {
-  const _ReadOnlyTile({
-    required this.title,
-    required this.value,
-    required this.icon,
-    this.warning,
-  });
-
-  final String title;
-  final String value;
-  final IconData icon;
-  final String? warning;
-
-  @override
-  Widget build(BuildContext context) {
-    return ActionTile(
-      title: title,
-      subtitle: warning == null ? value : '$value  ·  $warning',
-      icon: icon,
-      color: warning == null ? AppColors.accent : AppColors.warning,
-      trailing: const SizedBox.shrink(),
     );
   }
 }
