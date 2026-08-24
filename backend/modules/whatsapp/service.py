@@ -122,8 +122,11 @@ def _load_profiles() -> list[dict[str, Any]]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        profile_id = str(row.get("profile_id", "")).strip()
-        if not profile_id:
+        # `row.get("profile_id")` can be JSON null (str(None) == "None") from an
+        # entry written before upsert_profile collapsed None to "". Treat those
+        # sentinel strings as absent so a corrupt id never resurfaces as "None".
+        profile_id = str(row.get("profile_id") or "").strip()
+        if not profile_id or profile_id.lower() in {"none", "null", "undefined"}:
             continue
         session_dir = PROFILES_DIR / profile_id
         profile = {
