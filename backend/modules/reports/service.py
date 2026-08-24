@@ -77,6 +77,32 @@ _META = {
         "SalesAge": ("Sale Age", "right", _INT),
         "PurAge": ("Pur Age", "right", _INT),
     },
+    "expiry-pending-supplier": {
+        "SupplierName": ("Supplier", "left", None),
+        "Acks": ("Acks", "right", _INT),
+        "GivenQty": ("Given Qty", "right", _INT),
+        "ReceivedQty": ("Received Qty", "right", _INT),
+        "PendingQty": ("Pending Qty", "right", _INT),
+        "GivenValue": ("Given Value", "right", _MONEY),
+        "ReceivedValue": ("Received Value", "right", _MONEY),
+        "BalanceValue": ("Balance", "right", _MONEY),
+    },
+    "expiry-not-claimed": {
+        "SupplierName": ("Supplier", "left", None),
+        "ProductCode": ("Code", "left", None),
+        "ProductName": ("Product", "left", None),
+        "Batch": ("Batch", "left", None),
+        "ExpiryDate": ("Expiry", "center", _DATE),
+        "AckNumber": ("Ack No", "left", None),
+        "AckDate": ("Ack Date", "center", _DATE),
+        "Qty": ("Qty", "right", _INT),
+        "Free": ("Free", "right", _INT),
+        "Rate": ("Rate", "right", _MONEY),
+        "MRP": ("MRP", "right", _MONEY),
+        "Value": ("Value", "right", _MONEY),
+        "DaysPending": ("Days", "right", _INT),
+        "Remarks": ("Remarks", "left", None),
+    },
 }
 _META["purchased-not-sold"] = _META["non-moving"]
 
@@ -92,6 +118,8 @@ _CATALOG = [
     {"key": "non-moving", "label": "Non Moving", "group": "Stock", "needs_dwell_days": True, "needs_supplier": True},
     {"key": "purchased-not-sold", "label": "Purchased Not Sold", "group": "Stock", "needs_dwell_days": True, "needs_supplier": True},
     {"key": "eyrus-7day", "label": "EYRUS (7-Day Sales)", "group": "Sales", "needs_division": True},
+    {"key": "expiry-pending-supplier", "label": "Expiry Pending (Supplier-wise)", "group": "Expiry", "needs_date_range": True, "needs_supplier": True},
+    {"key": "expiry-not-claimed", "label": "Expiry Not Claimed (Product-wise)", "group": "Expiry", "needs_supplier": True},
 ]
 _TITLES = {c["key"]: c["label"] for c in _CATALOG}
 
@@ -206,6 +234,22 @@ def run(report_key, tenant_id, store_id, from_date=None, to_date=None,
 
         return _result(report_key, cols, rows, None)
 
+    if report_key in ("expiry-pending-supplier", "expiry-not-claimed"):
+        # Date range is optional for both (defaults to all outstanding).
+        fn = (repo.expiry_pending_supplier if report_key == "expiry-pending-supplier"
+              else repo.expiry_not_claimed)
+        try:
+            cols, rows = fn(tenant_id, store_id, from_date, to_date, supplier_code or None)
+        except Exception:
+            cols, rows = [], []
+        if not rows:
+            mock_fn = (mock_data.get_mock_expiry_pending_supplier
+                       if report_key == "expiry-pending-supplier"
+                       else mock_data.get_mock_expiry_not_claimed)
+            cols, rows = mock_fn(supplier_code or None)
+        summary = _summary_for(report_key, rows)
+        return _result(report_key, cols, rows, summary)
+
     if report_key == "eyrus-7day":
         try:
             cols, rows = repo.eyrus_7day(tenant_id, store_id, (division_code or "").strip())
@@ -257,6 +301,20 @@ def _summary_for(report_key, rows):
                 "TransactionAmount": _sum(rows, "TransactionAmount"),
                 "TotalItemCost": cost, "ProfitValue": _sum(rows, "ProfitValue"),
                 "C_Margin_Pct": round(float(cbills / cost * 100), 2) if cost else 0}
+    if report_key == "expiry-pending-supplier":
+        return {"SupplierName": "Total",
+                "Acks": _sum(rows, "Acks"),
+                "GivenQty": _sum(rows, "GivenQty"),
+                "ReceivedQty": _sum(rows, "ReceivedQty"),
+                "PendingQty": _sum(rows, "PendingQty"),
+                "GivenValue": _sum(rows, "GivenValue"),
+                "ReceivedValue": _sum(rows, "ReceivedValue"),
+                "BalanceValue": _sum(rows, "BalanceValue")}
+    if report_key == "expiry-not-claimed":
+        return {"SupplierName": "Total",
+                "Qty": _sum(rows, "Qty"),
+                "Free": _sum(rows, "Free"),
+                "Value": _sum(rows, "Value")}
     return None
 
 

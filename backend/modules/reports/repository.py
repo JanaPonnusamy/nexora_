@@ -333,3 +333,88 @@ def eyrus_7day(tenant_id, store_id, division_code):
         ORDER BY p.ProductName
     """
     return _run(sql, (days[0], days[-1], tenant_id, store_id, division_code))
+
+
+# ---------------------------------------------------------------------------
+# Expiry — Supplier expiry returns (Given / Received / Pending).
+#
+# Source is the supplier acknowledgement flow synced from Shopaid:
+#   sync.SupplierAckHeader     — one row per acknowledgement (Ackno)
+#       Quantity      = expiry qty GIVEN/issued to the supplier
+#       AcceptedQty   = qty RECEIVED/accepted (credit given)
+#       TotalAmount   = value given ; AdjustedValue = value credited back
+#       Balance       = value acknowledged but not yet credited (pending)
+#   sync.SupplierPendingProducts — items given but NOT yet acknowledged
+#       (the legacy "Supplier Pending Issue Report" — not-claimed items)
+# ---------------------------------------------------------------------------
+
+def expiry_pending_supplier(tenant_id, store_id, from_date=None, to_date=None,
+                            supplier_code=None):
+    """Supplier-wise expiry Given / Received / Pending, with value columns."""
+    where = ["h.tenant_id = ?", "h.store_id = ?"]
+    params = [tenant_id, store_id]
+    if from_date and to_date:
+        where.append("CAST(h.AckDate AS DATE) BETWEEN ? AND ?")
+        params += [from_date, to_date]
+    if supplier_code:
+        where.append("h.SupplierCode = ?")
+        params.append(supplier_code)
+    sql = f"""
+        SELECT
+            RTRIM(COALESCE(s.suppliername, CAST(h.SupplierCode AS VARCHAR(50)))) AS SupplierName,
+            COUNT(*)                                                       AS Acks,
+            SUM(h.Quantity)                                                AS GivenQty,
+            SUM(h.AcceptedQty)                                            AS ReceivedQty,
+            SUM(h.Quantity - h.AcceptedQty - ISNULL(h.RejectedQty, 0))     AS PendingQty,
+            SUM(h.TotalAmount)                                            AS GivenValue,
+            SUM(h.AdjustedValue)                                          AS ReceivedValue,
+            SUM(h.Balance)                                                AS BalanceValue
+        FROM sync.SupplierAckHeader h
+        LEFT JOIN sync.Suppliers s
+            ON s.tenant_id = h.tenant_id AND s.store_id = h.store_id
+           AND s.suppliercode = h.SupplierCode
+        WHERE {' AND '.join(where)}
+        GROUP BY RTRIM(COALESCE(s.suppliername, CAST(h.SupplierCode AS VARCHAR(50))))
+        ORDER BY GivenValue DESC
+    """
+    return _run(sql, tuple(params))
+
+
+def expiry_not_claimed(tenant_id, store_id, from_date=None, to_date=None,
+                       supplier_code=None):
+    """Product-wise items given to the supplier but not yet claimed/received."""
+    where = ["p.tenant_id = ?", "p.store_id = ?"]
+    params = [tenant_id, store_id]
+    if from_date and to_date:
+        where.append("CAST(p.AckDate AS DATE) BETWEEN ? AND ?")
+        params += [from_date, to_date]
+    if supplier_code:
+        where.append("p.SupplierCode = ?")
+        params.append(supplier_code)
+    sql = f"""
+        SELECT
+            RTRIM(COALESCE(s.suppliername, CAST(p.SupplierCode AS VARCHAR(50)))) AS SupplierName,
+            CAST(p.ProductCode AS VARCHAR(50))                           AS ProductCode,
+            pr.ProductName,
+            p.BatchDescription                                           AS Batch,
+            p.ExpiryDate,
+            p.AckNumber,
+            p.AckDate,
+            p.Quantity                                                   AS Qty,
+            p.FreeQty                                                    AS Free,
+            p.Rate,
+            p.MRP,
+            p.TotalAmount                                                AS Value,
+            DATEDIFF(DAY, p.AckDate, GETDATE())                          AS DaysPending,
+            p.Remarks
+        FROM sync.SupplierPendingProducts p
+        LEFT JOIN sync.Suppliers s
+            ON s.tenant_id = p.tenant_id AND s.store_id = p.store_id
+           AND s.suppliercode = p.SupplierCode
+        LEFT JOIN sync.Products pr
+            ON pr.tenant_id = p.tenant_id AND pr.store_id = p.store_id
+           AND pr.ProductCode = p.ProductCode
+        WHERE {' AND '.join(where)}
+        ORDER BY p.AckDate, SupplierName
+    """
+    return _run(sql, tuple(params))
