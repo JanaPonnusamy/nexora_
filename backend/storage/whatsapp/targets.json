@@ -1,7 +1,7 @@
 [
   {
     "target_id": "6eeaaf07-c5d0-44b5-a12a-5a856abf2cbd",
-    "profile_id": "None",
+    "profile_id": "79a4a363-7684-47c0-8cf1-06e60fd473c1",
     "target_kind": "group",
     "target_name": "NMA GROUP",
     "target_ref": "NMA GROUP",
@@ -15,7 +15,7 @@
   },
   {
     "target_id": "658c277f-804f-4114-bfea-48a4b43f9891",
-    "profile_id": "None",
+    "profile_id": "79a4a363-7684-47c0-8cf1-06e60fd473c1",
     "target_kind": "group",
     "target_name": "NMC GROUP",
     "target_ref": "NMC GROUP",
@@ -29,7 +29,7 @@
   },
   {
     "target_id": "3ed9d0e2-e694-4e3e-98df-a1a02aabdade",
-    "profile_id": "None",
+    "profile_id": "79a4a363-7684-47c0-8cf1-06e60fd473c1",
     "target_kind": "group",
     "target_name": "NMG GROUP",
     "target_ref": "NMG GROUP",
@@ -43,7 +43,7 @@
   },
   {
     "target_id": "d9f8506d-a1f8-40a5-b3dd-9b47ca2feb27",
-    "profile_id": "None",
+    "profile_id": "79a4a363-7684-47c0-8cf1-06e60fd473c1",
     "target_kind": "group",
     "target_name": "NMS GROUP",
     "target_ref": "NMS GROUP",
@@ -57,7 +57,7 @@
   },
   {
     "target_id": "1c68ffe0-dc96-49ad-af06-80878fca4e8d",
-    "profile_id": "None",
+    "profile_id": "79a4a363-7684-47c0-8cf1-06e60fd473c1",
     "target_kind": "group",
     "target_name": "NMV GROUP",
     "target_ref": "NMV GROUP",
@@ -71,7 +71,7 @@
   },
   {
     "target_id": "None",
-    "profile_id": "None",
+    "profile_id": "79a4a363-7684-47c0-8cf1-06e60fd473c1",
     "target_kind": "contact",
     "target_name": "Jana1",
     "target_ref": "8870183539",
