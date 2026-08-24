@@ -59,7 +59,7 @@ _META = {
         ("PendingQty", "Pending Qty", "right", _INT),
         ("GivenValue", "Given Value", "right", _MONEY),
         ("ReceivedValue", "Received Value", "right", _MONEY),
-        ("BalanceValue", "Balance", "right", _MONEY),
+        ("PendingValue", "Pending Value", "right", _MONEY),
         ("Remarks", "Remarks", "left", None),
     ],
     "ack-products": [
@@ -89,7 +89,7 @@ _TOTALS = {
     "supplier-pending": ("ProductName", ["Qty", "Free", "Value"]),
     "supplier-acks": ("AckNumber", ["GivenQty", "ReceivedQty", "RejectQty",
                                     "PendingQty", "GivenValue", "ReceivedValue",
-                                    "BalanceValue"]),
+                                    "PendingValue"]),
     "ack-products": ("ProductName", ["GivenQty", "Free", "ReceivedQty",
                                      "RejectQty", "Value"]),
 }

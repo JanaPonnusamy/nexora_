@@ -33,34 +33,43 @@ def _run(sql, params):
 # ---------------------------------------------------------------------------
 
 def store_summary(tenant_id):
+    # Value columns are derived from quantities so every row reconciles:
+    #   Given = Received + Reject + Pending  (both qty and value).
+    # "Given" includes items still pending a claim (SupplierPendingProducts),
+    # which are given to the supplier but have no acknowledgement yet.
     sql = """
         SELECT
             st.store_name  AS StoreName,
             st.store_code  AS StoreCode,
             CAST(st.store_id AS VARCHAR(36)) AS StoreId,
-            ISNULL(a.GivenQty, 0)      AS GivenQty,
-            ISNULL(a.ReceivedQty, 0)   AS ReceivedQty,
-            ISNULL(a.RejectQty, 0)     AS RejectQty,
-            ISNULL(p.PendingQty, 0)    AS PendingQty,
-            ISNULL(a.GivenValue, 0)    AS GivenValue,
-            ISNULL(a.ReceivedValue, 0) AS ReceivedValue,
-            ISNULL(p.PendingValue, 0)  AS PendingValue
+            ISNULL(a.GivenQty, 0) + ISNULL(p.PendGivenQty, 0)     AS GivenQty,
+            ISNULL(a.ReceivedQty, 0)                              AS ReceivedQty,
+            ISNULL(a.RejectQty, 0)                                AS RejectQty,
+            ISNULL(a.AckPendingQty, 0) + ISNULL(p.PendGivenQty, 0) AS PendingQty,
+            ISNULL(a.GivenValue, 0) + ISNULL(p.PendGivenValue, 0) AS GivenValue,
+            ISNULL(a.ReceivedValue, 0)                            AS ReceivedValue,
+            ISNULL(a.AckPendingValue, 0) + ISNULL(p.PendGivenValue, 0) AS PendingValue
         FROM dbo.stores st
         LEFT JOIN (
             SELECT store_id,
-                   SUM(Quantity)                AS GivenQty,
-                   SUM(AcceptedQty)             AS ReceivedQty,
-                   SUM(ISNULL(RejectedQty, 0))  AS RejectQty,
-                   SUM(TotalAmount)             AS GivenValue,
-                   SUM(AdjustedValue)           AS ReceivedValue
+                   SUM(Quantity)               AS GivenQty,
+                   SUM(AcceptedQty)            AS ReceivedQty,
+                   SUM(ISNULL(RejectedQty, 0)) AS RejectQty,
+                   SUM(Quantity - AcceptedQty - ISNULL(RejectedQty, 0)) AS AckPendingQty,
+                   SUM(TotalAmount)            AS GivenValue,
+                   SUM(CASE WHEN Quantity > 0
+                            THEN TotalAmount * AcceptedQty / Quantity ELSE 0 END) AS ReceivedValue,
+                   SUM(CASE WHEN Quantity > 0
+                            THEN TotalAmount * (Quantity - AcceptedQty - ISNULL(RejectedQty, 0)) / Quantity
+                            ELSE 0 END) AS AckPendingValue
             FROM sync.SupplierAckHeader
             WHERE tenant_id = ?
             GROUP BY store_id
         ) a ON a.store_id = st.store_id
         LEFT JOIN (
             SELECT store_id,
-                   SUM(Quantity)    AS PendingQty,
-                   SUM(TotalAmount) AS PendingValue
+                   SUM(Quantity)    AS PendGivenQty,
+                   SUM(TotalAmount) AS PendGivenValue
             FROM sync.SupplierPendingProducts
             WHERE tenant_id = ?
             GROUP BY store_id
@@ -83,8 +92,13 @@ def supplier_summary(tenant_id, store_id):
                    SUM(Quantity)               AS GivenQty,
                    SUM(AcceptedQty)            AS ReceivedQty,
                    SUM(ISNULL(RejectedQty, 0)) AS RejectQty,
+                   SUM(Quantity - AcceptedQty - ISNULL(RejectedQty, 0)) AS AckPendingQty,
                    SUM(TotalAmount)            AS GivenValue,
-                   SUM(AdjustedValue)          AS ReceivedValue,
+                   SUM(CASE WHEN Quantity > 0
+                            THEN TotalAmount * AcceptedQty / Quantity ELSE 0 END) AS ReceivedValue,
+                   SUM(CASE WHEN Quantity > 0
+                            THEN TotalAmount * (Quantity - AcceptedQty - ISNULL(RejectedQty, 0)) / Quantity
+                            ELSE 0 END) AS AckPendingValue,
                    COUNT(*)                    AS Acks
             FROM sync.SupplierAckHeader
             WHERE tenant_id = ? AND store_id = ?
@@ -92,8 +106,8 @@ def supplier_summary(tenant_id, store_id):
         ),
         pend AS (
             SELECT SupplierCode,
-                   SUM(Quantity)    AS PendingQty,
-                   SUM(TotalAmount) AS PendingValue,
+                   SUM(Quantity)    AS PendGivenQty,
+                   SUM(TotalAmount) AS PendGivenValue,
                    COUNT(*)         AS PendingLines
             FROM sync.SupplierPendingProducts
             WHERE tenant_id = ? AND store_id = ?
@@ -108,14 +122,14 @@ def supplier_summary(tenant_id, store_id):
             RTRIM(COALESCE(s.suppliername, CAST(c.SupplierCode AS VARCHAR(50)))) AS SupplierName,
             CAST(c.SupplierCode AS VARCHAR(50)) AS SupplierCode,
             ISNULL(a.Acks, 0)          AS Acks,
-            ISNULL(a.GivenQty, 0)      AS GivenQty,
+            ISNULL(a.GivenQty, 0) + ISNULL(p.PendGivenQty, 0)      AS GivenQty,
             ISNULL(a.ReceivedQty, 0)   AS ReceivedQty,
             ISNULL(a.RejectQty, 0)     AS RejectQty,
-            ISNULL(p.PendingQty, 0)    AS PendingQty,
+            ISNULL(a.AckPendingQty, 0) + ISNULL(p.PendGivenQty, 0) AS PendingQty,
             ISNULL(p.PendingLines, 0)  AS PendingLines,
-            ISNULL(a.GivenValue, 0)    AS GivenValue,
+            ISNULL(a.GivenValue, 0) + ISNULL(p.PendGivenValue, 0)  AS GivenValue,
             ISNULL(a.ReceivedValue, 0) AS ReceivedValue,
-            ISNULL(p.PendingValue, 0)  AS PendingValue
+            ISNULL(a.AckPendingValue, 0) + ISNULL(p.PendGivenValue, 0) AS PendingValue
         FROM codes c
         LEFT JOIN acks a ON a.SupplierCode = c.SupplierCode
         LEFT JOIN pend p ON p.SupplierCode = c.SupplierCode
@@ -171,8 +185,11 @@ def supplier_acks(tenant_id, store_id, supplier_code):
             ISNULL(h.RejectedQty, 0)                AS RejectQty,
             (h.Quantity - h.AcceptedQty - ISNULL(h.RejectedQty, 0)) AS PendingQty,
             h.TotalAmount                           AS GivenValue,
-            h.AdjustedValue                         AS ReceivedValue,
-            h.Balance                               AS BalanceValue,
+            CASE WHEN h.Quantity > 0
+                 THEN h.TotalAmount * h.AcceptedQty / h.Quantity ELSE 0 END AS ReceivedValue,
+            CASE WHEN h.Quantity > 0
+                 THEN h.TotalAmount * (h.Quantity - h.AcceptedQty - ISNULL(h.RejectedQty, 0)) / h.Quantity
+                 ELSE 0 END AS PendingValue,
             h.Remarks
         FROM sync.SupplierAckHeader h
         WHERE h.tenant_id = ? AND h.store_id = ? AND h.SupplierCode = ?
