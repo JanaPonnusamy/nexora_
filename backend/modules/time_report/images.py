@@ -24,7 +24,7 @@ COL_NAME = ("Name", 215)
 COL_PUNCH_W = 56
 COL_WORK = ("Hrs", 64)
 # Trailing month-to-date columns (see service._month_to_date_counts).
-COL_MTD = [("MP", 46), ("<8:30", 56), ("<8:00", 56)]
+COL_MTD = [("MP Days", 66), ("<8:30", 56), ("<8:00", 56)]
 
 ROW_H = 26
 TITLE_H = 30

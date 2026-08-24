@@ -79,6 +79,22 @@ export default function ReportsPage() {
 
   const def = useMemo(() => defs.find((d) => d.key === reportKey) ?? null, [defs, reportKey])
 
+  // Group reports by their `group` for a labelled <optgroup> dropdown, keeping
+  // first-seen group order from the catalog.
+  const groupedDefs = useMemo(() => {
+    const groups: { group: string; items: ReportDef[] }[] = []
+    for (const d of defs) {
+      const name = d.group || 'Reports'
+      let g = groups.find((x) => x.group === name)
+      if (!g) {
+        g = { group: name, items: [] }
+        groups.push(g)
+      }
+      g.items.push(d)
+    }
+    return groups
+  }, [defs])
+
   useEffect(() => {
     if (!def?.needs_supplier || !tenantId || !storeId) {
       setSupplierOptions([])
@@ -152,7 +168,11 @@ export default function ReportsPage() {
           {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
         </select>
         <select className="form-select form-select-sm" aria-label="Report" value={reportKey} onChange={(e) => { setReportKey(e.target.value); setResult(null) }}>
-          {defs.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+          {groupedDefs.map((g) => (
+            <optgroup key={g.group} label={g.group}>
+              {g.items.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+            </optgroup>
+          ))}
         </select>
 
         {def?.needs_date_range && (
