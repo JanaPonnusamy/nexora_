@@ -124,6 +124,14 @@ export const whatsappService = {
       checked_at: string
     }>(`/api/whatsapp/profiles/${profileId}/status`)
   },
+  loginQr(profileId: string) {
+    return api.get<{
+      profile_id: string
+      logged_in: boolean
+      qr_data_uri: string | null
+      checked_at: string
+    }>(`/api/whatsapp/profiles/${profileId}/qr`)
+  },
   logoutProfile(profileId: string) {
     return api.post<{
       profile_id: string

@@ -10,6 +10,7 @@ import type {
 } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
 import { WhatsAppSendCard } from '../../components/common/WhatsAppSendCard'
+import { WhatsAppQrLogin } from '../../components/common/WhatsAppQrLogin'
 import { whatsappService } from '../../services/whatsappService'
 import { buildDistributionImage } from '../../components/procurement/distributionImage'
 import { date } from '../../components/stock/format'
@@ -66,21 +67,21 @@ export default function SupplierStockDistributionPage() {
   const [waErrorOpen, setWaErrorOpen] = useState<string | null>(null)
   const [waLaunching, setWaLaunching] = useState(false)
   const [waLaunchStatus, setWaLaunchStatus] = useState('')
+  const [qrProfileId, setQrProfileId] = useState<string | null>(null)
 
   const launchWhatsAppLogin = async () => {
     setWaLaunching(true)
     setWaLaunchStatus('')
     try {
       const state = await whatsappService.getState()
-      const profileId = state.capabilities.default_profile_id
+      const profileId = state.capabilities.default_profile_id || state.profiles[0]?.profile_id
       if (!profileId) {
-        setWaLaunchStatus('No WhatsApp profile configured to launch.')
+        setWaLaunchStatus('No WhatsApp profile configured to link.')
         return
       }
-      const result = await whatsappService.launchProfile(profileId)
-      setWaLaunchStatus(result.message || 'WhatsApp opened — scan the QR code, then retry the failed store.')
+      setQrProfileId(profileId)
     } catch (e) {
-      setWaLaunchStatus(e instanceof Error ? e.message : 'Unable to launch WhatsApp.')
+      setWaLaunchStatus(e instanceof Error ? e.message : 'Unable to open WhatsApp login.')
     } finally {
       setWaLaunching(false)
     }
@@ -352,7 +353,12 @@ export default function SupplierStockDistributionPage() {
 
       {lastRunItems.length > 0 && (
         <section className="pm-admin__panel">
-          <div className="pm-admin__panel-title">WhatsApp Distribution</div>
+          <div className="pm-admin__panel-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>WhatsApp Distribution</span>
+            <button className="pm-btn pm-btn--ghost" disabled={waLaunching} onClick={() => void launchWhatsAppLogin()}>
+              <i className="bi bi-qr-code" /> {waLaunching ? 'Opening…' : 'Link WhatsApp'}
+            </button>
+          </div>
           {waLaunchStatus && (
             <div className="pm-banner pm-banner--success" style={{ marginBottom: 12 }}>{waLaunchStatus}</div>
           )}
@@ -374,7 +380,7 @@ export default function SupplierStockDistributionPage() {
                       )}
                       {needsQrLogin && (
                         <button className="pm-btn pm-btn--ghost" disabled={waLaunching} onClick={() => void launchWhatsAppLogin()} style={{ marginLeft: 8 }}>
-                          {waLaunching ? 'Launching…' : 'Launch WhatsApp (Scan QR)'}
+                          {waLaunching ? 'Opening…' : 'Scan QR to log in'}
                         </button>
                       )}
                       {waErrorOpen === it.run_item_id && <span className="sx-dim" style={{ marginLeft: 8 }}>{errorText}</span>}
@@ -385,6 +391,14 @@ export default function SupplierStockDistributionPage() {
             </tbody>
           </table>
         </section>
+      )}
+
+      {qrProfileId && (
+        <WhatsAppQrLogin
+          profileId={qrProfileId}
+          onLoggedIn={() => setWaLaunchStatus('WhatsApp linked. Re-run the failed store to send.')}
+          onClose={() => setQrProfileId(null)}
+        />
       )}
 
       <section className="pm-admin__panel">

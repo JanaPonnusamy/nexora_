@@ -9,6 +9,7 @@ from .service import (
     check_status,
     delete_profile,
     delete_target,
+    get_login_qr,
     get_state,
     launch_qr,
     logout_profile,
@@ -101,6 +102,11 @@ def launch_whatsapp_qr(profile_id: str, _: dict = Depends(require_super_admin)):
 @router.get("/profiles/{profile_id}/status")
 def read_whatsapp_profile_status(profile_id: str, _: dict = Depends(require_super_admin)):
     return check_status(profile_id)
+
+
+@router.get("/profiles/{profile_id}/qr")
+def read_whatsapp_login_qr(profile_id: str, _: dict = Depends(require_super_admin)):
+    return get_login_qr(profile_id)
 
 
 @router.post("/profiles/{profile_id}/logout")
