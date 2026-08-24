@@ -80,6 +80,9 @@ from modules.procurement.router import (
 from modules.reports.router import (
     router as reports_router
 )
+from modules.expiry_report.router import (
+    router as expiry_report_router
+)
 from modules.time_report.router import (
     router as time_report_router
 )
@@ -294,6 +297,7 @@ app.include_router(stock_integrity_router)
 app.include_router(supplier_stock_analysis_router)
 app.include_router(procurement_router)
 app.include_router(reports_router)
+app.include_router(expiry_report_router)
 app.include_router(time_report_router)
 app.include_router(product_mapping_router)
 app.include_router(document_extraction_router)

@@ -87,6 +87,15 @@ export const NAV_ENTRIES: NavEntry[] = [
   },
   {
     kind: 'group',
+    label: 'Expiry Report',
+    icon: 'bi-calendar-x',
+    cap: 'REPORTS',
+    children: [
+      { label: 'Expiry Report', to: '/expiry-report', icon: 'bi-calendar-x', cap: 'REPORTS' },
+    ],
+  },
+  {
+    kind: 'group',
     label: 'System',
     icon: 'bi-gear',
     children: [

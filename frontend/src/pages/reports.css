@@ -130,3 +130,40 @@
   background: var(--nx-surface-sunk, #f8fafc);
   color: var(--nx-text, #0f172a);
 }
+
+/* --- Expiry Report: drill-down breadcrumb, tabs, clickable rows ---------- */
+.expiry-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0.6rem;
+  font-size: 0.85rem;
+}
+.expiry-crumbs .sep { color: var(--nx-text-soft, #64748b); }
+.expiry-crumb {
+  background: none;
+  border: none;
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--nx-radius-sm, 6px);
+  color: var(--nx-accent, #3b82f6);
+  cursor: pointer;
+  font: inherit;
+}
+.expiry-crumb:hover { background: var(--nx-surface-sunk, #f1f5f9); }
+.expiry-crumb.active { color: var(--nx-text, #0f172a); font-weight: 600; cursor: default; }
+.expiry-tabs { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; }
+.expiry-tab {
+  background: var(--nx-surface-sunk, #f8fafc);
+  border: 1px solid var(--nx-rule, #e2e8f0);
+  color: var(--nx-text-soft, #64748b);
+  padding: 0.3rem 0.9rem;
+  border-radius: var(--nx-radius-md, 8px);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+}
+.expiry-tab.active { background: var(--nx-accent, #3b82f6); border-color: var(--nx-accent, #3b82f6); color: #fff; font-weight: 600; }
+.rpt-table tr.expiry-row-link { cursor: pointer; }
+.rpt-table tr.expiry-row-link:hover td { background: var(--nx-surface-sunk, #f1f5f9); }
+.expiry-hint { padding: 0.4rem 0.75rem; font-size: 0.78rem; color: var(--nx-text-soft, #64748b); }
