@@ -324,7 +324,9 @@
 .pm-slot--select { width: 158px; min-width: 158px; }
 .pm-slot--offer { width: auto; min-width: 100px; }
 .pm-slot--supplier { width: 250px; min-width: 170px; }
-.pm-slot--supplier.pm-slot--empty { width: 0; min-width: 0; }
+/* A slot whose control is hidden collapses fully instead of reserving its fixed
+   width (which would crowd the still-visible controls into the scroll region). */
+.pm-slot--empty { display: none !important; }
 .pm-slot > * { width: 100%; }
 .pm-slot--offer > * { justify-content: center; }
 /* "Show" caption for the planning-state chip row */
@@ -826,6 +828,21 @@
 .pm-grid--stock td.pm-grid__final { padding-left: 0; padding-right: 0; }
 .pm-grid--stock .pm-qty--sm { text-align: center; }
 
+/* The Order Qty input IS the editable affordance here, so the selected row must
+   not also wash the whole cell amber — that stacked a box inside a box (the
+   "ramrod" outline around the value). Keep the cell flat and let just the input
+   read as the field: a clean single box, accent-bordered on the current row. */
+.pm .pm-grid--stock .pm-row--sel .pm-grid__final,
+[data-bs-theme="dark"] .pm-grid--stock .pm-row--sel .pm-grid__final { background: transparent; }
+.pm .pm-grid--stock .pm-qty--sm {
+  border: 1px solid var(--bs-border-color, #d0d5dd);
+  background: var(--bs-body-bg, #fff);
+  box-shadow: none;
+}
+.pm .pm-grid--stock .pm-row--sel .pm-qty--sm {
+  border-color: color-mix(in srgb, var(--bs-primary, #2563eb) 55%, var(--bs-border-color, #d0d5dd));
+}
+
 /* Row with a positive Order Qty — subtle green wash so an in-progress order
    stands out while scanning the grid (§ ROW HIGHLIGHT). Selection styling
    (.pm-row--sel) still wins when both apply. */
@@ -856,15 +873,25 @@
    Buy/Free/Discount/As-of detail (§ OFFER TOOLTIP). */
 .pm-offer[title] { cursor: help; }
 
-/* Quick filter bar above the stock grid (§ QUICK FILTER). */
-.pm-quickfilters { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 8px; }
+/* Quick filter bar above the stock grid (§ QUICK FILTER) — compact toggle
+   chips (not a segmented tab track) so they read as filters, not navigation,
+   and cost the grid as little vertical space as possible. */
+.pm-quickfilters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 0 6px; }
 .pm-qf {
   border: 1px solid var(--bs-border-color, #e2e8f0); background: var(--bs-body-bg, #fff);
-  color: #475569; border-radius: 999px; padding: 3px 10px; font-size: 11.5px;
+  color: #475569; border-radius: 999px; padding: 2px 10px; font-size: 11.5px; line-height: 1.5;
   cursor: pointer; transition: background .12s, color .12s, border-color .12s;
 }
 .pm-qf:hover { background: #f1f5f9; }
 .pm-qf--on { background: #2563eb; color: #fff; border-color: #2563eb; }
+.pm-qf__count { align-self: center; font-size: 11px; }
+[data-bs-theme="dark"] .pm-qf {
+  border-color: var(--bs-border-color, #3a4354);
+  background: color-mix(in srgb, var(--nx-glass-bg-sunk, #1e293b) 60%, transparent);
+  color: #cbd5e1;
+}
+[data-bs-theme="dark"] .pm-qf:hover { background: rgba(148, 163, 184, .16); }
+[data-bs-theme="dark"] .pm-qf--on { background: #2563eb; color: #fff; border-color: #2563eb; }
 [data-bs-theme="dark"] .pm-qf--on { background: #3b82f6; border-color: #3b82f6; }
 
 /* Add — compact pill with hover lift */
@@ -1546,6 +1573,9 @@
 .pm-suppick__name { font-weight: 600; }
 .pm-suppick__code { color: #94a3b8; font-size: 11.5px; }
 .pm-suppick__menu { position: absolute; top: 100%; left: 0; z-index: 20; margin: 4px 0 0; padding: 4px; list-style: none; min-width: 260px; background: var(--bs-body-bg, #fff); border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.15); max-height: 260px; overflow: auto; }
+/* Portaled to <body> so the toolbar's overflow-x:auto can't clip it — fixed
+   positioning is supplied inline; here we just lift it above the app chrome. */
+.pm-suppick__menu--float { margin: 0; z-index: 1100; }
 .pm-suppick__menu button { width: 100%; display: flex; justify-content: space-between; gap: 10px; border: 0; background: transparent; padding: 7px 9px; border-radius: 7px; cursor: pointer; color: inherit; text-align: left; }
 .pm-suppick__menu button:hover { background: rgba(79,70,229,.08); }
 

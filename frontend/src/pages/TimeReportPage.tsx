@@ -445,6 +445,18 @@ function PunchCells({ punches, n = 8 }: { punches: string[]; n?: number }) {
   )
 }
 
+/** One month-to-date count cell: a coloured pill when non-zero, a muted dash
+ *  otherwise. Colours reuse the status tokens (danger / warning / info) so the
+ *  three columns read at a glance without adding new palette entries. */
+function MtdCell({ value, tone, first }: { value?: number; tone: 'mp' | 'w830' | 'w800'; first?: boolean }) {
+  const n = value ?? 0
+  return (
+    <td className={`trp-mtd${first ? ' trp-mtd-sep' : ''}`}>
+      {n > 0 ? <span className={`trp-pill trp-pill-${tone}`}>{n}</span> : <span className="trp-zero">–</span>}
+    </td>
+  )
+}
+
 function DailyView({
   data,
   onDeptImage,
@@ -462,6 +474,10 @@ function DailyView({
   return (
     <div>
       <div className="trp-period">{data.period}</div>
+      <div className="trp-subnote">
+        <i className="bi bi-info-circle" /> The <b>MP / &lt;8:30 / &lt;8:00</b> columns are month-to-date tallies for{' '}
+        <b>{data.month_name}</b> (1st → selected date).
+      </div>
       {data.departments.map((dept) => (
         <div key={`${dept.dpt_id}-${dept.name}`}>
           <div className="trp-dept-head">
@@ -484,17 +500,26 @@ function DailyView({
             </div>
           </div>
           <div className="trp-tablewrap">
-            <table className="trp-table">
+            <table className="trp-table trp-daily">
               <thead>
                 <tr>
-                  <th className="trp-left">ID</th>
-                  <th className="trp-left">Name</th>
+                  <th className="trp-left" rowSpan={2}>ID</th>
+                  <th className="trp-left" rowSpan={2}>Name</th>
+                  <th className="trp-center trp-grp" colSpan={8}>Punches</th>
+                  <th className="trp-center" rowSpan={2}>Hrs</th>
+                  <th className="trp-center trp-grp trp-mtd-sep" colSpan={3}>
+                    This Month · to date
+                  </th>
+                </tr>
+                <tr>
                   {Array.from({ length: 8 }, (_, i) => (
-                    <th key={i} className="trp-center">
+                    <th key={i} className="trp-center trp-sub">
                       {i + 1}
                     </th>
                   ))}
-                  <th className="trp-center">Hrs</th>
+                  <th className="trp-center trp-sub trp-mtd-sep" title="Miss-punch days this month">MP</th>
+                  <th className="trp-center trp-sub" title="Days worked under 8h30m this month">&lt;8:30</th>
+                  <th className="trp-center trp-sub" title="Days worked under 8h00m this month">&lt;8:00</th>
                 </tr>
               </thead>
               <tbody>
@@ -507,12 +532,15 @@ function DailyView({
                     </td>
                     <PunchCells punches={row.punches} />
                     <td className="trp-center">{row.work_hm}</td>
+                    <MtdCell value={row.mp_month} tone="mp" first />
+                    <MtdCell value={row.below_830} tone="w830" />
+                    <MtdCell value={row.below_800} tone="w800" />
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="trp-foot">
-                  <td colSpan={11} className="trp-left">
+                  <td colSpan={14} className="trp-left">
                     Present {dept.totals.present} | Absent {dept.totals.absent} | Miss Punch {dept.totals.miss_punch} | Late {dept.totals.late}
                   </td>
                 </tr>

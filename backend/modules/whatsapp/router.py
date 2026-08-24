@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
+from dependencies.store_scope import require_super_admin
 from .service import (
     check_status,
     delete_profile,
     delete_target,
+    get_login_qr,
     get_state,
     launch_qr,
     logout_profile,
@@ -72,7 +74,7 @@ def read_whatsapp_state():
 
 
 @router.put("/settings")
-def save_whatsapp_settings(payload: WhatsAppSettingsPayload):
+def save_whatsapp_settings(payload: WhatsAppSettingsPayload, _: dict = Depends(require_super_admin)):
     return update_settings(
         payload.browser_command,
         payload.delivery_mode,
@@ -83,27 +85,32 @@ def save_whatsapp_settings(payload: WhatsAppSettingsPayload):
 
 
 @router.post("/profiles")
-def save_whatsapp_profile(payload: WhatsAppProfilePayload):
+def save_whatsapp_profile(payload: WhatsAppProfilePayload, _: dict = Depends(require_super_admin)):
     return upsert_profile(payload.model_dump())
 
 
 @router.delete("/profiles/{profile_id}")
-def remove_whatsapp_profile(profile_id: str):
+def remove_whatsapp_profile(profile_id: str, _: dict = Depends(require_super_admin)):
     return delete_profile(profile_id)
 
 
 @router.post("/profiles/{profile_id}/launch")
-def launch_whatsapp_qr(profile_id: str):
+def launch_whatsapp_qr(profile_id: str, _: dict = Depends(require_super_admin)):
     return launch_qr(profile_id)
 
 
 @router.get("/profiles/{profile_id}/status")
-def read_whatsapp_profile_status(profile_id: str):
+def read_whatsapp_profile_status(profile_id: str, _: dict = Depends(require_super_admin)):
     return check_status(profile_id)
 
 
+@router.get("/profiles/{profile_id}/qr")
+def read_whatsapp_login_qr(profile_id: str, _: dict = Depends(require_super_admin)):
+    return get_login_qr(profile_id)
+
+
 @router.post("/profiles/{profile_id}/logout")
-def logout_whatsapp_profile(profile_id: str):
+def logout_whatsapp_profile(profile_id: str, _: dict = Depends(require_super_admin)):
     return logout_profile(profile_id)
 
 

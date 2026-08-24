@@ -113,18 +113,29 @@ def load_source(conn, tenant_id, store_id, params):
         ),
         md AS (SELECT ProductCode, MAX(q) AS max_day_sale_qty FROM per_day GROUP BY ProductCode),
         mb AS (SELECT ProductCode, MAX(q) AS max_bill_qty FROM per_bill GROUP BY ProductCode),
-        -- Legacy watermark join (order_local/remote.sql `l` sub-query): last sale
-        -- bill and last GRN per product, taken only from ProductTrans months whose
-        -- LastBillDate is within the legacy 20-day window. Drives the recency and
-        -- "sold since last GRN" eligibility gates in decision_rules.evaluate.
-        lg AS (
-            SELECT ProductCode,
-                   MAX(LastBillDate) AS last_sale_date,
-                   MAX(LastGrnDate)  AS last_received_date
-            FROM sync.ProductTrans
+        -- Precise last-sale watermark: the REAL most-recent valid retail sale date
+        -- per product (full history, not just the rolling window), for the recency
+        -- and "sold since latest GRN" hard gates in decision_rules.evaluate. The
+        -- legacy engine and the old code read month-level sync.ProductTrans
+        -- aggregates (MAX LastBillDate / MAX LastGrnDate within 20 days); those
+        -- cannot answer "sold AFTER the latest GRN" because a monthly MAX loses the
+        -- intra-month ordering, so a product received today but not sold since would
+        -- still pass. Reading actual transaction dates fixes that class of bug.
+        ls AS (
+            SELECT ProductCode, MAX(TransactionDate) AS last_sale_date
+            FROM sync.ProductSaleInformation
             WHERE tenant_id = ? AND store_id = ?
-              AND LastBillDate IS NOT NULL
-              AND LastBillDate >= DATEADD(day, -20, GETDATE())
+              AND ISNULL(TransactionValidity, 0) = 0
+              AND SeriesTransID = 1
+            GROUP BY ProductCode
+        ),
+        -- Precise latest GRN (goods-receipt) date per product from real purchase
+        -- receipts. NULL when the product was never received (then the
+        -- "sold since GRN" gate does not apply).
+        grn AS (
+            SELECT ProductCode, MAX(grndate) AS last_received_date
+            FROM sync.PurchaseTrans
+            WHERE tenant_id = ? AND store_id = ?
             GROUP BY ProductCode
         )
         SELECT
@@ -143,17 +154,19 @@ def load_source(conn, tenant_id, store_id, params):
             CAST(ISNULL(agg.billing_frequency, 0) AS INT)          AS billing_frequency,
             CAST({_store_stock_expr("p")} AS DECIMAL(18,3)) AS current_stock,
             CAST(ISNULL(p.SaleUnit, 0) AS DECIMAL(18,3))    AS sale_unit,
-            lg.last_sale_date                    AS last_sale_date,
-            lg.last_received_date                AS last_received_date
+            ls.last_sale_date                    AS last_sale_date,
+            grn.last_received_date               AS last_received_date
         FROM sync.Products p
         LEFT JOIN agg ON agg.ProductCode = p.ProductCode
         LEFT JOIN md  ON md.ProductCode  = p.ProductCode
         LEFT JOIN mb  ON mb.ProductCode  = p.ProductCode
-        LEFT JOIN lg  ON lg.ProductCode  = p.ProductCode
+        LEFT JOIN ls  ON ls.ProductCode  = p.ProductCode
+        LEFT JOIN grn ON grn.ProductCode = p.ProductCode
         WHERE p.tenant_id = ? AND p.store_id = ?
           AND ISNULL(p.isActive, 1) = 1
         """,
-        (tenant_id, store_id, cutoff, tenant_id, store_id, tenant_id, store_id),
+        (tenant_id, store_id, cutoff, tenant_id, store_id,
+         tenant_id, store_id, tenant_id, store_id),
     )
     if not cursor.description:
         return []

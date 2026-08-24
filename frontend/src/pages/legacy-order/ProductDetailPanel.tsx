@@ -17,43 +17,42 @@ const CHART_SERIES: { key: keyof MonthlyStatRow; label: string; color: string }[
   { key: 'TransferOutQuantity', label: 'TOUT', color: '#a855f7' },
 ]
 
-/** Port of the VB Chart1 grouped-bar chart: last 3 months of ProductTrans. */
+/** Port of the VB Chart1 grouped-bar chart: last 3 months of ProductTrans.
+ *  Rendered as HTML/flex bars (not SVG) so it fills the panel width with no
+ *  letterbox gaps, shows each value, and takes a light card + glossy bars. */
 export function MonthlyStatsChart({ rows }: { rows: MonthlyStatRow[] }) {
   if (!rows.length) return <div className="lo-empty">No monthly statistics for this product.</div>
   const max = Math.max(1, ...rows.flatMap((row) => CHART_SERIES.map((s) => Number(row[s.key]) || 0)))
-  const W = 560
-  const H = 200
-  const padL = 30
-  const padB = 20
-  const plotW = W - padL - 10
-  const plotH = H - padB - 10
-  const groupW = plotW / rows.length
-  const barW = Math.max(3, (groupW * 0.8) / CHART_SERIES.length)
 
   return (
-    <div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Monthly statistics chart">
-        {rows.map((row, i) => {
-          const groupX = padL + i * groupW + groupW * 0.1
-          return (
-            <g key={row.MonthOfStatistics}>
-              {CHART_SERIES.map((series, j) => {
+    <div className="qc-chart">
+      <div className="qc-chart__plot" role="img" aria-label="Monthly statistics chart">
+        {rows.map((row, i) => (
+          <div className="qc-chart__group" key={`${row.MonthOfStatistics}-${i}`}>
+            <div className="qc-chart__bars">
+              {CHART_SERIES.map((series) => {
                 const value = Number(row[series.key]) || 0
-                const h = (value / max) * plotH
-                const x = groupX + j * barW
-                const y = padB + (plotH - h)
-                return <rect key={series.key} x={x} y={y} width={barW - 1} height={h} fill={series.color}><title>{`${series.label}: ${value}`}</title></rect>
+                const pct = Math.max(0, Math.min(100, (value / max) * 100))
+                return (
+                  <div
+                    key={series.key}
+                    className="qc-chart__bar"
+                    style={{ height: `${pct}%`, background: series.color }}
+                    title={`${series.label}: ${value}`}
+                  >
+                    {value !== 0 && <span className="qc-chart__val">{value}</span>}
+                  </div>
+                )
               })}
-              <text x={groupX + (barW * CHART_SERIES.length) / 2} y={H - 4} textAnchor="middle" fontSize="9" fill="currentColor">{row.MonthOfStatistics}</text>
-            </g>
-          )
-        })}
-      </svg>
-      <div className="lo-actions" style={{ flexWrap: 'wrap', marginTop: '0.4rem' }}>
+            </div>
+            <div className="qc-chart__month">{row.MonthOfStatistics}</div>
+          </div>
+        ))}
+      </div>
+      <div className="qc-chart__legend">
         {CHART_SERIES.map((series) => (
-          <span key={series.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem' }}>
-            <span style={{ width: '0.6rem', height: '0.6rem', background: series.color, borderRadius: '2px', display: 'inline-block' }} />
-            {series.label}
+          <span key={series.key} className="qc-chart__leg">
+            <i style={{ background: series.color }} />{series.label}
           </span>
         ))}
       </div>
@@ -64,7 +63,6 @@ export function MonthlyStatsChart({ rows }: { rows: MonthlyStatRow[] }) {
 interface ProductDetailPanelProps {
   store: string
   productCode: number | null
-  productName?: string
   mode: OrderMode
   onError?: (message: string) => void
 }
@@ -74,7 +72,7 @@ interface ProductDetailPanelProps {
  *  Chart. Self-fetches so both the Qty-Check screen and the Order Workspace can
  *  drop it in. Order history (OrderManagementBackup) is intentionally left to
  *  the host page, which renders it in its own full-width section. */
-export function ProductDetailPanel({ store, productCode, productName, mode, onError }: ProductDetailPanelProps) {
+export function ProductDetailPanel({ store, productCode, mode, onError }: ProductDetailPanelProps) {
   const [purchaseDetails, setPurchaseDetails] = useState<PurchaseDetailRow[]>([])
   const [salesDetails, setSalesDetails] = useState<SalesDetailRow[]>([])
   const [monthlyStats, setMonthlyStats] = useState<MonthlyStatRow[]>([])
@@ -112,36 +110,46 @@ export function ProductDetailPanel({ store, productCode, productName, mode, onEr
 
   return (
     <div className="qc-detail-scroll">
-      <p className="lo-note">{productName ?? ''} · {productCode}{loading ? ' · loading…' : ''}</p>
+      {loading && <p className="lo-note qc-pi-head">Loading…</p>}
 
-      <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Purchase / GRN history</h3>
-      <div className="lo-scroll" style={{ maxHeight: '7rem' }}>
-        <table className="lo-table">
-          <thead><tr><th className="lo-num">Stock</th><th className="lo-num">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
-          <tbody>
-            {purchaseDetails.map((row, i) => (
-              <tr key={i}><td className="lo-num">{row.RStock ?? '—'}</td><td className="lo-num">{row.FreeQty ?? '—'}</td><td className="lo-num">{row.DIS ?? '—'}</td><td className="lo-num">{row.ItemCost ?? '—'}</td><td className="lo-num">{row.PTR ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{fmtDate(row.GRNDate)}</td><td>{row.SupplierName ?? '—'}</td></tr>
-            ))}
-            {!purchaseDetails.length && <tr><td colSpan={8} className="lo-empty">No purchase history.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <section className="qc-pi-section qc-pi-grow">
+        <h3 className="qc-pi-title">Purchase / GRN history</h3>
+        <div className="lo-scroll qc-pi-scroll">
+          <table className="lo-table lo-table--pi">
+            <thead><tr><th className="lo-num">Stock</th><th className="lo-num">Free</th><th className="lo-num">Dis</th><th className="lo-num">Cost</th><th className="lo-num">PTR</th><th className="lo-num">MRP</th><th>GRN Date</th><th>Supplier</th></tr></thead>
+            <tbody>
+              {purchaseDetails.map((row, i) => {
+                // Legacy: rows that came with free goods (free > 0) are highlighted.
+                const free = Number(row.FreeQty) || 0
+                return (
+                <tr key={i} className={free > 0 ? 'qc-pi-freerow' : undefined}><td className="lo-num">{row.RStock ?? '—'}</td><td className={`lo-num${free > 0 ? ' qc-pi-free' : ''}`}>{row.FreeQty ?? '—'}</td><td className="lo-num">{row.DIS ?? '—'}</td><td className="lo-num">{row.ItemCost ?? '—'}</td><td className="lo-num">{row.PTR ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{fmtDate(row.GRNDate)}</td><td>{row.SupplierName ?? '—'}</td></tr>
+                )
+              })}
+              {!purchaseDetails.length && <tr><td colSpan={8} className="lo-empty">No purchase history.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-      <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Bill / sales history</h3>
-      <div className="lo-scroll" style={{ maxHeight: '7rem' }}>
-        <table className="lo-table">
-          <thead><tr><th className="lo-num">Qty</th><th>Bill Time</th><th>Salesman</th><th>Customer</th><th className="lo-num">Dis</th><th>Type</th><th className="lo-num">MRP</th></tr></thead>
-          <tbody>
-            {salesDetails.map((row, i) => (
-              <tr key={i}><td className="lo-num">{row.TotalQuantity ?? '—'}</td><td>{fmtDate(row.Bill_Time)}</td><td>{row.Salesmanname ?? '—'}</td><td>{row.CUSTOMERNAME ?? '—'}</td><td className="lo-num">{row.dis ?? '—'}</td><td>{row.type ?? '—'}</td><td className="lo-num">{row.mrp ?? '—'}</td></tr>
-            ))}
-            {!salesDetails.length && <tr><td colSpan={7} className="lo-empty">No sales history.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <section className="qc-pi-section qc-pi-grow">
+        <h3 className="qc-pi-title">Bill / sales history</h3>
+        <div className="lo-scroll qc-pi-scroll">
+          <table className="lo-table lo-table--pi">
+            <thead><tr><th className="lo-num">Qty</th><th>Bill Time</th><th>Salesman</th><th>Customer</th><th className="lo-num">Dis</th><th>Type</th><th className="lo-num">MRP</th></tr></thead>
+            <tbody>
+              {salesDetails.map((row, i) => (
+                <tr key={i}><td className="lo-num">{row.TotalQuantity ?? '—'}</td><td>{fmtDate(row.Bill_Time)}</td><td>{row.Salesmanname ?? '—'}</td><td>{row.CUSTOMERNAME ?? '—'}</td><td className="lo-num">{row.dis ?? '—'}</td><td>{row.type ?? '—'}</td><td className="lo-num">{row.mrp ?? '—'}</td></tr>
+              ))}
+              {!salesDetails.length && <tr><td colSpan={7} className="lo-empty">No sales history.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-      <h3 style={{ fontSize: '0.82rem', margin: '0.6rem 0 0.3rem' }}>Monthly statistics</h3>
-      <MonthlyStatsChart rows={monthlyStats} />
+      <section className="qc-pi-section qc-pi-chart">
+        <h3 className="qc-pi-title">Monthly statistics</h3>
+        <MonthlyStatsChart rows={monthlyStats} />
+      </section>
     </div>
   )
 }

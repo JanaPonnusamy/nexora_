@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../services/apiClient'
 import { whatsappService, type WhatsAppState } from '../../services/whatsappService'
+import { WhatsAppQrLogin } from './WhatsAppQrLogin'
 import './whatsapp-send-card.css'
 
 interface WhatsAppSendCardProps {
@@ -35,7 +36,7 @@ export function WhatsAppSendCard({
   const [message, setMessage] = useState(defaultCaption)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
-  const [launching, setLaunching] = useState(false)
+  const [showQr, setShowQr] = useState(false)
   const [addingContact, setAddingContact] = useState(false)
   const [newContactName, setNewContactName] = useState('')
   const [newContactPhone, setNewContactPhone] = useState('')
@@ -149,22 +150,12 @@ export function WhatsAppSendCard({
 
   const needsQrLogin = /not logged in/i.test(error)
 
-  const launchQr = async () => {
+  const openQrLogin = () => {
     if (!profileId) {
       setError('Choose a WhatsApp profile first.')
       return
     }
-    setLaunching(true)
-    setStatus('')
-    setError('')
-    try {
-      const result = await whatsappService.launchProfile(profileId)
-      setStatus(result.message || 'WhatsApp opened — scan the QR code, then click Send report.')
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to launch WhatsApp for this profile.')
-    } finally {
-      setLaunching(false)
-    }
+    setShowQr(true)
   }
 
   const send = async () => {
@@ -222,10 +213,9 @@ export function WhatsAppSendCard({
                 <button
                   type="button"
                   className="btn btn-outline-danger btn-sm ms-2"
-                  disabled={launching}
-                  onClick={() => void launchQr()}
+                  onClick={openQrLogin}
                 >
-                  {launching ? 'Launching...' : 'Launch WhatsApp (Scan QR)'}
+                  Scan QR to log in
                 </button>
               )}
             </div>
@@ -331,6 +321,14 @@ export function WhatsAppSendCard({
               <div className="wa-send__actions">
                 <button
                   type="button"
+                  className="btn btn-outline-secondary"
+                  disabled={!profileId}
+                  onClick={openQrLogin}
+                >
+                  <i className="bi bi-qr-code" /> Link WhatsApp
+                </button>
+                <button
+                  type="button"
                   className="btn btn-success"
                   disabled={sending || !profileId}
                   onClick={() => void send()}
@@ -341,6 +339,14 @@ export function WhatsAppSendCard({
             </>
           )}
         </div>
+      )}
+
+      {showQr && profileId && (
+        <WhatsAppQrLogin
+          profileId={profileId}
+          onLoggedIn={() => setError('')}
+          onClose={() => setShowQr(false)}
+        />
       )}
     </div>
   )

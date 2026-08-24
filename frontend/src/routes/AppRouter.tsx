@@ -42,7 +42,6 @@ const ReportsPage = lazy(() => import('../pages/ReportsPage'))
 const TimeReportPage = lazy(() => import('../pages/TimeReportPage'))
 const PassGenPage = lazy(() => import('../pages/pass-gen/PassGenPage'))
 const LegacyOrderPage = lazy(() => import('../pages/legacy-order/LegacyOrderPage'))
-const QtyCheckPage = lazy(() => import('../pages/legacy-order/QtyCheckPage'))
 const OrderWorkspacePage = lazy(() => import('../pages/legacy-order/OrderWorkspacePage'))
 const SettingsPage = lazy(() => import('../pages/SettingsPage'))
 const PlatformShellPreviewPage = lazy(() => import('../pages/PlatformShellPreviewPage'))
@@ -134,7 +133,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/time-report" element={<RequireCapability cap="TIME_REPORT"><TimeReportPage /></RequireCapability>} />
         <Route path="/pass-gen" element={<RequireCapability cap="PASS_GEN"><PassGenPage /></RequireCapability>} />
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />
-        <Route path="/legacy-order/qty-check" element={<RequireCapability cap="LEGACY_ORDER"><QtyCheckPage /></RequireCapability>} />
+        <Route path="/legacy-order/qty-check" element={<Navigate to="/legacy-order/workspace" replace />} />
         <Route path="/legacy-order/workspace" element={<RequireCapability cap="LEGACY_ORDER"><OrderWorkspacePage /></RequireCapability>} />
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />
         <Route path="*" element={<RoleLanding />} />

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import base64
 import concurrent.futures
 import json
 import re
@@ -121,8 +122,11 @@ def _load_profiles() -> list[dict[str, Any]]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        profile_id = str(row.get("profile_id", "")).strip()
-        if not profile_id:
+        # `row.get("profile_id")` can be JSON null (str(None) == "None") from an
+        # entry written before upsert_profile collapsed None to "". Treat those
+        # sentinel strings as absent so a corrupt id never resurfaces as "None".
+        profile_id = str(row.get("profile_id") or "").strip()
+        if not profile_id or profile_id.lower() in {"none", "null", "undefined"}:
             continue
         session_dir = PROFILES_DIR / profile_id
         profile = {
@@ -947,6 +951,108 @@ def _check_status_impl(profile_id: str) -> dict[str, Any]:
     return {
         "profile_id": profile_id,
         "logged_in": logged_in,
+        "checked_at": _now_iso(),
+    }
+
+
+# WhatsApp Web renders the login QR inside a <canvas> under a div[data-ref].
+# Selectors (most specific first) so we screenshot the QR image itself, not the
+# whole landing page. The aria-label wording drifts ("Scan me!", "Scan this QR
+# code to link a device!"), so match on the "Scan" prefix.
+_QR_SELECTORS = [
+    "xpath=//canvas[contains(@aria-label,'Scan')]",
+    "xpath=//div[@data-ref]//canvas",
+    "xpath=//div[@data-ref]",
+    "xpath=//canvas",
+]
+# When the QR expires WA hides it behind a "Click to reload QR code" button;
+# clicking it re-renders a fresh canvas in place (no page reload).
+_QR_RELOAD_SELECTORS = [
+    "xpath=//div[@role='button'][contains(translate(., 'RELOAD', 'reload'), 'reload')]",
+    "xpath=//button[contains(translate(., 'RELOAD', 'reload'), 'reload')]",
+    "xpath=//span[@data-icon='refresh-large']/ancestor::*[@role='button'][1]",
+]
+
+
+def _locate_qr(page: Any) -> Any | None:
+    for sel in _QR_SELECTORS:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                return loc.first
+        except Exception:
+            continue
+    return None
+
+
+def _maybe_reload_qr(page: Any) -> None:
+    for sel in _QR_RELOAD_SELECTORS:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                _safe_click(loc.first)
+                page.wait_for_timeout(800)
+                return
+        except Exception:
+            continue
+
+
+def get_login_qr(profile_id: str) -> dict[str, Any]:
+    return _run_on_driver_thread(_get_login_qr_impl, profile_id)
+
+
+def _get_login_qr_impl(profile_id: str) -> dict[str, Any]:
+    """Headless-capture the WhatsApp Web login QR for this profile and return it
+    as a PNG data URI so the user can scan it from their own browser -- the
+    server-side Firefox window is never visible to a remote/HO backend.
+
+    Reuses the SAME headless context the background sends use, so once the user
+    scans this QR the session is already logged in for the very next send. If
+    the profile is already logged in, returns logged_in=True with no QR.
+    """
+    settings = _load_settings()
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    qr_data_uri: str | None = None
+    logged_in = False
+    with _DRIVER_LOCK:
+        page = _acquire_context(profile, settings, want_headless=True)
+        try:
+            if "web.whatsapp.com" not in (page.url or ""):
+                page.goto("https://web.whatsapp.com/", timeout=30000)
+        except Exception:
+            pass
+        # Keep this short: the frontend re-polls every few seconds and every
+        # call serializes on the single driver thread, so a long block here
+        # backs up the queue. The QR normally renders in 1-2s.
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            if _is_logged_in(page):
+                logged_in = True
+                break
+            _maybe_reload_qr(page)
+            qr = _locate_qr(page)
+            if qr is not None:
+                try:
+                    png = qr.screenshot()
+                    qr_data_uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+                    break
+                except Exception:
+                    pass
+            try:
+                page.wait_for_timeout(500)
+            except Exception:
+                break
+        else:
+            logged_in = _is_logged_in(page)
+        if qr_data_uri is None and not logged_in:
+            _capture_debug(page, "qr-capture-fail")
+    profile["last_used_at"] = _now_iso()
+    _save_profiles(profiles)
+    return {
+        "profile_id": profile_id,
+        "logged_in": logged_in,
+        "qr_data_uri": qr_data_uri,
         "checked_at": _now_iso(),
     }
 

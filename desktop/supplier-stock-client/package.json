@@ -1,9 +1,9 @@
 {
   "name": "nexora-supplier-stock-client",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "private": true,
   "description": "Axythic supplier stock desktop client scaffold",
-  "main": "electron/main.js",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"node scripts/wait-and-launch.mjs\"",
@@ -15,6 +15,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-virtual": "^3.14.8",
+    "electron-updater": "^6.1.9",
     "react": "latest",
     "react-dom": "latest",
     "xlsx-js-style": "^1.2.0"
@@ -29,6 +30,18 @@
       "dist/**/*",
       "electron/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "tools",
+        "to": "tools"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "http://192.168.10.80:8000/updates"
+      }
     ],
     "win": {
       "target": [
@@ -47,7 +60,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
-    "electron": "latest",
+    "electron": "22.3.27",
     "electron-builder": "^24.13.3",
     "vite": "latest",
     "wait-on": "latest"

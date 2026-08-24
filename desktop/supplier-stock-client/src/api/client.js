@@ -88,6 +88,13 @@ export const api = {
     });
   },
 
+  // Release the server-side active session on explicit sign-out so the user can
+  // immediately sign in on another PC (single-session policy) instead of waiting
+  // for the lease to lapse. Best-effort - callers ignore failures.
+  logout(session) {
+    return request('/api/auth/logout', { method: 'POST', session });
+  },
+
   async testConnection({ apiBaseUrl, bootstrapUrl }) {
     const target = bootstrapUrl || apiBaseUrl;
     const response = await fetch(joinUrl(target, bootstrapUrl ? '' : '/health'), {
@@ -114,6 +121,12 @@ export const api = {
       session,
       body: JSON.stringify(payload)
     });
+  },
+
+  // Public (no session): a freshly-installed PC polls its own config by
+  // client_id to learn when HO has approved it and which store it was bound to.
+  getDesktopConfig(clientId) {
+    return request(`/api/desktop-client/config${toQuery({ client_id: clientId })}`);
   },
 
   listDesktopDevices(session) {

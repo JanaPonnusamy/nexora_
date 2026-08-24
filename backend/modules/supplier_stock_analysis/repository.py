@@ -136,7 +136,14 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                       AND pm.is_deleted = 0
                       AND pm.status IN ('APPROVED', 'AUTO')
                       AND pm.source_store_id = ss.store_id
-                      AND CAST(pm.source_product_code AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+                      -- product_code / source|target_product_code are all
+                      -- varchar(50) with the same collation: compare raw so the
+                      -- index seeks fire (UX_product_mapping_source_target for the
+                      -- source side, IX_product_mapping_target_code for the target
+                      -- side). CAST-ing to VARCHAR(100) makes the indexed column
+                      -- non-sargable and forces a full scan of the 1.1M-row
+                      -- product_mapping table per candidate row -> 45s timeout.
+                      AND pm.source_product_code = ss.product_code
                       AND pm.target_store_id <> ss.store_id
                     UNION
                     SELECT CAST(pm.source_store_id AS VARCHAR(36)) AS store_id
@@ -145,7 +152,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                       AND pm.is_deleted = 0
                       AND pm.status IN ('APPROVED', 'AUTO')
                       AND pm.target_store_id = ss.store_id
-                      AND CAST(pm.target_product_code AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+                      AND pm.target_product_code = ss.product_code
                       AND pm.source_store_id <> ss.store_id
                 ) resolved
             ) mapstats

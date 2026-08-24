@@ -155,6 +155,8 @@ function AppShell() {
   const [settings, setSettings] = useState(loadSettings);
   const [session, setSession] = useState(loadSession);
   const [activeScreen, setActiveScreen] = useState('stock');
+  // Guards the one-time "land on Settings on a fresh device" auto-route below.
+  const didAutoRoute = useRef(false);
   // Tenant list for the super-admin tenant filter on the Stock Availability
   // screen. The API already scopes this to the caller's own tenant for any
   // non-super-admin login (see backend/controllers/tenant_controller.py), so
@@ -193,17 +195,28 @@ function AppShell() {
     // server-side, this just keeps the nav honest). Checked before the
     // module-grant early-return below so it also applies to logins with no
     // module list.
-    const base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
+    let base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
+    // Salesman-only logins must not see NMW dispatch bills (warehouse->store
+    // billing). The API also 403s these endpoints server-side (see
+    // modules/nmw_sales_report/service.py); this just keeps the nav honest.
+    const nmwBlocked = isSalesmanOnly(session);
+    if (nmwBlocked) base = base.filter((s) => s.id !== 'nmw_sales');
     if (!modules.length) return base;
-    // 'settings' and 'nmw_sales' are always available: the NMW Sales Report is
-    // scoped server-side (store users see only their own approved bills), so it
-    // never depends on a per-user module grant.
-    const always = new Set(['settings', 'nmw_sales']);
+    // 'settings' is always available; 'nmw_sales' is too unless blocked above.
+    // The NMW Sales Report is scoped server-side (store users see only their
+    // own approved bills), so it never depends on a per-user module grant.
+    const always = new Set(nmwBlocked ? ['settings'] : ['settings', 'nmw_sales']);
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
 
   useEffect(() => {
-    if (!session && !isConfigured) {
+    // First run only: land on Settings when the device isn't set up yet, so a
+    // fresh store PC can enter its API base URL before signing in. Runs once
+    // (ref guard) so it never re-pins the user on Settings when they navigate
+    // back toward the login screen - otherwise an unconfigured PC could never
+    // reach login at all.
+    if (!didAutoRoute.current && !session && !isConfigured) {
+      didAutoRoute.current = true;
       setActiveScreen('settings');
       return;
     }
@@ -245,6 +258,9 @@ function AppShell() {
   }
 
   function handleLogout() {
+    // Best-effort: tell the server to release this user's active session so
+    // they can sign in elsewhere right away (single-session policy).
+    if (session) api.logout(session).catch(() => {});
     clearSession();
     queryClient.clear();
     setTenants([]);
@@ -256,6 +272,33 @@ function AppShell() {
     window.addEventListener('nexora:unauthorized', onUnauthorized);
     return () => window.removeEventListener('nexora:unauthorized', onUnauthorized);
   }, []);
+
+  // Device activation: once this PC has requested activation (settings.clientId)
+  // and a super admin approves it at HO, pick up the assigned tenant/store
+  // automatically - no manual entry, no sign-in needed. Polls the public
+  // /config endpoint until configured, then stops.
+  useEffect(() => {
+    const clientId = settings.clientId;
+    if (!clientId || (settings.tenantId && settings.storeId)) return;
+    let cancelled = false;
+    const check = () => {
+      api.getDesktopConfig(clientId).then((cfg) => {
+        if (cancelled || !cfg) return;
+        if (cfg.status === 'approved' && cfg.store_id) {
+          persistSettings({
+            ...loadSettings(),
+            tenantId: cfg.tenant_id || '',
+            storeId: cfg.store_id,
+            storeName: cfg.store_name || '',
+            ...(cfg.server_base_url ? { apiBaseUrl: cfg.server_base_url } : {})
+          });
+        }
+      }).catch(() => {});
+    };
+    check();
+    const timer = setInterval(check, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [settings.clientId, settings.tenantId, settings.storeId]);
 
   useEffect(() => {
     if (!session) return;
@@ -346,17 +389,21 @@ function AppShell() {
       </header>
 
       <main className="workspace">
-        {!session ? (
-          <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
-        ) : !isConfigured && activeScreen === 'settings' ? (
+        {activeScreen === 'settings' ? (
+          // Settings/API settings must be reachable BEFORE sign-in: a fresh
+          // store PC has to enter its API base URL here before login can even
+          // reach the HO server (checking this ahead of the !session branch is
+          // what makes the Settings tab / "API settings" link work logged out).
+          // The admin gate only applies once signed in on an unconfigured
+          // device (device activation); logged-out access shows the plain form.
           <SettingsScreen
             settings={runtimeSettings}
             onSave={persistSettings}
-            requireAdminGate={!canUnlockDeviceSetup(session)}
+            requireAdminGate={Boolean(session) && !isConfigured && !canUnlockDeviceSetup(session)}
             session={session}
           />
-        ) : activeScreen === 'settings' ? (
-          <SettingsScreen settings={runtimeSettings} onSave={persistSettings} session={session} />
+        ) : !session ? (
+          <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
         ) : activeScreen === 'analysis' ? (
           <SupplierStockAnalysis
             session={session}
@@ -431,8 +478,18 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
 
   useEffect(() => setDraft(settings), [settings]);
   useEffect(() => {
-    if (!effectiveSession) return;
+    // WhatsApp profile/QR setup is super-admin only (backend 403s it for
+    // everyone else) - don't even load its state for other logins.
+    if (!effectiveSession || !isSuperAdmin(effectiveSession)) return;
     loadWhatsApp();
+  }, [effectiveSession]);
+
+  useEffect(() => {
+    // Populate the "this device" store picker from the server so setup is a
+    // pick, not GUID typing. Silent/best-effort - the manual Load tenant/store
+    // button still exists.
+    if (!effectiveSession || stores.length) return;
+    api.listStores(effectiveSession).then((rows) => setStores(asArray(rows))).catch(() => {});
   }, [effectiveSession]);
 
   async function unlockAdmin(event) {
@@ -497,8 +554,11 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
         requested_store_code: draft.storeCode || '',
         install_code: ''
       }, effectiveSession);
-      setStatus({ state: 'ok', message: `Activation requested. Client ID: ${result.client_id} (${result.status})` });
+      setStatus({ state: 'ok', message: `Activation requested. Waiting for HO approval… (Client ID: ${result.client_id})` });
       setDraft({ ...draft, clientId: result.client_id });
+      // Persist immediately so the AppShell poller starts watching for approval
+      // even if the user never clicks Save.
+      onSave({ ...loadSettings(), clientId: result.client_id });
     } catch (error) {
       setStatus({ state: 'error', message: error.message });
     }
@@ -681,6 +741,28 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
           <input value={draft.bootstrapUrl} onChange={(event) => setDraft({ ...draft, bootstrapUrl: event.target.value })} placeholder="Optional discovery URL" />
         </label>
         <label>
+          Store (this device)
+          <select
+            value={draft.storeId || ''}
+            onChange={(event) => {
+              const picked = stores.find((s) => s.store_id === event.target.value);
+              if (picked) {
+                setDraft({
+                  ...draft,
+                  storeId: picked.store_id,
+                  storeName: picked.store_name || picked.store_code || '',
+                  tenantId: picked.tenant_id || draft.tenantId,
+                });
+              }
+            }}
+          >
+            <option value="">{stores.length ? 'Select this device’s store…' : 'Loading stores… (or click Load tenant/store)'}</option>
+            {stores.map((s) => (
+              <option key={s.store_id} value={s.store_id}>{s.store_name || s.store_code || s.store_id}</option>
+            ))}
+          </select>
+        </label>
+        <label>
           Tenant ID
           <input value={draft.tenantId} onChange={(event) => setDraft({ ...draft, tenantId: event.target.value })} />
         </label>
@@ -772,6 +854,7 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
         ) : <div className="empty-state">No devices loaded.</div>}
       </div>
 
+      {isSuperAdmin(effectiveSession) && (
       <div className="table-wrap">
         <div className={`status-line ${waStatus.state}`}>{waStatus.message || 'WhatsApp settings and QR profiles.'}</div>
         <div className="form-grid">
@@ -853,6 +936,7 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
           </table>
         ) : <div className="empty-state">No WhatsApp profiles created yet.</div>}
       </div>
+      )}
     </section>
   );
 }
@@ -1443,7 +1527,7 @@ function nmwCsvCell(value) {
 
 const NMW_EXPORT_COLUMNS = [
   'Inv No', 'Type', 'Inv Date', 'Customer Code', 'Inv Amount',
-  'Product Code', 'Product', 'Batch', 'Expiry', 'Qty', 'Free', 'MRP', 'Rate', 'Dis%',
+  'Product Code', 'Product', 'Batch', 'Expiry', 'Qty', 'Free', 'MRP', 'PTR', 'Dis%',
   'Packing', 'Sublocation', 'Amount'
 ];
 
@@ -1782,7 +1866,7 @@ function NmwSalesReport({ session, settings }) {
                     <thead>
                       <tr>
                         <th>Product Code</th><th>Product</th><th>Batch</th><th>Expiry</th>
-                        <th>Qty</th><th>Free</th><th>MRP</th><th>Rate</th><th>Dis%</th><th>Amount</th>
+                        <th>Qty</th><th>Free</th><th>MRP</th><th>PTR</th><th>Dis%</th><th>Amount</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3144,7 +3228,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const [tenantFilter, setTenantFilter] = useState(() => settings.tenantId || '');
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
-  const [supplierStatus, setSupplierStatus] = useState({ state: 'idle', message: 'Loading suppliers...' });
+  const [supplierStatus, setSupplierStatus] = useState({ state: 'idle', message: '' });
   const [selectedSupplier, setSelectedSupplier] = useState('');
   // Auto-hidden once a supplier is picked (see selectSupplier) so the product
   // list gets the width back; "Change Supplier" flips it on again without
@@ -3200,15 +3284,26 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     return map;
   }, [tenants]);
   const [warehouseId, setWarehouseId] = useState('');
-  const selectedWarehouse = useMemo(
-    () => warehouses.find((w) => w.store_id === warehouseId) || warehouses[0] || null,
-    [warehouses, warehouseId],
-  );
+  const selectedWarehouse = useMemo(() => {
+    const found = warehouses.find((w) => w.store_id === warehouseId);
+    if (found) return found;
+    // In all-tenants mode (tenantFilter === '') the user must explicitly pick
+    // which tenant's warehouse to order for — never auto-fall-back to the first
+    // one. Scoped to a single tenant, auto-selecting its first warehouse is a
+    // convenience, not a cross-tenant surprise.
+    if (!tenantFilter) return null;
+    return warehouses[0] || null;
+  }, [warehouses, warehouseId, tenantFilter]);
   // Keep a valid warehouse selected as the list changes (tenant switch / load).
   useEffect(() => {
     if (!warehouses.length) { if (warehouseId) setWarehouseId(''); return; }
+    // All-tenants mode: wait for an explicit pick; only drop a now-stale id.
+    if (!tenantFilter) {
+      if (warehouseId && !warehouses.some((w) => w.store_id === warehouseId)) setWarehouseId('');
+      return;
+    }
     if (!warehouses.some((w) => w.store_id === warehouseId)) setWarehouseId(warehouses[0].store_id);
-  }, [warehouses, warehouseId]);
+  }, [warehouses, warehouseId, tenantFilter]);
   // The actual query tenant follows the selected warehouse's tenant, so every
   // downstream query stays scoped even in all-tenants mode without extra plumbing.
   useEffect(() => {
@@ -3217,6 +3312,12 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }, [selectedWarehouse, tenantId, onTenantChange]);
   // The supplier/product list is scoped to the selected warehouse store.
   const scopeStoreId = selectedWarehouse?.store_id ?? '';
+  // Suppliers are always warehouse-scoped, so a resolved warehouse is required
+  // before loading — in every mode, not just all-tenants. Without this, a tenant
+  // that has no warehouse (selectedWarehouse === null) would load with tenant_id
+  // undefined and the API would fall back to the previously-queried tenant,
+  // leaking another tenant's suppliers.
+  const needWarehousePick = !selectedWarehouse;
   // { searchKey, matchesFound, storesWithMatches, byStore: Map(store_id -> {storeMeta, candidates[]}) }
   const [similar, setSimilar] = useState(null);
   const [similarStatus, setSimilarStatus] = useState({ state: 'idle', message: '' });
@@ -3436,14 +3537,50 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     // Wait until the store list has loaded so the warehouse (scopeStoreId) is
     // resolved before the first fetch — otherwise the initial all-stores query
     // races (and can clobber) the warehouse-scoped one. Reloads on tenant switch
-    // and once the warehouse id resolves.
-    if (!allStores.length) return;
+    // and once the warehouse id resolves. Show an honest "loading stores" status
+    // (not a stale "loading suppliers") so a failed/empty store list is visible
+    // rather than looking like a hung supplier fetch. Keep any store-load error.
+    if (!allStores.length) {
+      setSupplierStatus((s) => (s.state === 'error' ? s : { state: 'loading', message: 'Loading stores…' }));
+      return;
+    }
+    if (needWarehousePick) {
+      supplierRequestRef.current += 1; // supersede any in-flight load
+      setSuppliers([]);
+      setSelectedSupplier('');
+      setProducts([]);
+      setShowSupplierPanel(true);
+      setSupplierStatus({
+        state: 'idle',
+        message: warehouses.length
+          ? 'Select a warehouse to list its suppliers.'
+          : 'No warehouse is configured for this tenant.',
+      });
+      return;
+    }
+    // Warehouse/tenant scope changed: drop any supplier picked under the old
+    // store so a stale selection (a supplier not stocked at this warehouse)
+    // can't linger and render an empty product list.
+    setSelectedSupplier('');
+    setSelectedStockId('');
+    setProducts([]);
     loadSuppliers('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, scopeStoreId, allStores.length]);
+  }, [tenantId, scopeStoreId, allStores.length, needWarehousePick]);
 
   useEffect(() => {
-    api.listStores(session).then((rows) => setAllStores(asArray(rows))).catch(() => setAllStores([]));
+    let alive = true;
+    api.listStores(session)
+      .then((rows) => { if (alive) setAllStores(asArray(rows)); })
+      .catch((err) => {
+        if (!alive) return;
+        setAllStores([]);
+        // Surface the real reason instead of silently swallowing it — otherwise
+        // the supplier panel just sits on a stale message with no way to tell
+        // that the store list (which the whole screen depends on) never loaded.
+        setSupplierStatus({ state: 'error', message: `Could not load stores: ${err.message}` });
+      });
+    return () => { alive = false; };
   }, [session]);
 
   useEffect(() => {
@@ -3451,11 +3588,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     // current scopeStoreId, so running it before the warehouse resolves would
     // schedule a stale all-stores query that lands last. Re-runs (with a fresh
     // warehouse-scoped closure) once allStores loads.
-    if (!allStores.length) return;
+    if (!allStores.length || needWarehousePick) return;
     const timer = setTimeout(() => loadSuppliers(supplierSearch), 200);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supplierSearch, allStores.length, scopeStoreId]);
+  }, [supplierSearch, allStores.length, scopeStoreId, needWarehousePick]);
 
   // Products are fetched (and cached) once per supplier only - search and
   // "in stock only" are pure client-side filters below, so toggling them
@@ -3637,7 +3774,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     const token = ++supplierRequestRef.current;
     setSupplierStatus({ state: 'loading', message: 'Loading suppliers...' });
     try {
-      const response = await api.getSuppliers(session, { search, storeId: scopeStoreId });
+      // Scope the supplier list to the selected warehouse store: each warehouse
+      // has its own imported supplier stock (procurement.supplier_stock is keyed
+      // by store_id), so the list must reflect that warehouse, not the whole
+      // tenant. tenant_id is passed explicitly so it always matches the store.
+      const response = await api.getSuppliers(session, { search, storeId: scopeStoreId, tenantId: selectedWarehouse?.tenant_id });
       if (supplierRequestRef.current !== token) return; // superseded by a newer load
       const items = asArray(response);
       setSuppliers(items);
@@ -3670,7 +3811,8 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
       // Always fetch the full unfiltered set - search/in-stock filtering
       // happens client-side in visibleProducts, and the full set is what
       // gets cached and diffed against next time.
-      const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0, storeId: scopeStoreId });
+      // Scoped to the selected warehouse store (see loadSuppliers).
+      const response = await api.getSupplierProducts(supplierCode, session, { search: '', onlyAvailable: 0, storeId: scopeStoreId, tenantId: selectedWarehouse?.tenant_id || tenantId });
       if (productRequestRef.current !== requestToken) return;
       const items = normalizeSupplierProductRows(response);
       setProducts(items);
@@ -4341,7 +4483,16 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
         {tenants.length > 1 && (
           <label className="tenant-filter">
             Tenant
-            <select value={tenantFilter} onChange={(event) => setTenantFilter(event.target.value)}>
+            <select
+              value={tenantFilter}
+              onChange={(event) => {
+                // Switching tenant scope always forces a fresh warehouse choice:
+                // in all-tenants mode the user must pick; scoped to one tenant the
+                // effect above auto-selects that tenant's first warehouse.
+                setWarehouseId('');
+                setTenantFilter(event.target.value);
+              }}
+            >
               <option value="">All tenants</option>
               {tenants.map((tenant) => (
                 <option key={tenant.tenant_id} value={tenant.tenant_id}>
@@ -4351,10 +4502,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
             </select>
           </label>
         )}
-        {warehouses.length > 1 && (
+        {warehouses.length > 0 && (
           <label className="tenant-filter">
             Warehouse
             <select value={selectedWarehouse?.store_id || ''} onChange={(event) => setWarehouseId(event.target.value)}>
+              {!selectedWarehouse && <option value="">Select warehouse…</option>}
               {warehouses.map((w) => (
                 <option key={w.store_id} value={w.store_id}>
                   {w.store_code}{!tenantFilter ? ` · ${tenantNameById.get(String(w.tenant_id)) || w.store_name || ''}` : ''}

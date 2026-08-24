@@ -3,12 +3,17 @@ const SESSION_KEY = 'nexora.desktop.session';
 
 const defaultSettings = {
   serverMode: 'LAN',
-  apiBaseUrl: 'http://122.252.246.181:8443',
+  // Default to the HO server on the LAN so a fresh install connects with no
+  // manual Settings step. Override per-PC in Settings for remote/static-IP stores.
+  apiBaseUrl: 'http://192.168.10.80:8000',
   bootstrapUrl: '',
   tenantId: '',
   storeId: '',
   storeName: '',
   storeOrder: [],
+  // Device-activation id (from POST /api/desktop-client/activate/request). The
+  // app polls /config by this id until HO approves and assigns the store.
+  clientId: '',
   similarSearchChars: 6,
   themePreference: 'light'
 };

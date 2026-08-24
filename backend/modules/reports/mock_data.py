@@ -281,3 +281,60 @@ def get_mock_eyrus_7day(division_code: str = "") -> Tuple[List[str], List[Dict[s
             row_dict[d_str] = s_val
         rows.append(row_dict)
     return cols, rows
+
+
+def get_mock_expiry_pending_supplier(
+    supplier_code: str | None = None,
+) -> Tuple[List[str], List[Dict[str, Any]]]:
+    cols = ["SupplierName", "Acks", "GivenQty", "ReceivedQty", "PendingQty",
+            "GivenValue", "ReceivedValue", "BalanceValue"]
+    rows = []
+    for i, sup in enumerate(_SUPPLIERS[:8], start=1):
+        given = i * 240 + 60
+        pending = (i * 7) % 40
+        received = given - pending
+        given_val = Decimal(given) * Decimal("14.50")
+        recd_val = Decimal(received) * Decimal("14.50")
+        rows.append({
+            "SupplierName": sup["supplier_name"],
+            "Acks": i * 3,
+            "GivenQty": given,
+            "ReceivedQty": received,
+            "PendingQty": pending,
+            "GivenValue": float(given_val),
+            "ReceivedValue": float(recd_val),
+            "BalanceValue": float(given_val - recd_val),
+        })
+    return cols, rows
+
+
+def get_mock_expiry_not_claimed(
+    supplier_code: str | None = None,
+) -> Tuple[List[str], List[Dict[str, Any]]]:
+    cols = ["SupplierName", "ProductCode", "ProductName", "Batch", "ExpiryDate",
+            "AckNumber", "AckDate", "Qty", "Free", "Rate", "MRP", "Value",
+            "DaysPending", "Remarks"]
+    rows = []
+    for i, p in enumerate(_PRODUCTS[:12], start=1):
+        sup = _SUPPLIERS[i % len(_SUPPLIERS)]
+        qty = (i * 5) % 30 + 2
+        rate = p[4]
+        ack_date = date.today() - timedelta(days=25 + i * 11)
+        exp_date = date.today() - timedelta(days=i * 9)
+        rows.append({
+            "SupplierName": sup["supplier_name"],
+            "ProductCode": p[0],
+            "ProductName": p[1],
+            "Batch": f"B{2400 + i}",
+            "ExpiryDate": exp_date.strftime("%Y-%m-%d"),
+            "AckNumber": f"SAC0100{1400 + i}",
+            "AckDate": ack_date.strftime("%Y-%m-%d"),
+            "Qty": qty,
+            "Free": i % 3,
+            "Rate": float(rate),
+            "MRP": float(p[5]),
+            "Value": float(Decimal(qty) * rate),
+            "DaysPending": (date.today() - ack_date).days,
+            "Remarks": "DirectIssue",
+        })
+    return cols, rows
