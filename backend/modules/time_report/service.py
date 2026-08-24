@@ -145,9 +145,12 @@ def _month_to_date_counts(report_date: str, dept_id=None) -> dict:
     including ``report_date``, reusing the same day classification as the rest
     of the module (so the thresholds never diverge from config.classify_day):
 
+    The three buckets are mutually exclusive (a day is counted in at most one):
+
       - mp_month  : days flagged MISS_PUNCH (finger not placed properly)
-      - below_830 : days worked under 8h30m   (SHORT + LOW — cumulative)
-      - below_800 : days worked under 8h00m   (LOW)
+      - below_830 : days worked in the 8:00-8:29 band (SHORT — short of 8:30
+                    but not under 8:00)
+      - below_800 : days worked under 8h00m (LOW)
     """
     d = report_date if isinstance(report_date, str) else report_date.isoformat()
     month_start = f"{d[:7]}-01"
@@ -162,7 +165,6 @@ def _month_to_date_counts(report_date: str, dept_id=None) -> dict:
         elif status == "SHORT":
             c["below_830"] += 1
         elif status == "LOW":
-            c["below_830"] += 1
             c["below_800"] += 1
     return counts
 
