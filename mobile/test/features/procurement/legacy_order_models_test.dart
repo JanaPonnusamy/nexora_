@@ -104,5 +104,47 @@ void main() {
       expect(row.productName, 'Unnamed product');
       expect(row.orderQty, 0);
     });
+
+    test('previous-order comparison shapes preserve SQL field casing', () {
+      final order = PreviousOrder.fromJson(const {
+        'store_name': 'NMS',
+        'order_id': '314',
+        'wanted_date': '2026-08-23T14:30:00',
+      });
+      final supplier = PreviousOrderSupplier.fromJson(const {
+        'supplier_code': 'SUP-7',
+        'supplier_name': 'NMW Supplier',
+        'product_count': '4',
+      });
+      final product = SupplierComparisonProduct.fromJson(const {
+        'CurrentProductCode': 91,
+        'CurrentProductName': 'Paracetamol 500mg',
+        'CurrentOrderQty': 12,
+        'PreviousProductCode': 91,
+        'PreviousProductName': 'Paracetamol 500mg',
+        'PreviousOrderedQty': 8,
+        'PreviousStock': 6,
+        'CurrentStock': 4,
+      });
+
+      expect(order.orderId, 314);
+      expect(order.wantedAt, DateTime.parse('2026-08-23T14:30:00'));
+      expect(supplier.productCount, 4);
+      expect(product.productName, 'Paracetamol 500mg');
+      expect(product.changed, isTrue);
+    });
+
+    test('comparison result carries the affected row count', () {
+      final result = PreviousOrderComparison.fromJson(const {
+        'store_name': 'NMS',
+        'order_id': 314,
+        'supplier_code': 'SUP-7',
+        'affected_rows': '9',
+      });
+
+      expect(result.orderId, 314);
+      expect(result.supplierCode, 'SUP-7');
+      expect(result.affectedRows, 9);
+    });
   });
 }

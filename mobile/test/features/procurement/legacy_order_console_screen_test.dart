@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,7 @@ import 'package:nexora_mobile/features/auth/application/auth_state.dart';
 import 'package:nexora_mobile/features/auth/data/models/app_user.dart';
 import 'package:nexora_mobile/features/auth/data/models/user_role.dart';
 import 'package:nexora_mobile/features/procurement/application/legacy_order_providers.dart';
+import 'package:nexora_mobile/features/procurement/data/legacy_order_api.dart';
 import 'package:nexora_mobile/features/procurement/domain/legacy_order_models.dart';
 import 'package:nexora_mobile/features/procurement/presentation/legacy_order_console_screen.dart';
 import 'package:nexora_mobile/features/procurement/presentation/procurement_hub_screen.dart';
@@ -67,6 +69,64 @@ const _details = QtyCheckDetails(
   history: [OrderHistoryEntry(orderQty: 8, remarks: 'Previous order')],
 );
 
+final _previousOrder = PreviousOrder(
+  storeName: 'Nathan Medicals',
+  orderId: 314,
+  wantedAt: DateTime(2026, 8, 23, 14, 30),
+);
+
+const _previousSupplier = PreviousOrderSupplier(
+  code: 'SUP-7',
+  name: 'NMW Supplier',
+  productCount: 1,
+);
+
+const _comparisonProduct = SupplierComparisonProduct(
+  previousProductCode: 91,
+  previousProductName: 'Paracetamol 500mg',
+  currentProductCode: 91,
+  currentProductName: 'Paracetamol 500mg',
+  previousOrderedQty: 8,
+  currentOrderQty: 12,
+  previousStock: 6,
+  currentStock: 4,
+);
+
+class _RecordingLegacyOrderApi extends LegacyOrderApi {
+  _RecordingLegacyOrderApi() : super(Dio());
+
+  int? comparedOrderId;
+  String? comparedSupplierCode;
+
+  @override
+  Future<PreviousOrderComparison> comparePreviousOrder({
+    required String storeName,
+    required int orderId,
+  }) async {
+    comparedOrderId = orderId;
+    return PreviousOrderComparison(
+      storeName: storeName,
+      orderId: orderId,
+      affectedRows: 7,
+    );
+  }
+
+  @override
+  Future<PreviousOrderComparison> comparePreviousOrderSupplier({
+    required String storeName,
+    required int orderId,
+    required String supplierCode,
+  }) async {
+    comparedSupplierCode = supplierCode;
+    return PreviousOrderComparison(
+      storeName: storeName,
+      orderId: orderId,
+      affectedRows: 3,
+      supplierCode: supplierCode,
+    );
+  }
+}
+
 class _PlatformAuth extends AuthController {
   @override
   AuthState build() => const AuthState(
@@ -93,7 +153,7 @@ class _StoreAuth extends AuthController {
       );
 }
 
-Widget _harness() {
+Widget _harness({_RecordingLegacyOrderApi? api}) {
   const request = QtyCheckRequest(
     storeName: 'Nathan Medicals',
     productCode: 91,
@@ -101,6 +161,7 @@ Widget _harness() {
   );
   return ProviderScope(
     overrides: [
+      if (api != null) legacyOrderApiProvider.overrideWithValue(api),
       networkStatusProvider
           .overrideWith((ref) => Stream.value(NetworkStatus.online)),
       legacyConsoleProvider.overrideWith(
@@ -114,6 +175,21 @@ Widget _harness() {
       qtyCheckRowsProvider('Nathan Medicals')
           .overrideWith((ref) async => const [_row]),
       qtyCheckDetailsProvider(request).overrideWith((ref) async => _details),
+      previousOrdersProvider('Nathan Medicals')
+          .overrideWith((ref) async => [_previousOrder]),
+      previousOrderSuppliersProvider(
+        const PreviousOrderRequest(
+          storeName: 'Nathan Medicals',
+          orderId: 314,
+        ),
+      ).overrideWith((ref) async => const [_previousSupplier]),
+      supplierComparisonProductsProvider(
+        const SupplierComparisonRequest(
+          storeName: 'Nathan Medicals',
+          orderId: 314,
+          supplierCode: 'SUP-7',
+        ),
+      ).overrideWith((ref) async => const [_comparisonProduct]),
     ],
     child: MaterialApp(
       theme: AppTheme.dark,
@@ -262,5 +338,91 @@ void main() {
     expect(find.text('Purchase / GRN history'), findsOneWidget);
     expect(find.text('Sales history'), findsOneWidget);
     expect(find.text('Previous orders'), findsOneWidget);
+  });
+
+  testWidgets('compare tab lists previous orders and confirms a full compare',
+      (tester) async {
+    _tallPhone(tester);
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Compare'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('COMPARE PREVIOUS ORDER'), findsOneWidget);
+    expect(find.text('Order #314'), findsOneWidget);
+    expect(find.text('NMW Supplier'), findsOneWidget);
+    expect(find.text('SUP-7 · 1 products'), findsOneWidget);
+
+    await tester.tap(find.text('Compare entire order #314'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Compare order #314?'), findsOneWidget);
+    expect(find.text('Compare order'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('supplier review shows previous and current product values',
+      (tester) async {
+    _tallPhone(tester);
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Compare'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('NMW Supplier'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Paracetamol 500mg'), findsOneWidget);
+    expect(find.text('Previous qty'), findsOneWidget);
+    expect(find.text('Current qty'), findsOneWidget);
+    expect(find.text('Previous stock'), findsOneWidget);
+    expect(find.text('Current stock'), findsOneWidget);
+    expect(find.text('Changed'), findsOneWidget);
+    expect(find.text('Compare 1 products'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('confirmed comparisons call the full-order backend action',
+      (tester) async {
+    final api = _RecordingLegacyOrderApi();
+    _tallPhone(tester);
+    await tester.pumpWidget(_harness(api: api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Compare'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Compare entire order #314'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Compare order'));
+    await tester.pumpAndSettle();
+
+    expect(api.comparedOrderId, 314);
+    expect(
+      find.text('Compared order #314. 7 row updates applied.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('confirmed supplier comparison calls the scoped backend action',
+      (tester) async {
+    final api = _RecordingLegacyOrderApi();
+    _tallPhone(tester);
+    await tester.pumpWidget(_harness(api: api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Compare'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('NMW Supplier'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Compare 1 products'));
+    await tester.pump();
+    await tester.tap(find.text('Compare supplier'));
+    await tester.pumpAndSettle();
+
+    expect(api.comparedSupplierCode, 'SUP-7');
+    expect(find.text('Compared NMW Supplier. 3 row updates applied.'),
+        findsOneWidget);
   });
 }

@@ -30,6 +30,66 @@ final legacyConsoleProvider = FutureProvider.autoDispose<LegacyConsoleData>(
   },
 );
 
+final previousOrdersProvider = FutureProvider.autoDispose
+    .family<List<PreviousOrder>, String>((ref, storeName) {
+  if (storeName.isEmpty) return const [];
+  return ref.watch(legacyOrderApiProvider).previousOrders(storeName);
+});
+
+class PreviousOrderRequest {
+  const PreviousOrderRequest({required this.storeName, required this.orderId});
+
+  final String storeName;
+  final int orderId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PreviousOrderRequest &&
+      storeName == other.storeName &&
+      orderId == other.orderId;
+
+  @override
+  int get hashCode => Object.hash(storeName, orderId);
+}
+
+final previousOrderSuppliersProvider = FutureProvider.autoDispose
+    .family<List<PreviousOrderSupplier>, PreviousOrderRequest>((ref, request) {
+  return ref.watch(legacyOrderApiProvider).previousOrderSuppliers(
+        storeName: request.storeName,
+        orderId: request.orderId,
+      );
+});
+
+class SupplierComparisonRequest extends PreviousOrderRequest {
+  const SupplierComparisonRequest({
+    required super.storeName,
+    required super.orderId,
+    required this.supplierCode,
+  });
+
+  final String supplierCode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SupplierComparisonRequest &&
+      storeName == other.storeName &&
+      orderId == other.orderId &&
+      supplierCode == other.supplierCode;
+
+  @override
+  int get hashCode => Object.hash(storeName, orderId, supplierCode);
+}
+
+final supplierComparisonProductsProvider = FutureProvider.autoDispose
+    .family<List<SupplierComparisonProduct>, SupplierComparisonRequest>(
+        (ref, request) {
+  return ref.watch(legacyOrderApiProvider).previousOrderSupplierProducts(
+        storeName: request.storeName,
+        orderId: request.orderId,
+        supplierCode: request.supplierCode,
+      );
+});
+
 final qtyCheckRowsProvider = FutureProvider.autoDispose
     .family<List<QtyCheckRow>, String>((ref, storeName) {
   if (storeName.isEmpty) return const [];

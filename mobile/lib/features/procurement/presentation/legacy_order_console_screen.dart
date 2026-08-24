@@ -51,7 +51,7 @@ class _LegacyOrderConsoleScreenState
     });
 
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Legacy Order'),
@@ -59,6 +59,7 @@ class _LegacyOrderConsoleScreenState
             tabs: [
               Tab(text: 'Operations'),
               Tab(text: 'Qty check'),
+              Tab(text: 'Compare'),
             ],
           ),
           actions: [
@@ -134,6 +135,42 @@ class _LegacyOrderConsoleScreenState
                       onDetails: selected == null
                           ? null
                           : (row) => _showDetails(selected, row),
+                    ),
+                  if (data == null)
+                    console.isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : ErrorView(
+                            message: _message(
+                              console.error ??
+                                  const ApiException(
+                                    message: 'Could not load Legacy Order.',
+                                  ),
+                              'Could not load Legacy Order.',
+                            ),
+                            onRetry: _refresh,
+                          )
+                  else
+                    _PreviousOrderTab(
+                      stores: data.stores,
+                      selectedStore: selected,
+                      busy: _busy ||
+                          data.jobs.any(
+                            (job) =>
+                                job.isRunning &&
+                                job.storeName == selected?.name,
+                          ),
+                      onStoreChanged: (value) =>
+                          setState(() => _storeName = value),
+                      onCompare: selected == null
+                          ? null
+                          : (order) => _comparePreviousOrder(selected, order),
+                      onReviewSupplier: selected == null
+                          ? null
+                          : (order, supplier) => _showSupplierComparison(
+                                selected,
+                                order,
+                                supplier,
+                              ),
                     ),
                 ],
               ),
@@ -244,6 +281,97 @@ class _LegacyOrderConsoleScreenState
     _setPolling(true);
     ref.invalidate(legacyConsoleProvider);
     _say('Stock update started for ${store.name}.');
+  }
+
+  Future<PreviousOrderComparison?> _comparePreviousOrder(
+    LegacyStore store,
+    PreviousOrder order,
+  ) async {
+    if (!await _confirm(
+      title: 'Compare order #${order.orderId}?',
+      body: 'This applies the original Legacy Order comparison rules to the '
+          'current ${store.name} order. Matching quantities, suppliers and '
+          'statuses can be updated.',
+      label: 'Compare order',
+    )) {
+      return null;
+    }
+    final result = await _guard(
+      () => ref.read(legacyOrderApiProvider).comparePreviousOrder(
+            storeName: store.name,
+            orderId: order.orderId,
+          ),
+    );
+    if (result == null) return null;
+    ref.invalidate(qtyCheckRowsProvider(store.name));
+    _say(
+      'Compared order #${result.orderId}. '
+      '${result.affectedRows} row updates applied.',
+    );
+    return result;
+  }
+
+  Future<void> _showSupplierComparison(
+    LegacyStore store,
+    PreviousOrder order,
+    PreviousOrderSupplier supplier,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _SupplierComparisonSheet(
+        request: SupplierComparisonRequest(
+          storeName: store.name,
+          orderId: order.orderId,
+          supplierCode: supplier.code,
+        ),
+        supplier: supplier,
+        onCompare: () => _comparePreviousOrderSupplier(
+          store,
+          order,
+          supplier,
+        ),
+      ),
+    );
+  }
+
+  Future<PreviousOrderComparison?> _comparePreviousOrderSupplier(
+    LegacyStore store,
+    PreviousOrder order,
+    PreviousOrderSupplier supplier,
+  ) async {
+    if (!await _confirm(
+      title: 'Compare ${supplier.name}?',
+      body: 'This applies order #${order.orderId} only for this supplier and '
+          'updates matching current-order rows.',
+      label: 'Compare supplier',
+    )) {
+      return null;
+    }
+    final result = await _guard(
+      () => ref.read(legacyOrderApiProvider).comparePreviousOrderSupplier(
+            storeName: store.name,
+            orderId: order.orderId,
+            supplierCode: supplier.code,
+          ),
+    );
+    if (result == null) return null;
+    ref.invalidate(qtyCheckRowsProvider(store.name));
+    ref.invalidate(
+      supplierComparisonProductsProvider(
+        SupplierComparisonRequest(
+          storeName: store.name,
+          orderId: order.orderId,
+          supplierCode: supplier.code,
+        ),
+      ),
+    );
+    _say(
+      'Compared ${supplier.name}. '
+      '${result.affectedRows} row updates applied.',
+    );
+    return result;
   }
 
   Future<void> _reviewQty(LegacyStore store, QtyCheckRow row) async {
@@ -520,6 +648,457 @@ class _OperationsUnavailable extends StatelessWidget {
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+class _PreviousOrderTab extends ConsumerStatefulWidget {
+  const _PreviousOrderTab({
+    required this.stores,
+    required this.selectedStore,
+    required this.busy,
+    required this.onStoreChanged,
+    required this.onCompare,
+    required this.onReviewSupplier,
+  });
+
+  final List<LegacyStore> stores;
+  final LegacyStore? selectedStore;
+  final bool busy;
+  final ValueChanged<String?> onStoreChanged;
+  final Future<PreviousOrderComparison?> Function(PreviousOrder)? onCompare;
+  final void Function(PreviousOrder, PreviousOrderSupplier)? onReviewSupplier;
+
+  @override
+  ConsumerState<_PreviousOrderTab> createState() => _PreviousOrderTabState();
+}
+
+class _PreviousOrderTabState extends ConsumerState<_PreviousOrderTab> {
+  int? _selectedOrderId;
+
+  @override
+  void didUpdateWidget(covariant _PreviousOrderTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedStore?.name != widget.selectedStore?.name) {
+      _selectedOrderId = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final storeName = widget.selectedStore?.name ?? '';
+    final orders = ref.watch(previousOrdersProvider(storeName));
+
+    return RefreshIndicator(
+      onRefresh: () async => ref.invalidate(previousOrdersProvider(storeName)),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        children: [
+          const SectionHeader(
+            title: 'COMPARE PREVIOUS ORDER',
+            icon: Icons.compare_arrows_rounded,
+          ),
+          const Text(
+            'Uses the original Legacy Order rules. Recent two-day orders are '
+            'shown first, with the latest five as fallback.',
+            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+          const SizedBox(height: 14),
+          DropdownButtonFormField<String>(
+            initialValue: widget.selectedStore?.name,
+            decoration: const InputDecoration(labelText: 'Legacy store'),
+            items: [
+              for (final store in widget.stores)
+                DropdownMenuItem(value: store.name, child: Text(store.name)),
+            ],
+            onChanged: widget.busy ? null : widget.onStoreChanged,
+          ),
+          const SizedBox(height: 16),
+          orders.when(
+            loading: () => const Card(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: LinearProgressIndicator(),
+              ),
+            ),
+            error: (error, _) => _CompareErrorCard(
+              message: _message(error, 'Could not load previous orders.'),
+              onRetry: () => ref.invalidate(previousOrdersProvider(storeName)),
+            ),
+            data: (values) {
+              if (values.isEmpty) {
+                return const EmptyState(
+                  icon: Icons.receipt_long_outlined,
+                  message: 'No previous orders are available for this store.',
+                );
+              }
+              var selected = values.first;
+              for (final order in values) {
+                if (order.orderId == _selectedOrderId) selected = order;
+              }
+              return _PreviousOrdersBody(
+                orders: values,
+                selected: selected,
+                busy: widget.busy,
+                onSelected: (order) =>
+                    setState(() => _selectedOrderId = order.orderId),
+                onCompare: widget.onCompare,
+                onReviewSupplier: widget.onReviewSupplier,
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviousOrdersBody extends ConsumerWidget {
+  const _PreviousOrdersBody({
+    required this.orders,
+    required this.selected,
+    required this.busy,
+    required this.onSelected,
+    required this.onCompare,
+    required this.onReviewSupplier,
+  });
+
+  final List<PreviousOrder> orders;
+  final PreviousOrder selected;
+  final bool busy;
+  final ValueChanged<PreviousOrder> onSelected;
+  final Future<PreviousOrderComparison?> Function(PreviousOrder)? onCompare;
+  final void Function(PreviousOrder, PreviousOrderSupplier)? onReviewSupplier;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final request = PreviousOrderRequest(
+      storeName: selected.storeName,
+      orderId: selected.orderId,
+    );
+    final suppliers = ref.watch(previousOrderSuppliersProvider(request));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Previous order',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        for (final order in orders)
+          Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: ListTile(
+              selected: order.orderId == selected.orderId,
+              onTap: busy ? null : () => onSelected(order),
+              leading: Icon(
+                order.orderId == selected.orderId
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                color: order.orderId == selected.orderId
+                    ? AppColors.accent
+                    : AppColors.textMuted,
+              ),
+              title: Text(
+                'Order #${order.orderId}',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                order.wantedAt == null
+                    ? 'Date unavailable'
+                    : _dateTime(order.wantedAt),
+              ),
+            ),
+          ),
+        const SizedBox(height: 4),
+        FilledButton.icon(
+          onPressed:
+              busy || onCompare == null ? null : () => onCompare!(selected),
+          icon: const Icon(Icons.compare_arrows_rounded),
+          label: Text('Compare entire order #${selected.orderId}'),
+        ),
+        const SizedBox(height: 20),
+        SectionHeader(
+          title: 'SUPPLIERS IN ORDER #${selected.orderId}',
+          icon: Icons.local_shipping_outlined,
+        ),
+        suppliers.when(
+          loading: () => const Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (error, _) => _CompareErrorCard(
+            message: _message(error, 'Could not load order suppliers.'),
+            onRetry: () =>
+                ref.invalidate(previousOrderSuppliersProvider(request)),
+          ),
+          data: (values) => values.isEmpty
+              ? const EmptyState(
+                  icon: Icons.inventory_2_outlined,
+                  message: 'No assigned suppliers in this backup order.',
+                )
+              : Column(
+                  children: [
+                    for (final supplier in values)
+                      ActionTile(
+                        title: supplier.name,
+                        subtitle:
+                            '${supplier.code} · ${supplier.productCount} products',
+                        icon: Icons.local_shipping_outlined,
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: busy || onReviewSupplier == null
+                            ? null
+                            : () => onReviewSupplier!(selected, supplier),
+                      ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CompareErrorCard extends StatelessWidget {
+  const _CompareErrorCard({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.error_outline, color: AppColors.danger),
+        title: Text(message),
+        trailing: IconButton(
+          tooltip: 'Retry',
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh_rounded),
+        ),
+      ),
+    );
+  }
+}
+
+class _SupplierComparisonSheet extends ConsumerStatefulWidget {
+  const _SupplierComparisonSheet({
+    required this.request,
+    required this.supplier,
+    required this.onCompare,
+  });
+
+  final SupplierComparisonRequest request;
+  final PreviousOrderSupplier supplier;
+  final Future<PreviousOrderComparison?> Function() onCompare;
+
+  @override
+  ConsumerState<_SupplierComparisonSheet> createState() =>
+      _SupplierComparisonSheetState();
+}
+
+class _SupplierComparisonSheetState
+    extends ConsumerState<_SupplierComparisonSheet> {
+  bool _applying = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final products =
+        ref.watch(supplierComparisonProductsProvider(widget.request));
+    final loadedProducts = products.asData?.value;
+
+    return FractionallySizedBox(
+      heightFactor: 0.92,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.supplier.name,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      Text(
+                        'Order #${widget.request.orderId} · '
+                        '${widget.supplier.productCount} products',
+                        style: const TextStyle(color: AppColors.textMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close',
+                  onPressed:
+                      _applying ? null : () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: products.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (error, _) => ErrorView(
+                message: _message(
+                  error,
+                  'Could not load the supplier comparison.',
+                ),
+                onRetry: () => ref.invalidate(
+                  supplierComparisonProductsProvider(widget.request),
+                ),
+              ),
+              data: (values) => values.isEmpty
+                  ? const EmptyState(
+                      icon: Icons.inventory_2_outlined,
+                      message: 'No products are available for review.',
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: values.length,
+                      itemBuilder: (_, index) =>
+                          _ComparisonProductCard(product: values[index]),
+                    ),
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _applying || loadedProducts?.isEmpty != false
+                      ? null
+                      : _apply,
+                  icon: _applying
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.compare_arrows_rounded),
+                  label: Text(
+                    _applying
+                        ? 'Comparing…'
+                        : 'Compare ${loadedProducts?.length ?? 0} products',
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _apply() async {
+    setState(() => _applying = true);
+    final result = await widget.onCompare();
+    if (!mounted) return;
+    setState(() => _applying = false);
+    if (result != null) Navigator.of(context).pop();
+  }
+}
+
+class _ComparisonProductCard extends StatelessWidget {
+  const _ComparisonProductCard({required this.product});
+
+  final SupplierComparisonProduct product;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    product.productName,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                StatusBadge(
+                  label: product.changed ? 'Changed' : 'Same',
+                  color:
+                      product.changed ? AppColors.warning : AppColors.success,
+                  dense: true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Product ${product.previousProductCode}',
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _CompareValue(
+                    label: 'Previous qty',
+                    value: _num(product.previousOrderedQty),
+                  ),
+                ),
+                Expanded(
+                  child: _CompareValue(
+                    label: 'Current qty',
+                    value: _num(product.currentOrderQty),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: _CompareValue(
+                    label: 'Previous stock',
+                    value: _num(product.previousStock),
+                  ),
+                ),
+                Expanded(
+                  child: _CompareValue(
+                    label: 'Current stock',
+                    value: _num(product.currentStock),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CompareValue extends StatelessWidget {
+  const _CompareValue({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
       ],
     );
   }

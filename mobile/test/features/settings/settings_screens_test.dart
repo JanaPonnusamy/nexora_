@@ -81,7 +81,6 @@ void main() {
       for (final section in [
         'YOUR CHANGES',
         'SECURITY',
-        'SERVER',
         'STORAGE',
         'DIAGNOSTICS',
       ]) {
@@ -90,27 +89,16 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('names a cleartext backend rather than hiding it',
+    testWidgets('does not expose backend or environment details',
         (tester) async {
       _tallPhone(tester);
 
       await tester.pumpWidget(_harness(const SettingsScreen()));
       await tester.pump();
 
-      expect(find.textContaining('Not encrypted'), findsOneWidget);
-    });
-
-    testWidgets('an HTTPS backend carries no warning', (tester) async {
-      _tallPhone(tester);
-
-      await tester.pumpWidget(
-        _harness(
-          const SettingsScreen(),
-          config: _config(url: 'https://ho.axythic.com'),
-        ),
-      );
-      await tester.pump();
-
+      expect(find.text('SERVER'), findsNothing);
+      expect(find.text('Backend'), findsNothing);
+      expect(find.text('Environment'), findsNothing);
       expect(find.textContaining('Not encrypted'), findsNothing);
     });
 

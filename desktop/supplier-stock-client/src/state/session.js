@@ -3,13 +3,14 @@ const SESSION_KEY = 'nexora.desktop.session';
 
 const defaultSettings = {
   serverMode: 'LAN',
-  apiBaseUrl: 'http://localhost:8000',
+  apiBaseUrl: 'http://122.252.246.181:8443',
   bootstrapUrl: '',
   tenantId: '',
   storeId: '',
   storeName: '',
   storeOrder: [],
-  similarSearchChars: 6
+  similarSearchChars: 6,
+  themePreference: 'light'
 };
 
 function todayKey() {

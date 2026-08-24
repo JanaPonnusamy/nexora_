@@ -206,6 +206,113 @@ class LegacyConsoleData {
   bool get hasRunningJobs => jobs.any((job) => job.isRunning);
 }
 
+class PreviousOrder {
+  const PreviousOrder({
+    required this.storeName,
+    required this.orderId,
+    required this.wantedAt,
+  });
+
+  final String storeName;
+  final int orderId;
+  final DateTime? wantedAt;
+
+  factory PreviousOrder.fromJson(Map<String, dynamic> json) => PreviousOrder(
+        storeName: _text(json['store_name']) ?? '',
+        orderId: _integer(json['order_id']) ?? 0,
+        wantedAt: _date(json['wanted_date']),
+      );
+}
+
+class PreviousOrderComparison {
+  const PreviousOrderComparison({
+    required this.storeName,
+    required this.orderId,
+    required this.affectedRows,
+    this.supplierCode,
+  });
+
+  final String storeName;
+  final int orderId;
+  final int affectedRows;
+  final String? supplierCode;
+
+  factory PreviousOrderComparison.fromJson(Map<String, dynamic> json) =>
+      PreviousOrderComparison(
+        storeName: _text(json['store_name']) ?? '',
+        orderId: _integer(json['order_id']) ?? 0,
+        affectedRows: _integer(json['affected_rows']) ?? 0,
+        supplierCode: _text(json['supplier_code']),
+      );
+}
+
+class PreviousOrderSupplier {
+  const PreviousOrderSupplier({
+    required this.code,
+    required this.name,
+    required this.productCount,
+  });
+
+  final String code;
+  final String name;
+  final int productCount;
+
+  factory PreviousOrderSupplier.fromJson(Map<String, dynamic> json) =>
+      PreviousOrderSupplier(
+        code: _text(json['supplier_code']) ?? '',
+        name: _text(json['supplier_name']) ?? 'Unnamed supplier',
+        productCount: _integer(json['product_count']) ?? 0,
+      );
+}
+
+class SupplierComparisonProduct {
+  const SupplierComparisonProduct({
+    required this.previousProductCode,
+    required this.previousProductName,
+    this.currentProductCode,
+    this.currentProductName,
+    this.currentOrderQty,
+    this.currentWantedType,
+    this.previousOrderedQty,
+    this.previousStock,
+    this.currentStock,
+    this.previousRemarks,
+    this.previousStatus,
+  });
+
+  final int? currentProductCode;
+  final String? currentProductName;
+  final num? currentOrderQty;
+  final String? currentWantedType;
+  final int previousProductCode;
+  final String previousProductName;
+  final num? previousOrderedQty;
+  final num? previousStock;
+  final num? currentStock;
+  final String? previousRemarks;
+  final int? previousStatus;
+
+  String get productName => currentProductName ?? previousProductName;
+  bool get changed =>
+      previousOrderedQty != currentOrderQty || previousStock != currentStock;
+
+  factory SupplierComparisonProduct.fromJson(Map<String, dynamic> json) =>
+      SupplierComparisonProduct(
+        currentProductCode: _integer(json['CurrentProductCode']),
+        currentProductName: _text(json['CurrentProductName']),
+        currentOrderQty: _number(json['CurrentOrderQty']),
+        currentWantedType: _text(json['CurrentWantedType']),
+        previousProductCode: _integer(json['PreviousProductCode']) ?? 0,
+        previousProductName:
+            _text(json['PreviousProductName']) ?? 'Unnamed product',
+        previousOrderedQty: _number(json['PreviousOrderedQty']),
+        previousStock: _number(json['PreviousStock']),
+        currentStock: _number(json['CurrentStock']),
+        previousRemarks: _text(json['PreviousRemarks']),
+        previousStatus: _integer(json['PreviousStatus']),
+      );
+}
+
 class QtyCheckRow {
   const QtyCheckRow({
     required this.productCode,

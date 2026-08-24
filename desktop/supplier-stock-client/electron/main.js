@@ -7,7 +7,7 @@ import http from 'node:http';
 // `import ... from 'electron'` only ever yields the path to the binary, not
 // the app/BrowserWindow API. createRequire reaches the same patched require.
 const require = createRequire(import.meta.url);
-const { app, BrowserWindow, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, nativeTheme } = require('electron');
 
 if (!app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('temp'), 'nexora-supplier-stock-client-dev'));
@@ -59,13 +59,21 @@ ipcMain.handle('dev:maximizeViewport', (event) => {
   if (win) win.maximize();
 });
 
+ipcMain.handle('theme:setPreference', (event, { preference, resolvedTheme }) => {
+  const nextPreference = ['light', 'dark'].includes(preference) ? preference : 'light';
+  nativeTheme.themeSource = nextPreference;
+
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) win.setBackgroundColor(resolvedTheme === 'dark' ? '#0a0f17' : '#f4f6fa');
+});
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 980,
     minHeight: 680,
-    title: 'Nexora Supplier Stock',
+    title: 'Axythic Supplier Stock',
     backgroundColor: '#f5f7fb',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
