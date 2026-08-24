@@ -75,7 +75,7 @@ def daily_xlsx(data) -> io.BytesIO:
     ws = wb.active
     ws.title = "Daily"
     # Trailing month-to-date columns (see service._month_to_date_counts).
-    MTD_HEADERS = ["MP (mo)", "<8:30", "<8:00"]
+    MTD_HEADERS = ["MP Days", "<8:30", "<8:00"]
     headers = (["ID", "Name"] + [str(i + 1) for i in range(N_PUNCH)]
                + ["Hrs"] + MTD_HEADERS)
     ncol = len(headers)

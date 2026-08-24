@@ -476,7 +476,7 @@ function DailyView({
       <div className="trp-period">{data.period}</div>
       <div className="trp-subnote">
         <i className="bi bi-info-circle" /> Month-to-date tallies for <b>{data.month_name}</b> (1st → selected date), counted
-        separately: <b>MP</b> = miss-punch days · <b>&lt;8:30</b> = days in the 8:00–8:29 band · <b>&lt;8:00</b> = days under 8h.
+        separately: <b>MP Days</b> = miss-punch days · <b>&lt;8:30</b> = days in the 8:00–8:29 band · <b>&lt;8:00</b> = days under 8h.
       </div>
       {data.departments.map((dept) => (
         <div key={`${dept.dpt_id}-${dept.name}`}>
@@ -517,7 +517,7 @@ function DailyView({
                       {i + 1}
                     </th>
                   ))}
-                  <th className="trp-center trp-sub trp-mtd-sep" title="Miss-punch days this month">MP</th>
+                  <th className="trp-center trp-sub trp-mtd-sep" title="Miss-punch days this month">MP Days</th>
                   <th className="trp-center trp-sub" title="Days worked 8:00–8:29 this month (short of 8:30, but not under 8:00)">&lt;8:30</th>
                   <th className="trp-center trp-sub" title="Days worked under 8h00m this month">&lt;8:00</th>
                 </tr>
