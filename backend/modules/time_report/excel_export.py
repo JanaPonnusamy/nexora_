@@ -74,7 +74,10 @@ def daily_xlsx(data) -> io.BytesIO:
     wb = Workbook()
     ws = wb.active
     ws.title = "Daily"
-    headers = ["ID", "Name"] + [str(i + 1) for i in range(N_PUNCH)] + ["Hrs"]
+    # Trailing month-to-date columns (see service._month_to_date_counts).
+    MTD_HEADERS = ["MP (mo)", "<8:30", "<8:00"]
+    headers = (["ID", "Name"] + [str(i + 1) for i in range(N_PUNCH)]
+               + ["Hrs"] + MTD_HEADERS)
     ncol = len(headers)
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncol)
@@ -100,7 +103,10 @@ def daily_xlsx(data) -> io.BytesIO:
         row += 1
         for d in dept["rows"]:
             p = (d["punches"] + [""] * N_PUNCH)[:N_PUNCH]
-            vals = [d["user_id"], d["name"][:NAME_MAX]] + p + [d["work_hm"]]
+            mtd = [d.get("mp_month", 0) or 0, d.get("below_830", 0) or 0,
+                   d.get("below_800", 0) or 0]
+            vals = ([d["user_id"], d["name"][:NAME_MAX]] + p + [d["work_hm"]]
+                    + [v if v else "" for v in mtd])
             for col, v in enumerate(vals, 1):
                 c = ws.cell(row=row, column=col, value=v)
                 c.border = BORDER

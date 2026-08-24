@@ -128,3 +128,41 @@
 
 .trp-summary-line { font-size: 13px; margin: 6px 0 10px; }
 .trp-summary-line b { font-weight: 700; }
+
+/* Daily report: grouped header + month-to-date columns. */
+.trp-subnote {
+  font-size: 12px;
+  color: var(--bs-secondary-color, #64748b);
+  margin: -4px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.trp-subnote b { color: var(--bs-body-color, #1e293b); font-weight: 700; }
+
+.trp-daily thead th.trp-grp {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color, #64748b);
+  border-bottom: 1px solid var(--bs-border-color, #e5e7eb);
+}
+.trp-daily thead th.trp-sub { font-weight: 600; }
+/* Vertical rule separating the month-to-date group from the day columns. */
+.trp-daily .trp-mtd-sep { border-left: 2px solid var(--bs-border-color, #cbd5e1); }
+.trp-daily td.trp-mtd { text-align: center; font-variant-numeric: tabular-nums; }
+
+.trp-zero { color: var(--bs-secondary-color, #94a3b8); opacity: 0.6; }
+
+.trp-pill {
+  display: inline-block;
+  min-width: 22px;
+  padding: 0 7px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+}
+.trp-pill-mp { background: var(--nx-danger-sunk, #f4a7a7); color: var(--nx-danger-ink, #000); }
+.trp-pill-w830 { background: var(--nx-warning-sunk, #ffd9a0); color: var(--nx-warning-ink, #000); }
+.trp-pill-w800 { background: var(--nx-info-sunk, #bbdefb); color: var(--nx-info-ink, #000); }

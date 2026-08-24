@@ -71,6 +71,10 @@ export interface DayRecord {
   status_text: string
   status_code: string
   pdate_str?: string
+  /** Month-to-date tallies attached to DAILY rows only (day 1 → report date). */
+  mp_month?: number
+  below_830?: number
+  below_800?: number
 }
 
 export interface DailyDept {
@@ -85,6 +89,7 @@ export interface DailyReport {
   date: string
   date_fmt: string
   period: string
+  month_name: string
   departments: DailyDept[]
   totals: Totals
   legend: LegendItem[]

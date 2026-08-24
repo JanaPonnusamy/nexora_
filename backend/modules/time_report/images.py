@@ -23,6 +23,8 @@ COL_ID = ("ID", 56)
 COL_NAME = ("Name", 215)
 COL_PUNCH_W = 56
 COL_WORK = ("Hrs", 64)
+# Trailing month-to-date columns (see service._month_to_date_counts).
+COL_MTD = [("MP", 46), ("<8:30", 56), ("<8:00", 56)]
 
 ROW_H = 26
 TITLE_H = 30
@@ -61,6 +63,7 @@ def _columns():
     cols = [COL_ID, COL_NAME]
     cols += [(str(i + 1), COL_PUNCH_W) for i in range(N_PUNCH)]
     cols.append(COL_WORK)
+    cols += COL_MTD
     return cols
 
 
@@ -112,7 +115,10 @@ def department_image(dept, data) -> io.BytesIO:
         bg = _rgb(row["status_hex"])
         punches = (row["punches"] + [""] * N_PUNCH)[:N_PUNCH]
         name = row["name"][:NAME_MAX]
-        values = [row["user_id"], name] + punches + [row["work_hm"]]
+        mtd = [row.get("mp_month", 0) or 0, row.get("below_830", 0) or 0,
+               row.get("below_800", 0) or 0]
+        values = ([row["user_id"], name] + punches + [row["work_hm"]]
+                  + [v if v else "" for v in mtd])
         cx = x0
         for (header, w), val in zip(cols, values):
             d.rectangle([cx, y, cx + w, y + ROW_H], fill=bg, outline=grid)

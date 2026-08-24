@@ -138,8 +138,44 @@ def catalog() -> list:
 # ----------------------------------------------------------------------------
 # 1. Department-wise DAILY report
 # ----------------------------------------------------------------------------
+def _month_to_date_counts(report_date: str, dept_id=None) -> dict:
+    """Per-user month-to-date tallies for the DAILY report's extra columns.
+
+    Counts every day from the 1st of ``report_date``'s month up to and
+    including ``report_date``, reusing the same day classification as the rest
+    of the module (so the thresholds never diverge from config.classify_day):
+
+      - mp_month  : days flagged MISS_PUNCH (finger not placed properly)
+      - below_830 : days worked under 8h30m   (SHORT + LOW — cumulative)
+      - below_800 : days worked under 8h00m   (LOW)
+    """
+    d = report_date if isinstance(report_date, str) else report_date.isoformat()
+    month_start = f"{d[:7]}-01"
+    counts = {}
+    for r in repo.monthly_rows(month_start, d, dept_id):
+        day = _build_day({**r, "UserName": "", "Department": "", "DPTID": None})
+        c = counts.setdefault(
+            r["UserID"], {"mp_month": 0, "below_830": 0, "below_800": 0})
+        status = day["status"]
+        if status == "MISS_PUNCH":
+            c["mp_month"] += 1
+        elif status == "SHORT":
+            c["below_830"] += 1
+        elif status == "LOW":
+            c["below_830"] += 1
+            c["below_800"] += 1
+    return counts
+
+
 def daily_report(report_date: str, dept_id=None) -> dict:
     rows = [_build_day(r) for r in repo.daily_rows(report_date, dept_id)]
+
+    mtd = _month_to_date_counts(report_date, dept_id)
+    for r in rows:
+        c = mtd.get(r["user_id"], {})
+        r["mp_month"] = c.get("mp_month", 0)
+        r["below_830"] = c.get("below_830", 0)
+        r["below_800"] = c.get("below_800", 0)
 
     departments_ = []
     grand = _empty_totals()
@@ -153,11 +189,14 @@ def daily_report(report_date: str, dept_id=None) -> dict:
         _tally(grand, r)
 
     period = f"Department-Wise Daily Details From {fmt_date(report_date)} To {fmt_date(report_date)}"
+    d = report_date if isinstance(report_date, str) else report_date.isoformat()
+    month_name = datetime.fromisoformat(d).strftime("%B %Y")
     return {
         "title": "Department-wise Daily Attendance",
         "date": report_date,
         "date_fmt": fmt_date(report_date),
         "period": period,
+        "month_name": month_name,
         "departments": departments_,
         "totals": grand,
         "legend": _legend(),
