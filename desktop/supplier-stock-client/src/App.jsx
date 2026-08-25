@@ -14,6 +14,15 @@ import { buildBrandKey, buildPrefixSearchKey, normalizeForBadge, normalizeForLoo
 import { getCachedProducts, syncCachedProducts } from './lib/productCache.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 
+// Dev-only login bypass: when running under `vite` (npm run dev) with
+// credentials set in .env.development.local, the app auto-signs-in as that
+// account and lands straight on Stock Availability instead of the login screen.
+// import.meta.env.DEV is compiled to false in a production build, so this whole
+// path — and the credentials — are stripped from any packaged installer.
+const DEV_AUTO_LOGIN_USER = import.meta.env.DEV ? (import.meta.env.VITE_DEV_LOGIN_USER || '') : '';
+const DEV_AUTO_LOGIN_PASS = import.meta.env.DEV ? (import.meta.env.VITE_DEV_LOGIN_PASS || '') : '';
+const DEV_AUTO_LOGIN = Boolean(DEV_AUTO_LOGIN_USER);
+
 const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
   { id: 'analysis', label: 'Supplier Stock Analysis', module: 'supplier_stock_analysis' },
@@ -157,6 +166,8 @@ function AppShell() {
   const [activeScreen, setActiveScreen] = useState('stock');
   // Guards the one-time "land on Settings on a fresh device" auto-route below.
   const didAutoRoute = useRef(false);
+  // Guards the one-time dev auto-login so it fires at most once per app load.
+  const devAutoLoginTried = useRef(false);
   // Tenant list for the super-admin tenant filter on the Stock Availability
   // screen. The API already scopes this to the caller's own tenant for any
   // non-super-admin login (see backend/controllers/tenant_controller.py), so
@@ -215,7 +226,9 @@ function AppShell() {
     // (ref guard) so it never re-pins the user on Settings when they navigate
     // back toward the login screen - otherwise an unconfigured PC could never
     // reach login at all.
-    if (!didAutoRoute.current && !session && !isConfigured) {
+    // Skip the fresh-device Settings auto-route while a dev auto-login is in
+    // flight - we want to land on Stock Availability, not Settings.
+    if (!didAutoRoute.current && !session && !isConfigured && !DEV_AUTO_LOGIN) {
       didAutoRoute.current = true;
       setActiveScreen('settings');
       return;
@@ -256,6 +269,21 @@ function AppShell() {
     setSession(savedSession);
     setActiveScreen('stock');
   }
+
+  // Dev convenience: sign in automatically as the seeded dev super admin so
+  // `npm run dev` opens directly on Stock Availability. No-op in production
+  // (DEV_AUTO_LOGIN is false) and whenever a real session already exists.
+  useEffect(() => {
+    if (!DEV_AUTO_LOGIN || session || devAutoLoginTried.current) return;
+    devAutoLoginTried.current = true;
+    api.login({ username: DEV_AUTO_LOGIN_USER, password: DEV_AUTO_LOGIN_PASS })
+      .then((response) => {
+        const user = response.user || response.data?.user || response;
+        handleLogin({ ...response, user });
+      })
+      .catch((error) => console.warn('[dev] auto-login failed:', error.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   function handleLogout() {
     // Best-effort: tell the server to release this user's active session so
@@ -403,7 +431,13 @@ function AppShell() {
             session={session}
           />
         ) : !session ? (
-          <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
+          DEV_AUTO_LOGIN ? (
+            <section className="screen-panel">
+              <ScreenHeader title="Signing in…" subtitle="Dev auto-login as super admin." />
+            </section>
+          ) : (
+            <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
+          )
         ) : activeScreen === 'analysis' ? (
           <SupplierStockAnalysis
             session={session}

@@ -1,2 +1,7 @@
 # electron-builder local cache (pre-seeded NSIS binaries; environment-specific)
 .eb-cache/
+
+# Local dev env (dev auto-login credentials) — never commit
+.env.local
+.env.*.local
+
