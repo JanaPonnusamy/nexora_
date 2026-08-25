@@ -17,7 +17,13 @@ def _column_type(data_type, max_length, precision, scale):
         elif int(max_length) == -1:
             length = "MAX"
         else:
-            length = str(int(max_length))
+            ml = int(max_length)
+            # The catalog stores max_length in BYTES. Unicode types use 2
+            # bytes/char, so an nvarchar(4000) column reports max_length 8000;
+            # emit the character count (and never exceed the 4000 non-MAX cap).
+            if dt in ("nchar", "nvarchar"):
+                ml = ml // 2
+            length = str(ml)
         return dt + "(" + length + ")"
 
     if dt in _DECIMAL_TYPES:
