@@ -5,10 +5,20 @@ Drill-down hierarchy:
   tenant -> store summary -> supplier summary -> ( pending details |
             ack-wise -> ack product details )
 
-Given / Received / Reject come from sync.SupplierAckHeader (the supplier
-acknowledgement flow: Quantity given, AcceptedQty received, RejectedQty
-rejected). Pending is the still-outstanding "given but not yet claimed" items
-in sync.SupplierPendingProducts (the legacy "Supplier Pending Issue Report").
+Given / Received / Reject come from sync.SupplierAckHeader (Quantity given,
+AcceptedQty received, RejectedQty rejected).
+
+Pending faithfully replicates the legacy Shopaid stored procedure
+dbo.dsp_SupplierPendingIssueReport, @ProcessMode=0 branch (the mode these
+stores use — every synced ack has ProcessMode NULL/0). A UNION of
+  (1) SupplierAckHeader+SupplierAckDetail lines whose ack is unsettled
+      (ReferenceNumber empty, or Balance<>0 with the rate-mode / partial-
+      receipt condition) and which are NOT in SupplierPendingProducts, and
+  (2) SupplierPendingProducts (direct-issue pending),
+both gated by TransactionValidity + balance filters, ProcessMode=0 and
+SeriesSettings.IncludeInReports=1. Validated to the penny against the SP for
+NMA (635 rows / 7,336 qty / 169,280.23). Acks are keyed by TransNo (the "Ack
+No" the legacy report shows), NOT the numeric AckNumber.
 
 Every query is scoped by tenant_id (+ store_id where applicable).
 """
@@ -29,53 +39,120 @@ def _run(sql, params):
 
 
 # ---------------------------------------------------------------------------
+# Reusable "pending rows" derived table — a faithful port of the legacy
+# dsp_SupplierPendingIssueReport UNION. Exposes tenant_id/store_id/SupplierCode
+# so callers can scope + aggregate. No parameters inside; filter it outside.
+# ---------------------------------------------------------------------------
+
+_PENDING_ROWS = """
+(
+    -- Part 1: unsettled acknowledgement detail lines (not already in the
+    -- direct-issue pending list).
+    SELECT h.tenant_id, h.store_id, h.SupplierCode,
+           h.TransNo               AS AckNo,
+           h.AckDate               AS AckDate,
+           d.ProductCode           AS ProductCode,
+           d.BatchDescription      AS Batch,
+           d.ExpiryDate            AS ExpiryDate,
+           d.Quantity              AS Qty,
+           d.FreeQty               AS Free,
+           d.PendingQty            AS PendQty,
+           d.Rate                  AS Rate,
+           d.Mrp                   AS MRP,
+           d.TotalAmount           AS Value,
+           ISNULL(h.Remarks, '')   AS Remarks
+    FROM sync.SupplierAckHeader h
+    INNER JOIN sync.SupplierAckDetail d
+        ON d.tenant_id = h.tenant_id AND d.store_id = h.store_id
+       AND d.TransNo = h.TransNo AND d.AckDate = h.AckDate
+    INNER JOIN sync.SeriesSettings ss
+        ON ss.tenant_id = h.tenant_id AND ss.store_id = h.store_id
+       AND ss.TransID = h.SeriesTransId AND ss.SeriesName = h.SeriesName
+    LEFT JOIN (
+        SELECT DISTINCT tenant_id, store_id, AckNumber, AckDate
+        FROM sync.SupplierPendingProducts
+    ) tp ON tp.tenant_id = h.tenant_id AND tp.store_id = h.store_id
+        AND tp.AckNumber = h.TransNo AND tp.AckDate = h.AckDate
+    WHERE h.TransactionValidity = 0
+      AND ( ISNULL(h.ReferenceNumber, '') = ''
+            OR (h.Balance <> 0 AND h.RateMode = 3)
+            OR (h.Balance <> 0 AND h.RateMode <> 3
+                AND ISNULL(h.AcceptedQty, 0) + ISNULL(h.RejectedQty, 0) < ISNULL(h.Quantity, 0)) )
+      AND ss.IncludeInReports = 1
+      AND ISNULL(h.ProcessMode, 0) = 0
+      AND tp.AckNumber IS NULL
+
+    UNION ALL
+
+    -- Part 2: direct-issue pending products (no full ack yet).
+    SELECT p.tenant_id, p.store_id, p.SupplierCode,
+           h.TransNo               AS AckNo,
+           p.AckDate               AS AckDate,
+           p.ProductCode           AS ProductCode,
+           p.BatchDescription      AS Batch,
+           p.ExpiryDate            AS ExpiryDate,
+           p.Quantity              AS Qty,
+           p.FreeQty               AS Free,
+           CAST(0 AS FLOAT)        AS PendQty,
+           p.Rate                  AS Rate,
+           p.Mrp                   AS MRP,
+           p.TotalAmount           AS Value,
+           ISNULL(h.Remarks, '')   AS Remarks
+    FROM sync.SupplierPendingProducts p
+    INNER JOIN sync.SupplierAckHeader h
+        ON h.tenant_id = p.tenant_id AND h.store_id = p.store_id
+       AND h.TransNo = p.AckNumber AND h.AckDate = p.AckDate
+    INNER JOIN sync.SeriesSettings ss
+        ON ss.tenant_id = h.tenant_id AND ss.store_id = h.store_id
+       AND ss.TransID = h.SeriesTransId AND ss.SeriesName = h.SeriesName
+    WHERE h.TransactionValidity = 0
+      AND ( (h.AdjustedValue > 0 AND h.Balance <> 0)
+            OR (ISNULL(h.ReferenceNumber, '') = '' AND ISNULL(h.Balance, 0) <> 0)
+            OR h.AdjustedValue = 0 )
+      AND ss.IncludeInReports = 1
+      AND ISNULL(h.ProcessMode, 0) = 0
+) pend
+"""
+
+
+# ---------------------------------------------------------------------------
 # Level 1 — Store-wise summary (all stores of a tenant, totals only).
 # ---------------------------------------------------------------------------
 
 def store_summary(tenant_id):
-    # Value columns are derived from quantities so every row reconciles:
-    #   Given = Received + Reject + Pending  (both qty and value).
-    # "Given" includes items still pending a claim (SupplierPendingProducts),
-    # which are given to the supplier but have no acknowledgement yet.
-    sql = """
+    sql = f"""
         SELECT
             st.store_name  AS StoreName,
             st.store_code  AS StoreCode,
             CAST(st.store_id AS VARCHAR(36)) AS StoreId,
-            ISNULL(a.GivenQty, 0) + ISNULL(p.PendGivenQty, 0)     AS GivenQty,
-            ISNULL(a.ReceivedQty, 0)                              AS ReceivedQty,
-            ISNULL(a.RejectQty, 0)                                AS RejectQty,
-            ISNULL(a.AckPendingQty, 0) + ISNULL(p.PendGivenQty, 0) AS PendingQty,
-            ISNULL(a.GivenValue, 0) + ISNULL(p.PendGivenValue, 0) AS GivenValue,
-            ISNULL(a.ReceivedValue, 0)                            AS ReceivedValue,
-            ISNULL(a.AckPendingValue, 0) + ISNULL(p.PendGivenValue, 0) AS PendingValue
+            ISNULL(a.GivenQty, 0)      AS GivenQty,
+            ISNULL(a.ReceivedQty, 0)   AS ReceivedQty,
+            ISNULL(a.RejectQty, 0)     AS RejectQty,
+            ISNULL(pp.PendQty, 0)      AS PendingQty,
+            ISNULL(a.GivenValue, 0)    AS GivenValue,
+            ISNULL(a.ReceivedValue, 0) AS ReceivedValue,
+            ISNULL(pp.PendValue, 0)    AS PendingValue
         FROM dbo.stores st
         LEFT JOIN (
             SELECT store_id,
                    SUM(Quantity)               AS GivenQty,
                    SUM(AcceptedQty)            AS ReceivedQty,
                    SUM(ISNULL(RejectedQty, 0)) AS RejectQty,
-                   SUM(Quantity - AcceptedQty - ISNULL(RejectedQty, 0)) AS AckPendingQty,
                    SUM(TotalAmount)            AS GivenValue,
                    SUM(CASE WHEN Quantity > 0
-                            THEN TotalAmount * AcceptedQty / Quantity ELSE 0 END) AS ReceivedValue,
-                   SUM(CASE WHEN Quantity > 0
-                            THEN TotalAmount * (Quantity - AcceptedQty - ISNULL(RejectedQty, 0)) / Quantity
-                            ELSE 0 END) AS AckPendingValue
+                            THEN TotalAmount * AcceptedQty / Quantity ELSE 0 END) AS ReceivedValue
             FROM sync.SupplierAckHeader
             WHERE tenant_id = ?
             GROUP BY store_id
         ) a ON a.store_id = st.store_id
         LEFT JOIN (
-            SELECT store_id,
-                   SUM(Quantity)    AS PendGivenQty,
-                   SUM(TotalAmount) AS PendGivenValue
-            FROM sync.SupplierPendingProducts
+            SELECT store_id, SUM(Qty) AS PendQty, SUM(Value) AS PendValue
+            FROM {_PENDING_ROWS}
             WHERE tenant_id = ?
             GROUP BY store_id
-        ) p ON p.store_id = st.store_id
+        ) pp ON pp.store_id = st.store_id
         WHERE st.tenant_id = ?
-          AND (a.store_id IS NOT NULL OR p.store_id IS NOT NULL)
+          AND (a.store_id IS NOT NULL OR pp.store_id IS NOT NULL)
         ORDER BY st.store_order, st.store_name
     """
     return _run(sql, (tenant_id, tenant_id, tenant_id))
@@ -86,30 +163,24 @@ def store_summary(tenant_id):
 # ---------------------------------------------------------------------------
 
 def supplier_summary(tenant_id, store_id):
-    sql = """
+    sql = f"""
         WITH acks AS (
             SELECT SupplierCode,
                    SUM(Quantity)               AS GivenQty,
                    SUM(AcceptedQty)            AS ReceivedQty,
                    SUM(ISNULL(RejectedQty, 0)) AS RejectQty,
-                   SUM(Quantity - AcceptedQty - ISNULL(RejectedQty, 0)) AS AckPendingQty,
                    SUM(TotalAmount)            AS GivenValue,
                    SUM(CASE WHEN Quantity > 0
                             THEN TotalAmount * AcceptedQty / Quantity ELSE 0 END) AS ReceivedValue,
-                   SUM(CASE WHEN Quantity > 0
-                            THEN TotalAmount * (Quantity - AcceptedQty - ISNULL(RejectedQty, 0)) / Quantity
-                            ELSE 0 END) AS AckPendingValue,
                    COUNT(*)                    AS Acks
             FROM sync.SupplierAckHeader
             WHERE tenant_id = ? AND store_id = ?
             GROUP BY SupplierCode
         ),
         pend AS (
-            SELECT SupplierCode,
-                   SUM(Quantity)    AS PendGivenQty,
-                   SUM(TotalAmount) AS PendGivenValue,
-                   COUNT(*)         AS PendingLines
-            FROM sync.SupplierPendingProducts
+            SELECT SupplierCode, SUM(Qty) AS PendingQty, SUM(Value) AS PendingValue,
+                   COUNT(*) AS PendingLines
+            FROM {_PENDING_ROWS}
             WHERE tenant_id = ? AND store_id = ?
             GROUP BY SupplierCode
         ),
@@ -122,14 +193,14 @@ def supplier_summary(tenant_id, store_id):
             RTRIM(COALESCE(s.suppliername, CAST(c.SupplierCode AS VARCHAR(50)))) AS SupplierName,
             CAST(c.SupplierCode AS VARCHAR(50)) AS SupplierCode,
             ISNULL(a.Acks, 0)          AS Acks,
-            ISNULL(a.GivenQty, 0) + ISNULL(p.PendGivenQty, 0)      AS GivenQty,
+            ISNULL(a.GivenQty, 0)      AS GivenQty,
             ISNULL(a.ReceivedQty, 0)   AS ReceivedQty,
             ISNULL(a.RejectQty, 0)     AS RejectQty,
-            ISNULL(a.AckPendingQty, 0) + ISNULL(p.PendGivenQty, 0) AS PendingQty,
+            ISNULL(p.PendingQty, 0)    AS PendingQty,
             ISNULL(p.PendingLines, 0)  AS PendingLines,
-            ISNULL(a.GivenValue, 0) + ISNULL(p.PendGivenValue, 0)  AS GivenValue,
+            ISNULL(a.GivenValue, 0)    AS GivenValue,
             ISNULL(a.ReceivedValue, 0) AS ReceivedValue,
-            ISNULL(a.AckPendingValue, 0) + ISNULL(p.PendGivenValue, 0) AS PendingValue
+            ISNULL(p.PendingValue, 0)  AS PendingValue
         FROM codes c
         LEFT JOIN acks a ON a.SupplierCode = c.SupplierCode
         LEFT JOIN pend p ON p.SupplierCode = c.SupplierCode
@@ -142,44 +213,45 @@ def supplier_summary(tenant_id, store_id):
 
 
 # ---------------------------------------------------------------------------
-# Level 2b — Pending details (given but not yet claimed) for a supplier.
+# Level 2b — Pending details (legacy Supplier Pending Issue Report) for a
+# supplier. Rows come straight from the legacy pending UNION.
 # ---------------------------------------------------------------------------
 
 def supplier_pending(tenant_id, store_id, supplier_code):
-    sql = """
+    sql = f"""
         SELECT
-            CAST(p.ProductCode AS VARCHAR(50)) AS ProductCode,
-            pr.ProductName,
-            p.BatchDescription AS Batch,
-            p.ExpiryDate,
-            p.AckNumber,
-            p.AckDate,
-            p.Quantity AS Qty,
-            p.FreeQty  AS Free,
-            p.Rate,
-            p.MRP,
-            p.TotalAmount AS Value,
-            DATEDIFF(DAY, p.AckDate, GETDATE()) AS DaysPending,
-            p.Remarks
-        FROM sync.SupplierPendingProducts p
+            pend.AckNo                          AS AckNumber,
+            pend.AckDate                        AS AckDate,
+            CAST(pend.ProductCode AS VARCHAR(50)) AS ProductCode,
+            pr.ProductName                      AS ProductName,
+            pend.Batch                          AS Batch,
+            pend.ExpiryDate                     AS ExpiryDate,
+            pend.Qty                            AS Qty,
+            pend.Free                           AS Free,
+            pend.Rate                           AS Rate,
+            pend.MRP                            AS MRP,
+            pend.Value                          AS Value,
+            DATEDIFF(DAY, pend.AckDate, GETDATE()) AS DaysPending,
+            pend.Remarks                        AS Remarks
+        FROM {_PENDING_ROWS}
         LEFT JOIN sync.Products pr
-            ON pr.tenant_id = p.tenant_id AND pr.store_id = p.store_id
-           AND pr.ProductCode = p.ProductCode
-        WHERE p.tenant_id = ? AND p.store_id = ? AND p.SupplierCode = ?
-        ORDER BY p.AckDate, pr.ProductName
+            ON pr.tenant_id = pend.tenant_id AND pr.store_id = pend.store_id
+           AND pr.ProductCode = pend.ProductCode
+        WHERE pend.tenant_id = ? AND pend.store_id = ? AND pend.SupplierCode = ?
+        ORDER BY pend.AckDate, pr.ProductName
     """
     return _run(sql, (tenant_id, store_id, supplier_code))
 
 
 # ---------------------------------------------------------------------------
-# Level 3 — Ack-wise summary for a supplier (a supplier may have many acks).
+# Level 3 — Ack-wise summary for a supplier ("Ack No" = TransNo).
 # ---------------------------------------------------------------------------
 
 def supplier_acks(tenant_id, store_id, supplier_code):
     sql = """
         SELECT
-            h.AckNumber,
-            h.AckDate,
+            h.TransNo                               AS AckNumber,
+            h.AckDate                               AS AckDate,
             h.Quantity                              AS GivenQty,
             h.AcceptedQty                           AS ReceivedQty,
             ISNULL(h.RejectedQty, 0)                AS RejectQty,
@@ -193,13 +265,13 @@ def supplier_acks(tenant_id, store_id, supplier_code):
             h.Remarks
         FROM sync.SupplierAckHeader h
         WHERE h.tenant_id = ? AND h.store_id = ? AND h.SupplierCode = ?
-        ORDER BY h.AckDate DESC, h.AckNumber DESC
+        ORDER BY h.AckDate DESC, h.TransNo DESC
     """
     return _run(sql, (tenant_id, store_id, supplier_code))
 
 
 # ---------------------------------------------------------------------------
-# Level 4 — Product details for one ack.
+# Level 4 — Product details for one ack (linked by TransNo).
 # ---------------------------------------------------------------------------
 
 def ack_products(tenant_id, store_id, ack_number):
@@ -221,7 +293,7 @@ def ack_products(tenant_id, store_id, ack_number):
         LEFT JOIN sync.Products pr
             ON pr.tenant_id = d.tenant_id AND pr.store_id = d.store_id
            AND pr.ProductCode = d.ProductCode
-        WHERE d.tenant_id = ? AND d.store_id = ? AND d.AckNumber = ?
+        WHERE d.tenant_id = ? AND d.store_id = ? AND d.TransNo = ?
         ORDER BY pr.ProductName
     """
     return _run(sql, (tenant_id, store_id, ack_number))
