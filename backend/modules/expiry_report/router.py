@@ -46,6 +46,27 @@ def supplier_pending(
     return service.run("supplier-pending", tenant_id, store_id, supplier_code)
 
 
+@router.get("/pending-months")
+def pending_months(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+):
+    assert_tenant_access(current_user, tenant_id)
+    return service.run("pending-months", tenant_id, store_id)
+
+
+@router.get("/pending-by-month")
+def pending_by_month(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+    month: str = Query(..., description="yyyy-MM"),
+    current_user: dict = Depends(get_current_user),
+):
+    assert_tenant_access(current_user, tenant_id)
+    return service.run("pending-by-month", tenant_id, store_id, None, None, month)
+
+
 @router.get("/supplier-acks")
 def supplier_acks(
     tenant_id: str = Query(...),

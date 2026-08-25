@@ -244,6 +244,62 @@ def supplier_pending(tenant_id, store_id, supplier_code):
 
 
 # ---------------------------------------------------------------------------
+# Level 2c — Pending by month: month totals + a month's detail (all suppliers).
+# ---------------------------------------------------------------------------
+
+def pending_months(tenant_id, store_id):
+    """Per-month pending totals for a store (all suppliers), newest first."""
+    sql = f"""
+        SELECT
+            CONVERT(CHAR(7), pend.AckDate, 126) AS MonthKey,
+            LEFT(DATENAME(MONTH, pend.AckDate), 3) + ' '
+                + CAST(YEAR(pend.AckDate) AS VARCHAR(4)) AS Period,
+            COUNT(*)         AS Lines,
+            SUM(pend.Qty)    AS PendingQty,
+            SUM(pend.Value)  AS PendingValue
+        FROM {_PENDING_ROWS}
+        WHERE pend.tenant_id = ? AND pend.store_id = ?
+        GROUP BY CONVERT(CHAR(7), pend.AckDate, 126),
+                 LEFT(DATENAME(MONTH, pend.AckDate), 3),
+                 YEAR(pend.AckDate), MONTH(pend.AckDate)
+        ORDER BY YEAR(pend.AckDate) DESC, MONTH(pend.AckDate) DESC
+    """
+    return _run(sql, (tenant_id, store_id))
+
+
+def pending_by_month(tenant_id, store_id, month):
+    """All pending detail lines for a store in one month (month = 'yyyy-MM')."""
+    sql = f"""
+        SELECT
+            RTRIM(COALESCE(s.suppliername, CAST(pend.SupplierCode AS VARCHAR(50)))) AS SupplierName,
+            pend.AckNo                          AS AckNumber,
+            pend.AckDate                        AS AckDate,
+            CAST(pend.ProductCode AS VARCHAR(50)) AS ProductCode,
+            pr.ProductName                      AS ProductName,
+            pend.Batch                          AS Batch,
+            pend.ExpiryDate                     AS ExpiryDate,
+            pend.Qty                            AS Qty,
+            pend.Free                           AS Free,
+            pend.Rate                           AS Rate,
+            pend.MRP                            AS MRP,
+            pend.Value                          AS Value,
+            DATEDIFF(DAY, pend.AckDate, GETDATE()) AS DaysPending,
+            pend.Remarks                        AS Remarks
+        FROM {_PENDING_ROWS}
+        LEFT JOIN sync.Suppliers s
+            ON s.suppliercode = pend.SupplierCode
+           AND s.tenant_id = pend.tenant_id AND s.store_id = pend.store_id
+        LEFT JOIN sync.Products pr
+            ON pr.tenant_id = pend.tenant_id AND pr.store_id = pend.store_id
+           AND pr.ProductCode = pend.ProductCode
+        WHERE pend.tenant_id = ? AND pend.store_id = ?
+          AND CONVERT(CHAR(7), pend.AckDate, 126) = ?
+        ORDER BY SupplierName, pend.AckDate, pr.ProductName
+    """
+    return _run(sql, (tenant_id, store_id, month))
+
+
+# ---------------------------------------------------------------------------
 # Level 3 — Ack-wise summary for a supplier ("Ack No" = TransNo).
 # ---------------------------------------------------------------------------
 

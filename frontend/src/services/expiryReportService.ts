@@ -22,6 +22,16 @@ export const expiryReportService = {
       `/api/expiry-report/supplier-pending${qs({ tenant_id: tenantId, store_id: storeId, supplier_code: supplierCode })}`,
     ),
 
+  pendingMonths: (tenantId: string, storeId: string) =>
+    api.get<ExpiryResult>(
+      `/api/expiry-report/pending-months${qs({ tenant_id: tenantId, store_id: storeId })}`,
+    ),
+
+  pendingByMonth: (tenantId: string, storeId: string, month: string) =>
+    api.get<ExpiryResult>(
+      `/api/expiry-report/pending-by-month${qs({ tenant_id: tenantId, store_id: storeId, month })}`,
+    ),
+
   supplierAcks: (tenantId: string, storeId: string, supplierCode: string) =>
     api.get<ExpiryResult>(
       `/api/expiry-report/supplier-acks${qs({ tenant_id: tenantId, store_id: storeId, supplier_code: supplierCode })}`,

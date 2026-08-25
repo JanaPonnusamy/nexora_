@@ -35,6 +35,28 @@ _META = {
         ("ReceivedValue", "Received Value", "right", _MONEY),
         ("PendingValue", "Pending Value", "right", _MONEY),
     ],
+    "pending-months": [
+        ("Period", "Month", "left", None),
+        ("Lines", "Lines", "right", _INT),
+        ("PendingQty", "Pending Qty", "right", _INT),
+        ("PendingValue", "Pending Value", "right", _MONEY),
+    ],
+    "pending-by-month": [
+        ("SupplierName", "Supplier", "left", None),
+        ("AckNumber", "Ack No", "left", None),
+        ("AckDate", "Ack Date", "center", _DATE),
+        ("ProductCode", "Code", "left", None),
+        ("ProductName", "Product", "left", None),
+        ("Batch", "Batch", "left", None),
+        ("ExpiryDate", "Expiry", "center", _DATE),
+        ("Qty", "Qty", "right", _INT),
+        ("Free", "Free", "right", _INT),
+        ("Rate", "Rate", "right", _MONEY),
+        ("MRP", "MRP", "right", _MONEY),
+        ("Value", "Value", "right", _MONEY),
+        ("DaysPending", "Days", "right", _INT),
+        ("Remarks", "Remarks", "left", None),
+    ],
     "supplier-pending": [
         ("ProductCode", "Code", "left", None),
         ("ProductName", "Product", "left", None),
@@ -86,6 +108,8 @@ _TOTALS = {
     "supplier-summary": ("SupplierName", ["Acks", "GivenQty", "ReceivedQty",
                                           "RejectQty", "PendingQty", "GivenValue",
                                           "ReceivedValue", "PendingValue"]),
+    "pending-months": ("Period", ["Lines", "PendingQty", "PendingValue"]),
+    "pending-by-month": ("ProductName", ["Qty", "Free", "Value"]),
     "supplier-pending": ("ProductName", ["Qty", "Free", "Value"]),
     "supplier-acks": ("AckNumber", ["GivenQty", "ReceivedQty", "RejectQty",
                                     "PendingQty", "GivenValue", "ReceivedValue",
@@ -95,11 +119,13 @@ _TOTALS = {
 }
 
 _FN = {
-    "store-summary": lambda t, s, sup, ack: repo.store_summary(t),
-    "supplier-summary": lambda t, s, sup, ack: repo.supplier_summary(t, s),
-    "supplier-pending": lambda t, s, sup, ack: repo.supplier_pending(t, s, sup),
-    "supplier-acks": lambda t, s, sup, ack: repo.supplier_acks(t, s, sup),
-    "ack-products": lambda t, s, sup, ack: repo.ack_products(t, s, ack),
+    "store-summary": lambda t, s, sup, ack, mon: repo.store_summary(t),
+    "supplier-summary": lambda t, s, sup, ack, mon: repo.supplier_summary(t, s),
+    "supplier-pending": lambda t, s, sup, ack, mon: repo.supplier_pending(t, s, sup),
+    "supplier-acks": lambda t, s, sup, ack, mon: repo.supplier_acks(t, s, sup),
+    "ack-products": lambda t, s, sup, ack, mon: repo.ack_products(t, s, ack),
+    "pending-months": lambda t, s, sup, ack, mon: repo.pending_months(t, s),
+    "pending-by-month": lambda t, s, sup, ack, mon: repo.pending_by_month(t, s, mon),
 }
 
 
@@ -127,20 +153,23 @@ def _summary(level, rows):
     return out
 
 
-def run(level, tenant_id, store_id=None, supplier_code=None, ack_number=None):
+def run(level, tenant_id, store_id=None, supplier_code=None, ack_number=None,
+        month=None):
     if level not in _FN:
         raise HTTPException(status_code=404, detail=f"Unknown level '{level}'")
     if not tenant_id:
         raise HTTPException(status_code=400, detail="tenant_id is required")
     if level in ("supplier-summary", "supplier-pending", "supplier-acks",
-                 "ack-products") and not store_id:
+                 "ack-products", "pending-months", "pending-by-month") and not store_id:
         raise HTTPException(status_code=400, detail="store_id is required")
     if level in ("supplier-pending", "supplier-acks") and not supplier_code:
         raise HTTPException(status_code=400, detail="supplier_code is required")
     if level == "ack-products" and not ack_number:
         raise HTTPException(status_code=400, detail="ack_number is required")
+    if level == "pending-by-month" and not month:
+        raise HTTPException(status_code=400, detail="month is required")
 
-    _, rows = _FN[level](tenant_id, store_id, supplier_code, ack_number)
+    _, rows = _FN[level](tenant_id, store_id, supplier_code, ack_number, month)
     return {
         "level": level,
         "columns": _columns(level),

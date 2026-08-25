@@ -25,11 +25,12 @@ function loadPrefs(level: string): ColumnPrefs {
   return emptyPrefs
 }
 
-type View = 'stores' | 'suppliers' | 'supplier' | 'products'
+type View = 'stores' | 'suppliers' | 'months' | 'month-detail' | 'supplier' | 'products'
 type SupplierTab = 'acks' | 'pending'
 
 interface StoreCtx { id: string; name: string }
 interface SupplierCtx { code: string; name: string }
+interface MonthCtx { key: string; label: string }
 
 function cell(value: unknown, col: ExpiryColumn): string {
   if (value === null || value === undefined || value === '') return col.format === 'money' ? '—' : ''
@@ -48,6 +49,7 @@ export default function ExpiryReportPage() {
   const [store, setStore] = useState<StoreCtx | null>(null)
   const [supplier, setSupplier] = useState<SupplierCtx | null>(null)
   const [ack, setAck] = useState<string | null>(null)
+  const [month, setMonth] = useState<MonthCtx | null>(null)
 
   const [result, setResult] = useState<ExpiryResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -97,6 +99,8 @@ export default function ExpiryReportPage() {
     let p: Promise<ExpiryResult>
     if (view === 'stores') p = expiryReportService.storeSummary(tenantId)
     else if (view === 'suppliers' && store) p = expiryReportService.supplierSummary(tenantId, store.id)
+    else if (view === 'months' && store) p = expiryReportService.pendingMonths(tenantId, store.id)
+    else if (view === 'month-detail' && store && month) p = expiryReportService.pendingByMonth(tenantId, store.id, month.key)
     else if (view === 'supplier' && store && supplier) {
       p = supplierTab === 'acks'
         ? expiryReportService.supplierAcks(tenantId, store.id, supplier.code)
@@ -107,19 +111,19 @@ export default function ExpiryReportPage() {
     p.then(setResult)
       .catch((err) => { setResult(null); setError(err instanceof Error ? err.message : 'Failed to load') })
       .finally(() => setLoading(false))
-  }, [tenantId, view, store, supplier, supplierTab, ack])
+  }, [tenantId, view, store, supplier, supplierTab, ack, month])
 
   useEffect(() => { load() }, [load])
 
   // Reset the drill path whenever the tenant changes.
   useEffect(() => {
-    setView('stores'); setStore(null); setSupplier(null); setAck(null)
+    setView('stores'); setStore(null); setSupplier(null); setAck(null); setMonth(null)
   }, [tenantId])
 
   // --- Drill navigation ----------------------------------------------------
   const openStore = (row: Record<string, unknown>) => {
     setStore({ id: String(row.StoreId), name: String(row.StoreName) })
-    setSupplier(null); setAck(null); setView('suppliers')
+    setSupplier(null); setAck(null); setMonth(null); setView('suppliers')
   }
   const openSupplier = (row: Record<string, unknown>) => {
     setSupplier({ code: String(row.SupplierCode), name: String(row.SupplierName) })
@@ -128,26 +132,35 @@ export default function ExpiryReportPage() {
   const openAck = (row: Record<string, unknown>) => {
     setAck(String(row.AckNumber)); setView('products')
   }
-  const goStores = () => { setView('stores'); setStore(null); setSupplier(null); setAck(null) }
-  const goSuppliers = () => { setView('suppliers'); setSupplier(null); setAck(null) }
+  const openMonth = (row: Record<string, unknown>) => {
+    setMonth({ key: String(row.MonthKey), label: String(row.Period) }); setView('month-detail')
+  }
+  const goStores = () => { setView('stores'); setStore(null); setSupplier(null); setAck(null); setMonth(null) }
+  const goSuppliers = () => { setView('suppliers'); setSupplier(null); setAck(null); setMonth(null) }
   const goSupplier = () => { setView('supplier'); setAck(null) }
+  const goMonths = () => { setView('months'); setMonth(null) }
 
   const rowClick = (row: Record<string, unknown>): (() => void) | undefined => {
     if (view === 'stores') return () => openStore(row)
     if (view === 'suppliers') return () => openSupplier(row)
+    if (view === 'months') return () => openMonth(row)
     if (view === 'supplier' && supplierTab === 'acks') return () => openAck(row)
     return undefined
   }
-  const drillable = view === 'stores' || view === 'suppliers' || (view === 'supplier' && supplierTab === 'acks')
+  const drillable = view === 'stores' || view === 'suppliers' || view === 'months' || (view === 'supplier' && supplierTab === 'acks')
+  // The store scope shows two tabs: Suppliers and Pending by Month.
+  const inStoreScope = view === 'suppliers' || view === 'months'
 
   // --- Excel export --------------------------------------------------------
   const levelTitle = useMemo(() => {
     if (view === 'stores') return `Expiry — Store Summary — ${tenantName}`
     if (view === 'suppliers') return `Expiry — Suppliers — ${store?.name ?? ''}`
+    if (view === 'months') return `Expiry — Pending by Month — ${store?.name ?? ''}`
+    if (view === 'month-detail') return `Expiry — Pending ${month?.label ?? ''} — ${store?.name ?? ''}`
     if (view === 'supplier') return `Expiry — ${supplier?.name ?? ''} — ${supplierTab === 'acks' ? 'Acknowledgements' : 'Pending Details'}`
     if (view === 'products') return `Expiry — Ack ${ack} — Products`
     return 'Expiry Report'
-  }, [view, tenantName, store, supplier, supplierTab, ack])
+  }, [view, tenantName, store, supplier, supplierTab, ack, month])
 
   const exportExcel = () => {
     if (!result || result.rows.length === 0) return
@@ -187,10 +200,20 @@ export default function ExpiryReportPage() {
       {/* Breadcrumb drill path */}
       <div className="expiry-crumbs" role="navigation" aria-label="Drill path">
         <button className={`expiry-crumb${view === 'stores' ? ' active' : ''}`} onClick={goStores}>Stores</button>
-        {store && <><span className="sep">/</span><button className={`expiry-crumb${view === 'suppliers' ? ' active' : ''}`} onClick={goSuppliers}>{store.name.trim()}</button></>}
+        {store && <><span className="sep">/</span><button className={`expiry-crumb${inStoreScope ? ' active' : ''}`} onClick={goSuppliers}>{store.name.trim()}</button></>}
+        {(view === 'months' || view === 'month-detail') && <><span className="sep">/</span><button className={`expiry-crumb${view === 'months' ? ' active' : ''}`} onClick={goMonths}>Pending by Month</button></>}
+        {view === 'month-detail' && month && <><span className="sep">/</span><span className="expiry-crumb active">{month.label}</span></>}
         {supplier && <><span className="sep">/</span><button className={`expiry-crumb${view === 'supplier' ? ' active' : ''}`} onClick={goSupplier}>{supplier.name.trim()}</button></>}
         {ack && view === 'products' && <><span className="sep">/</span><span className="expiry-crumb active">Ack {ack}</span></>}
       </div>
+
+      {/* Store scope tabs: Suppliers | Pending by Month */}
+      {inStoreScope && (
+        <div className="expiry-tabs">
+          <button className={`expiry-tab${view === 'suppliers' ? ' active' : ''}`} onClick={goSuppliers}>Suppliers</button>
+          <button className={`expiry-tab${view === 'months' ? ' active' : ''}`} onClick={goMonths}>Pending by Month</button>
+        </div>
+      )}
 
       {/* Tabs at supplier level: Acknowledgements | Pending details */}
       {view === 'supplier' && (
