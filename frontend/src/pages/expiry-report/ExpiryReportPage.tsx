@@ -9,7 +9,21 @@ import type { Tenant } from '../../types/tenant'
 import type { ExpiryColumn, ExpiryResult } from '../../types/expiryReport'
 import { money, num, date } from '../../components/stock/format'
 import { exportExpiryExcel } from './exportExpiryExcel'
+import { ColumnChooser, applyColumnPrefs, type ColumnPrefs } from '../../components/common/ColumnChooser'
 import '../reports.css'
+
+const PREFS_KEY = 'expiry.cols.'
+const emptyPrefs: ColumnPrefs = { order: [], hidden: [] }
+
+function loadPrefs(level: string): ColumnPrefs {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY + level)
+    if (raw) return { ...emptyPrefs, ...JSON.parse(raw) }
+  } catch {
+    /* ignore malformed prefs */
+  }
+  return emptyPrefs
+}
 
 type View = 'stores' | 'suppliers' | 'supplier' | 'products'
 type SupplierTab = 'acks' | 'pending'
@@ -38,6 +52,27 @@ export default function ExpiryReportPage() {
   const [result, setResult] = useState<ExpiryResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // User-designed column layout, per report level, persisted in localStorage
+  // (identical behaviour in the browser and the Electron build).
+  const [prefs, setPrefs] = useState<ColumnPrefs>(emptyPrefs)
+  const level = result?.level ?? ''
+  useEffect(() => { if (level) setPrefs(loadPrefs(level)) }, [level])
+  const savePrefs = useCallback((next: ColumnPrefs) => {
+    setPrefs(next)
+    if (level) {
+      try { localStorage.setItem(PREFS_KEY + level, JSON.stringify(next)) } catch { /* quota */ }
+    }
+  }, [level])
+  const resetPrefs = useCallback(() => {
+    if (level) { try { localStorage.removeItem(PREFS_KEY + level) } catch { /* ignore */ } }
+    setPrefs(emptyPrefs)
+  }, [level])
+
+  const displayColumns = useMemo(
+    () => (result ? applyColumnPrefs(result.columns, prefs) : []),
+    [result, prefs],
+  )
 
   useEffect(() => {
     tenantService.list()
@@ -118,7 +153,7 @@ export default function ExpiryReportPage() {
     if (!result || result.rows.length === 0) return
     const safe = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 40)
     void exportExpiryExcel({
-      columns: result.columns,
+      columns: displayColumns,
       rows: result.rows,
       summary: result.summary,
       sheetName: view,
@@ -136,6 +171,14 @@ export default function ExpiryReportPage() {
           {tenants.length === 0 && <option value="">Loading…</option>}
           {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
         </select>
+        {result && result.columns.length > 0 && (
+          <ColumnChooser
+            columns={result.columns.map((c) => ({ key: c.key, label: c.label }))}
+            prefs={prefs}
+            onChange={savePrefs}
+            onReset={resetPrefs}
+          />
+        )}
         <button className="btn btn-outline-secondary btn-sm" disabled={!result || result.rows.length === 0} onClick={exportExcel}>
           <i className="bi bi-file-earmark-excel" /> Export Excel
         </button>
@@ -167,7 +210,7 @@ export default function ExpiryReportPage() {
         <div className="rpt-tablewrap">
           <table className="rpt-table">
             <thead>
-              <tr>{result.columns.map((c) => <th key={c.key} className={`rpt-${c.align}`}>{c.label}</th>)}</tr>
+              <tr>{displayColumns.map((c) => <th key={c.key} className={`rpt-${c.align}`}>{c.label}</th>)}</tr>
             </thead>
             <tbody>
               {result.rows.map((row, i) => {
@@ -179,13 +222,13 @@ export default function ExpiryReportPage() {
                     onClick={onClick}
                     title={onClick ? 'Click to drill in' : undefined}
                   >
-                    {result.columns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(row[c.key], c)}</td>)}
+                    {displayColumns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(row[c.key], c)}</td>)}
                   </tr>
                 )
               })}
               {result.summary && (
                 <tr className="rpt-total">
-                  {result.columns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(result.summary![c.key], c)}</td>)}
+                  {displayColumns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(result.summary![c.key], c)}</td>)}
                 </tr>
               )}
             </tbody>

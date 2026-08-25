@@ -167,3 +167,44 @@
 .rpt-table tr.expiry-row-link { cursor: pointer; }
 .rpt-table tr.expiry-row-link:hover td { background: var(--nx-surface-sunk, #f1f5f9); }
 .expiry-hint { padding: 0.4rem 0.75rem; font-size: 0.78rem; color: var(--nx-text-soft, #64748b); }
+
+/* --- Column chooser (Expiry Report "design columns") -------------------- */
+.colchooser { position: relative; display: inline-block; }
+.colchooser-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 230px;
+  max-height: 340px;
+  overflow-y: auto;
+  background: var(--nx-surface, #fff);
+  border: 1px solid var(--nx-rule, #e2e8f0);
+  border-radius: var(--nx-radius-md, 8px);
+  box-shadow: var(--nx-shadow-md, 0 4px 12px rgba(0,0,0,0.15));
+  padding: 0.4rem;
+}
+.colchooser-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.78rem; font-weight: 600; color: var(--nx-text-soft, #64748b);
+  padding: 0.15rem 0.35rem 0.4rem;
+}
+.colchooser-reset {
+  background: none; border: none; color: var(--nx-accent, #3b82f6);
+  cursor: pointer; font: inherit; font-size: 0.78rem; padding: 0;
+}
+.colchooser-list { list-style: none; margin: 0; padding: 0; }
+.colchooser-list li {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.5rem; padding: 0.15rem 0.35rem; border-radius: 4px;
+}
+.colchooser-list li:hover { background: var(--nx-surface-sunk, #f1f5f9); }
+.colchooser-item { display: flex; align-items: center; gap: 0.45rem; cursor: pointer; font-size: 0.85rem; margin: 0; flex: 1; }
+.colchooser-label { color: var(--nx-text, #0f172a); }
+.colchooser-move { display: inline-flex; gap: 2px; }
+.colchooser-move button {
+  background: none; border: 1px solid var(--nx-rule, #e2e8f0);
+  border-radius: 4px; cursor: pointer; font-size: 0.6rem; line-height: 1;
+  padding: 2px 4px; color: var(--nx-text-soft, #64748b);
+}
+.colchooser-move button:disabled { opacity: 0.35; cursor: default; }
