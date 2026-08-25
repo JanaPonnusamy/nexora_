@@ -92,6 +92,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     cap: 'REPORTS',
     children: [
       { label: 'Expiry Report', to: '/expiry-report', icon: 'bi-calendar-x', cap: 'REPORTS' },
+      { label: 'Expiry Stock', to: '/expiry-stock', icon: 'bi-scissors', cap: 'REPORTS' },
     ],
   },
   {

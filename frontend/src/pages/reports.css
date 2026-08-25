@@ -62,6 +62,43 @@
   color: var(--nx-text-soft, #64748b);
 }
 
+/* Inline checkbox filter (e.g. "Cutting only"). */
+.rpt-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--nx-text-soft, #64748b);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rpt-check input { cursor: pointer; }
+
+/* Cutting-expiry emphasis: red badge + soft red row tint. */
+.expiry-cut-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #b42318;
+  background: #fee4e2;
+  border: 1px solid #fda29b;
+}
+.expiry-cut-row td { background: #fef4f4; }
+[data-theme='dark'] .expiry-cut-row td,
+[data-bs-theme='dark'] .expiry-cut-row td,
+.dark .expiry-cut-row td { background: rgba(180, 35, 24, 0.14); }
+[data-theme='dark'] .expiry-cut-badge,
+[data-bs-theme='dark'] .expiry-cut-badge,
+.dark .expiry-cut-badge {
+  color: #ffb4ab;
+  background: rgba(180, 35, 24, 0.22);
+  border-color: rgba(253, 162, 155, 0.4);
+}
+
 /* ── Results Table ───────────────────────────────────────────────────────── */
 .rpt-tablewrap {
   overflow: auto;

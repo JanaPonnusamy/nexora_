@@ -40,6 +40,7 @@ const PermissionsPage = lazy(() => import('../pages/administration/PermissionsPa
 const AuditLogsPage = lazy(() => import('../pages/administration/AuditLogsPage'))
 const ReportsPage = lazy(() => import('../pages/ReportsPage'))
 const ExpiryReportPage = lazy(() => import('../pages/expiry-report/ExpiryReportPage'))
+const ExpiryStockReportPage = lazy(() => import('../pages/expiry-stock/ExpiryStockReportPage'))
 const TimeReportPage = lazy(() => import('../pages/TimeReportPage'))
 const PassGenPage = lazy(() => import('../pages/pass-gen/PassGenPage'))
 const LegacyOrderPage = lazy(() => import('../pages/legacy-order/LegacyOrderPage'))
@@ -132,6 +133,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/document-extraction/history" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionHistoryPage /></RequireCapability>} />
         <Route path="/reports" element={<RequireCapability cap="REPORTS"><ReportsPage /></RequireCapability>} />
         <Route path="/expiry-report" element={<RequireCapability cap="REPORTS"><ExpiryReportPage /></RequireCapability>} />
+        <Route path="/expiry-stock" element={<RequireCapability cap="REPORTS"><ExpiryStockReportPage /></RequireCapability>} />
         <Route path="/time-report" element={<RequireCapability cap="TIME_REPORT"><TimeReportPage /></RequireCapability>} />
         <Route path="/pass-gen" element={<RequireCapability cap="PASS_GEN"><PassGenPage /></RequireCapability>} />
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />
