@@ -153,6 +153,63 @@ def _summary(level, rows):
     return out
 
 
+_GROUP_LABEL = {"summary": "Store", "ack": "Ack No", "month": "Month",
+                "supplier": "Supplier", "product": "Product"}
+
+_STATUS_MEASURES = {
+    "all": [("GivenQty", "Given Qty", _INT), ("ReceivedQty", "Received Qty", _INT),
+            ("RejectQty", "Reject Qty", _INT), ("PendingQty", "Pending Qty", _INT),
+            ("GivenValue", "Given Value", _MONEY), ("ReceivedValue", "Received Value", _MONEY),
+            ("PendingValue", "Pending Value", _MONEY)],
+    "received": [("ReceivedQty", "Received Qty", _INT), ("ReceivedValue", "Received Value", _MONEY)],
+    "pending": [("PendingQty", "Pending Qty", _INT), ("PendingValue", "Pending Value", _MONEY)],
+    "rejected": [("RejectQty", "Reject Qty", _INT), ("RejectValue", "Reject Value", _MONEY)],
+}
+
+
+def date_bounds(tenant_id, store_id=None):
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    return repo.date_bounds(tenant_id, store_id or None)
+
+
+def expiry_data(tenant_id, store_id, from_date, to_date, status, group_by):
+    status = (status or "all").lower()
+    group_by = (group_by or "summary").lower()
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    if status not in _STATUS_MEASURES:
+        raise HTTPException(status_code=400, detail=f"bad status '{status}'")
+    if group_by not in _GROUP_LABEL:
+        raise HTTPException(status_code=400, detail=f"bad group_by '{group_by}'")
+    if not (from_date and to_date):
+        raise HTTPException(status_code=400, detail="from and to dates are required")
+
+    rows = repo.expiry_data(tenant_id, store_id or None, from_date, to_date, status, group_by)
+
+    columns = [{"key": "Group", "label": _GROUP_LABEL[group_by], "align": "left", "format": None}]
+    if group_by == "ack":
+        columns.append({"key": "AckDate", "label": "Ack Date", "align": "center", "format": _DATE})
+        columns.append({"key": "Supplier", "label": "Supplier", "align": "left", "format": None})
+    for key, label, fmt in _STATUS_MEASURES[status]:
+        columns.append({"key": key, "label": label, "align": "right", "format": fmt})
+
+    summary = None
+    if rows:
+        summary = {"Group": "Total"}
+        for key, _, _ in _STATUS_MEASURES[status]:
+            summary[key] = _sum(rows, key)
+
+    return {
+        "level": f"data-{status}-{group_by}",
+        "status": status,
+        "group_by": group_by,
+        "columns": columns,
+        "rows": rows,
+        "summary": summary,
+    }
+
+
 def run(level, tenant_id, store_id=None, supplier_code=None, ack_number=None,
         month=None):
     if level not in _FN:

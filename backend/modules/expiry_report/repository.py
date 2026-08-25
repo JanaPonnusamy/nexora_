@@ -116,6 +116,159 @@ _PENDING_ROWS = """
 
 
 # ---------------------------------------------------------------------------
+# Unified pivot: date range + status (all/received/pending/rejected) x
+# group_by (summary/ack/month/supplier/product). Given/Received/Rejected come
+# from the ack detail lines; Pending from the legacy-SP pending set. Both are
+# aggregated by the chosen dimension and merged in Python.
+# ---------------------------------------------------------------------------
+
+def date_bounds(tenant_id, store_id=None):
+    """Oldest pending AckDate for the scope (default 'from' date)."""
+    where = "pend.tenant_id = ?"
+    params = [tenant_id]
+    if store_id:
+        where += " AND pend.store_id = ?"
+        params.append(store_id)
+    sql = f"SELECT MIN(pend.AckDate) AS Oldest FROM {_PENDING_ROWS} WHERE {where}"
+    _, rows = _run(sql, tuple(params))
+    val = rows[0]["Oldest"] if rows else None
+    return {"oldest_pending": val.strftime("%Y-%m-%d") if val else None}
+
+
+def _dim_ack(group_by):
+    """(key_expr, label_expr, group_by_expr, extra_select, joins) for ack base."""
+    if group_by == "summary":
+        return ("CAST(h.store_id AS VARCHAR(36))", "MAX(st.store_name)", "h.store_id",
+                "", "LEFT JOIN dbo.stores st ON st.store_id = h.store_id")
+    if group_by == "ack":
+        return ("h.TransNo", "h.TransNo", "h.TransNo",
+                ", MIN(h.AckDate) AS AckDate, MAX(RTRIM(s.suppliername)) AS Supplier",
+                "LEFT JOIN sync.Suppliers s ON s.suppliercode=h.SupplierCode AND s.tenant_id=h.tenant_id AND s.store_id=h.store_id")
+    if group_by == "month":
+        return ("CONVERT(CHAR(7), h.AckDate, 126)",
+                "MAX(LEFT(DATENAME(MONTH,h.AckDate),3)+' '+CAST(YEAR(h.AckDate) AS VARCHAR(4)))",
+                "CONVERT(CHAR(7), h.AckDate, 126)", ", MIN(h.AckDate) AS SortDate", "")
+    if group_by == "supplier":
+        return ("CAST(h.SupplierCode AS VARCHAR(50))", "MAX(RTRIM(s.suppliername))", "h.SupplierCode",
+                "", "LEFT JOIN sync.Suppliers s ON s.suppliercode=h.SupplierCode AND s.tenant_id=h.tenant_id AND s.store_id=h.store_id")
+    # product
+    return ("CAST(d.ProductCode AS VARCHAR(50))", "MAX(pr.ProductName)", "d.ProductCode",
+            "", "LEFT JOIN sync.Products pr ON pr.ProductCode=d.ProductCode AND pr.tenant_id=d.tenant_id AND pr.store_id=d.store_id")
+
+
+def _dim_pending(group_by):
+    """(key_expr, label_expr, group_by_expr, extra_select, joins) for pending base."""
+    if group_by == "summary":
+        return ("CAST(pend.store_id AS VARCHAR(36))", "MAX(st.store_name)", "pend.store_id",
+                "", "LEFT JOIN dbo.stores st ON st.store_id = pend.store_id")
+    if group_by == "ack":
+        return ("pend.AckNo", "pend.AckNo", "pend.AckNo",
+                ", MIN(pend.AckDate) AS AckDate, MAX(RTRIM(s.suppliername)) AS Supplier",
+                "LEFT JOIN sync.Suppliers s ON s.suppliercode=pend.SupplierCode AND s.tenant_id=pend.tenant_id AND s.store_id=pend.store_id")
+    if group_by == "month":
+        return ("CONVERT(CHAR(7), pend.AckDate, 126)",
+                "MAX(LEFT(DATENAME(MONTH,pend.AckDate),3)+' '+CAST(YEAR(pend.AckDate) AS VARCHAR(4)))",
+                "CONVERT(CHAR(7), pend.AckDate, 126)", ", MIN(pend.AckDate) AS SortDate", "")
+    if group_by == "supplier":
+        return ("CAST(pend.SupplierCode AS VARCHAR(50))", "MAX(RTRIM(s.suppliername))", "pend.SupplierCode",
+                "", "LEFT JOIN sync.Suppliers s ON s.suppliercode=pend.SupplierCode AND s.tenant_id=pend.tenant_id AND s.store_id=pend.store_id")
+    return ("CAST(pend.ProductCode AS VARCHAR(50))", "MAX(pr.ProductName)", "pend.ProductCode",
+            "", "LEFT JOIN sync.Products pr ON pr.ProductCode=pend.ProductCode AND pr.tenant_id=pend.tenant_id AND pr.store_id=pend.store_id")
+
+
+def _ack_agg(tenant_id, store_id, from_date, to_date, group_by):
+    keyx, labelx, groupx, extra, join = _dim_ack(group_by)
+    where = ["h.tenant_id = ?", "h.TransactionValidity = 0",
+             "CAST(h.AckDate AS DATE) BETWEEN ? AND ?"]
+    params = [tenant_id, from_date, to_date]
+    if store_id:
+        where.append("h.store_id = ?"); params.append(store_id)
+    sql = f"""
+        SELECT {keyx} AS GroupKey, {labelx} AS Label{extra},
+               SUM(d.Quantity) AS gq, SUM(d.TotalAmount) AS gv,
+               SUM(d.AcceptedQty) AS rq,
+               SUM(CASE WHEN d.Quantity>0 THEN d.TotalAmount*d.AcceptedQty/d.Quantity ELSE 0 END) AS rv,
+               SUM(ISNULL(d.RejectedQty,0)) AS jq,
+               SUM(CASE WHEN d.Quantity>0 THEN d.TotalAmount*ISNULL(d.RejectedQty,0)/d.Quantity ELSE 0 END) AS jv
+        FROM sync.SupplierAckHeader h
+        INNER JOIN sync.SupplierAckDetail d
+            ON d.tenant_id=h.tenant_id AND d.store_id=h.store_id
+           AND d.TransNo=h.TransNo AND d.AckDate=h.AckDate
+        {join}
+        WHERE {' AND '.join(where)}
+        GROUP BY {groupx}
+    """
+    _, rows = _run(sql, tuple(params))
+    return rows
+
+
+def _pending_agg(tenant_id, store_id, from_date, to_date, group_by):
+    keyx, labelx, groupx, extra, join = _dim_pending(group_by)
+    where = ["pend.tenant_id = ?", "CAST(pend.AckDate AS DATE) BETWEEN ? AND ?"]
+    params = [tenant_id, from_date, to_date]
+    if store_id:
+        where.append("pend.store_id = ?"); params.append(store_id)
+    sql = f"""
+        SELECT {keyx} AS GroupKey, {labelx} AS Label{extra},
+               SUM(pend.Qty) AS pq, SUM(pend.Value) AS pv
+        FROM {_PENDING_ROWS}
+        {join}
+        WHERE {' AND '.join(where)}
+        GROUP BY {groupx}
+    """
+    _, rows = _run(sql, tuple(params))
+    return rows
+
+
+def expiry_data(tenant_id, store_id, from_date, to_date, status, group_by):
+    """Merged pivot rows. Always returns every measure; the service picks the
+    columns to show for the chosen status."""
+    need_ack = status in ("all", "received", "rejected")
+    need_pend = status in ("all", "pending")
+    ack = _ack_agg(tenant_id, store_id, from_date, to_date, group_by) if need_ack else []
+    pend = _pending_agg(tenant_id, store_id, from_date, to_date, group_by) if need_pend else []
+
+    merged = {}
+    def slot(r):
+        k = r["GroupKey"]
+        m = merged.get(k)
+        if not m:
+            m = {"GroupKey": k, "Group": (r.get("Label") or k),
+                 "AckDate": r.get("AckDate"), "Supplier": r.get("Supplier"),
+                 "SortDate": r.get("SortDate"),
+                 "GivenQty": 0, "GivenValue": 0, "ReceivedQty": 0, "ReceivedValue": 0,
+                 "RejectQty": 0, "RejectValue": 0, "PendingQty": 0, "PendingValue": 0}
+            merged[k] = m
+        return m
+    for r in ack:
+        m = slot(r)
+        m["GivenQty"] += r["gq"] or 0; m["GivenValue"] += r["gv"] or 0
+        m["ReceivedQty"] += r["rq"] or 0; m["ReceivedValue"] += r["rv"] or 0
+        m["RejectQty"] += r["jq"] or 0; m["RejectValue"] += r["jv"] or 0
+    for r in pend:
+        m = slot(r)
+        m["PendingQty"] += r["pq"] or 0; m["PendingValue"] += r["pv"] or 0
+
+    rows = list(merged.values())
+    # Status-specific row filter (drop empty rows for single-status views).
+    if status == "received":
+        rows = [r for r in rows if (r["ReceivedQty"] or 0) != 0]
+    elif status == "rejected":
+        rows = [r for r in rows if (r["RejectQty"] or 0) != 0]
+    elif status == "pending":
+        rows = [r for r in rows if (r["PendingQty"] or 0) != 0]
+
+    # Ordering: month by date desc; everything else by the dominant value desc.
+    if group_by == "month":
+        rows.sort(key=lambda r: str(r.get("SortDate") or ""), reverse=True)
+    else:
+        sortkey = {"received": "ReceivedValue", "rejected": "RejectValue",
+                   "pending": "PendingValue"}.get(status, "GivenValue")
+        rows.sort(key=lambda r: float(r.get(sortkey) or 0), reverse=True)
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Level 1 — Store-wise summary (all stores of a tenant, totals only).
 # ---------------------------------------------------------------------------
 

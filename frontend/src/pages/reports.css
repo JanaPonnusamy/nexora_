@@ -208,3 +208,7 @@
   padding: 2px 4px; color: var(--nx-text-soft, #64748b);
 }
 .colchooser-move button:disabled { opacity: 0.35; cursor: default; }
+
+/* Group-by selector row: lighter/secondary vs the status tabs above it. */
+.expiry-tab-alt { font-size: 0.8rem; padding: 0.25rem 0.75rem; }
+.expiry-tab-alt.active { background: var(--nx-text-soft, #64748b); border-color: var(--nx-text-soft, #64748b); }

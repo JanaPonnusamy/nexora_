@@ -16,6 +16,30 @@ from modules.expiry_report import service
 router = APIRouter(prefix="/api/expiry-report", tags=["Expiry Report"])
 
 
+@router.get("/date-bounds")
+def date_bounds(
+    tenant_id: str = Query(...),
+    store_id: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    assert_tenant_access(current_user, tenant_id)
+    return service.date_bounds(tenant_id, store_id)
+
+
+@router.get("/data")
+def data(
+    tenant_id: str = Query(...),
+    store_id: Optional[str] = Query(None),
+    from_date: str = Query(..., alias="from"),
+    to_date: str = Query(..., alias="to"),
+    status: str = Query("all"),
+    group_by: str = Query("summary"),
+    current_user: dict = Depends(get_current_user),
+):
+    assert_tenant_access(current_user, tenant_id)
+    return service.expiry_data(tenant_id, store_id, from_date, to_date, status, group_by)
+
+
 @router.get("/store-summary")
 def store_summary(
     tenant_id: str = Query(...),

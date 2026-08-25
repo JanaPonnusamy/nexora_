@@ -33,21 +33,23 @@ function value(raw: unknown, fmt: ExpiryColumn['format']): string | number | Dat
   return String(raw)
 }
 
-export async function exportExpiryExcel({
-  columns,
-  rows,
-  summary,
-  sheetName,
-  fileName,
-  title,
-}: {
+interface ExpiryExcelOpts {
   columns: ExpiryColumn[]
   rows: Record<string, unknown>[]
   summary: Record<string, unknown> | null
   sheetName: string
   fileName: string
   title?: string
-}): Promise<void> {
+}
+
+/** Build the styled workbook and return it as an .xlsx Blob (no download). */
+export async function buildExpiryExcelBlob({
+  columns,
+  rows,
+  summary,
+  sheetName,
+  title,
+}: ExpiryExcelOpts): Promise<Blob> {
   const wb = new ExcelJS.Workbook()
   wb.creator = 'Axythic'
   wb.created = new Date()
@@ -119,13 +121,25 @@ export async function exportExpiryExcel({
   })
 
   const buf = await wb.xlsx.writeBuffer()
-  const blob = new Blob([buf], {
+  return new Blob([buf], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
+}
+
+/** Build an .xlsx File (for WhatsApp / upload flows). */
+export async function buildExpiryExcelFile(opts: ExpiryExcelOpts): Promise<File> {
+  const blob = await buildExpiryExcelBlob(opts)
+  const name = opts.fileName.endsWith('.xlsx') ? opts.fileName : `${opts.fileName}.xlsx`
+  return new File([blob], name, { type: blob.type })
+}
+
+/** Build the workbook and trigger a browser download. */
+export async function exportExpiryExcel(opts: ExpiryExcelOpts): Promise<void> {
+  const blob = await buildExpiryExcelBlob(opts)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`
+  a.download = opts.fileName.endsWith('.xlsx') ? opts.fileName : `${opts.fileName}.xlsx`
   a.click()
   URL.revokeObjectURL(url)
 }

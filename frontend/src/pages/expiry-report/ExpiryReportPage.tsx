@@ -4,33 +4,42 @@ import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
 import { FilterBar } from '../../design-system/components/FilterBar'
 import { tenantService } from '../../services/tenantService'
-import { expiryReportService } from '../../services/expiryReportService'
+import { storeService } from '../../services/storeService'
+import { expiryReportService, type ExpiryStatus, type ExpiryGroupBy } from '../../services/expiryReportService'
 import type { Tenant } from '../../types/tenant'
+import type { Store } from '../../types/store'
 import type { ExpiryColumn, ExpiryResult } from '../../types/expiryReport'
 import { money, num, date } from '../../components/stock/format'
-import { exportExpiryExcel } from './exportExpiryExcel'
+import { exportExpiryExcel, buildExpiryExcelFile } from './exportExpiryExcel'
+import { WhatsAppSendCard } from '../../components/common/WhatsAppSendCard'
 import { ColumnChooser, applyColumnPrefs, type ColumnPrefs } from '../../components/common/ColumnChooser'
 import '../reports.css'
 
 const PREFS_KEY = 'expiry.cols.'
 const emptyPrefs: ColumnPrefs = { order: [], hidden: [] }
+const iso = (d: Date) => d.toISOString().slice(0, 10)
 
 function loadPrefs(level: string): ColumnPrefs {
   try {
     const raw = localStorage.getItem(PREFS_KEY + level)
     if (raw) return { ...emptyPrefs, ...JSON.parse(raw) }
-  } catch {
-    /* ignore malformed prefs */
-  }
+  } catch { /* ignore */ }
   return emptyPrefs
 }
 
-type View = 'stores' | 'suppliers' | 'months' | 'month-detail' | 'supplier' | 'products'
-type SupplierTab = 'acks' | 'pending'
-
-interface StoreCtx { id: string; name: string }
-interface SupplierCtx { code: string; name: string }
-interface MonthCtx { key: string; label: string }
+const STATUSES: { key: ExpiryStatus; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'received', label: 'Received' },
+  { key: 'pending', label: 'Pending' },
+  { key: 'rejected', label: 'Rejected' },
+]
+const GROUPS: { key: ExpiryGroupBy; label: string }[] = [
+  { key: 'summary', label: 'Summary' },
+  { key: 'ack', label: 'Ack-wise' },
+  { key: 'month', label: 'Month-wise' },
+  { key: 'supplier', label: 'Supplier-wise' },
+  { key: 'product', label: 'Product-wise' },
+]
 
 function cell(value: unknown, col: ExpiryColumn): string {
   if (value === null || value === undefined || value === '') return col.format === 'money' ? '—' : ''
@@ -43,136 +52,104 @@ function cell(value: unknown, col: ExpiryColumn): string {
 export default function ExpiryReportPage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState('')
+  const [stores, setStores] = useState<Store[]>([])
+  const [storeId, setStoreId] = useState('') // '' = all stores
 
-  const [view, setView] = useState<View>('stores')
-  const [supplierTab, setSupplierTab] = useState<SupplierTab>('acks')
-  const [store, setStore] = useState<StoreCtx | null>(null)
-  const [supplier, setSupplier] = useState<SupplierCtx | null>(null)
-  const [ack, setAck] = useState<string | null>(null)
-  const [month, setMonth] = useState<MonthCtx | null>(null)
+  const today = useMemo(() => new Date(), [])
+  const yesterday = useMemo(() => iso(new Date(today.getTime() - 864e5)), [today])
+  const [from, setFrom] = useState(iso(new Date(today.getTime() - 365 * 864e5)))
+  const [to, setTo] = useState(yesterday)
+  const [status, setStatus] = useState<ExpiryStatus>('all')
+  const [groupBy, setGroupBy] = useState<ExpiryGroupBy>('summary')
 
   const [result, setResult] = useState<ExpiryResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // User-designed column layout, per report level, persisted in localStorage
-  // (identical behaviour in the browser and the Electron build).
+  // Per-view column layout, persisted in localStorage (web + Electron).
   const [prefs, setPrefs] = useState<ColumnPrefs>(emptyPrefs)
   const level = result?.level ?? ''
   useEffect(() => { if (level) setPrefs(loadPrefs(level)) }, [level])
   const savePrefs = useCallback((next: ColumnPrefs) => {
     setPrefs(next)
-    if (level) {
-      try { localStorage.setItem(PREFS_KEY + level, JSON.stringify(next)) } catch { /* quota */ }
-    }
+    if (level) { try { localStorage.setItem(PREFS_KEY + level, JSON.stringify(next)) } catch { /* quota */ } }
   }, [level])
   const resetPrefs = useCallback(() => {
     if (level) { try { localStorage.removeItem(PREFS_KEY + level) } catch { /* ignore */ } }
     setPrefs(emptyPrefs)
   }, [level])
-
   const displayColumns = useMemo(
     () => (result ? applyColumnPrefs(result.columns, prefs) : []),
     [result, prefs],
   )
 
   useEffect(() => {
-    tenantService.list()
-      .then((rows) => {
-        const active = rows.filter((t) => t.is_active)
-        setTenants(active)
-        if (active.length) setTenantId((cur) => cur || active[0].tenant_id)
-      })
-      .catch(() => setTenants([]))
+    tenantService.list().then((rows) => {
+      const active = rows.filter((t) => t.is_active)
+      setTenants(active)
+      if (active.length) setTenantId((cur) => cur || active[0].tenant_id)
+    }).catch(() => setTenants([]))
+    storeService.list().then(setStores).catch(() => setStores([]))
   }, [])
 
-  const tenantName = useMemo(
-    () => tenants.find((t) => t.tenant_id === tenantId)?.tenant_name ?? '',
-    [tenants, tenantId],
+  const tenantStores = useMemo(
+    () => stores.filter((s) => s.tenant_id === tenantId && s.is_active),
+    [stores, tenantId],
   )
+  useEffect(() => {
+    // Reset store to "all" when tenant changes if the current store is foreign.
+    setStoreId((cur) => (tenantStores.some((s) => s.store_id === cur) ? cur : ''))
+  }, [tenantStores])
 
-  // Load the data for the current view.
-  const load = useCallback(() => {
+  // Default the "from" date to the oldest pending date for the scope.
+  useEffect(() => {
     if (!tenantId) return
+    let live = true
+    expiryReportService.dateBounds(tenantId, storeId || undefined)
+      .then((b) => { if (live && b.oldest_pending) setFrom(b.oldest_pending) })
+      .catch(() => { /* keep current from */ })
+    return () => { live = false }
+  }, [tenantId, storeId])
+
+  // Load the grouped data whenever a filter changes.
+  useEffect(() => {
+    if (!tenantId || !from || !to) return
+    let live = true
     setLoading(true)
     setError(null)
-    let p: Promise<ExpiryResult>
-    if (view === 'stores') p = expiryReportService.storeSummary(tenantId)
-    else if (view === 'suppliers' && store) p = expiryReportService.supplierSummary(tenantId, store.id)
-    else if (view === 'months' && store) p = expiryReportService.pendingMonths(tenantId, store.id)
-    else if (view === 'month-detail' && store && month) p = expiryReportService.pendingByMonth(tenantId, store.id, month.key)
-    else if (view === 'supplier' && store && supplier) {
-      p = supplierTab === 'acks'
-        ? expiryReportService.supplierAcks(tenantId, store.id, supplier.code)
-        : expiryReportService.supplierPending(tenantId, store.id, supplier.code)
-    } else if (view === 'products' && store && ack) p = expiryReportService.ackProducts(tenantId, store.id, ack)
-    else { setLoading(false); return }
+    expiryReportService.data(tenantId, storeId || undefined, from, to, status, groupBy)
+      .then((r) => { if (live) setResult(r) })
+      .catch((err) => { if (live) { setResult(null); setError(err instanceof Error ? err.message : 'Failed to load') } })
+      .finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [tenantId, storeId, from, to, status, groupBy])
 
-    p.then(setResult)
-      .catch((err) => { setResult(null); setError(err instanceof Error ? err.message : 'Failed to load') })
-      .finally(() => setLoading(false))
-  }, [tenantId, view, store, supplier, supplierTab, ack, month])
-
-  useEffect(() => { load() }, [load])
-
-  // Reset the drill path whenever the tenant changes.
-  useEffect(() => {
-    setView('stores'); setStore(null); setSupplier(null); setAck(null); setMonth(null)
-  }, [tenantId])
-
-  // --- Drill navigation ----------------------------------------------------
-  const openStore = (row: Record<string, unknown>) => {
-    setStore({ id: String(row.StoreId), name: String(row.StoreName) })
-    setSupplier(null); setAck(null); setMonth(null); setView('suppliers')
-  }
-  const openSupplier = (row: Record<string, unknown>) => {
-    setSupplier({ code: String(row.SupplierCode), name: String(row.SupplierName) })
-    setAck(null); setSupplierTab('acks'); setView('supplier')
-  }
-  const openAck = (row: Record<string, unknown>) => {
-    setAck(String(row.AckNumber)); setView('products')
-  }
-  const openMonth = (row: Record<string, unknown>) => {
-    setMonth({ key: String(row.MonthKey), label: String(row.Period) }); setView('month-detail')
-  }
-  const goStores = () => { setView('stores'); setStore(null); setSupplier(null); setAck(null); setMonth(null) }
-  const goSuppliers = () => { setView('suppliers'); setSupplier(null); setAck(null); setMonth(null) }
-  const goSupplier = () => { setView('supplier'); setAck(null) }
-  const goMonths = () => { setView('months'); setMonth(null) }
-
-  const rowClick = (row: Record<string, unknown>): (() => void) | undefined => {
-    if (view === 'stores') return () => openStore(row)
-    if (view === 'suppliers') return () => openSupplier(row)
-    if (view === 'months') return () => openMonth(row)
-    if (view === 'supplier' && supplierTab === 'acks') return () => openAck(row)
-    return undefined
-  }
-  const drillable = view === 'stores' || view === 'suppliers' || view === 'months' || (view === 'supplier' && supplierTab === 'acks')
-  // The store scope shows two tabs: Suppliers and Pending by Month.
-  const inStoreScope = view === 'suppliers' || view === 'months'
-
-  // --- Excel export --------------------------------------------------------
+  const storeName = useMemo(
+    () => (storeId ? tenantStores.find((s) => s.store_id === storeId)?.store_name ?? 'Store' : 'All stores'),
+    [storeId, tenantStores],
+  )
   const levelTitle = useMemo(() => {
-    if (view === 'stores') return `Expiry — Store Summary — ${tenantName}`
-    if (view === 'suppliers') return `Expiry — Suppliers — ${store?.name ?? ''}`
-    if (view === 'months') return `Expiry — Pending by Month — ${store?.name ?? ''}`
-    if (view === 'month-detail') return `Expiry — Pending ${month?.label ?? ''} — ${store?.name ?? ''}`
-    if (view === 'supplier') return `Expiry — ${supplier?.name ?? ''} — ${supplierTab === 'acks' ? 'Acknowledgements' : 'Pending Details'}`
-    if (view === 'products') return `Expiry — Ack ${ack} — Products`
-    return 'Expiry Report'
-  }, [view, tenantName, store, supplier, supplierTab, ack, month])
+    const st = STATUSES.find((s) => s.key === status)?.label ?? ''
+    const gb = GROUPS.find((g) => g.key === groupBy)?.label ?? ''
+    return `Expiry — ${st} — ${gb} — ${storeName}`
+  }, [status, groupBy, storeName])
 
+  const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 50)
+  const excelOpts = () => ({
+    columns: displayColumns,
+    rows: result!.rows,
+    summary: result!.summary,
+    sheetName: `${status}-${groupBy}`,
+    fileName: safeName(`${levelTitle}_${from}_${to}`),
+    title: `${levelTitle}  (${from} to ${to})`,
+  })
   const exportExcel = () => {
     if (!result || result.rows.length === 0) return
-    const safe = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 40)
-    void exportExpiryExcel({
-      columns: displayColumns,
-      rows: result.rows,
-      summary: result.summary,
-      sheetName: view,
-      fileName: safe(levelTitle),
-      title: levelTitle,
-    })
+    void exportExpiryExcel(excelOpts())
+  }
+  const buildWhatsAppFile = async () => {
+    if (!result || result.rows.length === 0) throw new Error('Run a report before sending it to WhatsApp.')
+    return buildExpiryExcelFile(excelOpts())
   }
 
   return (
@@ -184,6 +161,12 @@ export default function ExpiryReportPage() {
           {tenants.length === 0 && <option value="">Loading…</option>}
           {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
         </select>
+        <select className="form-select form-select-sm" aria-label="Store" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+          <option value="">All stores</option>
+          {tenantStores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
+        </select>
+        <label className="rpt-field"><span>From</span><input type="date" className="form-control form-control-sm" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+        <label className="rpt-field"><span>To</span><input type="date" className="form-control form-control-sm" value={to} onChange={(e) => setTo(e.target.value)} /></label>
         {result && result.columns.length > 0 && (
           <ColumnChooser
             columns={result.columns.map((c) => ({ key: c.key, label: c.label }))}
@@ -195,40 +178,33 @@ export default function ExpiryReportPage() {
         <button className="btn btn-outline-secondary btn-sm" disabled={!result || result.rows.length === 0} onClick={exportExcel}>
           <i className="bi bi-file-earmark-excel" /> Export Excel
         </button>
+        <WhatsAppSendCard
+          disabled={!result || result.rows.length === 0}
+          title="Send expiry report (Excel) to WhatsApp"
+          defaultCaption={`${levelTitle} | ${from} to ${to}`}
+          buildFile={buildWhatsAppFile}
+        />
       </FilterBar>
 
-      {/* Breadcrumb drill path */}
-      <div className="expiry-crumbs" role="navigation" aria-label="Drill path">
-        <button className={`expiry-crumb${view === 'stores' ? ' active' : ''}`} onClick={goStores}>Stores</button>
-        {store && <><span className="sep">/</span><button className={`expiry-crumb${inStoreScope ? ' active' : ''}`} onClick={goSuppliers}>{store.name.trim()}</button></>}
-        {(view === 'months' || view === 'month-detail') && <><span className="sep">/</span><button className={`expiry-crumb${view === 'months' ? ' active' : ''}`} onClick={goMonths}>Pending by Month</button></>}
-        {view === 'month-detail' && month && <><span className="sep">/</span><span className="expiry-crumb active">{month.label}</span></>}
-        {supplier && <><span className="sep">/</span><button className={`expiry-crumb${view === 'supplier' ? ' active' : ''}`} onClick={goSupplier}>{supplier.name.trim()}</button></>}
-        {ack && view === 'products' && <><span className="sep">/</span><span className="expiry-crumb active">Ack {ack}</span></>}
+      {/* Status filter */}
+      <div className="expiry-tabs" role="tablist" aria-label="Status">
+        {STATUSES.map((s) => (
+          <button key={s.key} className={`expiry-tab${status === s.key ? ' active' : ''}`} onClick={() => setStatus(s.key)}>{s.label}</button>
+        ))}
+      </div>
+      {/* Group-by selector */}
+      <div className="expiry-tabs" role="tablist" aria-label="Group by">
+        {GROUPS.map((g) => (
+          <button key={g.key} className={`expiry-tab expiry-tab-alt${groupBy === g.key ? ' active' : ''}`} onClick={() => setGroupBy(g.key)}>{g.label}</button>
+        ))}
       </div>
 
-      {/* Store scope tabs: Suppliers | Pending by Month */}
-      {inStoreScope && (
-        <div className="expiry-tabs">
-          <button className={`expiry-tab${view === 'suppliers' ? ' active' : ''}`} onClick={goSuppliers}>Suppliers</button>
-          <button className={`expiry-tab${view === 'months' ? ' active' : ''}`} onClick={goMonths}>Pending by Month</button>
-        </div>
-      )}
-
-      {/* Tabs at supplier level: Acknowledgements | Pending details */}
-      {view === 'supplier' && (
-        <div className="expiry-tabs">
-          <button className={`expiry-tab${supplierTab === 'acks' ? ' active' : ''}`} onClick={() => setSupplierTab('acks')}>Acknowledgements</button>
-          <button className={`expiry-tab${supplierTab === 'pending' ? ' active' : ''}`} onClick={() => setSupplierTab('pending')}>Pending details</button>
-        </div>
-      )}
-
       {error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} onRetry={() => setTo((t) => t)} />
       ) : loading && !result ? (
         <EmptyState icon="bi-hourglass-split" title="Loading…" description="Fetching expiry data." />
       ) : !result || result.rows.length === 0 ? (
-        <EmptyState icon="bi-inbox" title="No data" description="No expiry records for this selection." />
+        <EmptyState icon="bi-inbox" title="No data" description="No expiry records for this status / date range." />
       ) : (
         <div className="rpt-tablewrap">
           <table className="rpt-table">
@@ -236,19 +212,11 @@ export default function ExpiryReportPage() {
               <tr>{displayColumns.map((c) => <th key={c.key} className={`rpt-${c.align}`}>{c.label}</th>)}</tr>
             </thead>
             <tbody>
-              {result.rows.map((row, i) => {
-                const onClick = rowClick(row)
-                return (
-                  <tr
-                    key={i}
-                    className={onClick ? 'expiry-row-link' : undefined}
-                    onClick={onClick}
-                    title={onClick ? 'Click to drill in' : undefined}
-                  >
-                    {displayColumns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(row[c.key], c)}</td>)}
-                  </tr>
-                )
-              })}
+              {result.rows.map((row, i) => (
+                <tr key={i}>
+                  {displayColumns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(row[c.key], c)}</td>)}
+                </tr>
+              ))}
               {result.summary && (
                 <tr className="rpt-total">
                   {displayColumns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(result.summary![c.key], c)}</td>)}
@@ -256,7 +224,6 @@ export default function ExpiryReportPage() {
               )}
             </tbody>
           </table>
-          {drillable && <div className="expiry-hint"><i className="bi bi-info-circle" /> Click a row to drill in.</div>}
         </div>
       )}
     </div>

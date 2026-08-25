@@ -8,7 +8,27 @@ function qs(params: Record<string, string | number | undefined>): string {
   return parts.length ? `?${parts.join('&')}` : ''
 }
 
+export type ExpiryStatus = 'all' | 'received' | 'pending' | 'rejected'
+export type ExpiryGroupBy = 'summary' | 'ack' | 'month' | 'supplier' | 'product'
+
 export const expiryReportService = {
+  dateBounds: (tenantId: string, storeId?: string) =>
+    api.get<{ oldest_pending: string | null }>(
+      `/api/expiry-report/date-bounds${qs({ tenant_id: tenantId, store_id: storeId })}`,
+    ),
+
+  data: (
+    tenantId: string,
+    storeId: string | undefined,
+    from: string,
+    to: string,
+    status: ExpiryStatus,
+    groupBy: ExpiryGroupBy,
+  ) =>
+    api.get<ExpiryResult>(
+      `/api/expiry-report/data${qs({ tenant_id: tenantId, store_id: storeId, from, to, status, group_by: groupBy })}`,
+    ),
+
   storeSummary: (tenantId: string) =>
     api.get<ExpiryResult>(`/api/expiry-report/store-summary${qs({ tenant_id: tenantId })}`),
 
