@@ -35,6 +35,31 @@ _DEADLOCK_SQLSTATE = "40001"
 _DEADLOCK_RETRIES = 3
 _DEADLOCK_BACKOFF_SECONDS = 2
 
+# A momentary WAN/VPN blip to a remote branch SQL Server surfaces while pyodbc
+# is still *opening* the connection: an 08S01 communication link failure or an
+# HYT00/HYT01 connect timeout (classically "TCP Provider ... (10060)" raised on
+# SQLSetConnectAttr(SQL_ATTR_AUTOCOMMIT)). update_order_header_details always
+# reaches back out to the branch after the long sync, so a single dropped packet
+# there used to hard-fail the whole one-click run even though the OrderManagement
+# rewrite had already committed. Retry the connect itself a few times with
+# backoff before giving up.
+_TRANSIENT_CONN_SQLSTATES = {"08S01", "08001", "08003", "HYT00", "HYT01"}
+_CONNECT_RETRIES = 3
+_CONNECT_BACKOFF_SECONDS = 2
+
+
+def _connect(conn_str, timeout=30):
+    """pyodbc.connect with retry on transient connection failures."""
+    for attempt in range(1, _CONNECT_RETRIES + 1):
+        try:
+            return pyodbc.connect(conn_str, timeout=timeout)
+        except pyodbc.Error as exc:
+            sqlstate = exc.args[0] if exc.args else None
+            if sqlstate in _TRANSIENT_CONN_SQLSTATES and attempt < _CONNECT_RETRIES:
+                time.sleep(_CONNECT_BACKOFF_SECONDS * attempt)
+                continue
+            raise
+
 # start_order_process (service.py) fires one thread per store, and every
 # store's InsertDataIntoDestination hits the SAME shared OrderManagement
 # table. Without an index, the backup INSERT...SELECT and the DELETE below
@@ -115,7 +140,7 @@ def fetch_source_data(conn_str, odata, store_name, store_code, min_days, max_day
         "status": 0,
     })
 
-    with pyodbc.connect(conn_str, timeout=30) as conn:
+    with _connect(conn_str, timeout=30) as conn:
         conn.timeout = 0
         cur = conn.cursor()
         cur.execute(sql, values)
@@ -142,7 +167,7 @@ def insert_data_into_destination(columns, rows, store_name):
     # OrderManagement outside this process (e.g. the legacy desktop app).
     with _write_lock:
         for attempt in range(1, _DEADLOCK_RETRIES + 1):
-            with pyodbc.connect(database.central_connection_string(), timeout=30) as conn:
+            with _connect(database.central_connection_string(), timeout=30) as conn:
                 conn.timeout = 0
                 cur = conn.cursor()
                 try:
@@ -191,7 +216,7 @@ def update_order_header_details(source_cs, store_name, min_days, max_days):
     last_bill_datetime = None
     last_grn = ""
 
-    with pyodbc.connect(source_cs, timeout=30) as src:
+    with _connect(source_cs, timeout=30) as src:
         cur = src.cursor()
         row = cur.execute(
             "SELECT TOP 1 Transactiondate, BNumber FROM ProductSaleInformation "
@@ -208,7 +233,7 @@ def update_order_header_details(source_cs, store_name, min_days, max_days):
         if row:
             last_grn = str(row.Grnnumber or "")
 
-    with pyodbc.connect(database.central_connection_string(), timeout=30) as conn:
+    with _connect(database.central_connection_string(), timeout=30) as conn:
         cur = conn.cursor()
         row = cur.execute(
             "SELECT TOP 1 WantedDate, OrderId, StoreName FROM OrderManagement "
