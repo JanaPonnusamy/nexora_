@@ -128,17 +128,59 @@ _PENDING_ROWS = """
 # aggregated by the chosen dimension and merged in Python.
 # ---------------------------------------------------------------------------
 
-def date_bounds(tenant_id, store_id=None):
+def date_bounds(tenant_id, store_id=None, supplier_code=None):
     """Oldest pending AckDate for the scope (default 'from' date)."""
     where = "pend.tenant_id = ?"
     params = [tenant_id]
     if store_id:
         where += " AND pend.store_id = ?"
         params.append(store_id)
+    if supplier_code:
+        where += " AND pend.SupplierCode = ?"
+        params.append(supplier_code)
     sql = f"SELECT MIN(pend.AckDate) AS Oldest FROM {_PENDING_ROWS} WHERE {where}"
     _, rows = _run(sql, tuple(params))
     val = rows[0]["Oldest"] if rows else None
     return {"oldest_pending": val.strftime("%Y-%m-%d") if val else None}
+
+
+def suppliers(tenant_id, store_id=None):
+    """Distinct suppliers that have expiry ack or pending rows in the scope —
+    for the supplier filter dropdown. Names resolved from sync.Suppliers."""
+    ack_where = "h.tenant_id = ?"
+    pend_where = "pend.tenant_id = ?"
+    params = [tenant_id]
+    if store_id:
+        ack_where += " AND h.store_id = ?"
+        pend_where += " AND pend.store_id = ?"
+    sql = f"""
+        WITH codes AS (
+            SELECT DISTINCT CAST(h.SupplierCode AS VARCHAR(50)) AS SupplierCode
+            FROM sync.SupplierAckHeader h
+            WHERE {ack_where} AND h.SupplierCode IS NOT NULL
+            UNION
+            SELECT DISTINCT CAST(pend.SupplierCode AS VARCHAR(50))
+            FROM {_PENDING_ROWS}
+            WHERE {pend_where} AND pend.SupplierCode IS NOT NULL
+        )
+        SELECT c.SupplierCode,
+               RTRIM(COALESCE(MAX(s.suppliername), c.SupplierCode)) AS SupplierName
+        FROM codes c
+        LEFT JOIN sync.Suppliers s
+            ON s.suppliercode = c.SupplierCode AND s.tenant_id = ?
+        WHERE RTRIM(c.SupplierCode) <> ''
+        GROUP BY c.SupplierCode
+        ORDER BY SupplierName
+    """
+    # params order: ack tenant [+store], pend tenant [+store], suppliers tenant
+    full = [tenant_id]
+    if store_id:
+        full.append(store_id)
+    full.append(tenant_id)
+    if store_id:
+        full.append(store_id)
+    full.append(tenant_id)
+    return _run(sql, tuple(full))
 
 
 def _dim_ack(group_by):
@@ -211,13 +253,15 @@ def _dim_processed(group_by):
             "", "LEFT JOIN sync.Products pr ON pr.ProductCode=adjd.ProductCode AND pr.tenant_id=adjd.tenant_id AND pr.store_id=adjd.store_id")
 
 
-def _ack_agg(tenant_id, store_id, from_date, to_date, group_by):
+def _ack_agg(tenant_id, store_id, from_date, to_date, group_by, supplier_code=None):
     keyx, labelx, groupx, extra, join = _dim_ack(group_by)
     where = ["h.tenant_id = ?", "h.TransactionValidity = 0",
              "CAST(h.AckDate AS DATE) BETWEEN ? AND ?"]
     params = [tenant_id, from_date, to_date]
     if store_id:
         where.append("h.store_id = ?"); params.append(store_id)
+    if supplier_code:
+        where.append("h.SupplierCode = ?"); params.append(supplier_code)
     sql = f"""
         SELECT {keyx} AS GroupKey, {labelx} AS Label{extra},
                SUM(d.Quantity) AS gq, SUM(d.TotalAmount) AS gv,
@@ -237,7 +281,7 @@ def _ack_agg(tenant_id, store_id, from_date, to_date, group_by):
     return rows
 
 
-def _processed_agg(tenant_id, store_id, from_date, to_date, group_by):
+def _processed_agg(tenant_id, store_id, from_date, to_date, group_by, supplier_code=None):
     """Received = the legacy 'Processed Issue' figure. Faithful port of
     dbo.dsp_SupplierProcessedIssueReport (@ProcessMode=0 branch, @AdjMode=All):
     valid SupplierAdj settlement lines gated by SeriesSettings.IncludeInReports=1,
@@ -250,6 +294,8 @@ def _processed_agg(tenant_id, store_id, from_date, to_date, group_by):
     params = [tenant_id, from_date, to_date]
     if store_id:
         where.append("adjh.store_id = ?"); params.append(store_id)
+    if supplier_code:
+        where.append("adjh.SupplierCode = ?"); params.append(supplier_code)
     sql = f"""
         SELECT {keyx} AS GroupKey, {labelx} AS Label{extra},
                SUM(adjd.Quantity) AS rq, SUM(adjd.TotalAmount) AS rv
@@ -268,12 +314,14 @@ def _processed_agg(tenant_id, store_id, from_date, to_date, group_by):
     return rows
 
 
-def _pending_agg(tenant_id, store_id, from_date, to_date, group_by):
+def _pending_agg(tenant_id, store_id, from_date, to_date, group_by, supplier_code=None):
     keyx, labelx, groupx, extra, join = _dim_pending(group_by)
     where = ["pend.tenant_id = ?", "CAST(pend.AckDate AS DATE) BETWEEN ? AND ?"]
     params = [tenant_id, from_date, to_date]
     if store_id:
         where.append("pend.store_id = ?"); params.append(store_id)
+    if supplier_code:
+        where.append("pend.SupplierCode = ?"); params.append(supplier_code)
     sql = f"""
         SELECT {keyx} AS GroupKey, {labelx} AS Label{extra},
                SUM(pend.Qty) AS pq, SUM(pend.Value) AS pv
@@ -286,7 +334,8 @@ def _pending_agg(tenant_id, store_id, from_date, to_date, group_by):
     return rows
 
 
-def expiry_data(tenant_id, store_id, from_date, to_date, status, group_by):
+def expiry_data(tenant_id, store_id, from_date, to_date, status, group_by,
+                supplier_code=None):
     """Merged pivot rows. Always returns every measure; the service picks the
     columns to show for the chosen status."""
     # Given + Reject come from the ack lines; Received from the Processed
@@ -296,9 +345,9 @@ def expiry_data(tenant_id, store_id, from_date, to_date, status, group_by):
     need_ack = status in ("all", "received", "rejected")
     need_proc = status in ("all", "received")
     need_pend = status in ("all", "pending")
-    ack = _ack_agg(tenant_id, store_id, from_date, to_date, group_by) if need_ack else []
-    proc = _processed_agg(tenant_id, store_id, from_date, to_date, group_by) if need_proc else []
-    pend = _pending_agg(tenant_id, store_id, from_date, to_date, group_by) if need_pend else []
+    ack = _ack_agg(tenant_id, store_id, from_date, to_date, group_by, supplier_code) if need_ack else []
+    proc = _processed_agg(tenant_id, store_id, from_date, to_date, group_by, supplier_code) if need_proc else []
+    pend = _pending_agg(tenant_id, store_id, from_date, to_date, group_by, supplier_code) if need_pend else []
 
     merged = {}
     def slot(r):

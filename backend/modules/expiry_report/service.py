@@ -167,13 +167,21 @@ _STATUS_MEASURES = {
 }
 
 
-def date_bounds(tenant_id, store_id=None):
+def date_bounds(tenant_id, store_id=None, supplier_code=None):
     if not tenant_id:
         raise HTTPException(status_code=400, detail="tenant_id is required")
-    return repo.date_bounds(tenant_id, store_id or None)
+    return repo.date_bounds(tenant_id, store_id or None, supplier_code or None)
 
 
-def expiry_data(tenant_id, store_id, from_date, to_date, status, group_by):
+def suppliers(tenant_id, store_id=None):
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    _, rows = repo.suppliers(tenant_id, store_id or None)
+    return {"suppliers": rows}
+
+
+def expiry_data(tenant_id, store_id, from_date, to_date, status, group_by,
+                supplier_code=None):
     status = (status or "all").lower()
     group_by = (group_by or "summary").lower()
     if not tenant_id:
@@ -185,7 +193,8 @@ def expiry_data(tenant_id, store_id, from_date, to_date, status, group_by):
     if not (from_date and to_date):
         raise HTTPException(status_code=400, detail="from and to dates are required")
 
-    rows = repo.expiry_data(tenant_id, store_id or None, from_date, to_date, status, group_by)
+    rows = repo.expiry_data(tenant_id, store_id or None, from_date, to_date, status,
+                            group_by, supplier_code or None)
 
     columns = [{"key": "Group", "label": _GROUP_LABEL[group_by], "align": "left", "format": None}]
     if group_by == "ack":

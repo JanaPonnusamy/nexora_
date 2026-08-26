@@ -20,10 +20,21 @@ router = APIRouter(prefix="/api/expiry-report", tags=["Expiry Report"])
 def date_bounds(
     tenant_id: str = Query(...),
     store_id: Optional[str] = Query(None),
+    supplier_code: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
     assert_tenant_access(current_user, tenant_id)
-    return service.date_bounds(tenant_id, store_id)
+    return service.date_bounds(tenant_id, store_id, supplier_code)
+
+
+@router.get("/suppliers")
+def suppliers(
+    tenant_id: str = Query(...),
+    store_id: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    assert_tenant_access(current_user, tenant_id)
+    return service.suppliers(tenant_id, store_id)
 
 
 @router.get("/data")
@@ -34,10 +45,12 @@ def data(
     to_date: str = Query(..., alias="to"),
     status: str = Query("all"),
     group_by: str = Query("summary"),
+    supplier_code: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
     assert_tenant_access(current_user, tenant_id)
-    return service.expiry_data(tenant_id, store_id, from_date, to_date, status, group_by)
+    return service.expiry_data(tenant_id, store_id, from_date, to_date, status,
+                               group_by, supplier_code)
 
 
 @router.get("/store-summary")

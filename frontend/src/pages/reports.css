@@ -198,6 +198,33 @@
 }
 .expiry-crumb:hover { background: var(--nx-surface-sunk, #f1f5f9); }
 .expiry-crumb.active { color: var(--nx-text, #0f172a); font-weight: 600; cursor: default; }
+/* Prominent supplier search bar (above all other Expiry Report filters). */
+.rpt-supplierbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--nx-surface-sunk, #f8fafc);
+  border: 1px solid var(--nx-rule, #e2e8f0);
+  border-radius: var(--nx-radius-md, 8px);
+}
+.rpt-supplier-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--nx-text-soft, #475569);
+  white-space: nowrap;
+  margin: 0;
+}
+.rpt-supplier-select { max-width: 340px; min-width: 200px; }
+.rpt-supplier-count {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--nx-text-soft, #94a3b8);
+  white-space: nowrap;
+}
+
 .expiry-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.6rem; }
 .rpt-rangenote {
   margin-left: auto;

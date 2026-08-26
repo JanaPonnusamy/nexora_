@@ -11,10 +11,20 @@ function qs(params: Record<string, string | number | undefined>): string {
 export type ExpiryStatus = 'all' | 'received' | 'pending' | 'rejected'
 export type ExpiryGroupBy = 'summary' | 'ack' | 'month' | 'supplier' | 'product'
 
+export interface ExpirySupplier {
+  SupplierCode: string
+  SupplierName: string
+}
+
 export const expiryReportService = {
-  dateBounds: (tenantId: string, storeId?: string) =>
+  dateBounds: (tenantId: string, storeId?: string, supplierCode?: string) =>
     api.get<{ oldest_pending: string | null }>(
-      `/api/expiry-report/date-bounds${qs({ tenant_id: tenantId, store_id: storeId })}`,
+      `/api/expiry-report/date-bounds${qs({ tenant_id: tenantId, store_id: storeId, supplier_code: supplierCode })}`,
+    ),
+
+  suppliers: (tenantId: string, storeId?: string) =>
+    api.get<{ suppliers: ExpirySupplier[] }>(
+      `/api/expiry-report/suppliers${qs({ tenant_id: tenantId, store_id: storeId })}`,
     ),
 
   data: (
@@ -24,9 +34,10 @@ export const expiryReportService = {
     to: string,
     status: ExpiryStatus,
     groupBy: ExpiryGroupBy,
+    supplierCode?: string,
   ) =>
     api.get<ExpiryResult>(
-      `/api/expiry-report/data${qs({ tenant_id: tenantId, store_id: storeId, from, to, status, group_by: groupBy })}`,
+      `/api/expiry-report/data${qs({ tenant_id: tenantId, store_id: storeId, from, to, status, group_by: groupBy, supplier_code: supplierCode })}`,
     ),
 
   storeSummary: (tenantId: string) =>

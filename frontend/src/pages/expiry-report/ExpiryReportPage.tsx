@@ -5,7 +5,7 @@ import { ErrorState } from '../../components/common/ErrorState'
 import { FilterBar } from '../../design-system/components/FilterBar'
 import { tenantService } from '../../services/tenantService'
 import { storeService } from '../../services/storeService'
-import { expiryReportService, type ExpiryStatus, type ExpiryGroupBy } from '../../services/expiryReportService'
+import { expiryReportService, type ExpiryStatus, type ExpiryGroupBy, type ExpirySupplier } from '../../services/expiryReportService'
 import type { Tenant } from '../../types/tenant'
 import type { Store } from '../../types/store'
 import type { ExpiryColumn, ExpiryResult } from '../../types/expiryReport'
@@ -54,6 +54,8 @@ export default function ExpiryReportPage() {
   const [tenantId, setTenantId] = useState('')
   const [stores, setStores] = useState<Store[]>([])
   const [storeId, setStoreId] = useState('') // '' = all stores
+  const [suppliers, setSuppliers] = useState<ExpirySupplier[]>([])
+  const [supplierCode, setSupplierCode] = useState('') // '' = all suppliers
 
   const today = useMemo(() => new Date(), [])
   const yesterday = useMemo(() => iso(new Date(today.getTime() - 864e5)), [today])
@@ -101,15 +103,29 @@ export default function ExpiryReportPage() {
     setStoreId((cur) => (tenantStores.some((s) => s.store_id === cur) ? cur : ''))
   }, [tenantStores])
 
+  // Supplier list for the current tenant/store scope.
+  useEffect(() => {
+    if (!tenantId) { setSuppliers([]); return }
+    let live = true
+    expiryReportService.suppliers(tenantId, storeId || undefined)
+      .then((r) => { if (live) setSuppliers(r.suppliers) })
+      .catch(() => { if (live) setSuppliers([]) })
+    return () => { live = false }
+  }, [tenantId, storeId])
+  // Drop the supplier filter if it isn't valid for the new scope.
+  useEffect(() => {
+    setSupplierCode((cur) => (cur && suppliers.some((s) => s.SupplierCode === cur) ? cur : ''))
+  }, [suppliers])
+
   // Default the "from" date to the oldest pending date for the scope.
   useEffect(() => {
     if (!tenantId) return
     let live = true
-    expiryReportService.dateBounds(tenantId, storeId || undefined)
+    expiryReportService.dateBounds(tenantId, storeId || undefined, supplierCode || undefined)
       .then((b) => { if (live && b.oldest_pending) setFrom(b.oldest_pending) })
       .catch(() => { /* keep current from */ })
     return () => { live = false }
-  }, [tenantId, storeId])
+  }, [tenantId, storeId, supplierCode])
 
   // Load the grouped data whenever a filter changes.
   useEffect(() => {
@@ -117,22 +133,27 @@ export default function ExpiryReportPage() {
     let live = true
     setLoading(true)
     setError(null)
-    expiryReportService.data(tenantId, storeId || undefined, from, to, status, groupBy)
+    expiryReportService.data(tenantId, storeId || undefined, from, to, status, groupBy, supplierCode || undefined)
       .then((r) => { if (live) setResult(r) })
       .catch((err) => { if (live) { setResult(null); setError(err instanceof Error ? err.message : 'Failed to load') } })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-  }, [tenantId, storeId, from, to, status, groupBy])
+  }, [tenantId, storeId, from, to, status, groupBy, supplierCode])
 
   const storeName = useMemo(
     () => (storeId ? tenantStores.find((s) => s.store_id === storeId)?.store_name ?? 'Store' : 'All stores'),
     [storeId, tenantStores],
   )
+  const supplierName = useMemo(
+    () => (supplierCode ? suppliers.find((s) => s.SupplierCode === supplierCode)?.SupplierName ?? '' : ''),
+    [supplierCode, suppliers],
+  )
   const levelTitle = useMemo(() => {
     const st = STATUSES.find((s) => s.key === status)?.label ?? ''
     const gb = GROUPS.find((g) => g.key === groupBy)?.label ?? ''
-    return `Expiry — ${st} — ${gb} — ${storeName}`
-  }, [status, groupBy, storeName])
+    const base = `Expiry — ${st} — ${gb} — ${storeName}`
+    return supplierName ? `${base} — ${supplierName}` : base
+  }, [status, groupBy, storeName, supplierName])
 
   const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 50)
   const excelOpts = () => ({
@@ -155,6 +176,29 @@ export default function ExpiryReportPage() {
   return (
     <div className="container-fluid px-0 rpt">
       <PageHeader title="Expiry Report" breadcrumb={['Expiry Report']} />
+
+      {/* Prominent supplier search — above all other filters. */}
+      <div className="rpt-supplierbar">
+        <label className="rpt-supplier-label" htmlFor="expiry-supplier">
+          <i className="bi bi-search" /> Supplier
+        </label>
+        <select
+          id="expiry-supplier"
+          className="form-select form-select-sm rpt-supplier-select"
+          aria-label="Supplier"
+          value={supplierCode}
+          onChange={(e) => setSupplierCode(e.target.value)}
+        >
+          <option value="">All suppliers</option>
+          {suppliers.map((s) => <option key={s.SupplierCode} value={s.SupplierCode}>{s.SupplierName}</option>)}
+        </select>
+        {supplierCode && (
+          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setSupplierCode('')}>
+            <i className="bi bi-x-lg" /> Clear
+          </button>
+        )}
+        <span className="rpt-supplier-count">{suppliers.length} suppliers</span>
+      </div>
 
       <FilterBar compact className="rpt-bar" ariaLabel="Expiry report filters">
         <select className="form-select form-select-sm" aria-label="Tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
