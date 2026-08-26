@@ -2986,6 +2986,18 @@ th {
     min-height: 20px;
     margin-bottom: 3px;
   }
+
+  /* The empty / "Waiting" / "No" placeholder boxes carry a 52-100px minimum
+     that stops a store row from collapsing to its 1fr slice — with the grid's
+     overflow hidden that min-height is exactly what pushed stores 3+ off-screen
+     (clipped, not scrolled). Drop it on short viewports so every row can shrink
+     and all stores stay visible; the box still fills whatever slice it gets. */
+  .store-workbench .row-empty-state,
+  .store-workbench .waiting-card,
+  .store-workbench .not-found-card,
+  .store-workbench .store-product-grid-wrap .waiting-card {
+    min-height: 0;
+  }
 }
 
 .skeleton-block {
