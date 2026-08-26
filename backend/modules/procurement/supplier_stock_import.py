@@ -259,6 +259,24 @@ def parse_scheme(text):
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
 
+def looks_total_row(code_cell):
+    """True for a division/sub/grand-total or section line carrying the marker in
+    the product-code cell (e.g. 'Total', 'Division Total', 'Sub Total',
+    'Grand Total'). Only the CODE cell is tested — a real product name may itself
+    contain 'total' (e.g. the brand 'Totalip'), so the name is never matched.
+    Shared with modules.supplier_stock_analysis.excel_import."""
+    t = "".join(ch for ch in str(code_cell or "").lower() if ch.isalnum())
+    if not t:
+        return False
+    return (
+        t.startswith("total")
+        or t.startswith("division")
+        or "grandtotal" in t
+        or "subtotal" in t
+        or "divisiontotal" in t
+    )
+
+
 def _read_matrix(file_bytes, filename):
     """Read an .xls/.xlsx into a list-of-lists (no header assumption)."""
     import pandas as pd
@@ -406,10 +424,14 @@ def import_excel(tenant_id, store_id, supplier_code, file_bytes, filename,
         def g(i):
             return row[i] if (i is not None and i < len(row)) else None
         code = g(ci_code)
-        name = g(ci_name)
-        if (code is None or str(code).strip() == "") and (name is None or str(name).strip() == ""):
+        code_str = "" if code is None else str(code).strip()
+        # Drop rows with an empty product code (division section headers, blank
+        # spacers) and division/sub/grand-total lines.
+        if code_str == "" or looks_total_row(code_str):
             continue
-        key = (str(code).strip(), str(name).strip())
+        name = g(ci_name)
+        name_str = "" if name is None else str(name).strip()
+        key = (code_str, name_str)
         stock = _to_num(g(ci_stock), float, 0.0) or 0.0
         sch, free = 0, 0
         if ci_sch is not None:
@@ -420,8 +442,8 @@ def import_excel(tenant_id, store_id, supplier_code, file_bytes, filename,
             merged[key]["available_stock"] += stock
         else:
             merged[key] = {
-                "supplier_product_code": str(code).strip() if code is not None else None,
-                "supplier_product_name": str(name).strip() if name is not None else None,
+                "supplier_product_code": code_str or None,
+                "supplier_product_name": name_str or None,
                 "available_stock": stock,
                 "ptr": _to_num(g(ci_ptr), float),
                 "mrp": _to_num(g(ci_mrp), float),

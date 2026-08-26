@@ -21,8 +21,9 @@ from io import BytesIO
 import pandas as pd
 
 from modules.supplier_stock_analysis import repository
-# Reuse the proven scheme parser so both importers behave identically.
-from modules.procurement.supplier_stock_import import parse_scheme
+# Reuse the proven scheme parser + total-row detector so both importers behave
+# identically.
+from modules.procurement.supplier_stock_import import parse_scheme, looks_total_row
 
 TARGETS = [
     {"value": "supplier_product_code", "label": "Supplier Product Code", "mandatory": True},
@@ -75,23 +76,6 @@ _HEADER_TOKENS = [
 
 def _norm(value):
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
-
-
-def _looks_total(text):
-    """True for a division/sub/grand-total or section line carrying the marker in
-    the product-code cell (e.g. 'Total', 'Division Total', 'Sub Total',
-    'Grand Total'). Only the CODE cell is tested — a real product name may itself
-    contain 'total' (e.g. the brand 'Totalip'), so the name is never matched."""
-    t = _norm(text)
-    if not t:
-        return False
-    return (
-        t.startswith("total")
-        or t.startswith("division")
-        or "grandtotal" in t
-        or "subtotal" in t
-        or "divisiontotal" in t
-    )
 
 
 def _guess(header):
@@ -222,7 +206,7 @@ def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, importe
         code_str = "" if code is None else str(code).strip()
         # Drop rows with an empty product code (division section headers, blank
         # spacers) and division/sub/grand-total lines.
-        if code_str == "" or _looks_total(code_str):
+        if code_str == "" or looks_total_row(code_str):
             continue
         name = g(ci_name)
         name_str = "" if name is None else str(name).strip()
