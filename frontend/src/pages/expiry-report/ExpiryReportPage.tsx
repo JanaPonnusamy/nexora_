@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
 import { ErrorState } from '../../components/common/ErrorState'
@@ -68,6 +68,21 @@ export default function ExpiryReportPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Core filters (tenant/store/supplier/from/to) only take effect when the user
+  // clicks Load — no fetch fires while they are still choosing. Status/Group-By
+  // remain instant pivots that reuse whatever core was last loaded.
+  interface Core { tenantId: string; storeId: string; supplierCode: string; from: string; to: string }
+  const [applied, setApplied] = useState<Core | null>(null)
+  const [boundsReady, setBoundsReady] = useState(false)
+  const didInit = useRef(false)
+  const load = useCallback(() => {
+    if (!tenantId || !from || !to) return
+    setApplied({ tenantId, storeId, supplierCode, from, to })
+  }, [tenantId, storeId, supplierCode, from, to])
+  const dirty = !applied
+    || applied.tenantId !== tenantId || applied.storeId !== storeId
+    || applied.supplierCode !== supplierCode || applied.from !== from || applied.to !== to
+
   // Per-view column layout, persisted in localStorage (web + Electron).
   const [prefs, setPrefs] = useState<ColumnPrefs>(emptyPrefs)
   const level = result?.level ?? ''
@@ -124,29 +139,46 @@ export default function ExpiryReportPage() {
     expiryReportService.dateBounds(tenantId, storeId || undefined, supplierCode || undefined)
       .then((b) => { if (live && b.oldest_pending) setFrom(b.oldest_pending) })
       .catch(() => { /* keep current from */ })
+      .finally(() => { if (live) setBoundsReady(true) })
     return () => { live = false }
   }, [tenantId, storeId, supplierCode])
 
-  // Load the grouped data whenever a filter changes.
+  // Auto-run the report ONCE on first open (after the oldest-pending default is
+  // in), so the page isn't empty. Every later core-filter change waits for Load.
   useEffect(() => {
-    if (!tenantId || !from || !to) return
+    if (didInit.current || !boundsReady) return
+    if (tenantId && from && to) {
+      didInit.current = true
+      setApplied({ tenantId, storeId, supplierCode, from, to })
+    }
+  }, [boundsReady, tenantId, storeId, supplierCode, from, to])
+
+  // Fetch on the APPLIED core (set by Load) + the live Status / Group-By pivots.
+  useEffect(() => {
+    if (!applied) return
     let live = true
     setLoading(true)
     setError(null)
-    expiryReportService.data(tenantId, storeId || undefined, from, to, status, groupBy, supplierCode || undefined)
+    expiryReportService.data(applied.tenantId, applied.storeId || undefined, applied.from,
+                             applied.to, status, groupBy, applied.supplierCode || undefined)
       .then((r) => { if (live) setResult(r) })
       .catch((err) => { if (live) { setResult(null); setError(err instanceof Error ? err.message : 'Failed to load') } })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-  }, [tenantId, storeId, from, to, status, groupBy, supplierCode])
+  }, [applied, status, groupBy])
 
+  // Titles / exports describe the LOADED data (applied core), not pending edits.
+  const shownStoreId = applied?.storeId ?? storeId
+  const shownSupplierCode = applied?.supplierCode ?? supplierCode
+  const shownFrom = applied?.from ?? from
+  const shownTo = applied?.to ?? to
   const storeName = useMemo(
-    () => (storeId ? tenantStores.find((s) => s.store_id === storeId)?.store_name ?? 'Store' : 'All stores'),
-    [storeId, tenantStores],
+    () => (shownStoreId ? tenantStores.find((s) => s.store_id === shownStoreId)?.store_name ?? 'Store' : 'All stores'),
+    [shownStoreId, tenantStores],
   )
   const supplierName = useMemo(
-    () => (supplierCode ? suppliers.find((s) => s.SupplierCode === supplierCode)?.SupplierName ?? '' : ''),
-    [supplierCode, suppliers],
+    () => (shownSupplierCode ? suppliers.find((s) => s.SupplierCode === shownSupplierCode)?.SupplierName ?? '' : ''),
+    [shownSupplierCode, suppliers],
   )
   const levelTitle = useMemo(() => {
     const st = STATUSES.find((s) => s.key === status)?.label ?? ''
@@ -161,8 +193,8 @@ export default function ExpiryReportPage() {
     rows: result!.rows,
     summary: result!.summary,
     sheetName: `${status}-${groupBy}`,
-    fileName: safeName(`${levelTitle}_${from}_${to}`),
-    title: `${levelTitle}  (${from} to ${to})`,
+    fileName: safeName(`${levelTitle}_${shownFrom}_${shownTo}`),
+    title: `${levelTitle}  (${shownFrom} to ${shownTo})`,
   })
   const exportExcel = () => {
     if (!result || result.rows.length === 0) return
@@ -211,6 +243,14 @@ export default function ExpiryReportPage() {
         </select>
         <label className="rpt-field"><span>From</span><input type="date" className="form-control form-control-sm" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
         <label className="rpt-field"><span>To</span><input type="date" className="form-control form-control-sm" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+        <button
+          className={`btn btn-sm rpt-load ${dirty ? 'btn-primary' : 'btn-outline-primary'}`}
+          disabled={!tenantId || !from || !to || loading}
+          onClick={load}
+          title="Load the report for the selected store / dates / supplier"
+        >
+          <i className="bi bi-arrow-clockwise" /> {loading ? 'Loading…' : dirty ? 'Load' : 'Reload'}
+        </button>
         {result && result.columns.length > 0 && (
           <ColumnChooser
             columns={result.columns.map((c) => ({ key: c.key, label: c.label }))}
@@ -225,7 +265,7 @@ export default function ExpiryReportPage() {
         <WhatsAppSendCard
           disabled={!result || result.rows.length === 0}
           title="Send expiry report (Excel) to WhatsApp"
-          defaultCaption={`${levelTitle} | ${from} to ${to}`}
+          defaultCaption={`${levelTitle} | ${shownFrom} to ${shownTo}`}
           buildFile={buildWhatsAppFile}
         />
       </FilterBar>
@@ -243,8 +283,14 @@ export default function ExpiryReportPage() {
         ))}
       </div>
 
+      {dirty && applied && (
+        <div className="rpt-dirty" role="status">
+          <i className="bi bi-exclamation-circle" /> Filters changed — click <strong>Load</strong> to update the report.
+        </div>
+      )}
+
       {error ? (
-        <ErrorState description={error} onRetry={() => setTo((t) => t)} />
+        <ErrorState description={error} onRetry={load} />
       ) : loading && !result ? (
         <EmptyState icon="bi-hourglass-split" title="Loading…" description="Fetching expiry data." />
       ) : !result || result.rows.length === 0 ? (

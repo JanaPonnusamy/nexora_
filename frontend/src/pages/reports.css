@@ -198,6 +198,29 @@
 }
 .expiry-crumb:hover { background: var(--nx-surface-sunk, #f1f5f9); }
 .expiry-crumb.active { color: var(--nx-text, #0f172a); font-weight: 600; cursor: default; }
+/* Load trigger + "filters changed" hint. */
+.rpt-load { white-space: nowrap; font-weight: 600; }
+.rpt-dirty {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: var(--nx-radius-md, 8px);
+}
+[data-theme='dark'] .rpt-dirty,
+[data-bs-theme='dark'] .rpt-dirty,
+.dark .rpt-dirty {
+  color: #fcd34d;
+  background: rgba(146, 100, 14, 0.18);
+  border-color: rgba(252, 211, 77, 0.35);
+}
+
 /* Prominent supplier search bar (above all other Expiry Report filters). */
 .rpt-supplierbar {
   display: flex;
