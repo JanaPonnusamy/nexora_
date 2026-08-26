@@ -23,6 +23,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Label Exporter', to: '/label-exporter', icon: 'bi-tags', cap: 'INVENTORY' },
       { label: 'Box Workspace', to: '/label-exporter/box-workspace', icon: 'bi-grid-3x3-gap', cap: 'INVENTORY' },
       { label: 'NMW Sales Report', to: '/nmw-sales-report', icon: 'bi-receipt', cap: 'INVENTORY' },
+      { label: 'Non-Moving Report', to: '/non-moving-report', icon: 'bi-hourglass-bottom', cap: 'INVENTORY' },
       { label: 'Stock Integrity Check', to: '/stock-integrity', icon: 'bi-shield-check', cap: 'INVENTORY' },
     ],
   },
