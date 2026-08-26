@@ -2916,8 +2916,8 @@ th {
 
   .store-workbench {
     /* menubar (64) + workspace padding top+bottom (28) = 92. */
-    --store-row-height: 138px;
-    --warehouse-panel-height: 138px;
+    --store-row-height: 120px;
+    --warehouse-panel-height: 120px;
     height: calc(100vh - 92px);
     min-height: 0;
     gap: 8px;
@@ -2926,8 +2926,8 @@ th {
   /* Compress the top summary (PRODUCT + NON MOVING panels) so the store grid
      below is not starved — the user's chosen trade-off for the small screen. */
   .store-workbench .global-search-row {
-    min-height: 52px;
-    padding: 7px 10px;
+    min-height: 46px;
+    padding: 5px 10px;
   }
 
   .store-workbench .header-cell {
@@ -2945,15 +2945,17 @@ th {
     padding-block: 3px;
   }
 
-  /* Store rows SHARE the leftover grid height (1fr) instead of a fixed
-     height, so however many stores this tenant has all stay in view and
-     divide the space between them — the grid only scrolls if there are more
-     stores than can hold their ~96px minimum. When there are few stores the
-     rows grow tall and each list shows well over 5 product lines; as the store
-     count rises each row shrinks toward the floor. This restores the original
-     minmax(min, 1fr) intent that the fixed 150px override had defeated. */
+  /* ALL stores must fit the viewport with no grid scroll, whatever the store
+     count. Rows divide the leftover height equally with a ZERO floor
+     (minmax(0, 1fr)) and the grid never scrolls, so N stores each get an equal
+     1/N slice and every one stays in view. Each store's product list still
+     scrolls internally (store-product-grid-wrap) if a search returns more
+     items than its slice can show, so nothing is lost — the page just never
+     grows past the viewport. A fixed or min-floored height here is what pushed
+     the 5th/6th store off-screen. */
   .store-workbench .store-row-grid {
-    grid-auto-rows: minmax(96px, 1fr);
+    grid-auto-rows: minmax(0, 1fr);
+    overflow: hidden;
   }
 
   .store-workbench .top-summary-nmw .store-row-grid {
