@@ -1621,10 +1621,13 @@ function NmwSalesReport({ session, settings }) {
     api.listStores(session).then((rows) => setStores(asArray(rows))).catch(() => {});
   }, [session]);
 
-  function loadItems(bill) {
+  function loadItems(bill, force = false) {
     const key = nmwBillKey(bill);
     setActiveKey(key);
-    if (!items[key] && bill.bill_no) {
+    // Cache line items per bill, but always refetch when `force` (a Load/refresh)
+    // so a server-side data change (e.g. duplicate-line reconcile) is reflected
+    // without needing an app restart.
+    if ((force || !items[key]) && bill.bill_no) {
       api.getNmwSalesBillItems(bill.bill_no, bill.bill_date, session, { tenantId })
         .then((result) => setItems((prev) => ({ ...prev, [key]: asArray(result?.items) })))
         .catch(() => setItems((prev) => ({ ...prev, [key]: [] })));
@@ -1638,6 +1641,7 @@ function NmwSalesReport({ session, settings }) {
     }
     setStatus({ state: 'loading', message: 'Loading bills...' });
     setSelected(new Set());
+    setItems({});  // drop cached line items so a refresh pulls fresh server data
     api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId: storeFilter, dateFrom: range.dateFrom, dateTo: range.dateTo })
       .then((result) => {
         const rows = asArray(result?.bills);
@@ -1645,7 +1649,7 @@ function NmwSalesReport({ session, settings }) {
         setCanApprove(Boolean(result?.can_approve));
         setIsBroad(result?.scope === 'all');
         setStatus({ state: 'ok', message: rows.length ? `${rows.length} bill(s).` : 'No bills for this filter.' });
-        if (rows.length) loadItems(rows[0]);
+        if (rows.length) loadItems(rows[0], true);
         else setActiveKey(null);
       })
       .catch((error) => setStatus({ state: 'error', message: error.message }));
