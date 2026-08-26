@@ -384,6 +384,15 @@ if _frontend_dir and os.path.isdir(_frontend_dir):
     # can resolve the path client-side.
     @app.get('/{full_path:path}')
     def spa_fallback(full_path: str):
+        # An /api/* request that reaches this catch-all means no API router
+        # matched it (a missing route, a typo, or - most commonly - a running
+        # backend process that predates the route and was never restarted).
+        # Falling back to index.html would answer the API call with a 200 +
+        # HTML body, which the SPA client then reports as the misleading
+        # "did not return JSON (got status 200)". Return a clean 404 JSON so a
+        # missing API route is never masked as SPA HTML.
+        if full_path.startswith('api/') or full_path == 'api':
+            return JSONResponse(status_code=404, content={'detail': 'Not Found'})
         candidate = os.path.join(_frontend_dir, full_path)
         if full_path and os.path.isfile(candidate):
             return FileResponse(candidate)
