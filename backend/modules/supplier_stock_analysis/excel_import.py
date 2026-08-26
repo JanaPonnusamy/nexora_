@@ -77,6 +77,23 @@ def _norm(value):
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
 
+def _looks_total(text):
+    """True for a division/sub/grand-total or section line carrying the marker in
+    the product-code cell (e.g. 'Total', 'Division Total', 'Sub Total',
+    'Grand Total'). Only the CODE cell is tested — a real product name may itself
+    contain 'total' (e.g. the brand 'Totalip'), so the name is never matched."""
+    t = _norm(text)
+    if not t:
+        return False
+    return (
+        t.startswith("total")
+        or t.startswith("division")
+        or "grandtotal" in t
+        or "subtotal" in t
+        or "divisiontotal" in t
+    )
+
+
 def _guess(header):
     """Best canonical target for a header: exact normalized hit, then phrase match."""
     h = str(header or "").strip().lower()
@@ -202,10 +219,14 @@ def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, importe
         def g(i):
             return row[i] if (i is not None and i < len(row)) else None
         code = g(ci_code)
-        name = g(ci_name)
-        if (code is None or str(code).strip() == "") or (name is None or str(name).strip() == ""):
+        code_str = "" if code is None else str(code).strip()
+        # Drop rows with an empty product code (division section headers, blank
+        # spacers) and division/sub/grand-total lines.
+        if code_str == "" or _looks_total(code_str):
             continue
-        key = (str(code).strip(), str(name).strip())
+        name = g(ci_name)
+        name_str = "" if name is None else str(name).strip()
+        key = (code_str, name_str)
         stock = _number(g(ci_stock)) or 0.0
         # Split a combined "10 F 1" scheme; a dedicated Free column wins if mapped.
         sch, free = (parse_scheme(g(ci_sch)) if ci_sch is not None else (0, 0))
@@ -215,8 +236,8 @@ def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, importe
             merged[key]["available_stock"] = (merged[key]["available_stock"] or 0.0) + stock
             continue
         merged[key] = {
-            "supplier_product_code": str(code).strip(),
-            "supplier_product_name": str(name).strip(),
+            "supplier_product_code": code_str,
+            "supplier_product_name": name_str,
             "available_stock": stock,
             "ptr": _number(g(ci_ptr)),
             "mrp": _number(g(ci_mrp)),
