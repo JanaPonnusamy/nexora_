@@ -2371,6 +2371,148 @@ th {
   border-radius: 2px;
 }
 
+/* Trend chart in the web "regular model" (sa-chart) look — grouped bars over a
+   tinted plot with gridlines/Y-axis, on-bar value labels, a floating month
+   tooltip and a focused-month readout row. Compact-scaled to sit inside the
+   store row's trend cell. Ported from frontend/.../stock-ui.css, remapped to
+   the desktop's --nx-* design tokens. */
+.sa-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  height: 100%;
+  min-height: 0;
+}
+
+.sa-chart__plot {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sa-chart__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sa-chart__glass-a { stop-color: rgba(255, 255, 255, 0.55); }
+.sa-chart__glass-b { stop-color: rgba(255, 255, 255, 0.05); }
+:root[data-theme="dark"] .sa-chart__glass-a { stop-color: rgba(148, 163, 184, 0.14); }
+:root[data-theme="dark"] .sa-chart__glass-b { stop-color: rgba(148, 163, 184, 0.03); }
+
+.sa-chart__plotbg {
+  stroke: rgba(148, 163, 184, 0.25);
+  stroke-width: 1;
+}
+:root[data-theme="dark"] .sa-chart__plotbg { stroke: rgba(148, 163, 184, 0.16); }
+
+.sa-chart__axis {
+  fill: var(--nx-text-muted);
+  font-size: 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sa-chart__barval {
+  font-size: 7px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.sa-chart__month {
+  fill: var(--nx-text-muted);
+  font-size: 7.5px;
+  font-weight: 600;
+}
+
+.sa-chart__month--on {
+  fill: var(--nx-accent);
+  font-weight: 800;
+}
+
+.sa-chart__tip {
+  position: absolute;
+  z-index: 5;
+  min-width: 118px;
+  padding: 5px 7px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 7px;
+  background: var(--nx-surface);
+  box-shadow: var(--nx-shadow-md);
+  pointer-events: none;
+}
+
+.sa-chart__tip-head {
+  margin-bottom: 3px;
+  color: var(--nx-text);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.sa-chart__tip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.sa-chart__tip-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--nx-text-muted);
+}
+
+.sa-chart__tip-val {
+  color: var(--nx-text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.sa-chart__readout {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px 6px;
+  border-top: 1px solid var(--nx-rule);
+  padding-top: 3px;
+}
+
+.sa-chart__metric {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  min-width: 30px;
+}
+
+.sa-chart__metric-val {
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.sa-chart__metric-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--nx-text-muted);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.sa-chart__swatch {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
 
 .row-table-wrap {
   flex: 1 1 auto;
@@ -2756,6 +2898,85 @@ th {
   .store-row-grid {
     grid-auto-rows: minmax(58px, 1fr);
     gap: 6px;
+  }
+
+  /* 1366x768 fit: the store-grid defaults (208px top-summary, 156px rows,
+     112px product lists) were tuned on a ~1080p monitor and overflow a 768
+     laptop, so the page scrolls and each store shows only ~4 product rows.
+     These overrides carry .store-workbench specificity on purpose — they must
+     beat the unconditional desktop rules below (e.g. grid-auto-rows: 156px),
+     which a bare `.store-row-grid` selector can't. Everything is scoped to the
+     short-viewport media query, so 1080p+ monitors keep the roomier design. */
+
+  /* Reclaim vertical space from the page chrome (workspace padding) so the
+     fixed-height workbench fits the viewport without the page scrolling. */
+  .workspace {
+    padding: 14px;
+  }
+
+  .store-workbench {
+    /* menubar (64) + workspace padding top+bottom (28) = 92. */
+    --store-row-height: 150px;
+    --warehouse-panel-height: 150px;
+    height: calc(100vh - 92px);
+    min-height: 0;
+    gap: 8px;
+  }
+
+  /* Compress the top summary (PRODUCT + NON MOVING panels) so the store grid
+     below is not starved — the user's chosen trade-off for the small screen. */
+  .store-workbench .global-search-row {
+    min-height: 52px;
+    padding: 7px 10px;
+  }
+
+  .store-workbench .header-cell {
+    height: 38px;
+    min-height: 38px;
+    max-height: 38px;
+  }
+
+  .store-workbench .warehouse-column-headers {
+    flex-basis: 40px;
+  }
+
+  .store-workbench .product-status-legend {
+    min-height: 26px;
+    padding-block: 3px;
+  }
+
+  /* Each store row is exactly tall enough for 5 product lines; more stores are
+     reached by scrolling the grid, not the page. */
+  .store-workbench .store-row-grid {
+    grid-auto-rows: 150px;
+  }
+
+  .store-workbench .top-summary-nmw .store-row-grid {
+    grid-auto-rows: var(--warehouse-panel-height);
+  }
+
+  /* 5 rows visible: 5 x (22px min-height + 1px rule) = 115 <= 116. */
+  .store-workbench .stock-cell .store-product-grid-wrap,
+  .store-workbench .row-table-wrap {
+    flex: 0 0 116px;
+    height: 116px;
+    min-height: 116px;
+    max-height: 116px;
+  }
+
+  .store-workbench .row-cell {
+    padding: 4px 8px;
+  }
+
+  .store-workbench .row-cell .grid-row,
+  .store-workbench .store-product-grid-wrap .grid-row {
+    min-height: 22px;
+  }
+
+  .store-workbench .stock-cell-status {
+    flex-basis: 20px;
+    min-height: 20px;
+    margin-bottom: 3px;
   }
 }
 
@@ -3699,7 +3920,7 @@ th {
   padding: 0;
 }
 
-.trend-block .movement-chart {
+.trend-block .sa-chart {
   height: 150px;
 }
 

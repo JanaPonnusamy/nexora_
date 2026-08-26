@@ -2804,42 +2804,153 @@ function buildChartRows(rows, purchases = [], sales = []) {
   return orderedKeys.slice(-4).map((key) => byMonth.get(key));
 }
 
+// Tracks the rendered pixel size of the plot so the SVG viewBox maps ~1:1 to
+// screen units (crisp text, no aspect distortion under preserveAspectRatio).
+function useChartSize() {
+  const ref = useRef(null);
+  const [size, setSize] = useState({ w: 220, h: 120 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0].contentRect;
+      setSize({ w: Math.max(140, cr.width), h: Math.max(80, cr.height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, size];
+}
+
+// Restyled to the web "regular model" (sa-chart): grouped bars over a tinted
+// plot with gridlines + a Y-axis, value labels on each bar, a floating
+// per-month tooltip and a focused-month readout row. Transfer in/out stay
+// folded into Purchase/Sales to match the desktop data model + field toggles.
 function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields = DEFAULT_STOCK_FIELDS.trend }) {
   const months = buildChartRows(rows, purchases, sales);
-  if (!months.length) return <div className="row-empty-state">No</div>;
+  const [hover, setHover] = useState(null);
+  const [tip, setTip] = useState({ x: 0, y: 0 });
+  const [plotRef, { w: W, h: H }] = useChartSize();
 
-  const maxValue = Math.max(1, ...months.flatMap((row) => [
-    visibleFields.purchase && Number(row.pur || 0) + Number(row.tin || 0),
-    visibleFields.sales && Number(row.sal || 0) + Number(row.tout || 0),
-    visibleFields.stock && Number(row.stk || 0)
-  ].filter((value) => value !== false)));
+  const series = [
+    visibleFields.purchase && { key: 'pur', label: 'Purchase', short: 'PUR', color: '#1d4ed8', value: (row) => Number(row.pur || 0) + Number(row.tin || 0) },
+    visibleFields.sales && { key: 'sal', label: 'Sales', short: 'SAL', color: '#15803d', value: (row) => Number(row.sal || 0) + Number(row.tout || 0) },
+    visibleFields.stock && { key: 'stk', label: 'Stock', short: 'STK', color: '#dc2626', value: (row) => Number(row.stk || 0) }
+  ].filter(Boolean);
+
+  if (!months.length || !series.length) return <div className="row-empty-state">No</div>;
+
+  const n = months.length || 1;
+  const focus = hover ?? months.length - 1;
+  const padL = 30;
+  const padR = 8;
+  const padT = 8;
+  const padB = 15;
+  const plotW = Math.max(30, W - padL - padR);
+  const plotH = Math.max(30, H - padT - padB);
+  const baseY = padT + plotH;
+  const labelBand = plotH * 0.12;
+  const barAreaH = plotH - labelBand;
+  const barTopLimit = padT + labelBand;
+
+  const max = Math.max(1, ...months.flatMap((row) => series.map((s) => Math.abs(s.value(row)))));
+  const groupW = plotW / n;
+  const groupGap = Math.min(groupW * 0.3, 30);
+  const innerW = Math.max(series.length * 5, groupW - groupGap);
+  const barGap = Math.max(1.5, innerW * 0.06);
+  const barW = (innerW - barGap * (series.length - 1)) / series.length;
 
   return (
-    <div className="movement-chart">
-      {months.map((row) => {
-        // Transfer in/out stay folded into the purchase/sales totals (same
-        // underlying figures as before) - only the bar rendering is
-        // simplified to one flat color per category instead of a two-tone
-        // stacked segment.
-        const pur = Number(row.pur || 0) + Number(row.tin || 0);
-        const sal = Number(row.sal || 0) + Number(row.tout || 0);
-        const stock = Number(row.stk || 0);
-        return (
-          <div className="movement-month" key={row.period}>
-            <div className="movement-month-values">
-              {visibleFields.purchase && <span className="movement-qty movement-qty--purchase" title={`Purchase: ${pur}`}>P {compactQuantity(pur)}</span>}
-              {visibleFields.sales && <span className="movement-qty movement-qty--sales" title={`Sales: ${sal}`}>S {compactQuantity(sal)}</span>}
-              {visibleFields.stock && <span className="movement-qty movement-qty--stock" title={`Stock: ${stock}`}>Q {compactQuantity(stock)}</span>}
-            </div>
-            <div className="movement-bars">
-              {visibleFields.purchase && <MovementBar label="Purchase" segments={[{ value: pur, cls: 'pur' }]} max={maxValue} />}
-              {visibleFields.sales && <MovementBar label="Sales" segments={[{ value: sal, cls: 'sale' }]} max={maxValue} />}
-              {visibleFields.stock && <MovementBar label="Stock" segments={[{ value: stock, cls: 'stk' }]} max={maxValue} />}
-            </div>
-            <strong>{row.period}</strong>
+    <div className="sa-chart">
+      <div
+        className="sa-chart__plot"
+        ref={plotRef}
+        onMouseMove={(event) => setTip({ x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY })}
+        onMouseLeave={() => setHover(null)}
+      >
+        <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Monthly movement chart" className="sa-chart__svg" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="sa-chart-glass" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" className="sa-chart__glass-a" />
+              <stop offset="100%" className="sa-chart__glass-b" />
+            </linearGradient>
+          </defs>
+          <rect className="sa-chart__plotbg" x={padL - 6} y={barTopLimit - 3} width={plotW + 14} height={barAreaH + 6} rx={8} fill="url(#sa-chart-glass)" />
+
+          {[0, 0.5, 1].map((t) => {
+            const y = baseY - t * barAreaH;
+            return (
+              <g key={t}>
+                <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="rgba(100,116,139,0.18)" strokeWidth={1} />
+                <text x={padL - 5} y={y + 3} textAnchor="end" className="sa-chart__axis">{compactQuantity(Math.round(max * t))}</text>
+              </g>
+            );
+          })}
+
+          {months.map((row, i) => {
+            const groupX = padL + i * groupW + (groupW - innerW) / 2;
+            const focused = i === focus;
+            return (
+              <g key={row.period ?? i}>
+                {series.map((s, j) => {
+                  const value = s.value(row);
+                  const h = (Math.abs(value) / max) * barAreaH;
+                  const x = groupX + j * (barW + barGap);
+                  const cx = x + barW / 2;
+                  const top = baseY - h;
+                  const labelY = Math.max(barTopLimit - 1, top - 3);
+                  return (
+                    <g key={s.key}>
+                      <rect x={x} y={top} width={Math.max(3, barW)} height={h} rx={2.5} fill={s.color}>
+                        <title>{`${row.period ?? ''} · ${s.label}: ${compactQuantity(value)}`}</title>
+                      </rect>
+                      {value > 0 && (
+                        <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={s.color}>{compactQuantity(value)}</text>
+                      )}
+                    </g>
+                  );
+                })}
+                <rect
+                  x={groupX - barGap}
+                  y={barTopLimit}
+                  width={innerW + barGap * 2}
+                  height={barAreaH}
+                  fill="transparent"
+                  rx={6}
+                  onMouseEnter={() => setHover(i)}
+                  onMouseLeave={() => setHover(null)}
+                />
+                <text x={groupX + innerW / 2} y={H - 4} textAnchor="middle" className={`sa-chart__month${focused ? ' sa-chart__month--on' : ''}`}>{row.period ?? ''}</text>
+              </g>
+            );
+          })}
+        </svg>
+
+        {hover != null && months[hover] && (
+          <div
+            className="sa-chart__tip"
+            style={{ left: Math.min(Math.max(tip.x + 10, 4), Math.max(4, W - 130)), top: Math.max(tip.y - 6, 4) }}
+            role="tooltip"
+          >
+            <div className="sa-chart__tip-head">{months[hover].period ?? ''}</div>
+            {series.map((s) => (
+              <div className="sa-chart__tip-row" key={s.key}>
+                <span className="sa-chart__tip-key"><span className="sa-chart__swatch" style={{ background: s.color }} />{s.label}</span>
+                <span className="sa-chart__tip-val">{compactQuantity(s.value(months[hover]))}</span>
+              </div>
+            ))}
           </div>
-        );
-      })}
+        )}
+      </div>
+
+      <div className="sa-chart__readout">
+        {series.map((s) => (
+          <div className="sa-chart__metric" key={s.key} title={s.label}>
+            <span className="sa-chart__metric-val" style={{ color: s.color }}>{compactQuantity(s.value(months[focus]))}</span>
+            <span className="sa-chart__metric-label"><span className="sa-chart__swatch" style={{ background: s.color }} />{s.short}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2849,26 +2960,6 @@ function compactQuantity(value) {
   if (Math.abs(number) >= 1000000) return `${(number / 1000000).toFixed(1).replace(/\.0$/, '')}m`;
   if (Math.abs(number) >= 1000) return `${(number / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   return String(number);
-}
-
-function MovementBar({ label, segments, max }) {
-  const total = segments.reduce((sum, seg) => sum + seg.value, 0);
-  const height = total > 0 ? Math.max(6, (total / max) * 100) : 0;
-  return (
-    <div className="movement-bar-set" title={`${label}: ${total}`} aria-label={`${label}: ${total}`}>
-      <div className="movement-bar-track">
-        <div className="movement-bar-fill" style={{ height: `${height}%` }}>
-          {segments.map((seg) => (seg.value > 0 ? (
-            <div
-              key={seg.cls}
-              className={`movement-bar-segment ${seg.cls}`}
-              style={{ height: `${(seg.value / total) * 100}%` }}
-            />
-          ) : null))}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function MovementLegend() {
