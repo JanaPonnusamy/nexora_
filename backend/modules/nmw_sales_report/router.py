@@ -53,6 +53,19 @@ def approve_before(tenant_id: str, cutoff: str, current_user: dict = Depends(get
     return service.approve_before(current_user, tenant_id, cutoff)
 
 
+@router.post("/bills/reconcile")
+def reconcile(
+    tenant_id: str,
+    store_id: str = "",
+    apply: bool = False,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete mirror bill-line rows the source POS no longer has (lines superseded
+    by a bill modification and moved to its history table). Pass apply=false to
+    preview. store_id defaults to the NMW warehouse. Super admin only."""
+    return service.reconcile(current_user, tenant_id, store_id.strip() or None, apply)
+
+
 # --- Store customer-code administration (super admin) ----------------------
 # Maps each store to its NMW customer code (dbo.stores.ho_cust_code), which the
 # report joins against SaleInformation.CustomerCode to route bills store-wise.

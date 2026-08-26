@@ -2,7 +2,7 @@ from fastapi import HTTPException
 
 from dependencies.auth import has_full_access
 from dependencies.store_scope import is_salesman_only
-from modules.nmw_sales_report import repository
+from modules.nmw_sales_report import reconcile as _reconcile, repository
 
 
 def _role_names(user):
@@ -113,6 +113,20 @@ def approve(user, req):
     approved_by = user.get("username") or user.get("sub")
     count = repository.approve(req.tenant_id, nmw_store_id, req.bills, status, approved_by, req.remarks)
     return {"approved": count, "status": status}
+
+
+def reconcile(user, tenant_id, store_id, apply_changes):
+    """Delete mirror bill-line rows the source POS no longer has (superseded by a
+    bill modification). Super admin only. store_id defaults to the NMW warehouse."""
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Only a super admin can reconcile NMW bill lines.")
+    target_store = (store_id or "").strip() or repository.get_nmw_store_id(tenant_id)
+    if not target_store:
+        raise HTTPException(status_code=404, detail="No store to reconcile (NMW warehouse not found).")
+    try:
+        return _reconcile.reconcile_store(tenant_id, target_store, apply_changes=apply_changes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def approve_before(user, tenant_id, cutoff_date):

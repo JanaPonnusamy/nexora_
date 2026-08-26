@@ -56,6 +56,16 @@ export const nmwSalesReportService = {
       {},
     ),
 
+  reconcile: (tenantId: string, apply = false) =>
+    api.post<{
+      store_code: string
+      affected_bills: number
+      orphan_rows: number
+      deleted: number
+      skipped_lag_bills: string[]
+      applied: boolean
+    }>(`${base}/bills/reconcile?tenant_id=${encodeURIComponent(tenantId)}&apply=${apply}`, {}),
+
   autoMatchCustCodes: (tenantId: string, apply = true) =>
     api.post<{
       matched: number

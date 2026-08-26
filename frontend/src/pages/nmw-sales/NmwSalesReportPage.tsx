@@ -139,6 +139,34 @@ export default function NmwSalesReportPage() {
     }
   }
 
+  async function reconcile() {
+    setLoading(true)
+    setError(null)
+    try {
+      // Preview first so the count is shown; apply only if there is something to clean.
+      const preview = await nmwSalesReportService.reconcile(tenantId, false)
+      if (preview.orphan_rows === 0) {
+        setNotice('Mirror already matches the source — no duplicate lines to remove.')
+        return
+      }
+      const ok = window.confirm(
+        `Remove ${preview.orphan_rows} duplicate line(s) across ${preview.affected_bills} modified bill(s)?\n` +
+          `These are old lines the store POS replaced when a bill was edited.` +
+          (preview.skipped_lag_bills.length
+            ? `\n\n${preview.skipped_lag_bills.length} bill(s) are still syncing their latest version and will be skipped.`
+            : ''),
+      )
+      if (!ok) return
+      const result = await nmwSalesReportService.reconcile(tenantId, true)
+      setNotice(`Removed ${result.deleted} duplicate line(s) from ${result.affected_bills} bill(s).`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Reconcile failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function approve(target: NmwSalesBill[]) {
     const keys = target.filter((b) => b.bill_no && b.bill_date)
     if (!keys.length) return
@@ -230,6 +258,15 @@ export default function NmwSalesReportPage() {
             <button className="btn btn-outline-secondary" onClick={() => setShowCustCodes((v) => !v)}>
               <i className="bi bi-upc-scan me-1" />
               Store customer codes
+            </button>
+            <button
+              className="btn btn-outline-danger"
+              disabled={loading}
+              title="Remove duplicate bill lines left behind when a bill was modified at the store"
+              onClick={() => void reconcile()}
+            >
+              <i className="bi bi-recycle me-1" />
+              Reconcile duplicates
             </button>
             <div className="input-group" style={{ width: 'auto' }}>
               <span className="input-group-text">Approve all before</span>
