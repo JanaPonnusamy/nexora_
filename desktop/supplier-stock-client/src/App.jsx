@@ -1452,47 +1452,45 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
         </div>
       </div>
 
-      <div className="top-summary-row">
-        {warehouseStore && (
-          <div className="store-row-workspace no-side-search warehouse-only top-summary-nmw">
-            <section className="store-row-grid">
-              <StoreDataRow
-                key={warehouseStore.store_id || warehouseStore.store_code}
-                store={warehouseStore}
-                colorIndex={stores.indexOf(warehouseStore)}
-                hasSearched={hasSearched}
-                searchProducts={searchProductsByStore.get(warehouseStore.store_id) || []}
-                detail={storeDetails[warehouseStore.store_id]}
-                onProductSelect={(product) => handleProductSelect(warehouseStore.store_id, product)}
-                onSaleSelect={(store, row) => setBillDetail({ store, sale: row })}
-                onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store: warehouseStore, row }) : undefined}
-                hideSupplierColumn={hideSupplierColumn}
-                visibility={visibility}
-                restrictWarehouse
-                visibleFields={visibleFields}
-                selected={selectedStoreId === warehouseStore.store_id}
-                onSelect={() => setSelectedStoreId(warehouseStore.store_id)}
-              />
-            </section>
-          </div>
-        )}
+      <NonMovingHighlightCard
+        nonMovingGroups={groupedNonMoving}
+        nonMovingLoading={nonMovingLoading}
+        nonMovingIndex={nonMovingIndex}
+        onPrev={() => nonMovingStep(-1)}
+        onNext={() => nonMovingStep(1)}
+        onSearch={(productName) => {
+          if (!productName) return;
+          setIsAutoQuery(false);
+          setQuery(productName);
+        }}
+        allStores={tenantStores}
+        storeFilter={nonMovingStoreFilter}
+        onStoreFilterChange={setNonMovingStoreFilter}
+      />
 
-        <NonMovingHighlightCard
-          nonMovingGroups={groupedNonMoving}
-          nonMovingLoading={nonMovingLoading}
-          nonMovingIndex={nonMovingIndex}
-          onPrev={() => nonMovingStep(-1)}
-          onNext={() => nonMovingStep(1)}
-          onSearch={(productName) => {
-            if (!productName) return;
-            setIsAutoQuery(false);
-            setQuery(productName);
-          }}
-          allStores={tenantStores}
-          storeFilter={nonMovingStoreFilter}
-          onStoreFilterChange={setNonMovingStoreFilter}
-        />
-      </div>
+      {warehouseStore && (
+        <div className="store-row-workspace no-side-search warehouse-only top-summary-nmw nmw-panel">
+          <section className="store-row-grid">
+            <StoreDataRow
+              key={warehouseStore.store_id || warehouseStore.store_code}
+              store={warehouseStore}
+              colorIndex={stores.indexOf(warehouseStore)}
+              hasSearched={hasSearched}
+              searchProducts={searchProductsByStore.get(warehouseStore.store_id) || []}
+              detail={storeDetails[warehouseStore.store_id]}
+              onProductSelect={(product) => handleProductSelect(warehouseStore.store_id, product)}
+              onSaleSelect={(store, row) => setBillDetail({ store, sale: row })}
+              onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store: warehouseStore, row }) : undefined}
+              hideSupplierColumn={hideSupplierColumn}
+              visibility={visibility}
+              restrictWarehouse
+              visibleFields={visibleFields}
+              selected={selectedStoreId === warehouseStore.store_id}
+              onSelect={() => setSelectedStoreId(warehouseStore.store_id)}
+            />
+          </section>
+        </div>
+      )}
 
       <div className="store-row-workspace no-side-search">
         <section className="store-row-grid">

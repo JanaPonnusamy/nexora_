@@ -39,16 +39,82 @@
   --nx-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
   --nx-shadow-md: 0 2px 4px rgba(15, 23, 42, 0.06), 0 8px 20px -12px rgba(15, 23, 42, 0.22);
   --nx-shadow-lg: 0 4px 8px rgba(15, 23, 42, 0.07), 0 20px 40px -20px rgba(15, 23, 42, 0.28);
-  /* Single source of truth for the fixed store-row height — NMW
-     (.store-data-row) and the NON MOVING panel (.non-moving-wrap) must
-     always be exactly this tall, on purpose (see both rules' comments).
-     Sized to NMW's actual minimum content: its column-header row (27px) +
-     status line (~20px) + .warehouse-only .store-product-grid-wrap's
-     own min-height (146px, tuned to show 5 product rows without clipping)
-     + row padding/border (~15px) = ~208px. Shrinking this below that
-     re-clips NMW's product list to 1-2 rows. */
-  --store-row-height: 208px;
-  --warehouse-panel-height: var(--store-row-height);
+  /* ── Responsive density system ──────────────────────────────────────
+     Single source of truth for the stock workbench's sizing. Every panel
+     height, row height, font, gap and padding below is driven by one of
+     these variables so the whole screen recomputes for the viewport
+     instead of fighting scattered hardcoded pixels. :root holds the
+     NORMAL (1367–1920px desktop) scale; the COMPACT query (≤1366px OR
+     ≤768px — the target workstation) and the COMFORTABLE query (>1920px)
+     re-declare the same names to shift density as one unit.
+     Goal: at 1366×768 the data region fills the viewport and NMW + 5
+     stores are all visible without page scroll. */
+  --ui-font-size: 12px;        /* base data font */
+  --ui-small-font: 10.5px;     /* secondary metadata / column labels */
+  --ui-product-font: 12.5px;   /* product names */
+  --ui-row-height: 24px;       /* one data grid row */
+  --ui-grid-header-height: 40px;
+  --ui-store-header-height: 30px;
+  --ui-nav-height: 58px;       /* top navigation */
+  --ui-toolbar-height: 52px;   /* search / filter toolbar */
+  --ui-summary-height: 56px;   /* NON MOVING strip */
+  --ui-warehouse-height: 118px;/* NMW warehouse panel */
+  --ui-panel-padding: 6px;
+  --ui-grid-padding: 5px;
+  --ui-section-gap: 8px;       /* gap between workbench sections */
+  --ui-column-gap: 8px;
+  --ui-store-row-min: 116px;   /* store row floor before the grid scrolls */
+  --ui-workspace-padding: 16px;
+
+  /* Back-compat aliases still referenced by a few older rules. */
+  --store-row-height: var(--ui-warehouse-height);
+  --warehouse-panel-height: var(--ui-warehouse-height);
+}
+
+/* COMPACT — the 1366×768 workstation target (and anything smaller in
+   either axis). Tighter type, shorter chrome, floors low enough that all
+   six stores share the remaining height instead of overflowing. */
+@media (max-width: 1366px), (max-height: 768px) {
+  :root {
+    --ui-font-size: 11px;
+    --ui-small-font: 10px;
+    --ui-product-font: 12px;
+    --ui-row-height: 22px;
+    --ui-grid-header-height: 33px;
+    --ui-store-header-height: 28px;
+    --ui-nav-height: 50px;
+    --ui-toolbar-height: 46px;
+    --ui-summary-height: 50px;
+    --ui-warehouse-height: 92px;
+    --ui-panel-padding: 4px;
+    --ui-grid-padding: 4px;
+    --ui-section-gap: 4px;
+    --ui-column-gap: 6px;
+    --ui-store-row-min: 78px;
+    --ui-workspace-padding: 8px;
+  }
+}
+
+/* COMFORTABLE — large desktops get a little more air. */
+@media (min-width: 1921px) {
+  :root {
+    --ui-font-size: 13px;
+    --ui-small-font: 11px;
+    --ui-product-font: 13.5px;
+    --ui-row-height: 26px;
+    --ui-grid-header-height: 44px;
+    --ui-store-header-height: 32px;
+    --ui-nav-height: 62px;
+    --ui-toolbar-height: 56px;
+    --ui-summary-height: 60px;
+    --ui-warehouse-height: 140px;
+    --ui-panel-padding: 7px;
+    --ui-grid-padding: 6px;
+    --ui-section-gap: 10px;
+    --ui-column-gap: 10px;
+    --ui-store-row-min: 140px;
+    --ui-workspace-padding: 20px;
+  }
 }
 
 :root[data-theme="dark"] {
@@ -124,8 +190,9 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 16px;
-  min-height: 64px;
-  padding: 8px 18px;
+  min-height: var(--ui-nav-height);
+  height: var(--ui-nav-height);
+  padding: 4px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: var(--nx-header);
   color: var(--nx-text-on);
@@ -141,8 +208,8 @@ button:disabled {
 
 .brand-mark {
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   border-radius: 8px;
   background: #35c0a4;
@@ -151,8 +218,8 @@ button:disabled {
 }
 
 .brand-logo {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   border-radius: 0;
   object-fit: contain;
 }
@@ -191,11 +258,11 @@ button:disabled {
 
 .user-panel {
   display: flex;
-  min-height: 40px;
+  min-height: 36px;
   flex-direction: column;
   justify-content: center;
   gap: 3px;
-  padding: 5px 10px;
+  padding: 4px 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
@@ -235,8 +302,8 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 10px;
@@ -276,14 +343,14 @@ button:disabled {
 
 .menubar-nav button,
 .ghost-button {
-  min-height: 40px;
+  min-height: 36px;
   border: 1px solid transparent;
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   text-align: center;
   color: #cbd5e1;
   background: transparent;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
   white-space: nowrap;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
@@ -311,8 +378,8 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid rgba(248, 113, 113, 0.34);
   border-radius: 10px;
@@ -385,6 +452,15 @@ button:disabled {
 .workspace {
   padding: 32px;
   overflow: auto;
+}
+
+/* The stock workbench manages its own internal scrolling and must fill the
+   viewport exactly — give it a tight frame and stop the page from scrolling
+   so only the data region scrolls. Scoped with :has() so the other screens
+   (settings / analysis / NMW) keep their roomy 32px frame. */
+.workspace:has(> .store-workbench) {
+  padding: var(--ui-workspace-padding);
+  overflow: hidden;
 }
 
 .screen-panel,
@@ -984,8 +1060,9 @@ th {
 }
 
 .non-moving-global-card {
-  margin: 0 0 14px;
+  margin: 0;
   padding: 0;
+  min-height: 0;
 }
 
 .panel-section-title {
@@ -998,17 +1075,19 @@ th {
 }
 
 .non-moving-wrap {
+  /* Compact horizontal alert strip: [NON MOVING label | product · nav ·
+     store filter]  ·······  [Stock Cost · Expiry · Qty · … KPIs]. One
+     summary-height row, never the old full-height dashboard card. */
   display: flex !important;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
   width: 100%;
-  /* Exactly one store-row tall so the NMW panel and the Non Moving panel
-     align on the same horizontal line — no oversized white area. */
-  height: var(--store-row-height);
+  height: var(--ui-summary-height);
   min-height: 0;
-  max-height: var(--store-row-height) !important;
+  max-height: var(--ui-summary-height) !important;
   overflow: hidden;
   gap: 0;
-  border-radius: 8px;
+  border-radius: 9px;
   border: 1px solid #5eead4;
   box-shadow: 0 2px 8px rgba(13, 148, 136, 0.2);
 }
@@ -1017,10 +1096,10 @@ th {
 .non-moving-header-box {
   display: flex !important;
   align-items: stretch;
-  width: 100%;
-  height: 30px;
-  min-height: 30px;
-  max-height: 30px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 52%;
+  height: 100%;
   background: #0d9488;
   overflow: hidden;
 }
@@ -4222,20 +4301,24 @@ th {
 /* Stock Availability workspace: compact, aligned desktop dashboard. */
 .store-workbench {
   --stock-grid-columns: 30px minmax(205px, 1fr) minmax(150px, 0.72fr) minmax(335px, 1.5fr) minmax(335px, 1.5fr) minmax(325px, 1.4fr);
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: 12px;
-  height: calc(100vh - 128px);
-  min-height: 600px;
+  /* Five stacked sections: search toolbar, NON MOVING strip, NMW warehouse
+     panel, the store-comparison grid (the only flexible row — it soaks up
+     all remaining height), then the status legend. */
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: var(--ui-section-gap);
+  height: calc(100vh - var(--ui-nav-height) - var(--ui-workspace-padding) * 2);
+  min-height: 0;
 }
 
 .global-search-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 68px;
-  padding: 10px 12px;
+  min-height: var(--ui-toolbar-height);
+  height: var(--ui-toolbar-height);
+  padding: 0 10px;
   border: 1px solid var(--nx-rule);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--nx-surface);
   box-shadow: var(--nx-shadow-sm);
 }
@@ -4260,13 +4343,13 @@ th {
 
 .global-search-row .stock-search-field input {
   width: 100%;
-  height: 44px;
-  padding: 0 14px 0 40px;
+  height: 34px;
+  padding: 0 14px 0 38px;
   border-color: var(--nx-rule-strong);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--nx-surface-sunk);
   color: var(--nx-text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -4281,12 +4364,13 @@ th {
   grid-auto-flow: column;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
+  min-height: 34px;
   padding: 0 10px;
   border: 1px solid var(--nx-rule);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--nx-surface-sunk);
   color: var(--nx-text-soft);
+  font-size: var(--ui-small-font);
 }
 
 .stock-only-filter input {
@@ -4307,13 +4391,13 @@ th {
 }
 
 .tenant-filter select {
-  width: 190px;
-  height: 40px;
+  width: 180px;
+  height: 34px;
   border-color: var(--nx-rule-strong);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--nx-surface-sunk);
   color: var(--nx-text);
-  font-size: 13px;
+  font-size: 12px;
   text-transform: none;
   letter-spacing: normal;
 }
@@ -4352,11 +4436,11 @@ th {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 5px 6px 5px 11px;
+  gap: 8px;
+  min-height: 38px;
+  padding: 3px 5px 3px 10px;
   border: 1px solid var(--nx-rule);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--nx-surface-sunk);
 }
 
@@ -4387,7 +4471,7 @@ th {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 36px;
+  height: 30px;
   padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--nx-accent) 55%, transparent);
   border-radius: 8px;
@@ -4441,9 +4525,6 @@ th {
 }
 
 .non-moving-header-box {
-  height: 36px;
-  min-height: 36px;
-  max-height: 36px;
   background: #0f766e;
 }
 
@@ -4626,9 +4707,13 @@ th {
   }
 }
 
-/* Keep a minimum of four readable records visible in every store panel. */
+/* Store rows share the leftover viewport height equally (1fr) so all of
+   them fit at 1366×768 without page scroll; once there are more rows than
+   the floor allows, they hold --ui-store-row-min and the grid — not the
+   page — scrolls. This replaces the old fixed 156px that let only ~2.5
+   rows show. */
 .store-workbench .store-row-grid {
-  grid-auto-rows: 156px;
+  grid-auto-rows: minmax(var(--ui-store-row-min), 1fr);
 }
 
 .store-workbench .top-summary-nmw .store-row-grid {
@@ -4724,8 +4809,15 @@ th {
 }
 
 .store-workbench .warehouse-column-headers {
-  flex: 0 0 46px;
-  margin-bottom: 6px;
+  flex: 0 0 auto;
+  margin-bottom: 3px;
+}
+
+/* NMW panel is a full-width comparison row above the store grid — pin it to
+   the warehouse-height variable so it stays compact but shows a few product
+   lines. */
+.store-workbench .nmw-panel {
+  min-height: 0;
 }
 
 .store-workbench .warehouse-row-body {
@@ -4950,20 +5042,12 @@ th {
   white-space: nowrap;
 }
 
+/* The per-store picker cards are folded away in the compact strip — the
+   KPI line to the right already shows the selected store's Stock Cost /
+   Expiry, and the full per-store breakdown appears in the store grid when
+   the product is searched. */
 .store-workbench .non-moving-store-strip {
-  display: grid;
-  grid-auto-columns: minmax(160px, 190px);
-  grid-auto-flow: column;
-  flex: 0 0 70px;
-  height: 70px;
-  min-height: 0;
-  gap: 6px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 6px 7px;
-  background: color-mix(in srgb, var(--nx-success-sunk) 35%, var(--nx-surface));
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--nx-success) 35%, transparent) transparent;
+  display: none;
 }
 
 .store-workbench .non-moving-store-card {
@@ -5091,13 +5175,20 @@ th {
 
 .store-workbench .non-moving-overall-card {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(84px, 1fr);
+  grid-template-columns: none;
+  align-items: stretch;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
-  gap: 5px;
-  padding: 5px 7px 7px;
-  border-top: 1px solid var(--nx-rule);
+  gap: 4px;
+  padding: 4px 6px;
+  overflow-x: auto;
+  border-top: 0;
+  border-left: 1px solid var(--nx-rule);
   background: var(--nx-surface);
+  scrollbar-width: thin;
 }
 
 .store-workbench .non-moving-overall-card.clickable {
