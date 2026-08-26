@@ -2918,6 +2918,41 @@ th {
   max-height: none;
 }
 
+/* Compact density (user request): smaller fonts + tighter cells so each store's
+   height-shared row shows more product/history lines legibly. Scoped to
+   .store-workbench so the Analysis grids keep their own sizing. */
+.store-workbench .store-product-grid th,
+.store-workbench .store-product-grid td,
+.store-workbench .store-product-card-list strong,
+.store-workbench .store-product-card-list span,
+.store-workbench .history-zone th,
+.store-workbench .history-zone td,
+.store-workbench .detail-zone th,
+.store-workbench .detail-zone td {
+  font-size: 10px;
+}
+
+.store-workbench .store-product-grid th,
+.store-workbench .store-product-grid td,
+.store-workbench .store-product-card-list button,
+.store-workbench .history-zone th,
+.store-workbench .history-zone td,
+.store-workbench .detail-zone th,
+.store-workbench .detail-zone td {
+  padding: 2px 5px;
+}
+
+.store-workbench .store-column-headers .header-cell {
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  font-size: 10px;
+}
+
+.store-workbench .store-row-label strong {
+  font-size: 9.5px;
+}
+
 /* Shorter viewports (1366x768-class laptops) get a smaller row floor and
    tighter grid gap so at least 5 stores still fit without clipping or
    forcing the whole page to scroll past the viewport. */
