@@ -148,6 +148,13 @@ async function buildBlob({
   })
 }
 
+/** Build the A4-laid-out workbook as an .xlsx File (for WhatsApp / upload). */
+export async function buildExpiryStockExcelFile(opts: ExpiryStockExcelOpts): Promise<File> {
+  const blob = await buildBlob(opts)
+  const name = opts.fileName.endsWith('.xlsx') ? opts.fileName : `${opts.fileName}.xlsx`
+  return new File([blob], name, { type: blob.type })
+}
+
 export async function exportExpiryStockExcel(opts: ExpiryStockExcelOpts): Promise<void> {
   const blob = await buildBlob(opts)
   const url = URL.createObjectURL(blob)

@@ -10,14 +10,26 @@ import type { Tenant } from '../../types/tenant'
 import type { Store } from '../../types/store'
 import type { ExpiryStockColumn, ExpiryStockResult, ExpiryStockSupplier } from '../../types/expiryStock'
 import { money, num, date } from '../../components/stock/format'
-import { exportExpiryStockExcel } from './exportExpiryStockExcel'
+import { exportExpiryStockExcel, buildExpiryStockExcelFile } from './exportExpiryStockExcel'
+import { WhatsAppSendCard } from '../../components/common/WhatsAppSendCard'
 import { ColumnChooser, applyColumnPrefs, type ColumnPrefs } from '../../components/common/ColumnChooser'
 import '../reports.css'
 
 const PREFS_KEY = 'expiryStock.cols.'
 const emptyPrefs: ColumnPrefs = { order: [], hidden: [] }
 const iso = (d: Date) => d.toISOString().slice(0, 10)
-const endOfMonth = (d: Date) => iso(new Date(d.getFullYear(), d.getMonth() + 1, 0))
+const firstIso = (y: number, m: number) => iso(new Date(y, m, 1))
+const lastIso = (y: number, m: number) => iso(new Date(y, m + 1, 0))
+const monthValue = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+const parseMonth = (v: string): [number, number] => {
+  const [y, m] = v.split('-').map(Number)
+  return [y, (m || 1) - 1]
+}
+const monthLabel = (v: string) => {
+  if (!v) return ''
+  const [y, m] = parseMonth(v)
+  return new Date(y, m, 1).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' })
+}
 
 function loadPrefs(level: string): ColumnPrefs | null {
   try {
@@ -26,6 +38,17 @@ function loadPrefs(level: string): ColumnPrefs | null {
   } catch { /* ignore */ }
   return null
 }
+
+type Period = 'beforeIncl' | 'current' | 'before' | 'afterIncl' | 'after' | 'month' | 'range'
+const PERIODS: { key: Period; label: string }[] = [
+  { key: 'beforeIncl', label: 'Up to this month' },
+  { key: 'current', label: 'This month' },
+  { key: 'before', label: 'Before this month' },
+  { key: 'afterIncl', label: 'This month onward' },
+  { key: 'after', label: 'After this month' },
+  { key: 'month', label: 'Selected month' },
+  { key: 'range', label: 'Month range' },
+]
 
 /** qty: thousands + up to 2 decimals (batch/total stock can be fractional). */
 function qty(value: number | null | undefined): string {
@@ -55,16 +78,42 @@ export default function ExpiryStockReportPage() {
   const [supplierCode, setSupplierCode] = useState('')
 
   const today = useMemo(() => new Date(), [])
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState(endOfMonth(today))
+  const thisMonth = useMemo(() => monthValue(today), [today])
+  const [period, setPeriod] = useState<Period>('beforeIncl')
+  const [selMonth, setSelMonth] = useState(thisMonth)
+  const [fromMonth, setFromMonth] = useState(thisMonth)
+  const [toMonth, setToMonth] = useState(thisMonth)
   const [onlyCutting, setOnlyCutting] = useState(false)
+
+  // Derive the expiry-date window (from/to, ISO) from the chosen period.
+  const { from, to } = useMemo(() => {
+    const y = today.getFullYear()
+    const m = today.getMonth()
+    switch (period) {
+      case 'current': return { from: firstIso(y, m), to: lastIso(y, m) }
+      case 'before': return { from: '', to: lastIso(y, m - 1) }
+      case 'beforeIncl': return { from: '', to: lastIso(y, m) }
+      case 'after': return { from: firstIso(y, m + 1), to: '' }
+      case 'afterIncl': return { from: firstIso(y, m), to: '' }
+      case 'month': {
+        const [sy, sm] = parseMonth(selMonth)
+        return { from: firstIso(sy, sm), to: lastIso(sy, sm) }
+      }
+      case 'range': {
+        const [fy, fm] = parseMonth(fromMonth)
+        const [ty, tm] = parseMonth(toMonth)
+        return { from: firstIso(fy, fm), to: lastIso(ty, tm) }
+      }
+      default: return { from: '', to: lastIso(y, m) }
+    }
+  }, [period, selMonth, fromMonth, toMonth, today])
 
   const [result, setResult] = useState<ExpiryStockResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Per-view column layout (web + Electron via localStorage). When the user has
-  // no saved layout, the optional columns (Cost/PTR/Tax/Supplier) start hidden.
+  // Per-view column layout (web + Electron via localStorage). Optional columns
+  // (Cost/PTR/Tax/Supplier) start hidden until the user enables them.
   const [prefs, setPrefs] = useState<ColumnPrefs>(emptyPrefs)
   const level = result?.level ?? ''
   useEffect(() => {
@@ -102,11 +151,9 @@ export default function ExpiryStockReportPage() {
     [stores, tenantId],
   )
   useEffect(() => {
-    // Pick the first store of the tenant if the current one is foreign/empty.
     setStoreId((cur) => (tenantStores.some((s) => s.store_id === cur) ? cur : (tenantStores[0]?.store_id ?? '')))
   }, [tenantStores])
 
-  // Supplier list for the chosen store.
   useEffect(() => {
     if (!tenantId || !storeId) { setSuppliers([]); return }
     let live = true
@@ -117,7 +164,7 @@ export default function ExpiryStockReportPage() {
   }, [tenantId, storeId])
   useEffect(() => { setSupplierCode('') }, [storeId])
 
-  // Load the report whenever a filter changes.
+  // Load the report whenever any filter changes (period drives from/to).
   useEffect(() => {
     if (!tenantId || !storeId) { setResult(null); return }
     let live = true
@@ -143,28 +190,39 @@ export default function ExpiryStockReportPage() {
     () => (supplierCode ? suppliers.find((s) => s.SupplierCode === supplierCode)?.SupplierName ?? '' : ''),
     [supplierCode, suppliers],
   )
+  const rangeText = useMemo(() => {
+    const f = from ? monthLabel(monthValue(new Date(from))) : 'earliest'
+    const t = to ? monthLabel(monthValue(new Date(to))) : 'latest'
+    return `${f} → ${t}`
+  }, [from, to])
   const title = useMemo(() => {
     const parts = [`Expiry Stock — ${storeName}`]
     if (supplierName) parts.push(supplierName)
     if (onlyCutting) parts.push('Cutting only')
-    const range = to ? `${from || 'earliest'} → ${to}` : 'all'
-    parts.push(`Expiry ${range}`)
+    parts.push(`Expiry ${rangeText}`)
     return parts.join('  |  ')
-  }, [storeName, supplierName, onlyCutting, from, to])
+  }, [storeName, supplierName, onlyCutting, rangeText])
 
   const safeName = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 60)
+  const excelOpts = () => ({
+    columns: displayColumns,
+    rows: result!.rows,
+    summary: result!.summary,
+    sheetName: 'Expiry Stock',
+    fileName: safeName(`ExpiryStock_${storeName}_${to || from || 'all'}`),
+    title,
+    orientation: (displayColumns.length > 8 ? 'landscape' : 'portrait') as 'landscape' | 'portrait',
+  })
   const exportExcel = () => {
     if (!result || result.rows.length === 0) return
-    void exportExpiryStockExcel({
-      columns: displayColumns,
-      rows: result.rows,
-      summary: result.summary,
-      sheetName: 'Expiry Stock',
-      fileName: safeName(`ExpiryStock_${storeName}_${to || 'all'}`),
-      title,
-      orientation: displayColumns.length > 8 ? 'landscape' : 'portrait',
-    })
+    void exportExpiryStockExcel(excelOpts())
   }
+  const buildWhatsAppFile = async () => {
+    if (!result || result.rows.length === 0) throw new Error('Load a report before sharing it.')
+    return buildExpiryStockExcelFile(excelOpts())
+  }
+
+  const hasRows = !!result && result.rows.length > 0
 
   return (
     <div className="container-fluid px-0 rpt">
@@ -183,8 +241,6 @@ export default function ExpiryStockReportPage() {
           <option value="">All suppliers</option>
           {suppliers.map((s) => <option key={s.SupplierCode} value={s.SupplierCode}>{s.SupplierName}</option>)}
         </select>
-        <label className="rpt-field"><span>Expiry from</span><input type="date" className="form-control form-control-sm" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-        <label className="rpt-field"><span>Expiry to</span><input type="date" className="form-control form-control-sm" value={to} onChange={(e) => setTo(e.target.value)} /></label>
         <label className="rpt-check" title="Show only batches whose remaining stock is below one sale unit (loose / part packs)">
           <input type="checkbox" checked={onlyCutting} onChange={(e) => setOnlyCutting(e.target.checked)} /> <span>Cutting only</span>
         </label>
@@ -196,17 +252,52 @@ export default function ExpiryStockReportPage() {
             onReset={resetPrefs}
           />
         )}
-        <button className="btn btn-outline-secondary btn-sm" disabled={!result || result.rows.length === 0} onClick={exportExcel}>
-          <i className="bi bi-file-earmark-excel" /> Export Excel (A4)
+        <button className="btn btn-success btn-sm rpt-action" disabled={!hasRows} onClick={exportExcel}>
+          <i className="bi bi-file-earmark-excel-fill" /> Export Excel (A4)
         </button>
+        <WhatsAppSendCard
+          disabled={!hasRows}
+          title="Share expiry stock (A4 Excel) on WhatsApp"
+          defaultCaption={title}
+          buildFile={buildWhatsAppFile}
+        />
       </FilterBar>
 
+      {/* Period presets (expiry month window) */}
+      <div className="expiry-tabs" role="tablist" aria-label="Expiry period">
+        {PERIODS.map((p) => (
+          <button
+            key={p.key}
+            className={`expiry-tab expiry-tab-alt${period === p.key ? ' active' : ''}`}
+            onClick={() => setPeriod(p.key)}
+          >
+            {p.label}
+          </button>
+        ))}
+        {period === 'month' && (
+          <label className="rpt-field"><span>Month</span>
+            <input type="month" className="form-control form-control-sm" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} />
+          </label>
+        )}
+        {period === 'range' && (
+          <>
+            <label className="rpt-field"><span>From month</span>
+              <input type="month" className="form-control form-control-sm" value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} />
+            </label>
+            <label className="rpt-field"><span>To month</span>
+              <input type="month" className="form-control form-control-sm" value={toMonth} onChange={(e) => setToMonth(e.target.value)} />
+            </label>
+          </>
+        )}
+        <span className="rpt-rangenote">Expiry {rangeText}{hasRows ? ` · ${result!.rows.length} batches` : ''}</span>
+      </div>
+
       {error ? (
-        <ErrorState description={error} onRetry={() => setTo((t) => t)} />
-      ) : loading && !result ? (
+        <ErrorState description={error} onRetry={() => setPeriod((p) => p)} />
+      ) : loading ? (
         <EmptyState icon="bi-hourglass-split" title="Loading…" description="Fetching expiry stock." />
-      ) : !result || result.rows.length === 0 ? (
-        <EmptyState icon="bi-inbox" title="No stock" description="No in-stock batches for this filter / expiry range." />
+      ) : !hasRows ? (
+        <EmptyState icon="bi-inbox" title="No stock" description="No in-stock batches for this filter / expiry period." />
       ) : (
         <div className="rpt-tablewrap">
           <table className="rpt-table">
@@ -214,14 +305,14 @@ export default function ExpiryStockReportPage() {
               <tr>{displayColumns.map((c) => <th key={c.key} className={`rpt-${c.align}`}>{c.label}</th>)}</tr>
             </thead>
             <tbody>
-              {result.rows.map((row, i) => (
+              {result!.rows.map((row, i) => (
                 <tr key={i} className={row._cutting ? 'expiry-cut-row' : undefined}>
                   {displayColumns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(row[c.key], c)}</td>)}
                 </tr>
               ))}
-              {result.summary && (
+              {result!.summary && (
                 <tr className="rpt-total">
-                  {displayColumns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(result.summary![c.key], c)}</td>)}
+                  {displayColumns.map((c) => <td key={c.key} className={`rpt-${c.align}`}>{cell(result!.summary![c.key], c)}</td>)}
                 </tr>
               )}
             </tbody>

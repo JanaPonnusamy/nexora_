@@ -99,6 +99,15 @@
   border-color: rgba(253, 162, 155, 0.4);
 }
 
+/* Sticky grid header: the global `#root table { overflow:hidden }` (data-tables.css)
+   turns the table itself into a clip/scroll box, which breaks the thead's
+   position:sticky relative to .rpt-tablewrap (the header scrolls away). Restore
+   visible overflow on report tables so the header stays pinned while scrolling. */
+#root table.rpt-table { overflow: visible; }
+
+/* Month-year (mmm-yy) filter fields. */
+.rpt-field input[type='month'] { min-width: 130px; }
+
 /* ── Results Table ───────────────────────────────────────────────────────── */
 .rpt-tablewrap {
   overflow: auto;
@@ -189,7 +198,14 @@
 }
 .expiry-crumb:hover { background: var(--nx-surface-sunk, #f1f5f9); }
 .expiry-crumb.active { color: var(--nx-text, #0f172a); font-weight: 600; cursor: default; }
-.expiry-tabs { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; }
+.expiry-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.6rem; }
+.rpt-rangenote {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--nx-text-soft, #64748b);
+  white-space: nowrap;
+}
 .expiry-tab {
   background: var(--nx-surface-sunk, #f8fafc);
   border: 1px solid var(--nx-rule, #e2e8f0);
