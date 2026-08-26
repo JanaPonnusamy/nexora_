@@ -2002,7 +2002,7 @@ th {
 .batch-cell-expiry {
   display: flex;
   flex-direction: column;
-  line-height: 1.2;
+  line-height: 1.05;
 }
 
 .batch-cell-days {
@@ -2916,8 +2916,8 @@ th {
 
   .store-workbench {
     /* menubar (64) + workspace padding top+bottom (28) = 92. */
-    --store-row-height: 150px;
-    --warehouse-panel-height: 150px;
+    --store-row-height: 138px;
+    --warehouse-panel-height: 138px;
     height: calc(100vh - 92px);
     min-height: 0;
     gap: 8px;
@@ -2945,23 +2945,29 @@ th {
     padding-block: 3px;
   }
 
-  /* Each store row is exactly tall enough for 5 product lines; more stores are
-     reached by scrolling the grid, not the page. */
+  /* Store rows SHARE the leftover grid height (1fr) instead of a fixed
+     height, so however many stores this tenant has all stay in view and
+     divide the space between them — the grid only scrolls if there are more
+     stores than can hold their ~96px minimum. When there are few stores the
+     rows grow tall and each list shows well over 5 product lines; as the store
+     count rises each row shrinks toward the floor. This restores the original
+     minmax(min, 1fr) intent that the fixed 150px override had defeated. */
   .store-workbench .store-row-grid {
-    grid-auto-rows: 150px;
+    grid-auto-rows: minmax(96px, 1fr);
   }
 
   .store-workbench .top-summary-nmw .store-row-grid {
     grid-auto-rows: var(--warehouse-panel-height);
   }
 
-  /* 5 rows visible: 5 x (22px min-height + 1px rule) = 115 <= 116. */
+  /* Product list + Batch/Purchase/Billing tables fill whatever height their
+     store row is given (no fixed 112px cap), so they track the 1fr rows. */
   .store-workbench .stock-cell .store-product-grid-wrap,
   .store-workbench .row-table-wrap {
-    flex: 0 0 116px;
-    height: 116px;
-    min-height: 116px;
-    max-height: 116px;
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    max-height: none;
   }
 
   .store-workbench .row-cell {
@@ -4575,9 +4581,9 @@ th {
 
 .store-workbench .row-cell .grid-row,
 .store-workbench .store-product-grid-wrap .grid-row {
-  min-height: 25px;
+  min-height: 20px;
   gap: 2px;
-  padding: 3px 4px;
+  padding: 1px 4px;
 }
 
 .store-workbench .batch-table {
@@ -4585,9 +4591,9 @@ th {
 }
 
 .store-workbench .batch-row {
-  min-height: 22px;
+  min-height: 18px;
   gap: 2px;
-  padding-block: 1px;
+  padding-block: 0;
 }
 
 .store-workbench .row-cell .grid-row span,
