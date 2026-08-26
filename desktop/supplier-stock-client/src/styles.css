@@ -2891,6 +2891,33 @@ th {
   grid-column: 1;
 }
 
+/* Fit ALL stores (1 warehouse + N stores) in the viewport at once, on ANY
+   screen height — not only the short-viewport media query below. The store rows
+   divide the leftover height equally with a ZERO floor and the grid never
+   scrolls, so every store stays in view however many there are. Each store's
+   product list + Batch/Purchase/Billing tables fill their row and scroll
+   internally, so nothing is lost — a 72px floor + grid scroll is what let extra
+   stores drop below the fold on taller screens. The warehouse summary panel
+   keeps its own fixed height (it is a single card, not part of the N-store
+   division). Scoped to .store-workbench so the Analysis Similar/Exact grids are
+   untouched. */
+.store-workbench .store-row-grid {
+  grid-auto-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.store-workbench .top-summary-nmw .store-row-grid {
+  grid-auto-rows: var(--warehouse-panel-height);
+}
+
+.store-workbench .stock-cell .store-product-grid-wrap,
+.store-workbench .row-table-wrap {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+}
+
 /* Shorter viewports (1366x768-class laptops) get a smaller row floor and
    tighter grid gap so at least 5 stores still fit without clipping or
    forcing the whole page to scroll past the viewport. */
