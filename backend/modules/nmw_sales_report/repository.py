@@ -273,6 +273,37 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
                   AND si.BNumber = ?
                   AND (? IS NULL OR CAST(si.BillDate AS DATE) = CAST(? AS DATE))
                 ORDER BY si.BillDate DESC, si.BillNumber DESC
+            ),
+            -- De-duplicate the source line rows. The legacy POS writes a fresh
+            -- set of ProductSaleInformation rows (new ID, sometimes a different
+            -- Username) every time a bill is re-saved/re-processed WITHOUT
+            -- invalidating the previous rows (both keep TransactionValidity = 0),
+            -- so ~41% of NMW bills carry each line 2x+. That doubled the on-screen
+            -- lines AND the Excel export. Collapse rows that are identical on every
+            -- business column (product, batch, expiry, qty, free, MRP, PTR, rate,
+            -- amount) to a single row, keeping the latest generation (MAX ID).
+            -- This only ever merges exact clones -- two genuinely different lines
+            -- (different batch/qty/rate) differ in the partition and are preserved.
+            psi_dedup AS (
+                SELECT psi.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY psi.ProductCode, psi.Batchdescription,
+                            psi.Expirydate, psi.Quantity, psi.Freequantity,
+                            psi.MRP, psi.PurchasePrice, psi.Rate, psi.Transactionamount
+                        ORDER BY psi.ID DESC
+                    ) AS _dedup_rn
+                FROM bill_match bm
+                -- Join on the full bill number (Bnumber) rather than the retail
+                -- SeriesName = LEFT(BNumber,1) heuristic: NMW dispatch bills use a
+                -- multi-char series (e.g. 'D' in '26-27D1920'), so the line rows
+                -- key on Bnumber directly.
+                INNER JOIN sync.ProductSaleInformation psi
+                    ON psi.tenant_id = bm.tenant_id
+                   AND psi.store_id = bm.store_id
+                   AND psi.BillNumber = bm.BillNumber
+                   AND psi.Bnumber = bm.BNumber
+                   AND CAST(psi.TransactionDate AS DATE) = bm.BillDate
+                WHERE ISNULL(psi.TransactionValidity, 0) = 0
             )
             SELECT
                 CAST(psi.ProductCode AS NVARCHAR(100)) AS product_code,
@@ -300,22 +331,12 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
                 ISNULL(psi.Transactionamount, 0)       AS amount,
                 ISNULL(p.PackageInformation, '')       AS packing,
                 ISNULL(p.SubLocation, '')               AS sublocation
-            FROM bill_match bm
-            -- Join on the full bill number (Bnumber) rather than the retail
-            -- SeriesName = LEFT(BNumber,1) heuristic: NMW dispatch bills use a
-            -- multi-char series (e.g. 'D' in '26-27D1920'), so the line rows key
-            -- on Bnumber directly.
-            INNER JOIN sync.ProductSaleInformation psi
-                ON psi.tenant_id = bm.tenant_id
-               AND psi.store_id = bm.store_id
-               AND psi.BillNumber = bm.BillNumber
-               AND psi.Bnumber = bm.BNumber
-               AND CAST(psi.TransactionDate AS DATE) = bm.BillDate
+            FROM psi_dedup psi
             LEFT JOIN sync.Products p
                 ON p.tenant_id = psi.tenant_id
                AND p.store_id = psi.store_id
                AND p.ProductCode = psi.ProductCode
-            WHERE ISNULL(psi.TransactionValidity, 0) = 0
+            WHERE psi._dedup_rn = 1
             ORDER BY ISNULL(p.ProductName, CAST(psi.ProductCode AS NVARCHAR(100))), ISNULL(psi.Batchdescription, '')
             """,
             (tenant_id, nmw_store_id, bill_no, bill_date, bill_date),
