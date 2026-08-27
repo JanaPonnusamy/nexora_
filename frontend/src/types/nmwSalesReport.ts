@@ -38,6 +38,16 @@ export interface NmwSalesBillItem {
   amount: number
 }
 
+export interface NmwSalesBillSummary {
+  subtotal: number
+  cgst: number
+  sgst: number
+  tax_total: number
+  roundoff: number
+  bill_amount: number
+  is_transfer: number
+}
+
 export interface NmwStoreCustCode {
   store_id: string
   store_code: string | null

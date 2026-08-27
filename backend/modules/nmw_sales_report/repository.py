@@ -71,6 +71,19 @@ def _ensure_schema(cursor):
         IF COL_LENGTH('sync.SaleInformation', 'Cancelleddate') IS NULL
             ALTER TABLE sync.SaleInformation ADD Cancelleddate datetime NULL;
 
+        -- Header amount breakdown so the bill-detail footer reconciles the line
+        -- items to the header total: GrossAmount = sum of line amounts (pre-tax);
+        -- CGSTAmount = one half of the GST (SGST equals it intra-state); the
+        -- header BillAmount = GrossAmount + 2*CGSTAmount, rounded.
+        IF COL_LENGTH('sync.SaleInformation', 'GrossAmount') IS NULL
+            ALTER TABLE sync.SaleInformation ADD GrossAmount decimal(18,4) NULL;
+
+        IF COL_LENGTH('sync.SaleInformation', 'CGSTAmount') IS NULL
+            ALTER TABLE sync.SaleInformation ADD CGSTAmount decimal(18,4) NULL;
+
+        IF COL_LENGTH('sync.SaleInformation', 'TaxAmount') IS NULL
+            ALTER TABLE sync.SaleInformation ADD TaxAmount decimal(18,4) NULL;
+
         -- Select these for future syncs (derive sync_table_id from an existing
         -- SaleInformation mapping row; no-op if already present or if
         -- SaleInformation isn't configured on this HO yet).
@@ -84,7 +97,9 @@ def _ensure_schema(cursor):
               FROM sync.sync_column_mapping WHERE table_name = 'SaleInformation') t
         CROSS JOIN (VALUES
             ('IssuedDate', 'datetime', 1), ('SeriesName', 'varchar', 2),
-            ('Transactionvalidity', 'int', 3), ('Cancelleddate', 'datetime', 4)
+            ('Transactionvalidity', 'int', 3), ('Cancelleddate', 'datetime', 4),
+            ('GrossAmount', 'decimal', 5), ('CGSTAmount', 'decimal', 6),
+            ('TaxAmount', 'decimal', 7)
         ) AS c(column_name, data_type, ord)
         WHERE NOT EXISTS (
             SELECT 1 FROM sync.sync_column_mapping m
@@ -326,6 +341,77 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
             (tenant_id, nmw_store_id, bill_no, bill_date, bill_date),
         )
         return _rows(cursor)
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_bill_summary(tenant_id, nmw_store_id, bill_no, bill_date):
+    """Totals footer for a bill: the line sub-total (identical to the sum of the
+    items get_bill_items returns) plus the GST and round-off from the header, so
+    Sub-total + CGST + SGST + Round-off = header BillAmount exactly.
+
+    CGST is taken from the header CGSTAmount (one half of the GST); SGST equals it
+    for intra-state bills. Round-off absorbs any residual so the total always ties
+    to BillAmount even if a column has not been back-filled yet."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        _ensure_schema(cursor)
+        cursor.execute(
+            """
+            ;WITH bill_match AS (
+                SELECT TOP (1)
+                    si.tenant_id, si.store_id, si.BNumber, si.BillNumber,
+                    CAST(si.BillDate AS DATE) AS BillDate,
+                    ISNULL(si.BillAmount, 0) AS bill_amount,
+                    ISNULL(si.CGSTAmount, 0) AS cgst,
+                    CASE WHEN LTRIM(RTRIM(ISNULL(si.SeriesName, ''))) = 'TO'
+                              OR si.BNumber LIKE 'TO%' THEN 1 ELSE 0 END AS is_transfer
+                FROM sync.SaleInformation si
+                WHERE si.tenant_id = ?
+                  AND si.store_id = ?
+                  AND si.BNumber = ?
+                  AND (? IS NULL OR CAST(si.BillDate AS DATE) = CAST(? AS DATE))
+                ORDER BY si.BillDate DESC, si.BillNumber DESC
+            )
+            SELECT
+                bm.bill_amount,
+                bm.cgst,
+                bm.is_transfer,
+                ISNULL((
+                    SELECT SUM(ISNULL(psi.Transactionamount, 0))
+                    FROM sync.ProductSaleInformation psi
+                    WHERE psi.tenant_id = bm.tenant_id
+                      AND psi.store_id = bm.store_id
+                      AND psi.BillNumber = bm.BillNumber
+                      AND psi.Bnumber = bm.BNumber
+                      AND CAST(psi.TransactionDate AS DATE) = bm.BillDate
+                      AND ISNULL(psi.TransactionValidity, 0) = 0
+                ), 0) AS subtotal
+            FROM bill_match bm
+            """,
+            (tenant_id, nmw_store_id, bill_no, bill_date, bill_date),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        bill_amount = float(row[0] or 0)
+        cgst = float(row[1] or 0)
+        is_transfer = int(row[2] or 0)
+        subtotal = float(row[3] or 0)
+        sgst = cgst
+        tax_total = cgst + sgst
+        roundoff = round(bill_amount - subtotal - tax_total, 2)
+        return {
+            "subtotal": round(subtotal, 2),
+            "cgst": round(cgst, 2),
+            "sgst": round(sgst, 2),
+            "tax_total": round(tax_total, 2),
+            "roundoff": roundoff,
+            "bill_amount": round(bill_amount, 2),
+            "is_transfer": is_transfer,
+        }
     finally:
         cursor.close()
         conn.close()

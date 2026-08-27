@@ -5,7 +5,7 @@ import { storeService } from '../../services/storeService'
 import { nmwSalesReportService } from '../../services/nmwSalesReportService'
 import type { Tenant } from '../../types/tenant'
 import type { TenantStore } from '../../types/store'
-import type { NmwSalesBill, NmwSalesBillItem } from '../../types/nmwSalesReport'
+import type { NmwSalesBill, NmwSalesBillItem, NmwSalesBillSummary } from '../../types/nmwSalesReport'
 import { FilterBar } from '../../design-system/components/FilterBar'
 
 type StatusFilter = 'all' | 'pending' | 'approved'
@@ -38,6 +38,7 @@ export default function NmwSalesReportPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<string | null>(null)
   const [items, setItems] = useState<Record<string, NmwSalesBillItem[]>>({})
+  const [summaries, setSummaries] = useState<Record<string, NmwSalesBillSummary | null>>({})
   const [showCustCodes, setShowCustCodes] = useState(false)
 
   useEffect(() => {
@@ -95,6 +96,7 @@ export default function NmwSalesReportPage() {
       try {
         const result = await nmwSalesReportService.billItems(tenantId, bill.bill_no, bill.bill_date)
         setItems((prev) => ({ ...prev, [key]: result.items }))
+        setSummaries((prev) => ({ ...prev, [key]: result.summary }))
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load bill items')
       }
@@ -371,7 +373,7 @@ export default function NmwSalesReportPage() {
                     {expanded === key && (
                       <tr>
                         <td colSpan={canApprove ? 10 : 9} className="p-0">
-                          <BillItemsTable rows={items[key]} />
+                          <BillItemsTable rows={items[key]} summary={summaries[key]} />
                         </td>
                       </tr>
                     )}
@@ -388,9 +390,28 @@ export default function NmwSalesReportPage() {
   )
 }
 
-function BillItemsTable({ rows }: { rows: NmwSalesBillItem[] | undefined }) {
+function BillItemsTable({
+  rows,
+  summary,
+}: {
+  rows: NmwSalesBillItem[] | undefined
+  summary?: NmwSalesBillSummary | null
+}) {
   if (!rows) return <div className="p-2 small text-muted">Loading items…</div>
   if (rows.length === 0) return <div className="p-2 small text-muted">No line items.</div>
+  // Amount column is the 9th (index 8): Product, Batch, Expiry, Qty, Free, MRP,
+  // Rate, Dis%, Amount. The footer labels span the first 8, value sits under it.
+  const labelSpan = 8
+  const footerRow = (label: string, value: number, opts: { bold?: boolean } = {}) => (
+    <tr className={opts.bold ? 'fw-semibold border-top' : undefined}>
+      <td colSpan={labelSpan} className="text-end text-muted">
+        {label}
+      </td>
+      <td className="text-end" style={{ whiteSpace: 'nowrap' }}>
+        {money(value)}
+      </td>
+    </tr>
+  )
   return (
     <table className="table table-sm mb-0">
       <thead>
@@ -421,6 +442,15 @@ function BillItemsTable({ rows }: { rows: NmwSalesBillItem[] | undefined }) {
           </tr>
         ))}
       </tbody>
+      {summary && (
+        <tfoot>
+          {footerRow('Sub-total', summary.subtotal)}
+          {summary.cgst > 0 && footerRow('CGST', summary.cgst)}
+          {summary.sgst > 0 && footerRow('SGST', summary.sgst)}
+          {Math.abs(summary.roundoff) >= 0.005 && footerRow('Round-off', summary.roundoff)}
+          {footerRow('Bill Amount', summary.bill_amount, { bold: true })}
+        </tfoot>
+      )}
     </table>
   )
 }

@@ -81,9 +81,11 @@ def get_bill_items(user, tenant_id, bill_no, bill_date):
     _assert_can_view(user)
     nmw_store_id = repository.get_nmw_store_id(tenant_id)
     if not nmw_store_id:
-        return {"items": []}
-    items = repository.get_bill_items(tenant_id, nmw_store_id, bill_no, (bill_date or "").strip() or None)
-    return {"items": items}
+        return {"items": [], "summary": None}
+    bd = (bill_date or "").strip() or None
+    items = repository.get_bill_items(tenant_id, nmw_store_id, bill_no, bd)
+    summary = repository.get_bill_summary(tenant_id, nmw_store_id, bill_no, bd)
+    return {"items": items, "summary": summary}
 
 
 def list_store_cust_codes(user, tenant_id):

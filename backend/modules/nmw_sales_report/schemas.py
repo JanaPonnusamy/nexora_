@@ -47,8 +47,23 @@ class NmwSalesBillItem(BaseModel):
     sublocation: Optional[str] = None
 
 
+class NmwSalesBillSummary(BaseModel):
+    """Reconciliation footer for a bill: the line-item sub-total plus the GST and
+    round-off carried on the header, which together equal the header BillAmount.
+    (subtotal = sum of line amounts = GrossAmount; cgst = sgst = header CGSTAmount
+    for intra-state bills; roundoff absorbs any residual so total == bill_amount.)"""
+    subtotal: float = 0
+    cgst: float = 0
+    sgst: float = 0
+    tax_total: float = 0
+    roundoff: float = 0
+    bill_amount: float = 0
+    is_transfer: int = 0
+
+
 class NmwSalesBillItemList(BaseModel):
     items: List[NmwSalesBillItem] = []
+    summary: Optional[NmwSalesBillSummary] = None
 
 
 class BillKey(BaseModel):

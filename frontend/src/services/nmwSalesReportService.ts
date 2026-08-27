@@ -3,6 +3,7 @@ import type {
   BillKey,
   NmwSalesBillItem,
   NmwSalesBillList,
+  NmwSalesBillSummary,
   NmwStoreCustCode,
 } from '../types/nmwSalesReport'
 
@@ -22,7 +23,7 @@ export const nmwSalesReportService = {
   },
 
   billItems: (tenantId: string, billNo: string, billDate: string) =>
-    api.get<{ items: NmwSalesBillItem[] }>(
+    api.get<{ items: NmwSalesBillItem[]; summary: NmwSalesBillSummary | null }>(
       `${base}/bills/${encodeURIComponent(billNo)}/items?tenant_id=${encodeURIComponent(tenantId)}&bill_date=${encodeURIComponent(billDate)}`,
     ),
 

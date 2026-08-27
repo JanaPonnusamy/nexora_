@@ -251,6 +251,54 @@ def reconcile_store(tenant_id, store_id, apply_changes=False):
     }
 
 
+def backfill_header_amounts(tenant_id, store_id):
+    """One-time catch-up: pull GrossAmount / CGSTAmount / TaxAmount from the source
+    ``dbo.SaleInformation`` into the mirror for every bill of this store.
+
+    These header columns were only just added to the sync selection, so existing
+    mirror rows have them NULL until the store agent re-syncs. This writes the
+    correct values immediately (the agent keeps them fresh afterwards). Keyed on
+    BNumber + BillNumber + BillDate so financial-year-reused BNumbers (e.g. two
+    ``TO002000068`` bills on different dates) each get their own values."""
+    server, database, username, password, store_code = resolve_source(tenant_id, store_id)
+    src = legacy_db.get_branch_connection(server, database, username, password, timeout=120)
+    cur = src.cursor()
+    try:
+        cur.execute(
+            "SELECT BNumber, BillNumber, CAST(BillDate AS DATE), "
+            "ISNULL(GrossAmount, 0), ISNULL(CGSTAmount, 0), ISNULL(TaxAmount, 0) "
+            "FROM dbo.SaleInformation"
+        )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        src.close()
+
+    conn = get_connection()
+    pcur = conn.cursor()
+    updated = 0
+    try:
+        for bn, billno, bdate, gross, cgst, tax in rows:
+            pcur.execute(
+                "UPDATE sync.SaleInformation "
+                "SET GrossAmount = ?, CGSTAmount = ?, TaxAmount = ? "
+                "WHERE tenant_id = ? AND store_id = ? AND BNumber = ? "
+                "AND BillNumber = ? AND CAST(BillDate AS DATE) = ?",
+                (float(gross), float(cgst), float(tax),
+                 tenant_id, store_id, bn, billno, bdate),
+            )
+            updated += pcur.rowcount
+        conn.commit()
+    finally:
+        pcur.close()
+        conn.close()
+    logger.info(
+        "NMW header-amount backfill store=%s: %d source rows, %d mirror rows updated",
+        store_code, len(rows), updated,
+    )
+    return {"store_code": store_code, "source_rows": len(rows), "updated": updated}
+
+
 def _ensure_state(cur):
     cur.execute(
         """
