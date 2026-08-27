@@ -30,6 +30,9 @@ CREATE PROCEDURE stock.usp_PurchaseHistory
 AS
 BEGIN
     SET NOCOUNT ON;
+    -- Internal 'TI' (Transfer-In) rows resolve to the tenant warehouse
+    -- (dbo.stores.is_warehouse = 1), NOT the colliding SupplierCode which shares
+    -- the local supplier-code namespace. Genuine purchases are unchanged.
     SELECT TOP (15)
         CAST(pt.Grnnumber AS NVARCHAR(50))  AS grn_no,
         CAST(pt.grndate AS DATE)            AS [date],
@@ -39,11 +42,23 @@ BEGIN
         ISNULL(pt.itemcost, 0)              AS cost,
         ISNULL(pt.purchaseprice, 0)         AS ptr,
         ISNULL(pt.mrp, 0)                   AS mrp,
-        ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100))) AS supplier
+        RTRIM(pt.InvoiceSeries)             AS invoice_series,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN 'transfer' ELSE 'supplier' END AS party_type,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI'
+             THEN ISNULL(NULLIF(RTRIM(wh.store_code), ''), 'Transfer')
+             ELSE ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100)))
+        END                                 AS supplier,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN wh.store_name END AS source_store_name
     FROM sync.PurchaseTrans pt
     LEFT JOIN sync.Suppliers s
            ON s.tenant_id = pt.tenant_id AND s.store_id = pt.store_id
           AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(pt.SupplierCode AS VARCHAR(100))
+    OUTER APPLY (
+        SELECT TOP (1) w.store_code, w.store_name
+        FROM dbo.stores w
+        WHERE w.tenant_id = pt.tenant_id AND w.is_warehouse = 1
+        ORDER BY w.store_code
+    ) wh
     WHERE pt.tenant_id = @TenantId AND pt.store_id = @StoreId AND pt.ProductCode = @ProductCode
     ORDER BY pt.grndate DESC;
 END
@@ -98,11 +113,18 @@ CREATE PROCEDURE stock.usp_PurchaseBill
 AS
 BEGIN
     SET NOCOUNT ON;
+    -- 'TI' (Transfer-In) rows are internal transfers: resolve the party to the
+    -- tenant warehouse (is_warehouse = 1), not the colliding SupplierCode.
     SELECT
         CAST(pt.Grnnumber AS NVARCHAR(50))  AS grn_no,
         RTRIM(pt.InvoiceSeries)             AS invoice_series,
         CAST(pt.grndate AS DATE)            AS bill_date,
-        ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100))) AS supplier,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN 'transfer' ELSE 'supplier' END AS party_type,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI'
+             THEN ISNULL(NULLIF(RTRIM(wh.store_code), ''), 'Transfer')
+             ELSE ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100)))
+        END                                 AS supplier,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN wh.store_name END AS source_store_name,
         CAST(pt.SupplierCode AS NVARCHAR(100)) AS supplier_code,
         ISNULL(p.ProductName, CAST(pt.ProductCode AS NVARCHAR(50))) AS product_name,
         CAST(pt.BatchCode AS NVARCHAR(50))  AS batch,
@@ -123,6 +145,12 @@ BEGIN
     LEFT JOIN sync.Batches b
            ON b.tenant_id = pt.tenant_id AND b.store_id = pt.store_id
           AND b.BatchCode = pt.BatchCode AND b.ProductCode = pt.ProductCode
+    OUTER APPLY (
+        SELECT TOP (1) w.store_code, w.store_name
+        FROM dbo.stores w
+        WHERE w.tenant_id = pt.tenant_id AND w.is_warehouse = 1
+        ORDER BY w.store_code
+    ) wh
     WHERE pt.tenant_id = @TenantId AND pt.store_id = @StoreId AND pt.Grnnumber = @GrnNo
       AND (@GrnDate IS NULL OR CAST(pt.grndate AS DATE) = @GrnDate)
     ORDER BY p.ProductName;

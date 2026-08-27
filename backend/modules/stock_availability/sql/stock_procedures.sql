@@ -316,6 +316,48 @@ END
 GO
 
 /* ===========================================================================
+   4b) stock.usp_BatchDetail   (single-batch detail popup)
+   Full detail for ONE batch of a product, shown when the user clicks a batch
+   row. Everything comes straight off sync.Batches (which carries ItemCost +
+   SupplierCode per batch); supplier name resolved via sync.Suppliers.
+   OUTPUT: batch_no, batch_description, stock, expiry_date, cost, ptr, mrp,
+           supplier, last_purchase_date, last_sale_date
+   =========================================================================== */
+IF OBJECT_ID(N'stock.usp_BatchDetail', N'P') IS NOT NULL DROP PROCEDURE stock.usp_BatchDetail;
+GO
+CREATE PROCEDURE stock.usp_BatchDetail
+    @TenantId     UNIQUEIDENTIFIER,
+    @StoreId      UNIQUEIDENTIFIER,
+    @ProductCode  INT,
+    @BatchCode    VARCHAR(50)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP (1)
+        CAST(b.BatchCode AS VARCHAR(50))          AS batch_no,
+        LTRIM(RTRIM(ISNULL(b.BatchDescription, ''))) AS batch_description,
+        ISNULL(b.Stock, 0)                        AS stock,
+        CAST(b.ExpiryDate AS DATE)                 AS expiry_date,
+        ISNULL(b.ItemCost, 0)                     AS cost,
+        ISNULL(b.PurchasePrice, 0)                AS ptr,
+        ISNULL(b.MRP, 0)                          AS mrp,
+        ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(b.SupplierCode AS NVARCHAR(100))) AS supplier,
+        CAST(b.GrnDate AS DATE)                    AS last_purchase_date,
+        CAST(b.LastSaleDate AS DATE)               AS last_sale_date
+    FROM sync.Batches b
+    LEFT JOIN sync.Suppliers s
+           ON s.tenant_id = b.tenant_id
+          AND s.store_id  = b.store_id
+          AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(b.SupplierCode AS VARCHAR(100))
+    WHERE b.tenant_id = @TenantId
+      AND b.store_id  = @StoreId
+      AND b.ProductCode = @ProductCode
+      AND CAST(b.BatchCode AS VARCHAR(50)) = @BatchCode;
+END
+GO
+
+/* ===========================================================================
    5) stock.usp_PurchaseHistory   (Recent Purchases panel)
    Faithful to sp_nmstock_get_purchases, plus supplier name via
    PurchaseTrans.SupplierCode -> sync.Suppliers (same join pattern as
@@ -332,6 +374,13 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- Internal stock transfers (InvoiceSeries 'TI' = Transfer-In) are NOT
+    -- external purchases: their SupplierCode is a transfer/source code that
+    -- collides with the store-local supplier-code namespace (e.g. code 2 = a
+    -- real supplier "PENTACARE"), so it must NOT be resolved via sync.Suppliers.
+    -- For a transfer we surface the tenant's warehouse (dbo.stores.is_warehouse
+    -- = 1) as the source party. Genuine purchases (series 'IV' etc.) are
+    -- unchanged and keep resolving the real supplier name.
     SELECT TOP (15)
         CAST(pt.Grnnumber AS NVARCHAR(50)) AS grn_no,
         CAST(pt.grndate AS DATE)           AS [date],
@@ -341,12 +390,24 @@ BEGIN
         ISNULL(pt.itemcost, 0)             AS cost,
         ISNULL(pt.purchaseprice, 0)        AS ptr,
         ISNULL(pt.mrp, 0)                  AS mrp,
-        ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100))) AS supplier
+        RTRIM(pt.InvoiceSeries)            AS invoice_series,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN 'transfer' ELSE 'supplier' END AS party_type,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI'
+             THEN ISNULL(NULLIF(RTRIM(wh.store_code), ''), 'Transfer')
+             ELSE ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100)))
+        END                                AS supplier,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN wh.store_name END AS source_store_name
     FROM sync.PurchaseTrans pt
     LEFT JOIN sync.Suppliers s
            ON s.tenant_id = pt.tenant_id
           AND s.store_id  = pt.store_id
           AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(pt.SupplierCode AS VARCHAR(100))
+    OUTER APPLY (
+        SELECT TOP (1) w.store_code, w.store_name
+        FROM dbo.stores w
+        WHERE w.tenant_id = pt.tenant_id AND w.is_warehouse = 1
+        ORDER BY w.store_code
+    ) wh
     WHERE pt.tenant_id = @TenantId
       AND pt.store_id  = @StoreId
       AND pt.ProductCode = @ProductCode
@@ -489,7 +550,8 @@ BEGIN
         CASE WHEN ISNULL(b.Stock, 0) > 0 THEN 0 ELSE 1 END,
         b.ExpiryDate;
 
-    -- Result set 2: purchases (== stock.usp_PurchaseHistory)
+    -- Result set 2: purchases (== stock.usp_PurchaseHistory) — internal 'TI'
+    -- transfers resolve to the tenant warehouse, not the colliding SupplierCode.
     SELECT TOP (15)
         CAST(pt.Grnnumber AS NVARCHAR(50)) AS grn_no,
         CAST(pt.grndate AS DATE)           AS [date],
@@ -499,12 +561,24 @@ BEGIN
         ISNULL(pt.itemcost, 0)             AS cost,
         ISNULL(pt.purchaseprice, 0)        AS ptr,
         ISNULL(pt.mrp, 0)                  AS mrp,
-        ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100))) AS supplier
+        RTRIM(pt.InvoiceSeries)            AS invoice_series,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN 'transfer' ELSE 'supplier' END AS party_type,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI'
+             THEN ISNULL(NULLIF(RTRIM(wh.store_code), ''), 'Transfer')
+             ELSE ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100)))
+        END                                AS supplier,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN wh.store_name END AS source_store_name
     FROM sync.PurchaseTrans pt
     LEFT JOIN sync.Suppliers s
            ON s.tenant_id = pt.tenant_id
           AND s.store_id  = pt.store_id
           AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(pt.SupplierCode AS VARCHAR(100))
+    OUTER APPLY (
+        SELECT TOP (1) w.store_code, w.store_name
+        FROM dbo.stores w
+        WHERE w.tenant_id = pt.tenant_id AND w.is_warehouse = 1
+        ORDER BY w.store_code
+    ) wh
     WHERE pt.tenant_id = @TenantId
       AND pt.store_id  = @StoreId
       AND pt.ProductCode = @ProductCode

@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import axythicLogo from './assets/axythic-logo-mark.png';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -137,20 +138,77 @@ const PREFETCH_NEXT_ROWS = 20;
 const PREFETCH_CONCURRENCY = 4;
 const RECENT_ANALYSIS_ROWS = 20;
 const DEFAULT_STOCK_SECTIONS = { trend: true, batches: true, purchase: true, billing: true };
+const DEFAULT_GRID_DENSITY = 'normal';
 const DEFAULT_STOCK_FIELDS = {
   product: { name: true, unit: true, stock: true },
   trend: { purchase: true, sales: true, stock: true },
-  batches: { expiry: true, stock: true, mrp: true, batchNo: true, purchaseAge: true, salesAge: true, status: true },
-  purchase: { qty: true, free: true, allDiscount: true, productDiscount: true, grnDate: true, grnNo: true, supplier: true },
+  batches: { expiry: true, stock: true, mrp: true, purchaseAge: true, salesAge: true },
+  purchase: { qty: true, free: true, allDiscount: true, productDiscount: true, grnDate: true, supplier: true },
   billing: { qty: true, discount: true, date: true, billNo: true, mrp: true, amount: true }
 };
 const STOCK_FIELD_LABELS = {
   product: { name: 'Product name', unit: 'Unit', stock: 'Stock' },
   trend: { purchase: 'Purchase', sales: 'Sales', stock: 'Stock' },
-  batches: { expiry: 'Expiry', stock: 'Stock', mrp: 'MRP', batchNo: 'Batch No', purchaseAge: 'Purchase Age', salesAge: 'Sales Age', status: 'Status' },
-  purchase: { qty: 'Quantity', free: 'Free', allDiscount: 'All Discount', productDiscount: 'Product Discount', grnDate: 'GRN Date', grnNo: 'GRN No', supplier: 'Supplier' },
+  batches: { expiry: 'Expiry', stock: 'Stock', mrp: 'MRP', purchaseAge: 'Purchase Age', salesAge: 'Sales Age' },
+  purchase: { qty: 'Quantity', free: 'Free', allDiscount: 'All Discount', productDiscount: 'Product Discount', grnDate: 'GRN Date', supplier: 'Supplier' },
   billing: { qty: 'Quantity', discount: 'Discount', date: 'Date', billNo: 'Bill No', mrp: 'MRP', amount: 'Amount' }
 };
+
+// ── Single source of truth for stock-grid sub-column geometry ───────────────
+// The header (StoreColumnHeaders) and the body (StoreDataRow / StoreProductGrid)
+// BOTH read these same width maps, so a header track can never drift out of
+// alignment with the data column beneath it. Widths are intentionally compact
+// (numbers narrow, dates consistent) with the one flexible track per section —
+// Product name / Supplier / Bill No — absorbing the leftover space.
+const PRODUCT_COL_WIDTHS = { name: 'minmax(0, 1fr)', unit: '44px', stock: '50px' };
+const PRODUCT_COL_LABELS = { name: 'Product', unit: 'Unit', stock: 'Stock' };
+const BATCH_COL_WIDTHS = { expiry: '56px', stock: '34px', mrp: '46px', purchaseAge: '42px', salesAge: '42px' };
+const BATCH_COL_LABELS = { expiry: 'Exp', stock: 'Stk', mrp: 'MRP', purchaseAge: 'P.Age', salesAge: 'S.Age' };
+// GRN No lives in the purchase detail card now (not a dedicated row column), so
+// the freed width goes to the columns a buyer actually scans.
+const PURCHASE_COL_WIDTHS = { qty: '30px', free: '28px', allDiscount: '46px', productDiscount: '50px', grnDate: '58px', supplier: 'minmax(72px, 1fr)' };
+const PURCHASE_COL_LABELS = { qty: 'Qty', free: 'Free', allDiscount: 'All Dis', productDiscount: 'Prod Dis%', grnDate: 'GRN Date', supplier: 'Supplier' };
+const PURCHASE_SUMMARY_COL_WIDTHS = { qty: '32px', free: '30px', grnDate: '58px', mrp: '46px', ptr: '46px', cost: '50px' };
+const PURCHASE_SUMMARY_COL_LABELS = { qty: 'Qty', free: 'Free', grnDate: 'GRN Date', mrp: 'MRP', ptr: 'PTR', cost: 'Cost' };
+const BILLING_COL_WIDTHS = { qty: '28px', discount: '40px', date: '58px', billNo: 'minmax(64px, 1fr)', mrp: '46px', amount: '56px' };
+const BILLING_COL_LABELS = { qty: 'Qty', discount: 'Dis%', date: 'Date', billNo: 'Bill No', mrp: 'MRP', amount: 'Amount' };
+
+// Canonical left-to-right order of every resizable/reorderable column group.
+// The settings panel lets the user override order + per-column pixel width;
+// both the header (StoreColumnHeaders) and the body cells derive their grid
+// geometry from the SAME resolver so they can never drift out of alignment.
+// Columns whose default width is 'flex' (Product / Batch No / Supplier /
+// Bill No) fill the leftover space and are not px-resizable unless the user
+// types a width (which pins them); clearing the field restores flex.
+const STOCK_COLUMN_ORDER_BASE = {
+  product: ['name', 'unit', 'stock'],
+  batches: ['expiry', 'stock', 'mrp', 'purchaseAge', 'salesAge'],
+  purchase: ['qty', 'free', 'allDiscount', 'productDiscount', 'grnDate', 'supplier'],
+  billing: ['qty', 'discount', 'date', 'billNo', 'mrp', 'amount']
+};
+
+// All keys of a group in the user's current order (saved order first, then any
+// remaining defaults) — includes hidden columns so the settings list can show
+// every column with its checkbox.
+function orderedGroupKeys(group, columnOrder) {
+  const base = STOCK_COLUMN_ORDER_BASE[group] || [];
+  const saved = (columnOrder && columnOrder[group]) || [];
+  return [...saved.filter((k) => base.includes(k)), ...base.filter((k) => !saved.includes(k))];
+}
+
+// Reorder + width-override a definitions array ([key, ...rest, width]) using the
+// saved config for a group. The array is assumed pre-filtered to visible cols.
+function applyColumnConfig(defs, group, columnOrder, columnWidths) {
+  const byKey = new Map(defs.map((d) => [d[0], d]));
+  const orderedKeys = orderedGroupKeys(group, columnOrder).filter((k) => byKey.has(k));
+  const widths = (columnWidths && columnWidths[group]) || {};
+  return orderedKeys.map((k) => {
+    const def = byKey.get(k).slice();
+    const w = widths[k];
+    if (typeof w === 'number' && Number.isFinite(w) && w > 0) def[def.length - 1] = `${w}px`;
+    return def;
+  });
+}
 
 export default function App() {
   return (
@@ -1032,6 +1090,18 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   const [status, setStatus] = useState({ state: 'idle', message: 'Type product name to search.' });
   const [purchaseDetail, setPurchaseDetail] = useState(null);
   const [billDetail, setBillDetail] = useState(null);
+  const [batchDetail, setBatchDetail] = useState(null);
+
+  async function openBatchDetail(store, productCode, batchNo) {
+    if (!store || !productCode || !batchNo) return;
+    setBatchDetail({ store, batchNo, loading: true, row: null });
+    try {
+      const row = await api.getBatchDetail(store.store_id, productCode, batchNo, session, { tenantId: settings?.tenantId });
+      setBatchDetail({ store, batchNo, loading: false, row });
+    } catch {
+      setBatchDetail({ store, batchNo, loading: false, row: null, error: true });
+    }
+  }
   const [nonMovingProducts, setNonMovingProducts] = useState([]);
   const [nonMovingLoading, setNonMovingLoading] = useState(true);
   const [nonMovingIndex, setNonMovingIndex] = useState(0);
@@ -1057,6 +1127,20 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
       return DEFAULT_STOCK_FIELDS;
     }
   });
+  const [columnOrder, setColumnOrder] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('nexora.desktop.stockColumnOrder') || '{}') || {}; }
+    catch { return {}; }
+  });
+  const [columnWidths, setColumnWidths] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('nexora.desktop.stockColumnWidths') || '{}') || {}; }
+    catch { return {}; }
+  });
+  const [gridDensity, setGridDensity] = useState(() => {
+    try { return localStorage.getItem('nexora.desktop.stockDensity') || DEFAULT_GRID_DENSITY; }
+    catch { return DEFAULT_GRID_DENSITY; }
+  });
+  const [gridSettingsOpen, setGridSettingsOpen] = useState(false);
+  const gridSettingsBtnRef = useRef(null);
   const searchInputRef = useRef(null);
 
   const tenantStores = useMemo(() => {
@@ -1073,13 +1157,31 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
     try { localStorage.setItem('nexora.desktop.stockFields', JSON.stringify(visibleFields)); } catch { /* best effort */ }
   }, [visibleFields]);
 
+  useEffect(() => {
+    try { localStorage.setItem('nexora.desktop.stockColumnOrder', JSON.stringify(columnOrder)); } catch { /* best effort */ }
+  }, [columnOrder]);
+
+  useEffect(() => {
+    try { localStorage.setItem('nexora.desktop.stockColumnWidths', JSON.stringify(columnWidths)); } catch { /* best effort */ }
+  }, [columnWidths]);
+
+  useEffect(() => {
+    try { localStorage.setItem('nexora.desktop.stockDensity', gridDensity); } catch { /* best effort */ }
+  }, [gridDensity]);
+
+  // Column-width priority (req §7): Product and Sales Trend are the two
+  // columns a buyer reads continuously, so they get comparable flex weight -
+  // Product must never lose the width race to the chart. Batches/Purchase/
+  // Billing keep compact fixed sub-columns internally (see *_COL_WIDTHS)
+  // with only one flexible text field (Supplier / Bill No) each, so their
+  // track weight stays modest.
   const stockGridColumns = [
-    '30px',
-    'minmax(205px, 1fr)',
-    visibleSections.trend && 'minmax(180px, .85fr)',
-    visibleSections.batches && 'minmax(335px, 1.5fr)',
-    visibleSections.purchase && 'minmax(335px, 1.5fr)',
-    visibleSections.billing && 'minmax(325px, 1.4fr)'
+    '34px',
+    'minmax(220px, 1.3fr)',
+    visibleSections.trend && 'minmax(220px, 1.35fr)',
+    visibleSections.batches && 'minmax(228px, .9fr)',
+    visibleSections.purchase && 'minmax(286px, 1.2fr)',
+    visibleSections.billing && 'minmax(260px, 1.05fr)'
   ].filter(Boolean).join(' ');
 
   function toggleStockSection(section) {
@@ -1093,6 +1195,48 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
       if (group[field] && enabledCount === 1) return current;
       return { ...current, [category]: { ...group, [field]: !group[field] } };
     });
+  }
+
+  // Move a column one slot left (-1) or right (+1) within its group.
+  function moveStockColumn(group, key, dir) {
+    setColumnOrder((current) => {
+      const keys = orderedGroupKeys(group, current);
+      const i = keys.indexOf(key);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= keys.length) return current;
+      const next = keys.slice();
+      [next[i], next[j]] = [next[j], next[i]];
+      return { ...current, [group]: next };
+    });
+  }
+
+  // Set a column's pixel width; passing null/0/'' clears the override so the
+  // column returns to its default width (flex columns become stretchy again).
+  function setStockColumnWidth(group, key, width) {
+    setColumnWidths((current) => {
+      const groupWidths = { ...(current[group] || {}) };
+      const n = Number(width);
+      if (!width || !Number.isFinite(n) || n <= 0) delete groupWidths[key];
+      else groupWidths[key] = Math.round(n);
+      return { ...current, [group]: groupWidths };
+    });
+  }
+
+  // Restore a group's columns to their default order + widths + visibility.
+  function resetStockColumns(group) {
+    setColumnOrder((current) => { const n = { ...current }; delete n[group]; return n; });
+    setColumnWidths((current) => { const n = { ...current }; delete n[group]; return n; });
+    setVisibleFields((current) => ({ ...current, [group]: { ...DEFAULT_STOCK_FIELDS[group] } }));
+  }
+
+  // Restore every group + section visibility + density to factory defaults in
+  // one action (Grid settings panel's "Reset all").
+  function resetAllStockColumns() {
+    setColumnOrder({});
+    setColumnWidths({});
+    setVisibleFields(DEFAULT_STOCK_FIELDS);
+    setVisibleSections(DEFAULT_STOCK_SECTIONS);
+    setGridDensity(DEFAULT_GRID_DENSITY);
   }
 
   const loginStoreId = session?.user?.roles?.[0]?.store_id || loadSettings().storeId;
@@ -1405,7 +1549,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   const otherStores = stores.filter((store) => !isWarehouseStore(store));
 
   return (
-    <section className="store-workbench" style={{ '--stock-grid-columns': stockGridColumns }}>
+    <section className={`store-workbench density-${gridDensity}`} style={{ '--stock-grid-columns': stockGridColumns }}>
       <div className="global-search-row">
         <div className="stock-search-field">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.7 19.3-4.2-4.2a7.5 7.5 0 1 0-1.4 1.4l4.2 4.2 1.4-1.4ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
@@ -1425,16 +1569,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
           <span>In-stock only</span>
         </label>
         {tenants.length > 1 && (
-          <label className="tenant-filter">
-            <span>Tenant</span>
-            <select value={settings?.tenantId || ''} onChange={(event) => onTenantChange?.(event.target.value)}>
-              {tenants.map((tenant) => (
-                <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                  {tenant.tenant_name || tenant.tenant_code}
-                </option>
-              ))}
-            </select>
-          </label>
+          <TenantFilterPicker tenants={tenants} tenantId={settings?.tenantId || ''} onTenantChange={onTenantChange} />
         )}
         <div className={`stock-search-status status-line ${status.state}`} title={status.message}>
           <span className="stock-search-status-dot" aria-hidden="true" />
@@ -1449,80 +1584,130 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10v2H4V6Zm0 5h7v2H4v-2Zm0 5h4v2H4v-2Zm14.6-6.4L21 12l-2.4 2.4-1.4-1.4.7-.7H13v-2h4.9l-.7-.7 1.4-1.4Z" /></svg>
             <span>Store order</span>
           </button>
+          <button
+            type="button"
+            ref={gridSettingsBtnRef}
+            className="store-order-button grid-settings-button"
+            onClick={() => setGridSettingsOpen((open) => !open)}
+            aria-expanded={gridSettingsOpen}
+            title="Configure grid columns"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a8 8 0 0 0-1.7-1L15 3.5h-4L10.7 6A8 8 0 0 0 9 7L6.6 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4L9 17a8 8 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM13 18.5h-2l-.3-2-1-.4-1.9.8-1-1.7 1.6-1.3-.2-1v-1.8l.2-1-1.6-1.3 1-1.7 1.9.8 1-.4.3-2h2l.3 2 1 .4 1.9-.8 1 1.7-1.6 1.3.2 1v1.8l-.2 1 1.6 1.3-1 1.7-1.9-.8-1 .4-.3 2ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z" /></svg>
+            <span>Grid columns</span>
+          </button>
+          {gridSettingsOpen && (
+            <GridSettingsPanel
+              anchorRef={gridSettingsBtnRef}
+              sections={visibleSections}
+              fields={visibleFields}
+              columnOrder={columnOrder}
+              columnWidths={columnWidths}
+              density={gridDensity}
+              onToggleSection={toggleStockSection}
+              onToggleField={toggleStockField}
+              onMoveColumn={moveStockColumn}
+              onColumnWidth={setStockColumnWidth}
+              onResetColumns={resetStockColumns}
+              onResetAll={resetAllStockColumns}
+              onDensityChange={setGridDensity}
+              onClose={() => setGridSettingsOpen(false)}
+            />
+          )}
         </div>
       </div>
 
-      <NonMovingHighlightCard
-        nonMovingGroups={groupedNonMoving}
-        nonMovingLoading={nonMovingLoading}
-        nonMovingIndex={nonMovingIndex}
-        onPrev={() => nonMovingStep(-1)}
-        onNext={() => nonMovingStep(1)}
-        onSearch={(productName) => {
-          if (!productName) return;
-          setIsAutoQuery(false);
-          setQuery(productName);
-        }}
-        allStores={tenantStores}
-        storeFilter={nonMovingStoreFilter}
-        onStoreFilterChange={setNonMovingStoreFilter}
-      />
+      <div className="top-summary-row">
+        {warehouseStore && (
+          <div className="store-row-workspace no-side-search warehouse-only top-summary-nmw">
+            <section className="store-row-grid">
+              <StoreDataRow
+                key={warehouseStore.store_id || warehouseStore.store_code}
+                store={warehouseStore}
+                colorIndex={stores.indexOf(warehouseStore)}
+                hasSearched={hasSearched}
+                searchProducts={searchProductsByStore.get(warehouseStore.store_id) || []}
+                detail={storeDetails[warehouseStore.store_id]}
+                onProductSelect={(product) => handleProductSelect(warehouseStore.store_id, product)}
+                onSaleSelect={(store, row) => setBillDetail({ store, sale: row })}
+                onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store: warehouseStore, row }) : undefined}
+                onOpenBatch={openBatchDetail}
+                hideSupplierColumn={hideSupplierColumn}
+                visibility={visibility}
+                restrictWarehouse
+                visibleFields={visibleFields}
+                columnOrder={columnOrder}
+                columnWidths={columnWidths}
+                selected={selectedStoreId === warehouseStore.store_id}
+                onSelect={() => setSelectedStoreId(warehouseStore.store_id)}
+              />
+            </section>
+          </div>
+        )}
 
-      {warehouseStore && (
-        <div className="store-row-workspace no-side-search warehouse-only top-summary-nmw nmw-panel">
-          <section className="store-row-grid">
-            <StoreDataRow
-              key={warehouseStore.store_id || warehouseStore.store_code}
-              store={warehouseStore}
-              colorIndex={stores.indexOf(warehouseStore)}
-              hasSearched={hasSearched}
-              searchProducts={searchProductsByStore.get(warehouseStore.store_id) || []}
-              detail={storeDetails[warehouseStore.store_id]}
-              onProductSelect={(product) => handleProductSelect(warehouseStore.store_id, product)}
-              onSaleSelect={(store, row) => setBillDetail({ store, sale: row })}
-              onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store: warehouseStore, row }) : undefined}
-              hideSupplierColumn={hideSupplierColumn}
-              visibility={visibility}
-              restrictWarehouse
-              visibleFields={visibleFields}
-              selected={selectedStoreId === warehouseStore.store_id}
-              onSelect={() => setSelectedStoreId(warehouseStore.store_id)}
-            />
-          </section>
-        </div>
-      )}
+        <NonMovingHighlightCard
+          nonMovingGroups={groupedNonMoving}
+          nonMovingLoading={nonMovingLoading}
+          nonMovingIndex={nonMovingIndex}
+          onPrev={() => nonMovingStep(-1)}
+          onNext={() => nonMovingStep(1)}
+          onSearch={(productName) => {
+            if (!productName) return;
+            setIsAutoQuery(false);
+            setQuery(productName);
+          }}
+          allStores={tenantStores}
+          storeFilter={nonMovingStoreFilter}
+          onStoreFilterChange={setNonMovingStoreFilter}
+        />
+      </div>
 
       <div className="store-row-workspace no-side-search">
-        <section className="store-row-grid">
+        {/* Header/body split (not a CSS-grid row anymore): the header used to
+            be the first item of the SAME grid that auto-sizes the data rows,
+            pinned via position:sticky. Under space pressure (more rows than
+            fit) Chromium's grid track-sizing did not reliably respect the
+            header track's declared minimum once a sticky item was involved -
+            verified via CDP (offsetTop/offsetHeight showed the next row
+            starting before the header's own box ended, independent of
+            scroll), so no minmax() floor value could fix it for good. Taking
+            the header out of the grid entirely removes that whole class of
+            bug: it's a plain flex-fixed sibling above a separately
+            scrollable grid, so it can never overlap a row no matter how
+            tall/short the available space is. */}
+        <div className="store-row-grid-shell">
           <StoreColumnHeaders
             hideSupplierColumn={hideSupplierColumn}
-            sticky
             visibleSections={visibleSections}
             visibleFields={visibleFields}
-            onToggleSection={toggleStockSection}
-            onToggleField={toggleStockField}
+            columnOrder={columnOrder}
+            columnWidths={columnWidths}
           />
-          {otherStores.map((store, index) => (
-            <StoreDataRow
-              key={store.store_id || store.store_code}
-              store={store}
-              colorIndex={stores.indexOf(store)}
-              hasSearched={hasSearched}
-              searchProducts={searchProductsByStore.get(store.store_id) || []}
-              detail={storeDetails[store.store_id]}
-              onProductSelect={(product) => handleProductSelect(store.store_id, product)}
-              onSaleSelect={(s, row) => setBillDetail({ store: s, sale: row })}
-              onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store, row }) : undefined}
-              hideSupplierColumn={hideSupplierColumn}
-              visibility={visibility}
-              restrictWarehouse={false}
-              visibleSections={visibleSections}
-              visibleFields={visibleFields}
-              selected={selectedStoreId === store.store_id}
-              onSelect={() => setSelectedStoreId(store.store_id)}
-            />
-          ))}
-        </section>
+          <section className="store-row-grid">
+            {otherStores.map((store, index) => (
+              <StoreDataRow
+                key={store.store_id || store.store_code}
+                store={store}
+                colorIndex={stores.indexOf(store)}
+                hasSearched={hasSearched}
+                searchProducts={searchProductsByStore.get(store.store_id) || []}
+                detail={storeDetails[store.store_id]}
+                onProductSelect={(product) => handleProductSelect(store.store_id, product)}
+                onSaleSelect={(s, row) => setBillDetail({ store: s, sale: row })}
+                onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store, row }) : undefined}
+                onOpenBatch={openBatchDetail}
+                hideSupplierColumn={hideSupplierColumn}
+                visibility={visibility}
+                restrictWarehouse={false}
+                visibleSections={visibleSections}
+                visibleFields={visibleFields}
+                columnOrder={columnOrder}
+                columnWidths={columnWidths}
+                selected={selectedStoreId === store.store_id}
+                onSelect={() => setSelectedStoreId(store.store_id)}
+              />
+            ))}
+          </section>
+        </div>
       </div>
 
       <ProductStatusLegend />
@@ -1532,6 +1717,9 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
       )}
       {billDetail && (
         <BillDetailCard detail={billDetail} session={session} visibility={visibility} onClose={() => setBillDetail(null)} />
+      )}
+      {batchDetail && (
+        <BatchDetailCard detail={batchDetail} visibility={visibility} onClose={() => setBatchDetail(null)} />
       )}
     </section>
   );
@@ -1934,7 +2122,11 @@ function NmwSalesReport({ session, settings }) {
 
 const STORE_COLORS = ['#3b82f6', '#14b8a6', '#6366f1', '#0ea5e9', '#8b5cf6', '#06b6d4'];
 
-const STOCK_COLS = 'minmax(0, 1.35fr) 40px 44px';
+// Product absorbs all leftover width (the only flexible track); Unit and Stock
+// stay tightly sized to their content (TAB/BOX/BTL and the stock number) so the
+// grid never leaves a blank gutter after Stock. Header + body derive from the
+// SAME values (see StoreColumnHeaders / StoreProductGrid) to stay aligned.
+const STOCK_COLS = 'minmax(0, 1fr) 44px 52px';
 // Legacy 4-col batch layout, still used by the Supplier Stock Analysis
 // screen's own Batch panel (different data source - no purchase/sales age).
 const BATCH_COLS = '68px 46px 58px 78px';
@@ -1959,30 +2151,34 @@ function StoreColumnHeaders({
   showBillingColumn = true,
   visibleSections,
   visibleFields,
-  onToggleSection,
-  onToggleField
+  columnOrder,
+  columnWidths
 }) {
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const sections = visibleSections || DEFAULT_STOCK_SECTIONS;
   const fields = visibleFields || DEFAULT_STOCK_FIELDS;
-  const productDefinitions = [
-    ['name', 'Product', 'minmax(0, 1.35fr)'], ['unit', 'Unit', '40px'], ['stock', 'Stock', '44px']
-  ].filter(([key]) => fields.product[key]);
-  const batchDefinitions = [
-    ['expiry', 'Exp', '54px'], ['stock', 'Stk', '30px'], ['mrp', 'MRP', '38px'], ['batchNo', 'Batch No', '52px'],
-    ['purchaseAge', 'Pur. Age', '36px'], ['salesAge', 'Sale Age', '36px'], ['status', 'Status', 'minmax(58px, 1fr)']
-  ].filter(([key]) => fields.batches[key]);
-  const purchaseDefinitions = (hideSupplierColumn ? [
-    ['qty', 'Qty', '26px'], ['free', 'Free', '26px'], ['grnDate', 'GRN Date', '52px'], ['grnNo', 'GRN No', '48px'],
-    ['mrp', 'MRP', '42px'], ['ptr', 'PTR', '42px'], ['cost', 'Cost', '48px']
-  ] : [
-    ['qty', 'Qty', '22px'], ['free', 'Free', '20px'], ['allDiscount', 'All Dis', '38px'], ['productDiscount', 'Prod Dis%', '42px'],
-    ['grnDate', 'GRN Date', '52px'], ['grnNo', 'GRN No', '44px'], ['supplier', 'Supplier', 'minmax(86px, 1fr)']
-  ]).filter(([key]) => fields.purchase[key] !== false);
-  const billingDefinitions = [
-    ['qty', 'Qty', '30px'], ['discount', 'Dis%', '38px'], ['date', 'Date', '58px'], ['billNo', 'Bill No', 'minmax(76px, 1fr)'],
-    ['mrp', 'MRP', '48px'], ['amount', 'Amount', '62px']
-  ].filter(([key]) => fields.billing[key]);
+  // All widths come from the shared *_COL_WIDTHS maps so the header can never
+  // drift from the body row that reads the same maps.
+  const productDefinitions = applyColumnConfig(
+    ['name', 'unit', 'stock'].filter((key) => fields.product[key])
+      .map((key) => [key, PRODUCT_COL_LABELS[key], PRODUCT_COL_WIDTHS[key]]),
+    'product', columnOrder, columnWidths);
+  const batchDefinitions = applyColumnConfig(
+    ['expiry', 'stock', 'mrp', 'purchaseAge', 'salesAge'].filter((key) => fields.batches[key])
+      .map((key) => [key, BATCH_COL_LABELS[key], BATCH_COL_WIDTHS[key]]),
+    'batches', columnOrder, columnWidths);
+  // The salesman-only summary variant carries PTR/Cost keys that are outside
+  // the reorderable base set, so it stays fixed; the full variant is configurable.
+  const purchaseDefinitions = hideSupplierColumn
+    ? ['qty', 'free', 'grnDate', 'mrp', 'ptr', 'cost'].filter((key) => fields.purchase[key] !== false)
+        .map((key) => [key, PURCHASE_SUMMARY_COL_LABELS[key], PURCHASE_SUMMARY_COL_WIDTHS[key]])
+    : applyColumnConfig(
+        ['qty', 'free', 'allDiscount', 'productDiscount', 'grnDate', 'supplier'].filter((key) => fields.purchase[key] !== false)
+          .map((key) => [key, PURCHASE_COL_LABELS[key], PURCHASE_COL_WIDTHS[key]]),
+        'purchase', columnOrder, columnWidths);
+  const billingDefinitions = applyColumnConfig(
+    ['qty', 'discount', 'date', 'billNo', 'mrp', 'amount'].filter((key) => fields.billing[key])
+      .map((key) => [key, BILLING_COL_LABELS[key], BILLING_COL_WIDTHS[key]]),
+    'billing', columnOrder, columnWidths);
   const definitionGrid = (definitions) => definitions.map(([, , width]) => width).join(' ');
 
   if (restrictWarehouse) {
@@ -1998,7 +2194,7 @@ function StoreColumnHeaders({
   }
 
   return (
-    <div className={`store-column-headers ${sticky ? 'sticky' : ''} ${!visibleSections && !showBillingColumn ? 'no-bill-column' : ''} ${onToggleSection ? 'has-settings' : ''}`}>
+    <div className={`store-column-headers ${sticky ? 'sticky' : ''} ${!visibleSections && !showBillingColumn ? 'no-bill-column' : ''}`}>
       <span className="store-header-cell" />
       <div className="header-cell header-cell--product">
         <div className="header-cell-title">Product</div>
@@ -2007,11 +2203,6 @@ function StoreColumnHeaders({
       {sections.trend && (
         <div className="header-cell header-cell--trend">
           <div className="header-cell-title">Sales Trend</div>
-          <div className="trend-header-legend" aria-label="Sales trend series">
-            {fields.trend.purchase && <span className="trend-key trend-key--purchase">Purchase</span>}
-            {fields.trend.sales && <span className="trend-key trend-key--sales">Sales</span>}
-            {fields.trend.stock && <span className="trend-key trend-key--stock">Stock</span>}
-          </div>
         </div>
       )}
       {sections.batches && (
@@ -2032,70 +2223,214 @@ function StoreColumnHeaders({
           <GridRow cols={definitionGrid(billingDefinitions)} cells={billingDefinitions.map(([, label]) => label)} tag="span" />
         </div>
       )}
-      {onToggleSection && (
-        <div className="header-settings">
-          <button
-            type="button"
-            className="header-settings-button"
-            onClick={() => setSettingsOpen((open) => !open)}
-            aria-label="Configure visible columns"
-            aria-expanded={settingsOpen}
-            title="Configure visible columns"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a8 8 0 0 0-1.7-1L15 3.5h-4L10.7 6A8 8 0 0 0 9 7L6.6 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4L9 17a8 8 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM13 18.5h-2l-.3-2-1-.4-1.9.8-1-1.7 1.6-1.3-.2-1v-1.8l.2-1-1.6-1.3 1-1.7 1.9.8 1-.4.3-2h2l.3 2 1 .4 1.9-.8 1 1.7-1.6 1.3.2 1v1.8l-.2 1 1.6 1.3-1 1.7-1.9-.8-1 .4-.3 2ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z" /></svg>
-          </button>
-          {settingsOpen && (
-            <div className="header-settings-menu" role="group" aria-label="Visible data sections">
-              <strong>Visible columns</strong>
-              {[
-                ['product', 'Product'],
-                ['trend', 'Sales Trend'],
-                ['batches', 'Batches'],
-                ['purchase', 'Purchase History'],
-                ['billing', 'Billing History']
-              ].map(([category, label]) => {
-                const isProduct = category === 'product';
-                const categoryVisible = isProduct || sections[category];
-                return (
-                  <section className="header-settings-category" key={category}>
-                    <label className="header-settings-category-title">
-                      <input
-                        type="checkbox"
-                        checked={categoryVisible}
-                        disabled={isProduct}
-                        onChange={() => !isProduct && onToggleSection(category)}
-                      />
-                      <span>{label}</span>
-                    </label>
-                    {categoryVisible && (
-                      <div className="header-settings-fields">
-                        {Object.entries(STOCK_FIELD_LABELS[category]).map(([field, fieldLabel]) => (
-                          <label key={field}>
-                            <input
-                              type="checkbox"
-                              checked={fields[category][field] !== false}
-                              disabled={isProduct && field === 'name'}
-                              onChange={() => onToggleField(category, field)}
-                            />
-                            <span>{fieldLabel}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-function GridRow({ cols, cells, tag: Tag = 'div', className = '', onClick }) {
+// Category metadata for the Grid Settings panel (toolbar-anchored, see
+// GridSettingsPanel below) — human-readable names + whether a category is a
+// checkbox-only "series" (Sales Trend has no orderable sub-columns of its
+// own, just which series draw) vs a full reorderable column group.
+const GRID_SETTINGS_CATEGORIES = [
+  ['product', 'Product', false],
+  ['trend', 'Sales Trend', true],
+  ['batches', 'Batches', false],
+  ['purchase', 'Purchase History', false],
+  ['billing', 'Billing History', false]
+];
+
+/**
+ * Stock Availability's ⚙ Grid Settings popover — same architecture as the
+ * Purchase Manager workspace's settings popover (frontend/src/components/
+ * procurement/WorkspaceSettings.tsx): a fixed-position panel rendered via a
+ * portal into document.body, anchored under a toolbar button (not floating
+ * over the grid data, and immune to the grid's own horizontal scroll
+ * clipping it). Per-category: visibility checkbox + Reset; per-column:
+ * show/hide checkbox, Up/Down reorder, width input. Density (Normal/Compact)
+ * and a global Reset All live at the bottom, matching the Zoom/Density
+ * sections of the Purchase Manager panel.
+ */
+function GridSettingsPanel({
+  anchorRef,
+  sections,
+  fields,
+  columnOrder,
+  columnWidths,
+  density,
+  onToggleSection,
+  onToggleField,
+  onMoveColumn,
+  onColumnWidth,
+  onResetColumns,
+  onResetAll,
+  onDensityChange,
+  onClose
+}) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const r = anchor.getBoundingClientRect();
+    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+  }, [anchorRef]);
+
+  useEffect(() => {
+    function onDocClick(event) {
+      const target = event.target;
+      if (ref.current && !ref.current.contains(target) && !anchorRef.current?.contains(target)) onClose();
+    }
+    function onEsc(event) { if (event.key === 'Escape') onClose(); }
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [onClose, anchorRef]);
+
+  if (!pos) return null;
+
+  return createPortal(
+    <div
+      className="grid-settings-panel"
+      ref={ref}
+      role="dialog"
+      aria-label="Grid settings"
+      style={{ position: 'fixed', top: pos.top, right: pos.right }}
+    >
+      <div className="grid-settings-panel__head">
+        <strong>Grid Settings</strong>
+        <span>Show / hide, reorder &amp; resize columns</span>
+        {onResetAll && (
+          <button type="button" className="grid-settings-panel__reset-all" onClick={onResetAll}>
+            Reset to Default
+          </button>
+        )}
+      </div>
+
+      <div className="grid-settings-panel__body">
+        {GRID_SETTINGS_CATEGORIES.map(([category, label, seriesOnly]) => {
+          const isProduct = category === 'product';
+          const categoryVisible = isProduct || sections[category];
+          return (
+            <section className="grid-settings-panel__category" key={category}>
+              <label className="grid-settings-panel__category-title">
+                <input
+                  type="checkbox"
+                  checked={categoryVisible}
+                  disabled={isProduct}
+                  onChange={() => !isProduct && onToggleSection(category)}
+                />
+                <span>{label}</span>
+                {isProduct && <span className="grid-settings-panel__locktag">Always shown</span>}
+                {!seriesOnly && categoryVisible && onResetColumns && (
+                  <button
+                    type="button"
+                    className="grid-settings-panel__reset"
+                    onClick={() => onResetColumns(category)}
+                    title={`Reset ${label} columns to defaults`}
+                  >Reset</button>
+                )}
+              </label>
+              {categoryVisible && (seriesOnly ? (
+                <div className="grid-settings-panel__fields">
+                  {Object.entries(STOCK_FIELD_LABELS[category]).map(([field, fieldLabel]) => (
+                    <label key={field} className="grid-settings-panel__check">
+                      <input
+                        type="checkbox"
+                        checked={fields[category][field] !== false}
+                        onChange={() => onToggleField(category, field)}
+                      />
+                      <span>{fieldLabel}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <ul className="grid-settings-panel__cols">
+                  {orderedGroupKeys(category, columnOrder).map((field, idx, arr) => {
+                    const fieldLabel = STOCK_FIELD_LABELS[category]?.[field];
+                    if (!fieldLabel) return null;
+                    const visible = fields[category][field] !== false;
+                    const lockName = isProduct && field === 'name';
+                    const width = (columnWidths?.[category] || {})[field];
+                    return (
+                      <li className={`grid-settings-panel__col ${visible ? '' : 'is-off'}`} key={field}>
+                        <input
+                          type="checkbox"
+                          checked={visible}
+                          disabled={lockName}
+                          onChange={() => onToggleField(category, field)}
+                          title="Show this column"
+                        />
+                        <span className="grid-settings-panel__colname" title={fieldLabel}>{fieldLabel}</span>
+                        {lockName && <i className="grid-settings-panel__lock" title="Always visible">🔒</i>}
+                        <span className="grid-settings-panel__movebtns">
+                          <button
+                            type="button"
+                            className="grid-settings-panel__movebtn"
+                            disabled={idx === 0}
+                            aria-label={`Move ${fieldLabel} up`}
+                            title="Move up"
+                            onClick={() => onMoveColumn?.(category, field, -1)}
+                          >▲</button>
+                          <button
+                            type="button"
+                            className="grid-settings-panel__movebtn"
+                            disabled={idx === arr.length - 1}
+                            aria-label={`Move ${fieldLabel} down`}
+                            title="Move down"
+                            onClick={() => onMoveColumn?.(category, field, 1)}
+                          >▼</button>
+                        </span>
+                        <input
+                          className="grid-settings-panel__width"
+                          type="number"
+                          min="20"
+                          max="400"
+                          step="2"
+                          value={width ?? ''}
+                          placeholder="auto"
+                          onChange={(event) => onColumnWidth?.(category, field, event.target.value)}
+                          title="Width in px (blank = auto/stretch)"
+                          aria-label={`${fieldLabel} column width`}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              ))}
+            </section>
+          );
+        })}
+      </div>
+
+      {onDensityChange && (
+        <div className="grid-settings-panel__section">
+          <div className="grid-settings-panel__title">Density</div>
+          <div className="grid-settings-panel__chips">
+            <button
+              type="button"
+              className={`grid-settings-panel__chip${density === 'normal' ? ' is-on' : ''}`}
+              onClick={() => onDensityChange('normal')}
+            >Normal</button>
+            <button
+              type="button"
+              className={`grid-settings-panel__chip${density === 'compact' ? ' is-on' : ''}`}
+              onClick={() => onDensityChange('compact')}
+            >Compact</button>
+          </div>
+        </div>
+      )}
+    </div>,
+    document.body
+  );
+}
+
+function GridRow({ cols, cells, tag: Tag = 'div', className = '', onClick, rowRef }) {
   return (
-    <div className={`grid-row ${className}`} style={{ gridTemplateColumns: cols }} onClick={onClick}>
+    <div ref={rowRef} className={`grid-row ${className}`} style={{ gridTemplateColumns: cols }} onClick={onClick}>
       {cells.map((cell, index) => (
         <Tag
           key={index}
@@ -2108,7 +2443,7 @@ function GridRow({ cols, cells, tag: Tag = 'div', className = '', onClick }) {
   );
 }
 
-function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, onProductSelect, onSaleSelect, onPurchaseSelect, hideSupplierColumn, restrictWarehouse, selected, onSelect, showBillingColumn = true, visibleSections, visibleFields, visibility = 'SUMMARY', rowRef }) {
+function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, onProductSelect, onSaleSelect, onPurchaseSelect, onOpenBatch, hideSupplierColumn, restrictWarehouse, selected, onSelect, showBillingColumn = true, visibleSections, visibleFields, columnOrder, columnWidths, visibility = 'SUMMARY', rowRef }) {
   const batches = detail?.batches || [];
   const purchases = detail?.purchases || [];
   const sales = detail?.sales || [];
@@ -2119,14 +2454,22 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
   const batchSummary = summarizeProductBatches(batches);
   const sections = visibleSections || DEFAULT_STOCK_SECTIONS;
   const fields = visibleFields || DEFAULT_STOCK_FIELDS;
-  const purchaseFieldWidths = hideSupplierColumn
-    ? { qty: '26px', free: '26px', grnDate: '52px', grnNo: '48px', mrp: '42px', ptr: '42px', cost: '48px' }
-    : { qty: '22px', free: '20px', allDiscount: '38px', productDiscount: '42px', grnDate: '52px', grnNo: '44px', supplier: 'minmax(86px, 1fr)' };
-  const purchaseFieldKeys = Object.keys(purchaseFieldWidths).filter((key) => fields.purchase[key] !== false);
-  const purchaseGrid = purchaseFieldKeys.map((key) => purchaseFieldWidths[key]).join(' ');
-  const billingFieldWidths = { qty: '30px', discount: '38px', date: '58px', billNo: 'minmax(76px, 1fr)', mrp: '48px', amount: '62px' };
-  const billingFieldKeys = Object.keys(billingFieldWidths).filter((key) => fields.billing[key]);
-  const billingGrid = billingFieldKeys.map((key) => billingFieldWidths[key]).join(' ');
+  const purchaseBaseWidths = hideSupplierColumn ? PURCHASE_SUMMARY_COL_WIDTHS : PURCHASE_COL_WIDTHS;
+  const purchaseVisible = Object.keys(purchaseBaseWidths)
+    .filter((key) => fields.purchase[key] !== false)
+    .map((key) => [key, purchaseBaseWidths[key]]);
+  // The salesman-only summary variant keeps its fixed layout; the full variant
+  // honours the user's saved order + widths (kept identical to the header).
+  const purchaseCols = hideSupplierColumn ? purchaseVisible : applyColumnConfig(purchaseVisible, 'purchase', columnOrder, columnWidths);
+  const purchaseFieldKeys = purchaseCols.map(([key]) => key);
+  const purchaseGrid = purchaseCols.map(([, width]) => width).join(' ');
+  const billingBaseWidths = BILLING_COL_WIDTHS;
+  const billingCols = applyColumnConfig(
+    Object.keys(billingBaseWidths).filter((key) => fields.billing[key]).map((key) => [key, billingBaseWidths[key]]),
+    'billing', columnOrder, columnWidths
+  );
+  const billingFieldKeys = billingCols.map(([key]) => key);
+  const billingGrid = billingCols.map(([, width]) => width).join(' ');
 
   const statusText = currentProduct
     ? `${restrictWarehouse ? '' : 'Showing: '}${currentProduct}`
@@ -2155,31 +2498,29 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
           restrictWarehouse={restrictWarehouse}
           showBillingColumn={showBillingColumn}
           visibleFields={fields}
+          columnOrder={columnOrder}
+          columnWidths={columnWidths}
         />
       )}
 
       <div className={`store-row-grid-body ${restrictWarehouse ? 'warehouse-row-body' : ''} ${!visibleSections && !showBillingColumn ? 'no-bill-column' : ''}`} onClick={onSelect}>
         <div className="store-row-label" title={store.store_name || 'Loading store...'}>
           {store.store_code ? (
-            store.store_code.split('').map((char, index) => <strong key={index}>{char}</strong>)
+            <strong>{store.store_code}</strong>
           ) : (
             <span className="store-row-label-spinner" aria-hidden="true" />
           )}
         </div>
 
         <section className={`row-cell stock-cell ${restrictWarehouse ? 'stock-cell-full' : ''}`}>
-          <div className="stock-cell-status">
-            {statusText}
-            {!restrictWarehouse && batchInfoLine && (
-              <span className={`stock-cell-batch-info stock-cell-batch-info--${batchSummary.status}`}> · {batchInfoLine}</span>
-            )}
-          </div>
           <StoreProductGrid
             products={searchProducts}
             hasSearched={hasSearched}
             selectedProductCode={detail?.product?.product_code}
             onProductSelect={onProductSelect}
             visibleFields={fields.product}
+            columnOrder={columnOrder}
+            columnWidths={columnWidths}
           />
         </section>
 
@@ -2191,7 +2532,7 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
               </section>
             )}
 
-            {sections.batches && <BatchTable rows={batches} pending={pending} visibleFields={fields.batches} />}
+            {sections.batches && <BatchTable rows={batches} pending={pending} visibleFields={fields.batches} columnOrder={columnOrder} columnWidths={columnWidths} onBatchSelect={onOpenBatch && detail?.product?.product_code ? (batchNo) => onOpenBatch(store, detail.product.product_code, batchNo) : undefined} />}
 
             {sections.purchase && (
               <RowDataCell
@@ -2200,13 +2541,22 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
                 emptyMessage="No"
                 pending={pending}
                 rows={purchases.slice(0, 20).map((row) => {
+                  // Full supplier name is always available on hover (req §9) even
+                  // when the cell shows a compact/abbreviated label — the tooltip
+                  // reads the untruncated source name.
+                  const supplierFull = String(row.supplier || '').trim() || '-';
+                  const supplierCell = (
+                    <span className="purchase-supplier-cell" title={`Supplier Name: ${supplierFull}`}>
+                      {visibility === 'FULL' ? supplierFull : abbreviateSupplierName(row.supplier)}
+                    </span>
+                  );
                   const values = hideSupplierColumn ? {
-                    qty: formatQty(row.qty), free: formatQty(row.free ?? 0), grnDate: formatDate(row.date), grnNo: row.grn_no || '-',
+                    qty: formatQty(row.qty), free: formatQty(row.free ?? 0), grnDate: formatDate(row.date),
                     mrp: formatMoney(row.mrp), ptr: formatMoney(row.ptr ?? row.purchase_price), cost: formatMoney(row.cost)
                   } : {
                     qty: formatQty(row.qty), free: formatQty(row.free ?? 0), allDiscount: formatMoney(row.overall_discount ?? row.discount_amount),
-                    productDiscount: formatMoney(row.discount ?? row.dis), grnDate: formatDate(row.date), grnNo: row.grn_no || '-',
-                    supplier: visibility === 'FULL' ? (row.supplier || '-') : abbreviateSupplierName(row.supplier)
+                    productDiscount: formatMoney(row.discount ?? row.dis), grnDate: formatDate(row.date),
+                    supplier: supplierCell
                   };
                   return purchaseFieldKeys.map((key) => values[key]);
                 })}
@@ -2252,25 +2602,36 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
   );
 }
 
-const PURCHASE_DETAIL_FIELDS = [
-  ['supplier', 'Supplier'],
-  ['grn_no', 'GRN No'],
-  ['date', 'GRN Date'],
-  ['qty', 'Qty'],
-  ['free', 'Free'],
-  ['mrp', 'MRP'],
-  ['ptr', 'PTR'],
-  ['cost', 'Cost'],
-  ['dis_pct', 'Dis%']
+// Compact metric grid (party/source is rendered separately, above the grid).
+// [key, label, type]. type drives formatting.
+const PURCHASE_METRIC_FIELDS = [
+  ['grn_no', 'GRN No', 'text'],
+  ['date', 'GRN Date', 'date'],
+  ['qty', 'Qty', 'qty'],
+  ['free', 'Free', 'qty'],
+  ['mrp', 'MRP', 'money'],
+  ['ptr', 'PTR', 'money'],
+  ['cost', 'Cost', 'money'],
+  ['dis_pct', 'Dis%', 'text']
 ];
-
-const PURCHASE_MONEY_FIELDS = new Set(['mrp', 'ptr', 'cost']);
 // Fields only a FULL-visibility user (super admin / purchase role) may see.
-const PURCHASE_FULL_ONLY_FIELDS = new Set(['supplier', 'dis_pct']);
+// The party block (supplier / source store) is also FULL-only.
+const PURCHASE_FULL_ONLY_FIELDS = new Set(['dis_pct']);
 
 function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
   const { store, row } = detail;
-  const fields = PURCHASE_DETAIL_FIELDS.filter(([key]) => visibility === 'FULL' || !PURCHASE_FULL_ONLY_FIELDS.has(key));
+  // The backend resolves the party TYPE (internal store transfer vs external
+  // supplier); the UI never guesses from the displayed name. Internal 'TI'
+  // transfers surface the source store (e.g. NMW), NOT a supplier.
+  const isTransfer = String(row.party_type || '').toLowerCase() === 'transfer';
+  const showParty = visibility === 'FULL';
+  const partyLabel = isTransfer ? 'Source Store' : 'Supplier';
+  const partyName = String(row.supplier || '').trim() || '-';
+  const partySub = isTransfer ? (String(row.source_store_name || '').trim() || null) : null;
+
+  const metrics = PURCHASE_METRIC_FIELDS.filter(([key]) =>
+    (visibility === 'FULL' || !PURCHASE_FULL_ONLY_FIELDS.has(key))
+    && row[key] !== undefined && row[key] !== null && row[key] !== '');
 
   useEffect(() => {
     function closeOnEscape(event) {
@@ -2283,7 +2644,7 @@ function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
-        className="purchase-detail-card"
+        className="purchase-detail-card purchase-detail-card--compact"
         role="dialog"
         aria-modal="true"
         aria-labelledby="purchase-detail-title"
@@ -2295,33 +2656,120 @@ function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
               <svg viewBox="0 0 24 24"><path d="M7 3h10v2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2V3Zm2 2h6V4H9v1ZM5 8v11h14V8H5Zm3 3h8v2H8v-2Zm0 4h5v2H8v-2Z" /></svg>
             </span>
             <div>
-              <span className="purchase-detail-eyebrow">Purchase record</span>
-              <strong id="purchase-detail-title">{store.store_name || store.store_code}</strong>
+              <span className="purchase-detail-eyebrow">Purchase Record</span>
+              <strong id="purchase-detail-title">
+                {store.store_name || store.store_code}{row.grn_no ? ` • GRN #${row.grn_no}` : ''}
+              </strong>
             </div>
           </div>
           <button type="button" className="purchase-detail-close" onClick={onClose} aria-label="Close purchase details">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.4 6 4.6 4.6L16.6 6 18 7.4 13.4 12l4.6 4.6-1.4 1.4-4.6-4.6L7.4 18 6 16.6l4.6-4.6L6 7.4 7.4 6Z" /></svg>
           </button>
         </div>
+        <div className="purchase-detail-body">
+          {showParty && (
+            <div className={`purchase-party ${isTransfer ? 'purchase-party--transfer' : 'purchase-party--supplier'}`}>
+              <span className="purchase-party-label">{partyLabel}</span>
+              <strong className="purchase-party-name" title={partyName}>{partyName}</strong>
+              {partySub && <span className="purchase-party-sub" title={partySub}>{partySub}</span>}
+            </div>
+          )}
+          <div className="purchase-metric-grid">
+            {metrics.map(([key, label, type]) => (
+              <div className="purchase-metric" key={key}>
+                <span>{label}</span>
+                <strong className={type === 'money' ? 'num-value' : ''}>
+                  {type === 'date' ? formatDate(row[key])
+                    : type === 'money' ? formatMoney(row[key])
+                    : type === 'qty' ? formatQty(row[key])
+                    : row[key]}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Batch detail popup (click a batch row). Money/supplier fields are gated to
+// FULL visibility like the purchase card.
+const BATCH_DETAIL_FIELDS = [
+  ['batch_description', 'Description', 'text'],
+  ['stock', 'Stock', 'qty'],
+  ['expiry_date', 'Expiry', 'date'],
+  ['mrp', 'MRP', 'money'],
+  ['ptr', 'PTR', 'money'],
+  ['cost', 'Cost', 'money'],
+  ['supplier', 'Supplier', 'text'],
+  ['last_purchase_date', 'Last Received', 'date'],
+  ['last_sale_date', 'Last Sale', 'date']
+];
+const BATCH_FULL_ONLY_FIELDS = new Set(['cost', 'ptr', 'supplier']);
+
+function BatchDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
+  const { store, batchNo, loading, row, error } = detail;
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
+  const fields = BATCH_DETAIL_FIELDS.filter(([key]) => visibility === 'FULL' || !BATCH_FULL_ONLY_FIELDS.has(key));
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="purchase-detail-card batch-detail-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="batch-detail-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="purchase-detail-header">
+          <div className="purchase-detail-heading">
+            <span className="purchase-detail-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 4h16v4H4V4Zm0 6h16v10H4V10Zm3 2v6h2v-6H7Zm4 0v6h2v-6h-2Zm4 0v6h2v-6h-2Z" /></svg>
+            </span>
+            <div>
+              <span className="purchase-detail-eyebrow">Batch record</span>
+              <strong id="batch-detail-title">{store.store_name || store.store_code}</strong>
+            </div>
+          </div>
+          <button type="button" className="purchase-detail-close" onClick={onClose} aria-label="Close batch details">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.4 6 4.6 4.6L16.6 6 18 7.4 13.4 12l4.6 4.6-1.4 1.4-4.6-4.6L7.4 18 6 16.6l4.6-4.6L6 7.4 7.4 6Z" /></svg>
+          </button>
+        </div>
         <div className="purchase-detail-summary">
           <div>
-            <span>Purchase details</span>
-            <p>Invoice and pricing information for this stock entry.</p>
+            <span>Batch details</span>
+            <p>Stock, expiry and pricing for this specific batch.</p>
           </div>
-          {row.grn_no && <span className="purchase-reference">GRN&nbsp; #{row.grn_no}</span>}
+          <span className="purchase-reference">Batch&nbsp; #{row?.batch_no || batchNo}</span>
         </div>
-        <div className="purchase-detail-grid">
-          {fields.filter(([key]) => row[key] !== undefined && row[key] !== null && row[key] !== '').map(([key, label]) => (
-            <div className={`purchase-detail-item purchase-detail-item--${key}`} key={key}>
-              <span>{label}</span>
-              <strong className={PURCHASE_MONEY_FIELDS.has(key) ? 'num-value' : ''}>
-                {key === 'date' ? formatDate(row[key])
-                  : PURCHASE_MONEY_FIELDS.has(key) ? formatMoney(row[key])
-                  : row[key]}
-              </strong>
-            </div>
-          ))}
-        </div>
+        {loading ? (
+          <div className="row-empty-state" style={{ minHeight: 90 }}>Loading batch…</div>
+        ) : !row ? (
+          <div className="row-empty-state" style={{ minHeight: 90 }}>{error ? 'Failed to load batch detail.' : 'No detail found for this batch.'}</div>
+        ) : (
+          <div className="purchase-detail-grid">
+            {fields.filter(([key]) => row[key] !== undefined && row[key] !== null && row[key] !== '').map(([key, label, type]) => (
+              <div className={`purchase-detail-item purchase-detail-item--${key}`} key={key}>
+                <span>{label}</span>
+                <strong className={type === 'money' ? 'num-value' : ''}>
+                  {type === 'date' ? formatDate(row[key])
+                    : type === 'money' ? formatMoney(row[key])
+                    : type === 'qty' ? formatQty(row[key])
+                    : row[key]}
+                </strong>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2432,7 +2880,16 @@ function RowDataCell({ className, cols, rows, emptyMessage, highlightIndex, pend
 // §2/§3/§8: the Batch grid is the primary procurement-decision panel -
 // Status/Priority columns, expiry + days-remaining together, sorted worst
 // (Expired) first so the buyer never has to scan for risk.
-function BatchTable({ rows, pending, visibleFields = DEFAULT_STOCK_FIELDS.batches }) {
+// Recency key for a batch — used to pick the "last 2" reference batches when a
+// product is fully out of stock. Prefers last purchase (GRN), then last sale,
+// then expiry date.
+function batchRefTime(row) {
+  const raw = row?.last_purchase_date || row?.grndate || row?.last_sale_date || row?.lastsaledate || row?.expiry_date || row?.expirydate;
+  const t = raw ? new Date(String(raw).slice(0, 10)).getTime() : NaN;
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function BatchTable({ rows, pending, visibleFields = DEFAULT_STOCK_FIELDS.batches, columnOrder, columnWidths, onBatchSelect }) {
   if (pending) {
     return (
       <section className="row-cell row-data-cell batch-table">
@@ -2447,13 +2904,21 @@ function BatchTable({ rows, pending, visibleFields = DEFAULT_STOCK_FIELDS.batche
       </section>
     );
   }
-  // §2: every batch is shown, including zero-stock ones - only the render
-  // order changes (usable stock first), nothing is hidden or dropped.
-  const sorted = sortedBatches(rows);
-  const definitions = [
-    ['expiry', '54px'], ['stock', '30px'], ['mrp', '38px'], ['batchNo', '52px'],
-    ['purchaseAge', '36px'], ['salesAge', '36px'], ['status', 'minmax(58px, 1fr)']
-  ].filter(([key]) => visibleFields[key]);
+  // Display rule (owner-directed): if the product still has stock, only the
+  // in-stock batches matter — hide every stock=0 batch. If the product is
+  // fully out of stock (total = 0), show just the last 2 batches (most
+  // recently purchased) as a reference so the panel is never empty.
+  const inStock = rows.filter((row) => (Number(row.stock) || 0) > 0);
+  const displayRows = inStock.length
+    ? inStock
+    : [...rows]
+        .sort((a, b) => batchRefTime(b) - batchRefTime(a))
+        .slice(0, 2);
+  const sorted = sortedBatches(displayRows);
+  const definitions = applyColumnConfig([
+    ['expiry', '56px'], ['stock', '34px'], ['mrp', '46px'],
+    ['purchaseAge', '42px'], ['salesAge', '42px']
+  ].filter(([key]) => visibleFields[key]), 'batches', columnOrder, columnWidths);
   const grid = definitions.map(([, width]) => width).join(' ');
   return (
     <section className="row-cell row-data-cell batch-table">
@@ -2466,7 +2931,13 @@ function BatchTable({ rows, pending, visibleFields = DEFAULT_STOCK_FIELDS.batche
           const purchaseAge = ageInfo(row.last_purchase_date || row.grndate);
           const salesAge = ageInfo(row.last_sale_date || row.lastsaledate);
           return (
-            <div key={index} className={`grid-row batch-row batch-row--${status}`} style={{ gridTemplateColumns: grid }}>
+            <div
+              key={index}
+              className={`grid-row batch-row batch-row--${status} ${onBatchSelect ? 'clickable' : ''}`}
+              style={{ gridTemplateColumns: grid }}
+              onClick={onBatchSelect && batchNo ? () => onBatchSelect(batchNo) : undefined}
+              title={onBatchSelect && batchNo ? `Batch ${batchNo} — click for detail` : undefined}
+            >
               {definitions.map(([key]) => ({
                 expiry: <span className="batch-cell-expiry">{formatDate(expiryDate)}</span>,
                 stock: <span>{formatQty(row.stock)}</span>,
@@ -2518,19 +2989,45 @@ function summarizeProductBatches(batches) {
   };
 }
 
-function StoreProductGrid({ products, hasSearched, selectedProductCode, onProductSelect, visibleFields = DEFAULT_STOCK_FIELDS.product }) {
+function StoreProductGrid({ products, hasSearched, selectedProductCode, onProductSelect, visibleFields = DEFAULT_STOCK_FIELDS.product, columnOrder, columnWidths }) {
+  const wrapRef = useRef(null);
+  const activeRowRef = useRef(null);
+  const shown = products.slice(0, 20);
+  const activeIndex = Math.max(0, shown.findIndex((product) => product.product_code === selectedProductCode));
+
+  // Keep the keyboard-selected row scrolled into view inside the small list.
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [selectedProductCode]);
+
   if (!products.length) {
     return <div className={hasSearched ? 'not-found-card' : 'waiting-card'}>{hasSearched ? 'No' : 'Waiting'}</div>;
   }
 
-  const definitions = [
-    ['name', 'minmax(0, 1.35fr)'], ['unit', '40px'], ['stock', '44px']
-  ].filter(([key]) => visibleFields[key]);
+  const definitions = applyColumnConfig(
+    ['name', 'unit', 'stock'].filter((key) => visibleFields[key]).map((key) => [key, PRODUCT_COL_WIDTHS[key]]),
+    'product', columnOrder, columnWidths);
   const grid = definitions.map(([, width]) => width).join(' ');
 
+  // Arrow Up/Down move the selection within THIS grid once it has focus.
+  function handleKeyDown(event) {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    const dir = event.key === 'ArrowDown' ? 1 : -1;
+    const next = Math.min(shown.length - 1, Math.max(0, activeIndex + dir));
+    if (shown[next] && next !== activeIndex) onProductSelect(shown[next]);
+  }
+
   return (
-    <div className="store-product-grid-wrap">
-      {products.slice(0, 20).map((product, index) => {
+    <div
+      className="store-product-grid-wrap"
+      ref={wrapRef}
+      tabIndex={0}
+      role="listbox"
+      aria-label="Matched products — use arrow keys to change selection"
+      onKeyDown={handleKeyDown}
+    >
+      {shown.map((product, index) => {
         const isActive = product.product_code === selectedProductCode;
         const matchBadge = product.matchBadge;
         return (
@@ -2539,6 +3036,7 @@ function StoreProductGrid({ products, hasSearched, selectedProductCode, onProduc
             cols={grid}
             tag="span"
             className={isActive ? 'active-row' : ''}
+            rowRef={isActive ? activeRowRef : undefined}
             cells={definitions.map(([key]) => ({
               name: <span className="product-cell-main" title={product.product_name || '-'}>
                 <span className="product-name-with-badge">
@@ -2555,7 +3053,7 @@ function StoreProductGrid({ products, hasSearched, selectedProductCode, onProduc
                 {product.stock ?? 0}
               </span>
             })[key])}
-            onClick={() => onProductSelect(product)}
+            onClick={() => { onProductSelect(product); wrapRef.current?.focus(); }}
           />
         );
       })}
@@ -2572,6 +3070,11 @@ function ProductStatusLegend() {
           {meta.label}
         </span>
       ))}
+      <span className="legend-divider" aria-hidden="true" />
+      <span className="legend-group-label">Sales Trend</span>
+      <span><i className="trend-swatch trend-swatch--purchase" aria-hidden="true" />Purchase</span>
+      <span><i className="trend-swatch trend-swatch--sales" aria-hidden="true" />Sales</span>
+      <span><i className="trend-swatch trend-swatch--stock" aria-hidden="true" />Stock</span>
     </div>
   );
 }
@@ -2831,9 +3334,9 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
   const [plotRef, { w: W, h: H }] = useChartSize();
 
   const series = [
-    visibleFields.purchase && { key: 'pur', label: 'Purchase', short: 'PUR', color: '#1d4ed8', value: (row) => Number(row.pur || 0) + Number(row.tin || 0) },
-    visibleFields.sales && { key: 'sal', label: 'Sales', short: 'SAL', color: '#15803d', value: (row) => Number(row.sal || 0) + Number(row.tout || 0) },
-    visibleFields.stock && { key: 'stk', label: 'Stock', short: 'STK', color: '#dc2626', value: (row) => Number(row.stk || 0) }
+    visibleFields.purchase && { key: 'pur', label: 'Purchase', short: 'PUR', color: '#2563eb', light: '#7db0ff', dark: '#1a3fae', value: (row) => Number(row.pur || 0) + Number(row.tin || 0) },
+    visibleFields.sales && { key: 'sal', label: 'Sales', short: 'SAL', color: '#16a34a', light: '#67e08c', dark: '#12662f', value: (row) => Number(row.sal || 0) + Number(row.tout || 0) },
+    visibleFields.stock && { key: 'stk', label: 'Stock', short: 'STK', color: '#dc2626', light: '#fb8686', dark: '#9c1414', value: (row) => Number(row.stk || 0) }
   ].filter(Boolean);
 
   if (!months.length || !series.length) return <div className="row-empty-state">No</div>;
@@ -2853,9 +3356,10 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
 
   const max = Math.max(1, ...months.flatMap((row) => series.map((s) => Math.abs(s.value(row)))));
   const groupW = plotW / n;
-  const groupGap = Math.min(groupW * 0.3, 30);
-  const innerW = Math.max(series.length * 5, groupW - groupGap);
-  const barGap = Math.max(1.5, innerW * 0.06);
+  // Wider bars / tighter gaps for a bold, clear view (max usable bar width).
+  const groupGap = Math.min(groupW * 0.14, 12);
+  const innerW = Math.max(series.length * 9, groupW - groupGap);
+  const barGap = Math.max(1, innerW * 0.035);
   const barW = (innerW - barGap * (series.length - 1)) / series.length;
 
   return (
@@ -2872,6 +3376,13 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
               <stop offset="0%" className="sa-chart__glass-a" />
               <stop offset="100%" className="sa-chart__glass-b" />
             </linearGradient>
+            {series.map((s) => (
+              <linearGradient key={s.key} id={`sa-bar-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={s.light} />
+                <stop offset="48%" stopColor={s.color} />
+                <stop offset="100%" stopColor={s.dark} />
+              </linearGradient>
+            ))}
           </defs>
           <rect className="sa-chart__plotbg" x={padL - 6} y={barTopLimit - 3} width={plotW + 14} height={barAreaH + 6} rx={8} fill="url(#sa-chart-glass)" />
 
@@ -2899,11 +3410,15 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
                   const labelY = Math.max(barTopLimit - 1, top - 3);
                   return (
                     <g key={s.key}>
-                      <rect x={x} y={top} width={Math.max(3, barW)} height={h} rx={2.5} fill={s.color}>
+                      <rect x={x} y={top} width={Math.max(4, barW)} height={h} rx={3} fill={`url(#sa-bar-${s.key})`}>
                         <title>{`${row.period ?? ''} · ${s.label}: ${compactQuantity(value)}`}</title>
                       </rect>
+                      {/* glossy highlight down the left edge of each bar */}
+                      {h > 4 && (
+                        <rect x={x + 1} y={top + 1} width={Math.max(1, Math.min(2.5, barW * 0.22))} height={Math.max(0, h - 2)} rx={1.5} fill="rgba(255,255,255,0.38)" />
+                      )}
                       {value > 0 && (
-                        <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={s.color}>{compactQuantity(value)}</text>
+                        <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={s.dark}>{compactQuantity(value)}</text>
                       )}
                     </g>
                   );
@@ -2939,15 +3454,6 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
             ))}
           </div>
         )}
-      </div>
-
-      <div className="sa-chart__readout">
-        {series.map((s) => (
-          <div className="sa-chart__metric" key={s.key} title={s.label}>
-            <span className="sa-chart__metric-val" style={{ color: s.color }}>{compactQuantity(s.value(months[focus]))}</span>
-            <span className="sa-chart__metric-label"><span className="sa-chart__swatch" style={{ background: s.color }} />{s.short}</span>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -3069,6 +3575,160 @@ function ageInfo(dateValue) {
   return { text: `${days}`, tier };
 }
 
+/**
+ * Shared icon-button + portalled-card picker: one button that opens a small
+ * grid of pill choices anchored under it. Used for every "replace this
+ * <select> with an icon + card" control in this file (tenant, store filter,
+ * per-product store) so the open/close/position/outside-click/Escape
+ * plumbing exists in exactly one place instead of being copy-pasted three
+ * times.
+ */
+function IconCardPicker({ icon, buttonLabel, title, ariaLabel, items, activeValue, onChoose, columns = 2, buttonClassName }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const cardRef = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const btn = btnRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    setPos({ top: r.bottom + 6, left: r.left });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDocClick(event) {
+      const target = event.target;
+      if (cardRef.current && !cardRef.current.contains(target) && !btnRef.current?.contains(target)) setOpen(false);
+    }
+    function onEsc(event) { if (event.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  function choose(value) {
+    onChoose(value);
+    setOpen(false);
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        ref={btnRef}
+        className={buttonClassName}
+        onClick={() => setOpen((o) => !o)}
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        title={title}
+      >
+        {icon}
+        {buttonLabel != null && <span className="tenant-filter-btn-label">{buttonLabel}</span>}
+      </button>
+      {open && createPortal(
+        <div className="store-filter-card" ref={cardRef} role="dialog" aria-label={title} style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0 }}>
+          <div className="store-filter-card__title">{title}</div>
+          <div className={`store-filter-card__grid${columns === 1 ? ' store-filter-card__grid--single' : ''}`}>
+            {items.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`store-filter-card__pill${activeValue === item.value ? ' is-active' : ''}`}
+                onClick={() => choose(item.value)}
+                title={item.title}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+const STORE_ICON_PATH = 'M4 3h16l1.5 5.5a2.5 2.5 0 0 1-4.2 2.2A2.5 2.5 0 0 1 13 12a2.5 2.5 0 0 1-2-1 2.5 2.5 0 0 1-4.3-.3A2.5 2.5 0 0 1 2.5 8.5L4 3Zm1 8.9V21h14v-9.1a4.5 4.5 0 0 1-1.7-.7A4.5 4.5 0 0 1 15 12a4.5 4.5 0 0 1-3-1.1A4.5 4.5 0 0 1 9 12a4.5 4.5 0 0 1-2.3-.8 4.5 4.5 0 0 1-1.7.7ZM9 15h6v4H9v-4Z';
+
+/**
+ * Compact tenant-scope control for the search toolbar: an icon button
+ * showing the current tenant's name (tooltip "Select Tenant") instead of a
+ * native <select>, opening a portalled card of tenant pills - same
+ * data/state (tenants, tenantId, onTenantChange) and the same tenant
+ * filtering behavior as the dropdown it replaces, just a different way to
+ * open/choose it. Only rendered when there's more than one tenant to pick
+ * from (identical condition to the dropdown it replaces).
+ */
+function TenantFilterPicker({ tenants, tenantId, onTenantChange }) {
+  const current = tenants.find((tenant) => tenant.tenant_id === tenantId) || tenants[0];
+  return (
+    <div className="tenant-filter-picker">
+      <IconCardPicker
+        buttonClassName="tenant-filter-btn"
+        ariaLabel="Select tenant"
+        title="Select Tenant"
+        buttonLabel={current?.tenant_name || current?.tenant_code || 'Tenant'}
+        icon={(
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 21V5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v3h6a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-6v-3h-2v3H4Zm2-2h4v-2H6v2Zm0-4h4v-2H6v2Zm0-4h4V9H6v2Zm0-4h4V5H6v2Zm7 10h5V10h-5v9Zm2-6h2v2h-2v-2Z" />
+          </svg>
+        )}
+        columns={1}
+        activeValue={tenantId}
+        onChoose={onTenantChange}
+        items={tenants.map((tenant) => ({
+          key: tenant.tenant_id,
+          value: tenant.tenant_id,
+          label: tenant.tenant_name || tenant.tenant_code,
+          title: tenant.tenant_name || tenant.tenant_code,
+        }))}
+      />
+    </div>
+  );
+}
+
+/**
+ * Compact store-scope control for the Non-Moving bar: a single icon button
+ * (tooltip "Select Store") instead of a native <select>, opening a portalled
+ * card of store pills - same data/state (allStores, storeFilter,
+ * onStoreFilterChange) and the same filtering behavior as the dropdown it
+ * replaces, just a different way to open/choose it.
+ */
+function StoreFilterPicker({ allStores, storeFilter, onStoreFilterChange }) {
+  const activeStore = allStores.find((store) => store.store_id === storeFilter);
+  const items = [
+    { key: '__all__', value: '', label: 'All Stores' },
+    ...allStores.map((store) => ({
+      key: store.store_id,
+      value: store.store_id,
+      label: store.store_code || store.store_name,
+      title: store.store_name || store.store_code,
+    })),
+  ];
+  return (
+    <IconCardPicker
+      buttonClassName={`store-filter-icon-btn${storeFilter ? ' is-scoped' : ''}`}
+      ariaLabel="Select store"
+      title={activeStore ? `Select Store (${activeStore.store_name || activeStore.store_code})` : 'Select Store (All Stores)'}
+      icon={(
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d={STORE_ICON_PATH} />
+        </svg>
+      )}
+      columns={2}
+      activeValue={storeFilter}
+      onChoose={onStoreFilterChange}
+      items={items}
+    />
+  );
+}
+
 function groupNonMovingProducts(rows) {
   const groups = new Map();
   rows.forEach((row) => {
@@ -3085,17 +3745,7 @@ function groupNonMovingProducts(rows) {
 
 function NonMovingHighlightCard({ nonMovingGroups, nonMovingLoading, nonMovingIndex, onPrev, onNext, onSearch, allStores, storeFilter, onStoreFilterChange }) {
   const storeFilterControl = allStores?.length ? (
-    <select
-      className="non-moving-store-filter"
-      value={storeFilter || ''}
-      onChange={(event) => onStoreFilterChange?.(event.target.value)}
-      title="Filter non-moving stock to one store"
-    >
-      <option value="">All Stores</option>
-      {allStores.map((store) => (
-        <option key={store.store_id} value={store.store_id}>{store.store_name || store.store_code}</option>
-      ))}
-    </select>
+    <StoreFilterPicker allStores={allStores} storeFilter={storeFilter} onStoreFilterChange={onStoreFilterChange} />
   ) : null;
 
   if (!nonMovingGroups?.length) {
@@ -3104,9 +3754,7 @@ function NonMovingHighlightCard({ nonMovingGroups, nonMovingLoading, nonMovingIn
         <div className="non-moving-wrap non-moving-wrap-empty">
           <div className="non-moving-header-box">
             <div className="non-moving-block-label">
-              {'NON MOVING'.split('').map((char, index) => (
-                <span key={index}>{char === ' ' ? ' ' : char}</span>
-              ))}
+              <span className="non-moving-label-text">NM</span>
             </div>
             <div className="non-moving-block-header">{storeFilterControl}</div>
           </div>
@@ -3162,6 +3810,8 @@ function nonMovingStoreSummaries(rows) {
       stripQty: 0,
       ptr: 0,
       mrp: 0,
+      purAge: null,
+      salesAge: null,
       suppliers: new Set(),
       lastReceived: null,
       lastSale: null
@@ -3171,6 +3821,10 @@ function nonMovingStoreSummaries(rows) {
     current.stripQty += Number(row.StripQty ?? 0);
     current.ptr ||= Number(row.PurchasePrice ?? row.PTR ?? 0);
     current.mrp ||= Number(row.MRP ?? 0);
+    // PurAge / SalesAge are product-level (from ProductTrans), identical across
+    // a product's batches - keep the largest (oldest) seen for the store.
+    if (row.PurAge != null && (current.purAge == null || Number(row.PurAge) > current.purAge)) current.purAge = Number(row.PurAge);
+    if (row.SalesAge != null && (current.salesAge == null || Number(row.SalesAge) > current.salesAge)) current.salesAge = Number(row.SalesAge);
     if (row.SupplierName) current.suppliers.add(row.SupplierName);
     const expiry = row.ExpiryDate;
     if (expiry && (!current.expiryDate || new Date(expiry) < new Date(current.expiryDate))) {
@@ -3210,53 +3864,44 @@ function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl }) {
     <div className="non-moving-wrap">
       <div className="non-moving-header-box">
         <div className="non-moving-block-label">
-          {'NON MOVING'.split('').map((char, index) => (
-            <span key={index}>{char === ' ' ? ' ' : char}</span>
-          ))}
+          <span className="non-moving-label-text">NM</span>
         </div>
         <div className="non-moving-block-header">
-          {nav && <span className="non-moving-block-position">({nav.index + 1}/{nav.total})</span>}
-          <span className="non-moving-block-product">{group.productName}</span>
-          <span className="non-moving-store-count">{storeSummaries.length} {storeSummaries.length === 1 ? 'store' : 'stores'}</span>
-          {nav && (
-            <span className="non-moving-block-nav-buttons">
-              <button type="button" className="non-moving-block-nav" onClick={nav.onPrev}>‹</button>
-              <button type="button" className="non-moving-block-nav" onClick={nav.onNext}>›</button>
-            </span>
-          )}
           {storeFilterControl}
-        </div>
-      </div>
-      <div className="non-moving-store-strip">
-        {storeSummaries.map((store) => {
-          const daysLeft = daysUntil(store.expiryDate);
-          const expiryState = daysLeft !== null && daysLeft < 0 ? 'expired' : daysLeft !== null && daysLeft <= 60 ? 'near-expiry' : 'healthy';
-          return (
+          {nav && (
             <button
               type="button"
-              className={`non-moving-store-card non-moving-store-card--${expiryState} ${selectedStore === store ? 'active' : ''}`}
-              key={store.storeId || store.storeName}
-              onClick={() => setSelectedStoreKey(String(store.storeId || store.storeName))}
-              title={`Show details for ${store.storeName}`}
+              className="non-moving-block-nav"
+              onClick={nav.onPrev}
+              disabled={nav.total <= 1}
+              aria-label="Previous product"
+              title="Previous product"
             >
-              <span className="non-moving-store-metrics">
-                <span>
-                  <small>Stock Cost</small>
-                  <strong>{store.stockCost ? store.stockCost.toFixed(2) : '-'}</strong>
-                </span>
-                <span>
-                  <small>Expiry</small>
-                  <strong>{formatDate(store.expiryDate)}</strong>
-                </span>
-              </span>
-              <span className="non-moving-store-card-footer">
-                <span className="non-moving-store-avatar" aria-hidden="true">{store.storeName.slice(0, 1).toUpperCase()}</span>
-                <strong>{store.storeName}</strong>
-                <span aria-hidden="true">›</span>
-              </span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 6 9.4 12l6 6-1.4 1.4-7.4-7.4L14 4.6 15.4 6Z" /></svg>
             </button>
-          );
-        })}
+          )}
+          {storeSummaries.length > 1 && (
+            <IconCardPicker
+              buttonClassName="store-filter-icon-btn"
+              ariaLabel="Select store"
+              title={selectedStore ? `Select Store (${selectedStore.storeName})` : 'Select Store'}
+              icon={(
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d={STORE_ICON_PATH} />
+                </svg>
+              )}
+              columns={1}
+              activeValue={selectedStoreKey}
+              onChoose={setSelectedStoreKey}
+              items={storeSummaries.map((store) => ({
+                key: store.storeId || store.storeName,
+                value: String(store.storeId || store.storeName),
+                label: store.storeName,
+                title: store.storeName,
+              }))}
+            />
+          )}
+        </div>
       </div>
       {selectedStore && (
         <div
@@ -3272,15 +3917,28 @@ function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl }) {
             }
           } : undefined}
         >
-          <div><span>Stock Cost</span><strong className="non-moving-value-highlight">{selectedStore.stockCost ? selectedStore.stockCost.toFixed(2) : '-'}</strong></div>
-          <div><span>Expiry</span><strong>{formatDate(selectedStore.expiryDate)}</strong></div>
-          <div><span>Stock Qty</span><strong>{formatQty(selectedStore.stock)}{selectedStore.stripQty > 0 ? ` (${formatQty(selectedStore.stripQty)} strips)` : ''}</strong></div>
-          <div><span>PTR (Cost)</span><strong>{selectedStore.ptr ? formatMoney(selectedStore.ptr) : '-'}</strong></div>
+          <div className="non-moving-fact-product"><span>Product Name</span><strong title={group.productName}>{group.productName}</strong></div>
+          <div><span>Qty</span><strong>{formatQty(selectedStore.stock)}</strong></div>
+          <div><span>Strip Qty</span><strong>{selectedStore.stripQty > 0 ? formatQty(selectedStore.stripQty) : '-'}</strong></div>
+          <div><span>Total Cost</span><strong className="non-moving-value-highlight">{selectedStore.stockCost ? selectedStore.stockCost.toFixed(2) : '-'}</strong></div>
+          <div className="non-moving-fact-expiry"><span>Expiry</span><strong>{formatDate(selectedStore.expiryDate)}</strong></div>
           <div><span>MRP</span><strong>{selectedStore.mrp ? formatMoney(selectedStore.mrp) : '-'}</strong></div>
-          <div><span>Supplier</span><strong title={selectedStore.supplier}>{selectedStore.supplier}</strong></div>
-          <div><span>Last Received</span><strong>{formatDate(selectedStore.lastReceived)}</strong></div>
-          <div><span>Last Sale</span><strong>{formatDate(selectedStore.lastSale)}</strong></div>
+          <div><span>Pur Age</span><strong>{selectedStore.purAge != null ? `${selectedStore.purAge}d` : '-'}</strong></div>
+          <div><span>Sales Age</span><strong>{selectedStore.salesAge != null ? `${selectedStore.salesAge}d` : '-'}</strong></div>
+          <div className="non-moving-fact-supplier"><span>Supplier</span><strong title={selectedStore.supplier}>{selectedStore.supplier}</strong></div>
         </div>
+      )}
+      {nav && (
+        <button
+          type="button"
+          className="non-moving-block-nav"
+          onClick={nav.onNext}
+          disabled={nav.total <= 1}
+          aria-label="Next product"
+          title="Next product"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 6 10 4.6l7.4 7.4L10 19.4 8.6 18l6-6-6-6Z" /></svg>
+        </button>
       )}
     </div>
   );
