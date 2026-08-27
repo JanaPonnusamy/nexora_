@@ -101,6 +101,11 @@ _DBA_ONLY_STATES = {"RESTORING", "RECOVERING"}
 # States a non-destructive restart (offline/online) can clear, and that an
 # explicit emergency repair can attack with REPAIR_ALLOW_DATA_LOSS.
 _REPAIRABLE_STATES = {"RECOVERY_PENDING", "SUSPECT"}
+# EMERGENCY is entered manually -- typically as the first step of a corruption
+# repair. A database can get stuck here if an emergency repair was interrupted
+# or never ran its final SET ONLINE. Leaving it is non-destructive: SET ONLINE
+# simply re-runs crash recovery.
+_EMERGENCY_STATE = "EMERGENCY"
 
 
 def _server_and_creds():
@@ -262,6 +267,14 @@ def recover_database(allow_data_loss=False):
                 run("SET MULTI_USER", f"ALTER DATABASE {quoted} SET MULTI_USER WITH ROLLBACK IMMEDIATE")
                 state, access = _read_state(cur, database)
 
+            # 1b. EMERGENCY: usually left over from an interrupted emergency
+            # repair (or a manual SET EMERGENCY). SET ONLINE is non-destructive
+            # -- it just re-runs recovery; if the files are intact it comes
+            # straight back ONLINE. This is the common "stuck in emergency" case.
+            if state == _EMERGENCY_STATE:
+                run("SET ONLINE", f"ALTER DATABASE {quoted} SET ONLINE")
+                state, access = _read_state(cur, database)
+
             # 2. RECOVERY_PENDING / SUSPECT: non-destructive restart of recovery.
             if state in _REPAIRABLE_STATES:
                 if run("SET OFFLINE", f"ALTER DATABASE {quoted} SET OFFLINE WITH ROLLBACK IMMEDIATE"):
@@ -269,7 +282,7 @@ def recover_database(allow_data_loss=False):
                 state, access = _read_state(cur, database)
 
             # 3. Still broken: emergency repair, only with explicit consent.
-            if state in _REPAIRABLE_STATES:
+            if state in _REPAIRABLE_STATES or state == _EMERGENCY_STATE:
                 if allow_data_loss:
                     run("SET EMERGENCY", f"ALTER DATABASE {quoted} SET EMERGENCY")
                     run("SET SINGLE_USER", f"ALTER DATABASE {quoted} SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
@@ -277,6 +290,9 @@ def recover_database(allow_data_loss=False):
                         "DBCC CHECKDB REPAIR_ALLOW_DATA_LOSS",
                         f"DBCC CHECKDB ({quoted}, REPAIR_ALLOW_DATA_LOSS) WITH NO_INFOMSGS, ALL_ERRORMSGS",
                     )
+                    # A repaired database is still in EMERGENCY until SET ONLINE
+                    # re-runs recovery -- without this it stays EMERGENCY forever.
+                    run("SET ONLINE", f"ALTER DATABASE {quoted} SET ONLINE")
                     run("SET MULTI_USER", f"ALTER DATABASE {quoted} SET MULTI_USER")
                     state, access = _read_state(cur, database)
                 else:
@@ -302,7 +318,7 @@ def recover_database(allow_data_loss=False):
     ok = connected and after.get("state") == "ONLINE"
     if ok:
         message = f"Recovered: database is {after['state']} / {after['access']}."
-    elif after.get("state") in _REPAIRABLE_STATES and not allow_data_loss:
+    elif after.get("state") in (_REPAIRABLE_STATES | {_EMERGENCY_STATE}) and not allow_data_loss:
         message = (
             f"Database is still {after['state']}. The non-destructive restart did not clear it -- "
             "run Emergency Repair (may lose data) or call a DBA."
