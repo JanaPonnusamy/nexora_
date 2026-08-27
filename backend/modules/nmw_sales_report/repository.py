@@ -306,9 +306,10 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
             -- multi-char series (e.g. 'D' in '26-27D1920'), so the line rows key
             -- on Bnumber directly. Duplicate/orphan lines from *modified* bills
             -- (the source moves superseded rows to MProductSaleInformation but our
-            -- insert-only sync never deletes the mirror copy) are removed at the
-            -- source of truth by modules.nmw_sales_report.reconcile, NOT dedup'd
-            -- here -- so genuinely repeated product+batch lines are preserved.
+            -- insert-only sync never removed the mirror copy) are moved out of this
+            -- live mirror into sync.MProductSaleInformation by
+            -- modules.nmw_sales_report.reconcile (auto-run on report load), NOT
+            -- dedup'd here -- so genuinely repeated product+batch lines survive.
             INNER JOIN sync.ProductSaleInformation psi
                 ON psi.tenant_id = bm.tenant_id
                AND psi.store_id = bm.store_id

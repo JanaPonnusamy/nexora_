@@ -45,6 +45,14 @@ def list_bills(user, tenant_id, store_id, status, date_from, date_to):
     if not nmw_store_id:
         return {"bills": [], "can_approve": is_super_admin(user), "scope": "all" if can_view_all(user) else "store"}
 
+    # Throttled, best-effort self-heal: move any superseded (modified-bill) lines
+    # out of the live mirror before listing, so doubled bills never surface.
+    # Runs in the background and never blocks or fails the report.
+    try:
+        _reconcile.maybe_auto_reconcile(tenant_id, nmw_store_id)
+    except Exception:
+        pass
+
     broad = can_view_all(user)
     if broad:
         # Optional narrowing filter supplied by the client.
@@ -116,8 +124,9 @@ def approve(user, req):
 
 
 def reconcile(user, tenant_id, store_id, apply_changes):
-    """Delete mirror bill-line rows the source POS no longer has (superseded by a
-    bill modification). Super admin only. store_id defaults to the NMW warehouse."""
+    """Move mirror bill-line rows the source POS no longer has (superseded by a
+    bill modification) into sync.MProductSaleInformation history. Super admin
+    only. store_id defaults to the NMW warehouse."""
     if not is_super_admin(user):
         raise HTTPException(status_code=403, detail="Only a super admin can reconcile NMW bill lines.")
     target_store = (store_id or "").strip() or repository.get_nmw_store_id(tenant_id)
