@@ -1110,6 +1110,9 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   const [nonMovingIndex, setNonMovingIndex] = useState(0);
   const [nonMovingStoreFilter, setNonMovingStoreFilter] = useState('');
   const [nonMovingTotals, setNonMovingTotals] = useState([]);
+  // NM/Expiry valuation figures are blurred until unlocked with the password
+  // (req: hide stock value from the shop floor). Session-only — re-locks on reload.
+  const [nmValuesUnlocked, setNmValuesUnlocked] = useState(false);
   const [isAutoQuery, setIsAutoQuery] = useState(false);
   const [visibleSections, setVisibleSections] = useState(() => {
     try {
@@ -1733,6 +1736,9 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
           allStores={tenantStores}
           storeFilter={nonMovingStoreFilter}
           onStoreFilterChange={setNonMovingStoreFilter}
+          valuesUnlocked={nmValuesUnlocked}
+          onUnlockValues={() => setNmValuesUnlocked(true)}
+          onLockValues={() => setNmValuesUnlocked(false)}
         />
       </div>
 
@@ -3855,7 +3861,13 @@ function formatNmValue(value) {
 // is the store's/network's total non-moving / expiry valuation (cost + tax). Both
 // percentages are computed against closing stock value, mirroring the Expiry Stock
 // KPI card.
-function NonMovingTotalsStrip({ totals }) {
+// Client-side password that unlocks (unblurs) the NM valuation figures. This is
+// an over-the-shoulder screen for the shop floor, NOT real security — the value
+// is fetched regardless and the password ships in the bundle. Keep it that way
+// unless a real server-side gate is requested.
+const NM_VALUE_UNLOCK_PASSWORD = 'Nmex';
+
+function NonMovingTotalsStrip({ totals, unlocked, onUnlock, onLock }) {
   if (!totals?.length) return null;
   const agg = totals.reduce((acc, row) => {
     acc.stock += Number(row.stock_value || 0);
@@ -3866,33 +3878,103 @@ function NonMovingTotalsStrip({ totals }) {
   const nmPct = agg.stock > 0 ? (agg.nm / agg.stock) * 100 : 0;
   const exPct = agg.stock > 0 ? (agg.ex / agg.stock) * 100 : 0;
   const scopeLabel = totals.length > 1 ? `${totals.length} stores` : (totals[0].__storeCode || shortStoreName(totals[0].__storeName));
+  // Closing Stock Value is intentionally NOT shown (req: salesmen must not see
+  // total stock valuation). It is still summed above so the NM% / Ex% ratios keep
+  // their "% of closing stock" meaning.
+  const lockedCls = unlocked ? '' : 'nm-kpi-locked';
 
   return (
-    <div className="nm-kpi-cards" title={`Non-moving valuation for ${scopeLabel}`}>
-      <div className="nm-kpi-card nm-kpi-card--stock">
-        <span className="nm-kpi-cap">Closing Stock Value</span>
-        <strong className="nm-kpi-num">₹{formatNmValue(agg.stock)}</strong>
-        <span className="nm-kpi-sub">{scopeLabel}</span>
-      </div>
-      <div className="nm-kpi-card nm-kpi-card--nm">
+    <div className="nm-kpi-cards" title={`Non-moving / expiry valuation for ${scopeLabel}`}>
+      <div className={`nm-kpi-card nm-kpi-card--nm ${lockedCls}`}>
         <span className="nm-kpi-cap">Total NM Value</span>
         <strong className="nm-kpi-num">₹{formatNmValue(agg.nm)}</strong>
         <span className="nm-kpi-sub">{nmPct.toFixed(1)}% of closing stock</span>
       </div>
-      <div className="nm-kpi-card nm-kpi-card--ex">
+      <div className={`nm-kpi-card nm-kpi-card--ex ${lockedCls}`}>
         <span className="nm-kpi-cap">Total Expiry Value</span>
         <strong className="nm-kpi-num">₹{formatNmValue(agg.ex)}</strong>
         <span className="nm-kpi-sub">{exPct.toFixed(1)}% of closing stock</span>
       </div>
+      <NmValueLock unlocked={unlocked} onUnlock={onUnlock} onLock={onLock} />
     </div>
   );
 }
 
-function NonMovingHighlightCard({ nonMovingGroups, nonMovingTotals, nonMovingLoading, nonMovingIndex, onPrev, onNext, onSearch, allStores, storeFilter, onStoreFilterChange }) {
+// Padlock toggle for the NM valuation cards. Locked = values blurred; clicking
+// opens a small password field, and the correct password unblurs them for the
+// session. When unlocked the same button re-locks (hides) the values.
+function NmValueLock({ unlocked, onUnlock, onLock }) {
+  const [open, setOpen] = useState(false);
+  const [pw, setPw] = useState('');
+  const [error, setError] = useState(false);
+
+  if (unlocked) {
+    return (
+      <button
+        type="button"
+        className="nm-lock-btn nm-lock-btn--unlocked"
+        title="Hide valuation"
+        aria-label="Hide valuation"
+        onClick={() => onLock?.()}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a5 5 0 0 1 5 5v2h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h7V7a3 3 0 0 0-6 0H5a5 5 0 0 1 5-5h2Zm0 12a1.6 1.6 0 0 0-.8 3v2h1.6v-2A1.6 1.6 0 0 0 12 14Z" /></svg>
+      </button>
+    );
+  }
+
+  function submit(event) {
+    event?.preventDefault();
+    if (pw === NM_VALUE_UNLOCK_PASSWORD) {
+      setOpen(false);
+      setPw('');
+      setError(false);
+      onUnlock?.();
+    } else {
+      setError(true);
+    }
+  }
+
+  return (
+    <div className="nm-lock-wrap">
+      <button
+        type="button"
+        className="nm-lock-btn"
+        title="Show valuation (password required)"
+        aria-label="Show valuation"
+        onClick={() => { setOpen((prev) => !prev); setError(false); }}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a5 5 0 0 1 5 5v2h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h1V7a5 5 0 0 1 5-5Zm0 2a3 3 0 0 0-3 3v2h6V7a3 3 0 0 0-3-3Zm0 10a1.6 1.6 0 0 0-.8 3v2h1.6v-2A1.6 1.6 0 0 0 12 14Z" /></svg>
+      </button>
+      {open && (
+        <form className="nm-lock-pop" onSubmit={submit}>
+          <input
+            type="password"
+            autoFocus
+            placeholder="Password"
+            value={pw}
+            onChange={(event) => { setPw(event.target.value); setError(false); }}
+            className={`nm-lock-input ${error ? 'nm-lock-input--err' : ''}`}
+            aria-label="Valuation unlock password"
+          />
+          <button type="submit" className="nm-lock-go">Unlock</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function NonMovingHighlightCard({ nonMovingGroups, nonMovingTotals, nonMovingLoading, nonMovingIndex, onPrev, onNext, onSearch, allStores, storeFilter, onStoreFilterChange, valuesUnlocked, onUnlockValues, onLockValues }) {
   const storeFilterControl = allStores?.length ? (
     <StoreFilterPicker allStores={allStores} storeFilter={storeFilter} onStoreFilterChange={onStoreFilterChange} />
   ) : null;
-  const totalsStrip = <NonMovingTotalsStrip totals={nonMovingTotals} />;
+  const totalsStrip = (
+    <NonMovingTotalsStrip
+      totals={nonMovingTotals}
+      unlocked={valuesUnlocked}
+      onUnlock={onUnlockValues}
+      onLock={onLockValues}
+    />
+  );
 
   if (!nonMovingGroups?.length) {
     return (
@@ -3926,6 +4008,9 @@ function NonMovingHighlightCard({ nonMovingGroups, nonMovingTotals, nonMovingLoa
         onSearch={onSearch}
         storeFilterControl={storeFilterControl}
         allTotals={nonMovingTotals}
+        valuesUnlocked={valuesUnlocked}
+        onUnlockValues={onUnlockValues}
+        onLockValues={onLockValues}
         nav={{
           index,
           total: nonMovingGroups.length,
@@ -3995,7 +4080,7 @@ function nonMovingStoreSummaries(rows) {
   }));
 }
 
-function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl, allTotals }) {
+function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl, allTotals, valuesUnlocked, onUnlockValues, onLockValues }) {
   const storeSummaries = nonMovingStoreSummaries(group.rows);
   const [selectedStoreKey, setSelectedStoreKey] = useState('');
   const clickable = typeof onSearch === 'function';
@@ -4009,7 +4094,14 @@ function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl, allTot
   const storeTotals = (allTotals || []).filter(
     (row) => String(row.__storeId) === String(selectedStore?.storeId)
   );
-  const totalsStrip = <NonMovingTotalsStrip totals={storeTotals.length ? storeTotals : (allTotals || [])} />;
+  const totalsStrip = (
+    <NonMovingTotalsStrip
+      totals={storeTotals.length ? storeTotals : (allTotals || [])}
+      unlocked={valuesUnlocked}
+      onUnlock={onUnlockValues}
+      onLock={onLockValues}
+    />
+  );
 
   useEffect(() => {
     setSelectedStoreKey(String(storeSummaries[0]?.storeId || storeSummaries[0]?.storeName || ''));

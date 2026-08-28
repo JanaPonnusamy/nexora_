@@ -1163,8 +1163,8 @@ th {
 }
 
 .nm-kpi-cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
+  align-items: stretch;
   flex: 1 1 auto;
   min-width: 0;
   gap: 8px;
@@ -1175,6 +1175,7 @@ th {
   flex-direction: column;
   justify-content: center;
   gap: 3px;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 66px;
   padding: 10px 14px;
@@ -1183,6 +1184,97 @@ th {
   border-radius: 8px;
   background: var(--nx-surface-raised);
   box-shadow: var(--nx-shadow-sm);
+}
+
+/* Locked = valuation blurred (over-the-shoulder screen). The number is still in
+   the DOM; this is a visual gate, unblurred by the password (see NmValueLock). */
+.nm-kpi-card.nm-kpi-locked .nm-kpi-num,
+.nm-kpi-card.nm-kpi-locked .nm-kpi-sub {
+  filter: blur(7px);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Padlock toggle + password popover. */
+.nm-lock-wrap {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+}
+
+.nm-lock-btn {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  padding: 0;
+  border: 1px solid var(--nx-rule);
+  border-radius: 8px;
+  background: var(--nx-surface-raised);
+  color: var(--nx-text-soft);
+  cursor: pointer;
+}
+
+.nm-lock-btn:hover {
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
+}
+
+.nm-lock-btn svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.nm-lock-btn--unlocked {
+  border-color: var(--nx-success);
+  color: var(--nx-success);
+}
+
+.nm-lock-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 8px;
+  background: var(--nx-surface);
+  box-shadow: var(--nx-shadow-md);
+}
+
+.nm-lock-input {
+  width: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--nx-rule-strong);
+  border-radius: 6px;
+  background: var(--nx-surface-raised);
+  color: var(--nx-text);
+  font-size: 12px;
+}
+
+.nm-lock-input--err {
+  border-color: var(--nx-danger);
+  background: var(--nx-danger-sunk);
+}
+
+.nm-lock-go {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--nx-accent);
+  color: var(--nx-text-on);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.nm-lock-go:hover {
+  background: var(--nx-accent-strong, var(--nx-accent));
 }
 
 .nm-kpi-cap {
