@@ -58,7 +58,7 @@
   --ui-nav-height: 58px;       /* top navigation */
   --ui-toolbar-height: 36px;   /* search / filter toolbar (compact floor) */
   --ui-summary-height: 56px;   /* NON MOVING strip */
-  --ui-warehouse-height: 118px;/* NMW warehouse panel */
+  --ui-warehouse-height: 148px;/* NMW warehouse panel — fits >=4 product rows */
   --ui-panel-padding: 6px;
   --ui-grid-padding: 5px;
   --ui-section-gap: 8px;       /* gap between workbench sections */
@@ -85,12 +85,12 @@
     --ui-nav-height: 50px;
     --ui-toolbar-height: 32px;
     --ui-summary-height: 50px;
-    --ui-warehouse-height: 92px;
+    --ui-warehouse-height: 148px;/* fits >=4 product rows even on compact-but-tall screens */
     --ui-panel-padding: 4px;
     --ui-grid-padding: 4px;
     --ui-section-gap: 4px;
     --ui-column-gap: 6px;
-    --ui-store-row-min: 78px;
+    --ui-store-row-min: 100px;   /* floor per store row: >=4 complete product rows before scroll */
     --ui-workspace-padding: 8px;
   }
 }
@@ -107,7 +107,7 @@
     --ui-nav-height: 62px;
     --ui-toolbar-height: 44px;
     --ui-summary-height: 60px;
-    --ui-warehouse-height: 140px;
+    --ui-warehouse-height: 168px;/* fits >=4 product rows with extra air */
     --ui-panel-padding: 7px;
     --ui-grid-padding: 6px;
     --ui-section-gap: 10px;
@@ -1132,17 +1132,124 @@ th {
   line-height: 1;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   NM panel — stacked two-row layout. Row 1 is a KPI card row (Closing Stock /
+   Total NM / Total Expiry valuations, each with its share of closing stock);
+   Row 2 is the rotating product-detail card. This grows the panel vertically to
+   use the space beside/below the short NMW box, replacing the old single
+   fixed-height horizontal strip. */
+.non-moving-wrap--stacked {
+  flex-direction: column !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible;
+  gap: 8px;
+  padding: 8px;
+  background: var(--nx-surface);
+}
+
+/* Row 1: NM label + store controls on the left, KPI cards filling the rest. */
+.nm-kpi-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-height: 0;
+}
+
+.non-moving-wrap--stacked .non-moving-header-box {
+  flex: 0 0 auto;
+  max-width: none;
+  border-radius: 8px;
+}
+
+.nm-kpi-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 8px;
+}
+
+.nm-kpi-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 66px;
+  padding: 10px 14px;
+  border: 1px solid var(--nx-rule);
+  border-left: 3px solid var(--nx-rule-strong);
+  border-radius: 8px;
+  background: var(--nx-surface-raised);
+  box-shadow: var(--nx-shadow-sm);
+}
+
+.nm-kpi-cap {
+  overflow: hidden;
+  color: var(--nx-text-muted);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.nm-kpi-num {
+  color: var(--nx-text);
+  font-size: 22px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+.nm-kpi-sub {
+  overflow: hidden;
+  color: var(--nx-text-soft);
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nm-kpi-card--stock { border-left-color: var(--nx-accent); }
+.nm-kpi-card--nm { border-left-color: var(--nx-danger); }
+.nm-kpi-card--nm .nm-kpi-num { color: var(--nx-danger-ink); }
+.nm-kpi-card--ex { border-left-color: var(--nx-warning); }
+.nm-kpi-card--ex .nm-kpi-num { color: var(--nx-warning); }
+
+/* Row 2: prev-nav · product detail · next-nav. */
+.nm-detail-row {
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.non-moving-wrap--stacked .non-moving-empty-body {
+  flex: 1 1 auto;
+  border-radius: 8px;
+}
+
 .non-moving-block-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   flex: 1;
   min-width: 0;
   height: 100%;
-  padding: 0 12px;
+  /* No right padding: the prev arrow now stretches full-height and sits flush
+     against the KPI card (removes the wasted gap before the product name). */
+  padding: 0 0 0 6px;
   color: var(--nx-text-on);
   font-size: 12px;
   font-weight: 700;
+}
+
+/* Prev arrow pinned to the header's right edge so it flanks the KPI card just
+   like Next flanks it on the other side - a matched, symmetric pair. */
+.non-moving-block-header .non-moving-block-nav--prev {
+  margin-left: auto;
 }
 
 .non-moving-block-store {
@@ -1176,11 +1283,15 @@ th {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
+  /* Narrow, full-height tabs flanking the KPI card (req): reduce the width and
+     let them stretch the entire strip height instead of sitting as small
+     floating 26×26 squares that don't line up with the row. */
+  align-self: stretch;
+  width: 20px;
+  height: auto;
   padding: 0;
   border: 1px solid var(--nx-rule-strong);
-  border-radius: 7px;
+  border-radius: 0;
   background: var(--nx-surface);
   color: var(--nx-text-soft);
   cursor: pointer;
@@ -1206,19 +1317,40 @@ th {
    but uses the exact same .non-moving-block-nav class as Prev - same size,
    shape and color, no modifier needed - so both arrows are identical. */
 
-/* Store-scope icon button (replaces the old "All Stores ▾" <select>). */
+/* Group the store-scope filter + per-product store picker so the two store
+   icons always sit together (and always occupy the same footprint, thanks to
+   the reserved placeholder) - this keeps the KPI card starting at the same x
+   for every product instead of resizing per product. */
+.non-moving-store-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* Store-scope icon button (replaces the old "All Stores ▾" <select>). Matches
+   the nav arrows' 26x26 / radius-7 footprint so the icons + arrows read as one
+   uniformly sized control row. */
 .store-filter-icon-btn {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 5px;
+  border-radius: 7px;
   background: rgba(255, 255, 255, 0.15);
   color: var(--nx-text-on);
   cursor: pointer;
+}
+
+/* Invisible spacer that reserves the per-product picker's slot for single-store
+   products, so the header width never changes between products. */
+.store-filter-icon-btn--placeholder {
+  border-color: transparent;
+  background: transparent;
+  pointer-events: none;
 }
 
 .store-filter-icon-btn svg {
@@ -1227,7 +1359,7 @@ th {
   fill: currentColor;
 }
 
-.store-filter-icon-btn:hover {
+.store-filter-icon-btn:hover:not(.store-filter-icon-btn--placeholder) {
   background: rgba(255, 255, 255, 0.28);
 }
 
@@ -1527,11 +1659,11 @@ th {
 }
 
 .global-search-row input {
-  height: 34px;
+  height: 28px;
   border: 1px solid var(--nx-rule);
   border-radius: 8px;
   padding: 0 12px;
-  font-size: 14px;
+  font-size: 13px;
   background: var(--nx-surface);
 }
 
@@ -2066,10 +2198,23 @@ th {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* §9: the shell (not the inner grid) owns HORIZONTAL scroll, so the header
+     and the data rows — both min-width:1320px children of this flex column —
+     slide left/right together and can never desync. The inner grid keeps its
+     own VERTICAL scroll for the store list. overflow-y is pinned to hidden
+     (not left visible) so the header stays fixed instead of the whole shell
+     scrolling — a `visible` axis paired with a non-visible one computes to
+     auto per spec, which would have unpinned it. */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .store-row-grid-shell > .store-column-headers {
   flex: 0 0 auto;
+  /* §6: reserve the body's vertical-scrollbar width on the header so the two
+     share the same content width and their column boundaries stay aligned.
+     --stock-scrollbar-w is measured live by the JS effect. */
+  padding-right: var(--stock-scrollbar-w, 0);
 }
 
 .store-row-grid-shell > .store-row-grid {
@@ -3052,6 +3197,23 @@ th {
 
 .purchase-party--transfer .purchase-party-label { color: var(--nx-accent-ink); }
 
+/* Warehouse-sourced supplier buy (satellite store received via transfer): the
+   real supplier is shown, tinted with the info accent so it reads distinctly
+   from a plain in-store purchase without masquerading as an internal transfer. */
+.purchase-party--via-warehouse {
+  border-color: color-mix(in srgb, var(--nx-info) 30%, var(--nx-rule));
+  border-left-color: var(--nx-info);
+}
+
+.purchase-party--via-warehouse .purchase-party-label { color: var(--nx-info-ink); }
+
+/* Muted "· via NMW" provenance marker inside the compact purchase grid cell. */
+.purchase-supplier-via {
+  color: var(--nx-info-ink);
+  font-weight: 700;
+  opacity: 0.9;
+}
+
 .purchase-party-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3367,10 +3529,13 @@ th {
        and --warehouse-panel-height override the compact :root tokens even
        though nothing else in this block does (height/min-height/gap are
        fully superseded by the later unconditional .store-workbench rule and
-       were dead weight). Shrunk from 120px to recover height for the main
-       grid per the "reduce NMW/NMA/NMC header padding" request. */
-    --store-row-height: 100px;
-    --warehouse-panel-height: 100px;
+       were dead weight). Sized so the NMW panel shows >=4 COMPLETE product
+       rows: header ~40 + border/padding ~11 + 4×20px rows = ~131px, so the
+       148px floor clears it with a partial 5th row. The clamp lets the panel
+       grow with viewport height (more rows when space allows) while capping it
+       so it never starves the scrollable store grid below. */
+    --store-row-height: clamp(148px, 20vh, 210px);
+    --warehouse-panel-height: clamp(148px, 20vh, 210px);
   }
 
   /* Compress the top summary (PRODUCT + NON MOVING panels) so the store grid
@@ -3384,13 +3549,21 @@ th {
   }
 
   .store-workbench .header-cell {
-    height: 38px;
-    min-height: 38px;
-    max-height: 38px;
+    height: 24px;
+    min-height: 24px;
+    max-height: 24px;
+  }
+
+  /* Compact the section-title line so the two-line heading (title + column
+     labels) fits the shorter 24px header without clipping and stops wasting
+     vertical space above the store rows. */
+  .store-workbench .header-cell-title {
+    font-size: 10px;
+    line-height: 1.1;
   }
 
   .store-workbench .warehouse-column-headers {
-    flex-basis: 40px;
+    flex-basis: 28px;
   }
 
   .store-workbench .product-status-legend {
@@ -4600,6 +4773,14 @@ th {
 /* Stock Availability workspace: compact, aligned desktop dashboard. */
 .store-workbench {
   display: grid;
+  /* ── Shared row model (single source of truth for vertical sizing) ───────
+     Every store block is exactly --stock-block-chrome + N × --stock-row-h
+     tall, where N = --stock-visible-rows (published by the JS viewport
+     measurement in StockAvailability). The JS constants ROW_H/CHROME/GAP
+     mirror these three values, so what the calc says fits is exactly what a
+     block reserves — a block can only terminate on a whole-row boundary. */
+  --stock-row-h: 18px;
+  --stock-block-chrome: 16px;
   --stock-grid-columns: 24px minmax(188px, 0.92fr) minmax(246px, 1.75fr) minmax(228px, .9fr) minmax(286px, 1.3fr) minmax(280px, 1.15fr);
   /* Four stacked sections: search toolbar, the top summary (NMW product panel
      + NON MOVING strip side by side), the store-comparison grid (the only
@@ -4904,19 +5085,23 @@ th {
 }
 
 .header-cell {
-  justify-content: flex-start;
-  gap: 2px;
-  height: 44px;
-  min-height: 44px;
-  max-height: 44px;
-  padding: 5px 8px 4px;
+  justify-content: center;
+  gap: 1px;
+  /* §4/§5: one compact two-line header (group title + child labels). Height
+     reclaimed from the old 44px so the store grid below gets the space. */
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  padding: 2px 8px;
   border-right-color: var(--nx-rule);
   background: var(--nx-surface);
 }
 
 .header-cell-title {
-  font-size: 11px;
+  margin-bottom: 0;
+  font-size: 10.5px;
   font-weight: 800;
+  line-height: 1.1;
 }
 
 .header-cell .grid-row span {
@@ -4990,9 +5175,9 @@ th {
 }
 
 .product-status-legend {
-  min-height: 30px;
+  min-height: 24px;
   margin: 0;
-  padding: 5px 10px;
+  padding: 3px 10px;
   border-color: var(--nx-rule);
   background: var(--nx-surface);
   font-size: 10px;
@@ -5029,7 +5214,19 @@ th {
    existed than the floor allowed. scroll-snap below means a mid-scroll stop
    still lands on a row boundary instead of resting on a half-visible row. */
 .store-workbench .store-row-grid {
-  grid-auto-rows: minmax(var(--ui-store-row-min), 1fr);
+  /* Fixed block height (NOT minmax/1fr): each store gets exactly enough room
+     for --stock-visible-rows COMPLETE rows plus block chrome. Blocks no longer
+     stretch to fill leftover space (which used to let the inner lists show a
+     half row), and when the blocks don't all fit the grid scrolls — always
+     landing on a whole store boundary. --stock-visible-rows defaults to 4 and
+     is raised by the JS viewport measurement when the window is taller. */
+  --stock-visible-rows: 4;
+  grid-auto-rows: calc(var(--stock-block-chrome) + var(--stock-visible-rows) * var(--stock-row-h));
+  /* Always reserve the vertical-scrollbar gutter so the body content width
+     (and therefore its column boundaries) never shifts when the scrollbar
+     appears/disappears — the header reserves the same width (see shell rule). */
+  scrollbar-gutter: stable;
+  overflow-x: hidden;
   scroll-snap-type: y proximity;
 }
 
@@ -5037,50 +5234,70 @@ th {
   scroll-snap-align: start;
 }
 
+/* NMW warehouse panel: show EXACTLY 4 product rows. It used to fill a fixed
+   --warehouse-panel-height (~154px at 1366×768) with a flex:1 list, which
+   spilled a 5th row and stole height from the store grid below. Cap the list
+   to 4 rows and let the panel hug that content so the freed vertical space
+   flows to the 4-store grid — the 1366×768 fit requirement. */
 .store-workbench .top-summary-nmw .store-row-grid {
-  grid-auto-rows: var(--warehouse-panel-height);
+  grid-auto-rows: auto;
+}
+
+.store-workbench .top-summary-nmw .store-data-row {
+  height: auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.store-workbench .top-summary-nmw .stock-cell .store-product-grid-wrap {
+  flex: 0 0 auto;
+  height: calc(4 * var(--stock-row-h));
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
 }
 
 .store-workbench .store-column-headers {
   grid-row: auto;
 }
 
-.store-workbench .stock-cell .store-product-grid-wrap {
-  flex: 0 0 112px;
-  height: 112px;
-  min-height: 112px;
-  max-height: 112px;
-  overflow-y: auto;
-}
-
+/* Every list wrapper is exactly N complete rows tall (N = --stock-visible-rows,
+   inherited from the scrolling .store-row-grid). Because each row below is a
+   FIXED --stock-row-h, the box height is an exact multiple of the row height,
+   so the initial view shows whole rows only; a store with more matches than N
+   simply reveals a scrollbar (no half-row sliver). */
+.store-workbench .stock-cell .store-product-grid-wrap,
 .store-workbench .row-table-wrap {
-  flex: 0 0 112px;
-  height: 112px;
-  min-height: 112px;
-  max-height: 112px;
+  flex: 0 0 auto;
+  height: calc(var(--stock-visible-rows) * var(--stock-row-h));
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
 }
 
+/* Uniform, fixed row height across product / purchase / billing / batch lists
+   so "4 rows" means the same pixel height in every column and the store blocks
+   line up. Fixed (not min-) height is what keeps the wrapper an exact multiple. */
 .store-workbench .row-cell .grid-row,
-.store-workbench .store-product-grid-wrap .grid-row {
-  min-height: 20px;
+.store-workbench .store-product-grid-wrap .grid-row,
+.store-workbench .batch-row {
+  height: var(--stock-row-h);
+  min-height: var(--stock-row-h);
   gap: 2px;
   padding: 1px 4px;
 }
 
 .store-workbench .batch-table {
-  padding-block: 2px;
+  padding-block: 0;
 }
 
 .store-workbench .batch-row {
-  min-height: 18px;
-  gap: 2px;
   padding-block: 0;
 }
 
 .store-workbench .row-cell .grid-row span,
 .store-workbench .store-product-grid-wrap .grid-row span {
-  font-size: 10.5px;
+  font-size: 9.5px;
 }
 
 .store-workbench .batch-cell-status {
@@ -5109,7 +5326,8 @@ th {
 }
 
 .store-workbench .row-empty-state {
-  min-height: 100px;
+  height: calc(var(--stock-visible-rows) * var(--stock-row-h));
+  min-height: 0;
 }
 
 .warehouse-only .store-data-row {
@@ -5348,6 +5566,22 @@ th {
   box-shadow: var(--nx-shadow-md);
 }
 
+/* Stacked NM layout: give the row-2 product card a full border + rounded
+   corners (it no longer borrows the strip's outer frame), and round the outer
+   edge of each flanking nav button so the detail row reads as one pill. */
+.store-workbench .non-moving-wrap--stacked .non-moving-overall-card {
+  border: 1px solid var(--nx-rule);
+  border-radius: 0;
+}
+
+.store-workbench .nm-detail-row .non-moving-block-nav--prev {
+  border-radius: 8px 0 0 8px;
+}
+
+.store-workbench .nm-detail-row .non-moving-block-nav:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
 .store-workbench .non-moving-header-box {
   background: var(--nx-header);
 }
@@ -5522,6 +5756,7 @@ th {
 .store-workbench .non-moving-overall-card {
   display: grid;
   grid-template-columns:
+    minmax(40px, 46px)
     minmax(120px, 1.5fr)
     minmax(42px, 50px)
     minmax(48px, 58px)
@@ -5591,12 +5826,62 @@ th {
   font-weight: 850;
 }
 
+/* Store-code badge that leads the KPI card (req: show current store abbrev like
+   NMA / NMW / NMS before the product name). */
+.store-workbench .non-moving-fact-store {
+  align-content: center;
+  justify-items: center;
+}
+
+.store-workbench .non-moving-fact-store > strong {
+  color: var(--nx-accent-ink);
+  font-size: 12.5px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+}
+
 .store-workbench .non-moving-overall-card--near-expiry .non-moving-fact-expiry > strong {
   color: var(--nx-warning);
 }
 
 .store-workbench .non-moving-overall-card--expired .non-moving-fact-expiry > strong {
   color: var(--nx-danger-ink);
+}
+
+/* Whole-panel expiry highlight (req): orange when the selected stock is within
+   90 days of expiry, red once expired — tint the card surface AND each fact
+   tile so the alert reads at a glance, not just on the Expiry value. */
+/* NOTE: no color-mix() here — this app runs on Electron 22 (Chromium 108),
+   which does not support color-mix(), so such values are dropped to transparent.
+   Use the flat theme tint tokens (light/dark aware) instead. The card surface
+   carries the tint and each fact tile is transparent with a colored border, so
+   the whole panel reads orange (near expiry) / red (expired) at a glance. */
+.store-workbench .non-moving-overall-card--near-expiry {
+  background: #fed7aa;
+}
+
+.store-workbench .non-moving-overall-card--near-expiry > div {
+  border-color: var(--nx-warning);
+  background: transparent;
+}
+
+.store-workbench .non-moving-overall-card--expired {
+  background: #fca5a5;
+}
+
+.store-workbench .non-moving-overall-card--expired > div {
+  border-color: var(--nx-danger);
+  background: transparent;
+}
+
+/* Dark theme: use the darker tint tokens so the alert stays legible on a dark
+   surface (the light literals above would glare). */
+:root[data-theme="dark"] .store-workbench .non-moving-overall-card--near-expiry {
+  background: var(--nx-warning-sunk);
+}
+
+:root[data-theme="dark"] .store-workbench .non-moving-overall-card--expired {
+  background: var(--nx-danger-sunk);
 }
 
 .store-workbench .batch-row {
@@ -6000,8 +6285,12 @@ th {
   font-weight: 650;
   line-height: 1.05;
 }
+/* Product rows must track the viewport-derived --stock-row-h exactly. A stale
+   literal floor here (min-height:20px) kept rows at 20px even when the fit
+   calc shrank --stock-row-h below that, so the 4-row list wrapper (4×row-h)
+   only revealed ~3.5 rows. Tracking the variable keeps 4 rows always whole. */
 .store-workbench .store-product-grid-wrap .grid-row {
-  min-height: 20px;
+  min-height: var(--stock-row-h);
 }
 
 /* Product grid: Unit is a tiny centred code (TAB/CAP/BTL); Stock is a
@@ -6100,10 +6389,14 @@ th {
 .product-status-legend .trend-swatch--sales { background: linear-gradient(180deg, #67e08c, #12662f); }
 .product-status-legend .trend-swatch--stock { background: linear-gradient(180deg, #fb8686, #9c1414); }
 
-/* Bar value labels on the trend chart: compact and legible above each bar. */
+/* Bar value labels on the trend chart: now the EXACT quantity with thousands
+   separators (e.g. "10,900"), so trim the type slightly and tighten tracking
+   so a 5-6 char number stays legible above a narrow bar without abbreviating
+   back to "10.9k" (req §1/§13). tabular-nums keeps digits from jittering. */
 .store-workbench .sa-chart__barval {
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 800;
+  letter-spacing: -0.3px;
 }
 
 /* Batch grid is a set of fixed narrow columns — a tighter gap (header + body
@@ -6336,6 +6629,30 @@ th {
 }
 
 /* ==========================================================================
+   §3-§8 Batches header/body alignment — the last section left out of the
+   shared geometry above. The Batch group is the ONE place whose header cell
+   and body cell used different inset + gap (header kept the generic
+   .header-cell 10px inline padding with a 5px sub-column gap, while the body
+   used .row-cell 8px + .batch-row 4px with a 2px gap), so every Batch/
+   Purchase/Billing sub-column boundary drifted a few px. Both sides now use
+   the SAME 2px cell inset + 4px inner padding + 4px gap as the other
+   sections. Widths already come from the shared BATCH_COL_WIDTHS map that
+   both StoreColumnHeaders and BatchTable read, so with matched insets the
+   header label always sits exactly above its data column - and stays aligned
+   through resize / reorder / hide / reset (all of which flow through the same
+   applyColumnConfig resolver for header and body alike). No per-column pixel
+   nudges are used. */
+.store-workbench .header-cell--batches,
+.store-workbench .row-cell.batch-table {
+  padding-inline: 2px;
+}
+.store-workbench .header-cell--batches .grid-row,
+.store-workbench .batch-row {
+  gap: 4px;
+  padding-inline: 4px;
+}
+
+/* ==========================================================================
    Compact density (Grid Settings → Density → Compact). Placed last so it
    wins in source order over the section above with matching selector
    specificity - no !important stacking needed. Normal density is untouched.
@@ -6354,7 +6671,10 @@ th {
   height: 36px;
   min-height: 36px;
   max-height: 36px;
-  padding: 3px 8px 2px;
+  /* Inline inset stays 2px so the header sub-columns keep sitting exactly
+     above the body cells (which use 2px) in compact density - a wider inline
+     pad here would decouple header from body just like the Batch bug above. */
+  padding: 3px 2px 2px;
 }
 
 .store-workbench.density-compact .non-moving-overall-card {

@@ -170,7 +170,10 @@ const PURCHASE_COL_WIDTHS = { qty: '30px', free: '28px', allDiscount: '46px', pr
 const PURCHASE_COL_LABELS = { qty: 'Qty', free: 'Free', allDiscount: 'All Dis', productDiscount: 'Prod Dis%', grnDate: 'GRN Date', supplier: 'Supplier' };
 const PURCHASE_SUMMARY_COL_WIDTHS = { qty: '32px', free: '30px', grnDate: '58px', mrp: '46px', ptr: '46px', cost: '50px' };
 const PURCHASE_SUMMARY_COL_LABELS = { qty: 'Qty', free: 'Free', grnDate: 'GRN Date', mrp: 'MRP', ptr: 'PTR', cost: 'Cost' };
-const BILLING_COL_WIDTHS = { qty: '28px', discount: '40px', date: '58px', billNo: 'minmax(64px, 1fr)', mrp: '46px', amount: '56px' };
+// Compact widths so all six billing columns (through MRP + Amount) fit inside
+// the billing section track at 1366-wide without clipping the right edge — the
+// header and body both read this map, so they stay column-aligned (req §9/§10).
+const BILLING_COL_WIDTHS = { qty: '24px', discount: '34px', date: '50px', billNo: 'minmax(46px, 1fr)', mrp: '40px', amount: '44px' };
 const BILLING_COL_LABELS = { qty: 'Qty', discount: 'Dis%', date: 'Date', billNo: 'Bill No', mrp: 'MRP', amount: 'Amount' };
 
 // Canonical left-to-right order of every resizable/reorderable column group.
@@ -1106,6 +1109,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   const [nonMovingLoading, setNonMovingLoading] = useState(true);
   const [nonMovingIndex, setNonMovingIndex] = useState(0);
   const [nonMovingStoreFilter, setNonMovingStoreFilter] = useState('');
+  const [nonMovingTotals, setNonMovingTotals] = useState([]);
   const [isAutoQuery, setIsAutoQuery] = useState(false);
   const [visibleSections, setVisibleSections] = useState(() => {
     try {
@@ -1142,6 +1146,14 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   const [gridSettingsOpen, setGridSettingsOpen] = useState(false);
   const gridSettingsBtnRef = useRef(null);
   const searchInputRef = useRef(null);
+  // Viewport-first grid sizing (req "FINAL GRID LAYOUT FIX"): the store grid is
+  // NOT a natural-height stack that overflows the viewport. It measures the
+  // real available body height and derives how many COMPLETE product rows each
+  // store block can show (never fewer than 4, more when the window is taller),
+  // publishing that as --stock-visible-rows. The CSS then makes every store
+  // block a fixed height = chrome + rows × --stock-row-h, so a block can only
+  // ever end on a whole-row boundary — no half rows, no clipped store.
+  const storeGridRef = useRef(null);
 
   const tenantStores = useMemo(() => {
     const tenantId = settings?.tenantId;
@@ -1175,13 +1187,18 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   // Billing keep compact fixed sub-columns internally (see *_COL_WIDTHS)
   // with only one flexible text field (Supplier / Bill No) each, so their
   // track weight stays modest.
+  // Section track widths. Billing carries the most sub-columns (Qty/Dis%/Date/
+  // Bill No/MRP/Amount), so it gets the widest min + a healthy fr share; the
+  // Sales Trend sparkline and Purchase columns give up a little width for it so
+  // Amount is never clipped at the right edge at 1366 (req §10). The header and
+  // every store body read this same variable, so boundaries always align (§9).
   const stockGridColumns = [
     '34px',
     'minmax(220px, 1.3fr)',
-    visibleSections.trend && 'minmax(220px, 1.35fr)',
+    visibleSections.trend && 'minmax(214px, 1.15fr)',
     visibleSections.batches && 'minmax(228px, .9fr)',
-    visibleSections.purchase && 'minmax(286px, 1.2fr)',
-    visibleSections.billing && 'minmax(260px, 1.05fr)'
+    visibleSections.purchase && 'minmax(280px, 1.15fr)',
+    visibleSections.billing && 'minmax(300px, 1.3fr)'
   ].filter(Boolean).join(' ');
 
   function toggleStockSection(section) {
@@ -1272,9 +1289,10 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
       return undefined;
     }
     setNonMovingLoading(true);
-    Promise.all(tenantStores.map((store) => api.getNonMovingStock(store.store_id, session, { tenantId: settings.tenantId, dwellDays: 120, minPurAge: 10, limit: 50 })
+    // Non-moving rule (req): not sold >= 90 days AND last GRN older than 10 days.
+    Promise.all(tenantStores.map((store) => api.getNonMovingStock(store.store_id, session, { tenantId: settings.tenantId, dwellDays: 90, minPurAge: 10, limit: 50 })
       .then((result) => asArray(result?.rows)
-        .map((row) => ({ ...row, __storeId: store.store_id, __storeName: store.store_name || store.store_code })))
+        .map((row) => ({ ...row, __storeId: store.store_id, __storeName: store.store_name || store.store_code, __storeCode: store.store_code })))
       .catch(() => [])))
       .then((lists) => {
         if (cancelled) return;
@@ -1287,6 +1305,14 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
         setNonMovingProducts(merged);
         setNonMovingLoading(false);
       });
+    // Store-level valuation totals (cost+tax) for the NM bar summary strip.
+    Promise.all(tenantStores.map((store) => api.getNonMovingTotals(store.store_id, session, { tenantId: settings.tenantId, salesAge: 90, grnAge: 10 })
+      .then((totals) => ({ ...totals, __storeId: store.store_id, __storeName: store.store_name || store.store_code, __storeCode: store.store_code }))
+      .catch(() => null)))
+      .then((rows) => {
+        if (cancelled) return;
+        setNonMovingTotals(rows.filter(Boolean));
+      });
     return () => { cancelled = true; };
   }, [tenantStores, settings?.tenantId, session]);
 
@@ -1294,6 +1320,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
     setNonMovingStoreFilter('');
     setNonMovingIndex(0);
     setNonMovingProducts([]);
+    setNonMovingTotals([]);
     searchIdRef.current += 1;
     setSearchStores([]);
     setStoreDetails({});
@@ -1311,6 +1338,16 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
     () => groupNonMovingProducts(filteredNonMoving),
     [filteredNonMoving]
   );
+
+  // Per-store valuation totals scoped to the tenant (+ the active store filter),
+  // feeding the NM bar's "value + tax / NM% / Ex%" summary strip.
+  const scopedNonMovingTotals = useMemo(() => {
+    const tenantStoreIds = new Set(tenantStores.map((store) => String(store.store_id)));
+    const rows = nonMovingTotals.filter((row) => tenantStoreIds.has(String(row.__storeId)));
+    return nonMovingStoreFilter
+      ? rows.filter((row) => String(row.__storeId) === String(nonMovingStoreFilter))
+      : rows;
+  }, [nonMovingTotals, nonMovingStoreFilter, tenantStores]);
 
   // Switching the store filter can leave the carousel pointing past the end
   // of the (now shorter) filtered list — snap back to the first item.
@@ -1548,6 +1585,47 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   const warehouseStore = stores.find(isWarehouseStore);
   const otherStores = stores.filter((store) => !isWarehouseStore(store));
 
+  // Fit-to-viewport row model. Every store shows EXACTLY 4 product rows
+  // (--stock-visible-rows is fixed); what flexes is the ROW HEIGHT, derived
+  // from the measured grid height so that N store blocks always fill the
+  // available space without the grid scrolling. This inverts the old model
+  // (which fixed the row height and varied the row count / scrolled): with a
+  // variable store count (data-driven, N = grid.childElementCount) a fixed
+  // block height overflowed once 5+ stores rendered on a short viewport. Now
+  // the block height is avail/N, so 5 stores fit as cleanly as 4. The row
+  // height is clamped to a readable band; only if even the floor can't fit
+  // (extremely short window) does the grid's own overflow act as a graceful
+  // fallback. CHROME/GAP mirror the CSS (--stock-block-chrome + grid gap).
+  useLayoutEffect(() => {
+    const grid = storeGridRef.current;
+    if (!grid) return undefined;
+    const ROWS = 4;        // fixed: exactly 4 complete product rows per store
+    const CHROME = 16;     // --stock-block-chrome (border + row-cell padding)
+    const GAP = 2;         // .store-row-grid gap (compact)
+    const PAD = 4;         // grid bottom padding + rounding headroom
+    const MIN_RH = 15;     // readable floor for a data row
+    const MAX_RH = 22;     // don't over-stretch rows on tall monitors
+    const recompute = () => {
+      const n = grid.childElementCount || 1;
+      const avail = grid.clientHeight - PAD;
+      if (avail <= 0) return;
+      const perStore = (avail - (n - 1) * GAP) / n;
+      let rowH = (perStore - CHROME) / ROWS;
+      if (!Number.isFinite(rowH)) rowH = MIN_RH;
+      rowH = Math.max(MIN_RH, Math.min(MAX_RH, rowH));
+      grid.style.setProperty('--stock-visible-rows', String(ROWS));
+      grid.style.setProperty('--stock-row-h', `${rowH}px`);
+      // Reserve the exact vertical-scrollbar gutter on the header so its column
+      // boundaries never drift from the body by the scrollbar's width.
+      const shell = grid.parentElement;
+      if (shell) shell.style.setProperty('--stock-scrollbar-w', `${grid.offsetWidth - grid.clientWidth}px`);
+    };
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    ro.observe(grid);
+    return () => ro.disconnect();
+  }, [otherStores.length, visibleSections, gridDensity, columnWidths, columnOrder]);
+
   return (
     <section className={`store-workbench density-${gridDensity}`} style={{ '--stock-grid-columns': stockGridColumns }}>
       <div className="global-search-row">
@@ -1576,10 +1654,6 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
           <span>{status.message}</span>
         </div>
         <div className="current-store-badge">
-          <span className="current-store-copy">
-            <small>Current device store</small>
-            <strong>{session?.user?.roles?.[0]?.store_name || settings?.storeName || 'Not registered'}</strong>
-          </span>
           <button type="button" className="store-order-button" onClick={onOpenSettings} title="Manage store display order">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10v2H4V6Zm0 5h7v2H4v-2Zm0 5h4v2H4v-2Zm14.6-6.4L21 12l-2.4 2.4-1.4-1.4.7-.7H13v-2h4.9l-.7-.7 1.4-1.4Z" /></svg>
             <span>Store order</span>
@@ -1646,6 +1720,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
 
         <NonMovingHighlightCard
           nonMovingGroups={groupedNonMoving}
+          nonMovingTotals={scopedNonMovingTotals}
           nonMovingLoading={nonMovingLoading}
           nonMovingIndex={nonMovingIndex}
           onPrev={() => nonMovingStep(-1)}
@@ -1682,7 +1757,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
             columnOrder={columnOrder}
             columnWidths={columnWidths}
           />
-          <section className="store-row-grid">
+          <section className="store-row-grid" ref={storeGridRef}>
             {otherStores.map((store, index) => (
               <StoreDataRow
                 key={store.store_id || store.store_code}
@@ -2182,11 +2257,13 @@ function StoreColumnHeaders({
   const definitionGrid = (definitions) => definitions.map(([, , width]) => width).join(' ');
 
   if (restrictWarehouse) {
+    // Warehouse panel has a single section, so the "PRODUCT" section title
+    // duplicates the "Product" column label directly under it — drop the title
+    // and keep only the column-label row (Product / Unit / Stock).
     return (
       <div className={`store-column-headers warehouse-column-headers ${sticky ? 'sticky' : ''}`}>
         <span className="store-header-cell" />
         <div className="header-cell header-cell--product warehouse-only-header-cell">
-          <div className="header-cell-title">Product</div>
           <GridRow cols={definitionGrid(productDefinitions)} cells={productDefinitions.map(([, label]) => label)} tag="span" />
         </div>
       </div>
@@ -2545,9 +2622,15 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
                   // when the cell shows a compact/abbreviated label — the tooltip
                   // reads the untruncated source name.
                   const supplierFull = String(row.supplier || '').trim() || '-';
+                  // Warehouse-sourced rows (satellite store received the stock via
+                  // transfer) show the warehouse's real supplier plus a muted "via
+                  // NMW" marker so the provenance is visible without opening detail.
+                  const viaWh = String(row.party_type || '').toLowerCase() === 'via_warehouse'
+                    ? String(row.source_store_name || '').trim() : '';
                   const supplierCell = (
-                    <span className="purchase-supplier-cell" title={`Supplier Name: ${supplierFull}`}>
+                    <span className="purchase-supplier-cell" title={viaWh ? `Supplier Name: ${supplierFull} (via ${viaWh})` : `Supplier Name: ${supplierFull}`}>
                       {visibility === 'FULL' ? supplierFull : abbreviateSupplierName(row.supplier)}
+                      {viaWh && <span className="purchase-supplier-via"> · via {viaWh}</span>}
                     </span>
                   );
                   const values = hideSupplierColumn ? {
@@ -2623,11 +2706,19 @@ function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
   // The backend resolves the party TYPE (internal store transfer vs external
   // supplier); the UI never guesses from the displayed name. Internal 'TI'
   // transfers surface the source store (e.g. NMW), NOT a supplier.
-  const isTransfer = String(row.party_type || '').toLowerCase() === 'transfer';
+  const partyType = String(row.party_type || '').toLowerCase();
+  const isTransfer = partyType === 'transfer';
+  // 'via_warehouse': the store received this stock from the warehouse, so we
+  // surface the warehouse's REAL supplier (e.g. PENTACARE) and note the source
+  // store as a subtitle ("via NMW") rather than hiding it as a plain transfer.
+  const isViaWarehouse = partyType === 'via_warehouse';
   const showParty = visibility === 'FULL';
   const partyLabel = isTransfer ? 'Source Store' : 'Supplier';
   const partyName = String(row.supplier || '').trim() || '-';
-  const partySub = isTransfer ? (String(row.source_store_name || '').trim() || null) : null;
+  const sourceStore = String(row.source_store_name || '').trim();
+  const partySub = isTransfer ? (sourceStore || null)
+    : isViaWarehouse ? (sourceStore ? `via ${sourceStore}` : null)
+    : null;
 
   const metrics = PURCHASE_METRIC_FIELDS.filter(([key]) =>
     (visibility === 'FULL' || !PURCHASE_FULL_ONLY_FIELDS.has(key))
@@ -2668,7 +2759,7 @@ function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
         </div>
         <div className="purchase-detail-body">
           {showParty && (
-            <div className={`purchase-party ${isTransfer ? 'purchase-party--transfer' : 'purchase-party--supplier'}`}>
+            <div className={`purchase-party ${isTransfer ? 'purchase-party--transfer' : 'purchase-party--supplier'} ${isViaWarehouse ? 'purchase-party--via-warehouse' : ''}`}>
               <span className="purchase-party-label">{partyLabel}</span>
               <strong className="purchase-party-name" title={partyName}>{partyName}</strong>
               {partySub && <span className="purchase-party-sub" title={partySub}>{partySub}</span>}
@@ -2939,7 +3030,7 @@ function BatchTable({ rows, pending, visibleFields = DEFAULT_STOCK_FIELDS.batche
               title={onBatchSelect && batchNo ? `Batch ${batchNo} — click for detail` : undefined}
             >
               {definitions.map(([key]) => ({
-                expiry: <span className="batch-cell-expiry">{formatDate(expiryDate)}</span>,
+                expiry: <span className="batch-cell-expiry">{formatBatchExpiry(expiryDate)}</span>,
                 stock: <span>{formatQty(row.stock)}</span>,
                 mrp: <span>{formatMoney(row.mrp)}</span>,
                 batchNo: <span>{batchNo || '-'}</span>,
@@ -3343,7 +3434,12 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
 
   const n = months.length || 1;
   const focus = hover ?? months.length - 1;
-  const padL = 30;
+  const max = Math.max(1, ...months.flatMap((row) => series.map((s) => Math.abs(s.value(row)))));
+  // Axis now shows the exact top-of-scale quantity (e.g. "10,900"), so the
+  // left gutter widens to fit the longest tick label instead of a fixed 30px
+  // that only ever had to hold a 4-char "10.9k".
+  const axisTopLabel = exactQuantity(Math.round(max));
+  const padL = Math.max(28, Math.min(54, axisTopLabel.length * 4.6 + 8));
   const padR = 8;
   const padT = 8;
   const padB = 15;
@@ -3354,7 +3450,6 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
   const barAreaH = plotH - labelBand;
   const barTopLimit = padT + labelBand;
 
-  const max = Math.max(1, ...months.flatMap((row) => series.map((s) => Math.abs(s.value(row)))));
   const groupW = plotW / n;
   // Wider bars / tighter gaps for a bold, clear view (max usable bar width).
   const groupGap = Math.min(groupW * 0.14, 12);
@@ -3391,7 +3486,7 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
             return (
               <g key={t}>
                 <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="rgba(100,116,139,0.18)" strokeWidth={1} />
-                <text x={padL - 5} y={y + 3} textAnchor="end" className="sa-chart__axis">{compactQuantity(Math.round(max * t))}</text>
+                <text x={padL - 5} y={y + 3} textAnchor="end" className="sa-chart__axis">{exactQuantity(Math.round(max * t))}</text>
               </g>
             );
           })}
@@ -3411,14 +3506,14 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
                   return (
                     <g key={s.key}>
                       <rect x={x} y={top} width={Math.max(4, barW)} height={h} rx={3} fill={`url(#sa-bar-${s.key})`}>
-                        <title>{`${row.period ?? ''} · ${s.label}: ${compactQuantity(value)}`}</title>
+                        <title>{`${row.period ?? ''} · ${s.label}: ${exactQuantity(value)}`}</title>
                       </rect>
                       {/* glossy highlight down the left edge of each bar */}
                       {h > 4 && (
                         <rect x={x + 1} y={top + 1} width={Math.max(1, Math.min(2.5, barW * 0.22))} height={Math.max(0, h - 2)} rx={1.5} fill="rgba(255,255,255,0.38)" />
                       )}
                       {value > 0 && (
-                        <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={s.dark}>{compactQuantity(value)}</text>
+                        <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={s.dark}>{exactQuantity(value)}</text>
                       )}
                     </g>
                   );
@@ -3449,7 +3544,7 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
             {series.map((s) => (
               <div className="sa-chart__tip-row" key={s.key}>
                 <span className="sa-chart__tip-key"><span className="sa-chart__swatch" style={{ background: s.color }} />{s.label}</span>
-                <span className="sa-chart__tip-val">{compactQuantity(s.value(months[hover]))}</span>
+                <span className="sa-chart__tip-val">{exactQuantity(s.value(months[hover]))}</span>
               </div>
             ))}
           </div>
@@ -3459,11 +3554,15 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
   );
 }
 
-function compactQuantity(value) {
+// Inventory/procurement rule: chart value labels, axis ticks and tooltips
+// show the EXACT quantity with thousands separators - never a k/M
+// abbreviation and never rounded away (see req §1/§2). Integer source values
+// render as integers ("3,400"); fractional values keep up to 2 decimals.
+function exactQuantity(value) {
   const number = Number(value) || 0;
-  if (Math.abs(number) >= 1000000) return `${(number / 1000000).toFixed(1).replace(/\.0$/, '')}m`;
-  if (Math.abs(number) >= 1000) return `${(number / 1000).toFixed(1).replace(/\.0$/, '')}k`;
-  return String(number);
+  return Number.isInteger(number)
+    ? number.toLocaleString('en-US')
+    : number.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
 function MovementLegend() {
@@ -3743,20 +3842,70 @@ function groupNonMovingProducts(rows) {
   return [...groups.values()].sort((a, b) => b.totalCost - a.totalCost);
 }
 
-function NonMovingHighlightCard({ nonMovingGroups, nonMovingLoading, nonMovingIndex, onPrev, onNext, onSearch, allStores, storeFilter, onStoreFilterChange }) {
+// Compact INR formatter for the NM valuation strip (Indian digit grouping,
+// whole rupees — the strip is a glanceable KPI, not an accounting figure).
+function formatNmValue(value) {
+  const n = Number(value || 0);
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+}
+
+// Top-row KPI cards for the NM panel — Closing Stock value, Total NM value (+ its
+// share of closing stock), Total Expiry value (+ its share). Sums across the scope
+// (all stores in the tenant, or the one selected in the store filter), so the value
+// is the store's/network's total non-moving / expiry valuation (cost + tax). Both
+// percentages are computed against closing stock value, mirroring the Expiry Stock
+// KPI card.
+function NonMovingTotalsStrip({ totals }) {
+  if (!totals?.length) return null;
+  const agg = totals.reduce((acc, row) => {
+    acc.stock += Number(row.stock_value || 0);
+    acc.nm += Number(row.nm_value || 0);
+    acc.ex += Number(row.ex_value || 0);
+    return acc;
+  }, { stock: 0, nm: 0, ex: 0 });
+  const nmPct = agg.stock > 0 ? (agg.nm / agg.stock) * 100 : 0;
+  const exPct = agg.stock > 0 ? (agg.ex / agg.stock) * 100 : 0;
+  const scopeLabel = totals.length > 1 ? `${totals.length} stores` : (totals[0].__storeCode || shortStoreName(totals[0].__storeName));
+
+  return (
+    <div className="nm-kpi-cards" title={`Non-moving valuation for ${scopeLabel}`}>
+      <div className="nm-kpi-card nm-kpi-card--stock">
+        <span className="nm-kpi-cap">Closing Stock Value</span>
+        <strong className="nm-kpi-num">₹{formatNmValue(agg.stock)}</strong>
+        <span className="nm-kpi-sub">{scopeLabel}</span>
+      </div>
+      <div className="nm-kpi-card nm-kpi-card--nm">
+        <span className="nm-kpi-cap">Total NM Value + Tax</span>
+        <strong className="nm-kpi-num">₹{formatNmValue(agg.nm)}</strong>
+        <span className="nm-kpi-sub">{nmPct.toFixed(1)}% of closing stock</span>
+      </div>
+      <div className="nm-kpi-card nm-kpi-card--ex">
+        <span className="nm-kpi-cap">Total Expiry Value + Tax</span>
+        <strong className="nm-kpi-num">₹{formatNmValue(agg.ex)}</strong>
+        <span className="nm-kpi-sub">{exPct.toFixed(1)}% of closing stock</span>
+      </div>
+    </div>
+  );
+}
+
+function NonMovingHighlightCard({ nonMovingGroups, nonMovingTotals, nonMovingLoading, nonMovingIndex, onPrev, onNext, onSearch, allStores, storeFilter, onStoreFilterChange }) {
   const storeFilterControl = allStores?.length ? (
     <StoreFilterPicker allStores={allStores} storeFilter={storeFilter} onStoreFilterChange={onStoreFilterChange} />
   ) : null;
+  const totalsStrip = <NonMovingTotalsStrip totals={nonMovingTotals} />;
 
   if (!nonMovingGroups?.length) {
     return (
       <section className="non-moving-global-card">
-        <div className="non-moving-wrap non-moving-wrap-empty">
-          <div className="non-moving-header-box">
-            <div className="non-moving-block-label">
-              <span className="non-moving-label-text">NM</span>
+        <div className="non-moving-wrap non-moving-wrap--stacked non-moving-wrap-empty">
+          <div className="nm-kpi-row">
+            <div className="non-moving-header-box">
+              <div className="non-moving-block-label">
+                <span className="non-moving-label-text">NM</span>
+              </div>
+              <div className="non-moving-block-header">{storeFilterControl}</div>
             </div>
-            <div className="non-moving-block-header">{storeFilterControl}</div>
+            {totalsStrip}
           </div>
           <div className="non-moving-empty-body">
             {nonMovingLoading && <span className="non-moving-empty-spinner" aria-hidden="true" />}
@@ -3776,6 +3925,7 @@ function NonMovingHighlightCard({ nonMovingGroups, nonMovingLoading, nonMovingIn
         group={group}
         onSearch={onSearch}
         storeFilterControl={storeFilterControl}
+        totalsStrip={totalsStrip}
         nav={{
           index,
           total: nonMovingGroups.length,
@@ -3804,6 +3954,7 @@ function nonMovingStoreSummaries(rows) {
     const current = stores.get(key) || {
       storeId: row.__storeId,
       storeName: row.__storeName || 'Unknown store',
+      storeCode: row.__storeCode || '',
       stockCost: 0,
       expiryDate: null,
       stock: 0,
@@ -3844,7 +3995,7 @@ function nonMovingStoreSummaries(rows) {
   }));
 }
 
-function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl }) {
+function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl, totalsStrip }) {
   const storeSummaries = nonMovingStoreSummaries(group.rows);
   const [selectedStoreKey, setSelectedStoreKey] = useState('');
   const clickable = typeof onSearch === 'function';
@@ -3856,53 +4007,68 @@ function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl }) {
   }, [group.productName]);
 
   const selectedDaysLeft = daysUntil(selectedStore?.expiryDate);
+  // Highlight the product-detail panel by expiry: red once expired, orange when
+  // within 90 days of expiry (req), otherwise neutral.
   const selectedExpiryState = selectedDaysLeft !== null && selectedDaysLeft < 0
     ? 'expired'
-    : selectedDaysLeft !== null && selectedDaysLeft <= 60 ? 'near-expiry' : 'healthy';
+    : selectedDaysLeft !== null && selectedDaysLeft <= 90 ? 'near-expiry' : 'healthy';
 
   return (
-    <div className="non-moving-wrap">
+    <div className="non-moving-wrap non-moving-wrap--stacked">
+      {/* Row 1 — NM label + store controls, then the KPI cards. */}
+      <div className="nm-kpi-row">
       <div className="non-moving-header-box">
         <div className="non-moving-block-label">
           <span className="non-moving-label-text">NM</span>
         </div>
         <div className="non-moving-block-header">
-          {storeFilterControl}
-          {nav && (
-            <button
-              type="button"
-              className="non-moving-block-nav"
-              onClick={nav.onPrev}
-              disabled={nav.total <= 1}
-              aria-label="Previous product"
-              title="Previous product"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 6 9.4 12l6 6-1.4 1.4-7.4-7.4L14 4.6 15.4 6Z" /></svg>
-            </button>
-          )}
-          {storeSummaries.length > 1 && (
-            <IconCardPicker
-              buttonClassName="store-filter-icon-btn"
-              ariaLabel="Select store"
-              title={selectedStore ? `Select Store (${selectedStore.storeName})` : 'Select Store'}
-              icon={(
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d={STORE_ICON_PATH} />
-                </svg>
-              )}
-              columns={1}
-              activeValue={selectedStoreKey}
-              onChoose={setSelectedStoreKey}
-              items={storeSummaries.map((store) => ({
-                key: store.storeId || store.storeName,
-                value: String(store.storeId || store.storeName),
-                label: store.storeName,
-                title: store.storeName,
-              }))}
-            />
-          )}
+          <div className="non-moving-store-controls">
+            {storeFilterControl}
+            {/* Reserve the per-product store-picker slot even for single-store
+                products so the KPI card always starts at the same x and keeps a
+                constant width across products (no per-product resize). */}
+            {storeSummaries.length > 1 ? (
+              <IconCardPicker
+                buttonClassName="store-filter-icon-btn"
+                ariaLabel="Select store"
+                title={selectedStore ? `Select Store (${selectedStore.storeName})` : 'Select Store'}
+                icon={(
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d={STORE_ICON_PATH} />
+                  </svg>
+                )}
+                columns={1}
+                activeValue={selectedStoreKey}
+                onChoose={setSelectedStoreKey}
+                items={storeSummaries.map((store) => ({
+                  key: store.storeId || store.storeName,
+                  value: String(store.storeId || store.storeName),
+                  label: store.storeName,
+                  title: store.storeName,
+                }))}
+              />
+            ) : (
+              <span className="store-filter-icon-btn store-filter-icon-btn--placeholder" aria-hidden="true" />
+            )}
+          </div>
         </div>
       </div>
+      {totalsStrip}
+      </div>
+      {/* Row 2 — the rotating non-moving product detail, flanked by prev/next. */}
+      <div className="nm-detail-row">
+      {nav && (
+        <button
+          type="button"
+          className="non-moving-block-nav non-moving-block-nav--prev"
+          onClick={nav.onPrev}
+          disabled={nav.total <= 1}
+          aria-label="Previous product"
+          title="Previous product"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 6 9.4 12l6 6-1.4 1.4-7.4-7.4L14 4.6 15.4 6Z" /></svg>
+        </button>
+      )}
       {selectedStore && (
         <div
           className={`non-moving-overall-card non-moving-overall-card--${selectedExpiryState} ${clickable ? 'clickable' : ''}`}
@@ -3917,6 +4083,7 @@ function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl }) {
             }
           } : undefined}
         >
+          <div className="non-moving-fact-store"><span>Store</span><strong title={selectedStore.storeName}>{selectedStore.storeCode || shortStoreName(selectedStore.storeName)}</strong></div>
           <div className="non-moving-fact-product"><span>Product Name</span><strong title={group.productName}>{group.productName}</strong></div>
           <div><span>Qty</span><strong>{formatQty(selectedStore.stock)}</strong></div>
           <div><span>Strip Qty</span><strong>{selectedStore.stripQty > 0 ? formatQty(selectedStore.stripQty) : '-'}</strong></div>
@@ -3940,6 +4107,7 @@ function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl }) {
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 6 10 4.6l7.4 7.4L10 19.4 8.6 18l6-6-6-6Z" /></svg>
         </button>
       )}
+      </div>
     </div>
   );
 }
@@ -3950,6 +4118,22 @@ function formatDate(value) {
   const parts = raw.split('-');
   if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0].slice(2)}`;
   return raw;
+}
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Batch expiry display format (req §9/§10): MMM-YY only, no day. Presentation
+// only - the underlying expiry date is untouched, so status + sorting keep
+// using the real date (see sortedBatches / batchStatus). "2029-11-30" -> "Nov-29".
+function formatBatchExpiry(value) {
+  if (!value) return '-';
+  const raw = String(value).slice(0, 10);
+  const parts = raw.split('-');
+  if (parts.length === 3) {
+    const month = Number(parts[1]);
+    if (month >= 1 && month <= 12) return `${MONTH_ABBR[month - 1]}-${parts[0].slice(2)}`;
+  }
+  return formatDate(value);
 }
 
 const SUPPLIER_MAPPING_FILTERS = [
