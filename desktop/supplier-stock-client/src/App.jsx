@@ -3875,12 +3875,12 @@ function NonMovingTotalsStrip({ totals }) {
         <span className="nm-kpi-sub">{scopeLabel}</span>
       </div>
       <div className="nm-kpi-card nm-kpi-card--nm">
-        <span className="nm-kpi-cap">Total NM Value + Tax</span>
+        <span className="nm-kpi-cap">Total NM Value</span>
         <strong className="nm-kpi-num">₹{formatNmValue(agg.nm)}</strong>
         <span className="nm-kpi-sub">{nmPct.toFixed(1)}% of closing stock</span>
       </div>
       <div className="nm-kpi-card nm-kpi-card--ex">
-        <span className="nm-kpi-cap">Total Expiry Value + Tax</span>
+        <span className="nm-kpi-cap">Total Expiry Value</span>
         <strong className="nm-kpi-num">₹{formatNmValue(agg.ex)}</strong>
         <span className="nm-kpi-sub">{exPct.toFixed(1)}% of closing stock</span>
       </div>
@@ -3925,7 +3925,7 @@ function NonMovingHighlightCard({ nonMovingGroups, nonMovingTotals, nonMovingLoa
         group={group}
         onSearch={onSearch}
         storeFilterControl={storeFilterControl}
-        totalsStrip={totalsStrip}
+        allTotals={nonMovingTotals}
         nav={{
           index,
           total: nonMovingGroups.length,
@@ -3995,12 +3995,21 @@ function nonMovingStoreSummaries(rows) {
   }));
 }
 
-function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl, totalsStrip }) {
+function NonMovingDetailPanel({ group, onSearch, nav, storeFilterControl, allTotals }) {
   const storeSummaries = nonMovingStoreSummaries(group.rows);
   const [selectedStoreKey, setSelectedStoreKey] = useState('');
   const clickable = typeof onSearch === 'function';
   const selectedStore = storeSummaries.find((store) => String(store.storeId || store.storeName) === selectedStoreKey)
     || storeSummaries[0];
+
+  // KPI cards read the valuation for the store of the product shown below — not
+  // an entire-tenant roll-up — so the "Closing Stock / NM / Expiry" figures line
+  // up with the running product's store (req). Falls back to whatever totals are
+  // in scope if the selected store has no totals row yet.
+  const storeTotals = (allTotals || []).filter(
+    (row) => String(row.__storeId) === String(selectedStore?.storeId)
+  );
+  const totalsStrip = <NonMovingTotalsStrip totals={storeTotals.length ? storeTotals : (allTotals || [])} />;
 
   useEffect(() => {
     setSelectedStoreKey(String(storeSummaries[0]?.storeId || storeSummaries[0]?.storeName || ''));
