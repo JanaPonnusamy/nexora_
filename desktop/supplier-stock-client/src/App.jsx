@@ -1988,11 +1988,21 @@ function OrderWorkspace({ session, settings }) {
 
   const activeCount = view === 'qty' ? filteredQty.length : filteredRows.length;
 
+  // Selected-product identity for the intelligence sidebar (from whichever grid
+  // the selection currently lives in).
+  const selected = useMemo(() => {
+    if (selectedCode == null) return null;
+    const q = qtyRows.find((r) => r.productcode === selectedCode);
+    if (q) return { name: q.productname, stock: q.totalstock, pack: q.saleunit, mrp: q.mrp };
+    const o = rows.find((r) => r.ProductCode === selectedCode);
+    if (o) return { name: o.ProductName, stock: o.TotalStock, pack: o.SaleUnit, mrp: o.MRP };
+    return { name: `#${selectedCode}` };
+  }, [selectedCode, qtyRows, rows]);
+
   return (
     <section className="screen-panel ow-screen">
-      <ScreenHeader title="Order Workspace" subtitle="VB-style quantity review and ordering console (legacy order database)." />
-
       <div className="ow-toolbar">
+        <h2 className="ow-title">Order Workspace</h2>
         <label className="ow-field">
           <span>Store</span>
           <select value={store} onChange={(e) => setStore(e.target.value)}>
@@ -2014,9 +2024,11 @@ function OrderWorkspace({ session, settings }) {
       </div>
 
       {error && <div className="ow-error" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
-      {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate</div>}
 
-      <div className="table-wrap ow-grid">
+      <div className="ow-workspace">
+        <div className="ow-main">
+          {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate</div>}
+          <div className="ow-grid">
         {view === 'qty' ? (
           <table>
             <thead>
@@ -2083,6 +2095,11 @@ function OrderWorkspace({ session, settings }) {
             </tbody>
           </table>
         )}
+          </div>
+        </div>
+        <aside className="ow-intel">
+          <OrderIntelligence store={store} productCode={selectedCode} product={selected} mode="local" session={session} onError={setError} />
+        </aside>
       </div>
 
       <div className="ow-history">
@@ -2120,6 +2137,139 @@ function fmtOwDate(value) {
   const raw = String(value).slice(0, 10);
   const parts = raw.split('-');
   return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : raw;
+}
+
+// Contextual intelligence for the selected order row: Purchase/GRN, Sales/Bill
+// and monthly Trend, in a compact tabbed inspector (only one view expanded at a
+// time — never three tall tables at once). Real data via the legacy-order API.
+function OrderIntelligence({ store, productCode, product, mode, session, onError }) {
+  const [tab, setTab] = useState('purchase');
+  const [purchase, setPurchase] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [monthly, setMonthly] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!store || productCode == null) { setPurchase([]); setSales([]); setMonthly([]); return undefined; }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      api.legacyPurchaseDetails(store, productCode, mode, session).catch(() => []),
+      api.legacySalesDetails(store, productCode, mode, session).catch(() => []),
+      api.legacyMonthlyStats(store, productCode, mode, session).catch(() => [])
+    ])
+      .then(([p, s, m]) => {
+        if (cancelled) return;
+        setPurchase(asArray(p));
+        setSales(asArray(s));
+        setMonthly(asArray(m));
+      })
+      .catch((e) => { if (!cancelled) onError?.(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [store, productCode, mode, session]);
+
+  if (productCode == null) {
+    return <div className="ow-intel-empty">Select a product to see purchase, sales and trend.</div>;
+  }
+
+  return (
+    <div className="ow-intel-inner">
+      <div className="ow-intel-head">
+        <strong className="ow-intel-name" title={product?.name}>{product?.name || `#${productCode}`}</strong>
+        <div className="ow-intel-meta">
+          <span>Stock <b>{fmtOwQty(product?.stock)}</b></span>
+          <span>Pack <b>{fmtOwQty(product?.pack)}</b></span>
+          <span>MRP <b>{fmtOwMoney(product?.mrp)}</b></span>
+        </div>
+      </div>
+      <div className="ow-intel-tabs" role="tablist" aria-label="Product intelligence">
+        <button type="button" role="tab" aria-selected={tab === 'purchase'} className={tab === 'purchase' ? 'active' : ''} onClick={() => setTab('purchase')}>Purchase</button>
+        <button type="button" role="tab" aria-selected={tab === 'sales'} className={tab === 'sales' ? 'active' : ''} onClick={() => setTab('sales')}>Sales</button>
+        <button type="button" role="tab" aria-selected={tab === 'trend'} className={tab === 'trend' ? 'active' : ''} onClick={() => setTab('trend')}>Trend</button>
+      </div>
+      <div className="ow-intel-body">
+        {loading && <div className="ow-intel-loading">Loading…</div>}
+        {tab === 'purchase' && (
+          <div className="ow-intel-scroll">
+            <table className="ow-intel-table">
+              <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th>GRN Date</th><th className="ow-grow">Supplier</th></tr></thead>
+              <tbody>
+                {purchase.map((row, i) => (
+                  <tr key={i} className={Number(row.FreeQty) > 0 ? 'ow-freerow' : undefined}>
+                    <td className="ow-num">{fmtOwQty(row.RStock)}</td>
+                    <td className="ow-num">{fmtOwQty(row.FreeQty)}</td>
+                    <td className="ow-num">{fmtOwMoney(row.ItemCost)}</td>
+                    <td className="ow-num">{fmtOwMoney(row.PTR)}</td>
+                    <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
+                    <td>{fmtOwDate(row.GRNDate)}</td>
+                    <td className="ow-grow" title={row.SupplierName}>{row.SupplierName ?? '—'}</td>
+                  </tr>
+                ))}
+                {!purchase.length && !loading && <tr><td colSpan={7} className="ow-empty">No purchase history.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {tab === 'sales' && (
+          <div className="ow-intel-scroll">
+            <table className="ow-intel-table">
+              <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-grow">Customer</th><th className="ow-num">MRP</th></tr></thead>
+              <tbody>
+                {sales.map((row, i) => (
+                  <tr key={i}>
+                    <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
+                    <td>{fmtOwDate(row.Bill_Time)}</td>
+                    <td className="ow-grow" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
+                    <td className="ow-grow" title={row.CUSTOMERNAME}>{row.CUSTOMERNAME ?? '—'}</td>
+                    <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
+                  </tr>
+                ))}
+                {!sales.length && !loading && <tr><td colSpan={5} className="ow-empty">No sales history.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {tab === 'trend' && <OwTrendChart rows={monthly} loading={loading} />}
+      </div>
+    </div>
+  );
+}
+
+// Compact monthly trend: Purchase / Sales / Stock bars per month. HTML/flex bars
+// (no chart lib) so it fills the sidebar width and stays small.
+function OwTrendChart({ rows, loading }) {
+  if (!rows.length) return <div className="ow-empty">{loading ? 'Loading…' : 'No monthly statistics.'}</div>;
+  const series = [
+    { key: 'PurchaseQuantity', label: 'Purch', color: '#2563eb' },
+    { key: 'SaleQuantity', label: 'Sales', color: '#16a34a' },
+    { key: 'StockInHand', label: 'Stock', color: '#dc2626' }
+  ];
+  const max = Math.max(1, ...rows.flatMap((r) => series.map((s) => Number(r[s.key]) || 0)));
+  return (
+    <div className="ow-chart">
+      <div className="ow-chart-plot">
+        {rows.map((row, i) => (
+          <div className="ow-chart-group" key={`${row.MonthOfStatistics}-${i}`}>
+            <div className="ow-chart-bars">
+              {series.map((s) => {
+                const v = Number(row[s.key]) || 0;
+                return (
+                  <div key={s.key} className="ow-chart-bar" style={{ height: `${Math.max(1, (v / max) * 100)}%`, background: s.color }} title={`${s.label}: ${v}`}>
+                    {v !== 0 && <span className="ow-chart-val">{fmtOwQty(v)}</span>}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="ow-chart-month">{row.MonthOfStatistics}</div>
+          </div>
+        ))}
+      </div>
+      <div className="ow-chart-legend">
+        {series.map((s) => <span key={s.key}><i style={{ background: s.color }} />{s.label}</span>)}
+      </div>
+    </div>
+  );
 }
 
 function NmwSalesReport({ session, settings }) {

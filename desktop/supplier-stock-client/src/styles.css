@@ -6828,12 +6828,12 @@ th {
 /* Dense, aligned grids — full-width flexible product-name column, compact numerics. */
 .ow-screen table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .ow-screen thead th {
-  position: sticky; top: 0; z-index: 1; padding: 4px 8px;
+  position: sticky; top: 0; z-index: 1; height: 30px; padding: 0 8px;
   border-bottom: 1px solid var(--nx-rule-strong); background: var(--nx-surface-raised);
   color: var(--nx-text-soft); text-align: left; font-size: 11px; font-weight: 700;
   letter-spacing: 0.02em; text-transform: uppercase; white-space: nowrap;
 }
-.ow-screen tbody td { padding: 3px 8px; border-bottom: 1px solid var(--nx-rule); white-space: nowrap; }
+.ow-screen tbody td { height: 32px; padding: 0 8px; border-bottom: 1px solid var(--nx-rule); line-height: 1.2; white-space: nowrap; }
 .ow-screen tbody tr:hover > td { background: var(--nx-surface-hover); }
 .ow-screen .ow-grow { width: 100%; max-width: none; overflow: hidden; text-overflow: ellipsis; }
 .ow-screen .ow-idx { width: 1%; text-align: right; color: var(--nx-text-muted); font-variant-numeric: tabular-nums; }
@@ -6848,3 +6848,64 @@ th {
 .ow-screen tbody tr.ow-row-sel > td { background: var(--nx-surface-hover); }
 .ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-accent); }
 .ow-empty { padding: 1.2rem; text-align: center; color: var(--nx-text-muted); }
+
+/* ===== Order Workspace two-column layout (grid + intelligence sidebar) ===== */
+.ow-title { margin: 0 6px 0 0; font-size: 14px; font-weight: 800; letter-spacing: 0.01em; color: var(--nx-text); white-space: nowrap; }
+
+.ow-workspace {
+  flex: 1 1 auto; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 8px;
+}
+.ow-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.ow-main .ow-grid { flex: 1 1 auto; min-height: 0; }
+
+/* Intelligence sidebar — compact contextual inspector, only one tab expanded. */
+.ow-intel {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
+}
+.ow-intel-empty {
+  display: flex; align-items: center; justify-content: center; height: 100%;
+  padding: 1rem; text-align: center; color: var(--nx-text-muted); font-size: 12px;
+}
+.ow-intel-inner { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.ow-intel-head { flex: 0 0 auto; padding: 7px 10px; border-bottom: 1px solid var(--nx-rule); }
+.ow-intel-name { display: block; font-size: 13px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-intel-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; font-size: 11px; color: var(--nx-text-muted); }
+.ow-intel-meta b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.ow-intel-tabs { flex: 0 0 auto; display: flex; border-bottom: 1px solid var(--nx-rule); }
+.ow-intel-tabs button {
+  flex: 1 1 0; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent;
+  background: transparent; color: var(--nx-text-soft); font: inherit; font-size: 11px;
+  font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; cursor: pointer;
+}
+.ow-intel-tabs button:hover { color: var(--nx-text); }
+.ow-intel-tabs button.active { color: var(--nx-accent); border-bottom-color: var(--nx-accent); }
+.ow-intel-body { flex: 1 1 auto; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.ow-intel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.ow-intel-loading { position: absolute; top: 5px; right: 8px; font-size: 11px; color: var(--nx-text-muted); }
+/* Denser rows inside the sidebar than the main grid. */
+.ow-intel-table { width: 100%; }
+.ow-intel-table thead th { height: 26px; font-size: 10px; }
+.ow-intel-table tbody td { height: 26px; font-size: 11px; }
+.ow-freerow > td { background: rgba(245, 158, 11, 0.16); }
+
+/* Compact monthly trend chart. */
+.ow-chart { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; }
+.ow-chart-plot { flex: 1 1 auto; min-height: 60px; display: flex; align-items: stretch; gap: 8px; border-bottom: 1px solid var(--nx-rule); }
+.ow-chart-group { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.ow-chart-bars { flex: 1 1 auto; min-height: 0; display: flex; align-items: flex-end; justify-content: center; gap: 3px; padding-top: 12px; }
+.ow-chart-bar { position: relative; flex: 1 1 0; min-width: 4px; max-width: 16px; min-height: 1px; border-radius: 2px 2px 0 0; }
+.ow-chart-val { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 1px; font-size: 8px; font-weight: 700; color: var(--nx-text-soft); white-space: nowrap; }
+.ow-chart-month { flex: 0 0 auto; padding-top: 3px; text-align: center; font-size: 10px; font-weight: 600; color: var(--nx-text-muted); }
+.ow-chart-legend { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 3px 10px; }
+.ow-chart-legend span { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--nx-text-muted); }
+.ow-chart-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+/* Selected row a touch stronger so the intelligence context is obvious. */
+.ow-screen tbody tr.ow-row-sel > td { background: var(--nx-surface-sunk); }
+
+/* Narrow desktop: stack the sidebar under the grid rather than force h-scroll. */
+@media (max-width: 1100px) {
+  .ow-workspace { grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr); }
+}

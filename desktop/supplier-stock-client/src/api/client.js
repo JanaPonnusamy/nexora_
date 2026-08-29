@@ -488,6 +488,21 @@ export const api = {
 
   legacyOrderHistory(storeName, productCode, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/order-history`, { session });
+  },
+
+  // Product intelligence for the selected order row (purchase/GRN, bill/sales,
+  // monthly statistics). Same endpoints/semantics as the web ProductDetailPanel;
+  // transfers-vs-purchases distinction is handled server-side in the SP.
+  legacyPurchaseDetails(storeName, productCode, mode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/purchase-details${toQuery({ mode })}`, { session });
+  },
+
+  legacySalesDetails(storeName, productCode, mode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/sales-details${toQuery({ mode })}`, { session });
+  },
+
+  legacyMonthlyStats(storeName, productCode, mode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/monthly-stats${toQuery({ mode })}`, { session });
   }
 };
 
