@@ -23,6 +23,10 @@ import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme
 const DEV_AUTO_LOGIN_USER = import.meta.env.DEV ? (import.meta.env.VITE_DEV_LOGIN_USER || '') : '';
 const DEV_AUTO_LOGIN_PASS = import.meta.env.DEV ? (import.meta.env.VITE_DEV_LOGIN_PASS || '') : '';
 const DEV_AUTO_LOGIN = Boolean(DEV_AUTO_LOGIN_USER);
+// Dev-only: land straight on a given screen (e.g. VITE_DEV_SCREEN=order_workspace)
+// so a screen can be inspected without clicking through the nav. Stripped from
+// production builds along with the other dev aids above.
+const DEV_SCREEN = import.meta.env.DEV ? (import.meta.env.VITE_DEV_SCREEN || '') : '';
 
 const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
@@ -228,6 +232,7 @@ function AppShell() {
   const [activeScreen, setActiveScreen] = useState('stock');
   // Guards the one-time "land on Settings on a fresh device" auto-route below.
   const didAutoRoute = useRef(false);
+  const didDevScreen = useRef(false);
   // Guards the one-time dev auto-login so it fires at most once per app load.
   const devAutoLoginTried = useRef(false);
   // Tenant list for the super-admin tenant filter on the Stock Availability
@@ -308,6 +313,15 @@ function AppShell() {
       setActiveScreen(navItems[0]?.id || 'settings');
     }
   }, [activeScreen, navItems, isConfigured, session]);
+
+  // Dev-only: once signed in and the nav is resolved, jump to VITE_DEV_SCREEN
+  // (if that screen is allowed for this login). Runs once.
+  useEffect(() => {
+    if (DEV_SCREEN && !didDevScreen.current && session && navItems.some((item) => item.id === DEV_SCREEN)) {
+      didDevScreen.current = true;
+      setActiveScreen(DEV_SCREEN);
+    }
+  }, [session, navItems]);
 
   useEffect(() => {
     const storeName = session?.user?.roles?.[0]?.store_name || settings.storeName;
@@ -2032,7 +2046,7 @@ function OrderWorkspace({ session, settings }) {
         {view === 'qty' ? (
           <table>
             <thead>
-              <tr><th>#</th><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Pack</th><th>Desc</th><th className="ow-num">Sls Qty</th><th className="ow-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="ow-num">Max Qty</th><th>Wanted</th></tr>
+              <tr><th>#</th><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Pack</th><th>Desc</th><th className="ow-num">Sls Qty</th><th className="ow-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="ow-num">Max Qty</th><th className="ow-wanted">Wanted</th></tr>
             </thead>
             <tbody>
               {filteredQty.map((row, index) => {
@@ -2056,7 +2070,7 @@ function OrderWorkspace({ session, settings }) {
                     <td>{fmtOwDate(row.lastreceiveddate)}</td>
                     <td>{fmtOwDate(row.lastsaledate)}</td>
                     <td className="ow-num">{fmtOwQty(row.maxsaleqty)}</td>
-                    <td>{row.wantedtype ?? '—'}</td>
+                    <td className="ow-wanted" title={row.wantedtype}>{row.wantedtype ?? '—'}</td>
                   </tr>
                 );
               })}
@@ -2066,7 +2080,7 @@ function OrderWorkspace({ session, settings }) {
         ) : (
           <table>
             <thead>
-              <tr><th>#</th><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Pack</th><th>Desc</th><th className="ow-num">Sls</th><th className="ow-num">MRP</th><th>Wanted</th></tr>
+              <tr><th>#</th><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Pack</th><th>Desc</th><th className="ow-num">Sls</th><th className="ow-num">MRP</th><th className="ow-wanted">Wanted</th></tr>
             </thead>
             <tbody>
               {filteredRows.map((row, i) => {
@@ -2087,7 +2101,7 @@ function OrderWorkspace({ session, settings }) {
                     <td title={row.UnitDescription}>{row.UnitDescription}</td>
                     <td className="ow-num">{fmtOwQty(row.SLSQty)}</td>
                     <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
-                    <td>{row.WantedType ?? '—'}</td>
+                    <td className="ow-wanted" title={row.WantedType}>{row.WantedType ?? '—'}</td>
                   </tr>
                 );
               })}
