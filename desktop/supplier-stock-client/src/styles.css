@@ -6948,10 +6948,14 @@ th {
 .ow-panel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .ow-panel-body { flex: 1 1 auto; min-height: 0; display: flex; }
 
-/* Dense rows inside the dock tables. */
-.ow-intel-table { width: 100%; }
-.ow-intel-table thead th { position: sticky; top: 0; z-index: 1; height: 22px; font-size: 10px; }
-.ow-intel-table tbody td { height: 22px !important; padding: 0 8px !important; font-size: 11px; }
+/* Dense rows inside the dock tables. Tight padding on the numeric columns
+   (Stock/Free/Dis/etc.) and no forced 100% width -- when the Supplier name is
+   long the table grows past the panel and .ow-panel-scroll scrolls it
+   horizontally instead of squeezing/truncating the name. */
+.ow-intel-table { width: max-content; min-width: 100%; }
+.ow-intel-table thead th { position: sticky; top: 0; z-index: 1; height: 22px; padding: 0 5px !important; font-size: 10px; white-space: nowrap; }
+.ow-intel-table tbody td { height: 22px !important; padding: 0 5px !important; font-size: 11px; }
+.ow-intel-table .ow-intel-grow { white-space: nowrap; }
 .ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
 .ow-freerow > td { background: rgba(245, 158, 11, 0.16); }
 

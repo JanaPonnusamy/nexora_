@@ -2691,19 +2691,19 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
         <div className="ow-panel-title">Purchase / GRN</div>
         <div className="ow-panel-scroll">
           <table className="ow-intel-table">
-            <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th className="ow-num">Pro Dis%</th><th className="ow-num">Landing%</th><th>GRN Date</th><th className="ow-grow">Supplier</th></tr></thead>
+            <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Pro Dis%</th><th className="ow-num">Landing%</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th>GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
             <tbody>
               {purchase.map((row, i) => (
                 <tr key={i} className={Number(row.FreeQty) > 0 ? 'ow-freerow' : undefined}>
                   <td className="ow-num">{fmtOwQty(row.RStock)}</td>
                   <td className="ow-num">{fmtOwQty(row.FreeQty)}</td>
+                  <td className="ow-num">{fmtOwPct(row.DIS)}</td>
+                  <td className="ow-num">{fmtOwPct(owLandingPct(row.PTR, row.ItemCost))}</td>
                   <td className="ow-num">{fmtOwMoney(row.ItemCost)}</td>
                   <td className="ow-num">{fmtOwMoney(row.PTR)}</td>
                   <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
-                  <td className="ow-num">{fmtOwPct(row.DIS)}</td>
-                  <td className="ow-num">{fmtOwPct(owLandingPct(row.PTR, row.ItemCost))}</td>
                   <td>{fmtOwDate(row.GRNDate)}</td>
-                  <td className="ow-grow" title={row.SupplierName}>{row.SupplierName ?? '—'}</td>
+                  <td className="ow-intel-grow">{row.SupplierName ?? '—'}</td>
                 </tr>
               ))}
               {!purchase.length && <tr><td colSpan={9} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No purchase history.'}</td></tr>}
