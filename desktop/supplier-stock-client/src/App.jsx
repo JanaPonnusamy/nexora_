@@ -1893,27 +1893,27 @@ function nmwExportRows(bill, lineItems) {
 // Each grid (Qty Review, Review All) has its own column list; users can hide,
 // reorder and resize columns via a modern settings card, persisted per grid.
 const OW_QTY_COLUMNS = [
-  { key: 'name', label: 'Product Name', width: 220, grow: true, locked: true },
-  { key: 'orqty', label: 'Or Qty', width: 74, align: 'right', locked: true },
-  { key: 'stock', label: 'Stock', width: 60, align: 'right' },
-  { key: 'pack', label: 'Pack', width: 52, align: 'right' },
-  { key: 'desc', label: 'Desc', width: 74 },
-  { key: 'slsqty', label: 'Sls Qty', width: 64, align: 'right' },
-  { key: 'mrp', label: 'MRP', width: 68, align: 'right' },
-  { key: 'lrdate', label: 'LR Date', width: 76 },
-  { key: 'lsdate', label: 'LS Date', width: 76 },
-  { key: 'maxqty', label: 'Max Qty', width: 64, align: 'right' },
-  { key: 'wanted', label: 'Wanted', width: 150 }
+  { key: 'name', label: 'Product Name', width: 300, grow: true, locked: true },
+  { key: 'orqty', label: 'Or Qty', width: 66, align: 'right', locked: true },
+  { key: 'stock', label: 'Stock', width: 54, align: 'right' },
+  { key: 'pack', label: 'Pack', width: 46, align: 'right' },
+  { key: 'desc', label: 'Desc', width: 56 },
+  { key: 'slsqty', label: 'Sls Qty', width: 56, align: 'right' },
+  { key: 'mrp', label: 'MRP', width: 60, align: 'right' },
+  { key: 'lrdate', label: 'LR Date', width: 66 },
+  { key: 'lsdate', label: 'LS Date', width: 66 },
+  { key: 'maxqty', label: 'Max Qty', width: 56, align: 'right' },
+  { key: 'wanted', label: 'Wanted', width: 116 }
 ];
 const OW_REVIEW_COLUMNS = [
-  { key: 'name', label: 'Product Name', width: 220, grow: true, locked: true },
-  { key: 'orqty', label: 'Or Qty', width: 74, align: 'right', locked: true },
-  { key: 'stock', label: 'Stock', width: 60, align: 'right' },
-  { key: 'pack', label: 'Pack', width: 52, align: 'right' },
-  { key: 'desc', label: 'Desc', width: 74 },
-  { key: 'sls', label: 'Sls', width: 58, align: 'right' },
-  { key: 'mrp', label: 'MRP', width: 68, align: 'right' },
-  { key: 'wanted', label: 'Wanted', width: 150 }
+  { key: 'name', label: 'Product Name', width: 300, grow: true, locked: true },
+  { key: 'orqty', label: 'Or Qty', width: 66, align: 'right', locked: true },
+  { key: 'stock', label: 'Stock', width: 54, align: 'right' },
+  { key: 'pack', label: 'Pack', width: 46, align: 'right' },
+  { key: 'desc', label: 'Desc', width: 56 },
+  { key: 'sls', label: 'Sls', width: 54, align: 'right' },
+  { key: 'mrp', label: 'MRP', width: 60, align: 'right' },
+  { key: 'wanted', label: 'Wanted', width: 116 }
 ];
 
 const OW_GEAR_PATH = 'M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a8 8 0 0 0-1.7-1L15 3.5h-4L10.7 6A8 8 0 0 0 9 7L6.6 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4L9 17a8 8 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z';
@@ -2022,13 +2022,15 @@ function OrderWorkspace({ session, settings }) {
   const qtyRefs = useRef([]);
 
   // Per-grid column settings (show/hide, order, width), persisted per grid id.
+  // v2: bumped so stale column widths (which pinned a narrow Product Name) are
+  // discarded and the new wider defaults take effect.
   const [owColCfg, setOwColCfg] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexora.desktop.owGridColumns') || '{}') || {}; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem('nexora.desktop.owGridColumns.v2') || '{}') || {}; } catch { return {}; }
   });
   const [settingsFor, setSettingsFor] = useState(null); // 'qty' | 'review' | null
   const settingsBtnRef = useRef(null);
   useEffect(() => {
-    try { localStorage.setItem('nexora.desktop.owGridColumns', JSON.stringify(owColCfg)); } catch { /* best effort */ }
+    try { localStorage.setItem('nexora.desktop.owGridColumns.v2', JSON.stringify(owColCfg)); } catch { /* best effort */ }
   }, [owColCfg]);
   const cfgToggle = (id, key) => setOwColCfg((c) => { const g = { ...(c[id] || {}) }; const hidden = { ...(g.hidden || {}) }; hidden[key] = !hidden[key]; return { ...c, [id]: { ...g, hidden } }; });
   const cfgMove = (id, base, key, dir) => setOwColCfg((c) => { const order = orderOwKeys(base, c[id]); const i = order.indexOf(key); const j = i + dir; if (i < 0 || j < 0 || j >= order.length) return c; const n = [...order]; [n[i], n[j]] = [n[j], n[i]]; return { ...c, [id]: { ...(c[id] || {}), order: n } }; });
@@ -2089,13 +2091,21 @@ function OrderWorkspace({ session, settings }) {
   const filteredQty = useMemo(() => qtyRows.filter((r) => match(r.productname, r.productcode)), [qtyRows, term]);
   const filteredRows = useMemo(() => rows.filter((r) => match(r.ProductName, r.ProductCode)), [rows, term]);
 
-  const commitQty = (productCode, value, focusIndex) => {
+  // Persist the reviewed quantity. `remove` (Enter/Accept) drops the row from the
+  // pending list; when false (Esc/Set-0) the row stays visible with qty 0 so the
+  // user can keep it in context and still change it.
+  const commitQty = (productCode, value, focusIndex, remove = true) => {
     if (!store) return;
     setSavingCode(productCode);
     api.legacyUpdateQtyCheck(store, productCode, value, session)
       .then(() => {
-        setQtyRows((cur) => cur.filter((r) => r.productcode !== productCode));
-        setEdits((cur) => { const n = { ...cur }; delete n[productCode]; return n; });
+        if (remove) {
+          setQtyRows((cur) => cur.filter((r) => r.productcode !== productCode));
+          setEdits((cur) => { const n = { ...cur }; delete n[productCode]; return n; });
+        } else {
+          setQtyRows((cur) => cur.map((r) => (r.productcode === productCode ? { ...r, orderqty: value } : r)));
+          setEdits((cur) => ({ ...cur, [productCode]: value }));
+        }
         requestAnimationFrame(() => qtyRefs.current[focusIndex]?.focus());
       })
       .catch((e) => setError(e.message))
@@ -2103,11 +2113,15 @@ function OrderWorkspace({ session, settings }) {
   };
 
   const onQtyKey = (e, row, index) => {
-    if (e.key === 'Enter' || e.key === 'Escape') {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      const value = e.key === 'Enter' ? Number(edits[row.productcode] ?? row.orderqty) : 0;
+      const value = Number(edits[row.productcode] ?? row.orderqty);
       const next = filteredQty[index + 1] ?? filteredQty[index - 1] ?? null;
-      commitQty(row.productcode, value, next ? index : Math.max(0, index - 1));
+      commitQty(row.productcode, value, next ? index : Math.max(0, index - 1), true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      // Set 0 but keep the product in the list; move focus to the next row.
+      commitQty(row.productcode, 0, Math.min(index + 1, filteredQty.length - 1), false);
     } else if (e.key === 'ArrowDown') { e.preventDefault(); qtyRefs.current[index + 1]?.focus(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); qtyRefs.current[index - 1]?.focus(); }
   };
@@ -2235,7 +2249,7 @@ function OrderWorkspace({ session, settings }) {
       <div className="ow-body">
         <div className="ow-left">
         <div className="ow-main">
-          {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate</div>}
+          {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> Set 0 (keep) <kbd>↑↓</kbd> Navigate</div>}
           <div className="ow-grid">
         {view === 'qty' ? (
           <table className="ow-cfg">
