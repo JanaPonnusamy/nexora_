@@ -6901,17 +6901,27 @@ th {
 .ow-intel-name { display: block; font-size: 13px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ow-intel-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; font-size: 11px; color: var(--nx-text-muted); }
 .ow-intel-meta b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
-.ow-intel-tabs { flex: 0 0 auto; display: flex; border-bottom: 1px solid var(--nx-rule); }
-.ow-intel-tabs button {
-  flex: 1 1 0; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent;
-  background: transparent; color: var(--nx-text-soft); font: inherit; font-size: 11px;
-  font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; cursor: pointer;
+/* Stacked sections: Purchase, Sales and Trend are ALL visible at once (not
+   tabbed), each capped to ~5 rows then scrolling internally. */
+.ow-intel-sections {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  gap: 6px; padding: 6px; overflow: auto;
 }
-.ow-intel-tabs button:hover { color: var(--nx-text); }
-.ow-intel-tabs button.active { color: var(--nx-accent); border-bottom-color: var(--nx-accent); }
-.ow-intel-body { flex: 1 1 auto; min-height: 0; position: relative; display: flex; flex-direction: column; }
-.ow-intel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.ow-intel-loading { position: absolute; top: 5px; right: 8px; font-size: 11px; color: var(--nx-text-muted); }
+.ow-intel-sec {
+  display: flex; flex-direction: column; min-height: 0;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); overflow: hidden;
+}
+.ow-intel-sec-title {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  background: var(--nx-surface-raised); color: var(--nx-text-soft);
+  font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.ow-intel-scroll { min-height: 0; overflow: auto; }
+/* ~5 data rows (26px) + sticky header row, then scroll. */
+.ow-intel-sec--rows .ow-intel-scroll { max-height: calc(6 * 26px); }
+.ow-intel-sec--chart { flex: 1 1 auto; min-height: 120px; }
+.ow-intel-sec--chart .ow-chart { padding: 6px 8px; }
+.ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
 /* Denser rows inside the sidebar than the main grid. */
 .ow-intel-table { width: 100%; }
 .ow-intel-table thead th { height: 26px; font-size: 10px; }

@@ -2157,7 +2157,6 @@ function fmtOwDate(value) {
 // and monthly Trend, in a compact tabbed inspector (only one view expanded at a
 // time — never three tall tables at once). Real data via the legacy-order API.
 function OrderIntelligence({ store, productCode, product, mode, session, onError }) {
-  const [tab, setTab] = useState('purchase');
   const [purchase, setPurchase] = useState([]);
   const [sales, setSales] = useState([]);
   const [monthly, setMonthly] = useState([]);
@@ -2197,14 +2196,9 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
           <span>MRP <b>{fmtOwMoney(product?.mrp)}</b></span>
         </div>
       </div>
-      <div className="ow-intel-tabs" role="tablist" aria-label="Product intelligence">
-        <button type="button" role="tab" aria-selected={tab === 'purchase'} className={tab === 'purchase' ? 'active' : ''} onClick={() => setTab('purchase')}>Purchase</button>
-        <button type="button" role="tab" aria-selected={tab === 'sales'} className={tab === 'sales' ? 'active' : ''} onClick={() => setTab('sales')}>Sales</button>
-        <button type="button" role="tab" aria-selected={tab === 'trend'} className={tab === 'trend' ? 'active' : ''} onClick={() => setTab('trend')}>Trend</button>
-      </div>
-      <div className="ow-intel-body">
-        {loading && <div className="ow-intel-loading">Loading…</div>}
-        {tab === 'purchase' && (
+      <div className="ow-intel-sections">
+        <section className="ow-intel-sec ow-intel-sec--rows">
+          <div className="ow-intel-sec-title">Purchase / GRN{loading && <span className="ow-intel-loading">…</span>}</div>
           <div className="ow-intel-scroll">
             <table className="ow-intel-table">
               <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th>GRN Date</th><th className="ow-grow">Supplier</th></tr></thead>
@@ -2224,8 +2218,9 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
               </tbody>
             </table>
           </div>
-        )}
-        {tab === 'sales' && (
+        </section>
+        <section className="ow-intel-sec ow-intel-sec--rows">
+          <div className="ow-intel-sec-title">Bill / Sales</div>
           <div className="ow-intel-scroll">
             <table className="ow-intel-table">
               <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-grow">Customer</th><th className="ow-num">MRP</th></tr></thead>
@@ -2243,8 +2238,11 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
               </tbody>
             </table>
           </div>
-        )}
-        {tab === 'trend' && <OwTrendChart rows={monthly} loading={loading} />}
+        </section>
+        <section className="ow-intel-sec ow-intel-sec--chart">
+          <div className="ow-intel-sec-title">Monthly Trend</div>
+          <OwTrendChart rows={monthly} loading={loading} />
+        </section>
       </div>
     </div>
   );
