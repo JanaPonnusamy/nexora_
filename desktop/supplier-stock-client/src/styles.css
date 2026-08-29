@@ -6844,12 +6844,16 @@ th {
 }
 .ow-banner button { margin-left: auto; border: 0; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
 
-/* Searchable supplier combo (By Supplier / Assigned toolbar). */
-.ow-supplier-pick { position: relative; display: inline-flex; align-items: center; }
+/* Searchable supplier combo (By Supplier / Assigned toolbar). Explicit
+   font-size/weight throughout -- this list isn't inside .ow-screen (it's not
+   portaled, but the toolbar's own font can inherit from a larger ancestor),
+   and matching the app's dense 11-12px scale keeps it calm instead of
+   jumping out at a bold, oversized default. */
+.ow-supplier-pick { position: relative; display: inline-flex; align-items: center; font-size: 12px; }
 .ow-supplier-input {
   width: 220px; min-height: 30px; padding: 2px 26px 2px 10px;
   border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
-  background: var(--nx-surface); color: var(--nx-text); font: inherit;
+  background: var(--nx-surface); color: var(--nx-text); font-size: 12px; font-weight: 500;
 }
 .ow-supplier-clear {
   position: absolute; right: 4px; width: 20px; height: 20px; display: grid; place-items: center;
@@ -6861,13 +6865,15 @@ th {
   width: 320px; max-height: 320px; overflow: auto; margin: 0; padding: 4px;
   list-style: none; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface-raised); box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  font-size: 12px;
 }
 .ow-supplier-list button {
-  display: block; width: 100%; padding: 6px 8px; border: 0; border-radius: 4px;
-  background: none; color: var(--nx-text); font: inherit; text-align: left; cursor: pointer;
+  display: block; width: 100%; padding: 5px 8px; border: 0; border-radius: 4px;
+  background: none; color: var(--nx-text-soft); font-size: 12px; font-weight: 500; line-height: 1.4;
+  text-align: left; cursor: pointer;
 }
-.ow-supplier-list button:hover { background: var(--nx-surface-hover); }
-.ow-supplier-list button.is-active { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); font-weight: 700; }
+.ow-supplier-list button:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.ow-supplier-list button.is-active { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); font-weight: 600; }
 .ow-supplier-empty { padding: 8px; color: var(--nx-text-muted); font-size: 12px; }
 
 /* Export options card. */
@@ -6983,6 +6989,10 @@ th {
 .ow-intel-table thead th { position: sticky; top: 0; z-index: 1; height: 22px; padding: 0 4px !important; font-size: 10px; white-space: nowrap; }
 .ow-intel-table tbody td { height: 22px !important; padding: 0 4px !important; font-size: 11px; }
 .ow-intel-table .ow-intel-grow { white-space: nowrap; }
+/* Bill/Sales Customer: a second column can't ALSO be ow-grow (max-width:0
+   fights with Salesman's and collapses both to ~nothing) -- give it its own
+   bounded width with ellipsis instead. */
+.ow-intel-cust { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Purchase/GRN: narrow numeric columns (Stock/Free/Dis%/Land%/Cost/PTR/MRP) so
    the table doesn't eat width the Supplier name needs. */
 .ow-panel--purchase .ow-num { min-width: 38px; }
