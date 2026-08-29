@@ -6947,3 +6947,19 @@ th {
 @media (max-width: 1100px) {
   .ow-workspace { grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr); }
 }
+
+/* ===== Config-driven grid (resizable/reorderable columns) + gear button ===== */
+/* Fixed layout so the per-column <colgroup> widths apply and are resizable; the
+   grow (Product Name) column has no width and takes the remaining space. */
+.ow-cfg { table-layout: fixed; width: 100%; }
+.ow-cfg th, .ow-cfg td { overflow: hidden; text-overflow: ellipsis; }
+.ow-cellname { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ow-icon-btn {
+  display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); color: var(--nx-text-soft); cursor: pointer;
+}
+.ow-icon-btn:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.ow-icon-btn[aria-expanded="true"] { border-color: var(--nx-accent); color: var(--nx-accent); }
+.ow-icon-btn svg { width: 17px; height: 17px; fill: currentColor; }

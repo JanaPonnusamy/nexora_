@@ -27,6 +27,7 @@ const DEV_AUTO_LOGIN = Boolean(DEV_AUTO_LOGIN_USER);
 // so a screen can be inspected without clicking through the nav. Stripped from
 // production builds along with the other dev aids above.
 const DEV_SCREEN = import.meta.env.DEV ? (import.meta.env.VITE_DEV_SCREEN || '') : '';
+const DEV_STORE = import.meta.env.DEV ? (import.meta.env.VITE_DEV_STORE || '') : '';
 
 const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
@@ -1888,6 +1889,111 @@ function nmwExportRows(bill, lineItems) {
 // requests. Whether THIS login is broad-access is read from the API response
 // (can_approve / scope), not detected client-side — role name shapes differ
 // across deployments, so the server is the only reliable source of truth.
+// ---- Order Workspace grid column model + per-grid settings ----
+// Each grid (Qty Review, Review All) has its own column list; users can hide,
+// reorder and resize columns via a modern settings card, persisted per grid.
+const OW_QTY_COLUMNS = [
+  { key: 'name', label: 'Product Name', width: 220, grow: true, locked: true },
+  { key: 'orqty', label: 'Or Qty', width: 74, align: 'right', locked: true },
+  { key: 'stock', label: 'Stock', width: 60, align: 'right' },
+  { key: 'pack', label: 'Pack', width: 52, align: 'right' },
+  { key: 'desc', label: 'Desc', width: 74 },
+  { key: 'slsqty', label: 'Sls Qty', width: 64, align: 'right' },
+  { key: 'mrp', label: 'MRP', width: 68, align: 'right' },
+  { key: 'lrdate', label: 'LR Date', width: 76 },
+  { key: 'lsdate', label: 'LS Date', width: 76 },
+  { key: 'maxqty', label: 'Max Qty', width: 64, align: 'right' },
+  { key: 'wanted', label: 'Wanted', width: 150 }
+];
+const OW_REVIEW_COLUMNS = [
+  { key: 'name', label: 'Product Name', width: 220, grow: true, locked: true },
+  { key: 'orqty', label: 'Or Qty', width: 74, align: 'right', locked: true },
+  { key: 'stock', label: 'Stock', width: 60, align: 'right' },
+  { key: 'pack', label: 'Pack', width: 52, align: 'right' },
+  { key: 'desc', label: 'Desc', width: 74 },
+  { key: 'sls', label: 'Sls', width: 58, align: 'right' },
+  { key: 'mrp', label: 'MRP', width: 68, align: 'right' },
+  { key: 'wanted', label: 'Wanted', width: 150 }
+];
+
+const OW_GEAR_PATH = 'M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a8 8 0 0 0-1.7-1L15 3.5h-4L10.7 6A8 8 0 0 0 9 7L6.6 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4L9 17a8 8 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z';
+
+// Ordered list of column keys for a grid (saved order first, then any new base
+// columns appended so a config from an older build never drops a column).
+function orderOwKeys(base, cfg) {
+  const keys = base.map((c) => c.key);
+  const saved = (cfg?.order || []).filter((k) => keys.includes(k));
+  keys.forEach((k) => { if (!saved.includes(k)) saved.push(k); });
+  return saved;
+}
+
+// Visible, ordered columns with any user width override applied.
+function resolveOwColumns(base, cfg) {
+  const byKey = new Map(base.map((c) => [c.key, c]));
+  return orderOwKeys(base, cfg)
+    .map((k) => byKey.get(k))
+    .filter((c) => c && !(cfg?.hidden && cfg.hidden[c.key]))
+    .map((c) => {
+      const w = cfg?.widths ? cfg.widths[c.key] : undefined;
+      return { ...c, width: (w != null && w !== '') ? Number(w) : c.width };
+    });
+}
+
+// Modern grid-settings card (reuses the app's .grid-settings-panel styling):
+// show/hide, reorder and resize the columns of ONE grid.
+function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth, onReset, onClose }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+  useLayoutEffect(() => {
+    const a = anchorRef.current;
+    if (!a) return;
+    const r = a.getBoundingClientRect();
+    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+  }, [anchorRef]);
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target) && !anchorRef.current?.contains(e.target)) onClose(); }
+    function onEsc(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onEsc); };
+  }, [onClose, anchorRef]);
+  if (!pos) return null;
+  const byKey = new Map(base.map((c) => [c.key, c]));
+  const orderKeys = orderOwKeys(base, cfg);
+  return createPortal(
+    <div className="grid-settings-panel" ref={ref} role="dialog" aria-label={`${title} column settings`} style={{ position: 'fixed', top: pos.top, right: pos.right }}>
+      <div className="grid-settings-panel__head">
+        <strong>{title} · Columns</strong>
+        <span>Show / hide, reorder &amp; resize</span>
+        <button type="button" className="grid-settings-panel__reset-all" onClick={onReset}>Reset to Default</button>
+      </div>
+      <div className="grid-settings-panel__body">
+        <ul className="grid-settings-panel__cols">
+          {orderKeys.map((key, idx, arr) => {
+            const col = byKey.get(key);
+            if (!col) return null;
+            const visible = !(cfg?.hidden && cfg.hidden[key]);
+            const width = cfg?.widths ? cfg.widths[key] : undefined;
+            return (
+              <li className={`grid-settings-panel__col ${visible ? '' : 'is-off'}`} key={key}>
+                <input type="checkbox" checked={visible} disabled={col.locked} onChange={() => onToggle(key)} title="Show this column" />
+                <span className="grid-settings-panel__colname" title={col.label}>{col.label}</span>
+                {col.locked && <i className="grid-settings-panel__lock" title="Always visible">🔒</i>}
+                <span className="grid-settings-panel__movebtns">
+                  <button type="button" className="grid-settings-panel__movebtn" disabled={idx === 0} title="Move up" onClick={() => onMove(key, -1)}>▲</button>
+                  <button type="button" className="grid-settings-panel__movebtn" disabled={idx === arr.length - 1} title="Move down" onClick={() => onMove(key, 1)}>▼</button>
+                </span>
+                <input className="grid-settings-panel__width" type="number" min="30" max="400" step="2" value={width ?? ''} placeholder={String(col.width)} onChange={(e) => onWidth(key, e.target.value)} title="Width in px (blank = default)" aria-label={`${col.label} column width`} />
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // Order Workspace — VB-style ordering console ported into the desktop client
 // (Purchase-Manager tool). Self-contained via the /api/legacy-order endpoints,
 // keyed by store_name (independent of the desktop tenant/store GUID context).
@@ -1898,7 +2004,10 @@ function nmwExportRows(bill, lineItems) {
 function OrderWorkspace({ session, settings }) {
   void settings;
   const [stores, setStores] = useState([]);
-  const [store, setStore] = useState('');
+  const [store, setStore] = useState(() => {
+    if (DEV_STORE) return DEV_STORE;
+    try { return localStorage.getItem('nexora.desktop.owStore') || ''; } catch { return ''; }
+  });
   const [view, setView] = useState('qty'); // 'qty' | 'review'
   const [qtyRows, setQtyRows] = useState([]);
   const [rows, setRows] = useState([]);
@@ -1912,15 +2021,35 @@ function OrderWorkspace({ session, settings }) {
   const [error, setError] = useState('');
   const qtyRefs = useRef([]);
 
+  // Per-grid column settings (show/hide, order, width), persisted per grid id.
+  const [owColCfg, setOwColCfg] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('nexora.desktop.owGridColumns') || '{}') || {}; } catch { return {}; }
+  });
+  const [settingsFor, setSettingsFor] = useState(null); // 'qty' | 'review' | null
+  const settingsBtnRef = useRef(null);
+  useEffect(() => {
+    try { localStorage.setItem('nexora.desktop.owGridColumns', JSON.stringify(owColCfg)); } catch { /* best effort */ }
+  }, [owColCfg]);
+  const cfgToggle = (id, key) => setOwColCfg((c) => { const g = { ...(c[id] || {}) }; const hidden = { ...(g.hidden || {}) }; hidden[key] = !hidden[key]; return { ...c, [id]: { ...g, hidden } }; });
+  const cfgMove = (id, base, key, dir) => setOwColCfg((c) => { const order = orderOwKeys(base, c[id]); const i = order.indexOf(key); const j = i + dir; if (i < 0 || j < 0 || j >= order.length) return c; const n = [...order]; [n[i], n[j]] = [n[j], n[i]]; return { ...c, [id]: { ...(c[id] || {}), order: n } }; });
+  const cfgWidth = (id, key, w) => setOwColCfg((c) => { const g = { ...(c[id] || {}) }; const widths = { ...(g.widths || {}) }; if (w === '' || w == null) delete widths[key]; else widths[key] = Number(w); return { ...c, [id]: { ...g, widths } }; });
+  const cfgReset = (id) => setOwColCfg((c) => { const n = { ...c }; delete n[id]; return n; });
+
   useEffect(() => {
     api.legacyStores(session)
       .then((list) => {
         const arr = asArray(list);
         setStores(arr);
-        setStore((cur) => cur || arr[0]?.store_name || '');
+        // Keep the current/remembered store if it's still valid; else first store.
+        setStore((cur) => (cur && arr.some((s) => s.store_name === cur)) ? cur : (arr[0]?.store_name || ''));
       })
       .catch((e) => setError(e.message));
   }, [session]);
+
+  // Remember the selected store across reloads/relaunches (localStorage).
+  useEffect(() => {
+    if (store) { try { localStorage.setItem('nexora.desktop.owStore', store); } catch { /* best effort */ } }
+  }, [store]);
 
   const loadWorkflow = useCallback(() => {
     if (!store) return;
@@ -2013,6 +2142,54 @@ function OrderWorkspace({ session, settings }) {
     return { name: `#${selectedCode}` };
   }, [selectedCode, qtyRows, rows]);
 
+  // Close the settings card when switching grids (each grid has its own config).
+  useEffect(() => { setSettingsFor(null); }, [view]);
+  const gridId = view === 'qty' ? 'qty' : 'review';
+  const qtyCols = resolveOwColumns(OW_QTY_COLUMNS, owColCfg.qty);
+  const reviewCols = resolveOwColumns(OW_REVIEW_COLUMNS, owColCfg.review);
+
+  function renderQtyCell(col, row, index) {
+    switch (col.key) {
+      case 'name': return <span className="ow-cellname" title={row.productname}>{row.productname}</span>;
+      case 'orqty': return (
+        <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} aria-label={`${row.productname} order quantity`}
+          value={edits[row.productcode] ?? row.orderqty} disabled={savingCode === row.productcode || finalized}
+          onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.productcode)}
+          onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: Number(e.target.value) }))}
+          onKeyDown={(e) => onQtyKey(e, row, index)} />
+      );
+      case 'stock': return fmtOwQty(row.totalstock);
+      case 'pack': return fmtOwQty(row.saleunit);
+      case 'desc': return row.unitdescription;
+      case 'slsqty': return fmtOwQty(row.slsqty);
+      case 'mrp': return fmtOwMoney(row.mrp);
+      case 'lrdate': return fmtOwDate(row.lastreceiveddate);
+      case 'lsdate': return fmtOwDate(row.lastsaledate);
+      case 'maxqty': return fmtOwQty(row.maxsaleqty);
+      case 'wanted': return row.wantedtype ?? '—';
+      default: return null;
+    }
+  }
+  function renderReviewCell(col, row) {
+    switch (col.key) {
+      case 'name': return <span className="ow-cellname" title={row.ProductName}>{row.ProductName}</span>;
+      case 'orqty': return (
+        <input className="ow-qty" type="number" min={0} aria-label={`${row.ProductName} order quantity`}
+          value={edits[row.ProductCode] ?? row.OrderQty} disabled={savingCode === row.ProductCode || finalized}
+          onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.ProductCode)}
+          onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: Number(e.target.value) }))}
+          onBlur={(e) => saveOrderQty(row, Number(e.target.value))} />
+      );
+      case 'stock': return fmtOwQty(row.TotalStock);
+      case 'pack': return fmtOwQty(row.SaleUnit);
+      case 'desc': return row.UnitDescription;
+      case 'sls': return fmtOwQty(row.SLSQty);
+      case 'mrp': return fmtOwMoney(row.MRP);
+      case 'wanted': return row.WantedType ?? '—';
+      default: return null;
+    }
+  }
+
   return (
     <section className="screen-panel ow-screen">
       <div className="ow-toolbar">
@@ -2032,10 +2209,26 @@ function OrderWorkspace({ session, settings }) {
         {workflow && <span className={`ow-chip ${finalized || workflow.ready ? 'ow-chip-ok' : 'ow-chip-run'}`}>{String(workflow.status || '').replace(/_/g, ' ')}</span>}
         {workflow && <span className="ow-metrics"><strong>{workflow.qty_pending ?? 0}</strong> pending · <strong>{workflow.assigned_lines ?? 0}</strong> assigned · <strong>{workflow.unassigned_lines ?? 0}</strong> open</span>}
         <span className="ow-count">{activeCount} products</span>
+        <button type="button" ref={settingsBtnRef} className="ow-icon-btn" title="Grid column settings" aria-label="Grid column settings" aria-expanded={Boolean(settingsFor)} onClick={() => setSettingsFor((v) => (v ? null : gridId))}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d={OW_GEAR_PATH} /></svg>
+        </button>
         {finalized
           ? <button type="button" className="ow-btn" onClick={() => finalize(true)}>Reopen</button>
           : <button type="button" className="ow-btn ow-btn-primary" disabled={!workflow?.ready} title={workflow?.ready ? 'Lock this order' : 'Complete review first'} onClick={() => finalize(false)}>Finalize</button>}
       </div>
+      {settingsFor && (
+        <OwGridSettings
+          title={settingsFor === 'qty' ? 'Quantity Review' : 'Order Grid'}
+          anchorRef={settingsBtnRef}
+          base={settingsFor === 'qty' ? OW_QTY_COLUMNS : OW_REVIEW_COLUMNS}
+          cfg={owColCfg[settingsFor]}
+          onToggle={(key) => cfgToggle(settingsFor, key)}
+          onMove={(key, dir) => cfgMove(settingsFor, settingsFor === 'qty' ? OW_QTY_COLUMNS : OW_REVIEW_COLUMNS, key, dir)}
+          onWidth={(key, w) => cfgWidth(settingsFor, key, w)}
+          onReset={() => cfgReset(settingsFor)}
+          onClose={() => setSettingsFor(null)}
+        />
+      )}
 
       {error && <div className="ow-error" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
 
@@ -2044,68 +2237,33 @@ function OrderWorkspace({ session, settings }) {
           {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate</div>}
           <div className="ow-grid">
         {view === 'qty' ? (
-          <table>
+          <table className="ow-cfg">
+            <colgroup>{qtyCols.map((c) => <col key={c.key} style={c.grow ? undefined : { width: `${c.width}px` }} />)}</colgroup>
             <thead>
-              <tr><th>#</th><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Pack</th><th>Desc</th><th className="ow-num">Sls Qty</th><th className="ow-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="ow-num">Max Qty</th><th className="ow-wanted">Wanted</th></tr>
+              <tr>{qtyCols.map((c) => <th key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{c.label}</th>)}</tr>
             </thead>
             <tbody>
-              {filteredQty.map((row, index) => {
-                const value = edits[row.productcode] ?? row.orderqty;
-                return (
-                  <tr key={row.productcode} className={selectedCode === row.productcode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.productcode)}>
-                    <td className="ow-idx">{index + 1}</td>
-                    <td className="ow-grow" title={row.productname}>{row.productname}</td>
-                    <td className="ow-num">
-                      <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} aria-label={`${row.productname} order quantity`}
-                        value={value} disabled={savingCode === row.productcode || finalized}
-                        onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.productcode)}
-                        onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: Number(e.target.value) }))}
-                        onKeyDown={(e) => onQtyKey(e, row, index)} />
-                    </td>
-                    <td className="ow-num">{fmtOwQty(row.totalstock)}</td>
-                    <td className="ow-num">{fmtOwQty(row.saleunit)}</td>
-                    <td title={row.unitdescription}>{row.unitdescription}</td>
-                    <td className="ow-num">{fmtOwQty(row.slsqty)}</td>
-                    <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
-                    <td>{fmtOwDate(row.lastreceiveddate)}</td>
-                    <td>{fmtOwDate(row.lastsaledate)}</td>
-                    <td className="ow-num">{fmtOwQty(row.maxsaleqty)}</td>
-                    <td className="ow-wanted" title={row.wantedtype}>{row.wantedtype ?? '—'}</td>
-                  </tr>
-                );
-              })}
-              {!filteredQty.length && <tr><td colSpan={12} className="ow-empty">{loading ? 'Loading…' : qtyRows.length ? 'No products match.' : `Every pending product for ${store || 'this store'} has been reviewed.`}</td></tr>}
+              {filteredQty.map((row, index) => (
+                <tr key={row.productcode} className={selectedCode === row.productcode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.productcode)}>
+                  {qtyCols.map((c) => <td key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{renderQtyCell(c, row, index)}</td>)}
+                </tr>
+              ))}
+              {!filteredQty.length && <tr><td colSpan={qtyCols.length} className="ow-empty">{loading ? 'Loading…' : qtyRows.length ? 'No products match.' : `Every pending product for ${store || 'this store'} has been reviewed.`}</td></tr>}
             </tbody>
           </table>
         ) : (
-          <table>
+          <table className="ow-cfg">
+            <colgroup>{reviewCols.map((c) => <col key={c.key} style={c.grow ? undefined : { width: `${c.width}px` }} />)}</colgroup>
             <thead>
-              <tr><th>#</th><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Pack</th><th>Desc</th><th className="ow-num">Sls</th><th className="ow-num">MRP</th><th className="ow-wanted">Wanted</th></tr>
+              <tr>{reviewCols.map((c) => <th key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{c.label}</th>)}</tr>
             </thead>
             <tbody>
-              {filteredRows.map((row, i) => {
-                const value = edits[row.ProductCode] ?? row.OrderQty;
-                return (
-                  <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
-                    <td className="ow-idx">{i + 1}</td>
-                    <td className="ow-grow" title={row.ProductName}>{row.ProductName}</td>
-                    <td className="ow-num">
-                      <input className="ow-qty" type="number" min={0} aria-label={`${row.ProductName} order quantity`}
-                        value={value} disabled={savingCode === row.ProductCode || finalized}
-                        onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.ProductCode)}
-                        onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: Number(e.target.value) }))}
-                        onBlur={(e) => saveOrderQty(row, Number(e.target.value))} />
-                    </td>
-                    <td className="ow-num">{fmtOwQty(row.TotalStock)}</td>
-                    <td className="ow-num">{fmtOwQty(row.SaleUnit)}</td>
-                    <td title={row.UnitDescription}>{row.UnitDescription}</td>
-                    <td className="ow-num">{fmtOwQty(row.SLSQty)}</td>
-                    <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
-                    <td className="ow-wanted" title={row.WantedType}>{row.WantedType ?? '—'}</td>
-                  </tr>
-                );
-              })}
-              {!filteredRows.length && <tr><td colSpan={9} className="ow-empty">{loading ? 'Loading…' : 'No open order rows for this store.'}</td></tr>}
+              {filteredRows.map((row, i) => (
+                <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
+                  {reviewCols.map((c) => <td key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{renderReviewCell(c, row)}</td>)}
+                </tr>
+              ))}
+              {!filteredRows.length && <tr><td colSpan={reviewCols.length} className="ow-empty">{loading ? 'Loading…' : 'No open order rows for this store.'}</td></tr>}
             </tbody>
           </table>
         )}
