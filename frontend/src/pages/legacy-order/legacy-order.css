@@ -1537,6 +1537,46 @@
 .qc-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .qc-qty-input:disabled { opacity: 0.6; }
 
+/* ===== Aligned, full-width grid columns ==================================
+   The grids used to size every column to its content (table-layout:auto +
+   nowrap), so a narrow result left dead space on the right and a wide one
+   scrolled early. Now the numeric/short columns keep their natural width and
+   the Product Name column (.lo-col-grow) absorbs ALL remaining width. Because
+   header and body are one <table>, the two stay pixel-aligned automatically;
+   horizontal scroll only appears once the compact columns genuinely overflow. */
+.qc-grid-scroll > .lo-table,
+.qc-history-scroll > .lo-table { width: 100%; }
+.qc-grid-scroll .lo-col-grow,
+.qc-history-scroll .lo-col-grow { width: 100%; max-width: none; }
+.qc-grid-scroll td.lo-col-grow,
+.qc-history-scroll td.lo-col-grow { min-width: 11rem; }
+/* Row-index gutter: a hair of width, right-aligned, muted. */
+.qc-grid-scroll .lo-col-idx {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--bs-secondary-color);
+  font-variant-numeric: tabular-nums;
+}
+/* Numeric columns hug their content so they never steal the name column's
+   width; the grow column above is what expands. */
+.qc-grid-scroll .lo-num,
+.qc-history-scroll .lo-num { width: 1%; white-space: nowrap; }
+/* Let the product name fill (and truncate within) its now-flexible cell rather
+   than the old fixed 14rem cap. */
+.qc-grid-scroll .qc-product-name,
+.qc-history-scroll .qc-product-name { max-width: 100%; width: 100%; }
+
+/* ===== Viewport-proportional secondary panels ============================
+   Replaces fixed rem heights so these scale with the window instead of leaving
+   a gap on tall screens / overflowing on short ones. */
+/* Previous-decisions strip: ~18% of viewport, clamped to a sensible band. */
+.lo-merged-history .qc-history-scroll { height: clamp(6rem, 18vh, 15rem); }
+/* Monthly-statistics chart: bounded so Purchase/Sales keep the priority
+   (req §8 — the chart must not consume excessive vertical space). */
+.lo-merged .qc-pi-section.qc-pi-chart { flex: 0 0 auto; height: clamp(5rem, 15vh, 10rem); }
+.lo-merged .qc-pi-chart .qc-chart { min-height: 0; }
+
 @media (max-width: 960px) {
   .lo-workflow-steps { grid-template-columns: repeat(2, 1fr); }
   .lo-workflow-metrics { flex-wrap: wrap; }

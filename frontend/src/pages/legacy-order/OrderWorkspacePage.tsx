@@ -16,7 +16,7 @@ import './legacy-order.css'
 import { FilterBar, FilterSearch, FilterSelect, FilterTabs } from '../../design-system/components/FilterBar'
 import { ProductDetailPanel } from './ProductDetailPanel'
 import { SupplierSearchSelect } from './SupplierSearchSelect'
-import { fmtDate } from './format'
+import { fmtDate, fmtMoney, fmtQty } from './format'
 
 // The single VB.NET-style ordering screen: quantity review AND supplier
 // assignment on one page. "Qty Review" walks pending lines one at a time
@@ -495,15 +495,15 @@ export default function OrderWorkspacePage() {
             <div className="lo-scroll qc-grid-scroll">
               <table className="lo-table lo-dense">
                 <thead>
-                  <tr><th>#</th><th>Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">Pack</th><th>Desc</th><th className="lo-num">Sls Qty</th><th className="lo-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="lo-num">Max Qty</th><th>Txn Date</th><th>Wanted</th></tr>
+                  <tr><th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">Pack</th><th>Desc</th><th className="lo-num">Sls Qty</th><th className="lo-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="lo-num">Max Qty</th><th>Txn Date</th><th>Wanted</th></tr>
                 </thead>
                 <tbody>
                   {filteredQty.map((row, index) => {
                     const value = edits[row.productcode] ?? row.orderqty
                     return (
                       <tr key={row.productcode} className={selectedCode === row.productcode ? 'is-row-selected' : undefined} onClick={() => setSelectedCode(row.productcode)}>
-                        <td>{index + 1}</td>
-                        <td><span className="qc-product-name" title={row.productname}>{row.productname}</span></td>
+                        <td className="lo-col-idx">{index + 1}</td>
+                        <td className="lo-col-grow"><span className="qc-product-name" title={row.productname}>{row.productname}</span></td>
                         <td className="lo-num">
                           <input
                             ref={(el) => { qtyInputRefs.current[index] = el }}
@@ -519,14 +519,14 @@ export default function OrderWorkspacePage() {
                             onKeyDown={(e) => onQtyKeyDown(e, index)}
                           />
                         </td>
-                        <td className="lo-num">{row.totalstock}</td>
-                        <td className="lo-num">{row.saleunit}</td>
+                        <td className="lo-num">{fmtQty(row.totalstock)}</td>
+                        <td className="lo-num">{fmtQty(row.saleunit)}</td>
                         <td>{row.unitdescription}</td>
-                        <td className="lo-num">{row.slsqty}</td>
-                        <td className="lo-num">{row.mrp?.toFixed?.(2) ?? row.mrp}</td>
+                        <td className="lo-num">{fmtQty(row.slsqty)}</td>
+                        <td className="lo-num">{fmtMoney(row.mrp)}</td>
                         <td>{fmtDate(row.lastreceiveddate)}</td>
                         <td>{fmtDate(row.lastsaledate)}</td>
-                        <td className="lo-num">{row.maxsaleqty}</td>
+                        <td className="lo-num">{fmtQty(row.maxsaleqty)}</td>
                         <td>{fmtDate(row.Transactiondate)}</td>
                         <td>{row.wantedtype ?? '—'}</td>
                       </tr>
@@ -539,15 +539,15 @@ export default function OrderWorkspacePage() {
           ) : view === 'assigned' ? (
             <div className="lo-scroll qc-grid-scroll" tabIndex={0} onKeyDown={onGridKey}>
               <table className="lo-table lo-dense">
-                <thead><tr><th>#</th><th>Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">MRP</th><th>Supplier</th><th>Remarks</th></tr></thead>
+                <thead><tr><th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">MRP</th><th>Supplier</th><th>Remarks</th></tr></thead>
                 <tbody>
                   {filteredAssigned.map((row, i) => (
                     <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'is-row-selected' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
-                      <td>{i + 1}</td>
-                      <td><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td>
-                      <td className="lo-num">{row.OrderQty}</td>
-                      <td className="lo-num">{row.TotalStock}</td>
-                      <td className="lo-num">{num(row.MRP).toFixed(2)}</td>
+                      <td className="lo-col-idx">{i + 1}</td>
+                      <td className="lo-col-grow"><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td>
+                      <td className="lo-num">{fmtQty(row.OrderQty)}</td>
+                      <td className="lo-num">{fmtQty(row.TotalStock)}</td>
+                      <td className="lo-num">{fmtMoney(row.MRP)}</td>
                       <td>{row.OrSupplier ?? '—'}</td>
                       <td>{row.Remarks ?? '—'}</td>
                     </tr>
@@ -561,7 +561,7 @@ export default function OrderWorkspacePage() {
               <table className="lo-table lo-dense">
                 <thead>
                   <tr>
-                    <th>#</th><th>Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th>
+                    <th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th>
                     {isStock && <><th className="lo-num">S.Stock</th><th className="lo-num">Disc</th><th className="lo-num">MinQty</th><th>Rack</th></>}
                     <th className="lo-num">Pack</th><th>Desc</th><th className="lo-num">Sls</th><th className="lo-num">MRP</th><th>Wanted</th>
                     {canAssign && <th>Action</th>}
@@ -579,8 +579,8 @@ export default function OrderWorkspacePage() {
                         onClick={() => setSelectedCode(row.ProductCode)}
                         data-col-count={colCount}
                       >
-                        <td>{i + 1}</td>
-                        <td><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td>
+                        <td className="lo-col-idx">{i + 1}</td>
+                        <td className="lo-col-grow"><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td>
                         <td className="lo-num">
                           <input
                             ref={(el) => { workspaceInputRefs.current[i] = el }}
@@ -597,17 +597,17 @@ export default function OrderWorkspacePage() {
                             onKeyDown={(e) => onWorkspaceQtyKeyDown(e, row, i, value)}
                           />
                         </td>
-                        <td className="lo-num">{row.TotalStock}</td>
+                        <td className="lo-num">{fmtQty(row.TotalStock)}</td>
                         {isStock && <>
-                          <td className="lo-num">{row.S_Stock ?? '—'}</td>
-                          <td className="lo-num">{row.Discount ?? '—'}</td>
-                          <td className="lo-num">{row.MinQty ?? '—'}</td>
+                          <td className="lo-num">{fmtQty(row.S_Stock)}</td>
+                          <td className="lo-num">{fmtQty(row.Discount)}</td>
+                          <td className="lo-num">{fmtQty(row.MinQty)}</td>
                           <td>{row.Rack || '—'}</td>
                         </>}
-                        <td className="lo-num">{row.SaleUnit}</td>
+                        <td className="lo-num">{fmtQty(row.SaleUnit)}</td>
                         <td>{row.UnitDescription}</td>
-                        <td className="lo-num">{row.SLSQty}</td>
-                        <td className="lo-num">{num(row.MRP).toFixed(2)}</td>
+                        <td className="lo-num">{fmtQty(row.SLSQty)}</td>
+                        <td className="lo-num">{fmtMoney(row.MRP)}</td>
                         <td>{row.WantedType ?? '—'}</td>
                         {canAssign && (
                           <td>
@@ -665,10 +665,10 @@ export default function OrderWorkspacePage() {
         {historyOpen && (
         <div className="lo-scroll qc-history-scroll">
           <table className="lo-table lo-dense">
-            <thead><tr><th>Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Org Order</th><th className="lo-num">Pack</th><th className="lo-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
+            <thead><tr><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Org Order</th><th className="lo-num">Pack</th><th className="lo-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
             <tbody>
               {orderHistory.map((row, i) => (
-                <tr key={i}><td><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td><td className="lo-num">{row.Orqty ?? '—'}</td><td className="lo-num">{row.OrgOrderQty ?? '—'}</td><td className="lo-num">{row.saleunit ?? '—'}</td><td className="lo-num">{row.MRP ?? '—'}</td><td>{row.remarks ?? '—'}</td><td>{fmtDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
+                <tr key={i}><td className="lo-col-grow"><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td><td className="lo-num">{fmtQty(row.Orqty)}</td><td className="lo-num">{fmtQty(row.OrgOrderQty)}</td><td className="lo-num">{fmtQty(row.saleunit)}</td><td className="lo-num">{fmtMoney(row.MRP)}</td><td>{row.remarks ?? '—'}</td><td>{fmtDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
               ))}
               {!orderHistory.length && <tr><td colSpan={9} className="lo-empty">{selectedCode == null ? 'Select a product to see its previous-order history.' : 'No previous-order history for this product.'}</td></tr>}
             </tbody>
