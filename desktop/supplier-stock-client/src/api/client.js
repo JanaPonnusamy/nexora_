@@ -503,6 +503,29 @@ export const api = {
 
   legacyMonthlyStats(storeName, productCode, mode, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/monthly-stats${toQuery({ mode })}`, { session });
+  },
+
+  // Supplier assignment: supplier list, orderable rows per supplier (by purchase
+  // history or by live supplier stock), the assigned-order view, and the
+  // assign/unassign toggle. Same endpoints as the web Order Workspace.
+  legacySuppliers(storeName, search, session) {
+    return request(`/api/legacy-order/suppliers/${encodeURIComponent(storeName)}${toQuery({ search: search || '' })}`, { session });
+  },
+
+  legacyOrdersBySupplier(storeName, supplierCode, mode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/by-supplier${toQuery({ supplier_code: supplierCode, mode })}`, { session });
+  },
+
+  legacyAssignedOrders(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/assigned${toQuery({ supplier_code: supplierCode })}`, { session });
+  },
+
+  legacyAssignSupplier(storeName, productCode, supplierCode, supplierName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/${productCode}/assign`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ supplier_code: supplierCode, supplier_name: supplierName })
+    });
   }
 };
 

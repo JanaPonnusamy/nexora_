@@ -6823,7 +6823,39 @@ th {
   background: var(--nx-surface); color: var(--nx-text); font: inherit; font-weight: 600; cursor: pointer;
 }
 .ow-btn-primary { border-color: var(--nx-accent); background: var(--nx-accent); color: var(--nx-text-on); }
+.ow-btn-danger { border-color: var(--nx-danger); background: var(--nx-danger); color: var(--nx-text-on); }
+.ow-btn-sm { min-height: 24px; padding: 1px 10px; font-size: 11px; }
 .ow-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Assigned rows in the By-Supplier grid turn green. */
+.ow-screen tbody tr.ow-row-assigned > td { background: var(--nx-success-sunk); }
+.ow-screen tbody tr.ow-row-assigned.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-success-ink); }
+
+/* Zero-stock hint: red shade so an out-of-stock product is obvious while
+   ordering (row in every grid, dock header + trend chart when it's selected). */
+.ow-screen tbody tr.ow-row-zero > td { background: var(--nx-danger-sunk); }
+.ow-screen tbody tr.ow-row-zero.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-danger); }
+.ow-side-head--zero { background: var(--nx-danger-sunk); }
+.ow-side-meta--zero, .ow-side-meta--zero b { color: var(--nx-danger-ink); }
+.ow-panel--zero { background: var(--nx-danger-sunk); }
+.ow-zero-tag { margin-left: auto; padding: 1px 6px; border-radius: 999px; background: var(--nx-danger); color: var(--nx-text-on); font-size: 9px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
+
+/* Success banner (assign confirmation, export done). */
+.ow-banner {
+  display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+  padding: 5px 10px; border: 1px solid var(--nx-success-ink); border-radius: var(--nx-radius-sm);
+  background: var(--nx-success-sunk); color: var(--nx-success-ink); font-size: 12px;
+}
+.ow-banner button { margin-left: auto; border: 0; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+
+/* Export options card. */
+.ow-export-body { display: flex; flex-direction: column; gap: 8px; padding: 10px; min-width: 260px; }
+.ow-export-scope { font-size: 12px; color: var(--nx-text-muted); }
+.ow-export-scope b { color: var(--nx-text); }
+.ow-export-field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text-muted); }
+.ow-export-field input { width: 64px; min-height: 28px; padding: 2px 8px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; text-align: right; }
+.ow-export-hint { margin: 0; font-size: 11px; color: var(--nx-text-muted); }
+.ow-export-go { align-self: flex-start; }
 .ow-help { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); }
 .ow-help kbd { padding: 1px 5px; border: 1px solid var(--nx-rule-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--nx-surface-raised); font: inherit; font-weight: 700; }
 .ow-error {

@@ -380,7 +380,8 @@ def order_summary(store_name):
         "SELECT OrderId, ProductCode, ProductName, TotalStock, SaleUnit, SLSQty, "
         "MinQty, MaxQty, OrderQty, OrgOrderQty, WantedType, ProductTypeName, "
         "Frequence, MRP, PurchasePrice, UnitDescription, SubLocation, "
-        "LastSaleDate, LastReceivedDate, WantedDate, Status, Remarks "
+        "LastSaleDate, LastReceivedDate, WantedDate, Status, Remarks, "
+        "OrSupplier, OrSupplierCode "
         "FROM OrderManagement WHERE StoreName = ? ORDER BY ProductName"
     )
     with database.get_central_connection() as conn:
