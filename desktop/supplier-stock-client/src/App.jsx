@@ -1994,6 +1994,59 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
   );
 }
 
+// Searchable supplier combo (type-to-filter dropdown) -- replaces a plain
+// <select> so picking a supplier out of a long alphabetical list doesn't
+// require scrolling through it by hand.
+function OwSupplierPicker({ suppliers, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    function onDoc(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const term = query.trim().toLowerCase();
+  const filtered = term
+    ? suppliers.filter((s) => String(s.supplier_name || '').toLowerCase().includes(term) || String(s.supplier_code).includes(term))
+    : suppliers;
+
+  const pick = (s) => { onChange(s); setQuery(''); setOpen(false); };
+
+  return (
+    <div className="ow-supplier-pick" ref={wrapRef}>
+      <input
+        ref={inputRef}
+        className="ow-supplier-input"
+        type="text"
+        placeholder="Search supplier…"
+        value={open ? query : (value?.supplier_name || '')}
+        onFocus={() => { setOpen(true); setQuery(''); }}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); inputRef.current?.blur(); } else if (e.key === 'Enter' && filtered.length) { pick(filtered[0]); } }}
+        aria-label="Search and select supplier"
+        role="combobox" aria-expanded={open} autoComplete="off"
+      />
+      {value && !open && <button type="button" className="ow-supplier-clear" title="Clear supplier" aria-label="Clear supplier" onClick={() => onChange(null)}>×</button>}
+      {open && (
+        <ul className="ow-supplier-list" role="listbox">
+          {filtered.map((s) => (
+            <li key={s.supplier_code}>
+              <button type="button" className={value?.supplier_code === s.supplier_code ? 'is-active' : undefined} onClick={() => pick(s)}>
+                {s.supplier_name}
+              </button>
+            </li>
+          ))}
+          {!filtered.length && <li className="ow-supplier-empty">No suppliers match.</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // Export options popover: split-count + scope, anchored to the Export button.
 function OwExportCard({ anchorRef, splitCount, setSplitCount, exporting, scopeLabel, onExport, onClose }) {
   const ref = useRef(null);
@@ -2404,10 +2457,7 @@ function OrderWorkspace({ session, settings }) {
         {(view === 'supplier' || view === 'assigned') && (
           <label className="ow-field">
             <span>Supplier</span>
-            <select value={supplier?.supplier_code || ''} onChange={(e) => setSupplier(suppliers.find((s) => String(s.supplier_code) === e.target.value) || null)}>
-              <option value="">Select supplier…</option>
-              {suppliers.map((s) => <option key={s.supplier_code} value={s.supplier_code}>{s.supplier_name}</option>)}
-            </select>
+            <OwSupplierPicker suppliers={suppliers} value={supplier} onChange={setSupplier} />
           </label>
         )}
         {view === 'supplier' && (
