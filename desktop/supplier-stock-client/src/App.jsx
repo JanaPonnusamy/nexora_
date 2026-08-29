@@ -1900,8 +1900,8 @@ const OW_QTY_COLUMNS = [
   { key: 'desc', label: 'Desc', width: 56 },
   { key: 'slsqty', label: 'Sls Qty', width: 56, align: 'right' },
   { key: 'mrp', label: 'MRP', width: 60, align: 'right' },
-  { key: 'lrdate', label: 'LR Date', width: 66 },
-  { key: 'lsdate', label: 'LS Date', width: 66 },
+  { key: 'lrdate', label: 'LRD', width: 44, align: 'right' },
+  { key: 'lsdate', label: 'LSD', width: 44, align: 'right' },
   { key: 'maxqty', label: 'Max Qty', width: 56, align: 'right' },
   { key: 'wanted', label: 'Wanted', width: 116 }
 ];
@@ -2346,19 +2346,19 @@ function OrderWorkspace({ session, settings }) {
     switch (col.key) {
       case 'name': return <span className="ow-cellname" title={row.productname}>{row.productname}</span>;
       case 'orqty': return (
-        <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} aria-label={`${row.productname} order quantity`}
+        <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.productname} order quantity`}
           value={edits[row.productcode] ?? row.orderqty} disabled={savingCode === row.productcode || finalized}
-          onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.productcode)}
-          onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: Number(e.target.value) }))}
+          onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.productcode); e.target.select(); }}
+          onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: owWholeQty(e.target.value) }))}
           onKeyDown={(e) => onQtyKey(e, row, index)} />
       );
-      case 'stock': return fmtOwQty(row.totalstock);
+      case 'stock': return <span className={Number(row.totalstock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.totalstock)}</span>;
       case 'pack': return fmtOwQty(row.saleunit);
       case 'desc': return row.unitdescription;
       case 'slsqty': return fmtOwQty(row.slsqty);
       case 'mrp': return fmtOwMoney(row.mrp);
-      case 'lrdate': return fmtOwDate(row.lastreceiveddate);
-      case 'lsdate': return fmtOwDate(row.lastsaledate);
+      case 'lrdate': return fmtOwDaysAgo(row.lastreceiveddate);
+      case 'lsdate': return fmtOwDaysAgo(row.lastsaledate);
       case 'maxqty': return fmtOwQty(row.maxsaleqty);
       case 'wanted': return row.wantedtype ?? '—';
       default: return null;
@@ -2368,13 +2368,13 @@ function OrderWorkspace({ session, settings }) {
     switch (col.key) {
       case 'name': return <span className="ow-cellname" title={row.ProductName}>{row.ProductName}</span>;
       case 'orqty': return (
-        <input className="ow-qty" type="number" min={0} aria-label={`${row.ProductName} order quantity`}
+        <input className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
           value={edits[row.ProductCode] ?? row.OrderQty} disabled={savingCode === row.ProductCode || finalized}
-          onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.ProductCode)}
-          onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: Number(e.target.value) }))}
-          onBlur={(e) => saveOrderQty(row, Number(e.target.value))} />
+          onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
+          onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
+          onBlur={(e) => saveOrderQty(row, owWholeQty(e.target.value))} />
       );
-      case 'stock': return fmtOwQty(row.TotalStock);
+      case 'stock': return <span className={Number(row.TotalStock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.TotalStock)}</span>;
       case 'pack': return fmtOwQty(row.SaleUnit);
       case 'desc': return row.UnitDescription;
       case 'sls': return fmtOwQty(row.SLSQty);
@@ -2472,7 +2472,7 @@ function OrderWorkspace({ session, settings }) {
             </thead>
             <tbody>
               {filteredQty.map((row, index) => (
-                <tr key={row.productcode} className={owRowClass(selectedCode === row.productcode, Number(row.totalstock) === 0)} onClick={() => setSelectedCode(row.productcode)}>
+                <tr key={row.productcode} className={selectedCode === row.productcode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.productcode)}>
                   {qtyCols.map((c) => <td key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{renderQtyCell(c, row, index)}</td>)}
                 </tr>
               ))}
@@ -2487,7 +2487,7 @@ function OrderWorkspace({ session, settings }) {
             </thead>
             <tbody>
               {filteredRows.map((row, i) => (
-                <tr key={row.ProductCode} className={owRowClass(selectedCode === row.ProductCode, Number(row.TotalStock) === 0)} onClick={() => setSelectedCode(row.ProductCode)}>
+                <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
                   {reviewCols.map((c) => <td key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{renderReviewCell(c, row)}</td>)}
                 </tr>
               ))}
@@ -2507,18 +2507,17 @@ function OrderWorkspace({ session, settings }) {
               {filteredRows.map((row) => {
                 const isAssigned = statusOf(row) === 1;
                 const value = edits[row.ProductCode] ?? row.OrderQty;
-                const zeroStock = Number(row.TotalStock) === 0;
                 return (
-                  <tr key={row.ProductCode} className={`${selectedCode === row.ProductCode ? 'ow-row-sel' : ''}${isAssigned ? ' ow-row-assigned' : zeroStock ? ' ow-row-zero' : ''}`.trim() || undefined} onClick={() => setSelectedCode(row.ProductCode)}>
+                  <tr key={row.ProductCode} className={`${selectedCode === row.ProductCode ? 'ow-row-sel' : ''}${isAssigned ? ' ow-row-assigned' : ''}`.trim() || undefined} onClick={() => setSelectedCode(row.ProductCode)}>
                     <td className="ow-grow" title={row.ProductName}>{row.ProductName}</td>
                     <td className="ow-num">
-                      <input className="ow-qty" type="number" min={0} aria-label={`${row.ProductName} order quantity`}
+                      <input className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
                         value={value} disabled={savingCode === row.ProductCode || isAssigned || finalized}
-                        onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.ProductCode)}
-                        onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: Number(e.target.value) }))}
+                        onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
+                        onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
                         onKeyDown={(e) => { if (e.key === 'Enter' && !isAssigned) { e.preventDefault(); toggleAssign(row); } }} />
                     </td>
-                    <td className="ow-num">{fmtOwQty(row.TotalStock)}</td>
+                    <td className="ow-num"><span className={Number(row.TotalStock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.TotalStock)}</span></td>
                     {isStockMode && <>
                       <td className="ow-num">{fmtOwQty(row.S_Stock)}</td>
                       <td className="ow-num">{fmtOwQty(row.Discount)}</td>
@@ -2546,7 +2545,7 @@ function OrderWorkspace({ session, settings }) {
             <thead><tr><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Supplier</th><th>Remarks</th></tr></thead>
             <tbody>
               {filteredAssigned.map((row) => (
-                <tr key={row.ProductCode} className={owRowClass(selectedCode === row.ProductCode, Number(row.TotalStock) === 0)} onClick={() => setSelectedCode(row.ProductCode)}>
+                <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
                   <td className="ow-grow" title={row.ProductName}>{row.ProductName}</td>
                   <td className="ow-num">{fmtOwQty(row.OrderQty)}</td>
                   <td className="ow-num">{fmtOwQty(row.SaleUnit)}</td>
@@ -2579,18 +2578,18 @@ function OrderWorkspace({ session, settings }) {
         </div>
 
         <aside className="ow-side">
-          <div className={`ow-side-head${selected && Number(selected.stock) === 0 ? ' ow-side-head--zero' : ''}`}>
+          <div className="ow-side-head">
             {selected ? (
               <>
                 <strong className="ow-side-name" title={selected.name}>{selected.name}</strong>
-                <span className={`ow-side-meta${Number(selected.stock) === 0 ? ' ow-side-meta--zero' : ''}`}>Stock <b>{fmtOwQty(selected.stock)}</b>{Number(selected.stock) === 0 && ' · Out of stock'}</span>
+                <span className="ow-side-meta">Stock <b className={Number(selected.stock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(selected.stock)}</b></span>
                 <span className="ow-side-meta">Pack <b>{fmtOwQty(selected.pack)}</b></span>
                 <span className="ow-side-meta">MRP <b>{fmtOwMoney(selected.mrp)}</b></span>
               </>
             ) : <span className="ow-side-hint">Select a product to see its trend, purchase &amp; sales.</span>}
           </div>
           <div className="ow-side-panels">
-            <OrderIntelligence store={store} productCode={selectedCode} mode="local" session={session} onError={setError} zeroStock={selected && Number(selected.stock) === 0} />
+            <OrderIntelligence store={store} productCode={selectedCode} mode="local" session={session} onError={setError} />
           </div>
         </aside>
       </div>
@@ -2616,11 +2615,30 @@ function fmtOwDate(value) {
   const parts = raw.split('-');
   return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : raw;
 }
-// Row class combining selection + zero-stock hint (red shade) so the reviewer
-// can spot out-of-stock products at a glance while ordering.
-function owRowClass(selected, zeroStock) {
-  const cls = [selected ? 'ow-row-sel' : '', zeroStock ? 'ow-row-zero' : ''].filter(Boolean).join(' ');
-  return cls || undefined;
+// Days elapsed since a date (LR/LS Date -> LR/LS Days), whole days, floor.
+function fmtOwDaysAgo(value) {
+  if (!value) return '—';
+  const then = new Date(String(value).slice(0, 10));
+  if (Number.isNaN(then.getTime())) return '—';
+  const days = Math.floor((Date.now() - then.getTime()) / 86400000);
+  return days < 0 ? '—' : String(days);
+}
+// Whole-number-only quantity input: no decimals, empty clears to 0.
+function owWholeQty(raw) {
+  const n = Math.trunc(Number(raw));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+function fmtOwPct(value) {
+  if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '—';
+  return `${Number(value).toFixed(2)}%`;
+}
+// Landing cost % = margin between PTR (selling-in price) and Cost (net landed
+// cost, already inclusive of the synced offer/product-discount/scheme), i.e.
+// how much PTR sits above Cost.
+function owLandingPct(ptr, cost) {
+  const p = Number(ptr); const c = Number(cost);
+  if (!Number.isFinite(p) || !Number.isFinite(c) || p <= 0) return null;
+  return ((p - c) / p) * 100;
 }
 function owDownloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -2633,7 +2651,7 @@ function owDownloadBlob(blob, filename) {
 // Contextual intelligence for the selected order row: Purchase/GRN, Sales/Bill
 // and monthly Trend, in a compact tabbed inspector (only one view expanded at a
 // time — never three tall tables at once). Real data via the legacy-order API.
-function OrderIntelligence({ store, productCode, product, mode, session, onError, zeroStock }) {
+function OrderIntelligence({ store, productCode, product, mode, session, onError }) {
   const [purchase, setPurchase] = useState([]);
   const [sales, setSales] = useState([]);
   const [monthly, setMonthly] = useState([]);
@@ -2663,8 +2681,8 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
 
   return (
     <>
-      <section className={`ow-panel ow-panel--chart${zeroStock ? ' ow-panel--zero' : ''}`}>
-        <div className="ow-panel-title">Monthly Trend{loading && <span className="ow-intel-loading">…</span>}{zeroStock && <span className="ow-zero-tag">Out of stock</span>}</div>
+      <section className="ow-panel ow-panel--chart">
+        <div className="ow-panel-title">Monthly Trend{loading && <span className="ow-intel-loading">…</span>}</div>
         <div className="ow-panel-body">
           {empty ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={monthly} loading={loading} />}
         </div>
@@ -2673,7 +2691,7 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
         <div className="ow-panel-title">Purchase / GRN</div>
         <div className="ow-panel-scroll">
           <table className="ow-intel-table">
-            <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th>GRN Date</th><th className="ow-grow">Supplier</th></tr></thead>
+            <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th className="ow-num">Pro Dis%</th><th className="ow-num">Landing%</th><th>GRN Date</th><th className="ow-grow">Supplier</th></tr></thead>
             <tbody>
               {purchase.map((row, i) => (
                 <tr key={i} className={Number(row.FreeQty) > 0 ? 'ow-freerow' : undefined}>
@@ -2682,11 +2700,13 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
                   <td className="ow-num">{fmtOwMoney(row.ItemCost)}</td>
                   <td className="ow-num">{fmtOwMoney(row.PTR)}</td>
                   <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
+                  <td className="ow-num">{fmtOwPct(row.DIS)}</td>
+                  <td className="ow-num">{fmtOwPct(owLandingPct(row.PTR, row.ItemCost))}</td>
                   <td>{fmtOwDate(row.GRNDate)}</td>
                   <td className="ow-grow" title={row.SupplierName}>{row.SupplierName ?? '—'}</td>
                 </tr>
               ))}
-              {!purchase.length && <tr><td colSpan={7} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No purchase history.'}</td></tr>}
+              {!purchase.length && <tr><td colSpan={9} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No purchase history.'}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -2695,18 +2715,17 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
         <div className="ow-panel-title">Bill / Sales</div>
         <div className="ow-panel-scroll">
           <table className="ow-intel-table">
-            <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-grow">Customer</th><th className="ow-num">MRP</th></tr></thead>
+            <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-num">MRP</th></tr></thead>
             <tbody>
               {sales.map((row, i) => (
                 <tr key={i}>
                   <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
                   <td>{fmtOwDate(row.Bill_Time)}</td>
                   <td className="ow-grow" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
-                  <td className="ow-grow" title={row.CUSTOMERNAME}>{row.CUSTOMERNAME ?? '—'}</td>
                   <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
                 </tr>
               ))}
-              {!sales.length && <tr><td colSpan={5} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No sales history.'}</td></tr>}
+              {!sales.length && <tr><td colSpan={4} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No sales history.'}</td></tr>}
             </tbody>
           </table>
         </div>

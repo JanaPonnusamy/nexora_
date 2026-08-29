@@ -6831,14 +6831,10 @@ th {
 .ow-screen tbody tr.ow-row-assigned > td { background: var(--nx-success-sunk); }
 .ow-screen tbody tr.ow-row-assigned.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-success-ink); }
 
-/* Zero-stock hint: red shade so an out-of-stock product is obvious while
-   ordering (row in every grid, dock header + trend chart when it's selected). */
-.ow-screen tbody tr.ow-row-zero > td { background: var(--nx-danger-sunk); }
-.ow-screen tbody tr.ow-row-zero.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-danger); }
-.ow-side-head--zero { background: var(--nx-danger-sunk); }
-.ow-side-meta--zero, .ow-side-meta--zero b { color: var(--nx-danger-ink); }
-.ow-panel--zero { background: var(--nx-danger-sunk); }
-.ow-zero-tag { margin-left: auto; padding: 1px 6px; border-radius: 999px; background: var(--nx-danger); color: var(--nx-text-on); font-size: 9px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
+/* Zero-stock hint: red text on the Stock number only (not a full-row/panel
+   shade, so it doesn't clash with the selection highlight or dominate the
+   grid) -- wherever a Stock value is shown: every grid + the dock header. */
+.ow-stock-zero { color: var(--nx-danger); font-weight: 700; }
 
 /* Success banner (assign confirmation, export done). */
 .ow-banner {
@@ -6898,7 +6894,9 @@ th {
 }
 .ow-qty::-webkit-outer-spin-button, .ow-qty::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ow-qty:disabled { opacity: 0.6; }
-.ow-screen tbody tr.ow-row-sel > td { background: var(--nx-surface-hover); }
+/* Active row: one clean, unambiguous highlight (accent-tinted bg + left bar) so
+   it always reads distinctly from hover/zebra/assigned rows. */
+.ow-screen tbody tr.ow-row-sel > td { background: color-mix(in srgb, var(--nx-accent) 14%, var(--nx-surface)); }
 .ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-accent); }
 .ow-empty { padding: 1.2rem; text-align: center; color: var(--nx-text-muted); }
 
@@ -6938,7 +6936,7 @@ th {
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
 }
-.ow-panel--chart { flex: 0 0 auto; height: 132px; }
+.ow-panel--chart { flex: 0 0 auto; height: 168px; }
 .ow-panel--purchase { flex: 1.5 1 0; min-height: 90px; }   /* Purchase gets the most room. */
 .ow-panel--sales { flex: 1.1 1 0; min-height: 80px; }
 .ow-panel-title {
@@ -6969,9 +6967,6 @@ th {
 .ow-chart-legend span { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--nx-text-muted); }
 .ow-chart-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 
-/* Selected row a touch stronger so the intelligence context is obvious. */
-.ow-screen tbody tr.ow-row-sel > td { background: var(--nx-surface-sunk); }
-
 /* Narrow desktop: give the intelligence column a firmer minimum. */
 @media (max-width: 1180px) {
   .ow-body { grid-template-columns: 1.8fr minmax(320px, 1fr); }
@@ -6982,6 +6977,9 @@ th {
    grow (Product Name) column has no width and takes the remaining space. */
 .ow-cfg { table-layout: fixed; width: 100%; }
 .ow-cfg th, .ow-cfg td { overflow: hidden; text-overflow: ellipsis; }
+/* The Or Qty cell holds a form control, not text -- never ellipsis-clip it (that
+   was rendering a stray "." at the cell edge for narrow columns). */
+.ow-cfg td:has(.ow-qty) { overflow: visible; text-overflow: clip; }
 .ow-cellname { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .ow-icon-btn {
