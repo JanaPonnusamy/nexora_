@@ -2691,18 +2691,18 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
         <div className="ow-panel-title">Purchase / GRN</div>
         <div className="ow-panel-scroll">
           <table className="ow-intel-table">
-            <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Pro Dis%</th><th className="ow-num">Landing%</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th>GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
+            <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num ow-grp">Dis%</th><th className="ow-num">Land%</th><th className="ow-num ow-grp ow-col-cost">Cost</th><th className="ow-num ow-col-ptr">PTR</th><th className="ow-num ow-col-mrp">MRP</th><th className="ow-grp">GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
             <tbody>
               {purchase.map((row, i) => (
                 <tr key={i} className={Number(row.FreeQty) > 0 ? 'ow-freerow' : undefined}>
                   <td className="ow-num">{fmtOwQty(row.RStock)}</td>
                   <td className="ow-num">{fmtOwQty(row.FreeQty)}</td>
-                  <td className="ow-num">{fmtOwPct(row.DIS)}</td>
+                  <td className="ow-num ow-grp">{fmtOwPct(row.DIS)}</td>
                   <td className="ow-num">{fmtOwPct(owLandingPct(row.PTR, row.ItemCost))}</td>
-                  <td className="ow-num">{fmtOwMoney(row.ItemCost)}</td>
-                  <td className="ow-num">{fmtOwMoney(row.PTR)}</td>
-                  <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
-                  <td>{fmtOwDate(row.GRNDate)}</td>
+                  <td className="ow-num ow-grp ow-col-cost">{fmtOwMoney(row.ItemCost)}</td>
+                  <td className="ow-num ow-col-ptr">{fmtOwMoney(row.PTR)}</td>
+                  <td className="ow-num ow-col-mrp">{fmtOwMoney(row.MRP)}</td>
+                  <td className="ow-grp">{fmtOwDate(row.GRNDate)}</td>
                   <td className="ow-intel-grow">{row.SupplierName ?? '—'}</td>
                 </tr>
               ))}
@@ -2715,17 +2715,18 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
         <div className="ow-panel-title">Bill / Sales</div>
         <div className="ow-panel-scroll">
           <table className="ow-intel-table">
-            <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-num">MRP</th></tr></thead>
+            <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-grow">Customer</th><th className="ow-num">MRP</th></tr></thead>
             <tbody>
               {sales.map((row, i) => (
                 <tr key={i}>
                   <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
                   <td>{fmtOwDate(row.Bill_Time)}</td>
                   <td className="ow-grow" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
+                  <td className="ow-grow" title={row.CUSTOMERNAME}>{row.CUSTOMERNAME ?? '—'}</td>
                   <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
                 </tr>
               ))}
-              {!sales.length && <tr><td colSpan={4} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No sales history.'}</td></tr>}
+              {!sales.length && <tr><td colSpan={5} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No sales history.'}</td></tr>}
             </tbody>
           </table>
         </div>

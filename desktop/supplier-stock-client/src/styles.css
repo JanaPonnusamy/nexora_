@@ -6954,9 +6954,19 @@ th {
    long the table grows past the panel and .ow-panel-scroll scrolls it
    horizontally instead of squeezing/truncating the name. */
 .ow-intel-table { width: max-content; min-width: 100%; }
-.ow-intel-table thead th { position: sticky; top: 0; z-index: 1; height: 22px; padding: 0 5px !important; font-size: 10px; white-space: nowrap; }
-.ow-intel-table tbody td { height: 22px !important; padding: 0 5px !important; font-size: 11px; }
+.ow-intel-table thead th { position: sticky; top: 0; z-index: 1; height: 22px; padding: 0 4px !important; font-size: 10px; white-space: nowrap; }
+.ow-intel-table tbody td { height: 22px !important; padding: 0 4px !important; font-size: 11px; }
 .ow-intel-table .ow-intel-grow { white-space: nowrap; }
+/* Purchase/GRN: narrow numeric columns (Stock/Free/Dis%/Land%/Cost/PTR/MRP) so
+   the table doesn't eat width the Supplier name needs. */
+.ow-panel--purchase .ow-num { min-width: 38px; }
+/* Group dividers so Cost/PTR/MRP (three similar-looking decimal numbers in a
+   row) don't blur together -- a light rule + distinct weight/color per
+   column breaks up the "wall of numbers" look. */
+.ow-panel--purchase .ow-grp { border-left: 1px solid var(--nx-rule); }
+.ow-panel--purchase .ow-col-cost { color: var(--nx-text-muted); }
+.ow-panel--purchase .ow-col-ptr { font-weight: 700; color: var(--nx-text); }
+.ow-panel--purchase .ow-col-mrp { color: var(--nx-accent-ink); }
 .ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
 .ow-freerow > td { background: rgba(245, 158, 11, 0.16); }
 
