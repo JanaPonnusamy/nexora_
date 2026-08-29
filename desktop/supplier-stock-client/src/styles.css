@@ -6834,9 +6834,6 @@ th {
 .ow-error button { border: 0; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
 
 .ow-grid { flex: 1 1 auto; min-height: 0; overflow: auto; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); }
-.ow-history { flex: 0 0 auto; }
-.ow-history .table-wrap { max-height: clamp(6rem, 18vh, 14rem); overflow: auto; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); }
-.ow-history-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 11px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-soft); }
 
 /* Dense, aligned grids — full-width flexible product-name column, compact numerics. */
 .ow-screen table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -6873,59 +6870,55 @@ th {
 .ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-accent); }
 .ow-empty { padding: 1.2rem; text-align: center; color: var(--nx-text-muted); }
 
-/* ===== Order Workspace two-column layout (grid + intelligence sidebar) ===== */
+/* ===== Order Workspace layout: main grid on top, intelligence dock below ===== */
 .ow-title { margin: 0 6px 0 0; font-size: 14px; font-weight: 800; letter-spacing: 0.01em; color: var(--nx-text); white-space: nowrap; }
 
-.ow-workspace {
-  flex: 1 1 auto; min-height: 0;
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  /* Bound the single row to the flex-allocated height so the grid + sidebar
-     scroll INTERNALLY instead of growing and page-scrolling. */
-  grid-template-rows: minmax(0, 1fr);
-  gap: 8px; align-items: stretch;
-}
-.ow-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+/* Vertical split: the order grid takes the flexible upper space, the dock is a
+   fixed-height band along the bottom (full window width so Purchase/Sales get
+   far more room than the old narrow right sidebar). */
+.ow-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.ow-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .ow-main .ow-grid { flex: 1 1 auto; min-height: 0; }
 
-/* Intelligence sidebar — compact contextual inspector, only one tab expanded. */
-.ow-intel {
+/* Bottom intelligence dock. */
+.ow-dock {
+  flex: 0 0 auto; height: clamp(178px, 30vh, 250px);
+  min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
+}
+.ow-dock-head {
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 3px 16px;
+  padding: 5px 10px; border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface-raised);
+}
+.ow-dock-name { font-size: 13px; font-weight: 800; color: var(--nx-text); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-dock-meta { font-size: 11px; color: var(--nx-text-muted); }
+.ow-dock-meta b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.ow-dock-hint { font-size: 12px; color: var(--nx-text-muted); }
+
+/* Horizontal panel row: Trend, Purchase, Sales, Previous Decisions. */
+.ow-dock-panels { flex: 1 1 auto; min-height: 0; display: flex; gap: 6px; padding: 6px; overflow: hidden; }
+.ow-panel {
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
 }
-.ow-intel-empty {
-  display: flex; align-items: center; justify-content: center; height: 100%;
-  padding: 1rem; text-align: center; color: var(--nx-text-muted); font-size: 12px;
-}
-.ow-intel-inner { display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.ow-intel-head { flex: 0 0 auto; padding: 7px 10px; border-bottom: 1px solid var(--nx-rule); }
-.ow-intel-name { display: block; font-size: 13px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ow-intel-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; font-size: 11px; color: var(--nx-text-muted); }
-.ow-intel-meta b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
-/* Stacked sections: Purchase, Sales and Trend are ALL visible at once (not
-   tabbed), each capped to ~5 rows then scrolling internally. */
-.ow-intel-sections {
-  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-  gap: 6px; padding: 6px; overflow: auto;
-}
-.ow-intel-sec {
-  display: flex; flex-direction: column; min-height: 0;
-  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); overflow: hidden;
-}
-.ow-intel-sec-title {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+.ow-panel--chart { flex: 1 1 0; min-width: 200px; }
+.ow-panel--purchase { flex: 1.7 1 0; min-width: 300px; }   /* Purchase gets the most room. */
+.ow-panel--sales { flex: 1.3 1 0; min-width: 250px; }
+.ow-panel--history { flex: 1.2 1 0; min-width: 230px; }
+.ow-panel-title {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 3px 8px;
   background: var(--nx-surface-raised); color: var(--nx-text-soft);
   font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
 }
-.ow-intel-scroll { min-height: 0; overflow: auto; }
-/* ~5 data rows (26px) + sticky header row, then scroll. */
-.ow-intel-sec--rows .ow-intel-scroll { max-height: calc(6 * 26px); }
-.ow-intel-sec--chart { flex: 1 1 auto; min-height: 120px; }
-.ow-intel-sec--chart .ow-chart { padding: 6px 8px; }
-.ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
-/* Denser rows inside the sidebar than the main grid. */
+.ow-panel-count { font-weight: 700; color: var(--nx-text-muted); text-transform: none; letter-spacing: 0; }
+.ow-panel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.ow-panel-body { flex: 1 1 auto; min-height: 0; display: flex; }
+
+/* Dense rows inside the dock tables. */
 .ow-intel-table { width: 100%; }
-.ow-intel-table thead th { height: 26px; font-size: 10px; }
-.ow-intel-table tbody td { height: 26px; font-size: 11px; }
+.ow-intel-table thead th { position: sticky; top: 0; z-index: 1; height: 22px; font-size: 10px; }
+.ow-intel-table tbody td { height: 22px !important; padding: 0 8px !important; font-size: 11px; }
+.ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
 .ow-freerow > td { background: rgba(245, 158, 11, 0.16); }
 
 /* Compact monthly trend chart. */
@@ -6943,9 +6936,9 @@ th {
 /* Selected row a touch stronger so the intelligence context is obvious. */
 .ow-screen tbody tr.ow-row-sel > td { background: var(--nx-surface-sunk); }
 
-/* Narrow desktop: stack the sidebar under the grid rather than force h-scroll. */
-@media (max-width: 1100px) {
-  .ow-workspace { grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr); }
+/* Narrow desktop: let the dock panels scroll horizontally rather than crush. */
+@media (max-width: 1180px) {
+  .ow-dock-panels { overflow-x: auto; }
 }
 
 /* ===== Config-driven grid (resizable/reorderable columns) + gear button ===== */

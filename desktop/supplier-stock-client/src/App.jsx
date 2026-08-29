@@ -2232,7 +2232,7 @@ function OrderWorkspace({ session, settings }) {
 
       {error && <div className="ow-error" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
 
-      <div className="ow-workspace">
+      <div className="ow-body">
         <div className="ow-main">
           {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate</div>}
           <div className="ow-grid">
@@ -2269,23 +2269,35 @@ function OrderWorkspace({ session, settings }) {
         )}
           </div>
         </div>
-        <aside className="ow-intel">
-          <OrderIntelligence store={store} productCode={selectedCode} product={selected} mode="local" session={session} onError={setError} />
-        </aside>
-      </div>
 
-      <div className="ow-history">
-        <div className="ow-history-head">Previous decisions {selectedCode != null && <span className="ow-count">Last {Math.min(history.length, 25)} entries</span>}</div>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Org Order</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
-            <tbody>
-              {history.map((row, i) => (
-                <tr key={i}><td className="ow-grow" title={row.ProductName}>{row.ProductName}</td><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwQty(row.saleunit)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td>{row.remarks ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
-              ))}
-              {!history.length && <tr><td colSpan={9} className="ow-empty">{selectedCode == null ? 'Select a product to see its previous-order history.' : 'No previous-order history for this product.'}</td></tr>}
-            </tbody>
-          </table>
+        <div className="ow-dock">
+          <div className="ow-dock-head">
+            {selected ? (
+              <>
+                <strong className="ow-dock-name" title={selected.name}>{selected.name}</strong>
+                <span className="ow-dock-meta">Stock <b>{fmtOwQty(selected.stock)}</b></span>
+                <span className="ow-dock-meta">Pack <b>{fmtOwQty(selected.pack)}</b></span>
+                <span className="ow-dock-meta">MRP <b>{fmtOwMoney(selected.mrp)}</b></span>
+              </>
+            ) : <span className="ow-dock-hint">Select a product to see its trend, purchase, sales &amp; previous decisions.</span>}
+          </div>
+          <div className="ow-dock-panels">
+            <OrderIntelligence store={store} productCode={selectedCode} mode="local" session={session} onError={setError} />
+            <section className="ow-panel ow-panel--history">
+              <div className="ow-panel-title">Previous Decisions{selectedCode != null && history.length > 0 && <span className="ow-panel-count">Last {Math.min(history.length, 25)}</span>}</div>
+              <div className="ow-panel-scroll">
+                <table className="ow-intel-table">
+                  <thead><tr><th className="ow-num">Or Qty</th><th className="ow-num">Org</th><th className="ow-num">MRP</th><th className="ow-grow">Remarks</th><th>Date</th></tr></thead>
+                  <tbody>
+                    {history.map((row, i) => (
+                      <tr key={i}><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td className="ow-grow" title={row.remarks ?? row.WantedType ?? ''}>{row.remarks ?? row.WantedType ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td></tr>
+                    ))}
+                    {!history.length && <tr><td colSpan={5} className="ow-empty">{selectedCode == null ? 'No product selected.' : 'No previous-order history.'}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </section>
@@ -2340,69 +2352,59 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
     return () => { cancelled = true; };
   }, [store, productCode, mode, session]);
 
-  if (productCode == null) {
-    return <div className="ow-intel-empty">Select a product to see purchase, sales and trend.</div>;
-  }
+  const empty = productCode == null;
 
   return (
-    <div className="ow-intel-inner">
-      <div className="ow-intel-head">
-        <strong className="ow-intel-name" title={product?.name}>{product?.name || `#${productCode}`}</strong>
-        <div className="ow-intel-meta">
-          <span>Stock <b>{fmtOwQty(product?.stock)}</b></span>
-          <span>Pack <b>{fmtOwQty(product?.pack)}</b></span>
-          <span>MRP <b>{fmtOwMoney(product?.mrp)}</b></span>
+    <>
+      <section className="ow-panel ow-panel--chart">
+        <div className="ow-panel-title">Monthly Trend{loading && <span className="ow-intel-loading">…</span>}</div>
+        <div className="ow-panel-body">
+          {empty ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={monthly} loading={loading} />}
         </div>
-      </div>
-      <div className="ow-intel-sections">
-        <section className="ow-intel-sec ow-intel-sec--rows">
-          <div className="ow-intel-sec-title">Purchase / GRN{loading && <span className="ow-intel-loading">…</span>}</div>
-          <div className="ow-intel-scroll">
-            <table className="ow-intel-table">
-              <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th>GRN Date</th><th className="ow-grow">Supplier</th></tr></thead>
-              <tbody>
-                {purchase.map((row, i) => (
-                  <tr key={i} className={Number(row.FreeQty) > 0 ? 'ow-freerow' : undefined}>
-                    <td className="ow-num">{fmtOwQty(row.RStock)}</td>
-                    <td className="ow-num">{fmtOwQty(row.FreeQty)}</td>
-                    <td className="ow-num">{fmtOwMoney(row.ItemCost)}</td>
-                    <td className="ow-num">{fmtOwMoney(row.PTR)}</td>
-                    <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
-                    <td>{fmtOwDate(row.GRNDate)}</td>
-                    <td className="ow-grow" title={row.SupplierName}>{row.SupplierName ?? '—'}</td>
-                  </tr>
-                ))}
-                {!purchase.length && !loading && <tr><td colSpan={7} className="ow-empty">No purchase history.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section className="ow-intel-sec ow-intel-sec--rows">
-          <div className="ow-intel-sec-title">Bill / Sales</div>
-          <div className="ow-intel-scroll">
-            <table className="ow-intel-table">
-              <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-grow">Customer</th><th className="ow-num">MRP</th></tr></thead>
-              <tbody>
-                {sales.map((row, i) => (
-                  <tr key={i}>
-                    <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
-                    <td>{fmtOwDate(row.Bill_Time)}</td>
-                    <td className="ow-grow" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
-                    <td className="ow-grow" title={row.CUSTOMERNAME}>{row.CUSTOMERNAME ?? '—'}</td>
-                    <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
-                  </tr>
-                ))}
-                {!sales.length && !loading && <tr><td colSpan={5} className="ow-empty">No sales history.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section className="ow-intel-sec ow-intel-sec--chart">
-          <div className="ow-intel-sec-title">Monthly Trend</div>
-          <OwTrendChart rows={monthly} loading={loading} />
-        </section>
-      </div>
-    </div>
+      </section>
+      <section className="ow-panel ow-panel--purchase">
+        <div className="ow-panel-title">Purchase / GRN</div>
+        <div className="ow-panel-scroll">
+          <table className="ow-intel-table">
+            <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num">Cost</th><th className="ow-num">PTR</th><th className="ow-num">MRP</th><th>GRN Date</th><th className="ow-grow">Supplier</th></tr></thead>
+            <tbody>
+              {purchase.map((row, i) => (
+                <tr key={i} className={Number(row.FreeQty) > 0 ? 'ow-freerow' : undefined}>
+                  <td className="ow-num">{fmtOwQty(row.RStock)}</td>
+                  <td className="ow-num">{fmtOwQty(row.FreeQty)}</td>
+                  <td className="ow-num">{fmtOwMoney(row.ItemCost)}</td>
+                  <td className="ow-num">{fmtOwMoney(row.PTR)}</td>
+                  <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
+                  <td>{fmtOwDate(row.GRNDate)}</td>
+                  <td className="ow-grow" title={row.SupplierName}>{row.SupplierName ?? '—'}</td>
+                </tr>
+              ))}
+              {!purchase.length && <tr><td colSpan={7} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No purchase history.'}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="ow-panel ow-panel--sales">
+        <div className="ow-panel-title">Bill / Sales</div>
+        <div className="ow-panel-scroll">
+          <table className="ow-intel-table">
+            <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-grow">Customer</th><th className="ow-num">MRP</th></tr></thead>
+            <tbody>
+              {sales.map((row, i) => (
+                <tr key={i}>
+                  <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
+                  <td>{fmtOwDate(row.Bill_Time)}</td>
+                  <td className="ow-grow" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
+                  <td className="ow-grow" title={row.CUSTOMERNAME}>{row.CUSTOMERNAME ?? '—'}</td>
+                  <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
+                </tr>
+              ))}
+              {!sales.length && <tr><td colSpan={5} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No sales history.'}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </>
   );
 }
 
