@@ -6873,38 +6873,40 @@ th {
 /* ===== Order Workspace layout: main grid on top, intelligence dock below ===== */
 .ow-title { margin: 0 6px 0 0; font-size: 14px; font-weight: 800; letter-spacing: 0.01em; color: var(--nx-text); white-space: nowrap; }
 
-/* Vertical split: the order grid takes the flexible upper space, the dock is a
-   fixed-height band along the bottom (full window width so Purchase/Sales get
-   far more room than the old narrow right sidebar). */
-.ow-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-.ow-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+/* Side-by-side split: order grid on the left (~2/3), intelligence panels
+   stacked in a right column (~1/3): Trend, Purchase, Sales, Previous Decisions. */
+.ow-body {
+  flex: 1 1 auto; min-height: 0;
+  display: grid; grid-template-columns: 2fr minmax(360px, 1fr);
+  grid-template-rows: minmax(0, 1fr); gap: 8px; align-items: stretch;
+}
+.ow-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .ow-main .ow-grid { flex: 1 1 auto; min-height: 0; }
 
-/* Bottom intelligence dock. */
-.ow-dock {
-  flex: 0 0 auto; height: clamp(178px, 30vh, 250px);
-  min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+/* Right intelligence column. */
+.ow-side {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
 }
-.ow-dock-head {
-  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 3px 16px;
-  padding: 5px 10px; border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface-raised);
+.ow-side-head {
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 14px;
+  padding: 6px 10px; border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface-raised);
 }
-.ow-dock-name { font-size: 13px; font-weight: 800; color: var(--nx-text); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ow-dock-meta { font-size: 11px; color: var(--nx-text-muted); }
-.ow-dock-meta b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
-.ow-dock-hint { font-size: 12px; color: var(--nx-text-muted); }
+.ow-side-name { display: block; width: 100%; font-size: 13px; font-weight: 800; color: var(--nx-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-side-meta { font-size: 11px; color: var(--nx-text-muted); }
+.ow-side-meta b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.ow-side-hint { font-size: 12px; color: var(--nx-text-muted); }
 
-/* Horizontal panel row: Trend, Purchase, Sales, Previous Decisions. */
-.ow-dock-panels { flex: 1 1 auto; min-height: 0; display: flex; gap: 6px; padding: 6px; overflow: hidden; }
+/* Vertical panel stack. */
+.ow-side-panels { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px; overflow: hidden; }
 .ow-panel {
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
 }
-.ow-panel--chart { flex: 1 1 0; min-width: 200px; }
-.ow-panel--purchase { flex: 1.7 1 0; min-width: 300px; }   /* Purchase gets the most room. */
-.ow-panel--sales { flex: 1.3 1 0; min-width: 250px; }
-.ow-panel--history { flex: 1.2 1 0; min-width: 230px; }
+.ow-panel--chart { flex: 0 0 auto; height: 128px; }
+.ow-panel--purchase { flex: 1.5 1 0; min-height: 84px; }   /* Purchase gets the most room. */
+.ow-panel--sales { flex: 1.1 1 0; min-height: 74px; }
+.ow-panel--history { flex: 1 1 0; min-height: 74px; }
 .ow-panel-title {
   flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 3px 8px;
   background: var(--nx-surface-raised); color: var(--nx-text-soft);
@@ -6936,9 +6938,9 @@ th {
 /* Selected row a touch stronger so the intelligence context is obvious. */
 .ow-screen tbody tr.ow-row-sel > td { background: var(--nx-surface-sunk); }
 
-/* Narrow desktop: let the dock panels scroll horizontally rather than crush. */
+/* Narrow desktop: give the intelligence column a firmer minimum. */
 @media (max-width: 1180px) {
-  .ow-dock-panels { overflow-x: auto; }
+  .ow-body { grid-template-columns: 1.8fr minmax(320px, 1fr); }
 }
 
 /* ===== Config-driven grid (resizable/reorderable columns) + gear button ===== */

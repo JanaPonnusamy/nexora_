@@ -2270,18 +2270,18 @@ function OrderWorkspace({ session, settings }) {
           </div>
         </div>
 
-        <div className="ow-dock">
-          <div className="ow-dock-head">
+        <aside className="ow-side">
+          <div className="ow-side-head">
             {selected ? (
               <>
-                <strong className="ow-dock-name" title={selected.name}>{selected.name}</strong>
-                <span className="ow-dock-meta">Stock <b>{fmtOwQty(selected.stock)}</b></span>
-                <span className="ow-dock-meta">Pack <b>{fmtOwQty(selected.pack)}</b></span>
-                <span className="ow-dock-meta">MRP <b>{fmtOwMoney(selected.mrp)}</b></span>
+                <strong className="ow-side-name" title={selected.name}>{selected.name}</strong>
+                <span className="ow-side-meta">Stock <b>{fmtOwQty(selected.stock)}</b></span>
+                <span className="ow-side-meta">Pack <b>{fmtOwQty(selected.pack)}</b></span>
+                <span className="ow-side-meta">MRP <b>{fmtOwMoney(selected.mrp)}</b></span>
               </>
-            ) : <span className="ow-dock-hint">Select a product to see its trend, purchase, sales &amp; previous decisions.</span>}
+            ) : <span className="ow-side-hint">Select a product to see its trend, purchase, sales &amp; previous decisions.</span>}
           </div>
-          <div className="ow-dock-panels">
+          <div className="ow-side-panels">
             <OrderIntelligence store={store} productCode={selectedCode} mode="local" session={session} onError={setError} />
             <section className="ow-panel ow-panel--history">
               <div className="ow-panel-title">Previous Decisions{selectedCode != null && history.length > 0 && <span className="ow-panel-count">Last {Math.min(history.length, 25)}</span>}</div>
@@ -2298,7 +2298,7 @@ function OrderWorkspace({ session, settings }) {
               </div>
             </section>
           </div>
-        </div>
+        </aside>
       </div>
     </section>
   );
