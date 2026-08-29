@@ -6894,9 +6894,10 @@ th {
 }
 .ow-qty::-webkit-outer-spin-button, .ow-qty::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ow-qty:disabled { opacity: 0.6; }
-/* Active row: one clean, unambiguous highlight (accent-tinted bg + left bar) so
-   it always reads distinctly from hover/zebra/assigned rows. */
-.ow-screen tbody tr.ow-row-sel > td { background: color-mix(in srgb, var(--nx-accent) 14%, var(--nx-surface)); }
+/* Active row: one clean, unambiguous highlight across the FULL row (every td,
+   not just a left accent bar) so it always reads distinctly from hover/zebra/
+   assigned rows. Plain theme token (not color-mix()) so it renders reliably. */
+.ow-screen tbody tr.ow-row-sel > td { background: var(--nx-accent-sunk) !important; }
 .ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-accent); }
 .ow-empty { padding: 1.2rem; text-align: center; color: var(--nx-text-muted); }
 
