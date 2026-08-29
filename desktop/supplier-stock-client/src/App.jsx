@@ -2233,6 +2233,7 @@ function OrderWorkspace({ session, settings }) {
       {error && <div className="ow-error" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
 
       <div className="ow-body">
+        <div className="ow-left">
         <div className="ow-main">
           {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate</div>}
           <div className="ow-grid">
@@ -2270,6 +2271,22 @@ function OrderWorkspace({ session, settings }) {
           </div>
         </div>
 
+        <section className="ow-panel ow-panel--history">
+          <div className="ow-panel-title">Previous Decisions{selectedCode != null && history.length > 0 && <span className="ow-panel-count">Last {Math.min(history.length, 25)}</span>}</div>
+          <div className="ow-panel-scroll">
+            <table className="ow-intel-table">
+              <thead><tr><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Org Order</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
+              <tbody>
+                {history.map((row, i) => (
+                  <tr key={i}><td className="ow-grow" title={row.ProductName}>{row.ProductName}</td><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwQty(row.saleunit)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td>{row.remarks ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
+                ))}
+                {!history.length && <tr><td colSpan={9} className="ow-empty">{selectedCode == null ? 'Select a product to see its previous-order history.' : 'No previous-order history for this product.'}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        </div>
+
         <aside className="ow-side">
           <div className="ow-side-head">
             {selected ? (
@@ -2279,24 +2296,10 @@ function OrderWorkspace({ session, settings }) {
                 <span className="ow-side-meta">Pack <b>{fmtOwQty(selected.pack)}</b></span>
                 <span className="ow-side-meta">MRP <b>{fmtOwMoney(selected.mrp)}</b></span>
               </>
-            ) : <span className="ow-side-hint">Select a product to see its trend, purchase, sales &amp; previous decisions.</span>}
+            ) : <span className="ow-side-hint">Select a product to see its trend, purchase &amp; sales.</span>}
           </div>
           <div className="ow-side-panels">
             <OrderIntelligence store={store} productCode={selectedCode} mode="local" session={session} onError={setError} />
-            <section className="ow-panel ow-panel--history">
-              <div className="ow-panel-title">Previous Decisions{selectedCode != null && history.length > 0 && <span className="ow-panel-count">Last {Math.min(history.length, 25)}</span>}</div>
-              <div className="ow-panel-scroll">
-                <table className="ow-intel-table">
-                  <thead><tr><th className="ow-num">Or Qty</th><th className="ow-num">Org</th><th className="ow-num">MRP</th><th className="ow-grow">Remarks</th><th>Date</th></tr></thead>
-                  <tbody>
-                    {history.map((row, i) => (
-                      <tr key={i}><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td className="ow-grow" title={row.remarks ?? row.WantedType ?? ''}>{row.remarks ?? row.WantedType ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td></tr>
-                    ))}
-                    {!history.length && <tr><td colSpan={5} className="ow-empty">{selectedCode == null ? 'No product selected.' : 'No previous-order history.'}</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </section>
           </div>
         </aside>
       </div>

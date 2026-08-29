@@ -6880,8 +6880,11 @@ th {
   display: grid; grid-template-columns: 2fr minmax(360px, 1fr);
   grid-template-rows: minmax(0, 1fr); gap: 8px; align-items: stretch;
 }
-.ow-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+/* Left column: order grid (flexible) with Previous Decisions docked below it. */
+.ow-left { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.ow-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .ow-main .ow-grid { flex: 1 1 auto; min-height: 0; }
+.ow-left > .ow-panel--history { flex: 0 0 auto; height: clamp(120px, 22vh, 190px); }
 
 /* Right intelligence column. */
 .ow-side {
@@ -6903,10 +6906,9 @@ th {
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
 }
-.ow-panel--chart { flex: 0 0 auto; height: 128px; }
-.ow-panel--purchase { flex: 1.5 1 0; min-height: 84px; }   /* Purchase gets the most room. */
-.ow-panel--sales { flex: 1.1 1 0; min-height: 74px; }
-.ow-panel--history { flex: 1 1 0; min-height: 74px; }
+.ow-panel--chart { flex: 0 0 auto; height: 132px; }
+.ow-panel--purchase { flex: 1.5 1 0; min-height: 90px; }   /* Purchase gets the most room. */
+.ow-panel--sales { flex: 1.1 1 0; min-height: 80px; }
 .ow-panel-title {
   flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 3px 8px;
   background: var(--nx-surface-raised); color: var(--nx-text-soft);
