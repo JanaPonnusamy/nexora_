@@ -224,6 +224,16 @@ export const api = {
     })}`, { session });
   },
 
+  getBatchDetail(storeId, productCode, batchNo, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/stock-availability/products/batch-detail${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: storeId,
+      product: productCode,
+      batch: batchNo
+    })}`, { session });
+  },
+
   getStockPurchases(storeId, productCode, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/stock-availability/products/purchases${toQuery({
@@ -377,6 +387,16 @@ export const api = {
     })}`, { session });
   },
 
+  getNonMovingTotals(storeId, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/reports/non-moving/totals${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: storeId,
+      sales_age: filters.salesAge || 90,
+      grn_age: filters.grnAge || 10
+    })}`, { session });
+  },
+
   updateSupplierMapping(payload, session) {
     return request('/api/supplier-stock-analysis/mapping', {
       method: 'POST',
@@ -413,6 +433,61 @@ export const api = {
       session,
       body: JSON.stringify({ tenant_id: tenantId, bills, status })
     });
+  },
+
+  // ----- Order Workspace (legacy VB-style ordering console) -----
+  // Store-scoped by store_name and authorised server-side; independent of the
+  // desktop tenant/store GUID context (mirrors the web legacyOrderService).
+  legacyStores(session, activeOnly = true) {
+    return request(`/api/legacy-order/stores${toQuery({ active_only: activeOnly })}`, { session });
+  },
+
+  legacyQtyCheckRows(storeName, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  legacyUpdateQtyCheck(storeName, productCode, orderQty, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}`, {
+      method: 'PATCH',
+      session,
+      body: JSON.stringify({ order_qty: orderQty })
+    });
+  },
+
+  legacyOrders(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  legacyUpdateOrderQty(storeName, productCode, orderQty, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/${productCode}`, {
+      method: 'PATCH',
+      session,
+      body: JSON.stringify({ order_qty: orderQty })
+    });
+  },
+
+  legacyOrderWorkflow(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/workflow`, { session });
+  },
+
+  legacyFinalizeOrder(storeName, note, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/workflow/finalize`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ note: note || null })
+    });
+  },
+
+  legacyReopenOrder(storeName, note, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/workflow/reopen`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ note: note || null })
+    });
+  },
+
+  legacyOrderHistory(storeName, productCode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/order-history`, { session });
   }
 };
 

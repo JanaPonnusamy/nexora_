@@ -28,6 +28,7 @@ const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
   { id: 'analysis', label: 'Supplier Stock Analysis', module: 'supplier_stock_analysis' },
   { id: 'nmw_sales', label: 'NMW Sales Report', module: 'nmw_sales_report' },
+  { id: 'order_workspace', label: 'Order Workspace', module: 'order_workspace' },
   { id: 'settings', label: 'Settings', module: 'settings' }
 ];
 
@@ -273,11 +274,20 @@ function AppShell() {
     // modules/nmw_sales_report/service.py); this just keeps the nav honest.
     const nmwBlocked = isSalesmanOnly(session);
     if (nmwBlocked) base = base.filter((s) => s.id !== 'nmw_sales');
+    // Order Workspace (VB-style ordering console) is a Purchase-Manager tool:
+    // visible to super admins and purchase-manager logins, hidden from everyone
+    // else (e.g. salesman-only). The legacy-order API is store-scoped/authorised
+    // server-side too; this keeps the nav honest.
+    const orderWorkspaceAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
+    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'order_workspace');
     if (!modules.length) return base;
     // 'settings' is always available; 'nmw_sales' is too unless blocked above.
     // The NMW Sales Report is scoped server-side (store users see only their
     // own approved bills), so it never depends on a per-user module grant.
+    // Order Workspace, when allowed above, is likewise always available (no
+    // per-user module grant needed).
     const always = new Set(nmwBlocked ? ['settings'] : ['settings', 'nmw_sales']);
+    if (orderWorkspaceAllowed) always.add('order_workspace');
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
 
@@ -508,6 +518,8 @@ function AppShell() {
           />
         ) : activeScreen === 'nmw_sales' ? (
           <NmwSalesReport session={session} settings={runtimeSettings} />
+        ) : activeScreen === 'order_workspace' ? (
+          <OrderWorkspace session={session} settings={runtimeSettings} />
         ) : (
           <StockAvailability
             session={session}
@@ -1862,6 +1874,254 @@ function nmwExportRows(bill, lineItems) {
 // requests. Whether THIS login is broad-access is read from the API response
 // (can_approve / scope), not detected client-side — role name shapes differ
 // across deployments, so the server is the only reliable source of truth.
+// Order Workspace — VB-style ordering console ported into the desktop client
+// (Purchase-Manager tool). Self-contained via the /api/legacy-order endpoints,
+// keyed by store_name (independent of the desktop tenant/store GUID context).
+// v1 covers the core workflow: store pick, Qty Review (Enter accept / Esc no-need
+// / ↑↓ navigate) and Review All (inline qty edit), the workflow summary + Finalize,
+// and the Previous-decisions strip. Supplier assignment + product intelligence are
+// intentionally deferred (see web OrderWorkspacePage for the full feature set).
+function OrderWorkspace({ session, settings }) {
+  void settings;
+  const [stores, setStores] = useState([]);
+  const [store, setStore] = useState('');
+  const [view, setView] = useState('qty'); // 'qty' | 'review'
+  const [qtyRows, setQtyRows] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [edits, setEdits] = useState({});
+  const [savingCode, setSavingCode] = useState(null);
+  const [selectedCode, setSelectedCode] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [workflow, setWorkflow] = useState(null);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const qtyRefs = useRef([]);
+
+  useEffect(() => {
+    api.legacyStores(session)
+      .then((list) => {
+        const arr = asArray(list);
+        setStores(arr);
+        setStore((cur) => cur || arr[0]?.store_name || '');
+      })
+      .catch((e) => setError(e.message));
+  }, [session]);
+
+  const loadWorkflow = useCallback(() => {
+    if (!store) return;
+    api.legacyOrderWorkflow(store, session).then(setWorkflow).catch(() => {});
+  }, [store, session]);
+  useEffect(() => { loadWorkflow(); }, [loadWorkflow]);
+
+  useEffect(() => {
+    if (!store) return undefined;
+    let cancelled = false;
+    setLoading(true); setError(''); setEdits({}); setSelectedCode(null);
+    const done = () => { if (!cancelled) setLoading(false); };
+    if (view === 'qty') {
+      api.legacyQtyCheckRows(store, session)
+        .then((r) => { if (!cancelled) setQtyRows(asArray(r)); })
+        .catch((e) => { if (!cancelled) setError(e.message); })
+        .finally(done);
+    } else {
+      api.legacyOrders(store, session)
+        .then((r) => { if (!cancelled) setRows(asArray(r)); })
+        .catch((e) => { if (!cancelled) setError(e.message); })
+        .finally(done);
+    }
+    return () => { cancelled = true; };
+  }, [store, view, session]);
+
+  useEffect(() => {
+    if (!store || selectedCode == null) { setHistory([]); return; }
+    api.legacyOrderHistory(store, selectedCode, session)
+      .then((r) => setHistory(asArray(r)))
+      .catch(() => setHistory([]));
+  }, [store, selectedCode, session]);
+
+  const finalized = workflow?.status === 'FINALIZED';
+  const term = search.trim().toLowerCase();
+  const match = (name, code) => !term || String(name || '').toLowerCase().includes(term) || String(code).includes(term);
+  const filteredQty = useMemo(() => qtyRows.filter((r) => match(r.productname, r.productcode)), [qtyRows, term]);
+  const filteredRows = useMemo(() => rows.filter((r) => match(r.ProductName, r.ProductCode)), [rows, term]);
+
+  const commitQty = (productCode, value, focusIndex) => {
+    if (!store) return;
+    setSavingCode(productCode);
+    api.legacyUpdateQtyCheck(store, productCode, value, session)
+      .then(() => {
+        setQtyRows((cur) => cur.filter((r) => r.productcode !== productCode));
+        setEdits((cur) => { const n = { ...cur }; delete n[productCode]; return n; });
+        requestAnimationFrame(() => qtyRefs.current[focusIndex]?.focus());
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => { setSavingCode(null); loadWorkflow(); });
+  };
+
+  const onQtyKey = (e, row, index) => {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      e.preventDefault();
+      const value = e.key === 'Enter' ? Number(edits[row.productcode] ?? row.orderqty) : 0;
+      const next = filteredQty[index + 1] ?? filteredQty[index - 1] ?? null;
+      commitQty(row.productcode, value, next ? index : Math.max(0, index - 1));
+    } else if (e.key === 'ArrowDown') { e.preventDefault(); qtyRefs.current[index + 1]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); qtyRefs.current[index - 1]?.focus(); }
+  };
+
+  const saveOrderQty = (row, value) => {
+    if (!store || value === row.OrderQty) return;
+    setSavingCode(row.ProductCode);
+    api.legacyUpdateOrderQty(store, row.ProductCode, value, session)
+      .then(() => setRows((cur) => cur.map((r) => (r.ProductCode === row.ProductCode ? { ...r, OrderQty: value } : r))))
+      .catch((e) => setError(e.message))
+      .finally(() => { setSavingCode(null); loadWorkflow(); });
+  };
+
+  const finalize = (reopen) => {
+    if (!store) return;
+    const note = window.prompt(reopen ? 'Why is this order being reopened?' : 'Optional finalization note:');
+    if (note === null) return;
+    const call = reopen ? api.legacyReopenOrder(store, note, session) : api.legacyFinalizeOrder(store, note, session);
+    call.then(setWorkflow).catch((e) => setError(e.message));
+  };
+
+  const activeCount = view === 'qty' ? filteredQty.length : filteredRows.length;
+
+  return (
+    <section className="screen-panel ow-screen">
+      <ScreenHeader title="Order Workspace" subtitle="VB-style quantity review and ordering console (legacy order database)." />
+
+      <div className="ow-toolbar">
+        <label className="ow-field">
+          <span>Store</span>
+          <select value={store} onChange={(e) => setStore(e.target.value)}>
+            {!stores.length && <option value="">No stores</option>}
+            {stores.map((s) => <option key={s.store_name} value={s.store_name}>{s.store_name}</option>)}
+          </select>
+        </label>
+        <div className="ow-tabs" role="tablist" aria-label="Workspace view">
+          <button type="button" role="tab" aria-selected={view === 'qty'} className={view === 'qty' ? 'active' : ''} onClick={() => setView('qty')}>Qty Review</button>
+          <button type="button" role="tab" aria-selected={view === 'review'} className={view === 'review' ? 'active' : ''} onClick={() => setView('review')}>Review All</button>
+        </div>
+        <input className="ow-search" type="search" value={search} placeholder="Search product or code…" aria-label="Search products" onChange={(e) => setSearch(e.target.value)} />
+        {workflow && <span className={`ow-chip ${finalized || workflow.ready ? 'ow-chip-ok' : 'ow-chip-run'}`}>{String(workflow.status || '').replace(/_/g, ' ')}</span>}
+        {workflow && <span className="ow-metrics"><strong>{workflow.qty_pending ?? 0}</strong> pending · <strong>{workflow.assigned_lines ?? 0}</strong> assigned · <strong>{workflow.unassigned_lines ?? 0}</strong> open</span>}
+        <span className="ow-count">{activeCount} products</span>
+        {finalized
+          ? <button type="button" className="ow-btn" onClick={() => finalize(true)}>Reopen</button>
+          : <button type="button" className="ow-btn ow-btn-primary" disabled={!workflow?.ready} title={workflow?.ready ? 'Lock this order' : 'Complete review first'} onClick={() => finalize(false)}>Finalize</button>}
+      </div>
+
+      {error && <div className="ow-error" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
+      {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate</div>}
+
+      <div className="table-wrap ow-grid">
+        {view === 'qty' ? (
+          <table>
+            <thead>
+              <tr><th>#</th><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Pack</th><th>Desc</th><th className="ow-num">Sls Qty</th><th className="ow-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="ow-num">Max Qty</th><th>Wanted</th></tr>
+            </thead>
+            <tbody>
+              {filteredQty.map((row, index) => {
+                const value = edits[row.productcode] ?? row.orderqty;
+                return (
+                  <tr key={row.productcode} className={selectedCode === row.productcode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.productcode)}>
+                    <td className="ow-idx">{index + 1}</td>
+                    <td className="ow-grow" title={row.productname}>{row.productname}</td>
+                    <td className="ow-num">
+                      <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} aria-label={`${row.productname} order quantity`}
+                        value={value} disabled={savingCode === row.productcode || finalized}
+                        onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.productcode)}
+                        onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: Number(e.target.value) }))}
+                        onKeyDown={(e) => onQtyKey(e, row, index)} />
+                    </td>
+                    <td className="ow-num">{fmtOwQty(row.totalstock)}</td>
+                    <td className="ow-num">{fmtOwQty(row.saleunit)}</td>
+                    <td title={row.unitdescription}>{row.unitdescription}</td>
+                    <td className="ow-num">{fmtOwQty(row.slsqty)}</td>
+                    <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
+                    <td>{fmtOwDate(row.lastreceiveddate)}</td>
+                    <td>{fmtOwDate(row.lastsaledate)}</td>
+                    <td className="ow-num">{fmtOwQty(row.maxsaleqty)}</td>
+                    <td>{row.wantedtype ?? '—'}</td>
+                  </tr>
+                );
+              })}
+              {!filteredQty.length && <tr><td colSpan={12} className="ow-empty">{loading ? 'Loading…' : qtyRows.length ? 'No products match.' : `Every pending product for ${store || 'this store'} has been reviewed.`}</td></tr>}
+            </tbody>
+          </table>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>#</th><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Pack</th><th>Desc</th><th className="ow-num">Sls</th><th className="ow-num">MRP</th><th>Wanted</th></tr>
+            </thead>
+            <tbody>
+              {filteredRows.map((row, i) => {
+                const value = edits[row.ProductCode] ?? row.OrderQty;
+                return (
+                  <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
+                    <td className="ow-idx">{i + 1}</td>
+                    <td className="ow-grow" title={row.ProductName}>{row.ProductName}</td>
+                    <td className="ow-num">
+                      <input className="ow-qty" type="number" min={0} aria-label={`${row.ProductName} order quantity`}
+                        value={value} disabled={savingCode === row.ProductCode || finalized}
+                        onClick={(e) => e.stopPropagation()} onFocus={() => setSelectedCode(row.ProductCode)}
+                        onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: Number(e.target.value) }))}
+                        onBlur={(e) => saveOrderQty(row, Number(e.target.value))} />
+                    </td>
+                    <td className="ow-num">{fmtOwQty(row.TotalStock)}</td>
+                    <td className="ow-num">{fmtOwQty(row.SaleUnit)}</td>
+                    <td title={row.UnitDescription}>{row.UnitDescription}</td>
+                    <td className="ow-num">{fmtOwQty(row.SLSQty)}</td>
+                    <td className="ow-num">{fmtOwMoney(row.MRP)}</td>
+                    <td>{row.WantedType ?? '—'}</td>
+                  </tr>
+                );
+              })}
+              {!filteredRows.length && <tr><td colSpan={9} className="ow-empty">{loading ? 'Loading…' : 'No open order rows for this store.'}</td></tr>}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="ow-history">
+        <div className="ow-history-head">Previous decisions {selectedCode != null && <span className="ow-count">Last {Math.min(history.length, 25)} entries</span>}</div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Org Order</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
+            <tbody>
+              {history.map((row, i) => (
+                <tr key={i}><td className="ow-grow" title={row.ProductName}>{row.ProductName}</td><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwQty(row.saleunit)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td>{row.remarks ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
+              ))}
+              {!history.length && <tr><td colSpan={9} className="ow-empty">{selectedCode == null ? 'Select a product to see its previous-order history.' : 'No previous-order history for this product.'}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Order Workspace formatters: full grouped numbers (no 1.3k abbreviation),
+// 2-dp money, dd/mm/yy dates; em dash for blanks.
+function fmtOwQty(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—';
+}
+function fmtOwMoney(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+}
+function fmtOwDate(value) {
+  if (!value) return '—';
+  const raw = String(value).slice(0, 10);
+  const parts = raw.split('-');
+  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : raw;
+}
+
 function NmwSalesReport({ session, settings }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
 
