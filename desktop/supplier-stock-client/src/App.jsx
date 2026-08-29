@@ -2765,18 +2765,19 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
         <div className="ow-panel-title">Bill / Sales</div>
         <div className="ow-panel-scroll">
           <table className="ow-intel-table">
-            <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-grow">Salesman</th><th className="ow-intel-cust">Customer</th><th className="ow-num">MRP</th></tr></thead>
+            <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-intel-cust">Salesman</th><th className="ow-intel-cust">Customer</th><th className="ow-num">Dis%</th><th className="ow-num">MRP</th></tr></thead>
             <tbody>
               {sales.map((row, i) => (
                 <tr key={i}>
                   <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
                   <td>{fmtOwDate(row.Bill_Time)}</td>
-                  <td className="ow-grow" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
+                  <td className="ow-intel-cust" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
                   <td className="ow-intel-cust" title={row.CUSTOMERNAME}>{row.CUSTOMERNAME ?? '—'}</td>
+                  <td className="ow-num">{fmtOwPct(row.dis)}</td>
                   <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
                 </tr>
               ))}
-              {!sales.length && <tr><td colSpan={5} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No sales history.'}</td></tr>}
+              {!sales.length && <tr><td colSpan={6} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No sales history.'}</td></tr>}
             </tbody>
           </table>
         </div>

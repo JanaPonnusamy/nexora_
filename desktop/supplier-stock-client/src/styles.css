@@ -6993,6 +6993,11 @@ th {
    fights with Salesman's and collapses both to ~nothing) -- give it its own
    bounded width with ellipsis instead. */
 .ow-intel-cust { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Bill/Sales has no ow-grow column anymore (Salesman + Customer are both
+   bounded) -- don't force the table to stretch to the panel's full width,
+   or the browser distributes the leftover space as a wide empty gap
+   between columns instead of packing them together. */
+.ow-panel--sales .ow-intel-table { width: max-content; min-width: 0; }
 /* Purchase/GRN: narrow numeric columns (Stock/Free/Dis%/Land%/Cost/PTR/MRP) so
    the table doesn't eat width the Supplier name needs. */
 .ow-panel--purchase .ow-num { min-width: 38px; }
