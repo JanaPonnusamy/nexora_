@@ -23,6 +23,7 @@ const StockAvailabilityPage = lazy(() => import('../pages/stock/StockAvailabilit
 const StockCheckReportPage = lazy(() => import('../pages/stock-check/StockCheckReportPage'))
 const LabelExporterPage = lazy(() => import('../pages/label-export/LabelExporterPage'))
 const BoxWorkspacePage = lazy(() => import('../pages/label-export/BoxWorkspacePage'))
+const LabelReviewPage = lazy(() => import('../pages/label-export/LabelReviewPage'))
 const NmwSalesReportPage = lazy(() => import('../pages/nmw-sales/NmwSalesReportPage'))
 const StockIntegrityReportPage = lazy(() => import('../pages/stock-integrity/StockIntegrityReportPage'))
 const PurchaseWorkspacePage = lazy(() => import('../pages/procurement/PurchaseWorkspacePage'))
@@ -42,6 +43,7 @@ const ReportsPage = lazy(() => import('../pages/ReportsPage'))
 const ExpiryReportPage = lazy(() => import('../pages/expiry-report/ExpiryReportPage'))
 const ExpiryStockReportPage = lazy(() => import('../pages/expiry-stock/ExpiryStockReportPage'))
 const NonMovingReportPage = lazy(() => import('../pages/non-moving-report/NonMovingReportPage'))
+const SaleAnalysisPage = lazy(() => import('../pages/sale-analysis/SaleAnalysisPage'))
 const TimeReportPage = lazy(() => import('../pages/TimeReportPage'))
 const PassGenPage = lazy(() => import('../pages/pass-gen/PassGenPage'))
 const LegacyOrderPage = lazy(() => import('../pages/legacy-order/LegacyOrderPage'))
@@ -116,6 +118,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />
         <Route path="/label-exporter" element={<RequireCapability cap="INVENTORY"><LabelExporterPage /></RequireCapability>} />
         <Route path="/label-exporter/box-workspace" element={<RequireCapability cap="INVENTORY"><BoxWorkspacePage /></RequireCapability>} />
+        <Route path="/label-exporter/review" element={<RequireCapability cap="INVENTORY"><LabelReviewPage /></RequireCapability>} />
         <Route path="/nmw-sales-report" element={<RequireCapability cap="INVENTORY"><NmwSalesReportPage /></RequireCapability>} />
         <Route path="/stock-integrity" element={<RequireCapability cap="INVENTORY"><StockIntegrityReportPage /></RequireCapability>} />
         <Route path="/procurement/console" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleRefreshConsolePage /></RequireCapability>} />
@@ -136,6 +139,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/expiry-report" element={<RequireCapability cap="REPORTS"><ExpiryReportPage /></RequireCapability>} />
         <Route path="/expiry-stock" element={<RequireCapability cap="REPORTS"><ExpiryStockReportPage /></RequireCapability>} />
         <Route path="/non-moving-report" element={<RequireCapability cap="INVENTORY"><NonMovingReportPage /></RequireCapability>} />
+        <Route path="/sale-analysis" element={<RequireCapability cap="INVENTORY"><SaleAnalysisPage /></RequireCapability>} />
         <Route path="/time-report" element={<RequireCapability cap="TIME_REPORT"><TimeReportPage /></RequireCapability>} />
         <Route path="/pass-gen" element={<RequireCapability cap="PASS_GEN"><PassGenPage /></RequireCapability>} />
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />

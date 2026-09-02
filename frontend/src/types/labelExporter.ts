@@ -67,3 +67,49 @@ export interface LabelBatchRow {
 export interface ProductBatchResult {
   rows: LabelBatchRow[]
 }
+
+/* ---------- Letter-wise review ---------- */
+
+export type IncludeLabel = 'Y' | 'N'
+export type ProductKind = 'counter' | 'consumer'
+export type SuggestionStatus = 'none' | 'pending' | 'approved' | 'rejected'
+
+export interface LabelReviewRow {
+  product_code: string
+  product_name: string
+  unit_description: string | null
+  current_sublocation: string | null
+  mrp: number
+  total_stock: number
+  include_label: IncludeLabel | null
+  product_kind: ProductKind | null
+  suggested_unit_description: string | null
+  suggestion_status: SuggestionStatus
+  final_unit_description: string | null
+}
+
+export interface LabelReviewListResult {
+  rows: LabelReviewRow[]
+}
+
+export interface LabelReviewUpdateRequest {
+  include_label?: IncludeLabel | null
+  product_kind?: ProductKind | null
+  suggested_unit_description?: string | null
+}
+
+export interface LabelSuggestionRow {
+  tenant_id: string
+  store_id: string
+  product_code: string
+  product_name: string
+  current_unit_description: string | null
+  suggested_unit_description: string | null
+  suggested_by: string | null
+  suggested_at: string | null
+  suggestion_status: SuggestionStatus
+}
+
+export interface LabelSuggestionListResult {
+  rows: LabelSuggestionRow[]
+}

@@ -7,12 +7,16 @@ show batch-wise detail before exporting a printable label sheet from the UI.
 from fastapi import APIRouter, Depends
 
 from dependencies.auth import get_current_user
-from dependencies.store_scope import assert_label_exporter_store_access
+from dependencies.store_scope import assert_label_exporter_store_access, require_super_admin
 from modules.label_exporter import service
 from modules.label_exporter.schemas import (
     BoxProductResult,
     BoxSearchResult,
+    LabelReviewListResult,
+    LabelReviewUpdateRequest,
     LabelSearchResult,
+    LabelSuggestionDecisionRequest,
+    LabelSuggestionListResult,
     ProductBatchResult,
 )
 
@@ -62,3 +66,58 @@ def get_box_products(tenant_id: str, store_id: str, box_number: str, current_use
 def get_product_batches(tenant_id: str, store_id: str, product_code: str, current_user: dict = Depends(get_current_user)):
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
     return service.get_product_batches(tenant_id, store_id, product_code)
+
+
+@router.get("/review/products", response_model=LabelReviewListResult)
+def list_products_for_review(
+    tenant_id: str,
+    store_id: str,
+    starts_with: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    return service.list_products_for_review(tenant_id, store_id, starts_with)
+
+
+@router.put("/review/products/{product_code}")
+def update_review(
+    tenant_id: str,
+    store_id: str,
+    product_code: str,
+    body: LabelReviewUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    service.update_review(
+        tenant_id,
+        store_id,
+        product_code,
+        body.include_label,
+        body.product_kind,
+        body.suggested_unit_description,
+        current_user.get("sub"),
+    )
+    return {"ok": True}
+
+
+@router.get("/review/suggestions", response_model=LabelSuggestionListResult)
+def list_pending_suggestions(
+    tenant_id: str = "",
+    store_id: str = "",
+    current_user: dict = Depends(require_super_admin),
+):
+    return service.list_pending_suggestions(tenant_id, store_id)
+
+
+@router.post("/review/suggestions/{tenant_id}/{store_id}/{product_code}/decision")
+def decide_suggestion(
+    tenant_id: str,
+    store_id: str,
+    product_code: str,
+    body: LabelSuggestionDecisionRequest,
+    current_user: dict = Depends(require_super_admin),
+):
+    service.decide_suggestion(
+        tenant_id, store_id, product_code, body.approved, body.final_unit_description, current_user.get("sub")
+    )
+    return {"ok": True}

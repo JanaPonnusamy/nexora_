@@ -4,6 +4,9 @@ import type {
   BoxSearchResult,
   BoxProductResult,
   ProductBatchResult,
+  LabelReviewListResult,
+  LabelReviewUpdateRequest,
+  LabelSuggestionListResult,
 } from '../types/labelExporter'
 
 const BASE = '/api/label-exporter'
@@ -61,5 +64,36 @@ export const labelExporterService = {
   getProductBatches: (tenantId: string, storeId: string, productCode: string) =>
     api.get<ProductBatchResult>(
       `${BASE}/products/batches?${new URLSearchParams({ tenant_id: tenantId, store_id: storeId, product_code: productCode })}`,
+    ),
+
+  listProductsForReview: (tenantId: string, storeId: string, startsWith = '') => {
+    const params = new URLSearchParams({ tenant_id: tenantId, store_id: storeId })
+    if (startsWith) params.set('starts_with', startsWith)
+    return api.get<LabelReviewListResult>(`${BASE}/review/products?${params}`)
+  },
+
+  updateReview: (tenantId: string, storeId: string, productCode: string, body: LabelReviewUpdateRequest) =>
+    api.put(
+      `${BASE}/review/products/${encodeURIComponent(productCode)}?${new URLSearchParams({ tenant_id: tenantId, store_id: storeId })}`,
+      body,
+    ),
+
+  listPendingSuggestions: (tenantId = '', storeId = '') => {
+    const params = new URLSearchParams()
+    if (tenantId) params.set('tenant_id', tenantId)
+    if (storeId) params.set('store_id', storeId)
+    return api.get<LabelSuggestionListResult>(`${BASE}/review/suggestions?${params}`)
+  },
+
+  decideSuggestion: (
+    tenantId: string,
+    storeId: string,
+    productCode: string,
+    approved: boolean,
+    finalUnitDescription?: string,
+  ) =>
+    api.post(
+      `${BASE}/review/suggestions/${tenantId}/${storeId}/${encodeURIComponent(productCode)}/decision`,
+      { approved, final_unit_description: finalUnitDescription ?? null },
     ),
 }
