@@ -4,9 +4,9 @@ import type {
   BoxSearchResult,
   BoxProductResult,
   ProductBatchResult,
-  LabelReviewListResult,
   LabelReviewUpdateRequest,
-  LabelSuggestionListResult,
+  LabelTrendResult,
+  UnitDescriptionMode,
 } from '../types/labelExporter'
 
 const BASE = '/api/label-exporter'
@@ -17,6 +17,7 @@ interface SearchProductsParams {
   q?: string
   startsWith?: string
   unitDescription?: string
+  unitDescriptionMode?: UnitDescriptionMode
   boxNumber?: string
   stockFilter?: string
   onlyNullSublocation?: boolean
@@ -30,6 +31,7 @@ export const labelExporterService = {
     q = '',
     startsWith = '',
     unitDescription = '',
+    unitDescriptionMode = 'contains',
     boxNumber = '',
     stockFilter = 'all',
     onlyNullSublocation = false,
@@ -42,6 +44,7 @@ export const labelExporterService = {
     if (q) params.set('q', q)
     if (startsWith) params.set('starts_with', startsWith)
     if (unitDescription) params.set('unit_description', unitDescription)
+    if (unitDescriptionMode !== 'contains') params.set('unit_description_mode', unitDescriptionMode)
     if (boxNumber) params.set('box_number', boxNumber)
     if (stockFilter !== 'all') params.set('stock_filter', stockFilter)
     if (onlyNullSublocation) params.set('only_null_sublocation', '1')
@@ -66,34 +69,20 @@ export const labelExporterService = {
       `${BASE}/products/batches?${new URLSearchParams({ tenant_id: tenantId, store_id: storeId, product_code: productCode })}`,
     ),
 
-  listProductsForReview: (tenantId: string, storeId: string, startsWith = '') => {
-    const params = new URLSearchParams({ tenant_id: tenantId, store_id: storeId })
-    if (startsWith) params.set('starts_with', startsWith)
-    return api.get<LabelReviewListResult>(`${BASE}/review/products?${params}`)
-  },
-
   updateReview: (tenantId: string, storeId: string, productCode: string, body: LabelReviewUpdateRequest) =>
     api.put(
-      `${BASE}/review/products/${encodeURIComponent(productCode)}?${new URLSearchParams({ tenant_id: tenantId, store_id: storeId })}`,
+      `${BASE}/products/${encodeURIComponent(productCode)}/review?${new URLSearchParams({ tenant_id: tenantId, store_id: storeId })}`,
       body,
     ),
 
-  listPendingSuggestions: (tenantId = '', storeId = '') => {
-    const params = new URLSearchParams()
-    if (tenantId) params.set('tenant_id', tenantId)
-    if (storeId) params.set('store_id', storeId)
-    return api.get<LabelSuggestionListResult>(`${BASE}/review/suggestions?${params}`)
-  },
+  assignSublocation: (tenantId: string, storeId: string, productCode: string, sublocation: string) =>
+    api.put(
+      `${BASE}/products/${encodeURIComponent(productCode)}/sublocation?${new URLSearchParams({ tenant_id: tenantId, store_id: storeId })}`,
+      { sublocation },
+    ),
 
-  decideSuggestion: (
-    tenantId: string,
-    storeId: string,
-    productCode: string,
-    approved: boolean,
-    finalUnitDescription?: string,
-  ) =>
-    api.post(
-      `${BASE}/review/suggestions/${tenantId}/${storeId}/${encodeURIComponent(productCode)}/decision`,
-      { approved, final_unit_description: finalUnitDescription ?? null },
+  getProductTrend: (tenantId: string, storeId: string, productCode: string) =>
+    api.get<LabelTrendResult>(
+      `${BASE}/products/${encodeURIComponent(productCode)}/trend?${new URLSearchParams({ tenant_id: tenantId, store_id: storeId })}`,
     ),
 }

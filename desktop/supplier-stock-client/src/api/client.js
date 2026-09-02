@@ -202,6 +202,26 @@ export const api = {
     })}`, { session });
   },
 
+  // Cross-store product-selection sync (see backend
+  // modules/stock_availability/service.py:match_cross_store_selection): for a
+  // product selected in one store, resolve its equivalent in every other
+  // store via SupplierProductMatch -> normalized name -> structured
+  // attributes -> relevance-scored fuzzy candidate.
+  syncStockSelection(sourceStoreId, sourceProductCode, sourceProductName, targetStoreIds, session, filters = {}) {
+    const settings = loadSettings();
+    return request('/api/stock-availability/products/sync-selection', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({
+        tenant_id: filters.tenantId || settings.tenantId,
+        source_store_id: sourceStoreId,
+        source_product_code: sourceProductCode,
+        source_product_name: sourceProductName,
+        target_store_ids: targetStoreIds || []
+      })
+    });
+  },
+
   getStockCoreBulk(items, session, filters = {}) {
     const settings = loadSettings();
     return request('/api/stock-availability/products/core/bulk', {
@@ -526,6 +546,79 @@ export const api = {
       session,
       body: JSON.stringify({ supplier_code: supplierCode, supplier_name: supplierName })
     });
+  },
+
+  // Bulk-assigns every OrderQty>0 row for this supplier, then returns the
+  // legacy-faithful Order Workspace Excel export (or a .zip of "Part N of M"
+  // files when splitSize splits it) built server-side by order_export.py --
+  // the same port of Form1.ExportSelectedColumnsFromGrid the web Order
+  // Workspace already uses. Filename + assigned count come back in headers,
+  // so this bypasses the JSON request() helper and reads the raw Response.
+  // ----- Label Exporter (letter-wise review + print) -----
+  searchLabelProducts(session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/label-exporter/products/search${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: filters.storeId || settings.storeId,
+      q: filters.q || '',
+      starts_with: filters.startsWith || '',
+      unit_description: filters.unitDescription || '',
+      unit_description_mode: filters.unitDescriptionMode || 'contains',
+      box_number: filters.boxNumber || '',
+      stock_filter: filters.stockFilter || 'all',
+      only_null_sublocation: filters.onlyNullSublocation ? 1 : 0,
+      only_sale_unit_gt_one: filters.onlySaleUnitGtOne ? 1 : 0
+    })}`, { session });
+  },
+
+  updateLabelReview(productCode, tenantId, storeId, body, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/review${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  assignLabelSublocation(productCode, tenantId, storeId, sublocation, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/sublocation${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ sublocation })
+    });
+  },
+
+  getLabelProductTrend(productCode, tenantId, storeId, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/trend${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
+  async legacyExportOrder(storeName, supplierCode, supplierName, mode, splitSize, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/legacy-order/orders/${encodeURIComponent(storeName)}/export`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(session)
+        },
+        body: JSON.stringify({ supplier_code: supplierCode, supplier_name: supplierName, mode, split_size: splitSize || 0 })
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try { const parsed = await response.json(); detail = parsed?.detail || parsed?.message || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = /filename="?([^"]+)"?/.exec(disposition);
+    return {
+      blob,
+      filename: match?.[1] || `${supplierName} ${storeName}.xlsx`,
+      exportedCount: Number(response.headers.get('X-Exported-Count') || 0)
+    };
   }
 };
 

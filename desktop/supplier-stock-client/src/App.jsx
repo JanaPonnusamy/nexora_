@@ -13,6 +13,13 @@ import {
 } from './state/session.js';
 import { buildBrandKey, buildPrefixSearchKey, normalizeForBadge, normalizeForLooseExact } from './lib/similarSearch.js';
 import { getCachedProducts, syncCachedProducts } from './lib/productCache.js';
+import {
+  applySyncResult,
+  buildSynchronizedMap,
+  emptySelectionState,
+  selectionFor as selectionForStore,
+  selectionStateForClick
+} from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 
 // Dev-only login bypass: when running under `vite` (npm run dev) with
@@ -31,6 +38,7 @@ const DEV_STORE = import.meta.env.DEV ? (import.meta.env.VITE_DEV_STORE || '') :
 
 const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
+  { id: 'label_exporter', label: 'Label Exporter', module: 'label_exporter' },
   { id: 'analysis', label: 'Supplier Stock Analysis', module: 'supplier_stock_analysis' },
   { id: 'nmw_sales', label: 'NMW Sales Report', module: 'nmw_sales_report' },
   { id: 'order_workspace', label: 'Order Workspace', module: 'order_workspace' },
@@ -531,10 +539,17 @@ function AppShell() {
             tenants={tenants}
             onTenantChange={(tenantId) => persistSettings({ ...settings, tenantId })}
           />
+        ) : activeScreen === 'label_exporter' ? (
+          <LabelExporter session={session} settings={runtimeSettings} />
         ) : activeScreen === 'nmw_sales' ? (
           <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : activeScreen === 'order_workspace' ? (
-          <OrderWorkspace session={session} settings={runtimeSettings} />
+          <OrderWorkspace
+            session={session}
+            settings={runtimeSettings}
+            onOpenSupplierStockAnalysis={() => setActiveScreen('analysis')}
+            supplierStockAnalysisAllowed={navItems.some((item) => item.id === 'analysis')}
+          />
         ) : (
           <StockAvailability
             session={session}
@@ -1115,6 +1130,16 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   });
   const [searchStores, setSearchStores] = useState([]);
   const [storeDetails, setStoreDetails] = useState({});
+  // Two-color product-selection state, kept separate from storeDetails (which
+  // is about what CORE DATA is loaded, not what color a row renders):
+  //   sourceStoreId/sourceProductCode - the product the user actually clicked
+  //     (GREEN). Set the instant a row is clicked, before the sync API call.
+  //   synchronized[storeId] - { productCode, matchType, score } for every
+  //     OTHER store's auto-resolved equivalent (BLUE). The source store is
+  //     never a key here. Replaced wholesale on every new click - never
+  //     merged with the previous click's map - so a store with no match in
+  //     the new response has no stale blue row left over from an old one.
+  const [selectionState, setSelectionState] = useState(emptySelectionState);
   const [selectedStoreId, setSelectedStoreId] = useState(session?.user?.roles?.[0]?.store_id || '');
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState({ state: 'idle', message: 'Type product name to search.' });
@@ -1296,6 +1321,12 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   // detailCacheRef: "storeId:productCode" -> fully loaded store detail (incl. bill items).
   const searchCacheRef = useRef(new Map());
   const detailCacheRef = useRef(new Map());
+  // Cross-store product-selection sync: lets a superseded sync response (an
+  // older click's result arriving after a newer click) be dropped instead of
+  // clobbering fresher selections. The sync path below calls loadStoreCore /
+  // setStoreDetails directly for target stores — never handleProductSelect —
+  // so it structurally cannot re-trigger itself; no recursion guard needed.
+  const syncTicketRef = useRef(0);
 
   useEffect(() => {
     api.listStores(session).then((rows) => {
@@ -1576,15 +1607,97 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
     }
   }
 
+  // Every row click - in ANY store, whether that row was previously unselected,
+  // green, or blue - is a brand-new USER SOURCE SELECTION. It always becomes
+  // the new GREEN, and the entire cross-store synchronization is recalculated
+  // from it; there is no special-casing based on what the row's color was
+  // before the click.
   function handleProductSelect(storeId, product) {
     const searchId = searchIdRef.current;
+
+    // Set GREEN and clear every previous BLUE synchronized selection
+    // immediately - before the network call - so the click feels instant and
+    // no store can show a stale blue row from the previous source product.
+    setSelectionState(selectionStateForClick(storeId, product.product_code));
+
     loadStoreCore(storeId, product)
       .then((core) => {
         if (searchIdRef.current !== searchId) return;
         setStoreDetails((prev) => ({ ...prev, [storeId]: core }));
       })
       .catch(() => {});
+
+    syncCrossStoreSelection(storeId, product, searchId);
   }
+
+  // For a product picked in one store, resolve its equivalent in every OTHER
+  // store currently on screen (see api.syncStockSelection / the matching
+  // hierarchy documented in backend stock_availability/service.py) and mark
+  // each one BLUE. Best-effort: the clicked store's own GREEN selection
+  // above already applied regardless of what happens here, and a store with
+  // no reliable match simply gets no blue row.
+  async function syncCrossStoreSelection(sourceStoreId, product, searchId) {
+    if (!product?.product_code) return;
+    const targetStoreIds = searchStores
+      .map((store) => store.store_id)
+      .filter((storeId) => storeId && storeId !== sourceStoreId);
+    if (!targetStoreIds.length) return;
+
+    const ticket = ++syncTicketRef.current;
+    let response;
+    try {
+      response = await api.syncStockSelection(
+        sourceStoreId,
+        product.product_code,
+        product.product_name,
+        targetStoreIds,
+        session,
+        { tenantId: settings?.tenantId }
+      );
+    } catch {
+      return; // cross-store sync is best-effort; the GREEN source selection above already applied
+    }
+    // A newer click (new ticket, or a whole new search) supersedes this
+    // response outright - never let an older click's result apply.
+    if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
+
+    const matches = asArray(response?.results).filter((r) => r.product && r.match_type !== 'NO_MATCH');
+
+    // Build the BLUE map fresh from THIS response only - never merge into the
+    // previous synchronized map, so a store with no match here has no stale
+    // blue row left over from the prior source product. Extra guard beyond
+    // the ticket check: only applies if the CURRENT selection state still
+    // corresponds to this exact click (same source store+product), so a
+    // stale response can never overwrite a newer source selection even in a
+    // race the ticket alone didn't catch.
+    const freshSynchronized = buildSynchronizedMap(response?.results);
+    setSelectionState((current) => applySyncResult(current, sourceStoreId, product.product_code, freshSynchronized));
+
+    await Promise.all(matches.map(async (match) => {
+      // Prefer the row already present in that store's own search results
+      // (carries stock/unit/etc. for display); fall back to the matcher's
+      // bare product identity when the match came from outside the current
+      // search filter (e.g. a SupplierProductMatch pair with a different name).
+      const knownRow = (searchProductsByStore.get(match.store_id) || [])
+        .find((row) => row.product_code === match.product.product_code);
+      const targetProduct = knownRow || {
+        product_code: match.product.product_code,
+        product_name: match.product.product_name,
+        mrp: match.product.mrp
+      };
+      try {
+        const core = await loadStoreCore(match.store_id, targetProduct);
+        if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
+        setStoreDetails((prev) => ({ ...prev, [match.store_id]: core }));
+      } catch {
+        // leave that store's previously loaded detail rather than clearing it on a transient fetch failure
+      }
+    }));
+  }
+
+  // Per-store selection descriptor for the two-color model - see
+  // selectionFor() in state/productSelection.js for the (unit-tested) rule.
+  const selectionFor = (storeId) => selectionForStore(selectionState, storeId);
 
   const searchProductsByStore = new Map(searchStores.map((store) => [store.store_id, store.products || []]));
   // allStores can still be loading when a search already resolved (its request
@@ -1731,6 +1844,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
                 hasSearched={hasSearched}
                 searchProducts={searchProductsByStore.get(warehouseStore.store_id) || []}
                 detail={storeDetails[warehouseStore.store_id]}
+                selection={selectionFor(warehouseStore.store_id)}
                 onProductSelect={(product) => handleProductSelect(warehouseStore.store_id, product)}
                 onSaleSelect={(store, row) => setBillDetail({ store, sale: row })}
                 onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store: warehouseStore, row }) : undefined}
@@ -1799,6 +1913,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
                 hasSearched={hasSearched}
                 searchProducts={searchProductsByStore.get(store.store_id) || []}
                 detail={storeDetails[store.store_id]}
+                selection={selectionFor(store.store_id)}
                 onProductSelect={(product) => handleProductSelect(store.store_id, product)}
                 onSaleSelect={(s, row) => setBillDetail({ store: s, sale: row })}
                 onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store, row }) : undefined}
@@ -1893,7 +2008,7 @@ function nmwExportRows(bill, lineItems) {
 // Each grid (Qty Review, Review All) has its own column list; users can hide,
 // reorder and resize columns via a modern settings card, persisted per grid.
 const OW_QTY_COLUMNS = [
-  { key: 'name', label: 'Product Name', width: 300, grow: true, locked: true },
+  { key: 'name', label: 'Product Name', width: 260, locked: true },
   { key: 'orqty', label: 'Or Qty', width: 66, align: 'right', locked: true },
   { key: 'stock', label: 'Stock', width: 54, align: 'right' },
   { key: 'pack', label: 'Pack', width: 46, align: 'right' },
@@ -1906,7 +2021,7 @@ const OW_QTY_COLUMNS = [
   { key: 'wanted', label: 'Wanted', width: 116 }
 ];
 const OW_REVIEW_COLUMNS = [
-  { key: 'name', label: 'Product Name', width: 300, grow: true, locked: true },
+  { key: 'name', label: 'Product Name', width: 215, locked: true },
   { key: 'orqty', label: 'Or Qty', width: 66, align: 'right', locked: true },
   { key: 'stock', label: 'Stock', width: 54, align: 'right' },
   { key: 'pack', label: 'Pack', width: 46, align: 'right' },
@@ -1915,6 +2030,16 @@ const OW_REVIEW_COLUMNS = [
   { key: 'mrp', label: 'MRP', width: 60, align: 'right' },
   { key: 'wanted', label: 'Wanted', width: 116 }
 ];
+
+// Column "width" is a relative weight, not a literal pixel size: every <col>
+// gets a percentage of the table (width / sum-of-all-widths), so Product
+// Name's share stays proportional -- and therefore capped -- at every
+// viewport size instead of soaking up 100% of whatever space the other
+// (genuinely fixed-content) columns leave behind.
+function owColgroupPct(cols) {
+  const total = cols.reduce((sum, c) => sum + (Number(c.width) || 0), 0) || 1;
+  return cols.map((c) => <col key={c.key} style={{ width: `${(Number(c.width) / total * 100).toFixed(3)}%` }} />);
+}
 
 const OW_GEAR_PATH = 'M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a8 8 0 0 0-1.7-1L15 3.5h-4L10.7 6A8 8 0 0 0 9 7L6.6 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4L9 17a8 8 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z';
 
@@ -2069,17 +2194,17 @@ function OwExportCard({ anchorRef, splitCount, setSplitCount, exporting, scopeLa
     <div className="grid-settings-panel ow-export-card" ref={ref} role="dialog" aria-label="Export options" style={{ position: 'fixed', top: pos.top, right: pos.right }}>
       <div className="grid-settings-panel__head">
         <strong>Export to Excel</strong>
-        <span>Grouped by supplier · one sheet per supplier</span>
+        <span>Assigns every ordered row to this supplier, then downloads</span>
       </div>
       <div className="grid-settings-panel__body ow-export-body">
         <div className="ow-export-scope">Scope: <b>{scopeLabel}</b></div>
         <label className="ow-export-field">
           <span>Split every</span>
-          <input type="number" min="0" step="1" value={splitCount} onChange={(e) => setSplitCount(Number(e.target.value))} aria-label="Split count (products per sheet)" />
+          <input type="number" min="0" step="1" value={splitCount} onChange={(e) => setSplitCount(Number(e.target.value))} aria-label="Split count (products per file)" />
           <span>products (0 = no split)</span>
         </label>
-        <p className="ow-export-hint">Each supplier with more than the split count is broken into multiple sheets (part 1, 2, …).</p>
-        <button type="button" className="ow-btn ow-btn-primary ow-export-go" disabled={exporting} onClick={onExport}>{exporting ? 'Exporting…' : '⬇ Download .xlsx'}</button>
+        <p className="ow-export-hint">Over the split count, the order is broken into separate files (Part 1, 2, …) delivered as one .zip — matching the legacy Export/Split behavior.</p>
+        <button type="button" className="ow-btn ow-btn-primary ow-export-go" disabled={exporting} onClick={onExport}>{exporting ? 'Exporting…' : '⬇ Download'}</button>
       </div>
     </div>,
     document.body
@@ -2093,7 +2218,38 @@ function OwExportCard({ anchorRef, splitCount, setSplitCount, exporting, scopeLa
 // / ↑↓ navigate) and Review All (inline qty edit), the workflow summary + Finalize,
 // and the Previous-decisions strip. Supplier assignment + product intelligence are
 // intentionally deferred (see web OrderWorkspacePage for the full feature set).
-function OrderWorkspace({ session, settings }) {
+
+// Mirrors the legacy VB.NET "Select Process" combobox (same items, same order).
+// Entries with a `view` are wired to an implemented Electron mode; `supplierMode`
+// picks which of the By Supplier screen's History/Live Stock tabs a process
+// lands on (Auto Pur UpDate = purchase-history-driven; Order Based Supplier
+// Stock = live-supplier-stock-driven -- same grid, same Enter-to-assign, only
+// the underlying query differs, exactly like the tab toggle already does).
+// Entries with `action: 'open_supplier_stock_analysis'` already have a real,
+// working implementation elsewhere in this app (the Supplier Stock Analysis
+// module's Excel import -- legacy's "Supplier Excel Mapping" + "Supplier
+// Stock" processes, but with auto-suggested mapping and import-time product-
+// code resolution that legacy never had) -- selecting them switches screens
+// instead of duplicating that feature here. Everything else is listed for
+// workflow fidelity but disabled until ported.
+const OW_PROCESS_OPTIONS = [
+  { key: 'access_db', label: 'Access DB', view: null },
+  { key: 'auto_pur_update', label: 'Auto Pur UpDate', view: 'supplier', supplierMode: 'history' },
+  { key: 'compare_previous_order', label: 'Compare Previous Order', view: null },
+  { key: 'compare_supplier', label: 'Compare Supplier', view: null },
+  { key: 'integrate_order_purchase', label: 'Integrate Order and Purchase', view: null },
+  { key: 'order_based_supplier_stock', label: 'Order Based Supplier Stock', view: 'supplier', supplierMode: 'stock' },
+  { key: 'pending_order', label: 'Pending Order', view: 'assigned' },
+  { key: 'process_order', label: 'Process Order', view: 'review' },
+  { key: 'qty_check', label: 'Qty Check', view: 'qty' },
+  { key: 'supplier_excel_mapping', label: 'Supplier Excel Mapping', view: null, action: 'open_supplier_stock_analysis' },
+  { key: 'supplier_invoice', label: 'Supplier Invoice', view: null },
+  { key: 'supplier_order_details', label: 'Supplier Order Details', view: 'supplier', supplierMode: 'history' },
+  { key: 'supplier_stock', label: 'Supplier Stock', view: null, action: 'open_supplier_stock_analysis' },
+  { key: 'unified_supplier_code', label: 'UnifiedSupplierCode', view: null },
+];
+
+function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, supplierStockAnalysisAllowed }) {
   void settings;
   const [stores, setStores] = useState([]);
   const [store, setStore] = useState(() => {
@@ -2112,6 +2268,8 @@ function OrderWorkspace({ session, settings }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const qtyRefs = useRef([]);
+  const reviewQtyRefs = useRef([]);
+  const supplierQtyRefs = useRef([]);
 
   // Supplier assignment (By Supplier / Assigned views).
   const [supplierMode, setSupplierMode] = useState('history'); // 'history' | 'stock'
@@ -2126,6 +2284,9 @@ function OrderWorkspace({ session, settings }) {
   const [splitCount, setSplitCount] = useState(0);
   const [exporting, setExporting] = useState(false);
   const exportBtnRef = useRef(null);
+  // Bumped after a successful export to re-fetch the grid, since export bulk-
+  // assigns every exported row to the supplier server-side (status changes).
+  const [reloadTick, setReloadTick] = useState(0);
 
   // Per-grid column settings (show/hide, order, width), persisted per grid id.
   // v2: bumped so stale column widths (which pinned a narrow Product Name) are
@@ -2202,7 +2363,7 @@ function OrderWorkspace({ session, settings }) {
         .finally(done);
     }
     return () => { cancelled = true; };
-  }, [store, view, session, supplier, supplierMode]);
+  }, [store, view, session, supplier, supplierMode, reloadTick]);
 
   useEffect(() => {
     if (!store || selectedCode == null) { setHistory([]); return; }
@@ -2217,21 +2378,19 @@ function OrderWorkspace({ session, settings }) {
   const filteredQty = useMemo(() => qtyRows.filter((r) => match(r.productname, r.productcode)), [qtyRows, term]);
   const filteredRows = useMemo(() => rows.filter((r) => match(r.ProductName, r.ProductCode)), [rows, term]);
 
-  // Persist the reviewed quantity. `remove` (Enter/Accept) drops the row from the
-  // pending list; when false (Esc/Set-0) the row stays visible with qty 0 so the
-  // user can keep it in context and still change it.
-  const commitQty = (productCode, value, focusIndex, remove = true) => {
+  // Persist the reviewed quantity. Neither Enter (Accept) nor Escape (Set 0 /
+  // not needed) removes the row -- Qty Check is a review screen, not a
+  // one-shot triage list, so a product stays visible after you act on it
+  // (matches Review All, which never drops rows either); only leaving the
+  // screen and coming back re-fetches, at which point already-reviewed rows
+  // (qtycheck=1) naturally fall out of this qtycheck=0 query.
+  const commitQty = (productCode, value, focusIndex) => {
     if (!store) return;
     setSavingCode(productCode);
     api.legacyUpdateQtyCheck(store, productCode, value, session)
       .then(() => {
-        if (remove) {
-          setQtyRows((cur) => cur.filter((r) => r.productcode !== productCode));
-          setEdits((cur) => { const n = { ...cur }; delete n[productCode]; return n; });
-        } else {
-          setQtyRows((cur) => cur.map((r) => (r.productcode === productCode ? { ...r, orderqty: value } : r)));
-          setEdits((cur) => ({ ...cur, [productCode]: value }));
-        }
+        setQtyRows((cur) => cur.map((r) => (r.productcode === productCode ? { ...r, orderqty: value } : r)));
+        setEdits((cur) => ({ ...cur, [productCode]: value }));
         requestAnimationFrame(() => qtyRefs.current[focusIndex]?.focus());
       })
       .catch((e) => setError(e.message))
@@ -2241,15 +2400,16 @@ function OrderWorkspace({ session, settings }) {
   const onQtyKey = (e, row, index) => {
     if (e.key === 'Enter') {
       e.preventDefault();
+      // Accept the quantity; row stays put (see commitQty).
       const value = Number(edits[row.productcode] ?? row.orderqty);
-      const next = filteredQty[index + 1] ?? filteredQty[index - 1] ?? null;
-      commitQty(row.productcode, value, next ? index : Math.max(0, index - 1), true);
+      commitQty(row.productcode, value, Math.min(index + 1, filteredQty.length - 1));
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      // Set 0 but keep the product in the list; move focus to the next row.
-      commitQty(row.productcode, 0, Math.min(index + 1, filteredQty.length - 1), false);
-    } else if (e.key === 'ArrowDown') { e.preventDefault(); qtyRefs.current[index + 1]?.focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); qtyRefs.current[index - 1]?.focus(); }
+      // Set 0 (not needed); row stays put too.
+      commitQty(row.productcode, 0, Math.min(index + 1, filteredQty.length - 1));
+    } else {
+      owHandleRowArrowKeys(e, qtyRefs, index);
+    }
   };
 
   const saveOrderQty = (row, value) => {
@@ -2296,75 +2456,29 @@ function OrderWorkspace({ session, settings }) {
       .finally(() => { setAssigningCode(null); loadWorkflow(); });
   };
 
-  // Export the current order to Excel, grouped by assigned supplier, optionally
-  // split into chunks of N products (one worksheet per supplier / split part).
+  // Export the current supplier's order to Excel via the same backend route
+  // the web Order Workspace uses (order_export.py) -- a direct port of the
+  // legacy Form1.btnExport_Click -> ExportSelectedColumnsFromGrid sequence
+  // (columns, S.No./OrderQty cell fills, Category prediction, filename
+  // pattern, and row-count "Split" into separate files zipped together).
+  // Bulk-assigns every OrderQty>0 row to the supplier server-side first, so
+  // the grid is reloaded afterward to reflect the new assignment/status.
+  // Only available from By Supplier / Assigned, matching the legacy app
+  // (btnExport was only ever wired for supplier-scoped grids; Qty Check
+  // explicitly hides it, and there's no supplier-scoped grid behind Review
+  // All to export from).
   const runExport = async () => {
+    if (!supplier) { setError('Pick a supplier first.'); return; }
     setExporting(true); setError('');
     try {
-      // Source rows: Review All uses the full order (has OrSupplier); By Supplier
-      // and Assigned export the currently loaded supplier's rows.
-      const src = view === 'assigned' ? filteredAssigned : filteredRows;
-      const rowsForExport = src
-        .map((r) => ({
-          supplier: (view === 'assigned' || view === 'supplier')
-            ? (supplier?.supplier_name || r.OrSupplier || 'Unassigned')
-            : (r.OrSupplier || 'Unassigned'),
-          name: r.ProductName,
-          qty: Number((view === 'assigned' ? r.OrderQty : (edits[r.ProductCode] ?? r.OrderQty)) || 0),
-          pack: Number(r.SaleUnit || 0),
-          mrp: Number(r.MRP || 0),
-          stock: Number(r.TotalStock || 0),
-          wanted: r.WantedType || '',
-          remarks: r.Remarks || '',
-        }))
-        .filter((r) => r.qty > 0);
-      if (!rowsForExport.length) { setError('Nothing to export (no order rows with quantity).'); return; }
-
-      // Group by supplier, then chunk each group by the split count.
-      const groups = new Map();
-      for (const r of rowsForExport) {
-        if (!groups.has(r.supplier)) groups.set(r.supplier, []);
-        groups.get(r.supplier).push(r);
-      }
-      const n = Number(splitCount) > 0 ? Number(splitCount) : 0;
-      const XLSX = await import('xlsx-js-style');
-      const wb = XLSX.utils.book_new();
-      const header = ['Product Name', 'Order Qty', 'Pack', 'MRP', 'Stock', 'Wanted', 'Remarks'];
-      const usedNames = new Set();
-      const sheetName = (base, part, total) => {
-        let nm = total > 1 ? `${base} (${part})` : base;
-        nm = nm.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31).trim() || 'Sheet';
-        let unique = nm; let i = 2;
-        while (usedNames.has(unique)) { unique = `${nm.slice(0, 28)} ${i++}`; }
-        usedNames.add(unique); return unique;
-      };
-      for (const [supName, list] of groups) {
-        const chunks = n > 0 ? Math.ceil(list.length / n) : 1;
-        for (let c = 0; c < chunks; c += 1) {
-          const part = n > 0 ? list.slice(c * n, (c + 1) * n) : list;
-          const aoa = [
-            [`Order · ${store} · ${supName}${chunks > 1 ? ` · part ${c + 1}/${chunks}` : ''}`],
-            header,
-            ...part.map((r) => [r.name, r.qty, r.pack, r.mrp, r.stock, r.wanted, r.remarks]),
-            ['TOTAL', part.reduce((s, r) => s + r.qty, 0), '', '', '', '', ''],
-          ];
-          const ws = XLSX.utils.aoa_to_sheet(aoa);
-          ws['!cols'] = [{ wch: 40 }, { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 8 }, { wch: 22 }, { wch: 24 }];
-          // Bold the title + header rows.
-          for (let col = 0; col < header.length; col += 1) {
-            const tref = XLSX.utils.encode_cell({ r: 0, c: col });
-            const href = XLSX.utils.encode_cell({ r: 1, c: col });
-            if (ws[tref]) ws[tref].s = { font: { bold: true, sz: 12 } };
-            if (ws[href]) ws[href].s = { font: { bold: true }, fill: { fgColor: { rgb: 'EEF2F7' } } };
-          }
-          XLSX.utils.book_append_sheet(wb, ws, sheetName(supName, c + 1, chunks));
-        }
-      }
-      const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
-      const stamp = new Date().toISOString().slice(0, 10);
-      owDownloadBlob(new Blob([buffer], { type: 'application/octet-stream' }), `Order_${store}_${stamp}.xlsx`);
-      setBanner(`Exported ${rowsForExport.length} products across ${groups.size} supplier(s)${n > 0 ? `, split every ${n}` : ''}.`);
+      const mode = view === 'supplier' ? supplierMode : 'history';
+      const { blob, filename, exportedCount } = await api.legacyExportOrder(
+        store, supplier.supplier_code, supplier.supplier_name, mode, Number(splitCount) || 0, session,
+      );
+      owDownloadBlob(blob, filename);
+      setBanner(`Exported ${exportedCount} product(s) for ${supplier.supplier_name}.`);
       setExportOpen(false);
+      setReloadTick((t) => t + 1);
     } catch (e) {
       setError(e.message || 'Export failed.');
     } finally {
@@ -2391,6 +2505,7 @@ function OrderWorkspace({ session, settings }) {
 
   // Close the settings card when switching grids (each grid has its own config).
   useEffect(() => { setSettingsFor(null); }, [view]);
+  useEffect(() => { if (view !== 'supplier' && view !== 'assigned') setExportOpen(false); }, [view]);
   const gridId = view === 'qty' ? 'qty' : 'review';
   const qtyCols = resolveOwColumns(OW_QTY_COLUMNS, owColCfg.qty);
   const reviewCols = resolveOwColumns(OW_REVIEW_COLUMNS, owColCfg.review);
@@ -2417,15 +2532,16 @@ function OrderWorkspace({ session, settings }) {
       default: return null;
     }
   }
-  function renderReviewCell(col, row) {
+  function renderReviewCell(col, row, index) {
     switch (col.key) {
       case 'name': return <span className="ow-cellname" title={row.ProductName}>{row.ProductName}</span>;
       case 'orqty': return (
-        <input className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
+        <input ref={(el) => { reviewQtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
           value={edits[row.ProductCode] ?? row.OrderQty} disabled={savingCode === row.ProductCode || finalized}
           onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
           onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
-          onBlur={(e) => saveOrderQty(row, owWholeQty(e.target.value))} />
+          onBlur={(e) => saveOrderQty(row, owWholeQty(e.target.value))}
+          onKeyDown={(e) => owHandleRowArrowKeys(e, reviewQtyRefs, index)} />
       );
       case 'stock': return <span className={Number(row.TotalStock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.TotalStock)}</span>;
       case 'pack': return fmtOwQty(row.SaleUnit);
@@ -2443,17 +2559,43 @@ function OrderWorkspace({ session, settings }) {
         <h2 className="ow-title">Order Workspace</h2>
         <label className="ow-field">
           <span>Store</span>
-          <select value={store} onChange={(e) => setStore(e.target.value)}>
+          <select className="ow-store-select" value={store} onChange={(e) => setStore(e.target.value)}>
             {!stores.length && <option value="">No stores</option>}
             {stores.map((s) => <option key={s.store_name} value={s.store_name}>{s.store_name}</option>)}
           </select>
         </label>
-        <div className="ow-tabs" role="tablist" aria-label="Workspace view">
-          <button type="button" role="tab" aria-selected={view === 'qty'} className={view === 'qty' ? 'active' : ''} onClick={() => setView('qty')}>Qty Review</button>
-          <button type="button" role="tab" aria-selected={view === 'review'} className={view === 'review' ? 'active' : ''} onClick={() => setView('review')}>Review All</button>
-          <button type="button" role="tab" aria-selected={view === 'supplier'} className={view === 'supplier' ? 'active' : ''} onClick={() => setView('supplier')}>By Supplier</button>
-          <button type="button" role="tab" aria-selected={view === 'assigned'} className={view === 'assigned' ? 'active' : ''} onClick={() => setView('assigned')}>Assigned</button>
-        </div>
+        <span className="ow-sep" aria-hidden="true" />
+        <label className="ow-field">
+          <span>Process</span>
+          <select
+            className="ow-process-select"
+            aria-label="Process"
+            value={
+              (view === 'supplier'
+                ? OW_PROCESS_OPTIONS.find((p) => p.view === 'supplier' && p.supplierMode === supplierMode)
+                : OW_PROCESS_OPTIONS.find((p) => p.view === view)
+              )?.key || 'qty_check'
+            }
+            onChange={(e) => {
+              const opt = OW_PROCESS_OPTIONS.find((p) => p.key === e.target.value);
+              if (opt?.view) {
+                setView(opt.view);
+                if (opt.supplierMode) setSupplierMode(opt.supplierMode);
+                return;
+              }
+              if (opt?.action === 'open_supplier_stock_analysis') {
+                if (supplierStockAnalysisAllowed) onOpenSupplierStockAnalysis?.();
+                else setError('Supplier Stock Analysis is not available for this login.');
+              }
+            }}
+          >
+            {OW_PROCESS_OPTIONS.map((p) => (
+              <option key={p.key} value={p.key} disabled={!p.view && !p.action}>
+                {p.label}{p.view ? '' : p.action ? ' (Supplier Stock Analysis)' : ' (coming soon)'}
+              </option>
+            ))}
+          </select>
+        </label>
         {(view === 'supplier' || view === 'assigned') && (
           <label className="ow-field">
             <span>Supplier</span>
@@ -2467,18 +2609,17 @@ function OrderWorkspace({ session, settings }) {
           </div>
         )}
         <input className="ow-search" type="search" value={search} placeholder="Search product or code…" aria-label="Search products" onChange={(e) => setSearch(e.target.value)} />
-        {workflow && <span className={`ow-chip ${finalized || workflow.ready ? 'ow-chip-ok' : 'ow-chip-run'}`}>{String(workflow.status || '').replace(/_/g, ' ')}</span>}
-        {workflow && <span className="ow-metrics"><strong>{workflow.qty_pending ?? 0}</strong> pending · <strong>{workflow.assigned_lines ?? 0}</strong> assigned · <strong>{workflow.unassigned_lines ?? 0}</strong> open</span>}
-        <span className="ow-count">{activeCount} products</span>
         {(view === 'qty' || view === 'review') && (
           <button type="button" ref={settingsBtnRef} className="ow-icon-btn" title="Grid column settings" aria-label="Grid column settings" aria-expanded={Boolean(settingsFor)} onClick={() => setSettingsFor((v) => (v ? null : gridId))}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d={OW_GEAR_PATH} /></svg>
           </button>
         )}
-        <button type="button" ref={exportBtnRef} className="ow-btn" title="Export order to Excel" aria-expanded={exportOpen} onClick={() => setExportOpen((v) => !v)}>⬇ Export</button>
         {finalized
           ? <button type="button" className="ow-btn" onClick={() => finalize(true)}>Reopen</button>
           : <button type="button" className="ow-btn ow-btn-primary" disabled={!workflow?.ready} title={workflow?.ready ? 'Lock this order' : 'Complete review first'} onClick={() => finalize(false)}>Finalize</button>}
+        {(view === 'supplier' || view === 'assigned') && (
+          <button type="button" ref={exportBtnRef} className="ow-btn" disabled={!supplier} title={supplier ? 'Export order to Excel' : 'Pick a supplier first'} aria-expanded={exportOpen} onClick={() => setExportOpen((v) => !v)}>⬇ Export</button>
+        )}
       </div>
       {exportOpen && (
         <OwExportCard
@@ -2486,7 +2627,7 @@ function OrderWorkspace({ session, settings }) {
           splitCount={splitCount}
           setSplitCount={setSplitCount}
           exporting={exporting}
-          scopeLabel={view === 'assigned' ? `${supplier?.supplier_name || 'selected supplier'} (assigned)` : view === 'supplier' ? `${supplier?.supplier_name || 'selected supplier'}` : 'full order (grouped by supplier)'}
+          scopeLabel={view === 'assigned' ? `${supplier?.supplier_name || 'selected supplier'} (assigned)` : `${supplier?.supplier_name || 'selected supplier'}`}
           onExport={runExport}
           onClose={() => setExportOpen(false)}
         />
@@ -2511,12 +2652,30 @@ function OrderWorkspace({ session, settings }) {
       <div className="ow-body">
         <div className="ow-left">
         <div className="ow-main">
-          {view === 'qty' && <div className="ow-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> Set 0 (keep) <kbd>↑↓</kbd> Navigate</div>}
-          {view === 'supplier' && <div className="ow-help"><kbd>Enter</kbd> Assign to {supplier?.supplier_name || 'supplier'} · assigned rows turn green</div>}
+          <div className="ow-help">
+            <span className="ow-status-hint">
+              {view === 'qty' && <><kbd>Enter</kbd> Accept <kbd>Esc</kbd> Set 0 (both stay listed) <kbd>↕</kbd> Navigate</>}
+              {view === 'supplier' && (supplier
+                ? <><kbd>Enter</kbd> Assign {supplier.supplier_name} <kbd>↕</kbd> Navigate</>
+                : <>Pick a supplier to assign · <kbd>↕</kbd> Navigate</>)}
+              {view === 'assigned' && <><kbd>↕</kbd> Navigate</>}
+              {view === 'review' && <><kbd>↕</kbd> Navigate</>}
+            </span>
+            {workflow && <span className="ow-status-sep" aria-hidden="true">•</span>}
+            {workflow && <span className={`ow-chip ${finalized || workflow.ready ? 'ow-chip-ok' : 'ow-chip-run'}`}>{String(workflow.status || '').replace(/_/g, ' ')}</span>}
+            {workflow && <span className="ow-status-sep" aria-hidden="true">•</span>}
+            {workflow && (
+              <span className="ow-metrics">
+                Pending <strong>{workflow.qty_pending ?? 0}</strong> · Assigned <strong>{workflow.assigned_lines ?? 0}</strong> · Open <strong>{workflow.unassigned_lines ?? 0}</strong>
+              </span>
+            )}
+            <span className="ow-status-sep" aria-hidden="true">•</span>
+            <span className="ow-count">{activeCount} products</span>
+          </div>
           <div className="ow-grid">
         {view === 'qty' ? (
           <table className="ow-cfg">
-            <colgroup>{qtyCols.map((c) => <col key={c.key} style={c.grow ? undefined : { width: `${c.width}px` }} />)}</colgroup>
+            <colgroup>{owColgroupPct(qtyCols)}</colgroup>
             <thead>
               <tr>{qtyCols.map((c) => <th key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{c.label}</th>)}</tr>
             </thead>
@@ -2531,21 +2690,35 @@ function OrderWorkspace({ session, settings }) {
           </table>
         ) : view === 'review' ? (
           <table className="ow-cfg">
-            <colgroup>{reviewCols.map((c) => <col key={c.key} style={c.grow ? undefined : { width: `${c.width}px` }} />)}</colgroup>
+            <colgroup>{owColgroupPct(reviewCols)}</colgroup>
             <thead>
               <tr>{reviewCols.map((c) => <th key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{c.label}</th>)}</tr>
             </thead>
             <tbody>
               {filteredRows.map((row, i) => (
                 <tr key={row.ProductCode} className={selectedCode === row.ProductCode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.ProductCode)}>
-                  {reviewCols.map((c) => <td key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{renderReviewCell(c, row)}</td>)}
+                  {reviewCols.map((c) => <td key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{renderReviewCell(c, row, i)}</td>)}
                 </tr>
               ))}
               {!filteredRows.length && <tr><td colSpan={reviewCols.length} className="ow-empty">{loading ? 'Loading…' : 'No open order rows for this store.'}</td></tr>}
             </tbody>
           </table>
         ) : view === 'supplier' ? (
-          <table>
+          <table className="ow-fixed">
+            <colgroup>
+              {isStockMode ? (
+                <>
+                  <col style={{ width: '26%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} />
+                  <col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} />
+                  <col style={{ width: '5%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '15%' }} />
+                </>
+              ) : (
+                <>
+                  <col style={{ width: '30%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} />
+                  <col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '16%' }} /><col style={{ width: '20%' }} />
+                </>
+              )}
+            </colgroup>
             <thead>
               <tr>
                 <th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th>
@@ -2554,18 +2727,25 @@ function OrderWorkspace({ session, settings }) {
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map((row) => {
+              {filteredRows.map((row, index) => {
                 const isAssigned = statusOf(row) === 1;
                 const value = edits[row.ProductCode] ?? row.OrderQty;
                 return (
                   <tr key={row.ProductCode} className={`${selectedCode === row.ProductCode ? 'ow-row-sel' : ''}${isAssigned ? ' ow-row-assigned' : ''}`.trim() || undefined} onClick={() => setSelectedCode(row.ProductCode)}>
                     <td className="ow-grow" title={row.ProductName}>{row.ProductName}</td>
                     <td className="ow-num">
-                      <input className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
+                      <input ref={(el) => { supplierQtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
                         value={value} disabled={savingCode === row.ProductCode || isAssigned || finalized}
                         onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
                         onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
-                        onKeyDown={(e) => { if (e.key === 'Enter' && !isAssigned) { e.preventDefault(); toggleAssign(row); } }} />
+                        onKeyDown={(e) => {
+                          // Enter only assigns when a supplier is actually
+                          // selected -- with none picked, it's a dead key
+                          // press (falls through to row navigation) rather
+                          // than a silent no-op assign attempt.
+                          if (e.key === 'Enter' && !isAssigned && supplier) { e.preventDefault(); toggleAssign(row); }
+                          else owHandleRowArrowKeys(e, supplierQtyRefs, index);
+                        }} />
                     </td>
                     <td className="ow-num"><span className={Number(row.TotalStock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.TotalStock)}</span></td>
                     {isStockMode && <>
@@ -2591,7 +2771,10 @@ function OrderWorkspace({ session, settings }) {
             </tbody>
           </table>
         ) : (
-          <table>
+          <table className="ow-fixed">
+            <colgroup>
+              <col style={{ width: '34%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '22%' }} /><col style={{ width: '20%' }} />
+            </colgroup>
             <thead><tr><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Supplier</th><th>Remarks</th></tr></thead>
             <tbody>
               {filteredAssigned.map((row) => (
@@ -2614,7 +2797,10 @@ function OrderWorkspace({ session, settings }) {
         <section className="ow-panel ow-panel--history">
           <div className="ow-panel-title">Previous Decisions{selectedCode != null && history.length > 0 && <span className="ow-panel-count">Last {Math.min(history.length, 25)}</span>}</div>
           <div className="ow-panel-scroll">
-            <table className="ow-intel-table">
+            <table className="ow-intel-table ow-fixed">
+              <colgroup>
+                <col style={{ width: '30%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '9%' }} /><col style={{ width: '16%' }} /><col style={{ width: '10%' }} /><col style={{ width: '6%' }} /><col style={{ width: '5%' }} />
+              </colgroup>
               <thead><tr><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Org Order</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
               <tbody>
                 {history.map((row, i) => (
@@ -2678,9 +2864,39 @@ function owWholeQty(raw) {
   const n = Math.trunc(Number(raw));
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
+// Shared row-navigation for every Order Workspace product grid (Qty Review,
+// Review All, By Supplier): ArrowUp/ArrowDown must never step the OR QTY
+// value the way a native <input type="number"> would -- they move focus to
+// the previous/next VISIBLE row's qty input instead, scrolling the grid (not
+// the page) to reveal it if needed. Each grid keeps its own Enter/Escape
+// semantics; this is the one place the arrow-key logic lives so it isn't
+// duplicated (and drifted) across the three call sites.
+function owFocusRow(refs, index) {
+  const el = refs.current[index];
+  if (!el) return; // out of range -- boundary row, stay put (no wraparound)
+  el.focus();
+  el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+function owHandleRowArrowKeys(e, refs, index) {
+  if (e.key === 'ArrowDown') { e.preventDefault(); owFocusRow(refs, index + 1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); owFocusRow(refs, index - 1); }
+}
 function fmtOwPct(value) {
   if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '—';
   return `${Number(value).toFixed(2)}%`;
+}
+// Explicit sign for Adjustment (never collapse -3 to 3, always show +5 not 5).
+function fmtOwSigned(value) {
+  const n = Number(value) || 0;
+  const body = Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return n > 0 ? `+${body}` : n < 0 ? `-${body}` : '0';
+}
+// "2026-08" -> "Aug 2026" for the chart's month axis.
+function fmtOwMonthLabel(ym) {
+  const [y, m] = String(ym || '').split('-');
+  const i = Number(m) - 1;
+  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return i >= 0 && i < 12 ? `${names[i]} ${y}` : (ym || '—');
 }
 // Landing cost % = margin between PTR (selling-in price) and Cost (net landed
 // cost, already inclusive of the synced offer/product-discount/scheme), i.e.
@@ -2732,7 +2948,10 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
   return (
     <>
       <section className="ow-panel ow-panel--chart">
-        <div className="ow-panel-title">Monthly Trend{loading && <span className="ow-intel-loading">…</span>}</div>
+        <div className="ow-panel-title">
+          Monthly Trend<span className="ow-panel-subtitle">Stock movement — last {monthly.length || 4} months</span>
+          {loading && <span className="ow-intel-loading">…</span>}
+        </div>
         <div className="ow-panel-body">
           {empty ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={monthly} loading={loading} />}
         </div>
@@ -2786,39 +3005,508 @@ function OrderIntelligence({ store, productCode, product, mode, session, onError
   );
 }
 
-// Compact monthly trend: Purchase / Sales / Stock bars per month. HTML/flex bars
-// (no chart lib) so it fills the sidebar width and stays small.
+// Stock-movement trend: IN (blue) / OUT (green) / STOCK (red) bars share one
+// unsigned scale; ADJUSTMENT (purple) is a small diverging bar in its own lane
+// with its own scale, since its magnitude is usually far smaller than the raw
+// quantities and it is the only series that can be negative -- forcing it
+// onto the shared axis would either crush the other three bars or make
+// Adjustment invisible. Both IN and OUT are already return-adjusted per
+// qty_check_monthly_stats' verified formula (IN = purchase + transfer_in +
+// sales_return, OUT = sales + transfer_out + purchase_return); Adjustment
+// already includes expiry returns, so it is deliberately NOT added again into
+// OUT (see that function's docstring) -- the tooltip labels this explicitly
+// rather than silently doing the math wrong.
+const OW_TREND_SERIES = [
+  { key: 'total_in', label: 'In', cls: 'in' },
+  { key: 'total_out', label: 'Out', cls: 'out' },
+  { key: 'stock', label: 'Stock', cls: 'stock' },
+];
+
 function OwTrendChart({ rows, loading }) {
+  const [hover, setHover] = useState(null); // { row, rect }
   if (!rows.length) return <div className="ow-empty">{loading ? 'Loading…' : 'No monthly statistics.'}</div>;
-  const series = [
-    { key: 'PurchaseQuantity', label: 'Purch', color: '#2563eb' },
-    { key: 'SaleQuantity', label: 'Sales', color: '#16a34a' },
-    { key: 'StockInHand', label: 'Stock', color: '#dc2626' }
-  ];
-  const max = Math.max(1, ...rows.flatMap((r) => series.map((s) => Number(r[s.key]) || 0)));
+
+  const maxLevel = Math.max(1, ...rows.flatMap((r) => OW_TREND_SERIES.map((s) => Number(r[s.key]) || 0)));
+  const maxAdj = Math.max(1, ...rows.map((r) => Math.abs(Number(r.adjustment) || 0)));
+
+  const showTip = (e, row) => setHover({ row, rect: e.currentTarget.getBoundingClientRect() });
+  const hideTip = () => setHover(null);
+
   return (
     <div className="ow-chart">
       <div className="ow-chart-plot">
-        {rows.map((row, i) => (
-          <div className="ow-chart-group" key={`${row.MonthOfStatistics}-${i}`}>
-            <div className="ow-chart-bars">
-              {series.map((s) => {
-                const v = Number(row[s.key]) || 0;
-                return (
-                  <div key={s.key} className="ow-chart-bar" style={{ height: `${Math.max(1, (v / max) * 100)}%`, background: s.color }} title={`${s.label}: ${v}`}>
-                    {v !== 0 && <span className="ow-chart-val">{fmtOwQty(v)}</span>}
-                  </div>
-                );
-              })}
+        {rows.map((row, i) => {
+          const adj = Number(row.adjustment) || 0;
+          const adjPct = adj === 0 ? 0 : Math.min(100, (Math.abs(adj) / maxAdj) * 100);
+          return (
+            <div
+              className="ow-chart-group"
+              key={`${row.month}-${i}`}
+              onMouseEnter={(e) => showTip(e, row)}
+              onMouseLeave={hideTip}
+              onFocus={(e) => showTip(e, row)}
+              onBlur={hideTip}
+              tabIndex={0}
+            >
+              <div className="ow-chart-bars">
+                {OW_TREND_SERIES.map((s) => {
+                  const v = Number(row[s.key]) || 0;
+                  const isZero = v === 0;
+                  const pct = isZero ? 0 : Math.max(4, (v / maxLevel) * 100);
+                  return (
+                    <div
+                      key={s.key}
+                      className={`ow-chart-bar ow-chart-bar--${s.cls}${isZero ? ' is-zero' : ''}`}
+                      style={{ height: isZero ? '3px' : `${pct}%` }}
+                    >
+                      <span className="ow-chart-val">{fmtOwQty(v)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="ow-chart-adjlane">
+                <div className="ow-chart-adjtrack-pos">
+                  {adj > 0 && (
+                    <div className="ow-chart-adjbar is-pos" style={{ height: `${adjPct}%` }}>
+                      <span className="ow-chart-adjval">{fmtOwSigned(adj)}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="ow-chart-adjtrack-base" />
+                <div className="ow-chart-adjtrack-neg">
+                  {adj < 0 && (
+                    <div className="ow-chart-adjbar is-neg" style={{ height: `${adjPct}%` }}>
+                      <span className="ow-chart-adjval">{fmtOwSigned(adj)}</span>
+                    </div>
+                  )}
+                  {adj === 0 && (
+                    <div className="ow-chart-adjbar is-zero">
+                      <span className="ow-chart-adjval">0</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="ow-chart-month">{fmtOwMonthLabel(row.month)}</div>
             </div>
-            <div className="ow-chart-month">{row.MonthOfStatistics}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div className="ow-chart-legend">
-        {series.map((s) => <span key={s.key}><i style={{ background: s.color }} />{s.label}</span>)}
+        <span><i className="ow-chart-dot ow-chart-dot--in" />In</span>
+        <span><i className="ow-chart-dot ow-chart-dot--out" />Out</span>
+        <span><i className="ow-chart-dot ow-chart-dot--stock" />Stock</span>
+        <span><i className="ow-chart-dot ow-chart-dot--adj" />Adjustment</span>
       </div>
+      {hover && <OwChartTooltip row={hover.row} anchorRect={hover.rect} />}
     </div>
+  );
+}
+
+// Rich floating tooltip for one month -- portaled to document.body (same
+// convention as OwGridSettings/OwExportCard) so it is never clipped by the
+// side panel's overflow:hidden ancestors. Purely presentational: every value
+// it shows already comes from qty_check_monthly_stats' response, computed
+// once on the backend.
+function OwChartTooltip({ row, anchorRect }) {
+  if (!anchorRect) return null;
+  const width = 224;
+  const left = Math.min(Math.max(anchorRect.left + anchorRect.width / 2, width / 2 + 8), window.innerWidth - width / 2 - 8);
+  const top = anchorRect.top - 8;
+  return createPortal(
+    <div className="ow-chart-tip" role="tooltip" style={{ position: 'fixed', top, left, width }}>
+      <div className="ow-chart-tip-month">{fmtOwMonthLabel(row.month)}</div>
+      <div className="ow-chart-tip-section ow-chart-tip-section--in">
+        <div className="ow-chart-tip-head">IN</div>
+        <div className="ow-chart-tip-row"><span>Purchase</span><b>{fmtOwQty(row.gross_purchase)}</b></div>
+        <div className="ow-chart-tip-row"><span>Transfer In</span><b>{fmtOwQty(row.transfer_in)}</b></div>
+        <div className="ow-chart-tip-row"><span>Sales Return</span><b>{fmtOwQty(row.sales_return)}</b></div>
+        <div className="ow-chart-tip-row ow-chart-tip-total"><span>Total IN</span><b>{fmtOwQty(row.total_in)}</b></div>
+      </div>
+      <div className="ow-chart-tip-section ow-chart-tip-section--out">
+        <div className="ow-chart-tip-head">OUT</div>
+        <div className="ow-chart-tip-row"><span>Sales</span><b>{fmtOwQty(row.gross_sales)}</b></div>
+        <div className="ow-chart-tip-row"><span>Transfer Out</span><b>{fmtOwQty(row.transfer_out)}</b></div>
+        <div className="ow-chart-tip-row"><span>Purchase Return</span><b>{fmtOwQty(row.purchase_return)}</b></div>
+        <div className="ow-chart-tip-row ow-chart-tip-total"><span>Total OUT</span><b>{fmtOwQty(row.total_out)}</b></div>
+      </div>
+      <div className="ow-chart-tip-section ow-chart-tip-section--stock">
+        <div className="ow-chart-tip-head">STOCK</div>
+        <div className="ow-chart-tip-row ow-chart-tip-single"><b>{fmtOwQty(row.stock)}</b></div>
+      </div>
+      <div className="ow-chart-tip-section ow-chart-tip-section--adj">
+        <div className="ow-chart-tip-head">ADJUSTMENT</div>
+        <div className="ow-chart-tip-row ow-chart-tip-single"><b>{fmtOwSigned(row.adjustment)}</b></div>
+        <div className="ow-chart-tip-note">includes expiry returns</div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+const LABEL_STOCK_FILTERS = [
+  { value: 'all', label: 'Stock > 0 or zero stock sale within 90 days' },
+  { value: 'in_stock', label: 'Stock > 0 only' },
+  { value: 'zero_recent_sale', label: 'Stock = 0 and sale within 90 days' },
+  { value: 'zero_stale', label: 'Stock = 0 and no sale in over 90 days' }
+];
+
+const LABEL_REMARKS_PRESETS = [
+  'Counter', 'Consumer', 'SYP', 'Cold Storage', 'Fragile', 'High Value', 'Fast Moving', 'Slow Moving', 'Check Unit Description'
+];
+
+// Mirrors backend dependencies.store_scope.assert_label_exporter_store_access:
+// only NMW (prints for every store) and super admin/platform logins may pick
+// a store other than their own.
+function canChangeLabelStore(session) {
+  if (isSuperAdmin(session)) return true;
+  const store = session?.user?.roles?.[0];
+  return String(store?.store_code || '').trim().toUpperCase() === 'NMW';
+}
+
+function LabelExporter({ session, settings }) {
+  const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
+  const admin = isSuperAdmin(session);
+  const canChangeStore = canChangeLabelStore(session);
+  const ownStoreId = session?.user?.roles?.[0]?.store_id || settings?.storeId || '';
+
+  const [stores, setStores] = useState([]);
+  const [storeId, setStoreId] = useState(ownStoreId);
+
+  const [q, setQ] = useState('');
+  const [startsWith, setStartsWith] = useState('');
+  const [unitDescription, setUnitDescription] = useState('');
+  const [unitDescriptionMode, setUnitDescriptionMode] = useState('contains');
+  const [boxNumber, setBoxNumber] = useState('');
+  const [stockFilter, setStockFilter] = useState('all');
+  const [onlyNullSublocation, setOnlyNullSublocation] = useState(true);
+  const [onlySaleUnitGtOne, setOnlySaleUnitGtOne] = useState(true);
+
+  const [rows, setRows] = useState([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [status, setStatus] = useState({ state: 'idle', message: 'Pick a letter and search.' });
+  const [savingCode, setSavingCode] = useState('');
+  const [subLocDrafts, setSubLocDrafts] = useState({});
+  const [remarksDrafts, setRemarksDrafts] = useState({});
+
+  const [trendRows, setTrendRows] = useState([]);
+  const [trendLoading, setTrendLoading] = useState(false);
+  const trendRequestRef = useRef(0);
+
+  useEffect(() => {
+    api.listStores(session).then((rows) => setStores(asArray(rows))).catch(() => {});
+  }, [session]);
+
+  const activeRow = rows[activeIndex] || null;
+
+  useEffect(() => {
+    if (!activeRow?.product_code || !tenantId || !storeId) {
+      setTrendRows([]);
+      return;
+    }
+    const requestId = ++trendRequestRef.current;
+    setTrendLoading(true);
+    api.getLabelProductTrend(activeRow.product_code, tenantId, storeId, session)
+      .then((result) => {
+        if (trendRequestRef.current !== requestId) return;
+        setTrendRows(asArray(result?.rows));
+      })
+      .catch(() => {
+        if (trendRequestRef.current !== requestId) return;
+        setTrendRows([]);
+      })
+      .finally(() => {
+        if (trendRequestRef.current !== requestId) return;
+        setTrendLoading(false);
+      });
+  }, [activeRow?.product_code, tenantId, storeId, session]);
+
+  function runSearch() {
+    if (!tenantId || !storeId) {
+      setStatus({ state: 'idle', message: 'Waiting for tenant/store...' });
+      return;
+    }
+    setStatus({ state: 'loading', message: 'Loading products...' });
+    api.searchLabelProducts(session, {
+      tenantId,
+      storeId,
+      q,
+      startsWith,
+      unitDescription,
+      unitDescriptionMode,
+      boxNumber,
+      stockFilter,
+      onlyNullSublocation: boxNumber ? false : onlyNullSublocation,
+      onlySaleUnitGtOne
+    }).then((result) => {
+      const nextRows = asArray(result?.rows);
+      setRows(nextRows);
+      setActiveIndex(0);
+      const nextSubLoc = {};
+      const nextRemarks = {};
+      nextRows.forEach((row) => {
+        nextSubLoc[row.product_code] = row.current_sublocation || '';
+        nextRemarks[row.product_code] = row.remarks || '';
+      });
+      setSubLocDrafts(nextSubLoc);
+      setRemarksDrafts(nextRemarks);
+      setStatus({ state: 'ok', message: nextRows.length ? `${nextRows.length} product(s).` : 'No products for this filter.' });
+    }).catch((error) => {
+      setRows([]);
+      setStatus({ state: 'error', message: error.message });
+    });
+  }
+
+  function patchRow(productCode, patch) {
+    setRows((current) => current.map((row) => (row.product_code === productCode ? { ...row, ...patch } : row)));
+  }
+
+  function setIncludeLabel(row, value) {
+    const nextValue = row.include_label === value ? null : value;
+    setSavingCode(row.product_code);
+    api.updateLabelReview(row.product_code, tenantId, storeId, { include_label: nextValue }, session)
+      .then(() => patchRow(row.product_code, { include_label: nextValue }))
+      .catch((error) => setStatus({ state: 'error', message: error.message }))
+      .finally(() => setSavingCode(''));
+  }
+
+  function saveRemarks(row) {
+    const draft = (remarksDrafts[row.product_code] || '').trim();
+    if (draft === (row.remarks || '')) return;
+    setSavingCode(row.product_code);
+    api.updateLabelReview(row.product_code, tenantId, storeId, { remarks: draft }, session)
+      .then(() => patchRow(row.product_code, { remarks: draft || null }))
+      .catch((error) => setStatus({ state: 'error', message: error.message }))
+      .finally(() => setSavingCode(''));
+  }
+
+  function saveSubLocation(row) {
+    const draft = (subLocDrafts[row.product_code] || '').trim();
+    if (draft === (row.current_sublocation || '')) return;
+    setSavingCode(row.product_code);
+    api.assignLabelSublocation(row.product_code, tenantId, storeId, draft, session)
+      .then(() => patchRow(row.product_code, { current_sublocation: draft || null }))
+      .catch((error) => setStatus({ state: 'error', message: error.message }))
+      .finally(() => setSavingCode(''));
+  }
+
+  const remarksOptions = useMemo(() => {
+    const used = rows.map((row) => row.remarks).filter(Boolean);
+    return Array.from(new Set([...LABEL_REMARKS_PRESETS, ...used]));
+  }, [rows]);
+
+  const trendMax = Math.max(1, ...trendRows.map((row) => Math.max(row.sale_qty, row.purchase_qty)));
+
+  return (
+    <section className="screen-panel lbl-screen">
+      <div className="nmw-toolbar">
+        <strong className="nmw-toolbar-title">Label Exporter</strong>
+
+        <label className="nmw-toolbar-field">
+          Store
+          <select value={storeId} disabled={!canChangeStore} onChange={(event) => setStoreId(event.target.value)}>
+            {stores.length === 0 && <option value={storeId}>{storeId ? 'Current store' : 'Loading...'}</option>}
+            {(canChangeStore ? stores : stores.filter((s) => s.store_id === storeId)).map((s) => (
+              <option key={s.store_id} value={s.store_id}>{s.store_code} — {s.store_name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="nmw-toolbar-field">
+          Letter
+          <input
+            value={startsWith}
+            maxLength={1}
+            onChange={(event) => setStartsWith(event.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1))}
+            placeholder="A"
+            style={{ width: 44 }}
+          />
+        </label>
+
+        <label className="nmw-toolbar-field">
+          Search
+          <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Product / code" />
+        </label>
+
+        <label className="nmw-toolbar-field">
+          Unit mode
+          <select value={unitDescriptionMode} onChange={(event) => setUnitDescriptionMode(event.target.value)}>
+            <option value="contains">Contains</option>
+            <option value="exact">Exact</option>
+            <option value="null">Blank / NULL</option>
+          </select>
+        </label>
+
+        <label className="nmw-toolbar-field">
+          Unit
+          <input
+            value={unitDescription}
+            disabled={unitDescriptionMode === 'null'}
+            onChange={(event) => setUnitDescription(event.target.value.toUpperCase())}
+            placeholder={unitDescriptionMode === 'null' ? 'n/a' : 'Type unit'}
+          />
+        </label>
+
+        <label className="nmw-toolbar-field">
+          Box
+          <input value={boxNumber} onChange={(event) => setBoxNumber(event.target.value.toUpperCase())} placeholder="A005" />
+        </label>
+
+        <label className="nmw-toolbar-field">
+          Stock rule
+          <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}>
+            {LABEL_STOCK_FILTERS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="nmw-toolbar-field lbl-checkbox-field">
+          <span>
+            <input
+              type="checkbox"
+              checked={onlyNullSublocation}
+              disabled={!!boxNumber}
+              onChange={(event) => setOnlyNullSublocation(event.target.checked)}
+            /> SubLoc null
+          </span>
+        </label>
+
+        <label className="nmw-toolbar-field lbl-checkbox-field">
+          <span>
+            <input
+              type="checkbox"
+              checked={onlySaleUnitGtOne}
+              onChange={(event) => setOnlySaleUnitGtOne(event.target.checked)}
+            /> SaleUnit &gt; 1
+          </span>
+        </label>
+
+        <button className="primary-button" disabled={!tenantId || !storeId} onClick={runSearch}>Search</button>
+      </div>
+
+      <div className={`status-line ${status.state}`}>{status.message}</div>
+      {!admin && <div className="lbl-review-note">Review only — sublocation assignment is a super-admin action.</div>}
+
+      <div className="lbl-split">
+        <div className="table-wrap lbl-products-pane">
+          <table className="nmw-compact-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Product</th>
+                <th>SubLoc</th>
+                <th>Unit</th>
+                <th>MRP</th>
+                <th>Packing</th>
+                <th>Stock</th>
+                <th>LRDays</th>
+                <th>LSDays</th>
+                <th>Include</th>
+                <th>Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={11} className="empty-state">Run search to load products</td></tr>
+              ) : (
+                rows.map((row, index) => {
+                  const code = row.product_code;
+                  return (
+                    <tr key={code} className={index === activeIndex ? 'nmw-row-active' : ''} onClick={() => setActiveIndex(index)}>
+                      <td>{row.product_code}</td>
+                      <td>{row.product_name}</td>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        {admin ? (
+                          <input
+                            className="lbl-inline-input"
+                            value={subLocDrafts[code] ?? ''}
+                            disabled={savingCode === code}
+                            onChange={(event) => setSubLocDrafts((current) => ({ ...current, [code]: event.target.value.toUpperCase() }))}
+                            onBlur={() => saveSubLocation(row)}
+                          />
+                        ) : (row.current_sublocation || <span className="lbl-null">NULL</span>)}
+                      </td>
+                      <td>{row.unit_description || '-'}</td>
+                      <td>{row.mrp}</td>
+                      <td>{row.sale_unit}</td>
+                      <td>{row.total_stock}</td>
+                      <td>{row.purchase_days ?? '-'}</td>
+                      <td>{row.sale_days ?? '-'}</td>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <div className="lbl-yn-group">
+                          <button
+                            type="button"
+                            className={`lbl-yn-btn lbl-yn-y ${row.include_label === 'Y' ? 'active' : ''}`}
+                            disabled={savingCode === code}
+                            onClick={() => setIncludeLabel(row, 'Y')}
+                          >Y</button>
+                          <button
+                            type="button"
+                            className={`lbl-yn-btn lbl-yn-n ${row.include_label === 'N' ? 'active' : ''}`}
+                            disabled={savingCode === code}
+                            onClick={() => setIncludeLabel(row, 'N')}
+                          >N</button>
+                        </div>
+                      </td>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <input
+                          className="lbl-inline-input lbl-remarks-input"
+                          list="lbl-remarks-options"
+                          value={remarksDrafts[code] ?? ''}
+                          disabled={savingCode === code}
+                          placeholder="Counter, SYP..."
+                          onChange={(event) => setRemarksDrafts((current) => ({ ...current, [code]: event.target.value }))}
+                          onBlur={() => saveRemarks(row)}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+          <datalist id="lbl-remarks-options">
+            {remarksOptions.map((option) => <option key={option} value={option} />)}
+          </datalist>
+        </div>
+
+        <div className="table-wrap lbl-trend-pane">
+          <div className="lbl-trend-head">
+            <strong>Product Trend</strong>
+            {activeRow && <span className="lbl-trend-head-sub">{activeRow.product_name}</span>}
+          </div>
+          {!activeRow ? (
+            <div className="empty-state">Select a product to view its sales/purchase trend.</div>
+          ) : trendLoading ? (
+            <div className="empty-state">Loading trend...</div>
+          ) : trendRows.length === 0 ? (
+            <div className="empty-state">No monthly trend data for this product.</div>
+          ) : (
+            <>
+              <div className="lbl-trend-legend">
+                <span><i className="lbl-dot lbl-dot-sale" />Sale qty</span>
+                <span><i className="lbl-dot lbl-dot-purchase" />Purchase qty</span>
+              </div>
+              <div className="lbl-trend-bars">
+                {trendRows.map((row) => (
+                  <div className="lbl-trend-row" key={row.month}>
+                    <span>{row.month}</span>
+                    <span className="lbl-trend-track">
+                      <span className="lbl-trend-fill lbl-trend-fill-sale" style={{ width: `${Math.min(100, (row.sale_qty / trendMax) * 100)}%` }} />
+                    </span>
+                    <span className="lbl-trend-track">
+                      <span className="lbl-trend-fill lbl-trend-fill-purchase" style={{ width: `${Math.min(100, (row.purchase_qty / trendMax) * 100)}%` }} />
+                    </span>
+                    <span className="lbl-trend-values">{row.sale_qty}/{row.purchase_qty}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="lbl-trend-stock">Current stock in hand: {trendRows[0]?.stock_in_hand ?? '-'}</div>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -3486,7 +4174,7 @@ function GridRow({ cols, cells, tag: Tag = 'div', className = '', onClick, rowRe
   );
 }
 
-function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, onProductSelect, onSaleSelect, onPurchaseSelect, onOpenBatch, hideSupplierColumn, restrictWarehouse, selected, onSelect, showBillingColumn = true, visibleSections, visibleFields, columnOrder, columnWidths, visibility = 'SUMMARY', rowRef }) {
+function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, selection, onProductSelect, onSaleSelect, onPurchaseSelect, onOpenBatch, hideSupplierColumn, restrictWarehouse, selected, onSelect, showBillingColumn = true, visibleSections, visibleFields, columnOrder, columnWidths, visibility = 'SUMMARY', rowRef }) {
   const batches = detail?.batches || [];
   const purchases = detail?.purchases || [];
   const sales = detail?.sales || [];
@@ -3559,7 +4247,8 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
           <StoreProductGrid
             products={searchProducts}
             hasSearched={hasSearched}
-            selectedProductCode={detail?.product?.product_code}
+            sourceProductCode={selection?.sourceProductCode ?? null}
+            syncProductCode={selection?.syncProductCode ?? null}
             onProductSelect={onProductSelect}
             visibleFields={fields.product}
             columnOrder={columnOrder}
@@ -4046,16 +4735,20 @@ function summarizeProductBatches(batches) {
   };
 }
 
-function StoreProductGrid({ products, hasSearched, selectedProductCode, onProductSelect, visibleFields = DEFAULT_STOCK_FIELDS.product, columnOrder, columnWidths }) {
+function StoreProductGrid({ products, hasSearched, sourceProductCode, syncProductCode, onProductSelect, visibleFields = DEFAULT_STOCK_FIELDS.product, columnOrder, columnWidths }) {
   const wrapRef = useRef(null);
   const activeRowRef = useRef(null);
   const shown = products.slice(0, 20);
-  const activeIndex = Math.max(0, shown.findIndex((product) => product.product_code === selectedProductCode));
+  // Keyboard nav/scroll-into-view tracks whichever of the two states this
+  // store currently has (a store never has both - see selectionFor() in the
+  // parent); the two are still rendered as visually distinct colors below.
+  const highlightedProductCode = sourceProductCode ?? syncProductCode;
+  const activeIndex = Math.max(0, shown.findIndex((product) => product.product_code === highlightedProductCode));
 
   // Keep the keyboard-selected row scrolled into view inside the small list.
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [selectedProductCode]);
+  }, [highlightedProductCode]);
 
   if (!products.length) {
     return <div className={hasSearched ? 'not-found-card' : 'waiting-card'}>{hasSearched ? 'No' : 'Waiting'}</div>;
@@ -4066,7 +4759,10 @@ function StoreProductGrid({ products, hasSearched, selectedProductCode, onProduc
     'product', columnOrder, columnWidths);
   const grid = definitions.map(([, width]) => width).join(' ');
 
-  // Arrow Up/Down move the selection within THIS grid once it has focus.
+  // Arrow Up/Down move the selection within THIS grid once it has focus. Like
+  // any row click, this is a real user action - it goes through the same
+  // onProductSelect handler, so it becomes a brand-new GREEN source and
+  // triggers a fresh cross-store synchronization, exactly like a mouse click.
   function handleKeyDown(event) {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     event.preventDefault();
@@ -4085,15 +4781,20 @@ function StoreProductGrid({ products, hasSearched, selectedProductCode, onProduc
       onKeyDown={handleKeyDown}
     >
       {shown.map((product, index) => {
-        const isActive = product.product_code === selectedProductCode;
+        // Priority: a row explicitly clicked by the user (GREEN / source-row)
+        // always wins over an auto-synchronized match (BLUE / active-row) -
+        // never both on the same row (structurally guaranteed anyway, since a
+        // store only ever has one of sourceProductCode/syncProductCode set).
+        const isSourceSelected = product.product_code === sourceProductCode;
+        const isSyncSelected = !isSourceSelected && product.product_code === syncProductCode;
         const matchBadge = product.matchBadge;
         return (
           <GridRow
             key={`${product.product_code || product.product_name}-${index}`}
             cols={grid}
             tag="span"
-            className={isActive ? 'active-row' : ''}
-            rowRef={isActive ? activeRowRef : undefined}
+            className={isSourceSelected ? 'source-row' : isSyncSelected ? 'active-row' : ''}
+            rowRef={isSourceSelected || isSyncSelected ? activeRowRef : undefined}
             cells={definitions.map(([key]) => ({
               name: <span className="product-cell-main" title={product.product_name || '-'}>
                 <span className="product-name-with-badge">

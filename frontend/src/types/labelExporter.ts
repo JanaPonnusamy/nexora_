@@ -1,18 +1,23 @@
 /* Types for the Label Exporter module. */
 
-/* ---------- Product search ---------- */
+/* ---------- Product search / review grid ---------- */
+
+export type IncludeLabel = 'Y' | 'N'
+export type UnitDescriptionMode = 'contains' | 'exact' | 'null'
+export type StockFilter = 'all' | 'in_stock' | 'zero_recent_sale' | 'zero_stale'
 
 export interface LabelSearchRow {
   product_code: string
   product_name: string
   unit_description: string | null
-  box_number: string | null
   mrp: number
   total_stock: number
   sale_days: number | null
   purchase_days: number | null
   current_sublocation?: string | null
   sale_unit?: number | null
+  include_label?: IncludeLabel | null
+  remarks?: string | null
 }
 
 export interface LabelSearchResult {
@@ -68,48 +73,28 @@ export interface ProductBatchResult {
   rows: LabelBatchRow[]
 }
 
-/* ---------- Letter-wise review ---------- */
-
-export type IncludeLabel = 'Y' | 'N'
-export type ProductKind = 'counter' | 'consumer'
-export type SuggestionStatus = 'none' | 'pending' | 'approved' | 'rejected'
-
-export interface LabelReviewRow {
-  product_code: string
-  product_name: string
-  unit_description: string | null
-  current_sublocation: string | null
-  mrp: number
-  total_stock: number
-  include_label: IncludeLabel | null
-  product_kind: ProductKind | null
-  suggested_unit_description: string | null
-  suggestion_status: SuggestionStatus
-  final_unit_description: string | null
-}
-
-export interface LabelReviewListResult {
-  rows: LabelReviewRow[]
-}
+/* ---------- Review (Y/N + remarks) ---------- */
 
 export interface LabelReviewUpdateRequest {
   include_label?: IncludeLabel | null
-  product_kind?: ProductKind | null
-  suggested_unit_description?: string | null
+  remarks?: string | null
 }
 
-export interface LabelSuggestionRow {
-  tenant_id: string
-  store_id: string
-  product_code: string
-  product_name: string
-  current_unit_description: string | null
-  suggested_unit_description: string | null
-  suggested_by: string | null
-  suggested_at: string | null
-  suggestion_status: SuggestionStatus
+/* ---------- Sublocation assignment (super admin) ---------- */
+
+export interface LabelSublocationAssignRequest {
+  sublocation: string
 }
 
-export interface LabelSuggestionListResult {
-  rows: LabelSuggestionRow[]
+/* ---------- Product trend panel ---------- */
+
+export interface LabelTrendRow {
+  month: string
+  sale_qty: number
+  purchase_qty: number
+  stock_in_hand: number
+}
+
+export interface LabelTrendResult {
+  rows: LabelTrendRow[]
 }

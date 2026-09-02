@@ -4,20 +4,48 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { storeService } from '../../services/storeService'
 import { tenantService } from '../../services/tenantService'
 import { labelExporterService } from '../../services/labelExporterService'
-import type { LabelSearchRow } from '../../types/labelExporter'
+import type {
+  IncludeLabel,
+  LabelSearchRow,
+  LabelTrendRow,
+  StockFilter,
+  UnitDescriptionMode,
+} from '../../types/labelExporter'
 import type { TenantStore } from '../../types/store'
 import type { Tenant } from '../../types/tenant'
 import { buildPreparedLabelItem, printLabelSheet, type PreparedLabelItem } from './printLabelSheet'
-import { canChangeLabelExportStore } from './labelExportAccess'
+import { canChangeLabelExportStore, isSuperAdmin } from './labelExportAccess'
 import { useAuth } from '../../hooks/useAuth'
 import { FilterBar } from '../../design-system/components/FilterBar'
 import './label-export.css'
 
-type StockFilter = 'all' | 'in_stock' | 'zero_recent_sale'
+const REMARKS_PRESETS = [
+  'Counter',
+  'Consumer',
+  'SYP',
+  'Cold Storage',
+  'Fragile',
+  'High Value',
+  'Fast Moving',
+  'Slow Moving',
+  'Check Unit Description',
+]
+
+function StockFilterLabel({ value }: { value: StockFilter }) {
+  const labels: Record<StockFilter, string> = {
+    all: 'Stock > 0 or zero stock sale within 90 days',
+    in_stock: 'Stock > 0 only',
+    zero_recent_sale: 'Stock = 0 and sale within 90 days',
+    zero_stale: 'Stock = 0 and no sale in over 90 days',
+  }
+  return <>{labels[value]}</>
+}
 
 export default function LabelExporterPage() {
   const { user } = useAuth()
   const canChangeStore = canChangeLabelExportStore(user)
+  const admin = isSuperAdmin(user)
+
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState('')
   const [stores, setStores] = useState<TenantStore[]>([])
@@ -26,6 +54,7 @@ export default function LabelExporterPage() {
   const [searchText, setSearchText] = useState('')
   const [startsWith, setStartsWith] = useState('')
   const [unitDescription, setUnitDescription] = useState('')
+  const [unitDescriptionMode, setUnitDescriptionMode] = useState<UnitDescriptionMode>('contains')
   const [unitDescriptionOptions, setUnitDescriptionOptions] = useState<string[]>([])
   const [boxNumber, setBoxNumber] = useState('')
   const [stockFilter, setStockFilter] = useState<StockFilter>('all')
@@ -42,6 +71,13 @@ export default function LabelExporterPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [subLocDrafts, setSubLocDrafts] = useState<Record<string, string>>({})
+  const [remarksDrafts, setRemarksDrafts] = useState<Record<string, string>>({})
+  const [savingCode, setSavingCode] = useState('')
+
+  const [trendRows, setTrendRows] = useState<LabelTrendRow[]>([])
+  const [trendLoading, setTrendLoading] = useState(false)
+
   const [labelWidthMm, setLabelWidthMm] = useState('50')
   const [labelHeightMm, setLabelHeightMm] = useState('25')
   const [labelColumns, setLabelColumns] = useState('4')
@@ -51,6 +87,7 @@ export default function LabelExporterPage() {
 
   const searchRowRefs = useRef<Record<string, HTMLTableRowElement | null>>({})
   const labelRowRefs = useRef<Record<string, HTMLTableRowElement | null>>({})
+  const trendRequestRef = useRef(0)
 
   useEffect(() => {
     tenantService
@@ -83,6 +120,7 @@ export default function LabelExporterPage() {
     setActiveSearchIndex(0)
     setUnitDescriptionOptions([])
     setLastBoxForLetter(null)
+    setTrendRows([])
   }, [tenantId, storeId])
 
   useEffect(() => {
@@ -103,6 +141,31 @@ export default function LabelExporterPage() {
     labelRowRefs.current[item.product_code]?.scrollIntoView({ block: 'nearest' })
   }, [activeLabelIndex, labelList])
 
+  // Load the sales/purchase trend for whichever row is active.
+  useEffect(() => {
+    const row = searchRows[activeSearchIndex]
+    if (!row?.product_code || !tenantId || !storeId) {
+      setTrendRows([])
+      return
+    }
+    const requestId = ++trendRequestRef.current
+    setTrendLoading(true)
+    labelExporterService
+      .getProductTrend(tenantId, storeId, row.product_code)
+      .then((result) => {
+        if (trendRequestRef.current !== requestId) return
+        setTrendRows(Array.isArray(result?.rows) ? result.rows : [])
+      })
+      .catch(() => {
+        if (trendRequestRef.current !== requestId) return
+        setTrendRows([])
+      })
+      .finally(() => {
+        if (trendRequestRef.current !== requestId) return
+        setTrendLoading(false)
+      })
+  }, [activeSearchIndex, searchRows, tenantId, storeId])
+
   async function runSearch() {
     if (!tenantId || !storeId) return
     setLoading(true)
@@ -114,6 +177,7 @@ export default function LabelExporterPage() {
         q: searchText.trim(),
         startsWith: startsWith.trim(),
         unitDescription: unitDescription.trim(),
+        unitDescriptionMode,
         boxNumber: boxNumber.trim(),
         stockFilter,
         onlyNullSublocation: boxNumber.trim() ? false : onlyNullSublocation,
@@ -127,6 +191,15 @@ export default function LabelExporterPage() {
       setUnitDescriptionOptions(nextUnitOptions)
       setLastBoxForLetter(productResult?.last_box_for_letter ?? null)
       setActiveSearchIndex(0)
+
+      const nextSubLoc: Record<string, string> = {}
+      const nextRemarks: Record<string, string> = {}
+      nextSearchRows.forEach((row) => {
+        nextSubLoc[row.product_code] = row.current_sublocation || ''
+        nextRemarks[row.product_code] = row.remarks || ''
+      })
+      setSubLocDrafts(nextSubLoc)
+      setRemarksDrafts(nextRemarks)
 
       if (nextSearchRows[0]?.product_code) selectSearchRow(0, nextSearchRows)
     } catch (err) {
@@ -198,11 +271,70 @@ export default function LabelExporterPage() {
     })
   }
 
+  function patchRow(productCode: string, patch: Partial<LabelSearchRow>) {
+    setSearchRows((current) => current.map((row) => (row.product_code === productCode ? { ...row, ...patch } : row)))
+  }
+
+  async function setIncludeLabel(row: LabelSearchRow, value: IncludeLabel) {
+    const nextValue = row.include_label === value ? null : value
+    setSavingCode(row.product_code)
+    setError(null)
+    try {
+      await labelExporterService.updateReview(tenantId, storeId, row.product_code, { include_label: nextValue })
+      patchRow(row.product_code, { include_label: nextValue })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save review')
+    } finally {
+      setSavingCode('')
+    }
+  }
+
+  async function saveRemarks(row: LabelSearchRow) {
+    const draft = (remarksDrafts[row.product_code] || '').trim()
+    if (draft === (row.remarks || '')) return
+    setSavingCode(row.product_code)
+    setError(null)
+    try {
+      await labelExporterService.updateReview(tenantId, storeId, row.product_code, { remarks: draft })
+      patchRow(row.product_code, { remarks: draft || null })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save remarks')
+    } finally {
+      setSavingCode('')
+    }
+  }
+
+  async function saveSubLocation(row: LabelSearchRow) {
+    const draft = (subLocDrafts[row.product_code] || '').trim()
+    if (draft === (row.current_sublocation || '')) return
+    setSavingCode(row.product_code)
+    setError(null)
+    try {
+      await labelExporterService.assignSublocation(tenantId, storeId, row.product_code, draft)
+      patchRow(row.product_code, { current_sublocation: draft || null })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to assign sublocation')
+    } finally {
+      setSavingCode('')
+    }
+  }
+
   const allVisibleSelected = searchRows.length > 0 && searchRows.every((row) => row.product_code && selectedSearchCodes[row.product_code])
 
   const totalLabels = useMemo(
     () => labelList.reduce((sum, item) => sum + Math.max(1, Number(item.quantity) || 1), 0),
     [labelList],
+  )
+
+  const remarksOptions = useMemo(() => {
+    const used = searchRows.map((row) => row.remarks).filter((v): v is string => !!v)
+    return Array.from(new Set([...REMARKS_PRESETS, ...used]))
+  }, [searchRows])
+
+  const activeTrendRow = searchRows[activeSearchIndex]
+  const trendMax = useMemo(
+    () => Math.max(1, ...trendRows.map((row) => Math.max(row.sale_qty, row.purchase_qty))),
+    [trendRows],
   )
 
   function exportPrint() {
@@ -223,10 +355,10 @@ export default function LabelExporterPage() {
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
       selectSearchRow(Math.max(0, activeSearchIndex - 1))
-    } else if (event.key === 'Enter') {
+    } else if (event.key === 'Enter' && admin) {
       event.preventDefault()
       addActiveRowToLabelList()
-    } else if (event.key === ' ') {
+    } else if (event.key === ' ' && admin) {
       event.preventDefault()
       const row = searchRows[activeSearchIndex]
       if (row?.product_code) toggleSearchRow(row.product_code)
@@ -300,13 +432,27 @@ export default function LabelExporterPage() {
         </label>
 
         <label className="label-export-field">
+          <span className="label-export-field__label">Unit mode</span>
+          <select
+            className="form-select form-select-sm"
+            value={unitDescriptionMode}
+            onChange={(e) => setUnitDescriptionMode(e.target.value as UnitDescriptionMode)}
+          >
+            <option value="contains">Contains</option>
+            <option value="exact">Exact</option>
+            <option value="null">Blank / NULL</option>
+          </select>
+        </label>
+
+        <label className="label-export-field">
           <span className="label-export-field__label">Unit</span>
           <input
             className="form-control form-control-sm"
             list="label-export-unit-options"
             value={unitDescription}
+            disabled={unitDescriptionMode === 'null'}
             onChange={(e) => setUnitDescription(e.target.value.toUpperCase())}
-            placeholder="Type unit"
+            placeholder={unitDescriptionMode === 'null' ? 'n/a' : 'Type unit'}
           />
           <datalist id="label-export-unit-options">
             {unitDescriptionOptions.map((option) => (
@@ -332,9 +478,10 @@ export default function LabelExporterPage() {
             value={stockFilter}
             onChange={(e) => setStockFilter(e.target.value as StockFilter)}
           >
-            <option value="all">Stock &gt; 0 or zero stock sale within 90 days</option>
-            <option value="in_stock">Stock &gt; 0 only</option>
-            <option value="zero_recent_sale">Stock = 0 and sale within 90 days</option>
+            <option value="all"><StockFilterLabel value="all" /></option>
+            <option value="in_stock"><StockFilterLabel value="in_stock" /></option>
+            <option value="zero_recent_sale"><StockFilterLabel value="zero_recent_sale" /></option>
+            <option value="zero_stale"><StockFilterLabel value="zero_stale" /></option>
           </select>
         </label>
 
@@ -368,41 +515,48 @@ export default function LabelExporterPage() {
       <div className="label-export-status">
         <span>Last box: <strong>{lastBoxForLetter || '-'}</strong></span>
         <span>Rows: <strong>{searchRows.length}</strong></span>
-        <span>Labels: <strong>{labelList.length}</strong> / <strong>{totalLabels}</strong></span>
+        {admin && <span>Labels: <strong>{labelList.length}</strong> / <strong>{totalLabels}</strong></span>}
+        {!admin && <span className="text-muted small">Review only - sublocation assignment and export are super-admin actions</span>}
       </div>
 
       {error && <div className="alert alert-danger py-2 small mb-0">{error}</div>}
 
-      <div className="label-export-grid label-export-grid--split">
+      <div className="label-export-main-grid">
         <section className="card shadow-sm">
           <div className="card-header d-flex justify-content-between align-items-center">
-            <strong>Assign Products</strong>
-            <button className="btn btn-sm btn-success" disabled={searchRows.length === 0} onClick={() => addSelectedToLabelList()}>
-              Add to label list
-            </button>
+            <strong>Products</strong>
+            {admin && (
+              <button className="btn btn-sm btn-success" disabled={searchRows.length === 0} onClick={() => addSelectedToLabelList()}>
+                Add to label list
+              </button>
+            )}
           </div>
           <div className="card-body p-0">
             <div className="table-responsive label-export-scroll label-export-grid-focus" tabIndex={0} onKeyDown={handleSearchGridKeyDown}>
               <table className="table table-sm table-hover align-middle mb-0 label-export-table">
                 <thead className="table-light">
                   <tr>
-                    <th>
-                      <input type="checkbox" checked={allVisibleSelected} onChange={(e) => toggleSelectAll(e.target.checked)} />
-                    </th>
+                    {admin && (
+                      <th>
+                        <input type="checkbox" checked={allVisibleSelected} onChange={(e) => toggleSelectAll(e.target.checked)} />
+                      </th>
+                    )}
                     <th>Code</th>
                     <th>Product</th>
                     <th>SubLoc</th>
                     <th>Unit</th>
                     <th className="text-end">MRP</th>
-                    <th className="text-end">SaleUnit</th>
+                    <th className="text-end">Packing</th>
                     <th className="text-end">Stock</th>
-                    <th className="text-end">PDay</th>
-                    <th className="text-end">SDay</th>
+                    <th className="text-end">LRDays</th>
+                    <th className="text-end">LSDays</th>
+                    <th className="text-center">Include</th>
+                    <th>Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
                   {searchRows.length === 0 ? (
-                    <tr><td colSpan={10} className="text-center text-muted py-4">Run search to load products</td></tr>
+                    <tr><td colSpan={admin ? 12 : 11} className="text-center text-muted py-4">Run search to load products</td></tr>
                   ) : (
                     searchRows.map((row, index) => {
                       const code = row.product_code || ''
@@ -413,28 +567,123 @@ export default function LabelExporterPage() {
                           className={index === activeSearchIndex ? 'table-primary' : ''}
                           onClick={() => selectSearchRow(index)}
                         >
-                          <td onClick={(e) => e.stopPropagation()}>
-                            <input type="checkbox" checked={!!selectedSearchCodes[code]} onChange={() => toggleSearchRow(code)} />
-                          </td>
+                          {admin && (
+                            <td onClick={(e) => e.stopPropagation()}>
+                              <input type="checkbox" checked={!!selectedSearchCodes[code]} onChange={() => toggleSearchRow(code)} />
+                            </td>
+                          )}
                           <td>{row.product_code}</td>
                           <td>{row.product_name}</td>
-                          <td>{row.current_sublocation || <span className="text-danger">NULL</span>}</td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            {admin ? (
+                              <input
+                                className="form-control form-control-sm label-export-inline-input"
+                                value={subLocDrafts[code] ?? ''}
+                                disabled={savingCode === code}
+                                onChange={(e) => setSubLocDrafts((current) => ({ ...current, [code]: e.target.value.toUpperCase() }))}
+                                onBlur={() => void saveSubLocation(row)}
+                              />
+                            ) : (
+                              row.current_sublocation || <span className="text-danger">NULL</span>
+                            )}
+                          </td>
                           <td>{row.unit_description || '-'}</td>
                           <td className="text-end">{row.mrp}</td>
                           <td className="text-end">{row.sale_unit}</td>
                           <td className="text-end">{row.total_stock}</td>
                           <td className="text-end">{row.purchase_days ?? '-'}</td>
                           <td className="text-end">{row.sale_days ?? '-'}</td>
+                          <td className="text-center" onClick={(e) => e.stopPropagation()}>
+                            <div className="btn-group btn-group-sm" role="group">
+                              <button
+                                type="button"
+                                className={`btn ${row.include_label === 'Y' ? 'btn-success' : 'btn-outline-success'}`}
+                                disabled={savingCode === code}
+                                onClick={() => void setIncludeLabel(row, 'Y')}
+                              >
+                                Y
+                              </button>
+                              <button
+                                type="button"
+                                className={`btn ${row.include_label === 'N' ? 'btn-danger' : 'btn-outline-danger'}`}
+                                disabled={savingCode === code}
+                                onClick={() => void setIncludeLabel(row, 'N')}
+                              >
+                                N
+                              </button>
+                            </div>
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <input
+                              className="form-control form-control-sm"
+                              list="label-export-remarks-options"
+                              value={remarksDrafts[code] ?? ''}
+                              disabled={savingCode === code}
+                              placeholder="Counter, SYP, unit fix..."
+                              onChange={(e) => setRemarksDrafts((current) => ({ ...current, [code]: e.target.value }))}
+                              onBlur={() => void saveRemarks(row)}
+                            />
+                          </td>
                         </tr>
                       )
                     })
                   )}
                 </tbody>
               </table>
+              <datalist id="label-export-remarks-options">
+                {remarksOptions.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
             </div>
           </div>
         </section>
 
+        <section className="card shadow-sm">
+          <div className="card-header">
+            <strong>Product Trend {activeTrendRow ? `- ${activeTrendRow.product_name}` : ''}</strong>
+          </div>
+          <div className="card-body label-export-trend-panel">
+            {!activeTrendRow ? (
+              <div className="label-export-trend-empty">Select a product to view its sales/purchase trend</div>
+            ) : trendLoading ? (
+              <div className="label-export-trend-empty">Loading trend...</div>
+            ) : trendRows.length === 0 ? (
+              <div className="label-export-trend-empty">No monthly trend data for this product</div>
+            ) : (
+              <>
+                <div className="label-export-trend-legend">
+                  <span><span className="label-export-trend-legend-dot" style={{ background: 'var(--bs-primary, #0d6efd)' }} />Sale qty</span>
+                  <span><span className="label-export-trend-legend-dot" style={{ background: 'var(--bs-success, #198754)' }} />Purchase qty</span>
+                </div>
+                <div className="label-export-trend-bars">
+                  {trendRows.map((row) => (
+                    <div className="label-export-trend-row" key={row.month}>
+                      <span>{row.month}</span>
+                      <span className="label-export-trend-track">
+                        <span
+                          className="label-export-trend-fill label-export-trend-fill--sale"
+                          style={{ width: `${Math.min(100, (row.sale_qty / trendMax) * 100)}%` }}
+                        />
+                      </span>
+                      <span className="label-export-trend-track">
+                        <span
+                          className="label-export-trend-fill label-export-trend-fill--purchase"
+                          style={{ width: `${Math.min(100, (row.purchase_qty / trendMax) * 100)}%` }}
+                        />
+                      </span>
+                      <span className="text-end small text-muted">{row.sale_qty}/{row.purchase_qty}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="small text-muted">Current stock in hand: {trendRows[0]?.stock_in_hand ?? '-'}</div>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+
+      {admin && (
         <section className="card shadow-sm">
           <div className="card-header d-flex justify-content-between align-items-center">
             <strong>Label List</strong>
@@ -532,7 +781,7 @@ export default function LabelExporterPage() {
             </div>
           </div>
         </section>
-      </div>
+      )}
     </div>
   )
 }

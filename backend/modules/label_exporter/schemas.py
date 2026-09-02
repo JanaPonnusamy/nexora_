@@ -20,6 +20,8 @@ class LabelSearchRow(BaseModel):
     total_stock: float
     sale_days: Optional[float] = None
     purchase_days: Optional[float] = None
+    include_label: Optional[str] = None
+    remarks: Optional[str] = None
 
 
 class LabelSearchResult(BaseModel):
@@ -78,49 +80,30 @@ class ProductBatchResult(BaseModel):
     rows: List[LabelBatchRow] = []
 
 
-# ---------- Letter-wise review ----------
-
-
-class LabelReviewRow(BaseModel):
-    product_code: str
-    product_name: str
-    unit_description: Optional[str] = None
-    current_sublocation: Optional[str] = None
-    mrp: float
-    total_stock: float
-    include_label: Optional[str] = None
-    product_kind: Optional[str] = None
-    suggested_unit_description: Optional[str] = None
-    suggestion_status: str = "none"
-    final_unit_description: Optional[str] = None
-
-
-class LabelReviewListResult(BaseModel):
-    rows: List[LabelReviewRow] = []
+# ---------- Review (Y/N + remarks) ----------
 
 
 class LabelReviewUpdateRequest(BaseModel):
     include_label: Optional[str] = None
-    product_kind: Optional[str] = None
-    suggested_unit_description: Optional[str] = None
+    remarks: Optional[str] = None
 
 
-class LabelSuggestionRow(BaseModel):
-    tenant_id: str
-    store_id: str
-    product_code: str
-    product_name: str
-    current_unit_description: Optional[str] = None
-    suggested_unit_description: Optional[str] = None
-    suggested_by: Optional[str] = None
-    suggested_at: Optional[str] = None
-    suggestion_status: str
+# ---------- Sublocation assignment (super admin) ----------
 
 
-class LabelSuggestionListResult(BaseModel):
-    rows: List[LabelSuggestionRow] = []
+class LabelSublocationAssignRequest(BaseModel):
+    sublocation: str = ""
 
 
-class LabelSuggestionDecisionRequest(BaseModel):
-    approved: bool
-    final_unit_description: Optional[str] = None
+# ---------- Product trend panel ----------
+
+
+class LabelTrendRow(BaseModel):
+    month: str
+    sale_qty: float
+    purchase_qty: float
+    stock_in_hand: float
+
+
+class LabelTrendResult(BaseModel):
+    rows: List[LabelTrendRow] = []

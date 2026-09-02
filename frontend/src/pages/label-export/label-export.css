@@ -225,3 +225,85 @@
   width: 32px;
   text-align: center;
 }
+
+/* ── Main grid + right-side trend panel (50/50 baseline @ 1360x768) ────── */
+
+.label-export-main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .label-export-main-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.label-export-inline-input {
+  min-width: 90px;
+}
+
+.label-export-trend-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.label-export-trend-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.label-export-trend-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.label-export-trend-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 1fr 50px;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+}
+
+.label-export-trend-track {
+  position: relative;
+  height: 10px;
+  background: var(--bs-tertiary-bg, #f1f3f5);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.label-export-trend-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+}
+
+.label-export-trend-fill--sale {
+  background: var(--bs-primary, #0d6efd);
+}
+
+.label-export-trend-fill--purchase {
+  background: var(--bs-success, #198754);
+}
+
+.label-export-trend-legend {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.78rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.label-export-trend-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+}

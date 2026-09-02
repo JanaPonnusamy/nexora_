@@ -25,7 +25,7 @@ export function buildPreparedLabelItem(row: LabelSearchRow): PreparedLabelItem {
     product_code: row.product_code,
     product_name: row.product_name,
     unit_description: row.unit_description,
-    box_number: row.box_number,
+    box_number: row.current_sublocation ?? null,
     mrp: row.mrp,
     total_stock: row.total_stock,
     sale_days: row.sale_days,

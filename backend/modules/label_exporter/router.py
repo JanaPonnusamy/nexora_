@@ -2,6 +2,9 @@
 
 Search products for label assignment, inspect box-wise product groupings, and
 show batch-wise detail before exporting a printable label sheet from the UI.
+Also carries the on-grid review workflow (Y/N include + remarks, open to any
+store-scoped user) and the super-admin-only sublocation assignment + product
+trend panel.
 """
 
 from fastapi import APIRouter, Depends
@@ -12,11 +15,10 @@ from modules.label_exporter import service
 from modules.label_exporter.schemas import (
     BoxProductResult,
     BoxSearchResult,
-    LabelReviewListResult,
     LabelReviewUpdateRequest,
     LabelSearchResult,
-    LabelSuggestionDecisionRequest,
-    LabelSuggestionListResult,
+    LabelSublocationAssignRequest,
+    LabelTrendResult,
     ProductBatchResult,
 )
 
@@ -30,6 +32,7 @@ def search_products(
     q: str = "",
     starts_with: str = "",
     unit_description: str = "",
+    unit_description_mode: str = "contains",
     box_number: str = "",
     stock_filter: str = "all",
     only_null_sublocation: int = 0,
@@ -43,6 +46,7 @@ def search_products(
         q,
         starts_with,
         unit_description,
+        unit_description_mode,
         box_number,
         stock_filter,
         only_null_sublocation,
@@ -68,18 +72,7 @@ def get_product_batches(tenant_id: str, store_id: str, product_code: str, curren
     return service.get_product_batches(tenant_id, store_id, product_code)
 
 
-@router.get("/review/products", response_model=LabelReviewListResult)
-def list_products_for_review(
-    tenant_id: str,
-    store_id: str,
-    starts_with: str = "",
-    current_user: dict = Depends(get_current_user),
-):
-    assert_label_exporter_store_access(current_user, tenant_id, store_id)
-    return service.list_products_for_review(tenant_id, store_id, starts_with)
-
-
-@router.put("/review/products/{product_code}")
+@router.put("/products/{product_code}/review")
 def update_review(
     tenant_id: str,
     store_id: str,
@@ -89,35 +82,29 @@ def update_review(
 ):
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
     service.update_review(
-        tenant_id,
-        store_id,
-        product_code,
-        body.include_label,
-        body.product_kind,
-        body.suggested_unit_description,
-        current_user.get("sub"),
+        tenant_id, store_id, product_code, body.include_label, body.remarks, current_user.get("sub")
     )
     return {"ok": True}
 
 
-@router.get("/review/suggestions", response_model=LabelSuggestionListResult)
-def list_pending_suggestions(
-    tenant_id: str = "",
-    store_id: str = "",
-    current_user: dict = Depends(require_super_admin),
-):
-    return service.list_pending_suggestions(tenant_id, store_id)
-
-
-@router.post("/review/suggestions/{tenant_id}/{store_id}/{product_code}/decision")
-def decide_suggestion(
+@router.put("/products/{product_code}/sublocation")
+def assign_sublocation(
     tenant_id: str,
     store_id: str,
     product_code: str,
-    body: LabelSuggestionDecisionRequest,
+    body: LabelSublocationAssignRequest,
     current_user: dict = Depends(require_super_admin),
 ):
-    service.decide_suggestion(
-        tenant_id, store_id, product_code, body.approved, body.final_unit_description, current_user.get("sub")
-    )
+    service.assign_sublocation(tenant_id, store_id, product_code, body.sublocation, current_user.get("sub"))
     return {"ok": True}
+
+
+@router.get("/products/{product_code}/trend", response_model=LabelTrendResult)
+def get_product_trend(
+    tenant_id: str,
+    store_id: str,
+    product_code: str,
+    current_user: dict = Depends(get_current_user),
+):
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    return service.get_product_trend(tenant_id, store_id, product_code)

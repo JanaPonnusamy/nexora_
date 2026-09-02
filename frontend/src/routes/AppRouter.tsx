@@ -23,7 +23,6 @@ const StockAvailabilityPage = lazy(() => import('../pages/stock/StockAvailabilit
 const StockCheckReportPage = lazy(() => import('../pages/stock-check/StockCheckReportPage'))
 const LabelExporterPage = lazy(() => import('../pages/label-export/LabelExporterPage'))
 const BoxWorkspacePage = lazy(() => import('../pages/label-export/BoxWorkspacePage'))
-const LabelReviewPage = lazy(() => import('../pages/label-export/LabelReviewPage'))
 const NmwSalesReportPage = lazy(() => import('../pages/nmw-sales/NmwSalesReportPage'))
 const StockIntegrityReportPage = lazy(() => import('../pages/stock-integrity/StockIntegrityReportPage'))
 const PurchaseWorkspacePage = lazy(() => import('../pages/procurement/PurchaseWorkspacePage'))
@@ -118,7 +117,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />
         <Route path="/label-exporter" element={<RequireCapability cap="INVENTORY"><LabelExporterPage /></RequireCapability>} />
         <Route path="/label-exporter/box-workspace" element={<RequireCapability cap="INVENTORY"><BoxWorkspacePage /></RequireCapability>} />
-        <Route path="/label-exporter/review" element={<RequireCapability cap="INVENTORY"><LabelReviewPage /></RequireCapability>} />
+        <Route path="/label-exporter/review" element={<Navigate to="/label-exporter" replace />} />
         <Route path="/nmw-sales-report" element={<RequireCapability cap="INVENTORY"><NmwSalesReportPage /></RequireCapability>} />
         <Route path="/stock-integrity" element={<RequireCapability cap="INVENTORY"><StockIntegrityReportPage /></RequireCapability>} />
         <Route path="/procurement/console" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleRefreshConsolePage /></RequireCapability>} />

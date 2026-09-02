@@ -31,11 +31,16 @@ def search_products(
     q,
     starts_with,
     unit_description,
+    unit_description_mode,
     box_number,
     stock_filter,
     only_null_sublocation,
     only_sale_unit_gt_one,
 ):
+    """Main label-exporter grid: every active product matching the filters,
+    with any Y/N + remarks review decision joined in. unit_description_mode
+    is 'contains' (substring match), 'exact', or 'null' (UnitDescription is
+    blank/NULL) - 'null' ignores the unit_description text value."""
     rows = _fetch_all(
         """
         ;WITH ProductAgg AS (
@@ -59,10 +64,16 @@ def search_products(
             CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.SubLocation)), ''), '') AS NVARCHAR(50)) AS current_sublocation,
             CAST(ISNULL(agg.purchase_days, 0) AS INT) AS purchase_days,
             CAST(ISNULL(agg.sale_days, 0) AS INT) AS sale_days,
-            CAST(ISNULL(agg.live_batch_stock, 0) AS DECIMAL(18, 2)) AS batch_stock
+            CAST(ISNULL(agg.live_batch_stock, 0) AS DECIMAL(18, 2)) AS batch_stock,
+            r.include_label,
+            r.remarks
         FROM sync.Products p
         LEFT JOIN ProductAgg agg
             ON agg.ProductCode = p.ProductCode
+        LEFT JOIN dbo.label_review r
+            ON r.tenant_id = p.tenant_id
+           AND r.store_id = p.store_id
+           AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
         WHERE p.tenant_id = ?
           AND p.store_id = ?
           AND ISNULL(p.isactive, 1) = 1
@@ -76,8 +87,12 @@ def search_products(
                 OR p.ProductName LIKE ? + '%'
               )
           AND (
-                ? = ''
-                OR ISNULL(p.UnitDescription, '') LIKE '%' + ? + '%'
+                ? = 'null'
+                AND LTRIM(RTRIM(ISNULL(p.UnitDescription, ''))) = ''
+                OR ? = 'exact'
+                AND LTRIM(RTRIM(ISNULL(p.UnitDescription, ''))) = ?
+                OR ? = 'contains'
+                AND (? = '' OR ISNULL(p.UnitDescription, '') LIKE '%' + ? + '%')
               )
           AND (
                 ? = ''
@@ -114,6 +129,11 @@ def search_products(
                     AND agg.sale_days IS NOT NULL
                     AND agg.sale_days <= 90
                 )
+                OR (
+                    ? = 'zero_stale'
+                    AND ISNULL(p.TotalStock, 0) = 0
+                    AND (agg.sale_days IS NULL OR agg.sale_days > 90)
+                )
               )
         ORDER BY
             CASE WHEN ISNULL(LTRIM(RTRIM(p.SubLocation)), '') = '' THEN 0 ELSE 1 END,
@@ -130,13 +150,15 @@ def search_products(
             q,
             starts_with,
             starts_with,
-            unit_description,
-            unit_description,
+            unit_description_mode,
+            unit_description_mode, unit_description,
+            unit_description_mode, unit_description, unit_description,
             box_number,
             box_number,
             1 if only_null_sublocation else 0,
             box_number,
             1 if only_sale_unit_gt_one else 0,
+            stock_filter,
             stock_filter,
             stock_filter,
             stock_filter,
@@ -269,54 +291,10 @@ def _execute(sql, params=()):
         conn.close()
 
 
-def list_products_for_review(tenant_id, store_id, starts_with):
-    """All active products for a letter, with any existing review decision
-    joined in. Unlike search_products, this is not filtered by a stock rule -
-    the point is to walk every product on the shelf for that letter."""
-    return _fetch_all(
-        """
-        SELECT TOP 500
-            CAST(p.ProductCode AS NVARCHAR(50)) AS product_code,
-            p.ProductName AS product_name,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.UnitDescription)), ''), '') AS NVARCHAR(100)) AS unit_description,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.SubLocation)), ''), '') AS NVARCHAR(50)) AS current_sublocation,
-            CAST(ISNULL(p.MRP, 0) AS DECIMAL(18, 2)) AS mrp,
-            CAST(ISNULL(p.TotalStock, 0) AS DECIMAL(18, 2)) AS total_stock,
-            r.include_label,
-            r.product_kind,
-            r.suggested_unit_description,
-            ISNULL(r.suggestion_status, 'none') AS suggestion_status,
-            r.final_unit_description
-        FROM sync.Products p
-        LEFT JOIN dbo.label_review r
-            ON r.tenant_id = p.tenant_id
-           AND r.store_id = p.store_id
-           AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
-        WHERE p.tenant_id = ?
-          AND p.store_id = ?
-          AND ISNULL(p.isactive, 1) = 1
-          AND (? = '' OR p.ProductName LIKE ? + '%')
-        ORDER BY p.ProductName
-        """,
-        (tenant_id, store_id, starts_with, starts_with),
-    )
-
-
-def upsert_review(
-    tenant_id,
-    store_id,
-    product_code,
-    include_label,
-    product_kind,
-    suggested_unit_description,
-    user_id,
-):
-    """Store-user action: set include Y/N, counter/consumer, and/or submit a
-    unit-description suggestion. A submitted suggestion always (re)opens the
-    row to 'pending' so a super admin has to look at it again."""
-    is_suggestion = suggested_unit_description is not None and suggested_unit_description != ''
-    is_review = include_label is not None or product_kind is not None
-
+def upsert_review(tenant_id, store_id, product_code, include_label, remarks, user_id):
+    """Reviewer action (any store-scoped user): set include Y/N and/or a
+    remarks note (predefined tag like 'Counter'/'SYP', or a free-text unit
+    description correction)."""
     existing = _fetch_one(
         "SELECT id FROM dbo.label_review WHERE tenant_id = ? AND store_id = ? AND product_code = ?",
         (tenant_id, store_id, product_code),
@@ -326,95 +304,64 @@ def upsert_review(
         _execute(
             """
             INSERT INTO dbo.label_review (
-                tenant_id, store_id, product_code, include_label, product_kind,
-                suggested_unit_description, suggestion_status,
-                suggested_by, suggested_at, reviewed_by, reviewed_at
+                tenant_id, store_id, product_code, include_label, remarks,
+                reviewed_by, reviewed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN SYSUTCDATETIME() END, ?, CASE WHEN ? = 1 THEN SYSUTCDATETIME() END)
+            VALUES (?, ?, ?, ?, ?, ?, SYSUTCDATETIME())
             """,
-            (
-                tenant_id, store_id, product_code, include_label, product_kind,
-                suggested_unit_description if is_suggestion else None,
-                'pending' if is_suggestion else 'none',
-                user_id if is_suggestion else None, 1 if is_suggestion else 0,
-                user_id if is_review else None, 1 if is_review else 0,
-            ),
+            (tenant_id, store_id, product_code, include_label, remarks, user_id),
         )
         return
 
-    set_clauses = ["updated_at = SYSUTCDATETIME()"]
-    params: list = []
-    if include_label is not None:
-        set_clauses.append("include_label = ?")
-        params.append(include_label)
-    if product_kind is not None:
-        set_clauses.append("product_kind = ?")
-        params.append(product_kind)
-    if is_review:
-        set_clauses.append("reviewed_by = ?")
-        set_clauses.append("reviewed_at = SYSUTCDATETIME()")
-        params.append(user_id)
-    if is_suggestion:
-        set_clauses.append("suggested_unit_description = ?")
-        set_clauses.append("suggestion_status = 'pending'")
-        set_clauses.append("suggested_by = ?")
-        set_clauses.append("suggested_at = SYSUTCDATETIME()")
-        params.extend([suggested_unit_description, user_id])
-
-    params.extend([tenant_id, store_id, product_code])
-    _execute(
-        f"""
-        UPDATE dbo.label_review
-        SET {', '.join(set_clauses)}
-        WHERE tenant_id = ? AND store_id = ? AND product_code = ?
-        """,
-        params,
-    )
-
-
-def list_pending_suggestions(tenant_id, store_id):
-    return _fetch_all(
-        """
-        SELECT
-            r.tenant_id, r.store_id,
-            r.product_code,
-            p.ProductName AS product_name,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.UnitDescription)), ''), '') AS NVARCHAR(100)) AS current_unit_description,
-            r.suggested_unit_description,
-            r.suggested_by,
-            r.suggested_at,
-            r.suggestion_status
-        FROM dbo.label_review r
-        JOIN sync.Products p
-            ON p.tenant_id = r.tenant_id
-           AND p.store_id = r.store_id
-           AND CAST(p.ProductCode AS NVARCHAR(50)) = r.product_code
-        WHERE r.suggestion_status = 'pending'
-          AND (? = '' OR r.tenant_id = ?)
-          AND (? = '' OR r.store_id = ?)
-        ORDER BY r.suggested_at
-        """,
-        (tenant_id or '', tenant_id, store_id or '', store_id),
-    )
-
-
-def decide_suggestion(tenant_id, store_id, product_code, approved, final_unit_description, user_id):
     _execute(
         """
         UPDATE dbo.label_review
-        SET suggestion_status = ?,
-            final_unit_description = ?,
-            decided_by = CAST(? AS UNIQUEIDENTIFIER),
-            decided_at = SYSUTCDATETIME(),
+        SET include_label = COALESCE(?, include_label),
+            remarks = COALESCE(?, remarks),
+            reviewed_by = ?,
+            reviewed_at = SYSUTCDATETIME(),
             updated_at = SYSUTCDATETIME()
         WHERE tenant_id = ? AND store_id = ? AND product_code = ?
         """,
-        (
-            'approved' if approved else 'rejected',
-            final_unit_description if approved else None,
-            user_id,
-            tenant_id, store_id, product_code,
-        ),
+        (include_label, remarks, user_id, tenant_id, store_id, product_code),
+    )
+
+
+def assign_sublocation(tenant_id, store_id, product_code, sublocation, user_id):
+    """Super-admin action: set the shelf/box SubLocation directly on
+    sync.Products (the platform mirror). Not pushed down to the store's own
+    SQL Server yet - may be overwritten by that store's next sync, same
+    caveat as the old unit-description-suggestion feature."""
+    _execute(
+        """
+        UPDATE sync.Products
+        SET SubLocation = NULLIF(LTRIM(RTRIM(?)), '')
+        WHERE tenant_id = ?
+          AND store_id = ?
+          AND CAST(ProductCode AS NVARCHAR(50)) = ?
+        """,
+        (sublocation, tenant_id, store_id, product_code),
+    )
+
+
+def get_product_trend(tenant_id, store_id, product_code):
+    """Last 12 months of sale/purchase quantity + stock snapshot for the
+    right-side trend panel, from sync.ProductTrans (populated monthly by the
+    store agent)."""
+    return _fetch_all(
+        """
+        SELECT TOP 12
+            CONVERT(VARCHAR(7), MonthOfStatistics, 120) AS month,
+            CAST(ISNULL(SaleQuantity, 0) AS DECIMAL(18, 2)) AS sale_qty,
+            CAST(ISNULL(PurchaseQuantity, 0) AS DECIMAL(18, 2)) AS purchase_qty,
+            CAST(ISNULL(StockInHand, 0) AS DECIMAL(18, 2)) AS stock_in_hand
+        FROM sync.ProductTrans
+        WHERE tenant_id = ?
+          AND store_id = ?
+          AND ProductCode = ?
+        ORDER BY MonthOfStatistics DESC
+        """,
+        (tenant_id, store_id, product_code),
     )
 
 

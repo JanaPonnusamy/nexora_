@@ -39,6 +39,11 @@
   --nx-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
   --nx-shadow-md: 0 2px 4px rgba(15, 23, 42, 0.06), 0 8px 20px -12px rgba(15, 23, 42, 0.22);
   --nx-shadow-lg: 0 4px 8px rgba(15, 23, 42, 0.07), 0 20px 40px -20px rgba(15, 23, 42, 0.28);
+  /* Restrained corner radii for the enterprise controls. These were referenced
+     across the Order Workspace but never declared, so those controls rendered
+     with square corners — declare them once here as the single source. */
+  --nx-radius-sm: 6px;
+  --nx-radius: 8px;
   /* ── Responsive density system ──────────────────────────────────────
      Single source of truth for the stock workbench's sizing. Every panel
      height, row height, font, gap and padding below is driven by one of
@@ -55,7 +60,7 @@
   --ui-row-height: 24px;       /* one data grid row */
   --ui-grid-header-height: 40px;
   --ui-store-header-height: 30px;
-  --ui-nav-height: 58px;       /* top navigation */
+  --ui-nav-height: 52px;       /* top navigation (compact app shell) */
   --ui-toolbar-height: 36px;   /* search / filter toolbar (compact floor) */
   --ui-summary-height: 56px;   /* NON MOVING strip */
   --ui-warehouse-height: 148px;/* NMW warehouse panel — fits >=4 product rows */
@@ -104,7 +109,7 @@
     --ui-row-height: 26px;
     --ui-grid-header-height: 44px;
     --ui-store-header-height: 32px;
-    --ui-nav-height: 62px;
+    --ui-nav-height: 56px;
     --ui-toolbar-height: 44px;
     --ui-summary-height: 60px;
     --ui-warehouse-height: 168px;/* fits >=4 product rows with extra air */
@@ -189,10 +194,10 @@ button:disabled {
 .menubar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   min-height: var(--ui-nav-height);
   height: var(--ui-nav-height);
-  padding: 4px 16px;
+  padding: 0 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: var(--nx-header);
   color: var(--nx-text-on);
@@ -218,8 +223,8 @@ button:disabled {
 }
 
 .brand-logo {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border-radius: 0;
   object-fit: contain;
 }
@@ -232,7 +237,7 @@ button:disabled {
 }
 
 .brand-block h1 {
-  font-size: 19px;
+  font-size: 16px;
   line-height: 1.05;
   letter-spacing: -0.01em;
 }
@@ -258,11 +263,11 @@ button:disabled {
 
 .user-panel {
   display: flex;
-  min-height: 36px;
+  min-height: 32px;
   flex-direction: column;
   justify-content: center;
-  gap: 3px;
-  padding: 4px 10px;
+  gap: 2px;
+  padding: 3px 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
@@ -284,9 +289,9 @@ button:disabled {
   align-items: center;
   gap: 3px;
   min-width: 0;
-  padding: 4px;
+  padding: 3px;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 11px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.035);
 }
 
@@ -302,11 +307,11 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 10px;
+  border-radius: 9px;
   background: rgba(255, 255, 255, 0.06);
   color: #dce4f2;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
@@ -324,8 +329,8 @@ button:disabled {
 }
 
 .theme-toggle svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   fill: currentColor;
 }
 
@@ -343,14 +348,14 @@ button:disabled {
 
 .menubar-nav button,
 .ghost-button {
-  min-height: 36px;
+  min-height: 32px;
   border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 6px 12px;
+  border-radius: 7px;
+  padding: 5px 11px;
   text-align: center;
   color: #cbd5e1;
   background: transparent;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 650;
   white-space: nowrap;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
@@ -378,11 +383,11 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 1px solid rgba(248, 113, 113, 0.34);
-  border-radius: 10px;
+  border-radius: 9px;
   background: rgba(239, 68, 68, 0.08);
   color: #f87171;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
@@ -400,8 +405,8 @@ button:disabled {
 }
 
 .logout-button svg {
-  width: 19px;
-  height: 19px;
+  width: 17px;
+  height: 17px;
   fill: currentColor;
 }
 
@@ -3067,6 +3072,12 @@ th {
   font-weight: 700;
 }
 
+.row-cell .grid-row.source-row,
+.store-product-grid-wrap .grid-row.source-row {
+  background: color-mix(in srgb, #16a34a 22%, var(--nx-surface));
+  font-weight: 700;
+}
+
 .purchase-table.clickable .grid-row {
   cursor: pointer;
 }
@@ -4862,6 +4873,176 @@ th {
   }
 }
 
+/* Label Exporter: letter-wise review grid (left) + product trend panel
+   (right), 50/50 baseline at 1360x768, stacking below 1100px. */
+.lbl-checkbox-field {
+  align-self: center;
+}
+
+.lbl-checkbox-field span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  min-height: 36px;
+}
+
+.lbl-review-note {
+  font-size: 12px;
+  color: var(--nx-text-muted);
+}
+
+.lbl-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .lbl-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lbl-products-pane,
+.lbl-trend-pane {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.lbl-inline-input {
+  width: 100%;
+  min-width: 70px;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid var(--nx-rule-strong);
+  border-radius: 4px;
+  background: var(--nx-surface);
+  color: var(--nx-text);
+}
+
+.lbl-remarks-input {
+  min-width: 120px;
+}
+
+.lbl-null {
+  color: var(--nx-danger);
+}
+
+.lbl-yn-group {
+  display: flex;
+  gap: 4px;
+}
+
+.lbl-yn-btn {
+  min-width: 26px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--nx-rule-strong);
+  background: var(--nx-surface);
+  color: var(--nx-text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lbl-yn-y.active {
+  background: var(--nx-success, #198754);
+  border-color: var(--nx-success, #198754);
+  color: #fff;
+}
+
+.lbl-yn-n.active {
+  background: var(--nx-danger);
+  border-color: var(--nx-danger);
+  color: #fff;
+}
+
+.lbl-trend-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--nx-rule);
+}
+
+.lbl-trend-head-sub {
+  color: var(--nx-text-muted);
+  font-size: 13px;
+}
+
+.lbl-trend-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--nx-text-muted);
+  margin-bottom: 8px;
+}
+
+.lbl-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.lbl-dot-sale {
+  background: var(--nx-accent);
+}
+
+.lbl-dot-purchase {
+  background: var(--nx-success, #198754);
+}
+
+.lbl-trend-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lbl-trend-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 1fr 56px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.lbl-trend-track {
+  position: relative;
+  height: 10px;
+  background: var(--nx-surface-sunk, var(--nx-surface));
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.lbl-trend-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+}
+
+.lbl-trend-fill-sale {
+  background: var(--nx-accent);
+}
+
+.lbl-trend-fill-purchase {
+  background: var(--nx-success, #198754);
+}
+
+.lbl-trend-values {
+  text-align: right;
+  color: var(--nx-text-muted);
+}
+
+.lbl-trend-stock {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--nx-text-muted);
+}
+
 /* Stock Availability workspace: compact, aligned desktop dashboard. */
 .store-workbench {
   display: grid;
@@ -5497,6 +5678,43 @@ th {
   --stock-indigo: #818cf8;
   --stock-violet: #a78bfa;
   --stock-amber: #d6a247;
+  /* Two-color product-selection system (Stock Availability cross-store sync):
+     GREEN = the product the user explicitly clicked (the source); BLUE =
+     an equivalent auto-selected in another store because it matches that
+     source. Both are a rich, deep fill (not a pale tint) with a subtle
+     glossy highlight toward the top -- reads as a real desktop-app selection
+     rather than a hover state -- kept visually distinct so the two meanings
+     are never confused at a glance. */
+  --stock-row-active-top: #3f6fe0;
+  --stock-row-active-bottom: #1d4ed8;
+  --stock-row-active-edge: #8fb4ff;
+  --stock-row-active-text: #ffffff;
+  --stock-row-active-stock-ink: #6ee7b3;
+  /* GREEN source-row: the user's explicit click. */
+  --stock-row-source-top: #1a9a5c;
+  --stock-row-source-bottom: #0f6b40;
+  --stock-row-source-edge: #7fe3ab;
+  --stock-row-source-text: #ffffff;
+  --stock-row-source-stock-ink: #fde68a;
+}
+
+:root[data-theme="dark"] .store-workbench {
+  --stock-row-active-top: #3a63c2;
+  --stock-row-active-bottom: #1b3f96;
+  --stock-row-active-edge: #9cc0ff;
+  --stock-row-source-top: #157a4a;
+  --stock-row-source-bottom: #0b4d2e;
+  --stock-row-source-edge: #6ee7b3;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .store-workbench {
+    --stock-row-active-top: #3a63c2;
+    --stock-row-active-bottom: #1b3f96;
+    --stock-row-active-edge: #9cc0ff;
+    --stock-row-source-top: #157a4a;
+    --stock-row-source-bottom: #0b4d2e;
+    --stock-row-source-edge: #6ee7b3;
+  }
 }
 
 .store-workbench .global-search-row {
@@ -5615,16 +5833,48 @@ th {
 
 .store-workbench .store-product-grid-wrap .grid-row.active-row,
 .store-workbench .row-cell .grid-row.active-row {
-  background: color-mix(in srgb, var(--stock-blue) 26%, var(--nx-surface));
-  box-shadow: inset 3px 0 0 var(--stock-blue);
+  position: relative;
+  background: linear-gradient(to bottom, var(--stock-row-active-top), var(--stock-row-active-bottom));
+  /* Glossy sheen: a bright top edge fading into the deep fill, same technique
+     as the panel's other glossy marks -- kept subtle, no glow/animation. */
+  background-image:
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(to bottom, var(--stock-row-active-top), var(--stock-row-active-bottom));
+  box-shadow: inset 3px 0 0 var(--stock-row-active-edge);
   border-radius: 3px;
+  color: var(--stock-row-active-text);
   font-weight: 700;
 }
 
 /* The selected product's row stays highlighted even under hover. */
 .store-workbench .store-product-grid-wrap .grid-row.active-row:hover,
 .store-workbench .row-cell .grid-row.active-row:hover {
-  background: color-mix(in srgb, var(--stock-blue) 32%, var(--nx-surface));
+  background-image:
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(to bottom, var(--stock-row-active-top), var(--stock-row-active-bottom));
+}
+
+/* GREEN source-row: the product the user explicitly clicked. Same glossy
+   treatment as the BLUE active-row (sync match) but a distinct rich green,
+   so the two selection meanings are never visually ambiguous. */
+.store-workbench .store-product-grid-wrap .grid-row.source-row,
+.store-workbench .row-cell .grid-row.source-row {
+  position: relative;
+  background: linear-gradient(to bottom, var(--stock-row-source-top), var(--stock-row-source-bottom));
+  background-image:
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(to bottom, var(--stock-row-source-top), var(--stock-row-source-bottom));
+  box-shadow: inset 3px 0 0 var(--stock-row-source-edge);
+  border-radius: 3px;
+  color: var(--stock-row-source-text);
+  font-weight: 700;
+}
+
+.store-workbench .store-product-grid-wrap .grid-row.source-row:hover,
+.store-workbench .row-cell .grid-row.source-row:hover {
+  background-image:
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(to bottom, var(--stock-row-source-top), var(--stock-row-source-bottom));
 }
 
 .store-workbench .row-cell .grid-row,
@@ -5647,9 +5897,23 @@ th {
   font-weight: 700;
 }
 
-/* Keep the green Stock value readable even on the highlighted current row. */
+/* Keep the Stock value readable on the deep-blue highlighted current row --
+   the normal ink values are tuned for a light/near-white row background and
+   lose contrast against the rich blue selection fill. */
 .store-workbench .grid-row.active-row .product-cell-stock--available {
-  color: var(--nx-success-ink);
+  color: var(--stock-row-active-stock-ink);
+}
+.store-workbench .grid-row.active-row .product-cell-stock--zero {
+  color: #fca5a5;
+}
+
+/* Same readability fix for the GREEN source-row -- green-on-green "available"
+   text would lose contrast, so it borrows a warm ink instead. */
+.store-workbench .grid-row.source-row .product-cell-stock--available {
+  color: var(--stock-row-source-stock-ink);
+}
+.store-workbench .grid-row.source-row .product-cell-stock--zero {
+  color: #fecaca;
 }
 
 .store-workbench .non-moving-wrap {
@@ -6442,7 +6706,9 @@ th {
 
 /* The current (keyboard/clicked) row: bold text so it's unmistakable. */
 .store-workbench .store-product-grid-wrap .grid-row.active-row span,
-.store-workbench .store-product-grid-wrap .grid-row.active-row .product-cell-main {
+.store-workbench .store-product-grid-wrap .grid-row.active-row .product-cell-main,
+.store-workbench .store-product-grid-wrap .grid-row.source-row span,
+.store-workbench .store-product-grid-wrap .grid-row.source-row .product-cell-main {
   font-weight: 800;
 }
 
@@ -6793,34 +7059,54 @@ th {
   min-height: 0; max-width: none; width: 100%;
   overflow: hidden;
 }
-.ow-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; flex: 0 0 auto; }
-.ow-field { display: inline-flex; align-items: center; gap: 6px; }
-.ow-field > span { color: var(--nx-text-muted); font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
-.ow-field select {
-  min-height: 30px; padding: 2px 8px;
-  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
-  background: var(--nx-surface); color: var(--nx-text); font: inherit;
+/* Single-row command bar. flex-wrap is deliberately OFF (not a safety net --
+   a toolbar that wraps at 1366px is exactly the bug this fixes): every
+   flexible field carries its own min-width:0 + shrink budget, and the
+   status/assignment content (workflow chip, pending/assigned counts, the
+   Enter/Esc/Navigate hint) lives in the separate .ow-status-strip row below
+   instead of competing with Export/Finalize for toolbar width. */
+.ow-toolbar {
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; flex: 0 0 auto;
+  padding: 6px 8px; min-height: 44px;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
 }
-.ow-tabs { display: inline-flex; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); overflow: hidden; }
-.ow-tabs button { padding: 5px 12px; border: 0; background: var(--nx-surface); color: var(--nx-text-soft); font: inherit; font-weight: 600; cursor: pointer; }
+/* Vertical divider between logical control groups. */
+.ow-sep { flex: 0 0 auto; align-self: stretch; width: 1px; margin: 3px 2px; background: var(--nx-rule-strong); }
+.ow-field { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 0 0 auto; }
+.ow-field > span { color: var(--nx-text-muted); font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; white-space: nowrap; }
+.ow-field select {
+  min-height: 32px; padding: 2px 8px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
+}
+/* Chromium sizes a closed <select> to its widest <option>, so every select
+   with long option text needs an explicit closed-width cap (dropdown panel
+   still shows full text) -- otherwise it, not the flex layout, is what
+   forces the toolbar to overflow/wrap at 1366px. */
+.ow-store-select { max-width: 88px; }
+.ow-process-select { max-width: 168px; }
+.ow-tabs { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); overflow: hidden; }
+.ow-tabs button { padding: 4px 10px; border: 0; background: var(--nx-surface); color: var(--nx-text-soft); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .ow-tabs button + button { border-left: 1px solid var(--nx-rule); }
 .ow-tabs button.active { background: var(--nx-accent); color: var(--nx-text-on); }
 .ow-search {
-  flex: 1 1 12rem; min-width: 8rem; min-height: 30px; padding: 2px 10px;
+  flex: 1 1 140px; min-width: 60px; min-height: 32px; padding: 2px 10px;
   border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
-  background: var(--nx-surface); color: var(--nx-text); font: inherit;
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
 }
-.ow-chip { padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
+.ow-chip { flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
 .ow-chip-ok { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
 .ow-chip-run { background: var(--nx-warning-sunk); color: var(--nx-warning); }
-.ow-metrics { font-size: 12px; color: var(--nx-text-muted); white-space: nowrap; }
-.ow-metrics strong { color: var(--nx-text); }
-.ow-count { margin-left: auto; font-size: 12px; color: var(--nx-text-muted); }
+.ow-metrics { flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); white-space: nowrap; }
+.ow-metrics strong { color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.ow-count { flex: 0 0 auto; font-size: 11px; font-weight: 600; color: var(--nx-text-muted); white-space: nowrap; }
 .ow-history .ow-count { margin-left: 0; }
 .ow-btn {
-  min-height: 30px; padding: 4px 12px;
+  flex: 0 0 auto; min-height: 32px; padding: 4px 10px;
   border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
-  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-weight: 600; cursor: pointer;
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
 }
 .ow-btn-primary { border-color: var(--nx-accent); background: var(--nx-accent); color: var(--nx-text-on); }
 .ow-btn-danger { border-color: var(--nx-danger); background: var(--nx-danger); color: var(--nx-text-on); }
@@ -6884,8 +7170,19 @@ th {
 .ow-export-field input { width: 64px; min-height: 28px; padding: 2px 8px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; text-align: right; }
 .ow-export-hint { margin: 0; font-size: 11px; color: var(--nx-text-muted); }
 .ow-export-go { align-self: flex-start; }
-.ow-help { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); }
-.ow-help kbd { padding: 1px 5px; border: 1px solid var(--nx-rule-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--nx-surface-raised); font: inherit; font-weight: 700; }
+/* Compact status/assignment strip: keyboard hint + workflow chip + dynamic
+   pending/assigned/open counts + product count, all on one line beneath the
+   toolbar -- this is where that content lives instead of inside .ow-toolbar,
+   so Export/Finalize never get pushed out or wrapped by it. */
+.ow-help {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto; flex-wrap: nowrap;
+  padding: 3px 8px; font-size: 11px; color: var(--nx-text-muted); overflow: hidden;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-sunk);
+}
+.ow-help kbd { padding: 0 5px; border: 1px solid var(--nx-rule-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--nx-surface-raised); color: var(--nx-text-soft); font: inherit; font-size: 10px; font-weight: 700; }
+.ow-status-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.ow-status-sep { flex: 0 0 auto; color: var(--nx-text-muted); opacity: 0.6; }
 .ow-error {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto;
   padding: 6px 10px; border: 1px solid var(--nx-danger); border-radius: var(--nx-radius-sm);
@@ -6897,6 +7194,16 @@ th {
 
 /* Dense, aligned grids — full-width flexible product-name column, compact numerics. */
 .ow-screen table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* Product grid + Previous Decisions tables carry an explicit <colgroup> of
+   percentage widths (see owColgroupPct / the per-view colgroups in App.jsx)
+   so Product Name gets a fixed, viewport-proportional share of the table
+   instead of soaking up all space the other columns leave behind. Purchase/
+   GRN and Bill/Sales intelligence tables deliberately stay outside this (they
+   still use .ow-intel-table's width: max-content + horizontal scroll for long
+   supplier names) so only the tables below opt in. */
+.ow-screen table.ow-fixed,
+.ow-screen table.ow-cfg { table-layout: fixed; width: 100%; }
+.ow-panel--history .ow-intel-table.ow-fixed { width: 100%; min-width: 0; }
 /* Override the global `th,td { padding: 12px 10px }` (24px of vertical padding)
    that was inflating these rows — force compact heights. */
 .ow-screen thead th {
@@ -6934,13 +7241,13 @@ th {
 .ow-empty { padding: 1.2rem; text-align: center; color: var(--nx-text-muted); }
 
 /* ===== Order Workspace layout: main grid on top, intelligence dock below ===== */
-.ow-title { margin: 0 6px 0 0; font-size: 14px; font-weight: 800; letter-spacing: 0.01em; color: var(--nx-text); white-space: nowrap; }
+.ow-title { margin: 0 2px 0 0; padding-left: 2px; font-size: 13px; font-weight: 800; letter-spacing: 0.01em; color: var(--nx-text); white-space: nowrap; }
 
 /* Side-by-side split: order grid on the left (~2/3), intelligence panels
    stacked in a right column (~1/3): Trend, Purchase, Sales, Previous Decisions. */
 .ow-body {
   flex: 1 1 auto; min-height: 0;
-  display: grid; grid-template-columns: 2fr minmax(360px, 1fr);
+  display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(320px, 1fr);
   grid-template-rows: minmax(0, 1fr); gap: 8px; align-items: stretch;
 }
 /* Left column: order grid (flexible) with Previous Decisions docked below it. */
@@ -6969,7 +7276,7 @@ th {
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
 }
-.ow-panel--chart { flex: 0 0 auto; height: 168px; }
+.ow-panel--chart { flex: 0 0 auto; height: clamp(150px, 20vh, 210px); }
 .ow-panel--purchase { flex: 1.5 1 0; min-height: 90px; }   /* Purchase gets the most room. */
 .ow-panel--sales { flex: 1.1 1 0; min-height: 80px; }
 .ow-panel-title {
@@ -6978,6 +7285,7 @@ th {
   font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
 }
 .ow-panel-count { font-weight: 700; color: var(--nx-text-muted); text-transform: none; letter-spacing: 0; }
+.ow-panel-subtitle { font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--nx-text-muted); opacity: 0.85; }
 .ow-panel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .ow-panel-body { flex: 1 1 auto; min-height: 0; display: flex; }
 
@@ -7011,21 +7319,112 @@ th {
 .ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
 .ow-freerow > td { background: rgba(245, 158, 11, 0.16); }
 
-/* Compact monthly trend chart. */
+/* Compact monthly trend chart. Semantic colors are fixed and must never swap:
+   In = blue, Out = green, Stock = red, Adjustment = purple -- everywhere
+   (bars, legend, tooltip, hover). */
+:root {
+  --ow-in: #2563eb;    --ow-in-hi: #60a5fa;    --ow-in-lo: #1d4ed8;    --ow-in-glow: rgba(37, 99, 235, 0.38);
+  --ow-out: #16a34a;   --ow-out-hi: #4ade80;   --ow-out-lo: #15803d;   --ow-out-glow: rgba(22, 163, 74, 0.38);
+  --ow-stock: #dc2626; --ow-stock-hi: #f87171; --ow-stock-lo: #b91c1c; --ow-stock-glow: rgba(220, 38, 38, 0.38);
+  --ow-adj: #7c3aed;   --ow-adj-hi: #a78bfa;   --ow-adj-lo: #6d28d9;   --ow-adj-glow: rgba(124, 58, 237, 0.38);
+}
 .ow-chart { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; }
-.ow-chart-plot { flex: 1 1 auto; min-height: 60px; display: flex; align-items: stretch; gap: 8px; border-bottom: 1px solid var(--nx-rule); }
-.ow-chart-group { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
-.ow-chart-bars { flex: 1 1 auto; min-height: 0; display: flex; align-items: flex-end; justify-content: center; gap: 3px; padding-top: 12px; }
-.ow-chart-bar { position: relative; flex: 1 1 0; min-width: 4px; max-width: 16px; min-height: 1px; border-radius: 2px 2px 0 0; }
-.ow-chart-val { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 1px; font-size: 8px; font-weight: 700; color: var(--nx-text-soft); white-space: nowrap; }
+.ow-chart-plot { flex: 1 1 auto; min-height: 60px; display: flex; align-items: stretch; gap: 10px; border-bottom: 1px solid var(--nx-rule); }
+.ow-chart-group {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; border-radius: 6px;
+  outline: none; transition: background 0.15s ease;
+}
+.ow-chart-group:hover, .ow-chart-group:focus-visible { background: var(--nx-surface-hover); }
+.ow-chart-bars { flex: 1 1 auto; min-height: 0; display: flex; align-items: flex-end; justify-content: center; gap: 4px; padding-top: 13px; }
+
+/* Bars: a restrained top-to-bottom shine (lighter lip, base tone, deeper foot)
+   plus a soft tinted shadow and a thin glossy inset highlight -- visible
+   polish without looking 3D, neon, or glossy-2010s. */
+.ow-chart-bar {
+  position: relative; flex: 1 1 0; min-width: 5px; max-width: 15px; min-height: 3px;
+  border-radius: 3px 3px 1px 1px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 2px rgba(15, 23, 42, 0.12);
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.ow-chart-bar:hover { transform: translateY(-1px); }
+.ow-chart-bar--in { background: linear-gradient(180deg, var(--ow-in-hi) 0%, var(--ow-in) 55%, var(--ow-in-lo) 100%); }
+.ow-chart-bar--in:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 8px var(--ow-in-glow); }
+.ow-chart-bar--out { background: linear-gradient(180deg, var(--ow-out-hi) 0%, var(--ow-out) 55%, var(--ow-out-lo) 100%); }
+.ow-chart-bar--out:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 8px var(--ow-out-glow); }
+.ow-chart-bar--stock { background: linear-gradient(180deg, var(--ow-stock-hi) 0%, var(--ow-stock) 55%, var(--ow-stock-lo) 100%); }
+.ow-chart-bar--stock:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 8px var(--ow-stock-glow); }
+/* Zero: a thin flat marker in a pale tint of the same hue -- never a fake
+   full-height bar, but still legend-color-consistent (not a generic gray). */
+.ow-chart-bar.is-zero { box-shadow: none; opacity: 0.55; }
+.ow-chart-bar--in.is-zero { background: var(--ow-in-hi); }
+.ow-chart-bar--out.is-zero { background: var(--ow-out-hi); }
+.ow-chart-bar--stock.is-zero { background: var(--ow-stock-hi); }
+.ow-chart-val {
+  position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 2px;
+  font-size: 9px; font-weight: 650; font-variant-numeric: tabular-nums;
+  color: var(--nx-text-soft); white-space: nowrap;
+}
 .ow-chart-month { flex: 0 0 auto; padding-top: 3px; text-align: center; font-size: 10px; font-weight: 600; color: var(--nx-text-muted); }
-.ow-chart-legend { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 3px 10px; }
-.ow-chart-legend span { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--nx-text-muted); }
-.ow-chart-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+/* Adjustment: a small diverging lane with its own scale (its magnitude is
+   usually far smaller than raw quantities, and it is the only signed series)
+   -- grows up from the baseline for a positive value, down for a negative
+   one, never converted to an absolute number. */
+.ow-chart-adjlane { flex: 0 0 auto; height: 30px; display: flex; flex-direction: column; }
+.ow-chart-adjtrack-pos { flex: 1 1 0; display: flex; align-items: flex-end; justify-content: center; min-height: 0; }
+.ow-chart-adjtrack-neg { flex: 1 1 0; display: flex; align-items: flex-start; justify-content: center; min-height: 0; }
+.ow-chart-adjtrack-base { flex: 0 0 auto; height: 1px; margin: 1px 4px; background: var(--nx-rule-strong); }
+.ow-chart-adjbar {
+  position: relative; width: 55%; max-width: 13px; min-height: 2px; border-radius: 2px;
+  background: linear-gradient(180deg, var(--ow-adj-hi) 0%, var(--ow-adj) 55%, var(--ow-adj-lo) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 2px rgba(15, 23, 42, 0.12);
+  transition: filter 0.15s ease, box-shadow 0.15s ease;
+}
+.ow-chart-adjbar:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 8px var(--ow-adj-glow); }
+.ow-chart-adjbar.is-zero { width: 70%; max-width: none; min-height: 2px; background: var(--ow-adj-hi); opacity: 0.55; box-shadow: none; }
+.ow-chart-adjval {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font-size: 9px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ow-adj);
+}
+.ow-chart-adjbar.is-pos .ow-chart-adjval { bottom: 100%; margin-bottom: 2px; }
+.ow-chart-adjbar.is-neg .ow-chart-adjval,
+.ow-chart-adjbar.is-zero .ow-chart-adjval { top: 100%; margin-top: 2px; }
+
+.ow-chart-legend { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.ow-chart-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: var(--nx-text-soft); }
+.ow-chart-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; box-shadow: inset 0 -1px 1px rgba(0, 0, 0, 0.15); }
+.ow-chart-dot--in { background: linear-gradient(135deg, var(--ow-in-hi), var(--ow-in)); }
+.ow-chart-dot--out { background: linear-gradient(135deg, var(--ow-out-hi), var(--ow-out)); }
+.ow-chart-dot--stock { background: linear-gradient(135deg, var(--ow-stock-hi), var(--ow-stock)); }
+.ow-chart-dot--adj { background: linear-gradient(135deg, var(--ow-adj-hi), var(--ow-adj)); }
+
+/* Floating month tooltip -- portaled to body (see OwChartTooltip) so it is
+   never clipped by the side panel's overflow:hidden ancestors. */
+.ow-chart-tip {
+  transform: translate(-50%, -100%);
+  z-index: 40; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--nx-rule); background: var(--nx-surface-raised);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.08);
+  pointer-events: none;
+}
+.ow-chart-tip-month { font-size: 10.5px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; color: var(--nx-text); margin-bottom: 4px; }
+.ow-chart-tip-section { padding: 4px 0; border-top: 1px solid var(--nx-rule); }
+.ow-chart-tip-section:first-of-type { border-top: none; }
+.ow-chart-tip-head { font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 2px; }
+.ow-chart-tip-section--in .ow-chart-tip-head { color: var(--ow-in); }
+.ow-chart-tip-section--out .ow-chart-tip-head { color: var(--ow-out); }
+.ow-chart-tip-section--stock .ow-chart-tip-head { color: var(--ow-stock); }
+.ow-chart-tip-section--adj .ow-chart-tip-head { color: var(--ow-adj); }
+.ow-chart-tip-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 10.5px; color: var(--nx-text-soft); line-height: 1.5; }
+.ow-chart-tip-row b { color: var(--nx-text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.ow-chart-tip-row.ow-chart-tip-total { border-top: 1px dashed var(--nx-rule); margin-top: 2px; padding-top: 2px; font-weight: 700; }
+.ow-chart-tip-row.ow-chart-tip-total b { font-size: 11px; }
+.ow-chart-tip-row.ow-chart-tip-single b { font-size: 13px; }
+.ow-chart-tip-note { font-size: 9px; color: var(--nx-text-muted); font-style: italic; margin-top: 1px; }
 
 /* Narrow desktop: give the intelligence column a firmer minimum. */
 @media (max-width: 1180px) {
-  .ow-body { grid-template-columns: 1.8fr minmax(320px, 1fr); }
+  .ow-body { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); }
 }
 
 /* ===== Config-driven grid (resizable/reorderable columns) + gear button ===== */
