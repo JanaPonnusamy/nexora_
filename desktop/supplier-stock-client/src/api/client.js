@@ -579,6 +579,14 @@ export const api = {
     });
   },
 
+  bulkSetLabelInclude(tenantId, storeId, productCodes, includeLabel, session) {
+    return request(`/api/label-exporter/products/bulk-review${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ product_codes: productCodes, include_label: includeLabel })
+    });
+  },
+
   assignLabelSublocation(productCode, tenantId, storeId, sublocation, session) {
     return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/sublocation${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
       method: 'PUT',

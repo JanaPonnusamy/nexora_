@@ -15,6 +15,7 @@ from modules.label_exporter import service
 from modules.label_exporter.schemas import (
     BoxProductResult,
     BoxSearchResult,
+    LabelBulkReviewRequest,
     LabelPurchaseResult,
     LabelReviewUpdateRequest,
     LabelSaleResult,
@@ -87,6 +88,20 @@ def update_review(
         tenant_id, store_id, product_code, body.include_label, body.remarks, current_user.get("sub")
     )
     return {"ok": True}
+
+
+@router.put("/products/bulk-review")
+def bulk_set_include_label(
+    tenant_id: str,
+    store_id: str,
+    body: LabelBulkReviewRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    service.bulk_set_include_label(
+        tenant_id, store_id, body.product_codes, body.include_label, current_user.get("sub")
+    )
+    return {"ok": True, "count": len(body.product_codes)}
 
 
 @router.put("/products/{product_code}/sublocation")

@@ -88,6 +88,11 @@ class LabelReviewUpdateRequest(BaseModel):
     remarks: Optional[str] = None
 
 
+class LabelBulkReviewRequest(BaseModel):
+    product_codes: List[str] = []
+    include_label: str
+
+
 # ---------- Sublocation assignment (super admin) ----------
 
 

@@ -337,6 +337,48 @@ def upsert_review(tenant_id, store_id, product_code, include_label, remarks, use
     )
 
 
+def bulk_set_include_label(tenant_id, store_id, product_codes, include_label, user_id):
+    """Bulk review action (e.g. 'mark all visible Y'): one connection, one
+    UPDATE for codes that already have a row, one INSERT for the rest -
+    avoids opening a connection per product like a loop over upsert_review
+    would for a few hundred rows."""
+    if not product_codes:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        placeholders = ", ".join("?" for _ in product_codes)
+        cursor.execute(
+            f"""
+            UPDATE dbo.label_review
+            SET include_label = ?, reviewed_by = ?, reviewed_at = SYSUTCDATETIME(), updated_at = SYSUTCDATETIME()
+            WHERE tenant_id = ? AND store_id = ? AND product_code IN ({placeholders})
+            """,
+            (include_label, user_id, tenant_id, store_id, *product_codes),
+        )
+        cursor.execute(
+            f"""
+            SELECT product_code FROM dbo.label_review
+            WHERE tenant_id = ? AND store_id = ? AND product_code IN ({placeholders})
+            """,
+            (tenant_id, store_id, *product_codes),
+        )
+        existing = {row[0] for row in cursor.fetchall()}
+        missing = [code for code in product_codes if code not in existing]
+        for code in missing:
+            cursor.execute(
+                """
+                INSERT INTO dbo.label_review (tenant_id, store_id, product_code, include_label, reviewed_by, reviewed_at)
+                VALUES (?, ?, ?, ?, ?, SYSUTCDATETIME())
+                """,
+                (tenant_id, store_id, code, include_label, user_id),
+            )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def assign_sublocation(tenant_id, store_id, product_code, sublocation, user_id):
     """Super-admin action: set the shelf/box SubLocation directly on
     sync.Products (the platform mirror). Not pushed down to the store's own

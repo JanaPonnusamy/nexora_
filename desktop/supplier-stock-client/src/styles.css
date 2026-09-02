@@ -4878,17 +4878,26 @@ th {
    .ow-intel-table) for the same viewport-fixed, dense, professional grid
    instead of a bespoke layout - see .ow-screen for the height:calc(100vh...)
    sizing that keeps rows a fixed height regardless of resolution. */
-.lbl-store-select { max-width: 170px; }
-.lbl-letter-input { width: 40px; min-height: 32px; padding: 2px 6px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px; text-align: center; text-transform: uppercase; }
-.lbl-box-input { width: 76px; min-height: 32px; padding: 2px 8px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px; }
-.lbl-stockrule-select { max-width: 230px; }
-.lbl-check-field { display: inline-flex; align-items: center; gap: 5px; }
-.lbl-check-field span { text-transform: none; font-weight: 600; font-size: 11px; }
-.lbl-review-note { flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); }
+/* The toolbar has more fields than Order Workspace's (Store/Letter/Search/
+   Unit/Box/Stock rule/2 checkboxes/Search) - every field below is capped
+   tighter than its ow- counterpart so the row still fits at 1366px without
+   pushing the Search button off-screen. overflow-x is still a scoped safety
+   net (never lets a field become totally unreachable on a narrower window). */
+.lbl-screen .ow-toolbar { overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; }
+/* The intelligence side panel needs less width here than Order Workspace's
+   (fewer purchase/sale columns) - give the product grid more room instead. */
+.lbl-screen .ow-body { grid-template-columns: minmax(0, 3fr) minmax(280px, 1fr); }
+.lbl-store-select { max-width: 120px; }
+.lbl-letter-input { width: 36px; min-height: 32px; padding: 2px 4px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px; text-align: center; text-transform: uppercase; }
+.lbl-box-input { width: 64px; min-height: 32px; padding: 2px 6px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px; }
+.lbl-stockrule-select { max-width: 150px; }
+.lbl-check-field { display: inline-flex; align-items: center; gap: 4px; }
+.lbl-check-field span { text-transform: none; font-weight: 600; font-size: 10px; white-space: nowrap; }
+.lbl-review-note { flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); white-space: nowrap; }
 
 /* Searchable multi-select unit combo, built on the same .ow-supplier-*
    positioning/box-model as the Order Workspace supplier picker. */
-.lbl-unit-pick { min-width: 130px; }
+.lbl-unit-pick { min-width: 100px; max-width: 110px; }
 .lbl-unit-trigger { width: 100%; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lbl-unit-list { width: 240px; padding: 0; display: flex; flex-direction: column; }
 .lbl-unit-search {
@@ -4911,6 +4920,10 @@ th {
 }
 .lbl-remarks-input { min-width: 110px; }
 .lbl-null { color: var(--nx-danger); }
+/* table-layout:fixed doesn't clip overflowing nowrap text on its own (only
+   .ow-grow does) - the Code column is narrow enough for a 7-digit code to
+   visually bleed into Product without this. */
+.lbl-code-cell { overflow: hidden; text-overflow: ellipsis; }
 .lbl-yn-group { display: flex; gap: 3px; }
 .lbl-yn-btn {
   min-width: 22px; height: 22px; padding: 0; border-radius: 4px;

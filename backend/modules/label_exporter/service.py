@@ -68,6 +68,14 @@ def update_review(
     repository.upsert_review(tenant_id, store_id, product_code, include_label, remarks, user_id)
 
 
+def bulk_set_include_label(
+    tenant_id: str, store_id: str, product_codes: list[str], include_label: str, user_id: str | None
+):
+    if include_label not in _VALID_INCLUDE_LABEL:
+        raise HTTPException(status_code=400, detail="include_label must be 'Y' or 'N'")
+    repository.bulk_set_include_label(tenant_id, store_id, product_codes, include_label, user_id)
+
+
 def assign_sublocation(tenant_id: str, store_id: str, product_code: str, sublocation: str, user_id: str | None):
     repository.assign_sublocation(tenant_id, store_id, product_code, sublocation.strip(), user_id)
 

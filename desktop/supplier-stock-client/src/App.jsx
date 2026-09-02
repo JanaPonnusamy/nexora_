@@ -3159,7 +3159,7 @@ const LABEL_REMARKS_PRESETS = [
   'Counter', 'Consumer', 'SYP', 'Cold Storage', 'Fragile', 'High Value', 'Fast Moving', 'Slow Moving', 'Check Unit Description'
 ];
 
-const LABEL_COLGROUP = [7, 22, 9, 6, 7, 7, 7, 7, 7, 10, 11]; // Code/Product/SubLoc/Unit/MRP/Packing/Stock/LRDays/LSDays/Include/Remarks
+const LABEL_COLGROUP = [7, 20, 9, 8, 6, 7, 6, 6, 6, 6, 19]; // Code/Product/Include/SubLoc/Unit/MRP/Pack/Stk/LRD/LSD/Remarks
 
 // Mirrors backend dependencies.store_scope.assert_label_exporter_store_access:
 // only NMW (prints for every store) and super admin/platform logins may pick
@@ -3257,6 +3257,8 @@ function LabelExporter({ session, settings }) {
   const [saleRows, setSaleRows] = useState([]);
   const [intelLoading, setIntelLoading] = useState(false);
   const intelRequestRef = useRef(0);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const rowRefs = useRef({});
 
   useEffect(() => {
     api.listStores(session).then((rows) => setStores(asArray(rows))).catch(() => {});
@@ -3361,7 +3363,58 @@ function LabelExporter({ session, settings }) {
     return Array.from(new Set([...LABEL_REMARKS_PRESETS, ...used]));
   }, [rows]);
 
-  const trendMax = Math.max(1, ...trendRows.map((row) => Math.max(row.sale_qty, row.purchase_qty)));
+  // Reuses OwTrendChart (the exact Order Workspace bar chart) - it expects
+  // total_in/total_out/stock/adjustment; we only have sale/purchase qty +
+  // stock-in-hand, so adjustment is always 0 and the tooltip's IN/OUT
+  // breakdown rows (transfer/return) show '-' since that detail isn't
+  // tracked by sync.ProductTrans, only the totals are.
+  const chartRows = useMemo(() => trendRows.map((row) => ({
+    month: row.month,
+    total_in: row.purchase_qty,
+    total_out: row.sale_qty,
+    stock: row.stock_in_hand,
+    adjustment: 0
+  })), [trendRows]);
+
+  function focusRow(index) {
+    if (!rows.length) return;
+    const clamped = Math.max(0, Math.min(rows.length - 1, index));
+    setActiveIndex(clamped);
+    rowRefs.current[clamped]?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function handleGridKeyDown(event) {
+    if (!rows.length) return;
+    if (event.key === 'ArrowDown') { event.preventDefault(); focusRow(activeIndex + 1); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); focusRow(activeIndex - 1); }
+    else if (event.key === 'Enter') {
+      event.preventDefault();
+      const row = rows[activeIndex];
+      if (row) setIncludeLabel(row, 'Y');
+      focusRow(activeIndex + 1);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      const row = rows[activeIndex];
+      if (row) setIncludeLabel(row, 'N');
+      focusRow(activeIndex + 1);
+    }
+  }
+
+  // Bulk-assign: mark every currently visible product Y (or N) in one call,
+  // then individual rows can still be flipped back one at a time (click, or
+  // Esc while that row is active) without re-running the bulk action.
+  function bulkMark(value) {
+    if (!rows.length || bulkBusy) return;
+    const codes = rows.map((row) => row.product_code);
+    setBulkBusy(true);
+    api.bulkSetLabelInclude(tenantId, storeId, codes, value, session)
+      .then(() => {
+        setRows((current) => current.map((row) => ({ ...row, include_label: value })));
+        setStatus({ state: 'ok', message: `Marked ${codes.length} product(s) ${value}.` });
+      })
+      .catch((error) => setStatus({ state: 'error', message: error.message }))
+      .finally(() => setBulkBusy(false));
+  }
 
   return (
     <section className="screen-panel ow-screen lbl-screen">
@@ -3431,6 +3484,10 @@ function LabelExporter({ session, settings }) {
       </div>
 
       <div className="ow-help">
+        <span className="ow-status-hint">
+          <kbd>Enter</kbd> Mark Y + next <kbd>Esc</kbd> Mark N + next <kbd>↕</kbd> Navigate
+        </span>
+        <span className="ow-status-sep" aria-hidden="true">•</span>
         <span className="ow-status-hint">{status.message}</span>
         {!admin && (
           <>
@@ -3438,12 +3495,15 @@ function LabelExporter({ session, settings }) {
             <span className="lbl-review-note">Review only — sublocation assignment is a super-admin action.</span>
           </>
         )}
+        <span className="ow-status-sep" aria-hidden="true">•</span>
+        <button type="button" className="ow-btn ow-btn-sm" disabled={!rows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
+        <button type="button" className="ow-btn ow-btn-sm" disabled={!rows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
       </div>
 
       <div className="ow-body">
         <div className="ow-left">
           <div className="ow-main">
-            <div className="ow-grid">
+            <div className="ow-grid" tabIndex={0} onKeyDown={handleGridKeyDown}>
               <table className="ow-fixed">
                 <colgroup>
                   {LABEL_COLGROUP.map((pct, i) => <col key={i} style={{ width: `${pct}%` }} />)}
@@ -3452,14 +3512,14 @@ function LabelExporter({ session, settings }) {
                   <tr>
                     <th>Code</th>
                     <th className="ow-grow">Product</th>
+                    <th>Include</th>
                     <th>SubLoc</th>
                     <th>Unit</th>
                     <th className="ow-num">MRP</th>
-                    <th className="ow-num">Packing</th>
-                    <th className="ow-num">Stock</th>
-                    <th className="ow-num">LRDays</th>
-                    <th className="ow-num">LSDays</th>
-                    <th>Include</th>
+                    <th className="ow-num" title="Packing">Pack</th>
+                    <th className="ow-num" title="Stock">Stk</th>
+                    <th className="ow-num" title="Last Receipt Days">LRD</th>
+                    <th className="ow-num" title="Last Sale Days">LSD</th>
                     <th>Remarks</th>
                   </tr>
                 </thead>
@@ -3470,9 +3530,30 @@ function LabelExporter({ session, settings }) {
                     rows.map((row, index) => {
                       const code = row.product_code;
                       return (
-                        <tr key={code} className={index === activeIndex ? 'ow-row-sel' : ''} onClick={() => setActiveIndex(index)}>
-                          <td>{row.product_code}</td>
+                        <tr
+                          key={code}
+                          ref={(node) => { rowRefs.current[index] = node; }}
+                          className={index === activeIndex ? 'ow-row-sel' : ''}
+                          onClick={() => setActiveIndex(index)}
+                        >
+                          <td className="lbl-code-cell" title={row.product_code}>{row.product_code}</td>
                           <td className="ow-grow" title={row.product_name}>{row.product_name}</td>
+                          <td onClick={(event) => event.stopPropagation()}>
+                            <div className="lbl-yn-group">
+                              <button
+                                type="button"
+                                className={`lbl-yn-btn lbl-yn-y ${row.include_label === 'Y' ? 'active' : ''}`}
+                                disabled={savingCode === code}
+                                onClick={() => setIncludeLabel(row, 'Y')}
+                              >Y</button>
+                              <button
+                                type="button"
+                                className={`lbl-yn-btn lbl-yn-n ${row.include_label === 'N' ? 'active' : ''}`}
+                                disabled={savingCode === code}
+                                onClick={() => setIncludeLabel(row, 'N')}
+                              >N</button>
+                            </div>
+                          </td>
                           <td onClick={(event) => event.stopPropagation()}>
                             {admin ? (
                               <input
@@ -3490,22 +3571,6 @@ function LabelExporter({ session, settings }) {
                           <td className={`ow-num ${Number(row.total_stock) === 0 ? 'ow-stock-zero' : ''}`}>{fmtOwQty(row.total_stock)}</td>
                           <td className="ow-num">{row.purchase_days ?? '-'}</td>
                           <td className="ow-num">{row.sale_days ?? '-'}</td>
-                          <td onClick={(event) => event.stopPropagation()}>
-                            <div className="lbl-yn-group">
-                              <button
-                                type="button"
-                                className={`lbl-yn-btn lbl-yn-y ${row.include_label === 'Y' ? 'active' : ''}`}
-                                disabled={savingCode === code}
-                                onClick={() => setIncludeLabel(row, 'Y')}
-                              >Y</button>
-                              <button
-                                type="button"
-                                className={`lbl-yn-btn lbl-yn-n ${row.include_label === 'N' ? 'active' : ''}`}
-                                disabled={savingCode === code}
-                                onClick={() => setIncludeLabel(row, 'N')}
-                              >N</button>
-                            </div>
-                          </td>
                           <td onClick={(event) => event.stopPropagation()}>
                             <input
                               className="lbl-inline-input lbl-remarks-input"
@@ -3548,32 +3613,7 @@ function LabelExporter({ session, settings }) {
                 {intelLoading && <span className="ow-intel-loading">…</span>}
               </div>
               <div className="ow-panel-body">
-                {!activeRow ? (
-                  <div className="ow-empty">Select a product.</div>
-                ) : trendRows.length === 0 ? (
-                  <div className="ow-empty">{intelLoading ? 'Loading…' : 'No monthly statistics.'}</div>
-                ) : (
-                  <div className="lbl-trend-panel">
-                    <div className="lbl-trend-legend">
-                      <span><i className="lbl-dot lbl-dot-sale" />Sale qty</span>
-                      <span><i className="lbl-dot lbl-dot-purchase" />Purchase qty</span>
-                    </div>
-                    <div className="lbl-trend-bars">
-                      {trendRows.map((row) => (
-                        <div className="lbl-trend-row" key={row.month}>
-                          <span>{row.month}</span>
-                          <span className="lbl-trend-track">
-                            <span className="lbl-trend-fill lbl-trend-fill-sale" style={{ width: `${Math.min(100, (row.sale_qty / trendMax) * 100)}%` }} />
-                          </span>
-                          <span className="lbl-trend-track">
-                            <span className="lbl-trend-fill lbl-trend-fill-purchase" style={{ width: `${Math.min(100, (row.purchase_qty / trendMax) * 100)}%` }} />
-                          </span>
-                          <span className="lbl-trend-values">{fmtOwQty(row.sale_qty)}/{fmtOwQty(row.purchase_qty)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {!activeRow ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={chartRows} loading={intelLoading} />}
               </div>
             </section>
 
@@ -3581,13 +3621,14 @@ function LabelExporter({ session, settings }) {
               <div className="ow-panel-title">Purchase / GRN</div>
               <div className="ow-panel-scroll">
                 <table className="ow-intel-table">
-                  <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num ow-grp">Dis%</th><th className="ow-num ow-grp ow-col-cost">Cost</th><th className="ow-num ow-col-ptr">PTR</th><th className="ow-num ow-col-mrp">MRP</th><th className="ow-grp">GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
+                  <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num ow-grp">Dis%</th><th className="ow-num">Land%</th><th className="ow-num ow-grp ow-col-cost">Cost</th><th className="ow-num ow-col-ptr">PTR</th><th className="ow-num ow-col-mrp">MRP</th><th className="ow-grp">GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
                   <tbody>
                     {purchaseRows.map((row, i) => (
                       <tr key={i}>
                         <td className="ow-num">{fmtOwQty(row.stock)}</td>
                         <td className="ow-num">{fmtOwQty(row.free_qty)}</td>
                         <td className="ow-num ow-grp">{fmtOwPct(row.discount_pct)}</td>
+                        <td className="ow-num">{fmtOwPct(owLandingPct(row.ptr, row.item_cost))}</td>
                         <td className="ow-num ow-grp ow-col-cost">{fmtOwMoney(row.item_cost)}</td>
                         <td className="ow-num ow-col-ptr">{fmtOwMoney(row.ptr)}</td>
                         <td className="ow-num ow-col-mrp">{fmtOwMoney(row.mrp)}</td>
@@ -3595,7 +3636,7 @@ function LabelExporter({ session, settings }) {
                         <td className="ow-intel-grow">{row.supplier_name?.trim() || '—'}</td>
                       </tr>
                     ))}
-                    {!purchaseRows.length && <tr><td colSpan={8} className="ow-empty">{!activeRow ? 'Select a product.' : intelLoading ? 'Loading…' : 'No purchase history.'}</td></tr>}
+                    {!purchaseRows.length && <tr><td colSpan={9} className="ow-empty">{!activeRow ? 'Select a product.' : intelLoading ? 'Loading…' : 'No purchase history.'}</td></tr>}
                   </tbody>
                 </table>
               </div>
