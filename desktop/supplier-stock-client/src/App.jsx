@@ -299,8 +299,13 @@ function AppShell() {
     // The NMW Sales Report is scoped server-side (store users see only their
     // own approved bills), so it never depends on a per-user module grant.
     // Order Workspace, when allowed above, is likewise always available (no
-    // per-user module grant needed).
-    const always = new Set(nmwBlocked ? ['settings'] : ['settings', 'nmw_sales']);
+    // per-user module grant needed). Label Exporter is the same story: any
+    // store user can review (Y/N + remarks); only sublocation-assign/export
+    // inside the screen are further gated by isSuperAdmin, so it doesn't
+    // depend on a per-user module grant either - no 'label_exporter' row was
+    // ever seeded into dbo.role_module_access, which silently hid the tab
+    // for any login whose modules list isn't empty (e.g. superadmin).
+    const always = new Set(nmwBlocked ? ['settings', 'label_exporter'] : ['settings', 'nmw_sales', 'label_exporter']);
     if (orderWorkspaceAllowed) always.add('order_workspace');
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
@@ -3407,7 +3412,7 @@ function LabelExporter({ session, settings }) {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={11} className="empty-state">Run search to load products</td></tr>
+                <tr><td colSpan={11}><div className="empty-state">Run search to load products</div></td></tr>
               ) : (
                 rows.map((row, index) => {
                   const code = row.product_code;
