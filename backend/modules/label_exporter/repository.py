@@ -39,10 +39,20 @@ def search_products(
 ):
     """Main label-exporter grid: every active product matching the filters,
     with any Y/N + remarks review decision joined in. unit_description_mode
-    is 'contains' (substring match), 'exact', or 'null' (UnitDescription is
-    blank/NULL) - 'null' ignores the unit_description text value."""
+    is 'contains' (substring match), 'exact' (unit_description may be a
+    comma-separated list for a multi-select filter), or 'null'
+    (UnitDescription is blank/NULL) - 'null' ignores the unit_description
+    text value."""
+    exact_values = [v.strip() for v in (unit_description or "").split(",") if v.strip()]
+    if unit_description_mode == "exact" and exact_values:
+        exact_clause = "LTRIM(RTRIM(ISNULL(p.UnitDescription, ''))) IN (%s)" % ", ".join("?" for _ in exact_values)
+        exact_params = list(exact_values)
+    else:
+        exact_clause = "1 = 1"
+        exact_params = []
+
     rows = _fetch_all(
-        """
+        f"""
         ;WITH ProductAgg AS (
             SELECT
                 b.ProductCode,
@@ -90,7 +100,7 @@ def search_products(
                 ? = 'null'
                 AND LTRIM(RTRIM(ISNULL(p.UnitDescription, ''))) = ''
                 OR ? = 'exact'
-                AND LTRIM(RTRIM(ISNULL(p.UnitDescription, ''))) = ?
+                AND {exact_clause}
                 OR ? = 'contains'
                 AND (? = '' OR ISNULL(p.UnitDescription, '') LIKE '%' + ? + '%')
               )
@@ -151,7 +161,7 @@ def search_products(
             starts_with,
             starts_with,
             unit_description_mode,
-            unit_description_mode, unit_description,
+            unit_description_mode, *exact_params,
             unit_description_mode, unit_description, unit_description,
             box_number,
             box_number,
@@ -360,6 +370,58 @@ def get_product_trend(tenant_id, store_id, product_code):
           AND store_id = ?
           AND ProductCode = ?
         ORDER BY MonthOfStatistics DESC
+        """,
+        (tenant_id, store_id, product_code),
+    )
+
+
+def get_product_purchases(tenant_id, store_id, product_code):
+    """Last 30 purchase/GRN lines for the right-side intelligence panel."""
+    return _fetch_all(
+        """
+        SELECT TOP 30
+            CAST(ISNULL(t.stockreceived, 0) AS DECIMAL(18, 2)) AS stock,
+            CAST(ISNULL(t.FreeQty, 0) AS DECIMAL(18, 2)) AS free_qty,
+            CAST(ISNULL(t.ProductDiscPercent, 0) AS DECIMAL(9, 2)) AS discount_pct,
+            CAST(ISNULL(t.itemcost, 0) AS DECIMAL(18, 2)) AS item_cost,
+            CAST(ISNULL(t.purchaseprice, 0) AS DECIMAL(18, 2)) AS ptr,
+            CAST(ISNULL(t.mrp, 0) AS DECIMAL(18, 2)) AS mrp,
+            CONVERT(VARCHAR(10), t.grndate, 120) AS grn_date,
+            s.suppliername AS supplier_name
+        FROM sync.PurchaseTrans t
+        LEFT JOIN sync.Suppliers s
+            ON s.tenant_id = t.tenant_id
+           AND s.store_id = t.store_id
+           AND s.suppliercode = t.SupplierCode
+        WHERE t.tenant_id = ?
+          AND t.store_id = ?
+          AND t.ProductCode = ?
+        ORDER BY t.grndate DESC
+        """,
+        (tenant_id, store_id, product_code),
+    )
+
+
+def get_product_sales(tenant_id, store_id, product_code):
+    """Last 30 bill/sale lines for the right-side intelligence panel."""
+    return _fetch_all(
+        """
+        SELECT TOP 30
+            CAST(ISNULL(ps.Quantity, 0) AS DECIMAL(18, 2)) AS qty,
+            CONVERT(VARCHAR(16), ps.TransactionDate, 120) AS bill_time,
+            CAST(si.DeliverySalesRep AS NVARCHAR(50)) AS salesman,
+            si.CustomerName AS customer,
+            CAST(ISNULL(ps.DiscountPercentage, 0) AS DECIMAL(9, 2)) AS discount_pct,
+            CAST(ISNULL(ps.MRP, 0) AS DECIMAL(18, 2)) AS mrp
+        FROM sync.ProductSaleInformation ps
+        LEFT JOIN sync.SaleInformation si
+            ON si.tenant_id = ps.tenant_id
+           AND si.store_id = ps.store_id
+           AND si.BillNumber = ps.BillNumber
+        WHERE ps.tenant_id = ?
+          AND ps.store_id = ?
+          AND ps.ProductCode = ?
+        ORDER BY ps.TransactionDate DESC
         """,
         (tenant_id, store_id, product_code),
     )

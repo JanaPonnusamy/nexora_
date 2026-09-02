@@ -15,7 +15,9 @@ from modules.label_exporter import service
 from modules.label_exporter.schemas import (
     BoxProductResult,
     BoxSearchResult,
+    LabelPurchaseResult,
     LabelReviewUpdateRequest,
+    LabelSaleResult,
     LabelSearchResult,
     LabelSublocationAssignRequest,
     LabelTrendResult,
@@ -108,3 +110,25 @@ def get_product_trend(
 ):
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
     return service.get_product_trend(tenant_id, store_id, product_code)
+
+
+@router.get("/products/{product_code}/purchases", response_model=LabelPurchaseResult)
+def get_product_purchases(
+    tenant_id: str,
+    store_id: str,
+    product_code: str,
+    current_user: dict = Depends(get_current_user),
+):
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    return service.get_product_purchases(tenant_id, store_id, product_code)
+
+
+@router.get("/products/{product_code}/sales", response_model=LabelSaleResult)
+def get_product_sales(
+    tenant_id: str,
+    store_id: str,
+    product_code: str,
+    current_user: dict = Depends(get_current_user),
+):
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    return service.get_product_sales(tenant_id, store_id, product_code)

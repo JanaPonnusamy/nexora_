@@ -107,3 +107,34 @@ class LabelTrendRow(BaseModel):
 
 class LabelTrendResult(BaseModel):
     rows: List[LabelTrendRow] = []
+
+
+# ---------- Purchase / sales intelligence panels ----------
+
+
+class LabelPurchaseRow(BaseModel):
+    stock: float
+    free_qty: float
+    discount_pct: float
+    item_cost: float
+    ptr: float
+    mrp: float
+    grn_date: Optional[str] = None
+    supplier_name: Optional[str] = None
+
+
+class LabelPurchaseResult(BaseModel):
+    rows: List[LabelPurchaseRow] = []
+
+
+class LabelSaleRow(BaseModel):
+    qty: float
+    bill_time: Optional[str] = None
+    salesman: Optional[str] = None
+    customer: Optional[str] = None
+    discount_pct: float
+    mrp: float
+
+
+class LabelSaleResult(BaseModel):
+    rows: List[LabelSaleRow] = []

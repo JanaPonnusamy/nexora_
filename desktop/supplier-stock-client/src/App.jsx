@@ -3159,6 +3159,8 @@ const LABEL_REMARKS_PRESETS = [
   'Counter', 'Consumer', 'SYP', 'Cold Storage', 'Fragile', 'High Value', 'Fast Moving', 'Slow Moving', 'Check Unit Description'
 ];
 
+const LABEL_COLGROUP = [7, 22, 9, 6, 7, 7, 7, 7, 7, 10, 11]; // Code/Product/SubLoc/Unit/MRP/Packing/Stock/LRDays/LSDays/Include/Remarks
+
 // Mirrors backend dependencies.store_scope.assert_label_exporter_store_access:
 // only NMW (prints for every store) and super admin/platform logins may pick
 // a store other than their own.
@@ -3166,6 +3168,63 @@ function canChangeLabelStore(session) {
   if (isSuperAdmin(session)) return true;
   const store = session?.user?.roles?.[0];
   return String(store?.store_code || '').trim().toUpperCase() === 'NMW';
+}
+
+// Searchable multi-select unit-description filter, built on the same
+// .ow-supplier-* combo styling as the Order Workspace supplier picker.
+function LabelUnitPicker({ options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    function onDoc(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const term = query.trim().toLowerCase();
+  const filtered = term ? options.filter((o) => o.toLowerCase().includes(term)) : options;
+
+  function toggle(unit) {
+    const next = new Set(selected);
+    if (next.has(unit)) next.delete(unit); else next.add(unit);
+    onChange(next);
+  }
+
+  const summary = selected.size === 0 ? 'Any unit' : selected.size === 1 ? Array.from(selected)[0] : `${selected.size} units`;
+
+  return (
+    <div className="ow-supplier-pick lbl-unit-pick" ref={wrapRef}>
+      <button type="button" className="ow-supplier-input lbl-unit-trigger" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        {summary}
+      </button>
+      {selected.size > 0 && !open && (
+        <button type="button" className="ow-supplier-clear" title="Clear unit filter" aria-label="Clear unit filter" onClick={() => onChange(new Set())}>×</button>
+      )}
+      {open && (
+        <div className="ow-supplier-list lbl-unit-list" role="listbox">
+          <input
+            className="lbl-unit-search"
+            type="text"
+            placeholder="Search unit..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            autoFocus
+          />
+          <div className="lbl-unit-options">
+            {filtered.map((unit) => (
+              <label key={unit}>
+                <input type="checkbox" checked={selected.has(unit)} onChange={() => toggle(unit)} />
+                {unit}
+              </label>
+            ))}
+            {!filtered.length && <div className="ow-supplier-empty">No units match.</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function LabelExporter({ session, settings }) {
@@ -3179,8 +3238,8 @@ function LabelExporter({ session, settings }) {
 
   const [q, setQ] = useState('');
   const [startsWith, setStartsWith] = useState('');
-  const [unitDescription, setUnitDescription] = useState('');
-  const [unitDescriptionMode, setUnitDescriptionMode] = useState('contains');
+  const [unitOptions, setUnitOptions] = useState([]);
+  const [selectedUnits, setSelectedUnits] = useState(() => new Set());
   const [boxNumber, setBoxNumber] = useState('');
   const [stockFilter, setStockFilter] = useState('all');
   const [onlyNullSublocation, setOnlyNullSublocation] = useState(true);
@@ -3194,8 +3253,10 @@ function LabelExporter({ session, settings }) {
   const [remarksDrafts, setRemarksDrafts] = useState({});
 
   const [trendRows, setTrendRows] = useState([]);
-  const [trendLoading, setTrendLoading] = useState(false);
-  const trendRequestRef = useRef(0);
+  const [purchaseRows, setPurchaseRows] = useState([]);
+  const [saleRows, setSaleRows] = useState([]);
+  const [intelLoading, setIntelLoading] = useState(false);
+  const intelRequestRef = useRef(0);
 
   useEffect(() => {
     api.listStores(session).then((rows) => setStores(asArray(rows))).catch(() => {});
@@ -3205,24 +3266,24 @@ function LabelExporter({ session, settings }) {
 
   useEffect(() => {
     if (!activeRow?.product_code || !tenantId || !storeId) {
-      setTrendRows([]);
+      setTrendRows([]); setPurchaseRows([]); setSaleRows([]);
       return;
     }
-    const requestId = ++trendRequestRef.current;
-    setTrendLoading(true);
-    api.getLabelProductTrend(activeRow.product_code, tenantId, storeId, session)
-      .then((result) => {
-        if (trendRequestRef.current !== requestId) return;
-        setTrendRows(asArray(result?.rows));
-      })
-      .catch(() => {
-        if (trendRequestRef.current !== requestId) return;
-        setTrendRows([]);
-      })
-      .finally(() => {
-        if (trendRequestRef.current !== requestId) return;
-        setTrendLoading(false);
-      });
+    const requestId = ++intelRequestRef.current;
+    setIntelLoading(true);
+    Promise.all([
+      api.getLabelProductTrend(activeRow.product_code, tenantId, storeId, session).catch(() => ({ rows: [] })),
+      api.getLabelProductPurchases(activeRow.product_code, tenantId, storeId, session).catch(() => ({ rows: [] })),
+      api.getLabelProductSales(activeRow.product_code, tenantId, storeId, session).catch(() => ({ rows: [] }))
+    ]).then(([trend, purchases, sales]) => {
+      if (intelRequestRef.current !== requestId) return;
+      setTrendRows(asArray(trend?.rows));
+      setPurchaseRows(asArray(purchases?.rows));
+      setSaleRows(asArray(sales?.rows));
+    }).finally(() => {
+      if (intelRequestRef.current !== requestId) return;
+      setIntelLoading(false);
+    });
   }, [activeRow?.product_code, tenantId, storeId, session]);
 
   function runSearch() {
@@ -3236,8 +3297,8 @@ function LabelExporter({ session, settings }) {
       storeId,
       q,
       startsWith,
-      unitDescription,
-      unitDescriptionMode,
+      unitDescription: selectedUnits.size ? Array.from(selectedUnits).join(',') : '',
+      unitDescriptionMode: selectedUnits.size ? 'exact' : 'contains',
       boxNumber,
       stockFilter,
       onlyNullSublocation: boxNumber ? false : onlyNullSublocation,
@@ -3246,6 +3307,7 @@ function LabelExporter({ session, settings }) {
       const nextRows = asArray(result?.rows);
       setRows(nextRows);
       setActiveIndex(0);
+      setUnitOptions(asArray(result?.unit_descriptions));
       const nextSubLoc = {};
       const nextRemarks = {};
       nextRows.forEach((row) => {
@@ -3302,13 +3364,13 @@ function LabelExporter({ session, settings }) {
   const trendMax = Math.max(1, ...trendRows.map((row) => Math.max(row.sale_qty, row.purchase_qty)));
 
   return (
-    <section className="screen-panel lbl-screen">
-      <div className="nmw-toolbar">
-        <strong className="nmw-toolbar-title">Label Exporter</strong>
+    <section className="screen-panel ow-screen lbl-screen">
+      <div className="ow-toolbar">
+        <h2 className="ow-title">Label Exporter</h2>
 
-        <label className="nmw-toolbar-field">
-          Store
-          <select value={storeId} disabled={!canChangeStore} onChange={(event) => setStoreId(event.target.value)}>
+        <label className="ow-field">
+          <span>Store</span>
+          <select className="lbl-store-select" value={storeId} disabled={!canChangeStore} onChange={(event) => setStoreId(event.target.value)}>
             {stores.length === 0 && <option value={storeId}>{storeId ? 'Current store' : 'Loading...'}</option>}
             {(canChangeStore ? stores : stores.filter((s) => s.store_id === storeId)).map((s) => (
               <option key={s.store_id} value={s.store_id}>{s.store_code} — {s.store_name}</option>
@@ -3316,200 +3378,252 @@ function LabelExporter({ session, settings }) {
           </select>
         </label>
 
-        <label className="nmw-toolbar-field">
-          Letter
+        <span className="ow-sep" aria-hidden="true" />
+
+        <label className="ow-field">
+          <span>Letter</span>
           <input
+            className="lbl-letter-input"
             value={startsWith}
             maxLength={1}
             onChange={(event) => setStartsWith(event.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1))}
             placeholder="A"
-            style={{ width: 44 }}
           />
         </label>
 
-        <label className="nmw-toolbar-field">
-          Search
-          <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Product / code" />
+        <input className="ow-search" type="search" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search product or code…" aria-label="Search products" />
+
+        <label className="ow-field">
+          <span>Unit</span>
+          <LabelUnitPicker options={unitOptions} selected={selectedUnits} onChange={setSelectedUnits} />
         </label>
 
-        <label className="nmw-toolbar-field">
-          Unit mode
-          <select value={unitDescriptionMode} onChange={(event) => setUnitDescriptionMode(event.target.value)}>
-            <option value="contains">Contains</option>
-            <option value="exact">Exact</option>
-            <option value="null">Blank / NULL</option>
-          </select>
+        <label className="ow-field">
+          <span>Box</span>
+          <input className="lbl-box-input" value={boxNumber} onChange={(event) => setBoxNumber(event.target.value.toUpperCase())} placeholder="A005" />
         </label>
 
-        <label className="nmw-toolbar-field">
-          Unit
-          <input
-            value={unitDescription}
-            disabled={unitDescriptionMode === 'null'}
-            onChange={(event) => setUnitDescription(event.target.value.toUpperCase())}
-            placeholder={unitDescriptionMode === 'null' ? 'n/a' : 'Type unit'}
-          />
-        </label>
-
-        <label className="nmw-toolbar-field">
-          Box
-          <input value={boxNumber} onChange={(event) => setBoxNumber(event.target.value.toUpperCase())} placeholder="A005" />
-        </label>
-
-        <label className="nmw-toolbar-field">
-          Stock rule
-          <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}>
+        <label className="ow-field">
+          <span>Stock rule</span>
+          <select className="lbl-stockrule-select" value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}>
             {LABEL_STOCK_FILTERS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
         </label>
 
-        <label className="nmw-toolbar-field lbl-checkbox-field">
-          <span>
-            <input
-              type="checkbox"
-              checked={onlyNullSublocation}
-              disabled={!!boxNumber}
-              onChange={(event) => setOnlyNullSublocation(event.target.checked)}
-            /> SubLoc null
-          </span>
+        <label className="ow-field lbl-check-field">
+          <input
+            type="checkbox"
+            checked={onlyNullSublocation}
+            disabled={!!boxNumber}
+            onChange={(event) => setOnlyNullSublocation(event.target.checked)}
+          />
+          <span>SubLoc null</span>
         </label>
 
-        <label className="nmw-toolbar-field lbl-checkbox-field">
-          <span>
-            <input
-              type="checkbox"
-              checked={onlySaleUnitGtOne}
-              onChange={(event) => setOnlySaleUnitGtOne(event.target.checked)}
-            /> SaleUnit &gt; 1
-          </span>
+        <label className="ow-field lbl-check-field">
+          <input type="checkbox" checked={onlySaleUnitGtOne} onChange={(event) => setOnlySaleUnitGtOne(event.target.checked)} />
+          <span>SaleUnit &gt; 1</span>
         </label>
 
-        <button className="primary-button" disabled={!tenantId || !storeId} onClick={runSearch}>Search</button>
+        <button type="button" className="ow-btn ow-btn-primary" disabled={!tenantId || !storeId} onClick={runSearch}>Search</button>
       </div>
 
-      <div className={`status-line ${status.state}`}>{status.message}</div>
-      {!admin && <div className="lbl-review-note">Review only — sublocation assignment is a super-admin action.</div>}
+      <div className="ow-help">
+        <span className="ow-status-hint">{status.message}</span>
+        {!admin && (
+          <>
+            <span className="ow-status-sep" aria-hidden="true">•</span>
+            <span className="lbl-review-note">Review only — sublocation assignment is a super-admin action.</span>
+          </>
+        )}
+      </div>
 
-      <div className="lbl-split">
-        <div className="table-wrap lbl-products-pane">
-          <table className="nmw-compact-table">
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Product</th>
-                <th>SubLoc</th>
-                <th>Unit</th>
-                <th>MRP</th>
-                <th>Packing</th>
-                <th>Stock</th>
-                <th>LRDays</th>
-                <th>LSDays</th>
-                <th>Include</th>
-                <th>Remarks</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr><td colSpan={11}><div className="empty-state">Run search to load products</div></td></tr>
-              ) : (
-                rows.map((row, index) => {
-                  const code = row.product_code;
-                  return (
-                    <tr key={code} className={index === activeIndex ? 'nmw-row-active' : ''} onClick={() => setActiveIndex(index)}>
-                      <td>{row.product_code}</td>
-                      <td>{row.product_name}</td>
-                      <td onClick={(event) => event.stopPropagation()}>
-                        {admin ? (
-                          <input
-                            className="lbl-inline-input"
-                            value={subLocDrafts[code] ?? ''}
-                            disabled={savingCode === code}
-                            onChange={(event) => setSubLocDrafts((current) => ({ ...current, [code]: event.target.value.toUpperCase() }))}
-                            onBlur={() => saveSubLocation(row)}
-                          />
-                        ) : (row.current_sublocation || <span className="lbl-null">NULL</span>)}
-                      </td>
-                      <td>{row.unit_description || '-'}</td>
-                      <td>{row.mrp}</td>
-                      <td>{row.sale_unit}</td>
-                      <td>{row.total_stock}</td>
-                      <td>{row.purchase_days ?? '-'}</td>
-                      <td>{row.sale_days ?? '-'}</td>
-                      <td onClick={(event) => event.stopPropagation()}>
-                        <div className="lbl-yn-group">
-                          <button
-                            type="button"
-                            className={`lbl-yn-btn lbl-yn-y ${row.include_label === 'Y' ? 'active' : ''}`}
-                            disabled={savingCode === code}
-                            onClick={() => setIncludeLabel(row, 'Y')}
-                          >Y</button>
-                          <button
-                            type="button"
-                            className={`lbl-yn-btn lbl-yn-n ${row.include_label === 'N' ? 'active' : ''}`}
-                            disabled={savingCode === code}
-                            onClick={() => setIncludeLabel(row, 'N')}
-                          >N</button>
-                        </div>
-                      </td>
-                      <td onClick={(event) => event.stopPropagation()}>
-                        <input
-                          className="lbl-inline-input lbl-remarks-input"
-                          list="lbl-remarks-options"
-                          value={remarksDrafts[code] ?? ''}
-                          disabled={savingCode === code}
-                          placeholder="Counter, SYP..."
-                          onChange={(event) => setRemarksDrafts((current) => ({ ...current, [code]: event.target.value }))}
-                          onBlur={() => saveRemarks(row)}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-          <datalist id="lbl-remarks-options">
-            {remarksOptions.map((option) => <option key={option} value={option} />)}
-          </datalist>
-        </div>
-
-        <div className="table-wrap lbl-trend-pane">
-          <div className="lbl-trend-head">
-            <strong>Product Trend</strong>
-            {activeRow && <span className="lbl-trend-head-sub">{activeRow.product_name}</span>}
+      <div className="ow-body">
+        <div className="ow-left">
+          <div className="ow-main">
+            <div className="ow-grid">
+              <table className="ow-fixed">
+                <colgroup>
+                  {LABEL_COLGROUP.map((pct, i) => <col key={i} style={{ width: `${pct}%` }} />)}
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th className="ow-grow">Product</th>
+                    <th>SubLoc</th>
+                    <th>Unit</th>
+                    <th className="ow-num">MRP</th>
+                    <th className="ow-num">Packing</th>
+                    <th className="ow-num">Stock</th>
+                    <th className="ow-num">LRDays</th>
+                    <th className="ow-num">LSDays</th>
+                    <th>Include</th>
+                    <th>Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 ? (
+                    <tr><td colSpan={11} className="ow-empty">Run search to load products</td></tr>
+                  ) : (
+                    rows.map((row, index) => {
+                      const code = row.product_code;
+                      return (
+                        <tr key={code} className={index === activeIndex ? 'ow-row-sel' : ''} onClick={() => setActiveIndex(index)}>
+                          <td>{row.product_code}</td>
+                          <td className="ow-grow" title={row.product_name}>{row.product_name}</td>
+                          <td onClick={(event) => event.stopPropagation()}>
+                            {admin ? (
+                              <input
+                                className="lbl-inline-input"
+                                value={subLocDrafts[code] ?? ''}
+                                disabled={savingCode === code}
+                                onChange={(event) => setSubLocDrafts((current) => ({ ...current, [code]: event.target.value.toUpperCase() }))}
+                                onBlur={() => saveSubLocation(row)}
+                              />
+                            ) : (row.current_sublocation || <span className="lbl-null">NULL</span>)}
+                          </td>
+                          <td>{row.unit_description || '-'}</td>
+                          <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
+                          <td className="ow-num">{fmtOwQty(row.sale_unit)}</td>
+                          <td className={`ow-num ${Number(row.total_stock) === 0 ? 'ow-stock-zero' : ''}`}>{fmtOwQty(row.total_stock)}</td>
+                          <td className="ow-num">{row.purchase_days ?? '-'}</td>
+                          <td className="ow-num">{row.sale_days ?? '-'}</td>
+                          <td onClick={(event) => event.stopPropagation()}>
+                            <div className="lbl-yn-group">
+                              <button
+                                type="button"
+                                className={`lbl-yn-btn lbl-yn-y ${row.include_label === 'Y' ? 'active' : ''}`}
+                                disabled={savingCode === code}
+                                onClick={() => setIncludeLabel(row, 'Y')}
+                              >Y</button>
+                              <button
+                                type="button"
+                                className={`lbl-yn-btn lbl-yn-n ${row.include_label === 'N' ? 'active' : ''}`}
+                                disabled={savingCode === code}
+                                onClick={() => setIncludeLabel(row, 'N')}
+                              >N</button>
+                            </div>
+                          </td>
+                          <td onClick={(event) => event.stopPropagation()}>
+                            <input
+                              className="lbl-inline-input lbl-remarks-input"
+                              list="lbl-remarks-options"
+                              value={remarksDrafts[code] ?? ''}
+                              disabled={savingCode === code}
+                              placeholder="Counter, SYP..."
+                              onChange={(event) => setRemarksDrafts((current) => ({ ...current, [code]: event.target.value }))}
+                              onBlur={() => saveRemarks(row)}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+              <datalist id="lbl-remarks-options">
+                {remarksOptions.map((option) => <option key={option} value={option} />)}
+              </datalist>
+            </div>
           </div>
-          {!activeRow ? (
-            <div className="empty-state">Select a product to view its sales/purchase trend.</div>
-          ) : trendLoading ? (
-            <div className="empty-state">Loading trend...</div>
-          ) : trendRows.length === 0 ? (
-            <div className="empty-state">No monthly trend data for this product.</div>
-          ) : (
-            <>
-              <div className="lbl-trend-legend">
-                <span><i className="lbl-dot lbl-dot-sale" />Sale qty</span>
-                <span><i className="lbl-dot lbl-dot-purchase" />Purchase qty</span>
-              </div>
-              <div className="lbl-trend-bars">
-                {trendRows.map((row) => (
-                  <div className="lbl-trend-row" key={row.month}>
-                    <span>{row.month}</span>
-                    <span className="lbl-trend-track">
-                      <span className="lbl-trend-fill lbl-trend-fill-sale" style={{ width: `${Math.min(100, (row.sale_qty / trendMax) * 100)}%` }} />
-                    </span>
-                    <span className="lbl-trend-track">
-                      <span className="lbl-trend-fill lbl-trend-fill-purchase" style={{ width: `${Math.min(100, (row.purchase_qty / trendMax) * 100)}%` }} />
-                    </span>
-                    <span className="lbl-trend-values">{row.sale_qty}/{row.purchase_qty}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="lbl-trend-stock">Current stock in hand: {trendRows[0]?.stock_in_hand ?? '-'}</div>
-            </>
-          )}
         </div>
+
+        <aside className="ow-side">
+          <div className="ow-side-head">
+            {activeRow ? (
+              <>
+                <strong className="ow-side-name" title={activeRow.product_name}>{activeRow.product_name}</strong>
+                <span className="ow-side-meta">Stock <b className={Number(activeRow.total_stock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(activeRow.total_stock)}</b></span>
+                <span className="ow-side-meta">Pack <b>{fmtOwQty(activeRow.sale_unit)}</b></span>
+                <span className="ow-side-meta">MRP <b>{fmtOwMoney(activeRow.mrp)}</b></span>
+              </>
+            ) : <span className="ow-side-hint">Select a product to see its trend, purchase &amp; sales.</span>}
+          </div>
+          <div className="ow-side-panels">
+            <section className="ow-panel ow-panel--chart">
+              <div className="ow-panel-title">
+                Monthly Trend<span className="ow-panel-subtitle">Stock movement — last {trendRows.length || 12} months</span>
+                {intelLoading && <span className="ow-intel-loading">…</span>}
+              </div>
+              <div className="ow-panel-body">
+                {!activeRow ? (
+                  <div className="ow-empty">Select a product.</div>
+                ) : trendRows.length === 0 ? (
+                  <div className="ow-empty">{intelLoading ? 'Loading…' : 'No monthly statistics.'}</div>
+                ) : (
+                  <div className="lbl-trend-panel">
+                    <div className="lbl-trend-legend">
+                      <span><i className="lbl-dot lbl-dot-sale" />Sale qty</span>
+                      <span><i className="lbl-dot lbl-dot-purchase" />Purchase qty</span>
+                    </div>
+                    <div className="lbl-trend-bars">
+                      {trendRows.map((row) => (
+                        <div className="lbl-trend-row" key={row.month}>
+                          <span>{row.month}</span>
+                          <span className="lbl-trend-track">
+                            <span className="lbl-trend-fill lbl-trend-fill-sale" style={{ width: `${Math.min(100, (row.sale_qty / trendMax) * 100)}%` }} />
+                          </span>
+                          <span className="lbl-trend-track">
+                            <span className="lbl-trend-fill lbl-trend-fill-purchase" style={{ width: `${Math.min(100, (row.purchase_qty / trendMax) * 100)}%` }} />
+                          </span>
+                          <span className="lbl-trend-values">{fmtOwQty(row.sale_qty)}/{fmtOwQty(row.purchase_qty)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="ow-panel ow-panel--purchase">
+              <div className="ow-panel-title">Purchase / GRN</div>
+              <div className="ow-panel-scroll">
+                <table className="ow-intel-table">
+                  <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num ow-grp">Dis%</th><th className="ow-num ow-grp ow-col-cost">Cost</th><th className="ow-num ow-col-ptr">PTR</th><th className="ow-num ow-col-mrp">MRP</th><th className="ow-grp">GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
+                  <tbody>
+                    {purchaseRows.map((row, i) => (
+                      <tr key={i}>
+                        <td className="ow-num">{fmtOwQty(row.stock)}</td>
+                        <td className="ow-num">{fmtOwQty(row.free_qty)}</td>
+                        <td className="ow-num ow-grp">{fmtOwPct(row.discount_pct)}</td>
+                        <td className="ow-num ow-grp ow-col-cost">{fmtOwMoney(row.item_cost)}</td>
+                        <td className="ow-num ow-col-ptr">{fmtOwMoney(row.ptr)}</td>
+                        <td className="ow-num ow-col-mrp">{fmtOwMoney(row.mrp)}</td>
+                        <td className="ow-grp">{fmtOwDate(row.grn_date)}</td>
+                        <td className="ow-intel-grow">{row.supplier_name?.trim() || '—'}</td>
+                      </tr>
+                    ))}
+                    {!purchaseRows.length && <tr><td colSpan={8} className="ow-empty">{!activeRow ? 'Select a product.' : intelLoading ? 'Loading…' : 'No purchase history.'}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="ow-panel ow-panel--sales">
+              <div className="ow-panel-title">Bill / Sales</div>
+              <div className="ow-panel-scroll">
+                <table className="ow-intel-table">
+                  <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-intel-cust">Salesman</th><th className="ow-intel-cust">Customer</th><th className="ow-num">Dis%</th><th className="ow-num">MRP</th></tr></thead>
+                  <tbody>
+                    {saleRows.map((row, i) => (
+                      <tr key={i}>
+                        <td className="ow-num">{fmtOwQty(row.qty)}</td>
+                        <td>{fmtOwDate(row.bill_time)}</td>
+                        <td className="ow-intel-cust" title={row.salesman}>{row.salesman || '—'}</td>
+                        <td className="ow-intel-cust" title={row.customer}>{row.customer?.trim() || '—'}</td>
+                        <td className="ow-num">{fmtOwPct(row.discount_pct)}</td>
+                        <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
+                      </tr>
+                    ))}
+                    {!saleRows.length && <tr><td colSpan={6} className="ow-empty">{!activeRow ? 'Select a product.' : intelLoading ? 'Loading…' : 'No sales history.'}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </aside>
       </div>
     </section>
   );

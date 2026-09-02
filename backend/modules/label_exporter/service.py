@@ -74,3 +74,11 @@ def assign_sublocation(tenant_id: str, store_id: str, product_code: str, subloca
 
 def get_product_trend(tenant_id: str, store_id: str, product_code: str):
     return {"rows": repository.get_product_trend(tenant_id, store_id, product_code)}
+
+
+def get_product_purchases(tenant_id: str, store_id: str, product_code: str):
+    return {"rows": repository.get_product_purchases(tenant_id, store_id, product_code)}
+
+
+def get_product_sales(tenant_id: str, store_id: str, product_code: str):
+    return {"rows": repository.get_product_sales(tenant_id, store_id, product_code)}

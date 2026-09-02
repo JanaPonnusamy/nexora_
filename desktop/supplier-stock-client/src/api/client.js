@@ -591,6 +591,14 @@ export const api = {
     return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/trend${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
   },
 
+  getLabelProductPurchases(productCode, tenantId, storeId, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/purchases${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
+  getLabelProductSales(productCode, tenantId, storeId, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/sales${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
   async legacyExportOrder(storeName, supplierCode, supplierName, mode, splitSize, session) {
     const settings = loadSettings();
     let response;
