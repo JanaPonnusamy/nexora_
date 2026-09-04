@@ -889,17 +889,18 @@ def _scrape_target_messages(profile: dict[str, Any], target: dict[str, Any], set
 # Groups"). Clicking "Groups" narrows the list to groups so we can label each
 # scraped chat; "All" restores the full list. Wording/DOM drift is covered by
 # several fallbacks.
+# The filter chips are <button role="tab"> whose text is the label + its count
+# with NO space ("Groups50", "Unread137"), and the group chip's id is dynamic
+# ("label_item_N"), so match on role=tab + text CONTAINING "Group".
 _FILTER_GROUPS_SELECTORS = [
-    "xpath=//div[@aria-label='chat-list-filters']//button[normalize-space()='Groups']",
-    "xpath=//button[@id='group-filter']",
-    "xpath=//*[@role='button'][normalize-space()='Groups']",
-    "xpath=//div[@role='tab'][normalize-space()='Groups']",
+    "xpath=//button[@role='tab'][starts-with(normalize-space(.),'Groups') or starts-with(normalize-space(.),'Group')]",
+    "xpath=//*[@role='tab'][contains(translate(.,'GROUP','group'),'group')]",
+    "xpath=//div[@aria-label='chat-list-filters']//button[contains(.,'Group')]",
 ]
 _FILTER_ALL_SELECTORS = [
-    "xpath=//div[@aria-label='chat-list-filters']//button[normalize-space()='All']",
     "xpath=//button[@id='all-filter']",
-    "xpath=//*[@role='button'][normalize-space()='All']",
-    "xpath=//div[@role='tab'][normalize-space()='All']",
+    "xpath=//button[@role='tab'][normalize-space()='All']",
+    "xpath=//*[@role='tab'][normalize-space()='All']",
 ]
 # Chat rows live under #pane-side; the chat name is the row's titled span. We
 # read one name per row (the first titled span) to avoid picking up message
@@ -938,7 +939,15 @@ _SCRAPE_NAMES_JS = """() => {
   });
   return out;
 }"""
-_SCROLL_PANE_JS = """() => { const p = document.getElementById('pane-side'); if (!p) return; const s = p.querySelector('[role="grid"]') || p; s.scrollTop = s.scrollHeight; }"""
+# The chat-list scroller is #pane-side itself (the inner role="grid" is not the
+# overflow element), so scroll BOTH to be safe -- setting scrollTop on a
+# non-scrollable node is harmless.
+_SCROLL_PANE_JS = """() => {
+  const p = document.getElementById('pane-side');
+  if (!p) return;
+  const g = p.querySelector('[role="grid"]');
+  [p, g].forEach((el) => { if (el) el.scrollTop = el.scrollHeight; });
+}"""
 
 
 def _scrape_chat_names(page: Any, max_rows: int = 1000, time_budget: float = 15.0) -> list[str]:
@@ -948,6 +957,13 @@ def _scrape_chat_names(page: Any, max_rows: int = 1000, time_budget: float = 15.
     list order preserved."""
     names: list[str] = []
     seen: set[str] = set()
+    # Start from the top so a previously bottom-scrolled pane (e.g. after a
+    # filter switch) doesn't miss the first rows.
+    try:
+        page.evaluate("() => { const p = document.getElementById('pane-side'); if (p) { p.scrollTop = 0; const g = p.querySelector('[role=\"grid\"]'); if (g) g.scrollTop = 0; } }")
+        page.wait_for_timeout(250)
+    except Exception:
+        pass
     end = time.time() + time_budget
     stagnant = 0
     while time.time() < end and len(names) < max_rows:
