@@ -10,11 +10,14 @@ from .service import (
     delete_profile,
     delete_target,
     get_login_qr,
+    get_send_log,
     get_state,
     launch_qr,
+    list_chats,
     logout_profile,
     send_message,
     send_target_message,
+    send_to_chat,
     sync_target_messages,
     update_settings,
     upsert_profile,
@@ -65,6 +68,12 @@ class WhatsAppTargetPayload(BaseModel):
 
 class WhatsAppTargetSendPayload(BaseModel):
     target_id: str
+    message: str = ""
+
+
+class WhatsAppChatSendPayload(BaseModel):
+    profile_id: str
+    chat_name: str
     message: str = ""
 
 
@@ -137,6 +146,33 @@ def send_whatsapp_target(payload: WhatsAppTargetSendPayload):
 @router.post("/targets/{target_id}/sync")
 def sync_whatsapp_target(target_id: str, limit: int = 20):
     return sync_target_messages(target_id, limit)
+
+
+@router.get("/profiles/{profile_id}/chats")
+async def read_whatsapp_chats(profile_id: str):
+    # Scrapes the WhatsApp chat list (recent contacts + groups) for the picker.
+    return await run_in_threadpool(list_chats, profile_id)
+
+
+@router.post("/send/chat")
+async def send_whatsapp_chat(payload: WhatsAppChatSendPayload):
+    return await run_in_threadpool(send_to_chat, payload.profile_id, payload.chat_name, payload.message)
+
+
+@router.post("/send/chat-file")
+async def send_whatsapp_chat_file(
+    profile_id: str = Form(...),
+    chat_name: str = Form(...),
+    message: str = Form(""),
+    file: UploadFile = File(...),
+):
+    content = await file.read()
+    return await run_in_threadpool(send_to_chat, profile_id, chat_name, message, file.filename, content)
+
+
+@router.get("/send-log")
+def read_whatsapp_send_log(limit: int = 100):
+    return get_send_log(limit)
 
 
 @router.post("/send/file")

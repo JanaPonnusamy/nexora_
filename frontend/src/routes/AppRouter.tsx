@@ -47,6 +47,7 @@ const TimeReportPage = lazy(() => import('../pages/TimeReportPage'))
 const PassGenPage = lazy(() => import('../pages/pass-gen/PassGenPage'))
 const LegacyOrderPage = lazy(() => import('../pages/legacy-order/LegacyOrderPage'))
 const OrderWorkspacePage = lazy(() => import('../pages/legacy-order/OrderWorkspacePage'))
+const WhatsAppPage = lazy(() => import('../pages/whatsapp/WhatsAppPage'))
 const SettingsPage = lazy(() => import('../pages/SettingsPage'))
 const PlatformShellPreviewPage = lazy(() => import('../pages/PlatformShellPreviewPage'))
 const DocumentExtractionReviewPage = lazy(() => import('../pages/document-extraction/ReviewPage'))
@@ -144,6 +145,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />
         <Route path="/legacy-order/qty-check" element={<Navigate to="/legacy-order/workspace" replace />} />
         <Route path="/legacy-order/workspace" element={<RequireCapability cap="LEGACY_ORDER"><OrderWorkspacePage /></RequireCapability>} />
+        <Route path="/whatsapp" element={<RequireCapability cap="SETTINGS"><WhatsAppPage /></RequireCapability>} />
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />
         <Route path="*" element={<RoleLanding />} />
       </Route>

@@ -41,7 +41,43 @@ export interface WhatsAppState {
   profiles: WhatsAppProfile[]
   targets: WhatsAppTarget[]
   messages: WhatsAppMessage[]
+  send_log?: WhatsAppSendLogEntry[]
   capabilities: WhatsAppCapabilities
+}
+
+export interface WhatsAppChat {
+  name: string
+  kind: 'group' | 'contact'
+}
+
+export interface WhatsAppChatList {
+  profile_id: string
+  chats: WhatsAppChat[]
+  count: number
+  group_count: number
+  checked_at: string
+}
+
+export interface WhatsAppSendLogEntry {
+  id: string
+  profile_id: string
+  profile_name: string
+  target_name: string
+  kind: string
+  status: 'sent' | 'failed' | string
+  message_preview: string
+  error: string
+  snapshot: string
+  at: string
+}
+
+export interface WhatsAppSendResult {
+  status: string
+  message: string
+  mode?: string
+  url?: string
+  target_hint?: string
+  attachment_path?: string
 }
 
 export interface WhatsAppTarget {
@@ -200,5 +236,28 @@ export const whatsappService = {
       url: string
       attachment_path?: string
     }>('/api/whatsapp/targets/send-file', form)
+  },
+  listChats(profileId: string) {
+    return api.get<WhatsAppChatList>(`/api/whatsapp/profiles/${profileId}/chats`)
+  },
+  sendChat(profileId: string, chatName: string, message: string) {
+    return api.post<WhatsAppSendResult>('/api/whatsapp/send/chat', {
+      profile_id: profileId,
+      chat_name: chatName,
+      message,
+    })
+  },
+  sendChatFile(profileId: string, chatName: string, message: string, file: File) {
+    const form = new FormData()
+    form.append('profile_id', profileId)
+    form.append('chat_name', chatName)
+    form.append('message', message)
+    form.append('file', file)
+    return api.upload<WhatsAppSendResult>('/api/whatsapp/send/chat-file', form)
+  },
+  getSendLog(limit = 100) {
+    return api.get<{ entries: WhatsAppSendLogEntry[]; count: number }>(
+      `/api/whatsapp/send-log?limit=${limit}`,
+    )
   },
 }

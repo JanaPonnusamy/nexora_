@@ -107,6 +107,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Pass Gen', to: '/pass-gen', icon: 'bi-key', cap: 'PASS_GEN' },
       { label: 'Legacy Order', to: '/legacy-order', icon: 'bi-database-gear', cap: 'LEGACY_ORDER' },
       { label: 'Order Workspace', to: '/legacy-order/workspace', icon: 'bi-grid-3x3-gap', cap: 'LEGACY_ORDER' },
+      { label: 'WhatsApp', to: '/whatsapp', icon: 'bi-whatsapp', cap: 'SETTINGS' },
       { label: 'Settings', to: '/settings', icon: 'bi-gear', cap: 'SETTINGS' },
     ],
   },
