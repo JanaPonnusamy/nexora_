@@ -216,7 +216,7 @@ export default function WhatsAppPage() {
           <div className="wa-list__search">
             <i className="bi bi-search" />
             <input
-              placeholder="Search name…"
+              placeholder="Search, or type a name / number…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />

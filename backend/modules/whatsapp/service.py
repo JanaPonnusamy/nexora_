@@ -787,8 +787,17 @@ def _attach_file(page: Any, settings: dict[str, Any], attachment_path: str) -> N
     except Exception:
         pass  # fall through: older UI, or no menu/chooser appeared
 
-    file_input = _first_locator(page, ["xpath=//input[@type='file']"], wait_seconds)
-    file_input.set_input_files(resolved_path)
+    # File inputs are display:none, so a visibility-gated locator (_first_locator)
+    # never returns them -- that was the "None of the selectors matched
+    # [input[type=file]]" attach failure. Set files directly on the (hidden)
+    # input instead; Playwright supports this without the element being visible.
+    loc = page.locator("xpath=//input[@type='file']")
+    end = time.time() + wait_seconds
+    while loc.count() == 0 and time.time() < end:
+        page.wait_for_timeout(300)
+    if loc.count() == 0:
+        raise TimeoutError("No file input was found to attach the document.")
+    loc.last.set_input_files(resolved_path)
     time.sleep(3)
 
 
@@ -914,55 +923,53 @@ def _click_first(page: Any, selectors: list[str]) -> bool:
     return False
 
 
-def _scrape_chat_names(page: Any, max_rows: int = 500, scroll_passes: int = 25) -> list[str]:
-    """Collect chat names from the (virtualized) chat list, scrolling to load
-    more. Returns names in list order, de-duplicated."""
+# One JS round-trip returns EVERY visible chat name from the pane -- far faster
+# than per-row Playwright locator calls (which turn a 99+/50-group account into
+# thousands of IPC calls and make the scrape look like a hang).
+_SCRAPE_NAMES_JS = """() => {
+  const pane = document.getElementById('pane-side');
+  if (!pane) return [];
+  const rows = pane.querySelectorAll('[role="listitem"], [role="row"], [role="gridcell"]');
+  const nodes = rows.length ? rows : pane.querySelectorAll('span[title]');
+  const out = [];
+  nodes.forEach((n) => {
+    const s = (n.matches && n.matches('span[title]')) ? n : n.querySelector('span[title]');
+    if (s) { const t = (s.getAttribute('title') || '').trim(); if (t) out.push(t); }
+  });
+  return out;
+}"""
+_SCROLL_PANE_JS = """() => { const p = document.getElementById('pane-side'); if (!p) return; const s = p.querySelector('[role="grid"]') || p; s.scrollTop = s.scrollHeight; }"""
+
+
+def _scrape_chat_names(page: Any, max_rows: int = 1000, time_budget: float = 15.0) -> list[str]:
+    """Collect chat names from the (virtualized) chat list, scrolling to the
+    bottom to load more. Uses a single JS evaluate per pass (fast) and a hard
+    time budget + stagnation cut-off so it can never hang. De-duplicated,
+    list order preserved."""
     names: list[str] = []
     seen: set[str] = set()
-
-    def _collect() -> None:
-        rows = None
-        for sel in _CHAT_ROW_SELECTORS:
-            loc = page.locator(sel)
-            try:
-                if loc.count() > 0:
-                    rows = loc
-                    break
-            except Exception:
-                continue
-        if rows is None:
-            # Fallback: any titled span inside the pane.
-            spans = page.locator("xpath=//div[@id='pane-side']//span[@title]")
-            for i in range(spans.count()):
-                try:
-                    t = (spans.nth(i).get_attribute("title") or "").strip()
-                except Exception:
-                    continue
-                if t and t not in seen:
-                    seen.add(t)
-                    names.append(t)
-            return
-        for i in range(rows.count()):
-            try:
-                span = rows.nth(i).locator("xpath=.//span[@title]").first
-                t = (span.get_attribute("title") or "").strip()
-            except Exception:
-                continue
+    end = time.time() + time_budget
+    stagnant = 0
+    while time.time() < end and len(names) < max_rows:
+        try:
+            batch = page.evaluate(_SCRAPE_NAMES_JS) or []
+        except Exception:
+            batch = []
+        added = 0
+        for t in batch:
+            t = (t or "").strip()
             if t and t not in seen:
                 seen.add(t)
                 names.append(t)
-
-    for _ in range(scroll_passes):
-        _collect()
-        if len(names) >= max_rows:
-            break
+                added += 1
         try:
-            page.evaluate(
-                "() => { const p = document.getElementById('pane-side'); if (p) { const s = p.querySelector('[role=\"grid\"]') || p; s.scrollBy(0, s.clientHeight || 600); } }"
-            )
+            page.evaluate(_SCROLL_PANE_JS)
         except Exception:
             pass
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(250)
+        stagnant = stagnant + 1 if added == 0 else 0
+        if stagnant >= 3:  # no new names after several scrolls -> end of list
+            break
     return names[:max_rows]
 
 
@@ -1038,14 +1045,20 @@ def _send_to_chat_impl(profile_id: str, chat_name: str, message: str, attachment
     profile["last_used_at"] = _now_iso()
     _save_profiles(profiles)
 
-    # A transient, non-"contact" target forces _open_target_chat's search-by-name
-    # path, which opens either a contact or a group chat by its visible name.
-    target = {"target_kind": "group", "target_name": chat_name, "target_ref": chat_name}
-
     if not (settings.get("delivery_mode") == "selenium" and _HAVE_PLAYWRIGHT):
         raise RuntimeError("Automated sending is not enabled (set delivery mode to the automation engine).")
+
+    # A raw phone number (e.g. "+91 95855 50296") won't reliably surface in the
+    # name search unless it's a saved contact, so route it through the direct
+    # send?phone= path instead. Anything else is a chat/group name -> search path.
+    digits = _sanitize_phone(chat_name)
+    looks_like_phone = len(digits) >= 8 and bool(re.fullmatch(r"[\d +\-()]+", chat_name))
     try:
-        result = _send_target_via_playwright(profile, target, settings, message, staged_attachment)
+        if looks_like_phone:
+            result = _send_via_playwright(profile, settings, digits, message, staged_attachment)
+        else:
+            target = {"target_kind": "group", "target_name": chat_name, "target_ref": chat_name}
+            result = _send_target_via_playwright(profile, target, settings, message, staged_attachment)
         _record_send(profile, chat_name, "chat", "sent", message, "", None)
         return result
     except Exception as exc:
