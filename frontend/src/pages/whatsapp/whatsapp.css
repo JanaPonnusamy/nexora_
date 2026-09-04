@@ -158,6 +158,72 @@
 .wa-avatar--contact {
   background: #6c8a9c;
 }
+.wa-avatar--adhoc {
+  background: #128c7e;
+}
+.wa-row--adhoc {
+  background: rgba(18, 140, 126, 0.08);
+}
+.wa-row--adhoc em {
+  font-size: 0.72rem;
+  color: var(--bs-secondary-color, #8a9198);
+}
+
+.wa-days {
+  padding: 0.2rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--bs-border-color, #ced4da);
+  background: var(--bs-body-bg, #fff);
+  color: inherit;
+  font-size: 0.8rem;
+}
+
+/* ---- Message thread (read history) ---- */
+.wa-thread {
+  border: 1px solid var(--bs-border-color, #e3e6ea);
+  border-radius: 8px;
+  padding: 0.6rem;
+  margin-bottom: 0.6rem;
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: rgba(0, 0, 0, 0.015);
+}
+.wa-thread__empty {
+  text-align: center;
+  color: var(--bs-secondary-color, #8a9198);
+  font-size: 0.85rem;
+  padding: 0.5rem;
+}
+.wa-msg {
+  max-width: 78%;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+.wa-msg--incoming {
+  align-self: flex-start;
+  background: var(--bs-body-bg, #fff);
+  border: 1px solid var(--bs-border-color, #e3e6ea);
+}
+.wa-msg--outgoing {
+  align-self: flex-end;
+  background: #d9fdd3;
+  color: #06210b;
+}
+.wa-msg--system {
+  align-self: center;
+  background: transparent;
+  color: var(--bs-secondary-color, #8a9198);
+  font-size: 0.78rem;
+}
+.wa-msg__meta {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  margin-top: 0.1rem;
+}
 
 /* ---- Right compose ---- */
 .wa-compose {

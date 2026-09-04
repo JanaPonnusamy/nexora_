@@ -5,6 +5,7 @@ import { ApiError } from '../../services/apiClient'
 import {
   whatsappService,
   type WhatsAppChat,
+  type WhatsAppChatMessage,
   type WhatsAppProfile,
   type WhatsAppSendLogEntry,
 } from '../../services/whatsappService'
@@ -41,6 +42,11 @@ export default function WhatsAppPage() {
   const [sendLog, setSendLog] = useState<WhatsAppSendLogEntry[]>([])
   const [showQr, setShowQr] = useState(false)
   const [error, setError] = useState('')
+
+  const [messages, setMessages] = useState<WhatsAppChatMessage[]>([])
+  const [loadingMsgs, setLoadingMsgs] = useState(false)
+  const [msgsFor, setMsgsFor] = useState('')
+  const [days, setDays] = useState(10)
 
   const refreshLog = useCallback(async () => {
     try {
@@ -129,6 +135,27 @@ export default function WhatsAppPage() {
     }
   }, [selected, profileId, message, file, refreshLog])
 
+  const selectChat = useCallback((c: WhatsAppChat) => {
+    setSelected(c)
+    setMessages([])
+    setMsgsFor('')
+    setBanner(null)
+  }, [])
+
+  const loadMessages = useCallback(async () => {
+    if (!selected || !profileId) return
+    setLoadingMsgs(true)
+    try {
+      const res = await whatsappService.readChatMessages(profileId, selected.name, days)
+      setMessages(res.messages)
+      setMsgsFor(selected.name)
+    } catch (err) {
+      setBanner({ kind: 'err', text: err instanceof ApiError ? err.message : 'Could not read messages.' })
+    } finally {
+      setLoadingMsgs(false)
+    }
+  }, [selected, profileId])
+
   const downloadContacts = useCallback(() => {
     if (!chats.length) return
     const rows = [['Name', 'Type'], ...chats.map((c) => [c.name, c.kind])]
@@ -206,16 +233,32 @@ export default function WhatsAppPage() {
             ))}
           </div>
           <div className="wa-list__scroll">
-            {filtered.length === 0 && !loadingChats && (
+            {/* Free-type: message any group/contact by exact name even if it is
+                not in the (recent) scraped list. WhatsApp search finds all. */}
+            {search.trim() &&
+              !chats.some((c) => c.name.toLowerCase() === search.trim().toLowerCase()) && (
+                <button
+                  className="wa-row wa-row--adhoc"
+                  onClick={() => selectChat({ name: search.trim(), kind: 'contact' })}
+                >
+                  <span className="wa-avatar wa-avatar--adhoc">
+                    <i className="bi bi-send" />
+                  </span>
+                  <span className="wa-row__name">
+                    Message “{search.trim()}” <em>(exact name)</em>
+                  </span>
+                </button>
+              )}
+            {filtered.length === 0 && !loadingChats && !search.trim() && (
               <div className="wa-list__empty">
-                {chats.length === 0 ? 'Load chats to begin.' : 'No matches.'}
+                {chats.length === 0 ? 'Load chats, or type a name above to message it directly.' : 'No matches.'}
               </div>
             )}
             {filtered.map((c) => (
               <button
                 key={`${c.kind}:${c.name}`}
                 className={`wa-row${selected?.name === c.name ? ' wa-row--on' : ''}`}
-                onClick={() => setSelected(c)}
+                onClick={() => selectChat(c)}
               >
                 <span className={`wa-avatar wa-avatar--${c.kind}`}>
                   <i className={`bi ${c.kind === 'group' ? 'bi-people-fill' : 'bi-person-fill'}`} />
@@ -239,7 +282,36 @@ export default function WhatsAppPage() {
                   <div className="wa-compose__name">{selected.name}</div>
                   <div className="wa-compose__kind">{selected.kind === 'group' ? 'Group' : 'Contact'}</div>
                 </div>
+                <div className="wa-compose__spacer" />
+                <select
+                  className="wa-days"
+                  value={days}
+                  onChange={(e) => setDays(Number(e.target.value))}
+                  title="How far back to read"
+                >
+                  <option value={3}>Last 3 days</option>
+                  <option value={7}>Last 7 days</option>
+                  <option value={10}>Last 10 days</option>
+                  <option value={30}>Last 30 days</option>
+                </select>
+                <button className="btn btn-outline-secondary btn-sm" onClick={loadMessages} disabled={loadingMsgs}>
+                  <i className="bi bi-chat-left-text" /> {loadingMsgs ? 'Reading…' : 'Load messages'}
+                </button>
               </div>
+
+              {msgsFor === selected.name && (
+                <div className="wa-thread">
+                  {messages.length === 0 && !loadingMsgs && (
+                    <div className="wa-thread__empty">No messages read.</div>
+                  )}
+                  {messages.map((m, i) => (
+                    <div key={i} className={`wa-msg wa-msg--${m.direction}`}>
+                      {m.text && <div className="wa-msg__text">{m.text}</div>}
+                      {m.meta && <div className="wa-msg__meta">{m.meta}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
               {banner && (
                 <div className={`alert ${banner.kind === 'ok' ? 'alert-success' : 'alert-danger'} wa-alert`}>
                   {banner.text}

@@ -15,6 +15,7 @@ from .service import (
     launch_qr,
     list_chats,
     logout_profile,
+    read_chat_messages,
     send_message,
     send_target_message,
     send_to_chat,
@@ -173,6 +174,12 @@ async def send_whatsapp_chat_file(
 @router.get("/send-log")
 def read_whatsapp_send_log(limit: int = 100):
     return get_send_log(limit)
+
+
+@router.get("/chat-messages")
+async def read_whatsapp_chat_messages(profile_id: str, chat_name: str, limit: int = 50):
+    # Opens the chat by name and scrapes its history (desktop-WhatsApp-like).
+    return await run_in_threadpool(read_chat_messages, profile_id, chat_name, limit)
 
 
 @router.post("/send/file")

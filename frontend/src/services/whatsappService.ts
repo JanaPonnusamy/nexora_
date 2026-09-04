@@ -71,6 +71,20 @@ export interface WhatsAppSendLogEntry {
   at: string
 }
 
+export interface WhatsAppChatMessage {
+  direction: 'incoming' | 'outgoing' | 'system'
+  text: string
+  meta: string
+}
+
+export interface WhatsAppChatMessages {
+  profile_id: string
+  chat_name: string
+  messages: WhatsAppChatMessage[]
+  count: number
+  checked_at: string
+}
+
 export interface WhatsAppSendResult {
   status: string
   message: string
@@ -259,5 +273,14 @@ export const whatsappService = {
     return api.get<{ entries: WhatsAppSendLogEntry[]; count: number }>(
       `/api/whatsapp/send-log?limit=${limit}`,
     )
+  },
+  readChatMessages(profileId: string, chatName: string, days = 10, limit = 500) {
+    const q = new URLSearchParams({
+      profile_id: profileId,
+      chat_name: chatName,
+      days: String(days),
+      limit: String(limit),
+    })
+    return api.get<WhatsAppChatMessages>(`/api/whatsapp/chat-messages?${q.toString()}`)
   },
 }

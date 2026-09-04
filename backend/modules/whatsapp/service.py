@@ -9,7 +9,7 @@ import shutil
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -476,20 +476,21 @@ atexit.register(shutdown_all_drivers)
 # selectors and falls back to a JS click. On failure we snapshot the page so
 # the real cause is visible (backend/storage/whatsapp/debug).
 
+# The chat-list search box in current WhatsApp Web is a plain <input> in the
+# left-pane header (aria-label "Search or start a new chat", data-tab="3").
+# CRITICAL: the message composer is ALSO a role="textbox"/contenteditable with
+# an aria-label, so a broad "any textbox" selector grabs the COMPOSER when a
+# chat is already open and types the query as a message instead of searching.
+# Every entry here therefore targets the header search box specifically and
+# EXCLUDES the footer composer (id="conversation-compose-box-input",
+# data-tab="10", inside <footer>).
 _SEARCH_BOX_SELECTORS = [
-    # Current WhatsApp Web renders the search box as a contenteditable inside a
-    # `div[tabindex=-1][data-tab=3]` container (the old plain <input> is gone),
-    # and that editable element is only mounted once any startup modal is
-    # dismissed -- see _dismiss_startup_dialogs.
-    "xpath=//div[@data-tab='3']//div[@contenteditable='true']",
-    "xpath=//div[@contenteditable='true'][@data-tab='3']",
-    "xpath=//div[@role='textbox'][@contenteditable='true'][@aria-label]",
-    # On the chat-list screen (no chat open yet) the only editable textbox is
-    # the search box, so a bare contenteditable textbox is a safe last resort.
-    "xpath=//div[@contenteditable='true'][@role='textbox']",
-    # Legacy fallbacks (older WhatsApp Web builds).
     "xpath=//input[@aria-label='Search or start a new chat']",
-    "xpath=//div[@aria-label='Chat list']//input[@role='textbox']",
+    "xpath=//input[@type='text'][@data-tab='3']",
+    # Older builds used a contenteditable search box with data-tab='3'.
+    "xpath=//div[@contenteditable='true'][@data-tab='3']",
+    # Last resort: a contenteditable textbox that is NOT the composer.
+    "xpath=//div[@contenteditable='true'][@role='textbox'][not(ancestor::footer)][not(@id='conversation-compose-box-input')][not(@data-tab='10')][not(@aria-placeholder='Type a message')]",
 ]
 
 # WhatsApp Web pops a "What's new on WhatsApp Web" (and similar) startup modal
@@ -1051,6 +1052,117 @@ def _send_to_chat_impl(profile_id: str, chat_name: str, message: str, attachment
         snapshot = _latest_debug_snapshot()
         _record_send(profile, chat_name, "chat", "failed", message, str(exc), snapshot)
         return _headless_failure(exc, staged_attachment, chat_name)
+
+
+# --- Read a chat's message history (desktop-WhatsApp-like) ------------------
+
+def _parse_msg_date(meta: str) -> "datetime | None":
+    """Best-effort parse of the date inside a message's data-pre-plain-text
+    (e.g. "[10:30 am, 4/9/2026] Sender: "). Date order varies by locale, so we
+    disambiguate D/M vs M/D when one value is > 12; otherwise assume D/M/Y (the
+    store's locale). Returns None when it can't be parsed."""
+    m = re.search(r",\s*(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\]", meta or "")
+    if not m:
+        return None
+    a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if y < 100:
+        y += 2000
+    day, mon = a, b
+    if a <= 12 and b > 12:  # value b can only be a day -> input was M/D/Y
+        day, mon = b, a
+    for d, mo in ((day, mon), (mon, day)):
+        try:
+            return datetime(y, mo, d)
+        except ValueError:
+            continue
+    return None
+
+
+def read_chat_messages(profile_id: str, chat_name: str, days: int = 10, limit: int = 500) -> dict[str, Any]:
+    return _run_on_driver_thread(_read_chat_messages_impl, profile_id, chat_name, days, limit)
+
+
+def _read_chat_messages_impl(profile_id: str, chat_name: str, days: int = 10, limit: int = 500) -> dict[str, Any]:
+    """Open a chat by its visible name and scrape its message history for the
+    last ``days`` days, scrolling up (like scrolling back in desktop WhatsApp)
+    until messages older than the cutoff are loaded or a scroll cap is hit."""
+    if not _HAVE_PLAYWRIGHT:
+        raise RuntimeError("Playwright is not installed in the backend runtime.")
+    settings = _load_settings()
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    chat_name = (chat_name or "").strip()
+    if not chat_name:
+        raise ValueError("A chat name is required.")
+    days = max(1, min(days, 90))
+    limit = max(1, min(limit, 1000))
+    cutoff = datetime.now() - timedelta(days=days)
+    target = {"target_kind": "group", "target_name": chat_name, "target_ref": chat_name, "target_id": ""}
+
+    def _oldest_loaded_date(page: Any) -> "datetime | None":
+        try:
+            first = page.locator("xpath=(//div[@id='main']//div[contains(@class,'message-')])[1]")
+            if first.count() > 0:
+                return _parse_msg_date(first.get_attribute("data-pre-plain-text") or "")
+        except Exception:
+            pass
+        return None
+
+    with _DRIVER_LOCK:
+        page = _acquire_context(profile, settings, bool(settings.get("headless", True)))
+        _open_target_chat(page, target, settings)
+        # Scroll the message panel up until we've loaded past the cutoff date or
+        # hit the cap (guards against very large / infinite histories).
+        max_passes = min(80, max(8, days * 6))
+        for _ in range(max_passes):
+            try:
+                page.evaluate(
+                    "() => { const rows = document.querySelectorAll('#main [class*=\"message-\"]');"
+                    " if (!rows.length) return;"
+                    " let el = rows[0].parentElement;"
+                    " while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement;"
+                    " if (el) el.scrollTop = 0; }"
+                )
+            except Exception:
+                pass
+            page.wait_for_timeout(450)
+            oldest = _oldest_loaded_date(page)
+            if oldest is not None and oldest < cutoff:
+                break
+
+        nodes = page.locator("xpath=//div[@id='main']//div[contains(@class,'message-')]")
+        count = nodes.count()
+        out: list[dict[str, Any]] = []
+        for i in range(count):
+            node = nodes.nth(i)
+            classes = (node.get_attribute("class") or "").lower()
+            if "message-in" in classes:
+                direction = "incoming"
+            elif "message-out" in classes:
+                direction = "outgoing"
+            else:
+                direction = "system"
+            text_nodes = node.locator("xpath=.//span[contains(@class,'selectable-text')]")
+            parts = [(text_nodes.nth(j).inner_text() or "").strip() for j in range(text_nodes.count())]
+            text = " ".join(p for p in parts if p).strip()
+            meta = (node.get_attribute("data-pre-plain-text") or "").strip()
+            if not text and not meta:
+                continue
+            # Filter to the requested window when we can read the date; keep
+            # undated rows (system/date separators, media-only) so context isn't lost.
+            mdate = _parse_msg_date(meta)
+            if mdate is not None and mdate < cutoff:
+                continue
+            out.append({"direction": direction, "text": text, "meta": meta})
+        out = out[-limit:]
+    return {
+        "profile_id": profile_id,
+        "chat_name": chat_name,
+        "days": days,
+        "messages": out,
+        "count": len(out),
+        "checked_at": _now_iso(),
+    }
 
 
 # --- Send log (inspect slow / failed sends) --------------------------------
