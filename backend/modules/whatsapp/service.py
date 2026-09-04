@@ -474,10 +474,31 @@ atexit.register(shutdown_all_drivers)
 # the real cause is visible (backend/storage/whatsapp/debug).
 
 _SEARCH_BOX_SELECTORS = [
-    "xpath=//input[@aria-label='Search or start a new chat']",
-    "xpath=//div[@aria-label='Chat list']//input[@role='textbox']",
+    # Current WhatsApp Web renders the search box as a contenteditable inside a
+    # `div[tabindex=-1][data-tab=3]` container (the old plain <input> is gone),
+    # and that editable element is only mounted once any startup modal is
+    # dismissed -- see _dismiss_startup_dialogs.
+    "xpath=//div[@data-tab='3']//div[@contenteditable='true']",
     "xpath=//div[@contenteditable='true'][@data-tab='3']",
     "xpath=//div[@role='textbox'][@contenteditable='true'][@aria-label]",
+    # On the chat-list screen (no chat open yet) the only editable textbox is
+    # the search box, so a bare contenteditable textbox is a safe last resort.
+    "xpath=//div[@contenteditable='true'][@role='textbox']",
+    # Legacy fallbacks (older WhatsApp Web builds).
+    "xpath=//input[@aria-label='Search or start a new chat']",
+    "xpath=//div[@aria-label='Chat list']//input[@role='textbox']",
+]
+
+# WhatsApp Web pops a "What's new on WhatsApp Web" (and similar) startup modal
+# -- role="dialog" aria-modal="true" -- that overlays the chat list AND blocks
+# the search box's contenteditable from mounting, so every search selector
+# fails until it is dismissed. These target the modal's primary dismiss
+# control across wording drift ("Continue" / "OK" / "Got it") plus the X.
+_STARTUP_DIALOG_DISMISS_SELECTORS = [
+    "xpath=//div[@role='dialog']//div[@role='button'][.//span[normalize-space()='Continue'] or normalize-space()='Continue']",
+    "xpath=//div[@role='dialog']//button[.//span[normalize-space()='Continue'] or normalize-space()='Continue']",
+    "xpath=//div[@role='dialog']//*[self::button or @role='button'][normalize-space()='OK' or normalize-space()='Got it' or normalize-space()='Okay']",
+    "xpath=//div[@role='dialog']//*[@aria-label='Close']",
 ]
 _COMPOSER_SELECTORS = [
     "xpath=//footer//div[@contenteditable='true'][@data-tab='10']",
@@ -589,11 +610,45 @@ def _safe_click(locator: Any) -> None:
             raise
 
 
+def _dismiss_startup_dialogs(page: Any) -> None:
+    """Close any WhatsApp Web startup modal (e.g. "What's new on WhatsApp Web")
+    that overlays the chat list. Left open, it prevents the search box's
+    contenteditable from mounting, so every _open_target_chat search fails with
+    "None of the selectors matched". Best-effort and idempotent: a couple of
+    passes (the app can chain more than one dialog), Escape as a final nudge."""
+    for _ in range(3):
+        try:
+            if page.locator("xpath=//div[@role='dialog']").count() == 0:
+                return
+        except Exception:
+            return
+        clicked = False
+        for sel in _STARTUP_DIALOG_DISMISS_SELECTORS:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    _safe_click(loc.first)
+                    clicked = True
+                    break
+            except Exception:
+                continue
+        if not clicked:
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+
 def _ensure_logged_in(page: Any, settings: dict[str, Any]) -> None:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     end = time.time() + wait_seconds
     while time.time() < end:
         if _is_logged_in(page):
+            _dismiss_startup_dialogs(page)
             return
         time.sleep(1)
     raise RuntimeError(
