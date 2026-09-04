@@ -89,6 +89,9 @@ from modules.expiry_stock.router import (
 from modules.nonmoving_report.router import (
     router as nonmoving_report_router
 )
+from modules.sale_analysis.router import (
+    router as sale_analysis_router
+)
 from modules.time_report.router import (
     router as time_report_router
 )
@@ -306,6 +309,7 @@ app.include_router(reports_router)
 app.include_router(expiry_report_router)
 app.include_router(expiry_stock_router)
 app.include_router(nonmoving_report_router)
+app.include_router(sale_analysis_router)
 app.include_router(time_report_router)
 app.include_router(product_mapping_router)
 app.include_router(document_extraction_router)
@@ -318,6 +322,20 @@ app.include_router(whatsapp_router)
 app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)
 app.include_router(mobile_bff_router)
+
+@app.on_event('startup')
+def _warmup_whatsapp_on_startup():
+    # The first WhatsApp send after a fresh backend start reliably fails against
+    # a cold / half-loaded WhatsApp Web (login not settled + the "What's new"
+    # startup modal blocking the search box); the second send then works. Warm
+    # the session in the background at startup and fire one self-message so the
+    # first real send of the day is already primed. Best-effort; never blocks or
+    # crashes startup.
+    try:
+        from modules.whatsapp.service import warmup_on_startup
+        warmup_on_startup()
+    except Exception:
+        pass
 
 @app.get('/health')
 def health():

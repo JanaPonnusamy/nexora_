@@ -852,6 +852,91 @@ def _scrape_target_messages(profile: dict[str, Any], target: dict[str, Any], set
         return captured
 
 
+def _warmup_log(msg: str) -> None:
+    """Append a timestamped line to storage/whatsapp/warmup.log (best-effort)."""
+    try:
+        _ensure_dirs()
+        line = f"{_now_iso()}  {msg}\n"
+        with (STORAGE_DIR / "warmup.log").open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:
+        pass
+
+
+def _warmup_impl() -> None:
+    """Warm the default profile's WhatsApp Web session so the FIRST real send of
+    the day doesn't fail against a cold / half-loaded page.
+
+    The daily failure the user sees is exactly this: on a fresh backend start
+    WhatsApp Web hasn't finished authenticating and still shows the "What's new"
+    startup modal (which stops the search box from mounting), so the first send
+    errors and only the second succeeds. Here we pre-load the session, dismiss
+    that modal (via _ensure_logged_in -> _dismiss_startup_dialogs) and, when
+    automated sending is configured, fire one self-message so the whole send
+    path is primed. Runs on the single driver thread; never raises."""
+    if not _HAVE_PLAYWRIGHT:
+        _warmup_log("skipped: Playwright not installed")
+        return
+    settings = _load_settings()
+    profiles = _load_profiles()
+    if not profiles:
+        _warmup_log("skipped: no profiles configured")
+        return
+    profile = next((row for row in profiles if row.get("is_default")), profiles[0])
+    want_headless = bool(settings.get("headless", True))
+    try:
+        with _DRIVER_LOCK:
+            page = _acquire_context(profile, settings, want_headless)
+            _ensure_logged_in(page, settings)  # also dismisses the startup modal
+    except Exception as exc:
+        _warmup_log(f"context/login not ready for '{profile.get('profile_name')}': {exc}")
+        return
+
+    # Only actively send when the automated (Playwright) path is the delivery
+    # mode -- in manual_browser mode a "send" would pop a visible window, which
+    # is not wanted at unattended startup. Pre-loading the context above is the
+    # useful part in that case.
+    if settings.get("delivery_mode") != "selenium":
+        _warmup_log(f"session pre-loaded for '{profile.get('profile_name')}' (manual mode, no self-message)")
+        return
+    phone = _sanitize_phone(profile.get("default_phone", ""))
+    if not phone:
+        _warmup_log(f"session pre-loaded for '{profile.get('profile_name')}' (no default_phone for self-message)")
+        return
+    try:
+        # Call the impl directly (not the public send_message, which re-submits
+        # to the single-worker driver executor -- doing that from within the
+        # driver thread would deadlock). _send_via_playwright re-enters the
+        # reentrant _DRIVER_LOCK safely.
+        _send_via_playwright(
+            profile,
+            settings,
+            phone,
+            f"Nexora HO backend started — WhatsApp session warmed up ({_now_iso()}).",
+            None,
+        )
+        _warmup_log(f"self-message sent for '{profile.get('profile_name')}' -> {phone}")
+    except Exception as exc:
+        _warmup_log(f"self-message failed for '{profile.get('profile_name')}': {exc}")
+
+
+def warmup_on_startup(delay_seconds: float = 8.0) -> None:
+    """Kick off the WhatsApp warm-up in a background daemon thread so it never
+    blocks or crashes backend startup. Safe to call unconditionally from the
+    FastAPI startup hook."""
+    def _runner() -> None:
+        try:
+            time.sleep(max(0.0, delay_seconds))  # let uvicorn bind the port first
+            _run_on_driver_thread(_warmup_impl)
+        except Exception:
+            pass
+
+    try:
+        threading.Thread(target=_runner, name="wa-warmup", daemon=True).start()
+    except Exception:
+        pass
+
+
 def get_state() -> dict[str, Any]:
     settings = _load_settings()
     profiles = _load_profiles()
