@@ -52,6 +52,20 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @Search NVARCHAR(100) = NULLIF(LTRIM(RTRIM(@SearchText)), '');
+    -- Candidate cap per store BEFORE the per-row stock lookup (the two
+    -- OUTER APPLYs into sync.Batches/sync.ProductTrans, ~1.5M rows each)
+    -- runs. Previously that stock lookup ran for EVERY name/code match
+    -- across every store, THEN limited to @PerStore -- measured against the
+    -- live DB: 19s for a blank search, 6.6s for a 1-char prefix, vs 0.19s
+    -- for a realistic 3-char prefix that already narrows the match count.
+    -- Ranking by name first and capping the candidate pool to @PerStore*15
+    -- per store before computing stock bounds that cost regardless of how
+    -- broad the typed search is. Trade-off: for a very broad/short search
+    -- with @OnlyStock=1, a genuinely high-stock match that falls outside
+    -- this window (alphabetically, per store) won't surface -- accepted
+    -- because @PerStore*15 (300 by default) is generous for what's meant to
+    -- be a live incremental-search box, not a full catalogue browse.
+    DECLARE @CandidateCap INT = @PerStore * 15;
 
     ;WITH filtered AS
     (
@@ -59,7 +73,8 @@ BEGIN
             s.store_id, s.store_code, s.store_name, s.store_order,
             p.ProductCode, p.ProductName, p.UnitDescription,
             p.TotalStock AS RawTotalStock,
-            ISNULL(p.MRP, 0) AS MRP
+            ISNULL(p.MRP, 0) AS MRP,
+            ROW_NUMBER() OVER (PARTITION BY s.store_id ORDER BY p.ProductName) AS pre_rn
         FROM sync.Products p
         INNER JOIN dbo.stores s
                 ON s.store_id  = p.store_id
@@ -71,6 +86,13 @@ BEGIN
                 OR p.ProductName LIKE @Search + '%'
                 OR CAST(p.ProductCode AS NVARCHAR(50)) LIKE @Search + '%'
               )
+    ),
+    capped AS
+    (
+        SELECT store_id, store_code, store_name, store_order,
+               ProductCode, ProductName, UnitDescription, RawTotalStock, MRP
+        FROM filtered
+        WHERE pre_rn <= @CandidateCap
     ),
     stocked AS
     (
@@ -90,7 +112,7 @@ BEGIN
                 f.RawTotalStock,
                 0
             ) AS TotalStock
-        FROM filtered f
+        FROM capped f
         OUTER APPLY (
             SELECT
                 SUM(CASE WHEN b.Stock > 0 THEN b.Stock ELSE 0 END) AS BatchStock,
@@ -374,13 +396,15 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    -- Internal stock transfers (InvoiceSeries 'TI' = Transfer-In) are NOT
-    -- external purchases: their SupplierCode is a transfer/source code that
-    -- collides with the store-local supplier-code namespace (e.g. code 2 = a
-    -- real supplier "PENTACARE"), so it must NOT be resolved via sync.Suppliers.
-    -- For a transfer we surface the tenant's warehouse (dbo.stores.is_warehouse
-    -- = 1) as the source party. Genuine purchases (series 'IV' etc.) are
-    -- unchanged and keep resolving the real supplier name.
+    -- Show ONLY this store's OWN PurchaseTrans - a satellite store's panel (e.g.
+    -- NMC) shows NMC's transactions, never NMW's. Internal 'TI' (Transfer-In)
+    -- lines are the store receiving stock from the tenant warehouse (NMW); their
+    -- SupplierCode is a transfer/source code that collides with the local
+    -- supplier namespace (e.g. code 2 = a real supplier "PENTACARE"), so it must
+    -- NOT resolve via sync.Suppliers - surface the warehouse (is_warehouse = 1)
+    -- as the source party instead. Genuine purchases (series <> 'TI') keep their
+    -- real supplier name. We do NOT trace transfers back into the warehouse's own
+    -- purchases. Kept byte-for-byte in sync with usp_ProductCore result set 2.
     SELECT TOP (15)
         CAST(pt.Grnnumber AS NVARCHAR(50)) AS grn_no,
         CAST(pt.grndate AS DATE)           AS [date],
@@ -550,8 +574,16 @@ BEGIN
         CASE WHEN ISNULL(b.Stock, 0) > 0 THEN 0 ELSE 1 END,
         b.ExpiryDate;
 
-    -- Result set 2: purchases (== stock.usp_PurchaseHistory) — internal 'TI'
-    -- transfers resolve to the tenant warehouse, not the colliding SupplierCode.
+    -- Result set 2: purchases (== stock.usp_PurchaseHistory). Show ONLY this
+    -- store's OWN PurchaseTrans - NMC's panel shows NMC's transactions, never
+    -- NMW's. Internal 'TI' (Transfer-In) lines are the satellite store receiving
+    -- stock from the tenant warehouse (NMW); their SupplierCode is a transfer/
+    -- source code that collides with the local supplier namespace (e.g. code 2 =
+    -- a real supplier "PENTACARE"), so it must NOT resolve via sync.Suppliers -
+    -- we surface the warehouse (dbo.stores.is_warehouse = 1) as the source party
+    -- instead. Genuine purchases (series <> 'TI') keep their real supplier name.
+    -- We do NOT trace transfers back into the warehouse's own purchases here.
+    -- Kept byte-for-byte in sync with usp_PurchaseHistory.
     SELECT TOP (15)
         CAST(pt.Grnnumber AS NVARCHAR(50)) AS grn_no,
         CAST(pt.grndate AS DATE)           AS [date],

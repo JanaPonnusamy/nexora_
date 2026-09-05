@@ -3149,17 +3149,22 @@ function OwChartTooltip({ row, anchorRect }) {
 }
 
 const LABEL_STOCK_FILTERS = [
-  { value: 'all', label: 'Stock > 0 or zero stock sale within 90 days' },
-  { value: 'in_stock', label: 'Stock > 0 only' },
-  { value: 'zero_recent_sale', label: 'Stock = 0 and sale within 90 days' },
-  { value: 'zero_stale', label: 'Stock = 0 and no sale in over 90 days' }
+  { value: 'all', short: '>0 or zero (sold <90d)', label: 'Stock > 0 or zero stock sale within 90 days' },
+  { value: 'in_stock', short: 'In stock only', label: 'Stock > 0 only' },
+  { value: 'zero_recent_sale', short: 'Zero, sold <90d', label: 'Stock = 0 and sale within 90 days' },
+  { value: 'zero_stale', short: 'Zero, no sale >90d', label: 'Stock = 0 and no sale in over 90 days' }
 ];
 
 const LABEL_REMARKS_PRESETS = [
   'Counter', 'Consumer', 'SYP', 'Cold Storage', 'Fragile', 'High Value', 'Fast Moving', 'Slow Moving', 'Check Unit Description'
 ];
 
-const LABEL_COLGROUP = [7, 20, 9, 8, 6, 7, 6, 6, 6, 6, 19]; // Code/Product/Include/SubLoc/Unit/MRP/Pack/Stk/LRD/LSD/Remarks
+// Fixed px widths for the identity/numeric/status columns (readable headers,
+// no cryptic truncation) with Product bounded so it can't dominate; Remarks is
+// 'auto' so it absorbs all remaining width — narrow at 1366, wider at 1600/
+// 1920+. table-layout:fixed honours these exactly.
+// #/Code/Product/Stock/Review/SubLocation/Unit/MRP/Pack/LRD/LSD/Remarks
+const LABEL_COLS = ['34px', '76px', '228px', '54px', '64px', '124px', '58px', '72px', '50px', '48px', '48px', 'auto'];
 
 // Mirrors backend dependencies.store_scope.assert_label_exporter_store_access:
 // only NMW (prints for every store) and super admin/platform logins may pick
@@ -3170,9 +3175,11 @@ function canChangeLabelStore(session) {
   return String(store?.store_code || '').trim().toUpperCase() === 'NMW';
 }
 
-// Searchable multi-select unit-description filter, built on the same
-// .ow-supplier-* combo styling as the Order Workspace supplier picker.
-function LabelUnitPicker({ options, selected, onChange }) {
+// Searchable multi-select filter (unit description, sublocation, ...), built
+// on the same .ow-supplier-* combo styling as the Order Workspace supplier
+// picker. Options always come from what's really in the product table -
+// no free-typed values.
+function LabelMultiPicker({ options, selected, onChange, placeholder = 'Any', noun = 'item' }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapRef = useRef(null);
@@ -3186,13 +3193,13 @@ function LabelUnitPicker({ options, selected, onChange }) {
   const term = query.trim().toLowerCase();
   const filtered = term ? options.filter((o) => o.toLowerCase().includes(term)) : options;
 
-  function toggle(unit) {
+  function toggle(value) {
     const next = new Set(selected);
-    if (next.has(unit)) next.delete(unit); else next.add(unit);
+    if (next.has(value)) next.delete(value); else next.add(value);
     onChange(next);
   }
 
-  const summary = selected.size === 0 ? 'Any unit' : selected.size === 1 ? Array.from(selected)[0] : `${selected.size} units`;
+  const summary = selected.size === 0 ? placeholder : selected.size === 1 ? Array.from(selected)[0] : `${selected.size} ${noun}s`;
 
   return (
     <div className="ow-supplier-pick lbl-unit-pick" ref={wrapRef}>
@@ -3200,26 +3207,26 @@ function LabelUnitPicker({ options, selected, onChange }) {
         {summary}
       </button>
       {selected.size > 0 && !open && (
-        <button type="button" className="ow-supplier-clear" title="Clear unit filter" aria-label="Clear unit filter" onClick={() => onChange(new Set())}>×</button>
+        <button type="button" className="ow-supplier-clear" title={`Clear ${noun} filter`} aria-label={`Clear ${noun} filter`} onClick={() => onChange(new Set())}>×</button>
       )}
       {open && (
         <div className="ow-supplier-list lbl-unit-list" role="listbox">
           <input
             className="lbl-unit-search"
             type="text"
-            placeholder="Search unit..."
+            placeholder={`Search ${noun}...`}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             autoFocus
           />
           <div className="lbl-unit-options">
-            {filtered.map((unit) => (
-              <label key={unit}>
-                <input type="checkbox" checked={selected.has(unit)} onChange={() => toggle(unit)} />
-                {unit}
+            {filtered.map((value) => (
+              <label key={value}>
+                <input type="checkbox" checked={selected.has(value)} onChange={() => toggle(value)} />
+                {value}
               </label>
             ))}
-            {!filtered.length && <div className="ow-supplier-empty">No units match.</div>}
+            {!filtered.length && <div className="ow-supplier-empty">No {noun}s match.</div>}
           </div>
         </div>
       )}
@@ -3240,6 +3247,8 @@ function LabelExporter({ session, settings }) {
   const [startsWith, setStartsWith] = useState('');
   const [unitOptions, setUnitOptions] = useState([]);
   const [selectedUnits, setSelectedUnits] = useState(() => new Set());
+  const [sublocOptions, setSublocOptions] = useState([]);
+  const [selectedSublocs, setSelectedSublocs] = useState(() => new Set());
   const [boxNumber, setBoxNumber] = useState('');
   const [stockFilter, setStockFilter] = useState('all');
   const [onlyNullSublocation, setOnlyNullSublocation] = useState(true);
@@ -3259,9 +3268,13 @@ function LabelExporter({ session, settings }) {
   const intelRequestRef = useRef(0);
   const [bulkBusy, setBulkBusy] = useState(false);
   const rowRefs = useRef({});
+  const remarksRefs = useRef({});
+  const gridRef = useRef(null);
 
   useEffect(() => {
-    api.listStores(session).then((rows) => setStores(asArray(rows))).catch(() => {});
+    api.listStores(session)
+      .then((rows) => setStores(asArray(rows)))
+      .catch((error) => setStatus({ state: 'error', message: `Store list failed: ${error.message}` }));
   }, [session]);
 
   const activeRow = rows[activeIndex] || null;
@@ -3304,12 +3317,14 @@ function LabelExporter({ session, settings }) {
       boxNumber,
       stockFilter,
       onlyNullSublocation: boxNumber ? false : onlyNullSublocation,
-      onlySaleUnitGtOne
+      onlySaleUnitGtOne,
+      sublocationFilter: selectedSublocs.size ? Array.from(selectedSublocs).join(',') : ''
     }).then((result) => {
       const nextRows = asArray(result?.rows);
       setRows(nextRows);
       setActiveIndex(0);
       setUnitOptions(asArray(result?.unit_descriptions));
+      setSublocOptions(asArray(result?.sublocations));
       const nextSubLoc = {};
       const nextRemarks = {};
       nextRows.forEach((row) => {
@@ -3329,13 +3344,31 @@ function LabelExporter({ session, settings }) {
     setRows((current) => current.map((row) => (row.product_code === productCode ? { ...row, ...patch } : row)));
   }
 
-  function setIncludeLabel(row, value) {
-    const nextValue = row.include_label === value ? null : value;
+  // Persist a review value on the shared backend field `include_label`
+  // ('Y'/'N'/null). One code path for every entry point (keyboard, badge
+  // click, bulk) so the UI's single REVIEW column always maps to the exact
+  // same data model the backend already expects — no new/duplicate field.
+  function persistReview(row, nextValue) {
+    if (row.include_label === nextValue) return Promise.resolve();
     setSavingCode(row.product_code);
-    api.updateLabelReview(row.product_code, tenantId, storeId, { include_label: nextValue }, session)
+    return api.updateLabelReview(row.product_code, tenantId, storeId, { include_label: nextValue }, session)
       .then(() => patchRow(row.product_code, { include_label: nextValue }))
       .catch((error) => setStatus({ state: 'error', message: error.message }))
       .finally(() => setSavingCode(''));
+  }
+
+  // Explicit set (keyboard Enter/Y => 'Y', Esc/N => 'N'); idempotent so a
+  // repeat keypress on an already-marked row is a harmless no-op, not a toggle.
+  function markReview(row, value) {
+    persistReview(row, value);
+  }
+
+  // Badge click cycles —/Y/N (blank -> Y -> N -> blank) so a single compact
+  // control replaces the old two-button Y|N group without losing the ability
+  // to reach any state (including clearing back to unreviewed) with the mouse.
+  function cycleReview(row) {
+    const next = row.include_label === 'Y' ? 'N' : row.include_label === 'N' ? null : 'Y';
+    persistReview(row, next);
   }
 
   function saveRemarks(row) {
@@ -3363,6 +3396,14 @@ function LabelExporter({ session, settings }) {
     return Array.from(new Set([...LABEL_REMARKS_PRESETS, ...used]));
   }, [rows]);
 
+  // Review progress for the status strip (reviewed = has a Y or N decision).
+  const progress = useMemo(() => {
+    const total = rows.length;
+    let reviewed = 0;
+    for (const row of rows) if (row.include_label === 'Y' || row.include_label === 'N') reviewed += 1;
+    return { total, reviewed, remaining: total - reviewed, pct: total ? Math.round((reviewed / total) * 100) : 0 };
+  }, [rows]);
+
   // Reuses OwTrendChart (the exact Order Workspace bar chart) - it expects
   // total_in/total_out/stock/adjustment; we only have sale/purchase qty +
   // stock-in-hand, so adjustment is always 0 and the tooltip's IN/OUT
@@ -3376,6 +3417,9 @@ function LabelExporter({ session, settings }) {
     adjustment: 0
   })), [trendRows]);
 
+  // Move selection (navigation ONLY — never mutates a review value) and keep
+  // the row scrolled into view. Clamped so the last/first row can't move the
+  // selection outside the grid.
   function focusRow(index) {
     if (!rows.length) return;
     const clamped = Math.max(0, Math.min(rows.length - 1, index));
@@ -3383,21 +3427,44 @@ function LabelExporter({ session, settings }) {
     rowRefs.current[clamped]?.scrollIntoView({ block: 'nearest' });
   }
 
+  // Single grid-level key handler. Enter/Y = mark Y + advance, Esc/N = mark N
+  // + advance, Up/Down = navigate only. Guards:
+  //  - ignores keys while focus is inside an editable field (Remarks / SubLoc
+  //    input) so typing 'y'/'n' or pressing Enter there behaves normally and
+  //    never fires the review workflow twice.
+  //  - preventDefault stops the browser default (Enter submitting, Esc, page
+  //    scroll on arrows) so nothing double-handles the same keystroke.
   function handleGridKeyDown(event) {
+    const tag = event.target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     if (!rows.length) return;
-    if (event.key === 'ArrowDown') { event.preventDefault(); focusRow(activeIndex + 1); }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); focusRow(activeIndex - 1); }
-    else if (event.key === 'Enter') {
+    const row = rows[activeIndex];
+    const key = event.key;
+    if (key === 'ArrowDown') { event.preventDefault(); focusRow(activeIndex + 1); }
+    else if (key === 'ArrowUp') { event.preventDefault(); focusRow(activeIndex - 1); }
+    else if (key === 'Enter' || key === 'y' || key === 'Y') {
       event.preventDefault();
-      const row = rows[activeIndex];
-      if (row) setIncludeLabel(row, 'Y');
+      if (row) markReview(row, 'Y');
       focusRow(activeIndex + 1);
-    } else if (event.key === 'Escape') {
+    } else if (key === 'Escape' || key === 'n' || key === 'N') {
       event.preventDefault();
-      const row = rows[activeIndex];
-      if (row) setIncludeLabel(row, 'N');
+      if (row) markReview(row, 'N');
       focusRow(activeIndex + 1);
+    } else if (key === 'ArrowRight') {
+      if (row) {
+        event.preventDefault();
+        remarksRefs.current[row.product_code]?.focus();
+      }
     }
+  }
+
+  // Clicking a row selects it AND returns keyboard focus to the grid so the
+  // operator can immediately continue the Enter/Y/Esc/N workflow without a
+  // second click — unless they clicked an interactive cell control.
+  function selectRow(index, event) {
+    setActiveIndex(index);
+    if (event?.target?.closest('input, select, button')) return;
+    gridRef.current?.focus();
   }
 
   // Bulk-assign: mark every currently visible product Y (or N) in one call,
@@ -3418,25 +3485,20 @@ function LabelExporter({ session, settings }) {
 
   return (
     <section className="screen-panel ow-screen lbl-screen">
-      <div className="ow-toolbar">
-        <h2 className="ow-title">Label Exporter</h2>
-
-        <label className="ow-field">
+      <div className="lblx-filterbar">
+        <label className="lblx-field lblx-store">
           <span>Store</span>
-          <select className="lbl-store-select" value={storeId} disabled={!canChangeStore} onChange={(event) => setStoreId(event.target.value)}>
-            {stores.length === 0 && <option value={storeId}>{storeId ? 'Current store' : 'Loading...'}</option>}
+          <select value={storeId} disabled={!canChangeStore} onChange={(event) => setStoreId(event.target.value)}>
+            {stores.length === 0 && <option value={storeId}>{storeId ? 'Current store' : 'Loading…'}</option>}
             {(canChangeStore ? stores : stores.filter((s) => s.store_id === storeId)).map((s) => (
               <option key={s.store_id} value={s.store_id}>{s.store_code} — {s.store_name}</option>
             ))}
           </select>
         </label>
 
-        <span className="ow-sep" aria-hidden="true" />
-
-        <label className="ow-field">
+        <label className="lblx-field lblx-letter">
           <span>Letter</span>
           <input
-            className="lbl-letter-input"
             value={startsWith}
             maxLength={1}
             onChange={(event) => setStartsWith(event.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1))}
@@ -3444,135 +3506,179 @@ function LabelExporter({ session, settings }) {
           />
         </label>
 
-        <input className="ow-search" type="search" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search product or code…" aria-label="Search products" />
+        <label className="lblx-field lblx-search">
+          <span>Search</span>
+          <input type="search" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Product or code…" aria-label="Search products" />
+        </label>
 
-        <label className="ow-field">
+        <label className="lblx-field lblx-unit">
           <span>Unit</span>
-          <LabelUnitPicker options={unitOptions} selected={selectedUnits} onChange={setSelectedUnits} />
+          <LabelMultiPicker options={unitOptions} selected={selectedUnits} onChange={setSelectedUnits} placeholder="Any unit" noun="unit" />
         </label>
 
-        <label className="ow-field">
+        <label className="lblx-field lblx-oldloc">
+          <span>Old Loc</span>
+          <LabelMultiPicker options={sublocOptions} selected={selectedSublocs} onChange={setSelectedSublocs} placeholder="Any location" noun="location" />
+        </label>
+
+        <label className="lblx-field lblx-box">
           <span>Box</span>
-          <input className="lbl-box-input" value={boxNumber} onChange={(event) => setBoxNumber(event.target.value.toUpperCase())} placeholder="A005" />
+          <input value={boxNumber} onChange={(event) => setBoxNumber(event.target.value.toUpperCase())} placeholder="A005" />
         </label>
 
-        <label className="ow-field">
-          <span>Stock rule</span>
-          <select className="lbl-stockrule-select" value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}>
+        <label className="lblx-field lblx-stock">
+          <span>Stock</span>
+          <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}>
             {LABEL_STOCK_FILTERS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>{option.short || option.label}</option>
             ))}
           </select>
         </label>
 
-        <label className="ow-field lbl-check-field">
-          <input
-            type="checkbox"
-            checked={onlyNullSublocation}
-            disabled={!!boxNumber}
-            onChange={(event) => setOnlyNullSublocation(event.target.checked)}
-          />
-          <span>SubLoc null</span>
+        <label className="lblx-check" title="Only products with no sub-location">
+          <input type="checkbox" checked={onlyNullSublocation} disabled={!!boxNumber} onChange={(event) => setOnlyNullSublocation(event.target.checked)} />
+          <span>Subloc&nbsp;null</span>
         </label>
 
-        <label className="ow-field lbl-check-field">
+        <label className="lblx-check" title="Only products with sale unit greater than 1">
           <input type="checkbox" checked={onlySaleUnitGtOne} onChange={(event) => setOnlySaleUnitGtOne(event.target.checked)} />
-          <span>SaleUnit &gt; 1</span>
+          <span>Sale&nbsp;&gt;1</span>
         </label>
 
-        <button type="button" className="ow-btn ow-btn-primary" disabled={!tenantId || !storeId} onClick={runSearch}>Search</button>
+        <button type="button" className="lblx-search-btn" disabled={!tenantId || !storeId || status.state === 'loading'} onClick={runSearch}>
+          {status.state === 'loading' ? '…' : 'Search'}
+        </button>
       </div>
 
-      <div className="ow-help">
-        <span className="ow-status-hint">
-          <kbd>Enter</kbd> Mark Y + next <kbd>Esc</kbd> Mark N + next <kbd>↕</kbd> Navigate
+      <div className="lblx-statusbar">
+        <span className="lblx-kbd">
+          <kbd>Enter</kbd>/<kbd>Y</kbd> Include <i>·</i> <kbd>Esc</kbd>/<kbd>N</kbd> Exclude <i>·</i> <kbd>↑↓</kbd> Navigate
         </span>
-        <span className="ow-status-sep" aria-hidden="true">•</span>
-        <span className="ow-status-hint">{status.message}</span>
-        {!admin && (
-          <>
-            <span className="ow-status-sep" aria-hidden="true">•</span>
-            <span className="lbl-review-note">Review only — sublocation assignment is a super-admin action.</span>
-          </>
-        )}
-        <span className="ow-status-sep" aria-hidden="true">•</span>
-        <button type="button" className="ow-btn ow-btn-sm" disabled={!rows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
-        <button type="button" className="ow-btn ow-btn-sm" disabled={!rows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
+
+        <span className="lblx-progress">
+          {rows.length > 0 ? (
+            <>
+              <b>{progress.total}</b> products
+              <i>·</i> <b className="lblx-reviewed">{progress.reviewed}</b> reviewed
+              <i>·</i> <b className="lblx-remaining">{progress.remaining}</b> remaining
+              <span className="lblx-progbar" aria-hidden="true"><span style={{ width: `${progress.pct}%` }} /></span>
+            </>
+          ) : (
+            <span className={`lblx-msg lblx-msg-${status.state}`}>
+              {status.message}
+              {status.state === 'error' && (
+                <button type="button" className="lblx-retry" onClick={runSearch}>Retry</button>
+              )}
+            </span>
+          )}
+        </span>
+
+        {!admin && <span className="lblx-note">Review only — sublocation is super-admin</span>}
+        <span className="lblx-spacer" />
+        <button type="button" className="lblx-mark lblx-mark-y" disabled={!rows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
+        <button type="button" className="lblx-mark lblx-mark-n" disabled={!rows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
       </div>
 
       <div className="ow-body">
         <div className="ow-left">
           <div className="ow-main">
-            <div className="ow-grid" tabIndex={0} onKeyDown={handleGridKeyDown}>
+            <div className="ow-grid lbl-grid" tabIndex={0} ref={gridRef} onKeyDown={handleGridKeyDown}>
               <table className="ow-fixed">
                 <colgroup>
-                  {LABEL_COLGROUP.map((pct, i) => <col key={i} style={{ width: `${pct}%` }} />)}
+                  {LABEL_COLS.map((w, i) => <col key={i} style={{ width: w }} />)}
                 </colgroup>
                 <thead>
                   <tr>
+                    <th className="ow-num" title="Serial number">#</th>
                     <th>Code</th>
                     <th className="ow-grow">Product</th>
-                    <th>Include</th>
-                    <th>SubLoc</th>
+                    <th className="ow-num" title="Stock on hand">Stock</th>
+                    <th className="lbl-review-head">Review</th>
+                    <th title="Sub location">Sub Location</th>
                     <th>Unit</th>
                     <th className="ow-num">MRP</th>
-                    <th className="ow-num" title="Packing">Pack</th>
-                    <th className="ow-num" title="Stock">Stk</th>
-                    <th className="ow-num" title="Last Receipt Days">LRD</th>
-                    <th className="ow-num" title="Last Sale Days">LSD</th>
+                    <th className="ow-num" title="Packing / sale unit">Pack</th>
+                    <th className="ow-num lbl-lrd-head" title="Last receipt (days ago)">LRD</th>
+                    <th className="ow-num lbl-lsd-head" title="Last sale (days ago)">LSD</th>
                     <th>Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 ? (
-                    <tr><td colSpan={11} className="ow-empty">Run search to load products</td></tr>
+                    <tr>
+                      <td colSpan={12} className={`ow-empty lblx-empty lblx-empty-${status.state}`}>
+                        {status.state === 'loading' ? (
+                          <span className="lblx-empty-loading"><span className="lblx-spin" aria-hidden="true" /> Loading products…</span>
+                        ) : status.state === 'error' ? (
+                          <span className="lblx-empty-error">
+                            <b>Unable to load products.</b> {status.message}
+                            <button type="button" className="lblx-retry" onClick={runSearch}>Retry</button>
+                          </span>
+                        ) : (
+                          <span>Pick a store &amp; letter, then <b>Search</b> to load products.</span>
+                        )}
+                      </td>
+                    </tr>
                   ) : (
                     rows.map((row, index) => {
                       const code = row.product_code;
+                      const review = row.include_label || null;
+                      const existingSubLoc = (row.current_sublocation || '').trim();
+                      const draftSubLoc = subLocDrafts[code] ?? '';
+                      const subLocChanged = admin && draftSubLoc.trim() !== existingSubLoc;
+                      // Display rule: existing sublocation always wins. When empty,
+                      // show "New" only if Review = Y, else nothing. "New" is a
+                      // display-only default — never written back over real data.
+                      const subLocPlaceholder = review === 'Y' && !existingSubLoc ? 'New' : '';
+                      const reviewBadge = review === 'Y' ? 'Y' : review === 'N' ? 'N' : '—';
+                      const reviewCls = review === 'Y' ? 'is-yes' : review === 'N' ? 'is-no' : 'is-none';
                       return (
                         <tr
                           key={code}
                           ref={(node) => { rowRefs.current[index] = node; }}
                           className={index === activeIndex ? 'ow-row-sel' : ''}
-                          onClick={() => setActiveIndex(index)}
+                          onClick={(event) => selectRow(index, event)}
                         >
+                          <td className="ow-num lbl-sno-cell">{index + 1}</td>
                           <td className="lbl-code-cell" title={row.product_code}>{row.product_code}</td>
                           <td className="ow-grow" title={row.product_name}>{row.product_name}</td>
-                          <td onClick={(event) => event.stopPropagation()}>
-                            <div className="lbl-yn-group">
-                              <button
-                                type="button"
-                                className={`lbl-yn-btn lbl-yn-y ${row.include_label === 'Y' ? 'active' : ''}`}
-                                disabled={savingCode === code}
-                                onClick={() => setIncludeLabel(row, 'Y')}
-                              >Y</button>
-                              <button
-                                type="button"
-                                className={`lbl-yn-btn lbl-yn-n ${row.include_label === 'N' ? 'active' : ''}`}
-                                disabled={savingCode === code}
-                                onClick={() => setIncludeLabel(row, 'N')}
-                              >N</button>
-                            </div>
+                          <td className={`ow-num ${Number(row.total_stock) === 0 ? 'ow-stock-zero' : ''}`}>{fmtOwQty(row.total_stock)}</td>
+                          <td className="lbl-review-cell">
+                            <button
+                              type="button"
+                              className={`lbl-review-badge ${reviewCls}`}
+                              disabled={savingCode === code}
+                              title="Click to cycle —/Y/N · or use Enter/Y, Esc/N"
+                              onClick={(event) => { event.stopPropagation(); cycleReview(row); }}
+                            >{reviewBadge}</button>
                           </td>
-                          <td onClick={(event) => event.stopPropagation()}>
+                          <td className="lbl-subloc-td" onClick={(event) => event.stopPropagation()}>
                             {admin ? (
                               <input
-                                className="lbl-inline-input"
-                                value={subLocDrafts[code] ?? ''}
+                                className={`lbl-inline-input lbl-subloc-input ${subLocChanged ? 'lbl-subloc-dirty' : ''}`}
+                                list="lbl-subloc-options"
+                                placeholder={subLocPlaceholder}
+                                value={draftSubLoc}
                                 disabled={savingCode === code}
                                 onChange={(event) => setSubLocDrafts((current) => ({ ...current, [code]: event.target.value.toUpperCase() }))}
                                 onBlur={() => saveSubLocation(row)}
                               />
-                            ) : (row.current_sublocation || <span className="lbl-null">NULL</span>)}
+                            ) : existingSubLoc ? (
+                              <span className="lbl-subloc-text" title={existingSubLoc}>{existingSubLoc}</span>
+                            ) : review === 'Y' ? (
+                              <span className="lbl-subloc-new">New</span>
+                            ) : (
+                              <span className="lbl-null">—</span>
+                            )}
                           </td>
-                          <td>{row.unit_description || '-'}</td>
+                          <td className="lbl-unit-cell" title={row.unit_description}>{row.unit_description || '-'}</td>
                           <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
                           <td className="ow-num">{fmtOwQty(row.sale_unit)}</td>
-                          <td className={`ow-num ${Number(row.total_stock) === 0 ? 'ow-stock-zero' : ''}`}>{fmtOwQty(row.total_stock)}</td>
-                          <td className="ow-num">{row.purchase_days ?? '-'}</td>
-                          <td className="ow-num">{row.sale_days ?? '-'}</td>
+                          <td className="ow-num lbl-lrd">{row.purchase_days ?? '-'}</td>
+                          <td className="ow-num lbl-lsd">{row.sale_days ?? '-'}</td>
                           <td onClick={(event) => event.stopPropagation()}>
                             <input
+                              ref={(node) => { remarksRefs.current[code] = node; }}
                               className="lbl-inline-input lbl-remarks-input"
                               list="lbl-remarks-options"
                               value={remarksDrafts[code] ?? ''}
@@ -3590,6 +3696,9 @@ function LabelExporter({ session, settings }) {
               </table>
               <datalist id="lbl-remarks-options">
                 {remarksOptions.map((option) => <option key={option} value={option} />)}
+              </datalist>
+              <datalist id="lbl-subloc-options">
+                {sublocOptions.map((option) => <option key={option} value={option} />)}
               </datalist>
             </div>
           </div>

@@ -8,53 +8,141 @@ import type {
 } from '../../types/legacyOrder'
 import { fmtDate } from './format'
 
-const CHART_SERIES: { key: keyof MonthlyStatRow; label: string; color: string }[] = [
-  { key: 'PurchaseQuantity', label: 'Purchase', color: '#1d4ed8' },
-  { key: 'SaleQuantity', label: 'Sales', color: '#15803d' },
-  { key: 'StockInHand', label: 'Stock', color: '#dc2626' },
-  { key: 'AdjustmentQuantity', label: 'Adjustment', color: '#f59e0b' },
-  { key: 'TransferInQuantity', label: 'TIN', color: '#0ea5e9' },
-  { key: 'TransferOutQuantity', label: 'TOUT', color: '#a855f7' },
+const BAR_SERIES: { key: 'total_in' | 'total_out' | 'adjustment'; label: string; cls: string }[] = [
+  { key: 'total_in', label: 'In', cls: 'in' },
+  { key: 'total_out', label: 'Out', cls: 'out' },
+  { key: 'adjustment', label: 'Adjustment', cls: 'adj' },
 ]
 
-/** Port of the VB Chart1 grouped-bar chart: last 3 months of ProductTrans.
- *  Rendered as HTML/flex bars (not SVG) so it fills the panel width with no
- *  letterbox gaps, shows each value, and takes a light card + glossy bars. */
+function fmtMonth(ym: string) {
+  const [y, m] = ym.split('-')
+  const d = new Date(Number(y), Number(m) - 1, 1)
+  return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
+}
+
+/** Modern stock-movement chart: grouped IN/OUT/ADJUSTMENT columns + a STOCK
+ *  line, sharing one linear axis (never a second scale). The underlying
+ *  quantities are the POS's own net/signed monthly rollup -- IN/OUT already
+ *  exclude returns from double counting; see repository.qty_check_monthly_stats
+ *  for the verified reconciliation. Hovering a month reveals the breakdown
+ *  (gross sales, sales/expiry return, raw adjustment) behind the net figures. */
 export function MonthlyStatsChart({ rows }: { rows: MonthlyStatRow[] }) {
+  const [hover, setHover] = useState<number | null>(null)
   if (!rows.length) return <div className="lo-empty">No monthly statistics for this product.</div>
-  const max = Math.max(1, ...rows.flatMap((row) => CHART_SERIES.map((s) => Number(row[s.key]) || 0)))
+
+  const allValues = rows.flatMap((r) => [r.total_in, r.total_out, r.adjustment, r.stock])
+  const max = Math.max(1, ...allValues)
+  const min = Math.min(0, ...allValues)
+  const span = max - min || 1
+  const zeroPct = (max / span) * 100 // baseline position from the top, in %
+
+  const stockPoints = rows
+    .map((row, i) => `${((i + 0.5) / rows.length) * 100},${((max - row.stock) / span) * 100}`)
+    .join(' ')
 
   return (
     <div className="qc-chart">
-      <div className="qc-chart__plot" role="img" aria-label="Monthly statistics chart">
-        {rows.map((row, i) => (
-          <div className="qc-chart__group" key={`${row.MonthOfStatistics}-${i}`}>
-            <div className="qc-chart__bars">
-              {CHART_SERIES.map((series) => {
-                const value = Number(row[series.key]) || 0
-                const pct = Math.max(0, Math.min(100, (value / max) * 100))
-                return (
-                  <div
-                    key={series.key}
-                    className="qc-chart__bar"
-                    style={{ height: `${pct}%`, background: series.color }}
-                    title={`${series.label}: ${value}`}
-                  >
-                    {value !== 0 && <span className="qc-chart__val">{value}</span>}
+      <div className="qc-chart__plot" role="img" aria-label="Monthly stock movement chart">
+        <div className="qc-chart__zero" style={{ top: `${zeroPct}%` }} />
+        <svg className="qc-chart__stockline" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polyline points={stockPoints} vectorEffect="non-scaling-stroke" />
+        </svg>
+        {rows.map((row, i) => {
+          const stockPct = ((max - row.stock) / span) * 100
+          return (
+            <div
+              key={`${row.month}-${i}`}
+              className={`qc-chart__group${hover === i ? ' is-hover' : ''}`}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover((h) => (h === i ? null : h))}
+            >
+              <div className="qc-chart__bars">
+                {BAR_SERIES.map((series) => {
+                  const value = row[series.key]
+                  const topPct = value >= 0 ? ((max - value) / span) * 100 : zeroPct
+                  const heightPct = (Math.abs(value) / span) * 100
+                  return (
+                    <div key={series.key} className="qc-chart__col">
+                      <div
+                        className={`qc-chart__bar qc-chart__bar--${series.cls}`}
+                        style={{ top: `${topPct}%`, height: `${heightPct}%` }}
+                      >
+                        {value !== 0 && (
+                          <span className={`qc-chart__val${value < 0 ? ' qc-chart__val--below' : ''}`}>
+                            {value > 0 ? `+${value}` : value}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+                <div className="qc-chart__stock-dot" style={{ top: `${stockPct}%` }}>
+                  <span className="qc-chart__val qc-chart__val--stock">{row.stock}</span>
+                </div>
+              </div>
+              <div className="qc-chart__month">{fmtMonth(row.month)}</div>
+
+              {hover === i && (
+                <div className="qc-chart__tooltip">
+                  <div className="qc-chart__tt-title">{fmtMonth(row.month)}</div>
+                  <div className="qc-chart__tt-row qc-chart__tt-head qc-chart__tt-in">
+                    <span>In</span><b>{row.total_in}</b>
                   </div>
-                )
-              })}
+                  <div className="qc-chart__tt-sub">
+                    <span>Purchase</span><span>{row.purchase}</span>
+                  </div>
+                  <div className="qc-chart__tt-sub">
+                    <span>Transfer in</span><span>{row.transfer_in}</span>
+                  </div>
+
+                  <div className="qc-chart__tt-row qc-chart__tt-head qc-chart__tt-out">
+                    <span>Out</span><b>{row.total_out}</b>
+                  </div>
+                  <div className="qc-chart__tt-sub">
+                    <span>Sales (net)</span><span>{row.sales}</span>
+                  </div>
+                  {row.sales_return > 0 && (
+                    <div className="qc-chart__tt-sub qc-chart__tt-note">
+                      <span>&nbsp;&nbsp;of which gross sales</span><span>{row.gross_sales}</span>
+                    </div>
+                  )}
+                  {row.sales_return > 0 && (
+                    <div className="qc-chart__tt-sub qc-chart__tt-note">
+                      <span>&nbsp;&nbsp;less sales return</span><span>-{row.sales_return}</span>
+                    </div>
+                  )}
+                  <div className="qc-chart__tt-sub">
+                    <span>Transfer out</span><span>{row.transfer_out}</span>
+                  </div>
+
+                  <div className="qc-chart__tt-row qc-chart__tt-head qc-chart__tt-adj">
+                    <span>Adjustment</span><b>{row.adjustment > 0 ? `+${row.adjustment}` : row.adjustment}</b>
+                  </div>
+                  {row.expiry_return > 0 && (
+                    <>
+                      <div className="qc-chart__tt-sub qc-chart__tt-note">
+                        <span>&nbsp;&nbsp;stock adjustment</span><span>{row.stock_adjustment}</span>
+                      </div>
+                      <div className="qc-chart__tt-sub qc-chart__tt-note">
+                        <span>&nbsp;&nbsp;expiry return</span><span>-{row.expiry_return}</span>
+                      </div>
+                    </>
+                  )}
+
+                  <div className="qc-chart__tt-row qc-chart__tt-head qc-chart__tt-stock">
+                    <span>Stock</span><b>{row.stock}</b>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="qc-chart__month">{row.MonthOfStatistics}</div>
-          </div>
-        ))}
+          )
+        })}
       </div>
       <div className="qc-chart__legend">
-        {CHART_SERIES.map((series) => (
-          <span key={series.key} className="qc-chart__leg">
-            <i style={{ background: series.color }} />{series.label}
-          </span>
-        ))}
+        <span className="qc-chart__leg"><i className="qc-chart__sw qc-chart__sw--in" />In</span>
+        <span className="qc-chart__leg"><i className="qc-chart__sw qc-chart__sw--out" />Out</span>
+        <span className="qc-chart__leg"><i className="qc-chart__sw qc-chart__sw--adj" />Adjustment</span>
+        <span className="qc-chart__leg"><i className="qc-chart__sw qc-chart__sw--stock-line" />Stock</span>
       </div>
     </div>
   )

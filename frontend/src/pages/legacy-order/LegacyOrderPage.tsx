@@ -307,6 +307,9 @@ export default function LegacyOrderPage() {
                 <div className="lo-op-head">
                   <span className={`lo-dot ${dotClass}`} />
                   <strong>{store.store_name}</strong>
+                  {lastJob?.warning && (
+                    <i className="bi bi-exclamation-triangle-fill lo-stale-warn" title={lastJob.warning} aria-label="Stale sale bill warning" />
+                  )}
                   <span className="lo-op-icons">
                     <button type="button" className="lo-icon-btn" title="Processing settings" aria-label={`${store.store_name} settings`} onClick={() => setSettingsOpenFor(settingsOpenFor === store.store_name ? null : store.store_name)}><i className="bi bi-gear" /></button>
                     <button type="button" className="lo-icon-btn" title="Store information" aria-label={`${store.store_name} info`} onClick={() => setInfoOpenFor(store.store_name)}><i className="bi bi-info-circle" /></button>
@@ -366,6 +369,9 @@ export default function LegacyOrderPage() {
                 <div><dt>Completed</dt><dd>{infoJob?.finished_at ? fmtDateTime(infoJob.finished_at) : '—'}</dd></div>
                 <div><dt>Message</dt><dd>{infoJob?.message ?? '—'}</dd></div>
               </dl>
+              {infoJob?.warning && (
+                <div className="lo-warn" role="alert"><i className="bi bi-exclamation-triangle-fill" /> {infoJob.warning}</div>
+              )}
               <h4>Connection</h4>
               <dl className="lo-meta">
                 <div><dt>Server</dt><dd>{infoStore.server_name || '—'}</dd></div>

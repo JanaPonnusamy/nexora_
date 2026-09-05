@@ -49,6 +49,20 @@ def non_moving_highlights(
     return service.non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age, limit)
 
 
+@router.get("/non-moving/totals")
+def non_moving_totals(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+    sales_age: int = Query(90, ge=0),
+    grn_age: int = Query(10, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """Store-level non-moving + expiry valuation totals (cost+tax) and their
+    share of total in-stock value, for the NM bar's summary readout."""
+    assert_store_access(current_user, tenant_id, store_id)
+    return service.non_moving_totals(tenant_id, store_id, sales_age, grn_age)
+
+
 @router.get("/{report_key}", response_model=ReportResult)
 def run_report(
     report_key: str,

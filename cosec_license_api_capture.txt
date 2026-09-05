@@ -1,0 +1,267 @@
+==============================================================================
+COSEC LICENSE INFORMATION -- LIVE API CAPTURE (READ ONLY, SECRETS REDACTED)
+Generated: 2026-09-03T15:14:58.811Z
+Base: http://192.168.10.14/COSEC
+No password/cookie/session/auth-header/CSRF value is stored in this file.
+==============================================================================
+
+[LOGIN]
+  result: SUCCESS
+  diag  : trigger=LoginButtonClick(Login); post-login-url=http://192.168.10.14/COSEC/Default/Default#/Module; stillLoginPage=false
+
+[JS RESOURCES containing licenseInformation*]
+  http://192.168.10.14/COSEC/bundles/cosecscripts-admin?v=14.3.101012019
+  http://192.168.10.14/COSEC/bundles/cosecscripts-app-module?v=14.3.101012019
+  http://192.168.10.14/COSEC/bundles/cosecscripts-admin?v=14.3.101012019
+  http://192.168.10.14/COSEC/bundles/cosecscripts-app-module?v=14.3.101012019
+
+[licenseInformationAPI definition]
+  source file (saved): js_cosecscripts_app_module
+  object snippet     : 
+licenseInformationAPI = {pageLoad:"api/LicenseInformation/PageLoad/",refreshClick:"api/LicenseInformation/RefreshClick/",submitClick:"api/LicenseInformation/SubmitClick/",openFile:"api/LicenseInformation/openFile/"}
+  pageLoad endpoint  : api/LicenseInformation/PageLoad/
+  openFile endpoint  : api/LicenseInformation/openFile/
+
+[LICENSE-RELATED XHR/FETCH captured]
+  GET http://192.168.10.14/cosec/api/LicenseInformation/PageLoad?token=***REDACTED***  -> 200  (application/json; charset=utf-8)
+    response body:
+      {
+        "isValidation": true,
+        "validation": {
+          "validateMsg": "",
+          "ValidateObjField": "",
+          "validate": true
+        },
+        "result": {
+          "ProductVariant": "COSEC PLT",
+          "LicenseKey": "88D3-587E-0670-A8FF-40A0-C8A1-A94C-D330-102F-009C-E000-5B00-32FE-585C-0000-0000-0000-C000-0000-0200-0000-0000-0000-0000-2602-0000-3B94-1400-0000-0000-0000-0000",
+          "MaxUser": "100",
+          "ActiveUser": "94",
+          "LicDevice": "65535",
+          "ConfigDevices": null,
+          "PackageValidity": "February-2019",
+          "LicenseKeySbmt": null,
+          "isLicDeviceVisible": false,
+          "isConfigDeviceVisible": false,
+          "AppMode": true,
+          "FilePath": null,
+          "MaxLicenseUsers": "Max License Users",
+          "LabelActiveUsers": "Active Users"
+        },
+        "gridData": [
+          {
+            "Module": "Platform Users",
+            "CurrentUsage": "94",
+            "AllowedLimit": "100"
+          },
+          {
+            "Module": "ACM Users",
+            "CurrentUsage": "0",
+            "AllowedLimit": "0"
+          },
+          {
+            "Module": "CMM Users",
+            "CurrentUsage": "0",
+            "AllowedLimit": "0"
+          },
+          {
+            "Module": "VMM Users",
+            "CurrentUsage": "0",
+            "AllowedLimit": "0"
+          },
+          {
+            "Module": "TAM Users",
+            "CurrentUsage": "94",
+            "AllowedLimit": "100"
+          },
+          {
+            "Module": "CWM Users",
+            "CurrentUsage": "0",
+            "AllowedLimit": "0"
+          },
+          {
+            "Module": "JPC Users",
+            "CurrentUsage": "0",
+            "AllowedLimit": "0"
+          },
+          {
+            "Module": "FVM Users",
+            "CurrentUsage": "0",
+            "AllowedLimit": "0"
+          },
+          {
+            "Module": "ESS Users",
+            "CurrentUsage": "0",
+            "AllowedLimit": "0"
+          },
+          {
+            "Module": "FR Users",
+            "CurrentUsage": "0",
+            "AllowedLimit": "0"
+          }
+        ]
+      }
+
+[LIVE pageLoad RESPONSE via app Angular service (read-only GET)]
+  licenseInformationAPI (from injector): {"pageLoad":"api/LicenseInformation/PageLoad/","refreshClick":"api/LicenseInformation/RefreshClick/","submitClick":"api/LicenseInformation/SubmitClick/","openFile":"api/LicenseInformation/openFile/"}
+  response top-level keys: ["isValidation","validation","result","gridData"]
+  response (secret-keys redacted):
+    {
+      "isValidation": true,
+      "validation": {
+        "validateMsg": "",
+        "ValidateObjField": "",
+        "validate": true
+      },
+      "result": {
+        "ProductVariant": "COSEC PLT",
+        "LicenseKey": "88D3-587E-0670-A8FF-40A0-C8A1-A94C-D330-102F-009C-E000-5B00-32FE-585C-0000-0000-0000-C000-0000-0200-0000-0000-0000-0000-2602-0000-3B94-1400-0000-0000-0000-0000",
+        "MaxUser": "100",
+        "ActiveUser": "94",
+        "LicDevice": "65535",
+        "ConfigDevices": null,
+        "PackageValidity": "February-2019",
+        "LicenseKeySbmt": null,
+        "isLicDeviceVisible": false,
+        "isConfigDeviceVisible": false,
+        "AppMode": true,
+        "FilePath": null,
+        "MaxLicenseUsers": "Max License Users",
+        "LabelActiveUsers": "Active Users"
+      },
+      "gridData": [
+        {
+          "Module": "Platform Users",
+          "CurrentUsage": "94",
+          "AllowedLimit": "100"
+        },
+        {
+          "Module": "ACM Users",
+          "CurrentUsage": "0",
+          "AllowedLimit": "0"
+        },
+        {
+          "Module": "CMM Users",
+          "CurrentUsage": "0",
+          "AllowedLimit": "0"
+        },
+        {
+          "Module": "VMM Users",
+          "CurrentUsage": "0",
+          "AllowedLimit": "0"
+        },
+        {
+          "Module": "TAM Users",
+          "CurrentUsage": "94",
+          "AllowedLimit": "100"
+        },
+        {
+          "Module": "CWM Users",
+          "CurrentUsage": "0",
+          "AllowedLimit": "0"
+        },
+        {
+          "Module": "JPC Users",
+          "CurrentUsage": "0",
+          "AllowedLimit": "0"
+        },
+        {
+          "Module": "FVM Users",
+          "CurrentUsage": "0",
+          "AllowedLimit": "0"
+        },
+        {
+          "Module": "ESS Users",
+          "CurrentUsage": "0",
+          "AllowedLimit": "0"
+        },
+        {
+          "Module": "FR Users",
+          "CurrentUsage": "0",
+          "AllowedLimit": "0"
+        }
+      ]
+    }
+
+[ALL XHR/FETCH (URLs redacted) -- for context]
+  GET 200 http://192.168.10.14/COSEC/Login/GetLoginData?casename=CheckFIPSPolicy
+  GET 200 http://192.168.10.14/COSEC/Login/GetLoginData?casename=Login
+  POST 200 http://192.168.10.14/COSEC/Login/CheckLogin
+  GET 200 http://192.168.10.14/cosec/Ip/GetGuIDMisc?nocache=1788448485217
+  GET 200 http://192.168.10.14/cosec/api/Common/MultiApiOnStartup?token=***REDACTED***
+  GET 200 http://192.168.10.14/COSEC/App/shared/common-views/Module.html?v=14.3.101012019
+  GET 200 http://192.168.10.14/COSEC/App/shared/directives/image-upload/image-upload.html?v=14.3.101012019
+  GET 200 http://192.168.10.14/cosec/api/ModuleSelection/GetModuleSelMultiApi?token=***REDACTED***
+  GET 200 http://192.168.10.14/cosec/api/ModuleSelection/GetModuleSelMultiApi?token=***REDACTED***
+  GET 200 http://192.168.10.14/cosec/Ip/GetGuIDMisc?nocache=1788448497057
+  GET 200 http://192.168.10.14/cosec/api/Common/MultiApiOnStartup?token=***REDACTED***
+  GET 200 http://192.168.10.14/COSEC/App/shared/common-views/Module.html?v=14.3.101012019
+  GET 200 http://192.168.10.14/COSEC/App/shared/directives/image-upload/image-upload.html?v=14.3.101012019
+  GET 200 http://192.168.10.14/cosec/api/LicenseInformation/PageLoad?token=***REDACTED***
+  GET 200 http://192.168.10.14/cosec/api/ModuleSelection/GetModuleSelMultiApi?token=***REDACTED***
+
+[ALL JS RESOURCES loaded (URLs) -- for context]
+    http://192.168.10.14/COSEC/Scripts/bootstrap.js
+    http://192.168.10.14/COSEC/Scripts/jquery-1.10.2.js?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/crypto-scripts?v=14.3.101012019
+    http://192.168.10.14/COSEC/Scripts/jquery-ui.js?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-shiftschedule?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-devices?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/appscripts?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-accesscontrol?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/appscripts-addon?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-contract-worker?v=14.3.101012019
+  * http://192.168.10.14/COSEC/bundles/cosecscripts-admin?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-leave?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-users?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-reports?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-enterprise-structure?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-cafeteria?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-employee-self-service?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-timeattendance?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-contractor-self-service?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-visitor?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-job-costing?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-dashboard?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-fvm?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-report-builder?v=14.3.101012019
+  * http://192.168.10.14/COSEC/bundles/cosecscripts-app-module?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/appdirectives-devices?v=14.3.101012019
+    http://192.168.10.14/COSEC/Scripts/angular-wysiwyg.js?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/appdirectives?v=14.3.101012019
+    http://192.168.10.14/COSEC/Scripts/jquery-1.10.2.js?v=14.3.101012019
+    http://192.168.10.14/COSEC/Scripts/angular-wysiwyg.js?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-shiftschedule?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-accesscontrol?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/appscripts-addon?v=14.3.101012019
+  * http://192.168.10.14/COSEC/bundles/cosecscripts-admin?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-devices?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-contractor-self-service?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-reports?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-leave?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-cafeteria?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-employee-self-service?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-visitor?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-report-builder?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-job-costing?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-dashboard?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/appscripts?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-contract-worker?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-users?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-fvm?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-enterprise-structure?v=14.3.101012019
+  * http://192.168.10.14/COSEC/bundles/cosecscripts-app-module?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/appdirectives-devices?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/cosecscripts-timeattendance?v=14.3.101012019
+    http://192.168.10.14/COSEC/bundles/appdirectives?v=14.3.101012019
+
+==============================================================================
+LOGIN: SUCCESS
+LICENSE JS: js_cosecscripts_app_module
+PAGELOAD API: api/LicenseInformation/PageLoad/
+OPENFILE API: api/LicenseInformation/openFile/
+LICENSE RESPONSE: keys=["isValidation","validation","result","gridData"]
+NEXT STEP: server-side static inspection of the ASP.NET assembly implementing the pageLoad action on 192.168.10.14 (/bin), which is unreachable from this host (SMB closed).
+==============================================================================

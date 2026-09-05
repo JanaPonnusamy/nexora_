@@ -50,6 +50,14 @@ class CoreBulkRequest(BaseModel):
     items: List[CoreBulkItem] = []
 
 
+class CrossStoreMatchRequest(BaseModel):
+    tenant_id: str
+    source_store_id: str
+    source_product_code: str
+    source_product_name: Optional[str] = None
+    target_store_ids: List[str] = []
+
+
 class SalesOrderIgnoreUpdate(BaseModel):
     tenant_id: str
     store_id: str

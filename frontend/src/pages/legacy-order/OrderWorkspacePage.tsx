@@ -51,13 +51,17 @@ export default function OrderWorkspacePage() {
   const [edits, setEdits] = useState<Record<number, number>>({})
   // Session status overrides so a row turns green/normal on assign toggle
   // without a full reload (orders_by_supplier only returns status=0 rows).
-  const [statusOverride, setStatusOverride] = useState<Record<number, number>>({})
   const [savingQty, setSavingQty] = useState<number | null>(null)
-  const [assigningCode, setAssigningCode] = useState<number | null>(null)
   const [selectedCode, setSelectedCode] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [banner, setBanner] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  // Stock-mode exportable count for the current store/supplier -- what
+  // Export actually acts on. Fetched independent of the History/Live Stock
+  // tab so the button never shows a History-tab count when Export always
+  // means stock-mode rows (see runExport below).
+  const [exportCount, setExportCount] = useState<number | null>(null)
 
   // Filters (from the old Qty-Check screen), applied to whichever grid is live.
   const [search, setSearch] = useState('')
@@ -98,10 +102,22 @@ export default function OrderWorkspacePage() {
 
   useEffect(() => { loadWorkflow() }, [loadWorkflow])
 
+  // Stock-mode exportable count -- deliberately independent of `supplierMode`
+  // (the History/Live Stock tab) so it always reflects what Export will
+  // actually do, never whatever the grid happens to be showing. Only fetched
+  // on the By-Supplier view, where the Export button lives.
+  const loadExportCount = useCallback(() => {
+    if (!store || !supplier || view !== 'supplier') { setExportCount(null); return }
+    legacyOrderService.ordersBySupplierExportCount(store, supplier.supplier_code)
+      .then(({ count }) => setExportCount(count))
+      .catch((e: Error) => setError(e.message))
+  }, [store, supplier, view])
+
+  useEffect(() => { loadExportCount() }, [loadExportCount])
+
   // Reset selection/edits whenever the store or view context changes.
   const resetGrid = useCallback(() => {
     setEdits({})
-    setStatusOverride({})
     setSelectedCode(null)
   }, [])
 
@@ -159,7 +175,6 @@ export default function OrderWorkspacePage() {
 
   const finalized = workflow?.status === 'FINALIZED'
 
-  const statusOf = (row: WorkspaceOrderRow) => statusOverride[row.ProductCode] ?? row.Status
   const qtyOf = (row: WorkspaceOrderRow) => edits[row.ProductCode] ?? row.OrderQty
 
   const term = search.trim().toLowerCase()
@@ -247,28 +262,10 @@ export default function OrderWorkspacePage() {
       .finally(() => { setSavingQty(null); loadWorkflow() })
   }, [store, loadWorkflow])
 
-  const toggleAssign = useCallback((row: WorkspaceOrderRow) => {
-    if (!store || !supplier) return
-    setAssigningCode(row.ProductCode)
-    setBanner(null)
-    legacyOrderService.assignSupplier(store, row.ProductCode, supplier.supplier_code, supplier.supplier_name)
-      .then((result) => {
-        setStatusOverride((cur) => ({ ...cur, [row.ProductCode]: result.status }))
-        setBanner(
-          result.status === 1
-            ? `Assigned ${row.ProductName} → ${supplier.supplier_name} (qty ${result.order_qty}).`
-            : `Cleared supplier from ${row.ProductName}.`,
-        )
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => { setAssigningCode(null); loadWorkflow() })
-  }, [store, supplier, loadWorkflow])
-
   const isStock = view === 'supplier' && supplierMode === 'stock'
-  const canAssign = view === 'supplier' && Boolean(supplier)
+  const hasSupplier = view === 'supplier' && Boolean(supplier)
 
-  // Move focus to a row's qty box (VB SelectOnlyRow + MoveToNextRow). Skips the
-  // disabled (already-assigned) inputs so navigation never lands on a dead cell.
+  // Move focus to a row's qty box (VB SelectOnlyRow + MoveToNextRow).
   const focusWorkspaceRow = useCallback((index: number, dir: 1 | -1 = 1) => {
     const list = filteredRows
     if (!list.length) return
@@ -290,35 +287,54 @@ export default function OrderWorkspacePage() {
     }
   }, [filteredRows])
 
-  // Enter on the Review-All / By-Supplier grid = VB dgvMain Enter:
-  // UpdateDatabase(productCode). In By-Supplier that saves the current qty and
-  // assigns it to the selected supplier (status 0->1 toggle); in Review-All it
-  // just saves. Then advance to the next row — matching MoveToNextRow.
+  // Enter on the Review-All / By-Supplier grid saves the qty and advances to
+  // the next row (VB MoveToNextRow). The grid is review-only — no per-row
+  // supplier assignment; that now happens in bulk from the Export button.
   const commitWorkspaceRow = useCallback((row: WorkspaceOrderRow, value: number, index: number) => {
     if (!store) return
-    const advance = () => focusWorkspaceRow(index + 1, 1)
-    if (canAssign && supplier && statusOverride[row.ProductCode] !== 1 && row.Status !== 1) {
-      setAssigningCode(row.ProductCode)
-      setBanner(null)
-      const saved = value !== row.OrderQty
-        ? legacyOrderService.updateOrderQty(store, row.ProductCode, value)
-          .then(() => setRows((cur) => cur.map((r) => (r.ProductCode === row.ProductCode ? { ...r, OrderQty: value } : r))))
-        : Promise.resolve()
-      saved
-        .then(() => legacyOrderService.assignSupplier(store, row.ProductCode, supplier.supplier_code, supplier.supplier_name))
-        .then((result) => {
-          setStatusOverride((cur) => ({ ...cur, [row.ProductCode]: result.status }))
-          setBanner(result.status === 1
-            ? `Assigned ${row.ProductName} → ${supplier.supplier_name} (qty ${result.order_qty}).`
-            : `Cleared supplier from ${row.ProductName}.`)
-        })
-        .catch((e: Error) => setError(e.message))
-        .finally(() => { setAssigningCode(null); loadWorkflow(); advance() })
-    } else {
-      if (value !== row.OrderQty) saveQty(row, value)
-      advance()
-    }
-  }, [store, canAssign, supplier, statusOverride, saveQty, focusWorkspaceRow, loadWorkflow])
+    if (value !== row.OrderQty) saveQty(row, value)
+    focusWorkspaceRow(index + 1, 1)
+  }, [store, saveQty, focusWorkspaceRow])
+
+  // Export = the bulk operation: assign every OrderQty>0 row for the current
+  // supplier server-side, then download the generated Excel. Disabled while
+  // in flight so a double click can't trigger it twice.
+  //
+  // Always exports mode "stock" (live SupplierStock -- Discount/Rack, real
+  // supplier availability), regardless of which History/Live Stock tab the
+  // grid happens to be showing. History mode is browse-only (no Discount/
+  // Rack data, a looser purchase-history eligibility match) and must never
+  // be what gets bulk-assigned/exported by this button.
+  const runExport = useCallback(() => {
+    if (!store || !supplier || exporting) return
+    setExporting(true)
+    setBanner(null)
+    setError(null)
+    legacyOrderService.exportOrder(store, supplier.supplier_code, supplier.supplier_name, 'stock')
+      .then(({ blob, filename, exportedCount }) => {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+        setBanner(`Export completed successfully. Supplier: ${supplier.supplier_name} · Products: ${exportedCount} · File: ${filename}`)
+        loadGrid()
+        loadWorkflow()
+        loadExportCount()
+      })
+      .catch((e: Error) => {
+        // A 500 here (order_export.ExportGenerationFailed) means the bulk
+        // assignment already committed and only the Excel build failed --
+        // the server's error message says so explicitly. Reload the grid so
+        // it never keeps showing those now-assigned rows as if still open.
+        setError(e.message)
+        loadGrid()
+        loadWorkflow()
+        loadExportCount()
+      })
+      .finally(() => setExporting(false))
+  }, [store, supplier, exporting, loadGrid, loadWorkflow, loadExportCount])
 
   // Escape = VB dgvMain Escape: set the qty to 0 ("Don't want to Order") and
   // advance to the next row.
@@ -418,6 +434,24 @@ export default function OrderWorkspacePage() {
           )}
         </div>
         <div className="lo-actions">
+          {hasSupplier && (
+            <button
+              type="button"
+              className="lo-btn lo-btn-sm lo-btn-primary"
+              disabled={exporting || finalized || !exportCount}
+              title={
+                exportCount
+                  ? 'Assign every stock-eligible product to this supplier and download the Excel export'
+                  : exportCount === 0
+                    ? 'No stock-eligible products for this supplier'
+                    : 'Checking exportable products…'
+              }
+              onClick={runExport}
+            >
+              <i className={`bi ${exporting ? 'bi-hourglass-split' : 'bi-file-earmark-excel'}`} />{' '}
+              {exporting ? 'Exporting…' : `Export Stock${exportCount != null ? ` (${exportCount})` : ''}`}
+            </button>
+          )}
           {finalized ? (
             <button type="button" className="lo-btn lo-btn-sm" disabled={workflowBusy} onClick={() => finalize(true)}><i className="bi bi-unlock" /> Reopen</button>
           ) : (
@@ -494,6 +528,9 @@ export default function OrderWorkspacePage() {
           {view === 'qty' ? (
             <div className="lo-scroll qc-grid-scroll">
               <table className="lo-table lo-dense">
+                <colgroup>
+                  <col style={{ width: '3%' }} /><col style={{ width: '27%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} /><col style={{ width: '5%' }} /><col style={{ width: '8%' }} />
+                </colgroup>
                 <thead>
                   <tr><th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">Pack</th><th>Desc</th><th className="lo-num">Sls Qty</th><th className="lo-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="lo-num">Max Qty</th><th>Txn Date</th><th>Wanted</th></tr>
                 </thead>
@@ -539,6 +576,9 @@ export default function OrderWorkspacePage() {
           ) : view === 'assigned' ? (
             <div className="lo-scroll qc-grid-scroll" tabIndex={0} onKeyDown={onGridKey}>
               <table className="lo-table lo-dense">
+                <colgroup>
+                  <col style={{ width: '4%' }} /><col style={{ width: '34%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '20%' }} /><col style={{ width: '18%' }} />
+                </colgroup>
                 <thead><tr><th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">MRP</th><th>Supplier</th><th>Remarks</th></tr></thead>
                 <tbody>
                   {filteredAssigned.map((row, i) => (
@@ -559,23 +599,35 @@ export default function OrderWorkspacePage() {
           ) : (
             <div className="lo-scroll qc-grid-scroll" ref={gridRef} tabIndex={0} onKeyDown={onGridKey}>
               <table className="lo-table lo-dense">
+                <colgroup>
+                  {isStock ? (
+                    <>
+                      <col style={{ width: '2%' }} /><col style={{ width: '26%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} />
+                      <col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '7%' }} />
+                      <col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '10%' }} />
+                    </>
+                  ) : (
+                    <>
+                      <col style={{ width: '3%' }} /><col style={{ width: '32%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
+                      <col style={{ width: '8%' }} /><col style={{ width: '9%' }} /><col style={{ width: '8%' }} /><col style={{ width: '9%' }} /><col style={{ width: '15%' }} />
+                    </>
+                  )}
+                </colgroup>
                 <thead>
                   <tr>
                     <th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th>
                     {isStock && <><th className="lo-num">S.Stock</th><th className="lo-num">Disc</th><th className="lo-num">MinQty</th><th>Rack</th></>}
                     <th className="lo-num">Pack</th><th>Desc</th><th className="lo-num">Sls</th><th className="lo-num">MRP</th><th>Wanted</th>
-                    {canAssign && <th>Action</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredRows.map((row, i) => {
-                    const assignedRow = statusOf(row) === 1
                     const value = qtyOf(row)
-                    const colCount = 9 + (isStock ? 4 : 0) + (canAssign ? 1 : 0)
+                    const colCount = 9 + (isStock ? 4 : 0)
                     return (
                       <tr
                         key={row.ProductCode}
-                        className={`${selectedCode === row.ProductCode ? 'is-row-selected' : ''}${assignedRow ? ' lo-row-assigned' : ''}`.trim() || undefined}
+                        className={selectedCode === row.ProductCode ? 'is-row-selected' : undefined}
                         onClick={() => setSelectedCode(row.ProductCode)}
                         data-col-count={colCount}
                       >
@@ -589,7 +641,7 @@ export default function OrderWorkspacePage() {
                             min={0}
                             aria-label={`${row.ProductName} order quantity`}
                             value={value}
-                            disabled={savingQty === row.ProductCode || assignedRow || finalized}
+                            disabled={savingQty === row.ProductCode || finalized}
                             onClick={(e) => e.stopPropagation()}
                             onFocus={() => setSelectedCode(row.ProductCode)}
                             onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: Number(e.target.value) }))}
@@ -609,22 +661,10 @@ export default function OrderWorkspacePage() {
                         <td className="lo-num">{fmtQty(row.SLSQty)}</td>
                         <td className="lo-num">{fmtMoney(row.MRP)}</td>
                         <td>{row.WantedType ?? '—'}</td>
-                        {canAssign && (
-                          <td>
-                            <button
-                              type="button"
-                              className={`lo-btn ${assignedRow ? 'lo-btn-danger' : 'lo-btn-primary'}`}
-                              disabled={assigningCode === row.ProductCode || finalized}
-                              onClick={(e) => { e.stopPropagation(); toggleAssign(row) }}
-                            >
-                              {assigningCode === row.ProductCode ? '…' : assignedRow ? 'Unassign' : 'Assign'}
-                            </button>
-                          </td>
-                        )}
                       </tr>
                     )
                   })}
-                  {!filteredRows.length && <tr><td colSpan={9 + (isStock ? 4 : 0) + (canAssign ? 1 : 0)} className="lo-empty">{loading ? 'Loading…' : view === 'supplier' ? (supplier ? 'No orderable products for this supplier.' : 'Search and select a supplier.') : 'No open order rows for this store.'}</td></tr>}
+                  {!filteredRows.length && <tr><td colSpan={9 + (isStock ? 4 : 0)} className="lo-empty">{loading ? 'Loading…' : view === 'supplier' ? (supplier ? 'No orderable products for this supplier.' : 'Search and select a supplier.') : 'No open order rows for this store.'}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -665,6 +705,9 @@ export default function OrderWorkspacePage() {
         {historyOpen && (
         <div className="lo-scroll qc-history-scroll">
           <table className="lo-table lo-dense">
+            <colgroup>
+              <col style={{ width: '30%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '9%' }} /><col style={{ width: '16%' }} /><col style={{ width: '10%' }} /><col style={{ width: '6%' }} /><col style={{ width: '5%' }} />
+            </colgroup>
             <thead><tr><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Org Order</th><th className="lo-num">Pack</th><th className="lo-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
             <tbody>
               {orderHistory.map((row, i) => (

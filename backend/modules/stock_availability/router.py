@@ -10,7 +10,12 @@ from fastapi import APIRouter, Depends
 
 from dependencies.auth import get_current_user
 from modules.stock_availability import service
-from modules.stock_availability.schemas import CoreBulkRequest, SalesOrderIgnoreUpdate, SearchResult
+from modules.stock_availability.schemas import (
+    CoreBulkRequest,
+    CrossStoreMatchRequest,
+    SalesOrderIgnoreUpdate,
+    SearchResult,
+)
 
 router = APIRouter(prefix="/api/stock-availability", tags=["Stock Availability"])
 
@@ -37,6 +42,21 @@ def search_batches(
 
 # ----- Detail panels (active product context) --------------------------------
 
+@router.post("/products/sync-selection")
+def sync_selection(payload: CrossStoreMatchRequest, current_user: dict = Depends(get_current_user)):
+    """Resolve the equivalent product in each of ``target_store_ids`` for a
+    product selected in ``source_store_id`` (SupplierProductMatch -> normalized
+    name -> structured attributes -> relevance-scored fuzzy candidate)."""
+    return service.match_cross_store_selection(
+        current_user,
+        payload.tenant_id,
+        payload.source_store_id,
+        payload.source_product_code,
+        payload.source_product_name,
+        payload.target_store_ids,
+    )
+
+
 @router.get("/products/details")
 def product_details(tenant_id: str, store_id: str, product: str, current_user: dict = Depends(get_current_user)):
     return service.product_details(current_user, tenant_id, store_id, product)
@@ -57,6 +77,12 @@ def product_core_bulk(payload: CoreBulkRequest, current_user: dict = Depends(get
 @router.get("/products/batches")
 def batch_details(tenant_id: str, store_id: str, product: str, current_user: dict = Depends(get_current_user)):
     return service.batch_details(current_user, tenant_id, store_id, product)
+
+
+@router.get("/products/batch-detail")
+def batch_detail(tenant_id: str, store_id: str, product: str, batch: str, current_user: dict = Depends(get_current_user)):
+    """Single-batch detail popup (batchdescription, stock, expiry, cost, ptr, mrp, supplier)."""
+    return service.batch_detail(current_user, tenant_id, store_id, product, batch)
 
 
 @router.get("/products/purchases")

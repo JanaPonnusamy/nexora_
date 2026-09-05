@@ -30,6 +30,27 @@ export interface StockSearchResult {
   summary: SearchSummary
 }
 
+/** Internal classification of how a cross-store product equivalent was found
+ *  (mirrors the Product Mapping engine's phases — see backend
+ *  stock_availability/service.py:match_cross_store_selection). */
+export type CrossStoreMatchType =
+  | 'EXACT_SUPPLIER_MATCH'
+  | 'EXACT_NORMALIZED_NAME'
+  | 'STRONG_ATTRIBUTE_MATCH'
+  | 'RELEVANT_FUZZY_MATCH'
+  | 'NO_MATCH'
+
+export interface CrossStoreMatch {
+  store_id: string
+  match_type: CrossStoreMatchType
+  score: number
+  product: { product_code: string; product_name: string | null; mrp: number | null } | null
+}
+
+export interface CrossStoreMatchResult {
+  results: CrossStoreMatch[]
+}
+
 /** The active context every detail panel reloads from. */
 export interface ProductContext {
   tenantId: string

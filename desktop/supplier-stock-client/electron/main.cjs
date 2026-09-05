@@ -5,7 +5,7 @@
 // fine on Electron 22's Chromium.
 const path = require('node:path');
 const http = require('node:http');
-const { app, BrowserWindow, shell, ipcMain, nativeTheme } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, nativeTheme, Menu } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
 if (!app.isPackaged) {
@@ -94,7 +94,11 @@ async function createWindow() {
       win.webContents.session.clearCache().finally(() => {
         win.loadURL(`http://127.0.0.1:${devPort}`);
       });
-      win.webContents.openDevTools({ mode: 'right' });
+      // Detached (own window) rather than docked right: a right-docked panel
+      // steals ~1/3 of the renderer width, which compressed the store grid and
+      // clipped the Billing History columns during development. Detached keeps
+      // devtools available without distorting the 1366-wide layout.
+      win.webContents.openDevTools({ mode: 'detach' });
     } else {
       win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
     }
@@ -118,6 +122,11 @@ function initAutoUpdates() {
 }
 
 app.whenReady().then(() => {
+  // Drop the native menu bar (File/Edit/View/Window/Help). This is a
+  // single-purpose kiosk-style app, and the menu bar ate ~20px of vertical
+  // space at the top — enough that a maximized window on a 1366×768 laptop
+  // clipped the last store row. DevTools stays reachable via F12/Ctrl+Shift+I.
+  Menu.setApplicationMenu(null);
   createWindow();
   initAutoUpdates();
 

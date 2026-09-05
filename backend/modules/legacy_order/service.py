@@ -37,6 +37,7 @@ def _new_job(kind, store_name, total_steps):
             "log": [],
             "result": None,
             "error": None,
+            "warning": None,
             "started_at": datetime.datetime.now(),
             "finished_at": None,
         }
@@ -157,11 +158,18 @@ def _run_sync(job_id, store, plan):
     except Exception:
         logger.exception("could not update Stores.LastSyncStatus")
 
+    warning = None
+    try:
+        warning = repository.stale_sale_bill_warning(store["store_name"])
+    except Exception:
+        logger.exception("could not check last sale bill freshness")
+
     _update(
         job_id,
         status=status,
         result={"tables": tables},
         error=(f"{len(failed)} table(s) failed: {', '.join(failed)}" if failed else None),
+        warning=warning,
         message=("Sync completed." if not failed
                  else f"Sync finished with {len(failed)} failed table(s)."),
         finished_at=datetime.datetime.now(),
@@ -237,10 +245,17 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode):
     except Exception:
         logger.exception("could not update Stores.LastSyncStatus")
 
+    warning = None
+    try:
+        warning = repository.stale_sale_bill_warning(store["store_name"])
+    except Exception:
+        logger.exception("could not check last sale bill freshness")
+
     if failed:
         _update(
             job_id, status="failed", result={"tables": tables},
             error=f"Order process stopped because sync failed: {', '.join(failed)}",
+            warning=warning,
             message="Pre-order sync failed. Order generation was not started.",
             finished_at=datetime.datetime.now(),
         )
@@ -259,6 +274,7 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode):
         result["tables"] = tables
         _update(
             job_id, status="completed", step=base_step + 3, result=result,
+            warning=warning,
             message=f"Sync and order processing completed ({result['rows']} rows).",
             finished_at=datetime.datetime.now(),
         )
@@ -266,6 +282,7 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode):
         logger.exception("legacy order process failed after sync")
         _update(
             job_id, status="failed", result={"tables": tables}, error=str(exc),
+            warning=warning,
             message=f"Sync completed, but order processing failed: {exc}",
             finished_at=datetime.datetime.now(),
         )

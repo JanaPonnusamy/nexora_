@@ -40,6 +40,7 @@ def search_products(
     stock_filter: str = "all",
     only_null_sublocation: int = 0,
     only_sale_unit_gt_one: int = 0,
+    sublocation_filter: str = "",
     current_user: dict = Depends(get_current_user),
 ):
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
@@ -54,6 +55,7 @@ def search_products(
         stock_filter,
         only_null_sublocation,
         only_sale_unit_gt_one,
+        sublocation_filter,
     )
 
 

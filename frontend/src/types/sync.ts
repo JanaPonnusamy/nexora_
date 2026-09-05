@@ -17,6 +17,9 @@ export interface ControlCenterStore {
   current_activity: string
   is_syncing: boolean
   status: string
+  last_sale_bill_at: string | null
+  last_sale_bill_minutes_ago: number | null
+  sale_bill_stale: boolean
 }
 
 export interface ControlCenter {
@@ -59,6 +62,9 @@ export interface StoreHealthRow {
   agent_status: string
   last_sync: string | null
   pending_queue: number
+  last_sale_bill_at: string | null
+  last_sale_bill_minutes_ago: number | null
+  sale_bill_stale: boolean
 }
 
 export interface SyncHistoryRow {

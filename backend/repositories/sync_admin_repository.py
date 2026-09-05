@@ -16,10 +16,19 @@ store_agent_registry + agent_heartbeat_log + sync_execution -- never from store
 business tables.
 """
 
+import datetime
+
 from config.database import get_connection
+
+STALE_SALE_BILL_MINUTES = 30
+
 
 def _iso(value):
     return value.isoformat() if value else None
+
+
+def _now():
+    return datetime.datetime.now()
 
 
 class SyncAdminRepository:
@@ -109,7 +118,8 @@ class SyncAdminRepository:
             reg.connection_type,
             CASE WHEN reg.last_heartbeat >= DATEADD(SECOND, -90, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
             (SELECT MAX(h.completed_at) FROM dbo.sync_execution h WHERE h.store_id = s.store_id AND h.execution_status = 'COMPLETED') AS last_sync,
-            (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status = 'RUNNING') AS running
+            (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status = 'RUNNING') AS running,
+            (SELECT MAX(si.Billtime) FROM sync.SaleInformation si WHERE si.store_id = s.store_id) AS last_sale_bill
         FROM dbo.stores s
         LEFT JOIN dbo.store_agent_registry reg ON reg.store_id = s.store_id AND reg.is_active = 1
         WHERE s.is_active = 1
@@ -118,6 +128,13 @@ class SyncAdminRepository:
         stores = []
         for r in cur.fetchall():
             is_running = (r[6] or 0) > 0
+            last_sale_bill = r[7]
+            bill_age_minutes = (
+                int((_now() - last_sale_bill).total_seconds() // 60)
+                if last_sale_bill else None
+            )
+            sale_bill_stale = bill_age_minutes is None or bill_age_minutes > STALE_SALE_BILL_MINUTES
+            status = "Syncing" if is_running else r[4]
             stores.append({
                 "store_id": str(r[0]),
                 "store_code": r[1],
@@ -127,7 +144,13 @@ class SyncAdminRepository:
                 "last_sync": _iso(r[5]),
                 "current_activity": "Syncing" if is_running else "Idle",
                 "is_syncing": is_running,
-                "status": "Syncing" if is_running else r[4],
+                "status": status,
+                "last_sale_bill_at": _iso(last_sale_bill),
+                "last_sale_bill_minutes_ago": bill_age_minutes,
+                # Sync can report "Online"/"COMPLETED" while no fresh bill has
+                # actually landed -- flag that silently-stale case even though
+                # the agent heartbeat itself looks healthy.
+                "sale_bill_stale": sale_bill_stale,
             })
 
         conn.close()
@@ -329,22 +352,33 @@ class SyncAdminRepository:
             reg.last_heartbeat,
             CASE WHEN reg.last_heartbeat >= DATEADD(SECOND, -90, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
             (SELECT MAX(h.completed_at) FROM dbo.sync_execution h WHERE h.store_id = s.store_id AND h.execution_status = 'COMPLETED') AS last_sync,
-            (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status IN ('QUEUED','PENDING','RUNNING')) AS pending_queue
+            (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status IN ('QUEUED','PENDING','RUNNING')) AS pending_queue,
+            (SELECT MAX(si.Billtime) FROM sync.SaleInformation si WHERE si.store_id = s.store_id) AS last_sale_bill
         FROM dbo.stores s
         LEFT JOIN dbo.store_agent_registry reg ON reg.store_id = s.store_id AND reg.is_active = 1
         WHERE s.is_active = 1
         ORDER BY s.store_code
         """)
-        rows = [{
-            "store_id": str(r[0]),
-            "store_code": r[1],
-            "store_name": r[2],
-            "connection_type": r[3] or "Offline",
-            "last_heartbeat": _iso(r[4]),
-            "agent_status": r[5],
-            "last_sync": _iso(r[6]),
-            "pending_queue": r[7] or 0,
-        } for r in cur.fetchall()]
+        rows = []
+        for r in cur.fetchall():
+            last_sale_bill = r[8]
+            bill_age_minutes = (
+                int((_now() - last_sale_bill).total_seconds() // 60)
+                if last_sale_bill else None
+            )
+            rows.append({
+                "store_id": str(r[0]),
+                "store_code": r[1],
+                "store_name": r[2],
+                "connection_type": r[3] or "Offline",
+                "last_heartbeat": _iso(r[4]),
+                "agent_status": r[5],
+                "last_sync": _iso(r[6]),
+                "pending_queue": r[7] or 0,
+                "last_sale_bill_at": _iso(last_sale_bill),
+                "last_sale_bill_minutes_ago": bill_age_minutes,
+                "sale_bill_stale": bill_age_minutes is None or bill_age_minutes > STALE_SALE_BILL_MINUTES,
+            })
         conn.close()
         return rows
 

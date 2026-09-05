@@ -4873,31 +4873,97 @@ th {
   }
 }
 
-/* Label Exporter: reuses the Order Workspace layout system (.ow-screen /
-   .ow-toolbar / .ow-body / .ow-left / .ow-grid / .ow-side / .ow-panel /
-   .ow-intel-table) for the same viewport-fixed, dense, professional grid
-   instead of a bespoke layout - see .ow-screen for the height:calc(100vh...)
-   sizing that keeps rows a fixed height regardless of resolution. */
-/* The toolbar has more fields than Order Workspace's (Store/Letter/Search/
-   Unit/Box/Stock rule/2 checkboxes/Search) - every field below is capped
-   tighter than its ow- counterpart so the row still fits at 1366px without
-   pushing the Search button off-screen. overflow-x is still a scoped safety
-   net (never lets a field become totally unreachable on a narrower window). */
-.lbl-screen .ow-toolbar { overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; }
-/* The intelligence side panel needs less width here than Order Workspace's
-   (fewer purchase/sale columns) - give the product grid more room instead. */
-.lbl-screen .ow-body { grid-template-columns: minmax(0, 3fr) minmax(280px, 1fr); }
-.lbl-store-select { max-width: 120px; }
-.lbl-letter-input { width: 36px; min-height: 32px; padding: 2px 4px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px; text-align: center; text-transform: uppercase; }
-.lbl-box-input { width: 64px; min-height: 32px; padding: 2px 6px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px; }
-.lbl-stockrule-select { max-width: 150px; }
-.lbl-check-field { display: inline-flex; align-items: center; gap: 4px; }
-.lbl-check-field span { text-transform: none; font-weight: 600; font-size: 10px; white-space: nowrap; }
-.lbl-review-note { flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); white-space: nowrap; }
+/* ============================ Label Exporter ============================
+   A dense keyboard-driven review workstation. Layout reuses the .ow-screen
+   flex column (viewport-locked height, internally scrolling panels) and the
+   .ow-body grid, but the filter bar (.lblx-filterbar) and status strip
+   (.lblx-statusbar) are purpose-built: one clean compact row each, never
+   wrapping at 1366px. The grid uses fixed px column widths (readable headers,
+   no cryptic truncation) with Remarks flexing to fill.                     */
 
-/* Searchable multi-select unit combo, built on the same .ow-supplier-*
-   positioning/box-model as the Order Workspace supplier picker. */
-.lbl-unit-pick { min-width: 100px; max-width: 110px; }
+/* ---- Filter bar: ONE row, inline mini-labels, ~46px, no wrap ---- */
+.lblx-filterbar {
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
+  padding: 6px 10px; min-height: 44px;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
+}
+.lblx-field { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.lblx-field > span {
+  flex: 0 0 auto; font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--nx-text-muted); white-space: nowrap;
+}
+.lblx-field select,
+.lblx-field > input,
+.lblx-filterbar .lbl-unit-trigger {
+  height: 30px; padding: 0 8px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
+}
+.lblx-store select { max-width: 158px; text-overflow: ellipsis; }
+.lblx-letter > input { width: 34px; text-align: center; text-transform: uppercase; font-weight: 700; }
+.lblx-search { flex: 1 1 140px; min-width: 110px; }
+.lblx-search > input { width: 100%; }
+.lblx-box > input { width: 58px; text-transform: uppercase; }
+.lblx-stock select { max-width: 168px; }
+.lblx-filterbar .lbl-unit-pick { min-width: 104px; max-width: 118px; }
+
+.lblx-check {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: 11px; font-weight: 600; color: var(--nx-text-soft); white-space: nowrap;
+}
+.lblx-check input { width: 14px; height: 14px; accent-color: var(--nx-accent); }
+
+.lblx-search-btn {
+  flex: 0 0 auto; height: 30px; padding: 0 16px; border: 1px solid var(--nx-accent); border-radius: var(--nx-radius-sm);
+  background: var(--nx-accent); color: #fff; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.lblx-search-btn:hover:not(:disabled) { filter: brightness(1.06); }
+.lblx-search-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* ---- Status strip: kbd hints · progress · Mark-all ---- */
+.lblx-statusbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px; min-height: 34px;
+  padding: 0 10px; font-size: 11px; color: var(--nx-text-muted); overflow: hidden;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface-sunk);
+}
+.lblx-kbd { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--nx-text-soft); }
+.lblx-kbd kbd {
+  display: inline-block; min-width: 15px; padding: 0 4px; border-radius: 3px;
+  border: 1px solid var(--nx-rule-strong); background: var(--nx-surface-raised);
+  font: inherit; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; color: var(--nx-text-soft);
+}
+.lblx-kbd i { color: var(--nx-rule-strong); font-style: normal; margin: 0 2px; }
+.lblx-progress { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.lblx-progress b { color: var(--nx-text); font-weight: 800; font-variant-numeric: tabular-nums; }
+.lblx-progress i { color: var(--nx-rule-strong); font-style: normal; }
+.lblx-progress .lblx-reviewed { color: var(--nx-success-ink); }
+.lblx-progress .lblx-remaining { color: var(--nx-accent); }
+.lblx-progbar { width: 84px; height: 5px; margin-left: 4px; border-radius: 3px; background: var(--nx-surface-raised); overflow: hidden; }
+.lblx-progbar > span { display: block; height: 100%; background: var(--nx-success-ink); border-radius: 3px; transition: width 0.2s; }
+.lblx-msg { display: inline-flex; align-items: center; gap: 8px; }
+.lblx-msg-error { color: var(--nx-danger); font-weight: 600; }
+.lblx-msg-loading { color: var(--nx-text-soft); }
+.lblx-note { flex: 0 0 auto; font-size: 10px; color: var(--nx-text-muted); }
+.lblx-spacer { flex: 1 1 auto; }
+.lblx-mark {
+  flex: 0 0 auto; height: 24px; padding: 0 10px; border-radius: var(--nx-radius-sm);
+  border: 1px solid var(--nx-rule-strong); background: var(--nx-surface); color: var(--nx-text-soft);
+  font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.lblx-mark:disabled { opacity: 0.5; cursor: default; }
+.lblx-mark-y:not(:disabled) { color: var(--nx-success-ink); border-color: var(--nx-success-ink); }
+.lblx-mark-n:not(:disabled) { color: var(--nx-danger); border-color: var(--nx-danger); }
+.lblx-retry {
+  height: 22px; padding: 0 10px; border-radius: var(--nx-radius-sm); border: 1px solid var(--nx-accent);
+  background: var(--nx-accent); color: #fff; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+}
+
+/* ---- Body split: 75/25 at 1366, detail panel a touch wider at 1600+ ---- */
+.lbl-screen .ow-body { grid-template-columns: minmax(0, 3fr) minmax(268px, 1fr); gap: 8px; }
+@media (min-width: 1700px) { .lbl-screen .ow-body { grid-template-columns: minmax(0, 3.4fr) minmax(300px, 1fr); } }
+
+/* ---- Searchable multi-select combo (Unit / Old Loc) ---- */
+.lbl-unit-pick { min-width: 104px; max-width: 118px; }
 .lbl-unit-trigger { width: 100%; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lbl-unit-list { width: 240px; padding: 0; display: flex; flex-direction: column; }
 .lbl-unit-search {
@@ -4912,41 +4978,93 @@ th {
 }
 .lbl-unit-options label:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
 
-/* Inline review controls, sized to fit the compact .ow-screen 30px row. */
+/* ---- Grid: compact 34px rows, single-line cells, fixed columns ---- */
+.lbl-grid tbody td { height: 34px; }
+.lbl-grid tbody td, .lbl-grid thead th { padding: 1px 8px !important; }
+.lbl-grid thead th { font-size: 10px; }
+
 .lbl-inline-input {
-  width: 100%; min-width: 60px; height: 24px; padding: 0 6px;
+  width: 100%; min-width: 0; height: 24px; padding: 0 6px;
   border: 1px solid var(--nx-rule-strong); border-radius: 4px;
   background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
 }
-.lbl-remarks-input { min-width: 110px; }
-.lbl-null { color: var(--nx-danger); }
-/* table-layout:fixed doesn't clip overflowing nowrap text on its own (only
-   .ow-grow does) - the Code column is narrow enough for a 7-digit code to
-   visually bleed into Product without this. */
-.lbl-code-cell { overflow: hidden; text-overflow: ellipsis; }
-.lbl-yn-group { display: flex; gap: 3px; }
-.lbl-yn-btn {
-  min-width: 22px; height: 22px; padding: 0; border-radius: 4px;
-  border: 1px solid var(--nx-rule-strong); background: var(--nx-surface); color: var(--nx-text-soft);
-  font-size: 11px; font-weight: 700; line-height: 1;
+/* Remarks: reads as a plain cell until focused/hovered, so hundreds of rows
+   don't look like a wall of form inputs. */
+.lbl-remarks-input {
+  min-width: 0; border-color: transparent; background: transparent;
 }
-.lbl-yn-y.active { background: var(--nx-success, #198754); border-color: var(--nx-success, #198754); color: #fff; }
-.lbl-yn-n.active { background: var(--nx-danger); border-color: var(--nx-danger); color: #fff; }
+.lbl-remarks-input:hover { border-color: var(--nx-rule); background: var(--nx-surface); }
+.lbl-remarks-input:focus { border-color: var(--nx-accent); background: var(--nx-surface); }
+.lbl-remarks-input::placeholder { color: var(--nx-text-muted); }
+.lbl-null { color: var(--nx-text-muted); }
+.lbl-code-cell {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 700; font-variant-numeric: tabular-nums; color: var(--nx-text); letter-spacing: 0.2px;
+}
+.lbl-sno-cell { color: var(--nx-text-muted); font-size: 11px; }
+.lbl-unit-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Monthly trend mini-chart, sized to sit inside .ow-panel--chart /
-   .ow-panel-body alongside the Purchase/GRN and Bill/Sales ow-panels. */
-.lbl-trend-panel { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; flex-direction: column; }
-.lbl-trend-legend { display: flex; gap: 14px; font-size: 11px; color: var(--nx-text-muted); padding: 4px 8px 0; }
-.lbl-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
-.lbl-dot-sale { background: var(--nx-accent); }
-.lbl-dot-purchase { background: var(--nx-success, #198754); }
-.lbl-trend-bars { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 6px; }
-.lbl-trend-row { display: grid; grid-template-columns: 44px 1fr 1fr 44px; align-items: center; gap: 6px; font-size: 11px; }
-.lbl-trend-track { position: relative; height: 8px; background: var(--nx-surface-sunk); border-radius: 4px; overflow: hidden; }
-.lbl-trend-fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
-.lbl-trend-fill-sale { background: var(--nx-accent); }
-.lbl-trend-fill-purchase { background: var(--nx-success, #198754); }
-.lbl-trend-values { text-align: right; color: var(--nx-text-muted); }
+/* Sub Location: one real cell, no floating control. Admin edits inline (the
+   input reads as a value until hover/focus); "New" is only a placeholder when
+   there's no existing location and Review = Y. Never overwrites real data. */
+.lbl-subloc-td { overflow: hidden; }
+.lbl-subloc-input {
+  height: 24px; border-color: transparent; background: transparent;
+  font-variant-numeric: tabular-nums;
+}
+.lbl-subloc-input:hover { border-color: var(--nx-rule); background: var(--nx-surface); }
+.lbl-subloc-input:focus { border-color: var(--nx-accent); background: var(--nx-surface); }
+.lbl-subloc-input.lbl-subloc-dirty { border-color: var(--nx-accent); background: var(--nx-accent-sunk); }
+.lbl-subloc-input::placeholder { color: var(--nx-accent); font-style: italic; opacity: 0.9; }
+.lbl-subloc-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lbl-subloc-new { color: var(--nx-accent); font-style: italic; font-weight: 600; }
+
+.lbl-lrd, .lbl-lrd-head { color: var(--ow-in); font-weight: 600; }
+.lbl-lsd, .lbl-lsd-head { color: var(--ow-out); font-weight: 600; }
+
+/* Single REVIEW column: one compact badge; click cycles —/Y/N. */
+.lbl-review-cell { text-align: center; }
+.lbl-review-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 20px; padding: 0; border-radius: 5px;
+  border: 1px solid transparent; background: transparent;
+  color: var(--nx-text-muted); font-size: 12px; font-weight: 800; line-height: 1;
+  cursor: pointer; transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.lbl-review-badge.is-none { color: var(--nx-rule-strong); }
+.lbl-review-badge.is-none:hover { border-color: var(--nx-rule-strong); color: var(--nx-text-soft); }
+.lbl-review-badge.is-yes { background: var(--nx-success, #198754); border-color: var(--nx-success, #198754); color: #fff; }
+.lbl-review-badge.is-no { background: var(--nx-danger); border-color: var(--nx-danger); color: #fff; }
+.lbl-review-badge:disabled { opacity: 0.55; cursor: default; }
+.lbl-review-head { text-align: center !important; }
+
+/* Selected row: subtle tint + a strong left accent bar as the primary cue.
+   Repeats .ow-screen to out-specificity the shared .ow-row-sel rule. */
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td { background: rgba(37, 99, 235, 0.08) !important; }
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-accent); }
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td { font-weight: 600; }
+:root[data-theme="dark"] .lbl-screen.ow-screen tbody tr.ow-row-sel > td { background: rgba(96, 165, 250, 0.13) !important; }
+:root[data-theme="light"] .lbl-screen.ow-screen tbody tr.ow-row-sel > td { background: rgba(37, 99, 235, 0.08) !important; }
+@media (prefers-color-scheme: dark) {
+  .lbl-screen.ow-screen tbody tr.ow-row-sel > td { background: rgba(96, 165, 250, 0.13) !important; }
+}
+
+/* ---- Empty / loading / error states in the grid body ---- */
+.lblx-empty { padding: 2.2rem 1rem !important; text-align: center; }
+.lblx-empty-loading, .lblx-empty-error { display: inline-flex; align-items: center; gap: 10px; justify-content: center; }
+.lblx-empty-error { color: var(--nx-danger); }
+.lblx-spin {
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--nx-rule-strong);
+  border-top-color: var(--nx-accent); animation: lblx-spin 0.7s linear infinite;
+}
+@keyframes lblx-spin { to { transform: rotate(360deg); } }
+
+/* ---- Right detail panel: tighter inspector (less wasted padding) ---- */
+.lbl-screen .ow-side-head { padding: 5px 9px; gap: 1px 12px; }
+.lbl-screen .ow-side-name { font-size: 12px; }
+.lbl-screen .ow-side-panels { padding: 5px; gap: 5px; }
+.lbl-screen .ow-panel-title { padding: 4px 8px; }
+.lbl-screen .ow-panel--chart { height: clamp(132px, 17vh, 190px); }
 
 /* Stock Availability workspace: compact, aligned desktop dashboard. */
 .store-workbench {
@@ -5244,7 +5362,11 @@ th {
 
 .store-column-headers,
 .store-row-grid-body {
-  grid-template-columns: var(--stock-grid-columns);
+  /* Screens that compute per-section widths (Stock Availability's
+     .store-workbench) set --stock-grid-columns; screens that don't (Supplier
+     Analysis) must still get the 6 default tracks — without this fallback the
+     var resolves to `none` and every store row collapses to one column. */
+  grid-template-columns: var(--stock-grid-columns, 34px minmax(210px, 1fr) minmax(260px, 1.45fr) minmax(360px, 1.1fr) minmax(360px, 1.55fr) minmax(280px, 1.05fr));
   /* Sum of the section track minimums (req §2/§3) — keeps every column legible
      while fitting the 1366-wide target without horizontal page overflow. */
   min-width: 1320px;

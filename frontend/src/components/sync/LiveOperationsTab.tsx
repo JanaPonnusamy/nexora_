@@ -55,6 +55,10 @@ function storeStatus(row: DashboardStore): string {
   if (row.live?.status === 'PAUSED') return 'PAUSED'
   if (row.live) return 'RUNNING'
   if ((row.status ?? '').toUpperCase() === 'FAILED') return 'FAILED'
+  // Agent heartbeat and sync executions can look healthy while no fresh sale
+  // bill has actually landed in 30+ minutes -- surface that as a strong,
+  // distinct warning rather than folding it into a plain "Online".
+  if (row.sale_bill_stale) return 'STALE_SALES'
   return row.agent_status || row.status || 'Offline'
 }
 
@@ -65,6 +69,12 @@ function activityTone(status: string | null): 'success' | 'danger' | 'indigo' | 
   if (value === 'RUNNING') return 'indigo'
   if (value === 'PENDING' || value === 'QUEUED') return 'warning'
   return 'muted'
+}
+
+function staleBillTooltip(row: DashboardStore): string {
+  return row.last_sale_bill_minutes_ago == null
+    ? 'STRONG WARNING: no synced sale bill found for this store at all.'
+    : `STRONG WARNING: last sale bill synced ${row.last_sale_bill_minutes_ago} minutes ago (over 30-minute threshold).`
 }
 
 function activityAbbr(status: string | null): string {
@@ -252,7 +262,9 @@ export function LiveOperationsTab() {
                         <span className="sx-storegrid__name" title={store.store_name}>{store.store_name}</span>
                       </span>
                     </div>
-                    <div><SyncStatusBadge status={storeStatus(store)} compact /></div>
+                    <div title={store.sale_bill_stale ? staleBillTooltip(store) : undefined}>
+                      <SyncStatusBadge status={storeStatus(store)} compact />
+                    </div>
                     <div className="sx-storegrid__table">{store.live?.current_table ?? store.current_activity ?? '-'}</div>
                     <div className="sx-storegrid__progress">
                       {store.live ? (

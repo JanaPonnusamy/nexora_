@@ -23,6 +23,7 @@ def search_products(
     stock_filter: str = "all",
     only_null_sublocation: int = 0,
     only_sale_unit_gt_one: int = 0,
+    sublocation_filter: str = "",
 ):
     if unit_description_mode not in _VALID_UNIT_DESCRIPTION_MODE:
         raise HTTPException(status_code=400, detail="Invalid unit_description_mode")
@@ -37,8 +38,10 @@ def search_products(
         stock_filter,
         only_null_sublocation,
         only_sale_unit_gt_one,
+        sublocation_filter,
     )
     result["unit_descriptions"] = repository.get_unit_descriptions(tenant_id, store_id, starts_with)
+    result["sublocations"] = repository.get_sublocations(tenant_id, store_id)
     return result
 
 

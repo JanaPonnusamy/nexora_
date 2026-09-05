@@ -249,6 +249,39 @@ def mark_sync_result(store_name, status):
         conn.commit()
 
 
+STALE_SALE_BILL_MINUTES = 30
+
+
+def last_sale_bill_age_minutes(store_name):
+    """Minutes since this store's most recent synced sale bill (Billtime),
+    or None if it has never synced a bill. Used to flag a sync that reports
+    success but has stopped actually carrying fresh sale data."""
+    with database.get_central_connection() as conn:
+        row = conn.cursor().execute(
+            "SELECT DATEDIFF(MINUTE, MAX(Billtime), GETDATE()) "
+            "FROM SaleInformation WHERE StoreName = ?",
+            store_name,
+        ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def stale_sale_bill_warning(store_name):
+    """Strong warning string when the last sale bill is stale/missing, else None."""
+    age = last_sale_bill_age_minutes(store_name)
+    if age is None:
+        return (
+            f"STRONG WARNING: '{store_name}' has no synced sale bill at all -- "
+            "verify the branch is billing and the sync is actually reaching SaleInformation."
+        )
+    if age > STALE_SALE_BILL_MINUTES:
+        return (
+            f"STRONG WARNING: '{store_name}' has had no new sale bill in {age} minutes "
+            f"(over the {STALE_SALE_BILL_MINUTES}-minute threshold) -- sync completed but "
+            "billing data looks stale. Check the branch POS and the connection."
+        )
+    return None
+
+
 def test_branch_connection(store):
     """Port of the Syncbtn_Click pre-flight: fail early with a clear message."""
     try:
@@ -456,11 +489,22 @@ _WORKSPACE_COLS = (
 
 
 def orders_by_supplier(store_name, supplier_code, mode):
-    """mode='history' ports LoadDataForSupplier (products this supplier has
-    historically supplied, via OrderPurchaseTrans); mode='stock' ports
-    LoadDataForSupplierStock (products matched to the supplier's live
+    """mode='history' ports LoadDataForSupplier -- legacy's "Auto Pur UpDate"
+    process (products this supplier has historically supplied); mode='stock'
+    ports LoadDataForSupplierStock (products matched to the supplier's live
     SupplierStock, with per-supplier stock/rack columns). Both only show
-    still-open rows (status=0, orderqty>0)."""
+    still-open rows (status=0, orderqty>0).
+
+    mode='history' deliberately does NOT use OrderPurchaseTrans, unlike the
+    legacy VB.NET query it ports (Form1.vb LoadDataForSupplier). That table is
+    a legacy-only staging table with no equivalent freshness guarantee in this
+    environment. PurchaseTrans is the real, actively-synced GRN/purchase-
+    invoice table this module already sources purchase history from elsewhere
+    (see qty_check_purchase_details) and from the store-scoping bug fix (see
+    'TI transfer vs supplier collision' -- InvoiceSeries='TI' rows are internal
+    warehouse transfers, not real supplier purchases, and must be excluded or
+    a transfer's SupplierCode-shaped warehouse code can collide with a real
+    supplier's code)."""
     if mode == "stock":
         sql = (
             "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.TotalStock, "
@@ -483,22 +527,72 @@ def orders_by_supplier(store_name, supplier_code, mode):
         params = (supplier_code, supplier_code, store_name, store_name)
     else:
         # EXISTS (not a JOIN) so a product with several historical purchase
-        # lines from this supplier still shows exactly once.
+        # lines from this supplier still shows exactly once. InvoiceSeries<>
+        # 'TI' excludes internal warehouse transfers (see docstring).
+        #
+        # supplier_code is split in Python, NOT via dbo.SplitString(...) in
+        # SQL: SplitString is a multi-statement table-valued function, which
+        # SQL Server can't inline into the plan. Called from inside a
+        # correlated EXISTS against PurchaseTrans (1M+ rows), that forces a
+        # per-row procedural re-evaluation instead of a set-based semi-join.
+        # A plain parametrized IN (?, ?, ...) list avoids that.
+        #
+        # pt.ProductCode is explicitly cast to om.ProductCode's side (not the
+        # reverse) for the same reason as the product_mapping timeout fix
+        # (see memory: non-sargable CASTs): OrderManagement.ProductCode is
+        # FLOAT but PurchaseTrans.ProductCode is INT. `pt.ProductCode =
+        # om.ProductCode` implicitly converts every pt.ProductCode to FLOAT
+        # (float outranks int in SQL Server's type precedence), which makes
+        # the predicate non-sargable and forces a full scan of PurchaseTrans
+        # PER OrderManagement ROW instead of a seek on
+        # IX_PurchaseTrans_Product_Store_Date -- this, not SplitString, was
+        # the actual cause of the 45s timeout (confirmed: still slow after
+        # removing SplitString alone, until this cast was added). Casting
+        # om.ProductCode to INT instead keeps pt.ProductCode untouched and
+        # seekable.
+        codes = [c.strip() for c in str(supplier_code or "").split(",") if c.strip()]
+        if not codes:
+            return []
+        placeholders = ", ".join("?" for _ in codes)
         sql = (
             f"SELECT {_WORKSPACE_COLS} FROM OrderManagement om "
             "WHERE om.Status = 0 AND om.OrderQty > 0 "
             "AND om.ProductTypeName IN ('Pharma', 'Non Pharma') AND om.StoreName = ? "
-            "AND EXISTS (SELECT 1 FROM OrderPurchaseTrans op "
-            "  WHERE op.ProductCode = om.ProductCode AND op.StoreName = om.StoreName "
-            "  AND op.SupplierCode IN (SELECT Value FROM dbo.SplitString(?, ','))) "
+            "AND EXISTS (SELECT 1 FROM PurchaseTrans pt WITH (NOLOCK) "
+            "  WHERE pt.ProductCode = CAST(om.ProductCode AS INT) AND pt.StoreName = om.StoreName "
+            "  AND pt.InvoiceSeries <> 'TI' "
+            f"  AND pt.SupplierCode IN ({placeholders})) "
             "ORDER BY om.ProductTypeName, om.ProductName"
         )
-        params = (store_name, supplier_code)
+        params = (store_name, *codes)
 
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, params)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def orders_by_supplier_export_count(store_name, supplier_code):
+    """Lightweight row count for the same stock-mode eligibility the Export
+    button always acts on (see orders_by_supplier's mode='stock' branch and
+    order_export.export_order) -- status=0, orderqty>0, live SupplierStock
+    match with Stock>0. Exists so the UI can show/enable Export accurately
+    without fetching the full stock grid just to count it, and independent of
+    whichever History/Live Stock tab happens to be on screen."""
+    sql = (
+        "SELECT COUNT(*) FROM OrderManagement om "
+        "INNER JOIN SupplierProductMatch SPM "
+        "  ON om.ProductCode = SPM.ProductCode AND SPM.StoreName = om.StoreName "
+        "  AND SPM.SupplierCode = ? "
+        "INNER JOIN SupplierStock SS "
+        "  ON SS.SupplierProductCode = SPM.SupplierProductCode "
+        "  AND SS.SupplierCode = ? AND SS.storename = ? "
+        "WHERE om.storename = ? AND om.status = 0 AND om.orderqty > 0 AND SS.Stock > 0"
+    )
+    params = (supplier_code, supplier_code, store_name, store_name)
+    with database.get_central_connection() as conn:
+        row = conn.cursor().execute(sql, params).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
 
 
 def assigned_orders(store_name, supplier_code):
@@ -564,6 +658,38 @@ def assign_supplier(store_name, product_code, supplier_code, supplier_name, acto
             return {"product_code": product_code, "status": 0, "order_qty": None, "changed": True}
         # status 2 (already processed by a previous-order compare) -- untouched.
         return {"product_code": product_code, "status": status, "order_qty": row[1], "changed": False}
+
+
+def bulk_assign_rows(store_name, supplier_code, supplier_name, product_codes, actor=None):
+    """Set-based bulk version of assign_supplier's status 0->1 branch -- ports
+    Form1.UpdateDatabase(), which looped every dgvMain row and ran the same
+    per-row UPDATE (see Form1.vb ~line 4782). product_codes must already be
+    resolved server-side (e.g. via orders_by_supplier) -- never trust a
+    client-supplied list, since that would bypass the store/supplier/
+    orderqty>0 scoping orders_by_supplier already enforces."""
+    if not product_codes:
+        return 0
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        placeholders = ",".join("?" for _ in product_codes)
+        cur.execute(
+            "UPDATE ordermanagement SET orqty = orderqty, orsupplier = ?, "
+            "orsuppliercode = ?, status = 1 "
+            "WHERE storename = ? AND status = 0 AND orderqty > 0 "
+            f"AND productcode IN ({placeholders})",
+            supplier_name, supplier_code, store_name, *product_codes,
+        )
+        assigned_count = cur.rowcount
+        order_id = _latest_order_id(cur, store_name)
+        if order_id is not None:
+            for code in product_codes:
+                _record_line_audit(
+                    cur, store_name, order_id, code, "SUPPLIER_ASSIGNED_BULK",
+                    None, supplier_code, actor,
+                )
+        conn.commit()
+        return assigned_count
 
 
 def qty_check_rows(store_name):
@@ -701,36 +827,148 @@ def qty_check_sales_details(store, product_code, mode):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def qty_check_monthly_stats(store, product_code, mode):
-    """Port of RetrieveDataForChartAsync -- last 3 months of ProductTrans
-    stats, the source for the "Monthly Statistics" chart."""
-    is_local = mode != "remote"
-    store_filter = " AND pt.StoreName = ?" if is_local else ""
+def _clean_qty(value):
+    """Exact integers stay ints; fractional (AllowFractions products) keep 3 dp.
+    Never abbreviate -- the chart shows the real quantity, 1300 not 1.3K."""
+    if value is None:
+        return 0
+    f = float(value)
+    return int(f) if f == int(f) else round(f, 3)
 
-    sql = (
-        "SELECT pt.ProductCode, CONVERT(VARCHAR(7), pt.MonthOfStatistics, 120) AS MonthOfStatistics, "
-        "ISNULL(pt.SaleQuantity, 0) AS SaleQuantity, ISNULL(pt.StockInHand, 0) AS StockInHand, "
-        "ISNULL(pt.PurchaseQuantity, 0) AS PurchaseQuantity, "
-        "ISNULL(pt.AdjustmentQuantity, 0) AS AdjustmentQuantity, "
-        "ISNULL(pt.TransferInQuantity, 0) AS TransferInQuantity, "
-        "ISNULL(pt.TransferOutQuantity, 0) AS TransferOutQuantity "
+
+def qty_check_monthly_stats(store, product_code, mode):
+    """Port of RetrieveDataForChartAsync -- the "Monthly Statistics" chart source,
+    enriched with the return breakdown the legacy WinForms chart never surfaced.
+
+    ProductTrans is the POS's OWN pre-aggregated monthly rollup. Verified against
+    371k consecutive month-pairs from the live copy, the closing-stock identity
+
+        opening + PurchaseQuantity + TransferInQuantity
+                - SaleQuantity - TransferOutQuantity + AdjustmentQuantity  ==  StockInHand
+
+    reconciles at 99.7% (residual is the rare tid-17 'N' series + a few data
+    anomalies -- NOT returns). That proves returns are ALREADY absorbed:
+
+        * SaleQuantity      is NET of sales returns  (the 'R' / tid-2 series)
+        * AdjustmentQuantity folds expiry returns    (the 'ER' / tid-16 series),
+          and is SIGNED (negative adjustments are preserved, never abs()'d)
+        * PurchaseQuantity  is already net of purchase returns
+
+    So the movement model the chart draws is:
+
+        IN         = purchase + transfer_in
+        OUT        = sales (net) + transfer_out
+        ADJUSTMENT = adjustment (signed)
+        STOCK      = stock (closing StockInHand)
+
+    We DO NOT re-add returns to those totals -- that would double count. We only
+    expose them for the tooltip so it can explain how a net figure was reached.
+    sales_return/expiry_return are read straight from the raw
+    ProductSaleInformation series (already synced centrally, no schema change
+    needed). purchase_return reads ProductTrans.PurchaseReturnQuantity directly
+    (added by sql/0004_producttrans_return_columns.sql + the matching
+    sync_engine.py projection change -- same row as PurchaseQuantity, so no
+    purchase/pack-unit conversion is involved, unlike PurchaseTrans's own
+    'PR' series which is stored in purchase units and would need a per-product
+    conversion factor to line up). Until that migration has been applied AND
+    a sync cycle has repopulated the month, the column reads NULL and this
+    coerces to 0 -- indistinguishable from a genuine zero-return month for
+    that transitional window."""
+    is_local = mode != "remote"
+    pt_store = " AND pt.StoreName = ?" if is_local else ""
+    ps_store = " AND ps.StoreName = ?" if is_local else ""
+    # Same window + ascending ordering as the legacy query: last ~3 month starts.
+    boundary = "DATEADD(MONTH, DATEDIFF(MONTH, 0, GETDATE()) - 3, 0)"
+
+    stats_sql = (
+        "SELECT CONVERT(VARCHAR(7), pt.MonthOfStatistics, 120) AS ym, "
+        "ISNULL(pt.PurchaseQuantity, 0) AS purchase, "
+        "ISNULL(pt.TransferInQuantity, 0) AS transfer_in, "
+        "ISNULL(pt.SaleQuantity, 0) AS sales, "
+        "ISNULL(pt.TransferOutQuantity, 0) AS transfer_out, "
+        "ISNULL(pt.AdjustmentQuantity, 0) AS adjustment, "
+        "ISNULL(pt.StockInHand, 0) AS stock, "
+        "ISNULL(pt.PurchaseReturnQuantity, 0) AS purchase_return_signed "
         "FROM ProductTrans pt WITH (NOLOCK) "
         "WHERE pt.ProductCode = ? "
-        "AND pt.MonthOfStatistics >= DATEADD(MONTH, DATEDIFF(MONTH, 0, GETDATE()) - 3, 0)"
-        f"{store_filter} "
+        f"AND pt.MonthOfStatistics >= {boundary}{pt_store} "
         "ORDER BY pt.MonthOfStatistics ASC"
     )
-    params = [product_code]
-    if is_local:
-        params.append(store["store_name"])
+    # Sales returns ('R') and expiry returns ('ER') per month, signed as stored
+    # (both come through negative). These are the ONLY return figures that
+    # reconcile in base units; everything else is read from ProductTrans above.
+    returns_sql = (
+        "SELECT CONVERT(VARCHAR(7), ps.TransactionDate, 120) AS ym, "
+        "SUM(CASE WHEN ps.SeriesName = 'R'  THEN ps.Quantity ELSE 0 END) AS r_signed, "
+        "SUM(CASE WHEN ps.SeriesName = 'ER' THEN ps.Quantity ELSE 0 END) AS er_signed "
+        "FROM ProductSaleInformation ps WITH (NOLOCK) "
+        "WHERE ps.ProductCode = ? AND ps.TransactionValidity = 0 "
+        "AND ps.SeriesName IN ('R', 'ER') "
+        f"AND ps.TransactionDate >= {boundary}{ps_store} "
+        "GROUP BY CONVERT(VARCHAR(7), ps.TransactionDate, 120)"
+    )
+    stats_params = [product_code] + ([store["store_name"]] if is_local else [])
+    returns_params = [product_code] + ([store["store_name"]] if is_local else [])
 
     conn = database.get_central_connection() if is_local else database.get_branch_connection(
         store["server_name"], store["database"], store["username"], store["password"]
     )
     with conn:
-        cur = conn.cursor().execute(sql, params)
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        cur = conn.cursor()
+        cur.execute(stats_sql, stats_params)
+        stat_rows = [dict(zip([d[0] for d in cur.description], row)) for row in cur.fetchall()]
+        cur.execute(returns_sql, returns_params)
+        returns = {r[0]: (r[1] or 0.0, r[2] or 0.0) for r in cur.fetchall()}
+
+    rows = []
+    for s in stat_rows:
+        ym = s["ym"]
+        r_signed, er_signed = returns.get(ym, (0.0, 0.0))
+        sales_return = _clean_qty(-float(r_signed))    # >= 0; stock came IN, already netted out of `sales`
+        expiry_return = _clean_qty(-float(er_signed))  # >= 0; stock went OUT, already inside `adjustment`
+        purchase = _clean_qty(s["purchase"])            # NET of purchase returns
+        transfer_in = _clean_qty(s["transfer_in"])
+        sales = _clean_qty(s["sales"])                 # NET of sales returns
+        transfer_out = _clean_qty(s["transfer_out"])
+        adjustment = _clean_qty(s["adjustment"])       # SIGNED, includes expiry returns
+        stock = _clean_qty(s["stock"])
+        # PurchaseReturnQuantity is stored <= 0 on the same ProductTrans row as
+        # PurchaseQuantity (added by sql/0004_producttrans_return_columns.sql),
+        # so this needs no unit conversion, unlike PurchaseTrans's own 'PR'
+        # series (purchase/pack units). Reads 0 pre-migration/pre-resync -- see
+        # the function docstring.
+        purchase_return = _clean_qty(-float(s["purchase_return_signed"]))
+        gross_purchase = _clean_qty(purchase + purchase_return)  # purchase before the return
+        gross_sales = _clean_qty(sales + sales_return)            # sales before the return
+        # total_in/total_out are built from the GROSS figures, not the net
+        # `purchase`/`sales` fields -- a month can carry a return with no
+        # offsetting purchase of its own (the original purchase landed in an
+        # earlier month), which drives net `purchase` negative and would make
+        # "stock coming in" a negative bar. Using gross figures keeps both
+        # bars >= 0 while still reconciling exactly: the purchase_return and
+        # sales_return terms cancel in (total_in - total_out), so
+        # prevStock + total_in - total_out + adjustment == stock holds
+        # identically either way (verified against live data both ways).
+        rows.append({
+            "month": ym,
+            # --- the four series the chart draws ---
+            "purchase": purchase,
+            "transfer_in": transfer_in,
+            "sales": sales,
+            "transfer_out": transfer_out,
+            "adjustment": adjustment,
+            "stock": stock,
+            "total_in": _clean_qty(gross_purchase + transfer_in + sales_return),
+            "total_out": _clean_qty(gross_sales + transfer_out + purchase_return),
+            # --- breakdown for the tooltip (already included above, shown for transparency) ---
+            "gross_purchase": gross_purchase,
+            "purchase_return": purchase_return,                       # inside `purchase` (net) already
+            "gross_sales": gross_sales,
+            "sales_return": sales_return,                             # inside `sales` (net) already
+            "expiry_return": expiry_return,                           # inside `adjustment` already
+            "stock_adjustment": _clean_qty(adjustment - float(er_signed)),  # adjustment excl. expiry
+        })
+    return rows
 
 
 def qty_check_order_history(store_name, product_code):

@@ -117,6 +117,16 @@ def get_batch_details(tenant_id, store_id, product_code):
     )
 
 
+def get_batch_detail(tenant_id, store_id, product_code, batch_code):
+    """Single-batch detail (popup): description, stock, expiry, cost, ptr, mrp, supplier."""
+    rows = _run_sp(
+        "EXEC stock.usp_BatchDetail "
+        "@TenantId=?, @StoreId=?, @ProductCode=?, @BatchCode=?",
+        (tenant_id, store_id, product_code, batch_code),
+    )
+    return rows[0] if rows else None
+
+
 def get_product_core(tenant_id, store_id, product_code, months=3):
     """batches + purchases + sales + movement in one round trip (perf)."""
     batches, purchases, sales, movement = _run_sp_multi(

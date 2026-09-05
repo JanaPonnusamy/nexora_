@@ -134,7 +134,8 @@
 .sa-dot--out { background: #dc2626; }
 
 /* Selection marker — one per store row, shown only on the active product. */
-.sa-dot--selected { background: #16a34a; }
+.sa-dot--selected { background: #ffffff; }
+.sa-dot--sync { background: #ffffff; }
 .sa-dot--hidden { visibility: hidden; }
 
 /* ===== Branch cards (colour-coded per store) — fill full width ===== */
@@ -215,15 +216,39 @@
   cursor: default;
 }
 .sa-branch__row:not(.sa-branch__row--head):hover { background: var(--sa-store-soft); }
-.sa-branch__row--active {
+
+/* SOURCE row — the product the user actually clicked. Strong green,
+   distinct from hover and from the BLUE cross-store synchronized state. */
+.sa-branch__row--source {
   min-height: var(--sa-row-h-active);
   padding-top: 0.55rem;
   padding-bottom: 0.55rem;
-  background: var(--sa-store-soft);
-  box-shadow: inset 3px 0 0 var(--sa-store);
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+  box-shadow: inset 3px 0 0 #14532d, 0 1px 2px rgba(0, 0, 0, 0.15);
   font-weight: 700;
+  color: #ffffff;
 }
-.sa-branch__row--active .sa-dot--selected { width: 11px; height: 11px; }
+.sa-branch__row--source .sa-dim,
+.sa-branch__row--source .sa-num { color: #ecfdf5; }
+.sa-branch__row--source:hover { background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); }
+
+/* SYNC row — the cross-store equivalent auto-resolved from the SOURCE
+   selection in another branch. Rich blue, never the same as SOURCE green. */
+.sa-branch__row--sync {
+  min-height: var(--sa-row-h-active);
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 100%);
+  box-shadow: inset 3px 0 0 #172554, 0 1px 2px rgba(0, 0, 0, 0.15);
+  font-weight: 700;
+  color: #ffffff;
+}
+.sa-branch__row--sync .sa-dim,
+.sa-branch__row--sync .sa-num { color: #dbeafe; }
+.sa-branch__row--sync:hover { background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 100%); }
+
+.sa-branch__row--source .sa-dot--selected,
+.sa-branch__row--sync .sa-dot--sync { width: 11px; height: 11px; }
 .sa-branch__row--empty {
   min-height: var(--sa-row-h);
   border-bottom: 1px solid var(--sx-border);
@@ -479,6 +504,51 @@
 .sa-toast--info i { color: var(--sx-info); }
 .sa-toast__msg { flex: 1; }
 .sa-toast__close { border: 0; background: transparent; color: var(--sx-faint); cursor: pointer; line-height: 1; }
+
+/* ===== Dense full-height shell integration (matches Order Workspace) =====
+   The page is a viewport-locked operational console: it fills .app-main and
+   reclaims its gutter; only the branch grid and the detail panels scroll. */
+.app-main:has(> .sa) { padding: 0.55rem 0.7rem; }
+
+/* Body scrolls only as a safety net when many branch cards stack; the detail
+   area keeps a workable floor so its panels never collapse to nothing. */
+.sa-body { overflow-y: auto; overflow-x: hidden; }
+.sa-detail { min-height: 420px; }
+
+/* Header right cluster: compact live KPI strip + tenant picker (replaces the
+   old full-height KpiBar of StatCards that ate a whole row). */
+.sa-head { flex-wrap: wrap; }
+.sa-head__right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem 1.1rem;
+  flex-wrap: wrap;
+}
+.sa-kpis { display: flex; align-items: center; gap: 0.35rem 1rem; flex-wrap: wrap; }
+.sa-kpi { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.02; }
+.sa-kpi b { font-size: 1rem; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--sx-text); }
+.sa-kpi i {
+  font-style: normal;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--sx-faint);
+}
+.sa-kpi--accent b { color: var(--sx-accent); }
+.sa-kpi--ok b { color: var(--sx-success); }
+
+.sa-tenant select {
+  border: 1px solid var(--sx-border);
+  background: var(--sx-surface);
+  color: var(--sx-text);
+  border-radius: var(--sx-r-sm);
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  font-size: 0.84rem;
+  min-height: 1.9rem;
+}
 
 @media (max-width: 640px) {
   .sa-deflist { grid-template-columns: 1fr; }

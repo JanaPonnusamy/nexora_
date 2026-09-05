@@ -27,6 +27,7 @@ class LabelSearchRow(BaseModel):
 class LabelSearchResult(BaseModel):
     rows: List[LabelSearchRow] = []
     unit_descriptions: List[str] = []
+    sublocations: List[str] = []
     last_box_for_letter: Optional[str] = None
 
 

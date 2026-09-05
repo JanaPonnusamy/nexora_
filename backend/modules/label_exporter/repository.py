@@ -36,13 +36,15 @@ def search_products(
     stock_filter,
     only_null_sublocation,
     only_sale_unit_gt_one,
+    sublocation_filter="",
 ):
     """Main label-exporter grid: every active product matching the filters,
     with any Y/N + remarks review decision joined in. unit_description_mode
     is 'contains' (substring match), 'exact' (unit_description may be a
     comma-separated list for a multi-select filter), or 'null'
     (UnitDescription is blank/NULL) - 'null' ignores the unit_description
-    text value."""
+    text value. sublocation_filter is an optional comma-separated list of
+    exact existing SubLocation values (multi-select 'old location' filter)."""
     exact_values = [v.strip() for v in (unit_description or "").split(",") if v.strip()]
     if unit_description_mode == "exact" and exact_values:
         exact_clause = "LTRIM(RTRIM(ISNULL(p.UnitDescription, ''))) IN (%s)" % ", ".join("?" for _ in exact_values)
@@ -50,6 +52,14 @@ def search_products(
     else:
         exact_clause = "1 = 1"
         exact_params = []
+
+    subloc_values = [v.strip() for v in (sublocation_filter or "").split(",") if v.strip()]
+    if subloc_values:
+        subloc_clause = "LTRIM(RTRIM(ISNULL(p.SubLocation, ''))) IN (%s)" % ", ".join("?" for _ in subloc_values)
+        subloc_params = list(subloc_values)
+    else:
+        subloc_clause = "1 = 1"
+        subloc_params = []
 
     rows = _fetch_all(
         f"""
@@ -113,6 +123,7 @@ def search_products(
                 OR ? <> ''
                 OR ISNULL(LTRIM(RTRIM(p.SubLocation)), '') = ''
               )
+          AND ({subloc_clause})
           AND (
                 ? = 0
                 OR TRY_CAST(p.SaleUnit AS DECIMAL(18, 2)) > 1
@@ -167,6 +178,7 @@ def search_products(
             box_number,
             1 if only_null_sublocation else 0,
             box_number,
+            *subloc_params,
             1 if only_sale_unit_gt_one else 0,
             stock_filter,
             stock_filter,
@@ -210,6 +222,26 @@ def get_unit_descriptions(tenant_id, store_id, starts_with):
         (tenant_id, store_id, starts_with, starts_with),
     )
     return [row["unit_description"] for row in rows if row.get("unit_description")]
+
+
+def get_sublocations(tenant_id, store_id):
+    """Distinct existing SubLocation values, for the 'Old Loc' multi-select
+    filter - so users pick from what's really in the table instead of
+    free-typing a location that may not exist."""
+    rows = _fetch_all(
+        """
+        SELECT DISTINCT TOP 300
+            CAST(LTRIM(RTRIM(SubLocation)) AS NVARCHAR(50)) AS sublocation
+        FROM sync.Products
+        WHERE tenant_id = ?
+          AND store_id = ?
+          AND ISNULL(isactive, 1) = 1
+          AND LTRIM(RTRIM(ISNULL(SubLocation, ''))) <> ''
+        ORDER BY CAST(LTRIM(RTRIM(SubLocation)) AS NVARCHAR(50))
+        """,
+        (tenant_id, store_id),
+    )
+    return [row["sublocation"] for row in rows if row.get("sublocation")]
 
 
 def search_boxes(tenant_id, store_id, q, starts_with):

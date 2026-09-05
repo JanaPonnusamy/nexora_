@@ -567,7 +567,8 @@ export const api = {
       box_number: filters.boxNumber || '',
       stock_filter: filters.stockFilter || 'all',
       only_null_sublocation: filters.onlyNullSublocation ? 1 : 0,
-      only_sale_unit_gt_one: filters.onlySaleUnitGtOne ? 1 : 0
+      only_sale_unit_gt_one: filters.onlySaleUnitGtOne ? 1 : 0,
+      sublocation_filter: filters.sublocationFilter || ''
     })}`, { session });
   },
 

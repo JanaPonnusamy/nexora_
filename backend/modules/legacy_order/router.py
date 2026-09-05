@@ -7,12 +7,12 @@ is a platform-ops console (DB recovery, sync jobs) with no per-tenant model
 of its own, so it's gated to super admin / platform users only rather than
 tenant-scoped like the rest of the API.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
-from modules.legacy_order import database, repository, service, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, WorkflowActionRequest
+from modules.legacy_order import database, order_export, repository, service, sync_engine
+from modules.legacy_order.schemas import AssignSupplierRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, WorkflowActionRequest
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -240,6 +240,18 @@ def orders_by_supplier(store_name: str, supplier_code: str, mode: str = "history
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/orders/{store_name}/by-supplier/export-count")
+def orders_by_supplier_export_count(store_name: str, supplier_code: str):
+    """Stock-mode exportable row count for this store/supplier -- exactly the
+    eligibility Export always acts on, regardless of which History/Live Stock
+    tab the grid is currently showing. Powers the Export button's label/count
+    without loading the full stock grid just to count it."""
+    try:
+        return {"count": repository.orders_by_supplier_export_count(store_name, supplier_code)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.get("/orders/{store_name}/assigned")
 def assigned_orders(store_name: str, supplier_code: str):
     """Rows already assigned to a supplier (status=1)."""
@@ -265,6 +277,44 @@ def assign_supplier(
         return result
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/export")
+def export_order(
+    store_name: str, payload: ExportOrderRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """Bulk-assign every OrderQty>0 row for this supplier, then build and
+    return the Order Workspace Excel export (or a .zip of parts when
+    split_size splits the file). Review-only grid, one click -- no
+    per-product Assign/Unassign. See order_export.export_order for the
+    resolve -> assign -> build sequence and why it's two steps, not one
+    transaction."""
+    try:
+        if not repository.get_store(store_name):
+            raise HTTPException(status_code=404, detail="Store not found")
+        result = order_export.export_order(
+            store_name, payload.supplier_code, payload.supplier_name,
+            payload.mode, payload.split_size,
+            current_user.get("username") or current_user.get("sub"),
+        )
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except order_export.NoExportableRows as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except order_export.ExportGenerationFailed as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return Response(
+        content=result.content,
+        media_type=result.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "X-Exported-Count": str(result.count),
+            "X-Supplier-Name": result.supplier_name,
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Exported-Count, X-Supplier-Name",
+        },
+    )
 
 
 @router.get("/previous-orders/{store_name}")

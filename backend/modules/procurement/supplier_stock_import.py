@@ -69,7 +69,7 @@ def _legacy_connection():
         "DATABASE=" + os.getenv("DB_DATABASE", "NEXORA_PLATFORM") + ";",
         "DATABASE=" + _LEGACY_DB + ";",
     )
-    return pyodbc.connect(cs)
+    return pyodbc.connect(cs, timeout=10)
 
 
 def apply_ddl():

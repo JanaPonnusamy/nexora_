@@ -149,6 +149,29 @@ def non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age, limit):
     return _result("non-moving", cols, rows, None)
 
 
+def non_moving_totals(tenant_id, store_id, sales_age=90, grn_age=10):
+    """Store non-moving / expiry valuation summary for the NM bar readout.
+    Returns cost+tax value buckets and their share of total in-stock value."""
+    try:
+        row = repo.non_moving_totals(tenant_id, store_id, sales_age, grn_age)
+    except Exception:
+        row = {}
+    stock = float(row.get("StockValue") or 0)
+    nm = float(row.get("NmValue") or 0)
+    ex = float(row.get("ExValue") or 0)
+    pct = lambda part: round((part / stock) * 100, 1) if stock > 0 else 0.0
+    return {
+        "store_id": store_id,
+        "stock_value": round(stock, 2),
+        "nm_value": round(nm, 2),
+        "ex_value": round(ex, 2),
+        "nm_pct": pct(nm),
+        "ex_pct": pct(ex),
+        "nm_items": int(row.get("NmItems") or 0),
+        "total_items": int(row.get("TotalItems") or 0),
+    }
+
+
 # --- Helpers --------------------------------------------------------------
 
 def _num(v):

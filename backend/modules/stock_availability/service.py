@@ -9,7 +9,141 @@ through to their procedures.
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dependencies.store_scope import assert_store_access, assert_tenant_access
+from modules.product_mapping import matcher as mapping_matcher
+from modules.product_mapping import repository as mapping_repository
+from modules.product_mapping import source_repository as mapping_source_repository
+from modules.product_mapping.medicine_parser import extract_medicine_attributes
 from modules.stock_availability import repository
+
+# Cross-store product-selection sync (Stock Availability grid) reuses the
+# Product Mapping engine's pure matcher — see match_cross_store_selection()
+# below — rather than re-implementing normalization/scoring here.
+#
+# The engine's own FUZZY phase (match_products Phase 7) exists to feed a human
+# review queue: it surfaces the best candidate whenever ANY signal overlaps at
+# all, however weak. Auto-selecting a row in another store with no human in
+# the loop needs a stricter bar, so this module applies two extra guards on
+# top of the engine's score before accepting a FUZZY result automatically:
+#   * the weighted score must clear FUZZY_AUTO_MIN_SCORE
+#   * parsed strength/dosage-form must not conflict (when both sides have one)
+# The engine's STRUCTURED phase (core-key + equal strength) also has no
+# dosage-form check of its own (e.g. "BRIV 100MG TAB" and "BRIV 100MG SYRUP"
+# strip to the same core key), so the dosage-form guard is applied there too.
+FUZZY_AUTO_MIN_SCORE = 60.0
+
+
+def _conflicts(a, b):
+    """True only when BOTH sides have a value and they differ — a missing
+    attribute on either side is never treated as a conflict."""
+    return bool(a) and bool(b) and a != b
+
+
+def _decision_attrs(decision, targets):
+    """(target_row, target_attrs, attr_conflict, brand_conflict) for one decision."""
+    target_code = decision["target_product_code"]
+    target_row = next((t for t in targets if t["product_code"] == target_code), None) if target_code else None
+    target_attrs = extract_medicine_attributes(target_row["product_name"] or "") if target_row else {}
+    source_attrs = {"strength": decision["strength"], "unit": decision["unit"], "dosage_form": decision["dosage_form"]}
+    attr_conflict = (_conflicts(source_attrs["strength"], target_attrs.get("strength"))
+                      or _conflicts(source_attrs["unit"], target_attrs.get("unit"))
+                      or _conflicts(source_attrs["dosage_form"], target_attrs.get("dosage_form")))
+    brand_conflict = _conflicts(decision["brand"], target_attrs.get("brand"))
+    return target_row, target_attrs, attr_conflict, brand_conflict
+
+
+def _match_one_store(tenant_id, source_row, terms, source_store_id, target_store_id):
+    pairs = mapping_source_repository.load_supplier_pairs(tenant_id, source_store_id, target_store_id)
+    targets = mapping_source_repository.load_store_products(tenant_id, target_store_id)
+    decision = mapping_matcher.match_products([source_row], targets, supplier_pairs=pairs, dosage_terms=terms)[0]
+
+    no_match = {"store_id": target_store_id, "match_type": "NO_MATCH", "score": 0.0, "product": None}
+    method = decision["match_method"]
+    target_row, target_attrs, attr_conflict, brand_conflict = _decision_attrs(decision, targets)
+
+    if method == "SUPPLIER" and (attr_conflict or brand_conflict):
+        # SupplierProductMatch pairs are curated for the Product Mapping
+        # review workflow, not guaranteed correct for *auto*-selecting a row
+        # here with no human in the loop — a stale or wrong pairing (e.g. two
+        # unrelated products that happen to share a (SupplierCode,
+        # SupplierProductCode) key in one store's data) would otherwise be
+        # trusted at 100% confidence with zero sanity check. Phase 1 claims
+        # the whole source row on a SUPPLIER hit, so EXACT/NORMALIZED/
+        # STRUCTURED/FUZZY never got a chance to run for it — re-match with
+        # that pairing excluded so a real equivalent already sitting in this
+        # store's own catalog can still be found via the later phases.
+        decision = mapping_matcher.match_products([source_row], targets, supplier_pairs=[], dosage_terms=terms)[0]
+        method = decision["match_method"]
+        target_row, target_attrs, attr_conflict, brand_conflict = _decision_attrs(decision, targets)
+
+    if method == "SUPPLIER":
+        match_type = "EXACT_SUPPLIER_MATCH"
+    elif method in ("EXACT", "NORMALIZED"):
+        match_type = "EXACT_NORMALIZED_NAME"
+    elif method == "STRUCTURED":
+        if attr_conflict:
+            return no_match
+        match_type = "STRONG_ATTRIBUTE_MATCH"
+    elif method == "FUZZY":
+        best = decision["candidates"][0] if decision["candidates"] else None
+        # FUZZY is similarity-scored, not exact — equal strength/unit/form is not
+        # enough on its own: two DIFFERENT brand families sharing a strength/form
+        # (e.g. "BRIV 100MG TAB" vs "BRIVATOP 100MG TAB", a distinct product that
+        # merely starts with the same letters) can otherwise clear the score
+        # threshold on name-similarity + matching attributes alone. Require the
+        # parsed brand to match too (when both sides have one) before auto-
+        # selecting a fuzzy candidate — SUPPLIER/EXACT/NORMALIZED/STRUCTURED are
+        # unaffected since each already pins the brand via an exact key/name.
+        if (not best or best["total_score"] < FUZZY_AUTO_MIN_SCORE or attr_conflict
+                or _conflicts(decision["brand"], best.get("brand"))):
+            return {**no_match, "score": round(best["total_score"], 2) if best else 0.0}
+        match_type = "RELEVANT_FUZZY_MATCH"
+    else:
+        return no_match
+
+    return {
+        "store_id": target_store_id,
+        "match_type": match_type,
+        "score": decision["confidence"],
+        "product": {
+            "product_code": decision["target_product_code"],
+            "product_name": decision["target_product_name"],
+            "mrp": target_row["mrp"] if target_row else None,
+        },
+    }
+
+
+def match_cross_store_selection(user, tenant_id, source_store_id, source_product_code,
+                                 source_product_name, target_store_ids):
+    """For a product selected in one store, resolve its equivalent product in
+    each of ``target_store_ids`` via the Product Mapping matching hierarchy
+    (SupplierProductMatch -> normalized name -> structured attributes ->
+    relevance-scored fuzzy candidate). Stores with no reliable match come back
+    with ``match_type: NO_MATCH`` / ``product: null`` so the caller leaves that
+    store's selection unchanged, never fabricating an equivalent."""
+    assert_tenant_access(user, tenant_id)
+
+    targets = [str(t) for t in (target_store_ids or []) if str(t) != str(source_store_id)]
+    if not source_product_name or not targets:
+        return {"results": []}
+
+    terms = mapping_repository.load_active_terms(tenant_id)
+    source_row = {
+        "product_code": str(source_product_code),
+        "product_name": source_product_name,
+        "mrp": None,
+    }
+
+    results = []
+    workers = min(8, len(targets))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_match_one_store, tenant_id, source_row, terms, source_store_id, tid): tid
+            for tid in targets
+        }
+        for future in as_completed(futures):
+            results.append(future.result())
+
+    return {"results": results}
 
 
 def _to_number(value):
@@ -145,6 +279,11 @@ def product_core_bulk(user, tenant_id, items, months=3):
 def batch_details(user, tenant_id, store_id, product_code):
     assert_store_access(user, tenant_id, store_id)
     return repository.get_batch_details(tenant_id, store_id, product_code)
+
+
+def batch_detail(user, tenant_id, store_id, product_code, batch_code):
+    assert_store_access(user, tenant_id, store_id)
+    return repository.get_batch_detail(tenant_id, store_id, product_code, batch_code)
 
 
 def purchase_history(user, tenant_id, store_id, product_code):

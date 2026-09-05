@@ -81,6 +81,27 @@ def _load_runtime_config():
             time.sleep(HEARTBEAT_SECONDS)
 
 
+def _refresh_runtime_config(current_config, ho_url):
+    """Single-attempt re-fetch of the store's runtime config from HO.
+
+    Never blocks and never raises: a transient HO outage must keep the sync
+    loop running on the last-known-good cached config rather than stall it.
+    Returns ``current_config`` unchanged unless a *different* config was
+    successfully fetched."""
+    try:
+        fresh = RuntimeConfigurationLoader().load(
+            f"{ho_url}/api/stores/{STORE_ID}/agent-config"
+        )
+    except Exception:
+        _log("[CONFIG] refresh failed, using cached config:\n" + _safe_tb())
+        return current_config
+
+    if fresh != current_config:
+        _log("[CONFIG] change detected, reloading runtime context")
+        return fresh
+    return current_config
+
+
 def main():
     _log("[AGENT] HO routes: " + ", ".join(config.HO_API_URLS))
     runtime_config, ho_url = _load_runtime_config()
@@ -123,6 +144,10 @@ def main():
     while True:
         connection = None
         try:
+            new_runtime_config = _refresh_runtime_config(runtime_config, config.active_ho_url())
+            if new_runtime_config is not runtime_config:
+                runtime_config = new_runtime_config
+                runtime_context = RuntimeContextFactory().create(runtime_config)
             connection = RuntimeSqlConnectionService().connect(runtime_context)
             orchestrator = SyncRuntimeOrchestrator(
                 connection=connection,
