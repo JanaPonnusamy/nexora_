@@ -711,6 +711,56 @@ def _caption_and_send_attachment(page: Any, settings: dict[str, Any], message: s
     time.sleep(3)
 
 
+# The open conversation's header title (the chat currently loaded in #main).
+# Read to VERIFY the right chat opened before we attach a file or type -- see
+# _wait_chat_opened. WhatsApp Web renders the chat name as the first titled
+# span inside #main's <header>.
+_OPEN_CHAT_TITLE_SELECTORS = [
+    "xpath=//div[@id='main']//header//span[@title]",
+    "xpath=//div[@id='main']//header//div[@role='button']//span[@title]",
+]
+
+
+def _current_chat_title(page: Any) -> str:
+    """Title of the currently-open conversation (#main header), or '' when no
+    chat is open."""
+    for sel in _OPEN_CHAT_TITLE_SELECTORS:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0:
+                title = (loc.first.get_attribute("title") or "").strip()
+                if title:
+                    return title
+        except Exception:
+            continue
+    return ""
+
+
+def _titles_match(opened: str, label: str) -> bool:
+    """Case-insensitive match tolerant of the same case/spacing drift the chat
+    selectors allow ("NMV GROUP" configured vs "NMV Group" in WhatsApp). Never
+    matches a genuinely different group (e.g. 'NMG GROUP' vs 'NMV GROUP')."""
+    a = (opened or "").strip().lower()
+    b = (label or "").strip().lower()
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
+
+
+def _wait_chat_opened(page: Any, label: str, timeout_seconds: float) -> bool:
+    """Poll until the open-conversation header shows ``label`` (the chat we
+    intended to open). WhatsApp switches chats asynchronously, so a search-result
+    click is NOT instantaneous -- attaching/typing before the switch completes
+    delivers into the previously-open chat. Returns False if the intended chat
+    never becomes the active conversation within the timeout."""
+    end = time.time() + timeout_seconds
+    while time.time() < end:
+        if _titles_match(_current_chat_title(page), label):
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any], message: str = "") -> str:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     if target["target_kind"] == "contact":
@@ -745,14 +795,19 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
     # the real chat title ("NMV GROUP" vs the actual "NMV Group") -- XPath 1.0
     # has no case-insensitive contains(), so translate() both sides to
     # lowercase before comparing.
+    # Scope the result click to the chat-list pane (#pane-side) ONLY -- never
+    # the whole page. The open conversation's header (#main) ALSO carries a
+    # span[@title=...]; matching page-wide could click/leave the previously-open
+    # chat active and send this store's file into the wrong group.
     _UPPER, _LOWER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
     label_lower = json.dumps(label.lower())
+    _pane = "//div[@id='pane-side']"
     chat_selectors = [
-        f"xpath=//span[@title={json.dumps(label)}]",
-        f"xpath=//*[@title={json.dumps(label)}]",
-        f"xpath=//span[contains(@title, {json.dumps(label)})]",
-        f"xpath=//span[translate(@title, '{_UPPER}', '{_LOWER}')={label_lower}]",
-        f"xpath=//span[contains(translate(@title, '{_UPPER}', '{_LOWER}'), {label_lower})]",
+        f"xpath={_pane}//span[@title={json.dumps(label)}]",
+        f"xpath={_pane}//*[@title={json.dumps(label)}]",
+        f"xpath={_pane}//span[contains(@title, {json.dumps(label)})]",
+        f"xpath={_pane}//span[translate(@title, '{_UPPER}', '{_LOWER}')={label_lower}]",
+        f"xpath={_pane}//span[contains(translate(@title, '{_UPPER}', '{_LOWER}'), {label_lower})]",
     ]
     try:
         chat = _first_locator(page, chat_selectors, wait_seconds)
@@ -762,9 +817,18 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
             "Use the exact chat/group name as it appears in WhatsApp."
         )
     _safe_click(chat)
-    # No fixed wait: the caller's composer/attach _first_locator polls until the
-    # opened chat is ready.
-    time.sleep(0.3)
+    # CRITICAL: WhatsApp switches the open conversation asynchronously. Do NOT
+    # proceed to attach/type on a fixed sleep -- wait until the header actually
+    # shows THIS group, and refuse to send (rather than spam the wrong group)
+    # if the intended chat never becomes active. This is the guard that stops a
+    # store's stock file landing in another store's group during the sequential
+    # multi-store distribution run.
+    if not _wait_chat_opened(page, label, wait_seconds):
+        opened = _current_chat_title(page)
+        raise ValueError(
+            f"Opened chat '{opened or 'unknown'}' does not match target '{label}'. "
+            "Aborting the send to avoid delivering to the wrong WhatsApp chat."
+        )
     return "https://web.whatsapp.com/"
 
 
