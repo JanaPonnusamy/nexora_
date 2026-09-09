@@ -713,22 +713,36 @@ def _caption_and_send_attachment(page: Any, settings: dict[str, Any], message: s
 
 # The open conversation's header title (the chat currently loaded in #main).
 # Read to VERIFY the right chat opened before we attach a file or type -- see
-# _wait_chat_opened. WhatsApp Web renders the chat name as the first titled
-# span inside #main's <header>.
+# _wait_chat_opened.
+# CRITICAL: in the current WhatsApp Web build the group/contact NAME sits in
+# the header as the *text* of span[data-testid='conversation-info-header-chat-title']
+# and carries NO @title attribute. The ONLY span[@title] inside #main's header
+# is the SUBTITLE -- the participant list ("Giri, NMG, NMG, Pradeep, ..., You")
+# for an unnamed-in-header group. Reading span[@title] therefore returned the
+# participant list, which never matches the configured group name ("NMG GROUP")
+# and made _wait_chat_opened abort EVERY group send as a false "wrong chat".
+# So read the chat-title span's TEXT first; only fall back to a @title attribute
+# on OLDER builds, and never read the chat-subtitle container.
 _OPEN_CHAT_TITLE_SELECTORS = [
-    "xpath=//div[@id='main']//header//span[@title]",
-    "xpath=//div[@id='main']//header//div[@role='button']//span[@title]",
+    "xpath=//div[@id='main']//header//span[@data-testid='conversation-info-header-chat-title']",
+    "xpath=//div[@id='main']//header//span[@title][not(ancestor::div[@data-testid='chat-subtitle'])]",
+    "xpath=//div[@id='main']//header//div[@role='button']//span[@title][not(ancestor::div[@data-testid='chat-subtitle'])]",
 ]
 
 
 def _current_chat_title(page: Any) -> str:
     """Title of the currently-open conversation (#main header), or '' when no
-    chat is open."""
+    chat is open. Prefers the header chat-title span's visible text (the group
+    name carries no @title attribute in the current build); falls back to a
+    @title attribute for older builds."""
     for sel in _OPEN_CHAT_TITLE_SELECTORS:
         try:
             loc = page.locator(sel)
             if loc.count() > 0:
-                title = (loc.first.get_attribute("title") or "").strip()
+                first = loc.first
+                title = (first.get_attribute("title") or "").strip()
+                if not title:
+                    title = (first.inner_text() or "").strip()
                 if title:
                     return title
         except Exception:

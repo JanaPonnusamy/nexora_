@@ -15,13 +15,18 @@ from modules.label_exporter import service
 from modules.label_exporter.schemas import (
     BoxProductResult,
     BoxSearchResult,
+    LabelAssignRequest,
+    LabelAssignResult,
     LabelBulkReviewRequest,
+    LabelMarkPrintedRequest,
     LabelPurchaseResult,
+    LabelQueueResult,
     LabelReviewUpdateRequest,
     LabelSaleResult,
     LabelSearchResult,
     LabelSublocationAssignRequest,
     LabelTrendResult,
+    LabelUnitCorrectionRequest,
     ProductBatchResult,
 )
 

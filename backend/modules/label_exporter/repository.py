@@ -1,4 +1,40 @@
+import os
+
 from config.database import get_connection
+
+_SQL_DIR = os.path.join(os.path.dirname(__file__), "sql")
+_DDL_FILES = (
+    os.path.join(_SQL_DIR, "0001_label_review.sql"),
+    os.path.join(_SQL_DIR, "0002_label_review_remarks.sql"),
+    os.path.join(_SQL_DIR, "0003_label_assignment.sql"),
+)
+_schema_ready = False
+
+
+def ensure_schema():
+    """Create/extend dbo.label_review + dbo.label_location_history if absent.
+
+    Every DDL file is idempotent (guarded by OBJECT_ID / COL_LENGTH), so this
+    self-provisions on first use and is safe to re-run each startup - mirrors
+    the procurement optimization_repository.ensure_schema pattern (split on
+    GO). 0001/0002 were historically applied by hand; re-applying them is a
+    no-op."""
+    global _schema_ready
+    if _schema_ready:
+        return
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        for ddl_file in _DDL_FILES:
+            with open(ddl_file, "r", encoding="utf-8") as fh:
+                script = fh.read()
+            for batch in (b.strip() for b in script.split("\nGO")):
+                if batch:
+                    cur.execute(batch)
+        conn.commit()
+    finally:
+        conn.close()
+    _schema_ready = True
 
 
 def _fetch_all(sql, params=()):
@@ -37,6 +73,7 @@ def search_products(
     only_null_sublocation,
     only_sale_unit_gt_one,
     sublocation_filter="",
+    review_status="",
 ):
     """Main label-exporter grid: every active product matching the filters,
     with any Y/N + remarks review decision joined in. unit_description_mode
@@ -86,7 +123,13 @@ def search_products(
             CAST(ISNULL(agg.sale_days, 0) AS INT) AS sale_days,
             CAST(ISNULL(agg.live_batch_stock, 0) AS DECIMAL(18, 2)) AS batch_stock,
             r.include_label,
-            r.remarks
+            r.remarks,
+            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), '') AS NVARCHAR(100)) AS corrected_unit,
+            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.old_unit_description)), ''), '') AS NVARCHAR(100)) AS old_unit_description,
+            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.assigned_sublocation)), ''), '') AS NVARCHAR(50)) AS assigned_sublocation,
+            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.old_sublocation)), ''), '') AS NVARCHAR(50)) AS old_sublocation,
+            r.assignment_type,
+            CAST(ISNULL(r.label_required, 0) AS BIT) AS label_required
         FROM sync.Products p
         LEFT JOIN ProductAgg agg
             ON agg.ProductCode = p.ProductCode
@@ -156,6 +199,11 @@ def search_products(
                     AND (agg.sale_days IS NULL OR agg.sale_days > 90)
                 )
               )
+          AND (
+                ? = ''
+                OR (? = 'unreviewed' AND r.include_label IS NULL)
+                OR (? IN ('Y', 'N') AND r.include_label = ?)
+              )
         ORDER BY
             CASE WHEN ISNULL(LTRIM(RTRIM(p.SubLocation)), '') = '' THEN 0 ELSE 1 END,
             ISNULL(LTRIM(RTRIM(p.SubLocation)), ''),
@@ -184,6 +232,10 @@ def search_products(
             stock_filter,
             stock_filter,
             stock_filter,
+            review_status,
+            review_status,
+            review_status,
+            review_status,
         ),
     )
     suggestion = _fetch_one(
@@ -499,6 +551,252 @@ def get_product_sales(tenant_id, store_id, product_code):
         """,
         (tenant_id, store_id, product_code),
     )
+
+
+# --------------------------------------------------------------------------
+# Location assignment (Modes 1/2, SYP, single box)
+# --------------------------------------------------------------------------
+
+def get_products_for_assignment(tenant_id, store_id, product_codes):
+    """Load the products the user picked, resolving the CORRECTED unit (a
+    review unit_description override wins over the master UnitDescription -
+    spec §Q) and each product's current effective location (its already-
+    assigned box if any, else the shelf SubLocation)."""
+    if not product_codes:
+        return []
+    placeholders = ", ".join("?" for _ in product_codes)
+    return _fetch_all(
+        f"""
+        SELECT
+            CAST(p.ProductCode AS NVARCHAR(50)) AS product_code,
+            p.ProductName AS product_name,
+            CAST(ISNULL(
+                NULLIF(LTRIM(RTRIM(r.unit_description)), ''),
+                NULLIF(LTRIM(RTRIM(p.UnitDescription)), '')
+            ) AS NVARCHAR(100)) AS unit_description,
+            CAST(ISNULL(
+                NULLIF(LTRIM(RTRIM(r.assigned_sublocation)), ''),
+                NULLIF(LTRIM(RTRIM(p.SubLocation)), '')
+            ) AS NVARCHAR(50)) AS current_location,
+            CAST(ISNULL(p.TotalStock, 0) AS DECIMAL(18, 2)) AS stock
+        FROM sync.Products p
+        LEFT JOIN dbo.label_review r
+            ON r.tenant_id = p.tenant_id
+           AND r.store_id = p.store_id
+           AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+        WHERE p.tenant_id = ?
+          AND p.store_id = ?
+          AND ISNULL(p.isactive, 1) = 1
+          AND CAST(p.ProductCode AS NVARCHAR(50)) IN ({placeholders})
+        """,
+        (tenant_id, store_id, *product_codes),
+    )
+
+
+def get_box_occupancy(tenant_id, store_id, letter, exclude_codes=()):
+    """Current occupancy per box for a letter: {box_id: product_count}, using
+    each product's effective location (assigned box wins over shelf
+    SubLocation). Products being (re)assigned in this run are excluded so they
+    aren't double-counted against the box they currently sit in."""
+    params = [tenant_id, store_id]
+    exclude_clause = ""
+    if exclude_codes:
+        ph = ", ".join("?" for _ in exclude_codes)
+        exclude_clause = f"AND CAST(p.ProductCode AS NVARCHAR(50)) NOT IN ({ph})"
+        params.extend(exclude_codes)
+    params.append(letter)
+    rows = _fetch_all(
+        f"""
+        SELECT t.eff AS box, COUNT(*) AS cnt
+        FROM (
+            SELECT COALESCE(
+                NULLIF(LTRIM(RTRIM(r.assigned_sublocation)), ''),
+                NULLIF(LTRIM(RTRIM(p.SubLocation)), '')
+            ) AS eff
+            FROM sync.Products p
+            LEFT JOIN dbo.label_review r
+                ON r.tenant_id = p.tenant_id
+               AND r.store_id = p.store_id
+               AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+            WHERE p.tenant_id = ?
+              AND p.store_id = ?
+              AND ISNULL(p.isactive, 1) = 1
+              {exclude_clause}
+        ) t
+        WHERE t.eff IS NOT NULL AND t.eff LIKE ? + '%'
+        GROUP BY t.eff
+        """,
+        tuple(params),
+    )
+    return {row["box"]: int(row["cnt"] or 0) for row in rows if row.get("box")}
+
+
+def assign_locations(tenant_id, store_id, assignments, mode, assignment_type, user_id):
+    """Commit a finalized assignment plan in ONE transaction (spec §V): upsert
+    each product's dbo.label_review with its new box + captured old location,
+    and append a dbo.label_location_history row for every real move. Either the
+    whole batch commits or it rolls back."""
+    if not assignments:
+        return {"assigned": 0}
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        for a in assignments:
+            code = a["product_code"]
+            old_loc = (a.get("old_location") or "").strip() or None
+            new_box = a["box"]
+            unit = (a.get("unit_description") or "").strip() or None
+            cursor.execute(
+                "SELECT id FROM dbo.label_review WHERE tenant_id = ? AND store_id = ? AND product_code = ?",
+                (tenant_id, store_id, code),
+            )
+            exists = cursor.fetchone() is not None
+            if not exists:
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.label_review (
+                        tenant_id, store_id, product_code, product_name,
+                        unit_description, old_sublocation, assigned_sublocation,
+                        assignment_mode, assignment_type, assigned_by, assigned_at,
+                        label_required, stock, sale_days, purchase_days
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), 1, ?, ?, ?)
+                    """,
+                    (
+                        tenant_id, store_id, code, a.get("product_name"),
+                        unit, old_loc, new_box, mode, assignment_type, user_id,
+                        a.get("stock"), a.get("sale_days"), a.get("purchase_days"),
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE dbo.label_review
+                    SET product_name = COALESCE(product_name, ?),
+                        unit_description = COALESCE(?, unit_description),
+                        old_sublocation = COALESCE(NULLIF(LTRIM(RTRIM(old_sublocation)), ''), ?),
+                        assigned_sublocation = ?,
+                        assignment_mode = ?,
+                        assignment_type = ?,
+                        assigned_by = ?,
+                        assigned_at = SYSUTCDATETIME(),
+                        label_required = 1,
+                        stock = COALESCE(?, stock),
+                        sale_days = COALESCE(?, sale_days),
+                        purchase_days = COALESCE(?, purchase_days),
+                        updated_at = SYSUTCDATETIME()
+                    WHERE tenant_id = ? AND store_id = ? AND product_code = ?
+                    """,
+                    (
+                        a.get("product_name"), unit, old_loc, new_box, mode,
+                        assignment_type, user_id, a.get("stock"), a.get("sale_days"),
+                        a.get("purchase_days"), tenant_id, store_id, code,
+                    ),
+                )
+            if old_loc != new_box:
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.label_location_history (
+                        tenant_id, store_id, product_code, old_location, new_location,
+                        unit_description, assignment_mode, assignment_type, assigned_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (tenant_id, store_id, code, old_loc, new_box, unit, mode, assignment_type, user_id),
+                )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+    return {"assigned": len(assignments)}
+
+
+def correct_unit(tenant_id, store_id, product_code, new_unit, current_unit, user_id):
+    """Reviewer corrects a product's unit (e.g. CALPOL SYP -> TAB). Captures the
+    original master unit into old_unit_description ONCE (never destroyed), and
+    stores the correction in unit_description. Auto-saved (spec §D)."""
+    existing = _fetch_one(
+        "SELECT id FROM dbo.label_review WHERE tenant_id = ? AND store_id = ? AND product_code = ?",
+        (tenant_id, store_id, product_code),
+    )
+    if existing is None:
+        _execute(
+            """
+            INSERT INTO dbo.label_review (
+                tenant_id, store_id, product_code, old_unit_description,
+                unit_description, reviewed_by, reviewed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, SYSUTCDATETIME())
+            """,
+            (tenant_id, store_id, product_code, current_unit or None, new_unit or None, user_id),
+        )
+        return
+    _execute(
+        """
+        UPDATE dbo.label_review
+        SET old_unit_description = COALESCE(NULLIF(LTRIM(RTRIM(old_unit_description)), ''), ?),
+            unit_description = ?,
+            reviewed_by = ?,
+            updated_at = SYSUTCDATETIME()
+        WHERE tenant_id = ? AND store_id = ? AND product_code = ?
+        """,
+        (current_unit or None, new_unit or None, user_id, tenant_id, store_id, product_code),
+    )
+
+
+def get_label_queue(tenant_id, store_id):
+    """Products with an assigned box and label_required = 1 (spec §W). Print/
+    export reads from here; assignment and printing stay separate."""
+    return _fetch_all(
+        """
+        SELECT
+            CAST(r.product_code AS NVARCHAR(50)) AS product_code,
+            CAST(ISNULL(r.product_name, p.ProductName) AS NVARCHAR(200)) AS product_name,
+            CAST(r.assigned_sublocation AS NVARCHAR(50)) AS location,
+            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), p.UnitDescription) AS NVARCHAR(100)) AS unit_description,
+            CAST(ISNULL(p.MRP, 0) AS DECIMAL(18, 2)) AS mrp,
+            CAST(ISNULL(p.SaleUnit, 0) AS DECIMAL(18, 2)) AS sale_unit,
+            r.assignment_type,
+            CONVERT(VARCHAR(19), r.assigned_at, 120) AS assigned_at,
+            CONVERT(VARCHAR(19), r.label_created_at, 120) AS label_created_at
+        FROM dbo.label_review r
+        LEFT JOIN sync.Products p
+            ON p.tenant_id = r.tenant_id
+           AND p.store_id = r.store_id
+           AND CAST(p.ProductCode AS NVARCHAR(50)) = r.product_code
+        WHERE r.tenant_id = ?
+          AND r.store_id = ?
+          AND ISNULL(r.label_required, 0) = 1
+          AND NULLIF(LTRIM(RTRIM(r.assigned_sublocation)), '') IS NOT NULL
+        ORDER BY r.assigned_sublocation, ISNULL(r.product_name, p.ProductName)
+        """,
+        (tenant_id, store_id),
+    )
+
+
+def mark_labels_printed(tenant_id, store_id, product_codes):
+    """Stamp label_created_at when labels are printed/exported (spec §W)."""
+    if not product_codes:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        placeholders = ", ".join("?" for _ in product_codes)
+        cursor.execute(
+            f"""
+            UPDATE dbo.label_review
+            SET label_created_at = SYSUTCDATETIME(), updated_at = SYSUTCDATETIME()
+            WHERE tenant_id = ? AND store_id = ? AND product_code IN ({placeholders})
+            """,
+            (tenant_id, store_id, *product_codes),
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def get_product_batches(tenant_id, store_id, product_code):

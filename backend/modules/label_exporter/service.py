@@ -6,10 +6,14 @@ Thin pass-through to repository.py, which queries the real synced tables
 
 from fastapi import HTTPException
 
+from modules.label_exporter import assignment_engine as engine
 from modules.label_exporter import repository
 
 _VALID_INCLUDE_LABEL = {"Y", "N"}
 _VALID_UNIT_DESCRIPTION_MODE = {"contains", "exact", "null"}
+_VALID_REVIEW_STATUS = {"", "unreviewed", "Y", "N"}
+_VALID_MODE = {"continue", "new_label", "single"}
+_VALID_ASSIGNMENT_TYPE = {"standard_box", "single_product_box"}
 
 
 def search_products(
@@ -24,9 +28,13 @@ def search_products(
     only_null_sublocation: int = 0,
     only_sale_unit_gt_one: int = 0,
     sublocation_filter: str = "",
+    review_status: str = "",
 ):
     if unit_description_mode not in _VALID_UNIT_DESCRIPTION_MODE:
         raise HTTPException(status_code=400, detail="Invalid unit_description_mode")
+    if review_status not in _VALID_REVIEW_STATUS:
+        raise HTTPException(status_code=400, detail="Invalid review_status")
+    repository.ensure_schema()
     result = repository.search_products(
         tenant_id,
         store_id,
@@ -39,6 +47,7 @@ def search_products(
         only_null_sublocation,
         only_sale_unit_gt_one,
         sublocation_filter,
+        review_status,
     )
     result["unit_descriptions"] = repository.get_unit_descriptions(tenant_id, store_id, starts_with)
     result["sublocations"] = repository.get_sublocations(tenant_id, store_id)
@@ -93,3 +102,137 @@ def get_product_purchases(tenant_id: str, store_id: str, product_code: str):
 
 def get_product_sales(tenant_id: str, store_id: str, product_code: str):
     return {"rows": repository.get_product_sales(tenant_id, store_id, product_code)}
+
+
+# --------------------------------------------------------------------------
+# Unit correction (auto-save)
+# --------------------------------------------------------------------------
+
+def correct_unit(
+    tenant_id: str, store_id: str, product_code: str, unit_description: str, current_unit: str, user_id
+):
+    new_unit = (unit_description or "").strip().upper()
+    if not new_unit:
+        raise HTTPException(status_code=400, detail="unit_description is required")
+    repository.ensure_schema()
+    repository.correct_unit(
+        tenant_id, store_id, product_code, new_unit, (current_unit or "").strip().upper() or None, user_id
+    )
+
+
+# --------------------------------------------------------------------------
+# Location assignment (preview + commit share one plan builder)
+# --------------------------------------------------------------------------
+
+def _build_assignment_plan(
+    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number
+):
+    """Shared, backend-authoritative planner (spec §AG): the frontend never
+    computes the final boxes - it previews and commits through here, and both
+    paths run the identical engine. Returns (plan, enriched_assignments)."""
+    repository.ensure_schema()
+    mode = (mode or "continue").strip()
+    assignment_type = (assignment_type or "standard_box").strip()
+    unit_u = (unit or "").strip().upper()
+    letter = (letter or "").strip().upper()[:1]
+
+    if mode not in _VALID_MODE:
+        raise HTTPException(status_code=400, detail="Invalid assignment mode")
+    if assignment_type not in _VALID_ASSIGNMENT_TYPE:
+        raise HTTPException(status_code=400, detail="Invalid assignment type")
+    codes = [c for c in (product_codes or []) if str(c or "").strip()]
+    if not codes:
+        raise HTTPException(status_code=400, detail="No products selected for assignment")
+
+    products_raw = repository.get_products_for_assignment(tenant_id, store_id, codes)
+    found = {p["product_code"] for p in products_raw}
+    missing = [c for c in codes if c not in found]
+    if missing:
+        # tenant/store safety: a code not present in THIS store is rejected
+        raise HTTPException(
+            status_code=400,
+            detail=f"{len(missing)} product(s) not found in this store and cannot be assigned",
+        )
+
+    products = [engine.Product(p["product_code"], p["product_name"]) for p in products_raw]
+    meta_by_code = {p["product_code"]: p for p in products_raw}
+
+    try:
+        if assignment_type == "single_product_box":
+            if not letter:
+                raise HTTPException(status_code=400, detail="A letter is required for box numbering")
+            occ = repository.get_box_occupancy(tenant_id, store_id, letter, exclude_codes=codes)
+            plan = engine.plan_single_boxes(letter, products, occ)
+        elif unit_u == engine.UNIT_SYP:
+            plan = engine.plan_syp(products)
+        elif unit_u == engine.UNIT_TAB:
+            if not letter:
+                raise HTTPException(status_code=400, detail="A letter is required for TAB assignment")
+            if mode == "new_label":
+                plan = engine.plan_new_label(letter, products, start_number=int(start_number or 1))
+            else:
+                occ = repository.get_box_occupancy(tenant_id, store_id, letter, exclude_codes=codes)
+                plan = engine.plan_continue(letter, products, occ)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No automatic location rule for unit '{unit}'. Use Single Product Box "
+                    "or assign these manually."
+                ),
+            )
+        engine.validate_plan(plan)
+    except engine.AssignmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    enriched = []
+    for a in plan.assignments:
+        meta = meta_by_code.get(a.product_code, {})
+        enriched.append(
+            {
+                "product_code": a.product_code,
+                "product_name": a.product_name,
+                "box": a.box,
+                "slot": a.slot,
+                "unit_description": meta.get("unit_description"),
+                "old_location": meta.get("current_location"),
+                "stock": meta.get("stock"),
+            }
+        )
+    return plan, enriched
+
+
+def preview_assignment(
+    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number=1
+):
+    plan, _ = _build_assignment_plan(
+        tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number
+    )
+    return plan.to_dict()
+
+
+def commit_assignment(
+    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number, user_id
+):
+    plan, enriched = _build_assignment_plan(
+        tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number
+    )
+    repository.assign_locations(tenant_id, store_id, enriched, plan.mode, plan.assignment_type, user_id)
+    result = plan.to_dict()
+    result["committed"] = True
+    return result
+
+
+# --------------------------------------------------------------------------
+# Label queue (print stays separate from assignment)
+# --------------------------------------------------------------------------
+
+def get_label_queue(tenant_id: str, store_id: str):
+    repository.ensure_schema()
+    return {"rows": repository.get_label_queue(tenant_id, store_id)}
+
+
+def mark_labels_printed(tenant_id: str, store_id: str, product_codes: list[str]):
+    repository.ensure_schema()
+    repository.mark_labels_printed(tenant_id, store_id, product_codes)
+    return {"ok": True, "count": len(product_codes or [])}

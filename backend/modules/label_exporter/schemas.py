@@ -22,6 +22,12 @@ class LabelSearchRow(BaseModel):
     purchase_days: Optional[float] = None
     include_label: Optional[str] = None
     remarks: Optional[str] = None
+    corrected_unit: Optional[str] = None
+    old_unit_description: Optional[str] = None
+    assigned_sublocation: Optional[str] = None
+    old_sublocation: Optional[str] = None
+    assignment_type: Optional[str] = None
+    label_required: bool = False
 
 
 class LabelSearchResult(BaseModel):
@@ -144,3 +150,71 @@ class LabelSaleRow(BaseModel):
 
 class LabelSaleResult(BaseModel):
     rows: List[LabelSaleRow] = []
+
+
+# ---------- Unit correction ----------
+
+
+class LabelUnitCorrectionRequest(BaseModel):
+    unit_description: str
+    current_unit: Optional[str] = None
+
+
+# ---------- Location assignment (preview + commit) ----------
+
+
+class LabelAssignRequest(BaseModel):
+    unit: str = ""
+    mode: str = "continue"            # continue / new_label / single
+    assignment_type: str = "standard_box"  # standard_box / single_product_box
+    letter: str = ""
+    product_codes: List[str] = []
+    start_number: int = 1
+
+
+class LabelAssignBox(BaseModel):
+    box: str
+    existing: int = 0
+    added: int = 0
+    total: int = 0
+    capacity: Optional[int] = None
+
+
+class LabelAssignEntry(BaseModel):
+    product_code: str
+    product_name: str
+    box: str
+    slot: int
+
+
+class LabelAssignResult(BaseModel):
+    unit: str
+    mode: str
+    assignment_type: str
+    assignments: List[LabelAssignEntry] = []
+    boxes: List[LabelAssignBox] = []
+    assigned_count: int = 0
+    committed: bool = False
+
+
+# ---------- Label queue ----------
+
+
+class LabelQueueRow(BaseModel):
+    product_code: str
+    product_name: str
+    location: Optional[str] = None
+    unit_description: Optional[str] = None
+    mrp: float = 0
+    sale_unit: Optional[float] = None
+    assignment_type: Optional[str] = None
+    assigned_at: Optional[str] = None
+    label_created_at: Optional[str] = None
+
+
+class LabelQueueResult(BaseModel):
+    rows: List[LabelQueueRow] = []
+
+
+class LabelMarkPrintedRequest(BaseModel):
+    product_codes: List[str] = []
