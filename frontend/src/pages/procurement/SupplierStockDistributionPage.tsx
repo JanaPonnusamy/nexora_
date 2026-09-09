@@ -328,7 +328,8 @@ export default function SupplierStockDistributionPage() {
                       <WhatsAppSendCard
                         title={`Send ${it.store_code} distribution image`}
                         buttonLabel="Send WhatsApp Image"
-                        defaultCaption={`NEXORA PLATFORM\nSUPPLIER STOCK DISTRIBUTION\n\nSource: ${sourceStoreCode}\nTarget: ${it.store_code}\nDate: ${runDateText}`}
+                        // Send the file only -- no caption/group name (owner request).
+                        defaultCaption=""
                         preferredTargetName={targetCfg?.whatsapp_group ?? undefined}
                         preferredPhone={targetCfg?.phone_number ?? undefined}
                         buildFile={async () => {

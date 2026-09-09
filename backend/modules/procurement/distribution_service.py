@@ -530,9 +530,13 @@ def generate(tenant_id, source_store_code, provider_name, only_store_ids=None,
             # Selected") -- "Generate Excel Only" must not send, "Update
             # Supplier Stock Only" must not export or send.
             if excel_path and excel_status == "success" and not supplier_update_only and not excel_only:
-                message = f"{source_store_code} Supplier Stock — {store['store_code']} ({run_stamp})"
+                # Send the stock file with NO caption -- the store owners asked
+                # for the file only, not a text line naming the group/store
+                # (the filename already carries store + date). An empty caption
+                # makes the attachment flow just click Send (see
+                # _caption_and_send_attachment's `if message:` guard).
                 wa_status, wa_error = _send_whatsapp(
-                    conn, run_item_id, tenant_id, store["store_id"], excel_path, message
+                    conn, run_item_id, tenant_id, store["store_id"], excel_path, ""
                 )
 
             duration_ms = int((time.time() - t0) * 1000)
