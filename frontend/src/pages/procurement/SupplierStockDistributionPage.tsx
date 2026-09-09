@@ -9,10 +9,8 @@ import type {
   DistributionRunItemRow,
 } from '../../types/procurement'
 import { EmptyState } from '../../components/common/EmptyState'
-import { WhatsAppSendCard } from '../../components/common/WhatsAppSendCard'
 import { WhatsAppQrLogin } from '../../components/common/WhatsAppQrLogin'
 import { whatsappService } from '../../services/whatsappService'
-import { buildDistributionImage } from '../../components/procurement/distributionImage'
 import { date } from '../../components/stock/format'
 import '../../components/procurement/purchase-manager.css'
 import { FilterSelect } from '../../design-system/components/FilterBar'
@@ -65,6 +63,7 @@ export default function SupplierStockDistributionPage() {
   const [lastRunItems, setLastRunItems] = useState<DistributionRunItemRow[]>([])
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   const [waErrorOpen, setWaErrorOpen] = useState<string | null>(null)
+  const [waSendingItem, setWaSendingItem] = useState<string | null>(null)
   const [waLaunching, setWaLaunching] = useState(false)
   const [waLaunchStatus, setWaLaunchStatus] = useState('')
   const [qrProfileId, setQrProfileId] = useState<string | null>(null)
@@ -158,6 +157,32 @@ export default function SupplierStockDistributionPage() {
       fail(e)
     } finally {
       setActiveAction(null)
+    }
+  }
+
+  // Send the store's already-generated Excel FILE (not an image) to its mapped
+  // WhatsApp group. The server reads the stored excel_path and sends it with no
+  // caption; we then refresh the run so the WhatsApp column reflects the result.
+  const sendWhatsAppExcel = async (runItemId: string) => {
+    setWaSendingItem(runItemId)
+    try {
+      const res = await procurementService.distributionSendWhatsApp(runItemId)
+      if (res.status === 'sent') {
+        say('success', 'Excel sent to WhatsApp.')
+      } else if (res.error) {
+        throw new Error(res.error)
+      } else {
+        say('danger', `WhatsApp: ${res.status}`)
+      }
+      if (lastRun?.run_id) {
+        const detail = await procurementService.distributionRunDetail(lastRun.run_id)
+        setLastRun(detail.run)
+        setLastRunItems(detail.items)
+      }
+    } catch (e) {
+      fail(e)
+    } finally {
+      setWaSendingItem(null)
     }
   }
 
@@ -312,8 +337,6 @@ export default function SupplierStockDistributionPage() {
             </thead>
             <tbody>
               {exportedItems.map((it) => {
-                const targetCfg = targets.find((t) => t.store_code === it.store_code)
-                const runDateText = date(lastRun?.started_at)
                 return (
                   <tr key={it.run_item_id}>
                     <td className="pm-prod__name">{it.store_code}</td>
@@ -325,24 +348,17 @@ export default function SupplierStockDistributionPage() {
                     </td>
                     <td>{waStatusLine(it.whatsapp_status).icon} {waStatusLine(it.whatsapp_status).label}</td>
                     <td>
-                      <WhatsAppSendCard
-                        title={`Send ${it.store_code} distribution image`}
-                        buttonLabel="Send WhatsApp Image"
-                        // Send the file only -- no caption/group name (owner request).
-                        defaultCaption=""
-                        preferredTargetName={targetCfg?.whatsapp_group ?? undefined}
-                        preferredPhone={targetCfg?.phone_number ?? undefined}
-                        buildFile={async () => {
-                          const products = await procurementService.distributionRunItemProducts(it.run_item_id)
-                          return buildDistributionImage({
-                            sourceStoreCode,
-                            targetStoreCode: it.store_code,
-                            targetStoreName: targetCfg?.store_name ?? it.store_code,
-                            runDate: runDateText,
-                            rows: products.rows,
-                          })
-                        }}
-                      />
+                      {/* Send the generated Excel FILE (not an image), no caption. */}
+                      <button
+                        type="button"
+                        className="btn btn-outline-success btn-sm"
+                        disabled={waSendingItem === it.run_item_id || !it.excel_path}
+                        onClick={() => void sendWhatsAppExcel(it.run_item_id)}
+                        title={it.excel_path ? 'Send the Excel file to the mapped WhatsApp group' : 'No Excel generated yet'}
+                      >
+                        <i className="bi bi-whatsapp" />{' '}
+                        {waSendingItem === it.run_item_id ? 'Sending…' : 'Send WhatsApp Excel'}
+                      </button>
                     </td>
                   </tr>
                 )

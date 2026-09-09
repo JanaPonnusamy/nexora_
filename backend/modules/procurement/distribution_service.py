@@ -659,6 +659,43 @@ def run_item_products(run_item_id):
         conn.close()
 
 
+def send_run_item_whatsapp(run_item_id):
+    """(Re)send the already-generated Excel file for ONE run item to its store's
+    configured WhatsApp group -- the Excel itself, not an image. Reuses the same
+    _send_whatsapp path as the auto pipeline (group mapping, queue row, status
+    update), so the manual 'Send' button and 'Generate All' behave identically.
+    No caption is sent (file only)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT i.store_id, i.excel_path, r.tenant_id "
+            "FROM procurement.distribution_run_item i "
+            "JOIN procurement.distribution_run r ON r.run_id = i.run_id "
+            "WHERE i.run_item_id = ?",
+            (run_item_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError("Run item not found.")
+        store_id, excel_path, tenant_id = row
+        if not excel_path or not os.path.exists(excel_path):
+            raise ValueError("No generated Excel file found for this store. Re-run the export first.")
+
+        status, error = _send_whatsapp(conn, run_item_id, tenant_id, store_id, excel_path, "")
+        # Mirror the outcome onto the run-item row so the UI's WhatsApp column
+        # reflects a manual resend, not just the original pipeline attempt.
+        cur.execute(
+            "UPDATE procurement.distribution_run_item SET whatsapp_status = ?, whatsapp_error = ? "
+            "WHERE run_item_id = ?",
+            (status, error, run_item_id),
+        )
+        conn.commit()
+        return {"run_item_id": run_item_id, "status": status, "error": error}
+    finally:
+        conn.close()
+
+
 def retry_failed(run_id, provider_name=None, started_by=None):
     conn = get_connection()
     try:

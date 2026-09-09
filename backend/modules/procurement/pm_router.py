@@ -390,6 +390,13 @@ def distribution_run_item_products(run_item_id: str):
     return distribution_service.run_item_products(run_item_id)
 
 
+@router.post("/distribution/run-items/{run_item_id}/send-whatsapp")
+def distribution_run_item_send_whatsapp(run_item_id: str):
+    """(Re)send this item's already-generated Excel file to its store's mapped
+    WhatsApp group -- the Excel itself, no image, no caption."""
+    return distribution_service.send_run_item_whatsapp(run_item_id)
+
+
 # --------------------------------------------------------------------------
 # Supplier Assignment
 # --------------------------------------------------------------------------

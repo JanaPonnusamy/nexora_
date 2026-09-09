@@ -798,4 +798,12 @@ export const procurementService = {
 
   distributionRunItemProducts: (runItemId: string) =>
     api.get<DistributionRunItemProducts>(`/api/procurement/distribution/run-items/${runItemId}/products`),
+
+  // (Re)send the item's already-generated Excel file to its mapped WhatsApp
+  // group -- the Excel itself, no image, no caption.
+  distributionSendWhatsApp: (runItemId: string) =>
+    api.post<{ run_item_id: string; status: string; error: string | null }>(
+      `/api/procurement/distribution/run-items/${runItemId}/send-whatsapp`,
+      {},
+    ),
 }
