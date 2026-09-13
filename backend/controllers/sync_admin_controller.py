@@ -26,6 +26,22 @@ router = APIRouter(prefix="/api/sync", tags=["Sync Administration"])
 def control_center():
     return SyncAdminService().control_center()
 
+@router.get("/scheduler/status")
+def scheduler_status():
+    """Proves the scheduler is actually alive and shows what its last pass
+    did (schedules seen, claimed/queued/skipped) -- see scheduler_service.py."""
+    from modules.sync import scheduler_service
+    return scheduler_service.get_status()
+
+@router.get("/schedules/board")
+def schedules_board():
+    """Per-store projection: Store | Schedule | Next Run | Last Run |
+    Last Status | Currently Running | Last Duration. The schedule CRUD list
+    below is per schedule-row, which for an all-stores schedule doesn't map
+    1:1 to a store -- this is the store-level view the Schedule Plan screen
+    needs to show which store did what."""
+    return SyncAdminService().get_schedule_board()
+
 # ===== Schedules (CRUD + suspend + seed) =====
 
 @router.get("/schedules")

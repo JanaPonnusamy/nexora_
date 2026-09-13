@@ -2,15 +2,19 @@ from modules.sync import runtime_repository
 
 
 def create_task(payload):
+    result = runtime_repository.create_task(
+        payload["tenant_id"],
+        payload["store_id"],
+        payload.get("execution_type", "FULL"),
+        payload.get("sync_mode", "FULL"),
+        payload.get("total_tables", 0),
+    )
+    # created=False means the store already had an active execution -- the
+    # caller gets that execution back instead of a duplicate.
     return {
-        "task_id": runtime_repository.create_task(
-            payload["tenant_id"],
-            payload["store_id"],
-            payload.get("execution_type", "FULL"),
-            payload.get("sync_mode", "FULL"),
-            payload.get("total_tables", 0),
-        ),
-        "status": "PENDING",
+        "task_id": result["execution_id"],
+        "status": result["status"],
+        "created": result["created"],
     }
 
 

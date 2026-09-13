@@ -19,6 +19,8 @@ business tables.
 import datetime
 
 from config.database import get_connection
+from modules.sync.scheduler_time import next_grid_boundary as _next_grid_boundary
+from modules.sync import scheduler_repository as _scheduler_repo
 
 STALE_SALE_BILL_MINUTES = 30
 
@@ -36,7 +38,7 @@ class SyncAdminRepository:
     # ===== Control Center (read-only) =====
 
     def _reap_stale_executions(self, cur):
-        """Fail-close orphaned RUNNING executions.
+        """Fail-close orphaned RUNNING and abandoned PENDING executions.
 
         The Store Agent is the only writer that can move an execution out of
         RUNNING (complete_task/fail_task in modules/sync/runtime_repository.py).
@@ -55,6 +57,18 @@ class SyncAdminRepository:
              whole time). The slowest table/full sync observed in history is
              ~5 minutes, so any RUNNING execution older than 2 hours is safe
              to treat as orphaned regardless of agent health.
+
+        SYNC-SCHED-01 addition: PENDING rows older than 24 hours are reaped
+        the same way. Confirmed against live data -- 71 MANUAL-trigger PENDING
+        rows for two stores had been accumulating since 2026-08-08 (their
+        agent apparently never polls), and because the scheduler's
+        count_active_syncs() treats any PENDING row as consuming a
+        concurrency slot, those 71 zombies had silently occupied the entire
+        NEXORA_SYNC_MAX_CONCURRENT budget forever -- no scheduled sync for any
+        real store could ever be dispatched as long as they existed. 24h is
+        deliberately generous (never fails a row for a store that is merely
+        closed overnight); a PENDING row surviving a full day means its
+        agent is never coming for it.
         """
         cur.execute("""
             UPDATE e
@@ -67,10 +81,19 @@ class SyncAdminRepository:
                    OR reg.last_heartbeat < DATEADD(SECOND, -90, GETDATE())
                    OR e.started_at < DATEADD(HOUR, -2, GETDATE()))
         """)
-        if cur.rowcount:
+        running_reaped = cur.rowcount
+        cur.execute("""
+            UPDATE e
+            SET e.execution_status = 'FAILED', e.completed_at = GETDATE()
+            FROM dbo.sync_execution e
+            WHERE e.execution_status = 'PENDING'
+              AND e.started_at < DATEADD(HOUR, -24, GETDATE())
+        """)
+        pending_reaped = cur.rowcount
+        if running_reaped or pending_reaped:
             cur.execute("""
                 INSERT INTO dbo.sync_execution_audit (execution_id, action_name, message)
-                SELECT e.execution_id, 'FAILED', 'Marked failed: execution orphaned (agent offline or stuck past max runtime)'
+                SELECT e.execution_id, 'FAILED', 'Marked failed: execution orphaned (agent offline, stuck past max runtime, or never claimed within 24h)'
                 FROM dbo.sync_execution e
                 WHERE e.execution_status = 'FAILED' AND e.completed_at >= DATEADD(SECOND, -5, GETDATE())
             """)
@@ -178,6 +201,11 @@ class SyncAdminRepository:
             "ALTER TABLE dbo.sync_schedule ADD last_run_at DATETIME NULL",
             "IF COL_LENGTH('dbo.sync_schedule','updated_at') IS NULL "
             "ALTER TABLE dbo.sync_schedule ADD updated_at DATETIME NULL",
+            # SYNC-SCHED-01: recurring "every N minutes" cadence. schedule_type
+            # gains an 'INTERVAL' value (validated in SyncAdminService); NULL
+            # for existing DAILY/ONCE rows.
+            "IF COL_LENGTH('dbo.sync_schedule','interval_minutes') IS NULL "
+            "ALTER TABLE dbo.sync_schedule ADD interval_minutes INT NULL",
         ):
             cur.execute(stmt)
         SyncAdminRepository._schema_ready = True
@@ -190,6 +218,7 @@ class SyncAdminRepository:
         return "Active" if is_enabled else "Disabled"
 
     def _serialize_schedule(self, r):
+        interval_minutes = r[13]
         return {
             "schedule_id": r[0],
             "tenant_id": str(r[1]) if r[1] else None,
@@ -204,13 +233,25 @@ class SyncAdminRepository:
             "suspended_until": _iso(r[10]),
             "last_run_at": _iso(r[11]),
             "created_at": _iso(r[12]),
+            "interval_minutes": interval_minutes,
+            # Live-computed, never persisted: the grid boundary is deterministic
+            # from interval_minutes + wall clock, so storing it would just be a
+            # second source of truth that can drift from what the scheduler
+            # actually does. See scheduler_service.next_grid_boundary().
+            "next_run_at": (
+                _iso(_next_grid_boundary(interval_minutes))
+                if r[6] == "INTERVAL" and interval_minutes and bool(r[9])
+                and not (r[10] and r[10] > _now())
+                else None
+            ),
             "status": self._status(bool(r[9]), r[10]),
         }
 
     _SELECT = """
         SELECT sc.schedule_id, sc.tenant_id, sc.store_id, st.store_code, st.store_name,
                sc.schedule_name, sc.schedule_type, sc.start_time, sc.sync_mode,
-               sc.is_enabled, sc.suspended_until, sc.last_run_at, sc.created_at
+               sc.is_enabled, sc.suspended_until, sc.last_run_at, sc.created_at,
+               sc.interval_minutes
         FROM dbo.sync_schedule sc
         LEFT JOIN dbo.stores st ON st.store_id = sc.store_id
     """
@@ -246,7 +287,7 @@ class SyncAdminRepository:
         return row[0] if row else None
 
     def create_schedule(self, schedule_name, schedule_type, store_id, start_time,
-                        sync_mode, is_enabled, tenant_id=None):
+                        sync_mode, is_enabled, tenant_id=None, interval_minutes=None):
         conn = get_connection()
         cur = conn.cursor()
         self.ensure_schema(cur)
@@ -254,28 +295,28 @@ class SyncAdminRepository:
         cur.execute("""
         INSERT INTO dbo.sync_schedule
             (tenant_id, store_id, schedule_name, schedule_type, start_time,
-             sync_mode, is_enabled, created_at, updated_at)
+             interval_minutes, sync_mode, is_enabled, created_at, updated_at)
         OUTPUT INSERTED.schedule_id
-        VALUES (?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
         """, tenant, store_id, schedule_name, schedule_type, start_time,
-             sync_mode, 1 if is_enabled else 0)
+             interval_minutes, sync_mode, 1 if is_enabled else 0)
         new_id = cur.fetchone()[0]
         conn.commit()
         conn.close()
         return new_id
 
     def update_schedule(self, schedule_id, schedule_name, schedule_type, store_id,
-                        start_time, sync_mode, is_enabled):
+                        start_time, sync_mode, is_enabled, interval_minutes=None):
         conn = get_connection()
         cur = conn.cursor()
         self.ensure_schema(cur)
         cur.execute("""
         UPDATE dbo.sync_schedule
         SET schedule_name = ?, schedule_type = ?, store_id = ?, start_time = ?,
-            sync_mode = ?, is_enabled = ?, updated_at = GETDATE()
+            interval_minutes = ?, sync_mode = ?, is_enabled = ?, updated_at = GETDATE()
         WHERE schedule_id = ?
-        """, schedule_name, schedule_type, store_id, start_time, sync_mode,
-             1 if is_enabled else 0, schedule_id)
+        """, schedule_name, schedule_type, store_id, start_time, interval_minutes,
+             sync_mode, 1 if is_enabled else 0, schedule_id)
         affected = cur.rowcount
         conn.commit()
         conn.close()
@@ -313,33 +354,113 @@ class SyncAdminRepository:
         return affected
 
     def seed_default_schedules(self):
-        """Per-store daily schedules: a morning run staggered 06:15-06:25 (2 min
-        apart) plus an afternoon run at 13:00 (staggered). Idempotent by name."""
-        import datetime as _dt
+        """SYNC-SCHED-01 default: one enabled, all-stores, every-30-minutes
+        INTERVAL schedule per active tenant. Idempotent per tenant (checks for
+        an existing INTERVAL schedule rather than an exact name match, so
+        renaming the seeded schedule doesn't cause a duplicate on the next
+        click). Older per-store DAILY morning/afternoon schedules from a
+        previous seeding are left untouched -- this only adds the 30-minute
+        cadence the Schedule Plan is now required to run by default."""
         conn = get_connection()
         cur = conn.cursor()
         self.ensure_schema(cur)
-        cur.execute("SELECT store_id, store_code, tenant_id FROM dbo.stores "
-                    "WHERE is_active = 1 ORDER BY store_code")
-        stores = cur.fetchall()
+        cur.execute("SELECT COUNT(*) FROM dbo.stores WHERE is_active = 1")
+        store_count = cur.fetchone()[0]
+        cur.execute("SELECT tenant_id, tenant_name FROM dbo.tenants WHERE is_active = 1 ORDER BY tenant_name")
+        tenants = cur.fetchall()
         created = 0
-        for idx, (store_id, code, tenant_id) in enumerate(stores):
-            morning = _dt.datetime(2000, 1, 1, 6, 15) + _dt.timedelta(minutes=2 * idx)
-            afternoon = _dt.datetime(2000, 1, 1, 13, 0) + _dt.timedelta(minutes=2 * idx)
-            for name, when in ((f"{code} Morning Sync", morning),
-                               (f"{code} Afternoon Sync", afternoon)):
-                cur.execute("SELECT COUNT(*) FROM dbo.sync_schedule WHERE schedule_name = ?", name)
-                if cur.fetchone()[0] == 0:
-                    cur.execute("""
-                    INSERT INTO dbo.sync_schedule
-                        (tenant_id, store_id, schedule_name, schedule_type, start_time,
-                         sync_mode, is_enabled, created_at, updated_at)
-                    VALUES (?, ?, ?, 'DAILY', ?, 'FULL', 1, GETDATE(), GETDATE())
-                    """, tenant_id, store_id, name, when)
-                    created += 1
+        for tenant_id, _name in tenants:
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.sync_schedule "
+                "WHERE tenant_id = ? AND schedule_type = 'INTERVAL'",
+                (tenant_id,),
+            )
+            if cur.fetchone()[0] > 0:
+                continue
+            cur.execute("""
+            INSERT INTO dbo.sync_schedule
+                (tenant_id, store_id, schedule_name, schedule_type, start_time,
+                 interval_minutes, sync_mode, is_enabled, created_at, updated_at)
+            VALUES (?, NULL, 'Every 30 Minutes', 'INTERVAL', ?, 30, 'FULL', 1, GETDATE(), GETDATE())
+            """, (tenant_id, datetime.datetime(2000, 1, 1)))
+            created += 1
         conn.commit()
         conn.close()
-        return {"created": created, "stores": len(stores)}
+        return {"created": created, "stores": store_count}
+
+    def get_schedule_board(self):
+        """Per-store projection of the currently-active schedule + its most
+        recent execution -- the shape the Schedule Plan screen needs
+        (Store | Schedule | Next Run | Last Run | Status | Currently Running |
+        Last Duration), which does not map 1:1 onto the per-schedule-row CRUD
+        list above whenever a schedule fans out to "all stores"."""
+        conn = get_connection()
+        cur = conn.cursor()
+        self.ensure_schema(cur)
+        cur.execute("""
+        SELECT s.store_id, s.store_code, s.store_name,
+               sch.schedule_id, sch.schedule_name, sch.schedule_type, sch.interval_minutes,
+               last_exec.execution_id, last_exec.execution_status,
+               last_exec.started_at, last_exec.completed_at,
+               running.execution_id, running.started_at
+        FROM dbo.stores s
+        OUTER APPLY (
+            SELECT TOP 1 sc.schedule_id, sc.schedule_name, sc.schedule_type, sc.interval_minutes
+            FROM dbo.sync_schedule sc
+            WHERE sc.is_enabled = 1
+              AND (sc.suspended_until IS NULL OR sc.suspended_until <= GETDATE())
+              AND (sc.store_id = s.store_id
+                   OR (sc.store_id IS NULL AND sc.tenant_id = s.tenant_id))
+            ORDER BY CASE WHEN sc.store_id = s.store_id THEN 0 ELSE 1 END, sc.schedule_id
+        ) sch
+        OUTER APPLY (
+            SELECT TOP 1 e.execution_id, e.execution_status, e.started_at, e.completed_at
+            FROM dbo.sync_execution e
+            WHERE e.store_id = s.store_id
+            ORDER BY e.started_at DESC
+        ) last_exec
+        OUTER APPLY (
+            SELECT TOP 1 e2.execution_id, e2.started_at
+            FROM dbo.sync_execution e2
+            WHERE e2.store_id = s.store_id AND e2.execution_status = 'RUNNING'
+            ORDER BY e2.started_at DESC
+        ) running
+        WHERE s.is_active = 1
+        ORDER BY s.store_code
+        """)
+        rows = []
+        for r in cur.fetchall():
+            (store_id, store_code, store_name, schedule_id, schedule_name, schedule_type,
+             interval_minutes, last_execution_id, last_status, last_started, last_completed,
+             running_execution_id, running_started) = r
+            is_running = running_execution_id is not None
+            duration_seconds = None
+            if is_running and running_started:
+                duration_seconds = int((_now() - running_started).total_seconds())
+            elif last_started and last_completed:
+                duration_seconds = int((last_completed - last_started).total_seconds())
+            next_run_at = (
+                _next_grid_boundary(interval_minutes)
+                if schedule_type == "INTERVAL" and interval_minutes else None
+            )
+            rows.append({
+                "store_id": str(store_id),
+                "store_code": store_code,
+                "store_name": store_name,
+                "schedule_id": schedule_id,
+                "schedule_name": schedule_name,
+                "schedule_type": schedule_type,
+                "interval_minutes": interval_minutes,
+                "next_run_at": _iso(next_run_at),
+                "last_run_at": _iso(last_started),
+                "last_status": last_status,
+                "last_execution_id": str(last_execution_id) if last_execution_id else None,
+                "is_running": is_running,
+                "running_execution_id": str(running_execution_id) if running_execution_id else None,
+                "last_duration_seconds": duration_seconds,
+            })
+        conn.close()
+        return rows
 
     # ===== Store Health (read-only) =====
 
@@ -394,6 +515,7 @@ class SyncAdminRepository:
                     sync_mode=None, search=None, limit=200):
         conn = get_connection()
         cur = conn.cursor()
+        _scheduler_repo.ensure_schema(cur)
         self._reap_stale_executions(cur)
         where, params = [], []
         if store_id:
@@ -418,9 +540,11 @@ class SyncAdminRepository:
             ck.err_count, ck.retry_count,
             (SELECT TOP 1 r.agent_version FROM dbo.store_agent_registry r
              WHERE r.store_id = e.store_id AND r.is_active = 1
-             ORDER BY r.last_heartbeat DESC) AS agent_version
+             ORDER BY r.last_heartbeat DESC) AS agent_version,
+            e.trigger_type, e.scheduled_time, sch.schedule_name, e.skip_reason
         FROM dbo.sync_execution e
         LEFT JOIN dbo.stores st ON st.store_id = e.store_id
+        LEFT JOIN dbo.sync_schedule sch ON sch.schedule_id = e.schedule_id
         OUTER APPLY (
             SELECT COUNT(DISTINCT d.table_name) AS tbl_count,
                    SUM(ISNULL(d.rows_examined, d.rows_processed)) AS rows_read,
@@ -464,6 +588,10 @@ class SyncAdminRepository:
             "warning_count": 0,
             "retry_count": int(r[17]) if r[17] else 0,
             "agent_version": r[18],
+            "trigger_type": r[19],
+            "scheduled_time": _iso(r[20]),
+            "schedule_name": r[21],
+            "skip_reason": r[22],
         } for r in cur.fetchall()]
         conn.close()
         return rows

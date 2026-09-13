@@ -64,7 +64,10 @@ class HeartbeatRequest(BaseModel):
 
 @router.post("/tasks/create")
 def create_task(payload: TaskCreateRequest):
-    return runtime_service.create_task(payload.dict())
+    try:
+        return runtime_service.create_task(payload.dict())
+    except TimeoutError as ex:
+        raise HTTPException(status_code=409, detail=str(ex))
 
 
 @router.get("/tasks/pending/{store_id}")

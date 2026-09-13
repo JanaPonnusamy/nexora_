@@ -34,13 +34,20 @@ class SyncAdminService:
     @staticmethod
     def validate_schedule(body):
         """Returns (error, schedule_type, start_dt). DAILY keeps time-of-day on a
-        fixed reference date; ONCE keeps the full datetime."""
+        fixed reference date; ONCE keeps the full datetime; INTERVAL ignores
+        start_time entirely -- its cadence is a fixed grid (see
+        modules/sync/scheduler_time.py), not an anchored clock time."""
         name = (body.schedule_name or "").strip()
         if not name:
             return "Schedule name is required", None, None
         stype = (body.schedule_type or "DAILY").upper()
-        if stype not in ("DAILY", "ONCE"):
-            return "Schedule type must be DAILY or ONCE", None, None
+        if stype not in ("DAILY", "ONCE", "INTERVAL"):
+            return "Schedule type must be DAILY, ONCE or INTERVAL", None, None
+        if stype == "INTERVAL":
+            minutes = body.interval_minutes
+            if not minutes or minutes <= 0:
+                return "Interval minutes must be a positive number for an INTERVAL schedule", None, None
+            return None, stype, _dt.datetime(2000, 1, 1)
         start = _parse_dt(body.start_time)
         if start is None:
             return "A valid start time is required", None, None
@@ -51,12 +58,17 @@ class SyncAdminService:
     def create_schedule(self, body, schedule_type, start_dt):
         return SyncAdminRepository().create_schedule(
             body.schedule_name.strip(), schedule_type, body.store_id, start_dt,
-            (body.sync_mode or "FULL").upper(), body.is_enabled, body.tenant_id)
+            (body.sync_mode or "FULL").upper(), body.is_enabled, body.tenant_id,
+            body.interval_minutes if schedule_type == "INTERVAL" else None)
 
     def update_schedule(self, schedule_id, body, schedule_type, start_dt):
         return SyncAdminRepository().update_schedule(
             schedule_id, body.schedule_name.strip(), schedule_type, body.store_id,
-            start_dt, (body.sync_mode or "FULL").upper(), body.is_enabled)
+            start_dt, (body.sync_mode or "FULL").upper(), body.is_enabled,
+            body.interval_minutes if schedule_type == "INTERVAL" else None)
+
+    def get_schedule_board(self):
+        return SyncAdminRepository().get_schedule_board()
 
     def set_schedule_status(self, schedule_id, is_enabled):
         return SyncAdminRepository().set_schedule_status(schedule_id, is_enabled)

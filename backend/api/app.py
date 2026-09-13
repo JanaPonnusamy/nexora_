@@ -119,6 +119,7 @@ from modules.automation_settings.router import (
 from modules.whatsapp.router import (
     router as whatsapp_router
 )
+from modules.schema_sync.router import router as schema_sync_router
 from modules.audit.router import router as audit_router
 from modules.audit.middleware import AuditFailureMiddleware
 from modules.audit.repository import ensure_schema as ensure_audit_schema
@@ -319,9 +320,23 @@ app.include_router(desktop_client_router)
 app.include_router(automation_settings_router)
 app.include_router(grid_settings_router)
 app.include_router(whatsapp_router)
+app.include_router(schema_sync_router)
 app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)
 app.include_router(mobile_bff_router)
+
+@app.on_event('startup')
+def _start_sync_scheduler_on_startup():
+    # SYNC-SCHED-01: the Schedule Plan screen used to be pure metadata with no
+    # reader anywhere in the codebase -- this is the reader. Runs as a daemon
+    # thread so it survives for the life of the backend process and needs no
+    # browser tab open anywhere. See modules/sync/scheduler_service.py.
+    try:
+        from modules.sync import scheduler_service
+        scheduler_service.start_background_loop()
+    except Exception:
+        import traceback
+        print("[SCHEDULER] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
 def _warmup_whatsapp_on_startup():

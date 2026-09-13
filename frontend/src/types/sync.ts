@@ -36,10 +36,12 @@ export interface SyncSchedule {
   schedule_name: string
   schedule_type: string | null
   start_time: string | null
+  interval_minutes: number | null
   sync_mode: string | null
   is_enabled: boolean
   suspended_until: string | null
   last_run_at: string | null
+  next_run_at: string | null
   created_at: string | null
   status: string
 }
@@ -48,9 +50,38 @@ export interface ScheduleInput {
   schedule_name: string
   schedule_type: string
   store_id: string | null
-  start_time: string
+  start_time: string | null
+  interval_minutes: number | null
   sync_mode: string
   is_enabled: boolean
+}
+
+/** Per-store projection: what the Schedule Plan screen actually needs to
+ * show, since an all-stores schedule doesn't map 1:1 onto a single store. */
+export interface ScheduleBoardRow {
+  store_id: string
+  store_code: string | null
+  store_name: string | null
+  schedule_id: number | null
+  schedule_name: string | null
+  schedule_type: string | null
+  interval_minutes: number | null
+  next_run_at: string | null
+  last_run_at: string | null
+  last_status: string | null
+  last_execution_id: string | null
+  is_running: boolean
+  running_execution_id: string | null
+  last_duration_seconds: number | null
+}
+
+export interface SchedulerStatus {
+  max_concurrent_syncs: number
+  tick_seconds: number
+  worker_id: string
+  last_tick_at: string | null
+  last_tick_summary: Record<string, unknown> | null
+  last_tick_error: string | null
 }
 
 export interface StoreHealthRow {
@@ -92,6 +123,10 @@ export interface SyncHistoryRow {
   error_count: number
   warning_count: number
   retry_count: number
+  trigger_type: string | null
+  scheduled_time: string | null
+  schedule_name: string | null
+  skip_reason: string | null
 }
 
 export interface SyncHistoryFilters {
@@ -246,6 +281,7 @@ export interface TableColumns {
 export interface SyncTaskResult {
   task_id: string
   status: string
+  created?: boolean
 }
 
 export interface PendingTask {
