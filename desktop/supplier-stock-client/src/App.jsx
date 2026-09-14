@@ -21,6 +21,7 @@ import {
   selectionStateForClick
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
+import SchemaSyncPage from './SchemaSyncPage.jsx';
 
 // Dev-only login bypass: when running under `vite` (npm run dev) with
 // credentials set in .env.development.local, the app auto-signs-in as that
@@ -42,6 +43,7 @@ const screens = [
   { id: 'analysis', label: 'Supplier Stock Analysis', module: 'supplier_stock_analysis' },
   { id: 'nmw_sales', label: 'NMW Sales Report', module: 'nmw_sales_report' },
   { id: 'order_workspace', label: 'Order Workspace', module: 'order_workspace' },
+  { id: 'schema_sync', label: 'Schema Sync', module: 'schema_sync' },
   { id: 'settings', label: 'Settings', module: 'settings' }
 ];
 
@@ -69,6 +71,18 @@ function isSalesmanOnly(session) {
   const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase());
   if (!roleNames.length) return false;
   return roleNames.every((name) => name.includes('salesman') || name.includes('sales man'));
+}
+
+// A dedicated Label-Exporter review login (role LABEL_REVIEW): can only review
+// products (Y/N, unit correction, remarks) in the Label Exporter. The desktop
+// nav is trimmed to just Label Exporter + Settings, and inside the screen the
+// assign/clear actions stay hidden (they require super-admin). Server-side,
+// assignment/clear already 403 for this role (require_super_admin).
+function isLabelReviewOnly(session) {
+  const roles = session?.user?.roles || [];
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase().replace(/[^a-z]/g, ''));
+  if (!roleNames.length) return false;
+  return roleNames.every((name) => name.includes('labelreview') || name.includes('reviewonly'));
 }
 
 // Mirrors backend dependencies.store_scope.is_supplier_analysis_blocked:
@@ -276,6 +290,10 @@ function AppShell() {
   const isConfigured = Boolean(effectiveTenantId && effectiveStoreId);
 
   const navItems = useMemo(() => {
+    // Review-only login: trim the nav to just Label Exporter + Settings.
+    if (isLabelReviewOnly(session)) {
+      return screens.filter((s) => s.id === 'label_exporter' || s.id === 'settings');
+    }
     const modules = userModules(session?.user);
     // Supplier Stock Analysis is admin-tier only - a purchase-manager-only or
     // salesman-only login must not see the tab at all (the API also 403s it
@@ -294,6 +312,9 @@ function AppShell() {
     // server-side too; this keeps the nav honest.
     const orderWorkspaceAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
     if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'order_workspace');
+    // Schema Sync runs live DDL against Production/HO - super admin only, no
+    // per-user module grant can unlock it.
+    if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'schema_sync');
     if (!modules.length) return base;
     // 'settings' is always available; 'nmw_sales' is too unless blocked above.
     // The NMW Sales Report is scoped server-side (store users see only their
@@ -307,6 +328,7 @@ function AppShell() {
     // for any login whose modules list isn't empty (e.g. superadmin).
     const always = new Set(nmwBlocked ? ['settings', 'label_exporter'] : ['settings', 'nmw_sales', 'label_exporter']);
     if (orderWorkspaceAllowed) always.add('order_workspace');
+    if (isSuperAdmin(session)) always.add('schema_sync');
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
 
@@ -555,6 +577,8 @@ function AppShell() {
             onOpenSupplierStockAnalysis={() => setActiveScreen('analysis')}
             supplierStockAnalysisAllowed={navItems.some((item) => item.id === 'analysis')}
           />
+        ) : activeScreen === 'schema_sync' ? (
+          <SchemaSyncPage session={session} />
         ) : (
           <StockAvailability
             session={session}
@@ -1976,25 +2000,58 @@ function nmwCsvCell(value) {
 const NMW_EXPORT_COLUMNS = [
   'Inv No', 'Type', 'Inv Date', 'Customer Code', 'Inv Amount',
   'Product Code', 'Product', 'Batch', 'Expiry', 'Qty', 'Free', 'MRP', 'PTR', 'Dis%',
-  'Packing', 'Sublocation', 'Amount'
+  'Packing', 'Sublocation', 'Amount',
+  'Purchase Entry Status', 'Purchase Entry No', 'Purchase Entry Date'
 ];
+
+// completed | pending | not_found | error -> short label used in the column,
+// the detail pane and the export. Kept identical to the web app's wording.
+function nmwPurchaseLabel(status) {
+  switch (status) {
+    case 'completed': return 'Completed';
+    case 'pending': return 'Pending';
+    case 'not_found': return 'Not Found';
+    case 'error': return 'Unable to check';
+    default: return '';
+  }
+}
+
+function nmwPurchaseClass(status) {
+  switch (status) {
+    case 'completed': return 'nmw-pe nmw-pe--ok';
+    case 'pending': return 'nmw-pe nmw-pe--pending';
+    case 'not_found': return 'nmw-pe nmw-pe--missing';
+    case 'error': return 'nmw-pe nmw-pe--error';
+    default: return 'nmw-pe';
+  }
+}
 
 function nmwDis2(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n.toFixed(2) : '0.00';
 }
 
-function nmwExportRows(bill, lineItems) {
+// purchaseEntry: the /purchase-entry detail for this bill (or null). When
+// absent, fall back to the bill's own purchase_status so the export never
+// disagrees with the list column; entry no/date are only known from the detail.
+function nmwExportRows(bill, lineItems, purchaseEntry) {
   const base = [
     bill.bill_no, bill.bill_type || (bill.is_transfer ? 'Transfer' : 'Sale'), bill.bill_date,
     bill.customer_code, bill.bill_amount
   ];
-  if (!lineItems || lineItems.length === 0) return [[...base, '', '', '', '', '', '', '', '', '0.00', '', '', '']];
+  const peStatus = nmwPurchaseLabel(purchaseEntry?.purchase_status || bill.purchase_status);
+  const peNo = purchaseEntry?.entry_no || '';
+  const peDate = purchaseEntry?.entry_date || '';
+  const peTail = [peStatus, peNo, peDate];
+  if (!lineItems || lineItems.length === 0) {
+    return [[...base, '', '', '', '', '', '', '', '', '0.00', '', '', '', ...peTail]];
+  }
   return lineItems.map((row) => [
     ...base,
     row.product_code, row.product_name, row.batch_no, row.expiry_date,
     row.qty, row.free_qty, row.mrp, row.rate, nmwDis2(row.discount_percentage),
-    row.packing || '', row.sublocation || '', row.amount
+    row.packing || '', row.sublocation || '', row.amount,
+    ...peTail
   ]);
 }
 
@@ -2044,6 +2101,17 @@ const OW_REVIEW_COLUMNS = [
 function owColgroupPct(cols) {
   const total = cols.reduce((sum, c) => sum + (Number(c.width) || 0), 0) || 1;
   return cols.map((c) => <col key={c.key} style={{ width: `${(Number(c.width) / total * 100).toFixed(3)}%` }} />);
+}
+
+// EXACT-pixel colgroup + a trailing filler <col> (no width). With
+// table-layout:fixed the fixed columns render at their literal px and the
+// filler absorbs any leftover width — so slack never inflates a real column
+// (spec §5-7: leave empty space / use a filler, never expand Product).
+function owColgroupExact(cols) {
+  return [
+    ...cols.map((c) => <col key={c.key} style={{ width: `${Number(c.width) || 0}px` }} />),
+    <col key="__filler" />,
+  ];
 }
 
 const OW_GEAR_PATH = 'M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a8 8 0 0 0-1.7-1L15 3.5h-4L10.7 6A8 8 0 0 0 9 7L6.6 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4L9 17a8 8 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z';
@@ -3148,6 +3216,137 @@ function OwChartTooltip({ row, anchorRect }) {
   );
 }
 
+// ── Monthly Trend chart (Label Exporter) ─────────────────────────────────
+// Four business movements per month, grouped bars. The values are computed in
+// LabelExporter.chartRows from real sync.ProductTrans columns (never invented):
+//   Purchase + Tin = PurchaseQuantity + TransferInQuantity
+//   Sales + Tout   = SaleQuantity     + TransferOutQuantity
+//   Stock          = StockInHand
+//   Adjustment     = AdjustmentQuantity  (can be negative)
+const LBL_TREND_SERIES = [
+  { key: 'purchaseTin', cls: 'in', label: 'Purchase + Tin' },
+  { key: 'salesTout', cls: 'out', label: 'Sales + Tout' },
+  { key: 'stock', cls: 'stock', label: 'Stock' },
+  { key: 'adjustment', cls: 'adj', label: 'Adjustment' }
+];
+
+// Compact month label so it never wraps in a narrow group column: month on one
+// line, 2-digit year small underneath (e.g. SEP / '26).
+const LBL_MON_NAMES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+function fmtLblMon(ym) {
+  const [y, m] = String(ym || '').split('-');
+  const i = Number(m) - 1;
+  return { mon: i >= 0 && i < 12 ? LBL_MON_NAMES[i] : (ym || '—'), yr: y ? `'${y.slice(2)}` : '' };
+}
+
+function LabelTrendChart({ rows, loading }) {
+  const [hover, setHover] = useState(null); // { row, rect }
+  if (loading && !rows.length) return <div className="ow-empty">Loading…</div>;
+  if (!rows.length) return <div className="ow-empty">No monthly statistics for this product.</div>;
+
+  // Single shared scale across all four categories so bar heights are
+  // comparable; |adjustment| participates so a negative adjustment still sizes.
+  const maxVal = Math.max(1, ...rows.flatMap((r) => LBL_TREND_SERIES.map((s) => Math.abs(Number(r[s.key]) || 0))));
+  const showTip = (e, row) => setHover({ row, rect: e.currentTarget.getBoundingClientRect() });
+  const hideTip = () => setHover(null);
+
+  return (
+    <div className="lblc">
+      <div className="lblc-plot">
+        {rows.map((row, i) => (
+          <div
+            className="lblc-group"
+            key={`${row.month}-${i}`}
+            onMouseEnter={(e) => showTip(e, row)}
+            onMouseLeave={hideTip}
+            onFocus={(e) => showTip(e, row)}
+            onBlur={hideTip}
+            tabIndex={0}
+          >
+            <div className="lblc-bars">
+              {LBL_TREND_SERIES.map((s) => {
+                const v = Number(row[s.key]) || 0;
+                const isZero = v === 0;
+                const pct = isZero ? 0 : Math.max(5, (Math.abs(v) / maxVal) * 100);
+                return (
+                  <div
+                    key={s.key}
+                    className={`lblc-bar lblc-bar--${s.cls}${isZero ? ' is-zero' : ''}${v < 0 ? ' is-neg' : ''}`}
+                    style={{ height: isZero ? '3px' : `${pct}%` }}
+                  >
+                    <span className="lblc-val">{s.cls === 'adj' ? fmtOwSigned(v) : fmtOwQty(v)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="lblc-month">
+              <span className="lblc-mon">{fmtLblMon(row.month).mon}</span>
+              <span className="lblc-yr">{fmtLblMon(row.month).yr}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="lblc-legend">
+        {LBL_TREND_SERIES.map((s) => (
+          <span key={s.key}><i className={`lblc-dot lblc-dot--${s.cls}`} />{s.label}</span>
+        ))}
+      </div>
+      {hover && <LabelTrendTip row={hover.row} anchorRect={hover.rect} />}
+    </div>
+  );
+}
+
+// Compact floating tooltip for one month — portaled to body so the panel's
+// overflow can't clip it. Shows each grouped total plus its raw components.
+function LabelTrendTip({ row, anchorRect }) {
+  if (!anchorRect) return null;
+  const width = 208;
+  const left = Math.min(Math.max(anchorRect.left + anchorRect.width / 2, width / 2 + 8), window.innerWidth - width / 2 - 8);
+  const top = anchorRect.top - 8;
+  return createPortal(
+    <div className="ow-chart-tip lblc-tip" role="tooltip" style={{ position: 'fixed', top, left, width }}>
+      <div className="ow-chart-tip-month">{fmtOwMonthLabel(row.month)}</div>
+      <div className="lblc-tip-row"><span><i className="lblc-dot lblc-dot--in" />Purchase + Tin</span><b>{fmtOwQty(row.purchaseTin)}</b></div>
+      <div className="lblc-tip-sub"><span>Purchase</span><b>{fmtOwQty(row.purchase_qty)}</b></div>
+      <div className="lblc-tip-sub"><span>Transfer In</span><b>{fmtOwQty(row.transfer_in_qty)}</b></div>
+      <div className="lblc-tip-row"><span><i className="lblc-dot lblc-dot--out" />Sales + Tout</span><b>{fmtOwQty(row.salesTout)}</b></div>
+      <div className="lblc-tip-sub"><span>Sales</span><b>{fmtOwQty(row.sale_qty)}</b></div>
+      <div className="lblc-tip-sub"><span>Transfer Out</span><b>{fmtOwQty(row.transfer_out_qty)}</b></div>
+      <div className="lblc-tip-row"><span><i className="lblc-dot lblc-dot--stock" />Stock</span><b>{fmtOwQty(row.stock)}</b></div>
+      <div className="lblc-tip-row"><span><i className="lblc-dot lblc-dot--adj" />Adjustment</span><b>{fmtOwSigned(row.adjustment)}</b></div>
+    </div>,
+    document.body
+  );
+}
+
+// ── Label Exporter UI-session persistence (spec Parts 9-15) ───────────────
+// ONE JSON file, UI state only (never product/review/business data). In the
+// Electron app it lives in userData via the preload session bridge; in a plain
+// browser (dev) it falls back to a single localStorage key. Every write
+// overwrites — no history.
+const LBL_SESSION_FILE = 'label-exporter-session.json';
+const LBL_SESSION_LS_KEY = 'nexora.desktop.labelExporterSession';
+const LBL_TREND_MONTHS_DEFAULT = 6;
+
+async function readLabelSession() {
+  try {
+    if (window.nexoraDesktop?.readSession) {
+      const data = await window.nexoraDesktop.readSession(LBL_SESSION_FILE);
+      if (data && typeof data === 'object') return data;
+    }
+  } catch { /* fall through to localStorage */ }
+  try {
+    const raw = localStorage.getItem(LBL_SESSION_LS_KEY);
+    if (raw) { const p = JSON.parse(raw); if (p && typeof p === 'object') return p; }
+  } catch { /* ignore corrupt */ }
+  return null;
+}
+
+function writeLabelSession(data) {
+  try { window.nexoraDesktop?.writeSession?.(LBL_SESSION_FILE, data); } catch { /* ignore */ }
+  try { localStorage.setItem(LBL_SESSION_LS_KEY, JSON.stringify(data)); } catch { /* ignore */ }
+}
+
 const LABEL_STOCK_FILTERS = [
   { value: 'all', short: '>0 or zero (sold <90d)', label: 'Stock > 0 or zero stock sale within 90 days' },
   { value: 'in_stock', short: 'In stock only', label: 'Stock > 0 only' },
@@ -3159,12 +3358,138 @@ const LABEL_REMARKS_PRESETS = [
   'Counter', 'Consumer', 'SYP', 'Cold Storage', 'Fragile', 'High Value', 'Fast Moving', 'Slow Moving', 'Check Unit Description'
 ];
 
-// Fixed px widths for the identity/numeric/status columns (readable headers,
-// no cryptic truncation) with Product bounded so it can't dominate; Remarks is
-// 'auto' so it absorbs all remaining width — narrow at 1366, wider at 1600/
-// 1920+. table-layout:fixed honours these exactly.
-// #/Code/Product/Stock/Review/SubLocation/Unit/MRP/Pack/LRD/LSD/Remarks
-const LABEL_COLS = ['34px', '76px', '228px', '54px', '64px', '124px', '58px', '72px', '50px', '48px', '48px', 'auto'];
+// A LEAN decision grid (spec §13/§23): only the columns a reviewer acts on at
+// 1366×768. Identity + the two unit + the two location columns get real width
+// so headers read in full ("Old Unit", not "Old U") and values never truncate
+// to a single letter. Secondary history (Sale U / Sale d / Pur d) and the
+// free-text Remarks live in the right detail panel instead of stealing grid
+// width. `width` is a relative WEIGHT (not literal px): every <col> gets
+// width / sum-of-widths of the table, so Product stays the largest but bounded
+// (see owColgroupPct).
+// # | Code | Product | Old Unit | New Unit | Old Loc | New Loc | Stock | MRP | Review | Status
+// Reorderable / resizable / show-hide via the same resolveOwColumns /
+// owColgroupPct / OwGridSettings machinery the Order Workspace grids use,
+// persisted per user in localStorage. `locked` cols can't be hidden (identity +
+// selector) but can still be reordered/resized. `noFilter` opts a column out of
+// the Excel-style per-column filter row.
+const LABEL_COLUMNS = [
+  { key: 'sno', label: '#', width: 32, thClass: 'ow-num', title: 'Serial number · Space selects a row', locked: true, noFilter: true },
+  { key: 'code', label: 'Code', width: 85, title: 'Product code', locked: true },
+  { key: 'product', label: 'Product', width: 220, thClass: 'ow-grow', title: 'Product name', locked: true },
+  { key: 'oldUnit', label: 'Old Unit', width: 75, title: 'Original / master unit — read-only' },
+  { key: 'newUnit', label: 'New Unit', width: 85, title: 'Corrected / current unit — click to edit, auto-saves' },
+  { key: 'oldLoc', label: 'Old Loc', width: 75, title: 'Location before this workflow' },
+  { key: 'newLoc', label: 'New Loc', width: 80, title: 'Box assigned by this workflow' },
+  { key: 'stock', label: 'Stock', width: 55, thClass: 'ow-num', title: 'Stock on hand' },
+  { key: 'lpd', label: 'LPD', width: 80, thClass: 'ow-num', title: 'Last purchase date' },
+  { key: 'lsd', label: 'LSD', width: 80, thClass: 'ow-num', title: 'Last sale date' },
+  { key: 'review', label: 'Review', width: 55, thClass: 'lbl-review-head', title: 'Include on label sheet (Y/N)' }
+];
+
+// Compact LPD/LSD renderer: backend sends ISO 'YYYY-MM-DD' → 'DD/MM/YY', '—' when absent.
+function fmtLblDate(iso) {
+  if (!iso) return '—';
+  const m = String(iso).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : String(iso);
+}
+
+// Grid LPD/LSD show AGE IN DAYS (spec §3/§6), not a date: '5d', or '—' when the
+// product was never purchased/sold (no date). Exact date goes in the tooltip
+// (§27). Reuses purchase_days/sale_days + the dates the search already returns
+// — no extra API call (§31). days can legitimately be 0 (today).
+function fmtLblDays(days, iso) {
+  if (!iso) return '—';
+  const n = Number(days);
+  return Number.isFinite(n) ? `${n}d` : '—';
+}
+function fmtLblDateFull(iso) {
+  if (!iso) return '';
+  const m = String(iso).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso);
+}
+
+// Common corrected-unit choices offered in the editable Unit cell datalist,
+// merged with whatever units the current load actually contains.
+const LABEL_UNIT_PRESETS = ['TAB', 'CAP', 'SYP', 'INJ', 'CREAM', 'LOT', 'PACK', 'SUG', 'DROPS', 'POWDER'];
+
+function escapeLabelHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ── Derived, non-overlapping status model (spec §12) ─────────────────────
+// Review (NULL/Y/N), Assignment (NOT_STARTED/NOT_REQUIRED/PENDING/ASSIGNED) and
+// the display badge are computed from the raw dbo.label_review facts so
+// "pending" etc. mean exactly one thing everywhere.
+function lblIsAssigned(row) { return String(row.assigned_sublocation || '').trim() !== ''; }
+function lblReview(row) {
+  return row.include_label === 'Y' ? 'INCLUDED' : row.include_label === 'N' ? 'EXCLUDED' : 'NOT_REVIEWED';
+}
+function lblAssignment(row) {
+  const r = lblReview(row);
+  if (r === 'NOT_REVIEWED') return 'NOT_STARTED';
+  if (r === 'EXCLUDED') return 'NOT_REQUIRED';
+  return lblIsAssigned(row) ? 'ASSIGNED' : 'PENDING';
+}
+function lblStatusBadge(row) {
+  switch (lblAssignment(row)) {
+    case 'ASSIGNED': return { cls: 'is-assigned', glyph: '✓', text: 'Assigned' };
+    case 'PENDING': return { cls: 'is-pending', glyph: '●', text: 'Pending' };
+    case 'NOT_REQUIRED': return { cls: 'is-excluded', glyph: '—', text: 'Excluded' };
+    default: return { cls: 'is-none', glyph: '—', text: 'Not Reviewed' };
+  }
+}
+// Old Unit = the master/original unit (read-only); New Unit = the corrected
+// value that all downstream logic uses; changed only when a real correction
+// exists (spec §1/§2/§9).
+function lblOldUnit(row) { return String(row.old_unit_description || row.unit_description || '').trim(); }
+function lblNewUnit(row) { return String(row.corrected_unit || row.unit_description || '').trim(); }
+function lblUnitChanged(row) {
+  return String(row.corrected_unit || '').trim() !== '' && lblNewUnit(row).toUpperCase() !== lblOldUnit(row).toUpperCase();
+}
+function lblOldLoc(row) { return String(row.old_sublocation || row.current_sublocation || '').trim(); }
+function lblNewLoc(row) { return String(row.assigned_sublocation || '').trim(); }
+
+// Excel-style per-column filtering. lblColValue returns the comparable value for
+// a column key; lblColMatch supports numeric operators (>,<,>=,<=,=) and falls
+// back to case-insensitive substring; lblRowMatchesFilters ANDs every active
+// column filter.
+function lblColValue(row, key) {
+  switch (key) {
+    case 'code': return row.product_code;
+    case 'product': return row.product_name;
+    case 'oldUnit': return lblOldUnit(row);
+    case 'newUnit': return lblNewUnit(row);
+    case 'oldLoc': return lblOldLoc(row);
+    case 'newLoc': return lblNewLoc(row);
+    case 'stock': return row.total_stock;
+    case 'lpd': return row.last_purchase_date ? row.purchase_days : '';
+    case 'lsd': return row.last_sale_date ? row.sale_days : '';
+    case 'review': return row.include_label || '';
+    default: return '';
+  }
+}
+function lblColMatch(value, filter) {
+  const f = String(filter || '').trim();
+  if (!f) return true;
+  const m = f.match(/^(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)$/);
+  if (m) {
+    const num = parseFloat(value);
+    if (Number.isNaN(num)) return false;
+    const t = parseFloat(m[2]);
+    if (m[1] === '>') return num > t;
+    if (m[1] === '<') return num < t;
+    if (m[1] === '>=') return num >= t;
+    if (m[1] === '<=') return num <= t;
+    return num === t;
+  }
+  return String(value ?? '').toLowerCase().includes(f.toLowerCase());
+}
+function lblRowMatchesFilters(row, filters) {
+  for (const key in filters) {
+    if (filters[key] && !lblColMatch(lblColValue(row, key), filters[key])) return false;
+  }
+  return true;
+}
 
 // Mirrors backend dependencies.store_scope.assert_label_exporter_store_access:
 // only NMW (prints for every store) and super admin/platform logins may pick
@@ -3234,6 +3559,140 @@ function LabelMultiPicker({ options, selected, onChange, placeholder = 'Any', no
   );
 }
 
+// Edit-on-demand searchable unit combobox (spec §5): mounts in place of the
+// read-only New Unit text only while a cell is being corrected. Supports both
+// picking an existing unit AND typing a brand-new description (e.g. DROPS).
+// Enter/click commits, Esc cancels, ↑/↓ move, click-away cancels.
+function LabelUnitCombo({ current, options, onPick, onCancel }) {
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
+  useEffect(() => {
+    function onDoc(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) onCancel(); }
+    document.addEventListener('mousedown', onDoc, true);
+    return () => document.removeEventListener('mousedown', onDoc, true);
+  }, [onCancel]);
+
+  const term = query.trim().toUpperCase();
+  const base = term ? options.filter((o) => o.toUpperCase().includes(term)) : options;
+  // Offer the typed value as a "create new" row when it isn't already an option.
+  const matches = term && !base.some((o) => o.toUpperCase() === term) ? [term, ...base].slice(0, 40) : base.slice(0, 40);
+
+  function commit(value) {
+    const v = String(value || '').trim().toUpperCase();
+    if (v) onPick(v); else onCancel();
+  }
+
+  function onKeyDown(event) {
+    event.stopPropagation();
+    if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
+    else if (event.key === 'ArrowDown') { event.preventDefault(); setActive((a) => Math.min(a + 1, matches.length - 1)); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+    else if (event.key === 'Enter') { event.preventDefault(); commit(matches[active] ?? query); }
+  }
+
+  return (
+    <div className="lbl-unit-combo" ref={wrapRef} onClick={(e) => e.stopPropagation()}>
+      <input
+        ref={inputRef}
+        className="lbl-unit-combo-input"
+        value={query}
+        placeholder={current || 'Search / type unit…'}
+        onChange={(event) => { setQuery(event.target.value.toUpperCase()); setActive(0); }}
+        onKeyDown={onKeyDown}
+      />
+      {matches.length > 0 && (
+        <div className="lbl-unit-combo-menu" role="listbox">
+          {matches.map((value, i) => (
+            <button
+              type="button"
+              key={value}
+              className={`lbl-unit-combo-row ${i === active ? 'is-active' : ''}`}
+              role="option"
+              aria-selected={i === active}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => commit(value)}
+            >
+              <span>{value}</span>
+              {value === current.toUpperCase() && <em>current</em>}
+              {term && value === term && !options.some((o) => o.toUpperCase() === term) && <em>new</em>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Manual box/location override combo — same behavior as LabelUnitCombo (type
+// to filter, Enter to pick, typing a value not in the list commits it as
+// new), reused verbatim except for the placeholder text.
+function LabelLocationCombo({ current, options, onPick, onCancel }) {
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
+  useEffect(() => {
+    function onDoc(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) onCancel(); }
+    document.addEventListener('mousedown', onDoc, true);
+    return () => document.removeEventListener('mousedown', onDoc, true);
+  }, [onCancel]);
+
+  const term = query.trim().toUpperCase();
+  const base = term ? options.filter((o) => o.toUpperCase().includes(term)) : options;
+  const matches = term && !base.some((o) => o.toUpperCase() === term) ? [term, ...base].slice(0, 40) : base.slice(0, 40);
+
+  function commit(value) {
+    const v = String(value || '').trim().toUpperCase();
+    if (v) onPick(v); else onCancel();
+  }
+
+  function onKeyDown(event) {
+    event.stopPropagation();
+    if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
+    else if (event.key === 'ArrowDown') { event.preventDefault(); setActive((a) => Math.min(a + 1, matches.length - 1)); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+    else if (event.key === 'Enter') { event.preventDefault(); commit(matches[active] ?? query); }
+  }
+
+  return (
+    <div className="lbl-unit-combo" ref={wrapRef} onClick={(e) => e.stopPropagation()}>
+      <input
+        ref={inputRef}
+        className="lbl-unit-combo-input"
+        value={query}
+        placeholder={current || 'Search / type location…'}
+        onChange={(event) => { setQuery(event.target.value.toUpperCase()); setActive(0); }}
+        onKeyDown={onKeyDown}
+      />
+      {matches.length > 0 && (
+        <div className="lbl-unit-combo-menu" role="listbox">
+          {matches.map((value, i) => (
+            <button
+              type="button"
+              key={value}
+              className={`lbl-unit-combo-row ${i === active ? 'is-active' : ''}`}
+              role="option"
+              aria-selected={i === active}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => commit(value)}
+            >
+              <span>{value}</span>
+              {value === current.toUpperCase() && <em>current</em>}
+              {term && value === term && !options.some((o) => o.toUpperCase() === term) && <em>new</em>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LabelExporter({ session, settings }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
   const admin = isSuperAdmin(session);
@@ -3251,33 +3710,222 @@ function LabelExporter({ session, settings }) {
   const [selectedSublocs, setSelectedSublocs] = useState(() => new Set());
   const [boxNumber, setBoxNumber] = useState('');
   const [stockFilter, setStockFilter] = useState('all');
-  const [onlyNullSublocation, setOnlyNullSublocation] = useState(true);
-  const [onlySaleUnitGtOne, setOnlySaleUnitGtOne] = useState(true);
+  const [reviewStatus, setReviewStatus] = useState('');
+  // Clean defaults (spec §1): both advanced toggles start UNCHECKED and the
+  // advanced panel starts collapsed — no stale box/subloc/sale filter is
+  // applied unless the operator opens Advanced and sets one.
+  const [onlyNullSublocation, setOnlyNullSublocation] = useState(false);
+  const [onlySaleUnitGtOne, setOnlySaleUnitGtOne] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [editingUnitCode, setEditingUnitCode] = useState(null);
+  const [editingLocationCode, setEditingLocationCode] = useState(null);
+  const [showColFilters, setShowColFilters] = useState(false);
+  const [colFilters, setColFilters] = useState({}); // { colKey: filterText }
+
+  // Per-user column config (order / hidden / widths), same shape + machinery as
+  // the Order Workspace grids. It is now part of the ONE UI-session file (spec
+  // Part 11) — no separate localStorage key — starting at the spec defaults and
+  // hydrated from the session on mount, then autosaved with everything else.
+  const [labelColCfg, setLabelColCfg] = useState({});
+  const [colSettingsOpen, setColSettingsOpen] = useState(false);
+  const colSettingsBtnRef = useRef(null);
+  const cfgToggle = (key) => setLabelColCfg((c) => { const hidden = { ...(c.hidden || {}) }; hidden[key] = !hidden[key]; return { ...c, hidden }; });
+  const cfgMove = (key, dir) => setLabelColCfg((c) => { const order = orderOwKeys(LABEL_COLUMNS, c); const i = order.indexOf(key); const j = i + dir; if (i < 0 || j < 0 || j >= order.length) return c; const n = [...order]; [n[i], n[j]] = [n[j], n[i]]; return { ...c, order: n }; });
+  const cfgWidth = (key, w) => setLabelColCfg((c) => { const widths = { ...(c.widths || {}) }; if (w === '' || w == null) delete widths[key]; else widths[key] = Number(w); return { ...c, widths }; });
+  const cfgReset = () => setLabelColCfg({});
+  const labelCols = useMemo(() => resolveOwColumns(LABEL_COLUMNS, labelColCfg), [labelColCfg]);
+
+  // One body cell for a given column key — keeps header/body driven by the SAME
+  // ordered column list so reordering/hiding can never misalign them.
+  function renderLabelCell(col, row, index) {
+    const code = row.product_code;
+    const selected = selectedCodes.has(code);
+    switch (col.key) {
+      case 'sno':
+        return (
+          <td key="sno" className={`ow-num lbl-sno-cell ${selected ? 'is-picked' : ''}`} title="Space to select for assignment"
+            onClick={(event) => { event.stopPropagation(); toggleSelect(code); }}>{selected ? '✓' : index + 1}</td>
+        );
+      case 'code':
+        return <td key="code" className="lbl-code-cell">{row.product_code}</td>;
+      case 'product':
+        return <td key="product" className="ow-grow" title={row.product_name}>{row.product_name}</td>;
+      case 'oldUnit': {
+        const oldUnit = lblOldUnit(row);
+        return <td key="oldUnit" className="lbl-oldunit-cell">{oldUnit || '—'}</td>;
+      }
+      case 'newUnit': {
+        const oldUnit = lblOldUnit(row);
+        const newUnit = lblNewUnit(row);
+        const unitChanged = lblUnitChanged(row);
+        return (
+          <td key="newUnit" className="lbl-newunit-td" onClick={(event) => event.stopPropagation()}>
+            {editingUnitCode === code ? (
+              <LabelUnitCombo
+                current={newUnit}
+                options={Array.from(new Set([...LABEL_UNIT_PRESETS, ...unitOptions]))}
+                onPick={(value) => commitUnit(row, value)}
+                onCancel={() => setEditingUnitCode(null)}
+              />
+            ) : (
+              <button
+                type="button"
+                className={`lbl-newunit-chip ${unitChanged ? 'is-changed' : ''}`}
+                disabled={savingCode === code}
+                title={unitChanged ? `Corrected from ${oldUnit} — click to change` : 'Click to correct unit'}
+                onClick={() => { setActiveIndex(index); setEditingUnitCode(code); }}
+              >
+                <span className="lbl-newunit-val">{newUnit || '—'}</span>
+                {unitChanged && <span className="lbl-newunit-dot" aria-label="changed">●</span>}
+              </button>
+            )}
+          </td>
+        );
+      }
+      case 'oldLoc': {
+        const oldLoc = lblOldLoc(row);
+        return <td key="oldLoc" className="lbl-oldloc-cell">{oldLoc || <span className="lbl-null">—</span>}</td>;
+      }
+      case 'newLoc': {
+        const newLoc = lblNewLoc(row);
+        if (!admin) {
+          return <td key="newLoc" className="lbl-newloc-cell">{newLoc ? <span className="lbl-assigned-box">{newLoc}</span> : <span className="lbl-null">—</span>}</td>;
+        }
+        return (
+          <td key="newLoc" className="lbl-newloc-cell" onClick={(event) => event.stopPropagation()}>
+            {editingLocationCode === code ? (
+              <LabelLocationCombo
+                current={newLoc}
+                options={locationOptions}
+                onPick={(value) => commitLocation(row, value)}
+                onCancel={() => setEditingLocationCode(null)}
+              />
+            ) : (
+              <button
+                type="button"
+                className="lbl-newunit-chip"
+                disabled={savingCode === code}
+                title={newLoc ? `Manually move from ${newLoc}` : 'Click to assign a location'}
+                onClick={() => { setActiveIndex(index); setEditingLocationCode(code); }}
+              >
+                <span className="lbl-newunit-val">{newLoc ? <span className="lbl-assigned-box">{newLoc}</span> : <span className="lbl-null">—</span>}</span>
+              </button>
+            )}
+          </td>
+        );
+      }
+      case 'stock':
+        return <td key="stock" className={`ow-num ${Number(row.total_stock) === 0 ? 'ow-stock-zero' : ''}`}>{fmtOwQty(row.total_stock)}</td>;
+      case 'lpd':
+        return <td key="lpd" className="ow-num lbl-date-cell" title={row.last_purchase_date ? `Last purchase: ${fmtLblDateFull(row.last_purchase_date)}` : 'Never purchased'}>{fmtLblDays(row.purchase_days, row.last_purchase_date)}</td>;
+      case 'lsd':
+        return <td key="lsd" className="ow-num lbl-date-cell" title={row.last_sale_date ? `Last sale: ${fmtLblDateFull(row.last_sale_date)}` : 'Never sold'}>{fmtLblDays(row.sale_days, row.last_sale_date)}</td>;
+      case 'review': {
+        const review = row.include_label || null;
+        const reviewBadge = review === 'Y' ? 'Y' : review === 'N' ? 'N' : '—';
+        const reviewCls = review === 'Y' ? 'is-yes' : review === 'N' ? 'is-no' : 'is-none';
+        return (
+          <td key="review" className="lbl-review-cell">
+            <button
+              type="button"
+              className={`lbl-review-badge ${reviewCls}`}
+              disabled={savingCode === code}
+              title="Click to cycle —/Y/N · or use Enter/Y, Esc/N"
+              onClick={(event) => { event.stopPropagation(); cycleReview(row); }}
+            >{reviewBadge}</button>
+          </td>
+        );
+      }
+      default:
+        return <td key={col.key} />;
+    }
+  }
+  const [confirm, setConfirm] = useState(null); // { title, body, confirmLabel, onConfirm }
+  const [toast, setToast] = useState(null);      // { text, kind: 'ok'|'err' }
+  const toastTimer = useRef(null);
+  function flashToast(text, kind = 'ok') {
+    setToast({ text, kind });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), kind === 'ok' ? 1400 : 2800);
+  }
 
   const [rows, setRows] = useState([]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [selectedCodes, setSelectedCodes] = useState(() => new Set());
   const [status, setStatus] = useState({ state: 'idle', message: 'Pick a letter and search.' });
   const [savingCode, setSavingCode] = useState('');
   const [subLocDrafts, setSubLocDrafts] = useState({});
   const [remarksDrafts, setRemarksDrafts] = useState({});
+  const [unitDrafts, setUnitDrafts] = useState({});
+
+  // Location-assignment drawer (Modes 1/2, single box) + label queue.
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignForm, setAssignForm] = useState({ mode: 'continue', assignmentType: 'standard_box', unit: '', letter: '', startNumber: 1 });
+  const [assignPreview, setAssignPreview] = useState(null);
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [assignError, setAssignError] = useState('');
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [queueRows, setQueueRows] = useState([]);
+  const [queueBusy, setQueueBusy] = useState(false);
 
   const [trendRows, setTrendRows] = useState([]);
+  const [trendMonths, setTrendMonths] = useState(LBL_TREND_MONTHS_DEFAULT); // 4-12, default 6 (spec §5A/5B)
   const [purchaseRows, setPurchaseRows] = useState([]);
   const [saleRows, setSaleRows] = useState([]);
   const [intelLoading, setIntelLoading] = useState(false);
   const intelRequestRef = useRef(0);
   const [bulkBusy, setBulkBusy] = useState(false);
   const rowRefs = useRef({});
-  const remarksRefs = useRef({});
   const gridRef = useRef(null);
 
+  // "More ▾" overflow menu — keeps the destructive Clear actions out of the
+  // primary action row (spec §30) so they never sit at the same visual weight
+  // as Assign / Mark all.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef(null);
   useEffect(() => {
+    if (!moreOpen) return undefined;
+    function onDoc(e) { if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [moreOpen]);
+
+  // Load the store list, retrying a few times if it comes back empty/errors.
+  // The list is only needed for the (super-admin/NMW) store switcher, so a
+  // failure here must NOT clobber the grid's status — it used to set an error
+  // that got masked by the next product search, leaving `stores` empty and the
+  // picker stuck on the "Current store" placeholder when this fetch happened to
+  // run while the backend was momentarily down.
+  const loadStores = useCallback((attempt = 0) => {
     api.listStores(session)
-      .then((rows) => setStores(asArray(rows)))
-      .catch((error) => setStatus({ state: 'error', message: `Store list failed: ${error.message}` }));
+      .then((rows) => {
+        const list = asArray(rows);
+        if (list.length) setStores(list);
+        else if (attempt < 4) setTimeout(() => loadStores(attempt + 1), 1200);
+      })
+      .catch(() => { if (attempt < 4) setTimeout(() => loadStores(attempt + 1), 1200); });
   }, [session]);
 
-  const activeRow = rows[activeIndex] || null;
+  useEffect(() => { loadStores(); }, [loadStores]);
+
+  const hasColFilters = useMemo(() => Object.values(colFilters).some((v) => v && v.trim()), [colFilters]);
+  // The grid, navigation, counters and bulk/clear actions all operate on the
+  // client-side column-filtered VIEW (Excel-style): filter the loaded rows,
+  // then act on what's shown.
+  const visibleRows = useMemo(
+    () => (hasColFilters ? rows.filter((row) => lblRowMatchesFilters(row, colFilters)) : rows),
+    [rows, colFilters, hasColFilters]
+  );
+  useEffect(() => { setActiveIndex(0); }, [colFilters]);
+
+  // Boxes already assigned in the loaded rows, so the reviewer can reuse one
+  // instead of retyping it; typing a value not here still commits as new.
+  const locationOptions = useMemo(() => {
+    const used = rows.map((row) => lblNewLoc(row)).filter((v) => v);
+    return Array.from(new Set(used)).sort();
+  }, [rows]);
+
+  const activeRow = visibleRows[activeIndex] || null;
 
   useEffect(() => {
     if (!activeRow?.product_code || !tenantId || !storeId) {
@@ -3301,11 +3949,140 @@ function LabelExporter({ session, settings }) {
     });
   }, [activeRow?.product_code, tenantId, storeId, session]);
 
+  // ── UI session: restore on mount, autosave (debounced) on change ─────────
+  // (spec Parts 9-15). One JSON file, UI state only. Business data (Y/N review,
+  // unit corrections, assignments) is never persisted here — it lives in the DB.
+  const scrollTopRef = useRef(0);
+  const saveTimer = useRef(null);
+  const readyToSaveRef = useRef(false);      // gates saves until restore settles
+  const restoreTargetRef = useRef(null);     // { productId, rowIndex, scrollTop }
+  const [restoreSearchToken, setRestoreSearchToken] = useState(0);
+
+  function buildSession() {
+    return {
+      version: 2,
+      storeId,
+      letter: startsWith,
+      filters: {
+        search: q,
+        units: Array.from(selectedUnits),
+        review: reviewStatus,
+        stock: stockFilter,
+        sublocs: Array.from(selectedSublocs),
+        box: boxNumber,
+        onlyNull: onlyNullSublocation,
+        onlySaleGt1: onlySaleUnitGtOne
+      },
+      advancedOpen: showAdvanced,
+      columnFiltersEnabled: showColFilters,
+      columnFilters: colFilters,
+      currentProductId: activeRow?.product_code || null,
+      currentRowIndex: activeIndex,
+      scrollTop: scrollTopRef.current,
+      columns: labelColCfg,
+      trendMonths,
+      updatedAt: new Date().toISOString()
+    };
+  }
+  const buildSessionRef = useRef(buildSession);
+  buildSessionRef.current = buildSession;
+
+  const scheduleSave = useCallback(() => {
+    if (!readyToSaveRef.current) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => writeLabelSession(buildSessionRef.current()), 500);
+  }, []);
+
+  // 1) Restore once on mount; flush a final save on unmount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const s = await readLabelSession();
+      if (cancelled) return;
+      if (s && typeof s === 'object') {
+        if (s.storeId && canChangeStore) setStoreId(s.storeId);
+        if (typeof s.letter === 'string') setStartsWith(s.letter);
+        const f = s.filters || {};
+        if (typeof f.search === 'string') setQ(f.search);
+        if (Array.isArray(f.units)) setSelectedUnits(new Set(f.units));
+        if (Array.isArray(f.sublocs)) setSelectedSublocs(new Set(f.sublocs));
+        if (typeof f.review === 'string') setReviewStatus(f.review);
+        if (typeof f.stock === 'string') setStockFilter(f.stock);
+        if (typeof f.box === 'string') setBoxNumber(f.box);
+        if (typeof f.onlyNull === 'boolean') setOnlyNullSublocation(f.onlyNull);
+        if (typeof f.onlySaleGt1 === 'boolean') setOnlySaleUnitGtOne(f.onlySaleGt1);
+        if (typeof s.advancedOpen === 'boolean') setShowAdvanced(s.advancedOpen);
+        if (typeof s.columnFiltersEnabled === 'boolean') setShowColFilters(s.columnFiltersEnabled);
+        if (s.columnFilters && typeof s.columnFilters === 'object') setColFilters(s.columnFilters);
+        if (s.columns && typeof s.columns === 'object') setLabelColCfg(s.columns);
+        if (Number.isFinite(s.trendMonths)) setTrendMonths(Math.min(12, Math.max(4, s.trendMonths)));
+        restoreTargetRef.current = {
+          productId: s.currentProductId || null,
+          rowIndex: Number.isInteger(s.currentRowIndex) ? s.currentRowIndex : 0,
+          scrollTop: Number.isFinite(s.scrollTop) ? s.scrollTop : 0
+        };
+        if ((s.letter && s.letter.trim()) || (f.search && f.search.trim())) {
+          setRestoreSearchToken((t) => t + 1);   // auto-run the saved search
+        } else {
+          readyToSaveRef.current = true;          // nothing to restore-search
+        }
+      } else {
+        readyToSaveRef.current = true;            // missing/corrupt -> clean defaults
+      }
+    })();
+    return () => {
+      cancelled = true;
+      clearTimeout(saveTimer.current);
+      if (readyToSaveRef.current) writeLabelSession(buildSessionRef.current());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 2) Run the restored search once the restored filter state has been applied.
+  useEffect(() => {
+    if (restoreSearchToken > 0) runSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreSearchToken]);
+
+  // 3) After the restored search lands, reselect the saved product (by id, then
+  //    row-index fallback) and restore scroll — then enable autosave. Runs once;
+  //    restoreTargetRef is consumed on the first ok/error.
+  useEffect(() => {
+    const t = restoreTargetRef.current;
+    if (!t) return;
+    if (status.state !== 'ok' && status.state !== 'error') return;
+    restoreTargetRef.current = null;
+    if (status.state === 'ok' && visibleRows.length) {
+      let idx = -1;
+      if (t.productId) idx = visibleRows.findIndex((r) => r.product_code === t.productId);
+      if (idx < 0 && Number.isInteger(t.rowIndex)) idx = Math.min(Math.max(t.rowIndex, 0), visibleRows.length - 1);
+      if (idx >= 0) {
+        setActiveIndex(idx);
+        requestAnimationFrame(() => {
+          if (t.scrollTop && gridRef.current) gridRef.current.scrollTop = t.scrollTop;
+          else rowRefs.current[idx]?.scrollIntoView({ block: 'center' });
+        });
+      }
+    }
+    readyToSaveRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status.state, visibleRows]);
+
+  // 4) Autosave (debounced) whenever any tracked UI state changes.
+  useEffect(() => { scheduleSave(); }, [
+    scheduleSave, storeId, startsWith, q, selectedUnits, selectedSublocs, reviewStatus,
+    stockFilter, boxNumber, onlyNullSublocation, onlySaleUnitGtOne, showAdvanced,
+    showColFilters, colFilters, activeIndex, labelColCfg, trendMonths, activeRow?.product_code
+  ]);
+
   function runSearch() {
     if (!tenantId || !storeId) {
       setStatus({ state: 'idle', message: 'Waiting for tenant/store...' });
       return;
     }
+    // If the store list never loaded (e.g. backend was down on mount), try again
+    // now that we're clearly talking to the backend.
+    if (stores.length === 0) loadStores();
     setStatus({ state: 'loading', message: 'Loading products...' });
     api.searchLabelProducts(session, {
       tenantId,
@@ -3316,6 +4093,7 @@ function LabelExporter({ session, settings }) {
       unitDescriptionMode: selectedUnits.size ? 'exact' : 'contains',
       boxNumber,
       stockFilter,
+      reviewStatus,
       onlyNullSublocation: boxNumber ? false : onlyNullSublocation,
       onlySaleUnitGtOne,
       sublocationFilter: selectedSublocs.size ? Array.from(selectedSublocs).join(',') : ''
@@ -3323,16 +4101,21 @@ function LabelExporter({ session, settings }) {
       const nextRows = asArray(result?.rows);
       setRows(nextRows);
       setActiveIndex(0);
+      setSelectedCodes(new Set());
       setUnitOptions(asArray(result?.unit_descriptions));
       setSublocOptions(asArray(result?.sublocations));
       const nextSubLoc = {};
       const nextRemarks = {};
+      const nextUnit = {};
       nextRows.forEach((row) => {
         nextSubLoc[row.product_code] = row.current_sublocation || '';
         nextRemarks[row.product_code] = row.remarks || '';
+        // Effective current unit = correction override wins over master unit.
+        nextUnit[row.product_code] = row.corrected_unit || row.unit_description || '';
       });
       setSubLocDrafts(nextSubLoc);
       setRemarksDrafts(nextRemarks);
+      setUnitDrafts(nextUnit);
       setStatus({ state: 'ok', message: nextRows.length ? `${nextRows.length} product(s).` : 'No products for this filter.' });
     }).catch((error) => {
       setRows([]);
@@ -3342,6 +4125,24 @@ function LabelExporter({ session, settings }) {
 
   function patchRow(productCode, patch) {
     setRows((current) => current.map((row) => (row.product_code === productCode ? { ...row, ...patch } : row)));
+  }
+
+  // Reset every filter to the clean default (spec §1) — filters only; never
+  // touches loaded review data. Search again to reload with the defaults.
+  function resetFilters() {
+    setQ('');
+    setStartsWith('');
+    setSelectedUnits(new Set());
+    setSelectedSublocs(new Set());
+    setBoxNumber('');
+    setStockFilter('all');
+    setReviewStatus('');
+    setOnlyNullSublocation(false);
+    setOnlySaleUnitGtOne(false);
+    setShowAdvanced(false);
+    setEditingUnitCode(null);
+    setColFilters({});
+    flashToast('✓ Filters reset');
   }
 
   // Persist a review value on the shared backend field `include_label`
@@ -3391,38 +4192,208 @@ function LabelExporter({ session, settings }) {
       .finally(() => setSavingCode(''));
   }
 
+  // Unit correction (spec §8): auto-saves the corrected New Unit; old_unit is
+  // captured backend-side from the master unit the FIRST time it changes and is
+  // never overwritten (spec §9). Called by the edit-on-demand combobox.
+  function commitUnit(row, value) {
+    setEditingUnitCode(null);
+    const next = String(value || '').trim().toUpperCase();
+    const current = lblNewUnit(row).toUpperCase();
+    if (!next || next === current) return;
+    setSavingCode(row.product_code);
+    api.correctLabelUnit(row.product_code, tenantId, storeId, next, lblOldUnit(row), session)
+      .then(() => {
+        patchRow(row.product_code, {
+          corrected_unit: next,
+          old_unit_description: row.old_unit_description || row.unit_description || null
+        });
+        flashToast(`✓ Unit → ${next}`);
+      })
+      .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Save failed', 'err'); })
+      .finally(() => setSavingCode(''));
+  }
+
+  // Manual box override (super admin): bypasses the standard-box/SYP
+  // assignment engine for one product. Old box is captured backend-side from
+  // whatever was last assigned and is never overwritten (same rule as unit).
+  function commitLocation(row, value) {
+    setEditingLocationCode(null);
+    const next = String(value || '').trim().toUpperCase();
+    const current = lblNewLoc(row).toUpperCase();
+    if (!next || next === current) return;
+    const capturedOld = lblNewLoc(row) || lblOldLoc(row);
+    setSavingCode(row.product_code);
+    api.correctLabelLocation(row.product_code, tenantId, storeId, next, capturedOld, session)
+      .then(() => {
+        patchRow(row.product_code, {
+          assigned_sublocation: next,
+          old_sublocation: row.old_sublocation || capturedOld || null,
+          label_required: true
+        });
+        flashToast(`✓ Location → ${next}`);
+      })
+      .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Save failed', 'err'); })
+      .finally(() => setSavingCode(''));
+  }
+
+  // Space toggles a row into the assignment selection (spec §F). When nothing
+  // is selected, assignment falls back to every reviewed-Y row in the load.
+  function toggleSelect(code) {
+    setSelectedCodes((current) => {
+      const next = new Set(current);
+      if (next.has(code)) next.delete(code); else next.add(code);
+      return next;
+    });
+  }
+
+  // Products the assignment run will act on: reviewed-Y rows, narrowed to the
+  // explicit selection if the operator Space-selected any.
+  const assignTargets = useMemo(() => {
+    const yRows = visibleRows.filter((row) => row.include_label === 'Y');
+    if (!selectedCodes.size) return yRows;
+    return yRows.filter((row) => selectedCodes.has(row.product_code));
+  }, [visibleRows, selectedCodes]);
+
+  function openAssignDrawer() {
+    if (!assignTargets.length) {
+      setStatus({ state: 'error', message: 'Mark products Y before assigning locations.' });
+      return;
+    }
+    // Default unit = effective unit of the first target; letter = filter letter
+    // or first letter of the first target product name.
+    const first = assignTargets[0];
+    const unit = (first.corrected_unit || first.unit_description || '').toUpperCase();
+    const letter = (startsWith || (first.product_name || '').trim().charAt(0)).toUpperCase();
+    setAssignForm({ mode: 'continue', assignmentType: 'standard_box', unit, letter, startNumber: 1 });
+    setAssignPreview(null);
+    setAssignError('');
+    setAssignOpen(true);
+  }
+
+  function assignBody() {
+    return {
+      unit: assignForm.unit,
+      mode: assignForm.assignmentType === 'single_product_box' ? 'single' : assignForm.mode,
+      assignment_type: assignForm.assignmentType,
+      letter: assignForm.letter,
+      product_codes: assignTargets.map((row) => row.product_code),
+      start_number: Number(assignForm.startNumber) || 1
+    };
+  }
+
+  function runPreview() {
+    setAssignBusy(true);
+    setAssignError('');
+    api.previewLabelAssignment(tenantId, storeId, assignBody(), session)
+      .then((result) => setAssignPreview(result))
+      .catch((error) => { setAssignPreview(null); setAssignError(error.message); })
+      .finally(() => setAssignBusy(false));
+  }
+
+  function runCommit() {
+    setAssignBusy(true);
+    setAssignError('');
+    api.commitLabelAssignment(tenantId, storeId, assignBody(), session)
+      .then((result) => {
+        const codes = new Set((result?.assignments || []).map((a) => a.product_code));
+        // Reflect the new assigned box + label-queued state on the grid rows.
+        setRows((current) => current.map((row) => (codes.has(row.product_code)
+          ? { ...row, assigned_sublocation: (result.assignments.find((a) => a.product_code === row.product_code) || {}).box, label_required: true }
+          : row)));
+        setStatus({ state: 'ok', message: `Assigned ${result?.assigned_count ?? codes.size} product(s) to ${result?.boxes?.length ?? 0} box(es).` });
+        setAssignOpen(false);
+        setSelectedCodes(new Set());
+      })
+      .catch((error) => setAssignError(error.message))
+      .finally(() => setAssignBusy(false));
+  }
+
+  function openQueue() {
+    setQueueOpen(true);
+    setQueueBusy(true);
+    api.getLabelQueue(tenantId, storeId, session)
+      .then((result) => setQueueRows(asArray(result?.rows)))
+      .catch((error) => setStatus({ state: 'error', message: error.message }))
+      .finally(() => setQueueBusy(false));
+  }
+
+  function printQueue() {
+    if (!queueRows.length) return;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    const body = queueRows.map((r) => `
+      <div class="lbl">
+        <div class="nm">${escapeLabelHtml(r.product_name || '')}</div>
+        <div class="mt"><span>${escapeLabelHtml(r.location || '')}</span><span>${escapeLabelHtml(r.unit_description || '')}</span></div>
+        <div class="mr">MRP ₹${escapeLabelHtml(String(r.mrp ?? ''))}</div>
+      </div>`).join('\n');
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Labels</title><style>
+      *{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;display:flex;flex-wrap:wrap;gap:2mm;padding:4mm}
+      .lbl{width:50mm;height:25mm;border:0.4px solid #000;padding:1.5mm;display:flex;flex-direction:column;justify-content:center;page-break-inside:avoid}
+      .nm{font-weight:700;font-size:9pt;line-height:1.15;overflow:hidden}.mt{display:flex;justify-content:space-between;font-size:8pt;margin-top:1mm}.mr{font-weight:600;font-size:8pt;margin-top:auto}
+      @page{margin:5mm}</style></head><body>${body}</body></html>`);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 400);
+    api.markLabelsPrinted(tenantId, storeId, queueRows.map((r) => r.product_code), session)
+      .then(() => setQueueRows((current) => current.map((r) => ({ ...r, label_created_at: r.label_created_at || 'printed' }))))
+      .catch(() => {});
+  }
+
   const remarksOptions = useMemo(() => {
     const used = rows.map((row) => row.remarks).filter(Boolean);
     return Array.from(new Set([...LABEL_REMARKS_PRESETS, ...used]));
   }, [rows]);
 
-  // Review progress for the status strip (reviewed = has a Y or N decision).
+  // Workflow counters for the status strip (spec §11/§25) — over the visible
+  // (column-filtered) rows so they match what's shown.
   const progress = useMemo(() => {
-    const total = rows.length;
-    let reviewed = 0;
-    for (const row of rows) if (row.include_label === 'Y' || row.include_label === 'N') reviewed += 1;
-    return { total, reviewed, remaining: total - reviewed, pct: total ? Math.round((reviewed / total) * 100) : 0 };
-  }, [rows]);
+    const c = { total: visibleRows.length, reviewed: 0, included: 0, excluded: 0, remaining: 0, pending: 0, assigned: 0 };
+    for (const row of visibleRows) {
+      const rv = lblReview(row);
+      if (rv === 'NOT_REVIEWED') { c.remaining += 1; continue; }
+      c.reviewed += 1;
+      if (rv === 'EXCLUDED') { c.excluded += 1; continue; }
+      c.included += 1;
+      if (lblAssignment(row) === 'ASSIGNED') c.assigned += 1; else c.pending += 1;
+    }
+    c.pct = c.total ? Math.round((c.reviewed / c.total) * 100) : 0;
+    return c;
+  }, [visibleRows]);
 
-  // Reuses OwTrendChart (the exact Order Workspace bar chart) - it expects
-  // total_in/total_out/stock/adjustment; we only have sale/purchase qty +
-  // stock-in-hand, so adjustment is always 0 and the tooltip's IN/OUT
-  // breakdown rows (transfer/return) show '-' since that detail isn't
-  // tracked by sync.ProductTrans, only the totals are.
-  const chartRows = useMemo(() => trendRows.map((row) => ({
-    month: row.month,
-    total_in: row.purchase_qty,
-    total_out: row.sale_qty,
-    stock: row.stock_in_hand,
-    adjustment: 0
-  })), [trendRows]);
+  // Four business movements per month for LabelTrendChart, from real
+  // sync.ProductTrans columns (see get_product_trend in repository.py):
+  //   Purchase + Tin = PurchaseQuantity + TransferInQuantity
+  //   Sales + Tout   = SaleQuantity     + TransferOutQuantity
+  //   Stock          = StockInHand
+  //   Adjustment     = AdjustmentQuantity
+  // Backend returns up to 12 months (newest first); we slice to the operator's
+  // 4-12 month choice client-side so changing the selector is instant (no
+  // refetch). Raw components are kept for the tooltip breakdown.
+  const chartRows = useMemo(() => trendRows.slice(0, trendMonths).map((row) => {
+    const purchase = Number(row.purchase_qty) || 0;
+    const tin = Number(row.transfer_in_qty) || 0;
+    const sale = Number(row.sale_qty) || 0;
+    const tout = Number(row.transfer_out_qty) || 0;
+    return {
+      month: row.month,
+      purchaseTin: purchase + tin,
+      salesTout: sale + tout,
+      stock: Number(row.stock_in_hand) || 0,
+      adjustment: Number(row.adjustment_qty) || 0,
+      purchase_qty: purchase,
+      transfer_in_qty: tin,
+      sale_qty: sale,
+      transfer_out_qty: tout
+    };
+  }), [trendRows, trendMonths]);
 
   // Move selection (navigation ONLY — never mutates a review value) and keep
   // the row scrolled into view. Clamped so the last/first row can't move the
   // selection outside the grid.
   function focusRow(index) {
-    if (!rows.length) return;
-    const clamped = Math.max(0, Math.min(rows.length - 1, index));
+    if (!visibleRows.length) return;
+    const clamped = Math.max(0, Math.min(visibleRows.length - 1, index));
     setActiveIndex(clamped);
     rowRefs.current[clamped]?.scrollIntoView({ block: 'nearest' });
   }
@@ -3437,8 +4408,8 @@ function LabelExporter({ session, settings }) {
   function handleGridKeyDown(event) {
     const tag = event.target?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    if (!rows.length) return;
-    const row = rows[activeIndex];
+    if (!visibleRows.length) return;
+    const row = visibleRows[activeIndex];
     const key = event.key;
     if (key === 'ArrowDown') { event.preventDefault(); focusRow(activeIndex + 1); }
     else if (key === 'ArrowUp') { event.preventDefault(); focusRow(activeIndex - 1); }
@@ -3450,11 +4421,9 @@ function LabelExporter({ session, settings }) {
       event.preventDefault();
       if (row) markReview(row, 'N');
       focusRow(activeIndex + 1);
-    } else if (key === 'ArrowRight') {
-      if (row) {
-        event.preventDefault();
-        remarksRefs.current[row.product_code]?.focus();
-      }
+    } else if (key === ' ' || key === 'Spacebar') {
+      event.preventDefault();
+      if (row) toggleSelect(row.product_code);
     }
   }
 
@@ -3471,16 +4440,70 @@ function LabelExporter({ session, settings }) {
   // then individual rows can still be flipped back one at a time (click, or
   // Esc while that row is active) without re-running the bulk action.
   function bulkMark(value) {
-    if (!rows.length || bulkBusy) return;
-    const codes = rows.map((row) => row.product_code);
+    if (!visibleRows.length || bulkBusy) return;
+    const codes = visibleRows.map((row) => row.product_code);
     setBulkBusy(true);
     api.bulkSetLabelInclude(tenantId, storeId, codes, value, session)
       .then(() => {
         setRows((current) => current.map((row) => ({ ...row, include_label: value })));
         setStatus({ state: 'ok', message: `Marked ${codes.length} product(s) ${value}.` });
+        flashToast(`✓ ${codes.length} marked ${value}`);
       })
-      .catch((error) => setStatus({ state: 'error', message: error.message }))
+      .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Bulk update failed', 'err'); })
       .finally(() => setBulkBusy(false));
+  }
+
+  // Explicit, confirmed reset actions (spec §10/§11). Both operate on the
+  // loaded scope and only reset dbo.label_review — never product master data,
+  // old locations, sales/purchase/stock. Assignment state clears the assigned
+  // box; Review reset also clears the Y/N decision.
+  function requestClearAssignment() {
+    const codes = visibleRows.map((r) => r.product_code);
+    const nAssigned = visibleRows.filter((r) => lblIsAssigned(r)).length;
+    if (!codes.length) return;
+    setConfirm({
+      title: 'Clear assignment state?',
+      body: [
+        `Reset location assignment for ${codes.length} loaded product(s) (${nAssigned} currently assigned).`,
+        'This clears: assigned box, pending/assigned status and label-queue state.',
+        'It will NOT change: Y/N review, OLD LOCATION, unit correction, or any master/product data.'
+      ],
+      confirmLabel: 'Clear Assignment State',
+      onConfirm: () => {
+        setBulkBusy(true);
+        api.clearLabelAssignment(tenantId, storeId, codes, session)
+          .then(() => {
+            setRows((cur) => cur.map((r) => ({ ...r, assigned_sublocation: null, assignment_type: null, label_required: false })));
+            flashToast(`✓ Assignment cleared (${codes.length})`);
+          })
+          .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Clear failed', 'err'); })
+          .finally(() => { setBulkBusy(false); setConfirm(null); });
+      }
+    });
+  }
+
+  function requestClearReview() {
+    const codes = visibleRows.map((r) => r.product_code);
+    if (!codes.length) return;
+    setConfirm({
+      title: `Reset review for ${codes.length} loaded product(s)?`,
+      body: [
+        'This will clear: Y / N review state, pending assignment state, and current label-queue state.',
+        'It will NOT delete: product master data, OLD LOCATION, sales, purchase or stock.'
+      ],
+      confirmLabel: 'Reset Review',
+      onConfirm: () => {
+        setBulkBusy(true);
+        api.clearLabelReview(tenantId, storeId, codes, session)
+          .then(() => {
+            setRows((cur) => cur.map((r) => ({ ...r, include_label: null, assigned_sublocation: null, assignment_type: null, label_required: false })));
+            setSelectedCodes(new Set());
+            flashToast(`✓ Review reset (${codes.length})`);
+          })
+          .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Reset failed', 'err'); })
+          .finally(() => { setBulkBusy(false); setConfirm(null); });
+      }
+    });
   }
 
   return (
@@ -3489,7 +4512,7 @@ function LabelExporter({ session, settings }) {
         <label className="lblx-field lblx-store">
           <span>Store</span>
           <select value={storeId} disabled={!canChangeStore} onChange={(event) => setStoreId(event.target.value)}>
-            {stores.length === 0 && <option value={storeId}>{storeId ? 'Current store' : 'Loading…'}</option>}
+            {stores.length === 0 && <option value={storeId}>{storeId ? (settings?.storeName || session?.user?.roles?.[0]?.store_name || 'Current store') : 'Loading…'}</option>}
             {(canChangeStore ? stores : stores.filter((s) => s.store_id === storeId)).map((s) => (
               <option key={s.store_id} value={s.store_id}>{s.store_code} — {s.store_name}</option>
             ))}
@@ -3516,39 +4539,73 @@ function LabelExporter({ session, settings }) {
           <LabelMultiPicker options={unitOptions} selected={selectedUnits} onChange={setSelectedUnits} placeholder="Any unit" noun="unit" />
         </label>
 
-        <label className="lblx-field lblx-oldloc">
-          <span>Old Loc</span>
-          <LabelMultiPicker options={sublocOptions} selected={selectedSublocs} onChange={setSelectedSublocs} placeholder="Any location" noun="location" />
+        <label className="lblx-field lblx-review">
+          <span>Review</span>
+          <select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value)}>
+            <option value="">All</option>
+            <option value="unreviewed">Unreviewed</option>
+            <option value="Y">Included (Y)</option>
+            <option value="N">Excluded (N)</option>
+          </select>
         </label>
 
-        <label className="lblx-field lblx-box">
-          <span>Box</span>
-          <input value={boxNumber} onChange={(event) => setBoxNumber(event.target.value.toUpperCase())} placeholder="A005" />
-        </label>
-
-        <label className="lblx-field lblx-stock">
+        <label className="lblx-field lblx-stock-head">
           <span>Stock</span>
-          <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}>
+          <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)} title="Stock / sale-days rule">
             {LABEL_STOCK_FILTERS.map((option) => (
               <option key={option.value} value={option.value}>{option.short || option.label}</option>
             ))}
           </select>
         </label>
 
-        <label className="lblx-check" title="Only products with no sub-location">
-          <input type="checkbox" checked={onlyNullSublocation} disabled={!!boxNumber} onChange={(event) => setOnlyNullSublocation(event.target.checked)} />
-          <span>Subloc&nbsp;null</span>
-        </label>
+        <button
+          type="button"
+          className={`lblx-adv-toggle ${showAdvanced ? 'is-open' : ''}`}
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+          title="More filters"
+        >
+          Advanced {showAdvanced ? '▲' : '▼'}
+        </button>
 
-        <label className="lblx-check" title="Only products with sale unit greater than 1">
-          <input type="checkbox" checked={onlySaleUnitGtOne} onChange={(event) => setOnlySaleUnitGtOne(event.target.checked)} />
-          <span>Sale&nbsp;&gt;1</span>
-        </label>
+        <button
+          type="button"
+          className="lblx-reset"
+          onClick={resetFilters}
+          disabled={status.state === 'loading'}
+          title="Reset all filters to defaults"
+        >
+          Reset
+        </button>
 
         <button type="button" className="lblx-search-btn" disabled={!tenantId || !storeId || status.state === 'loading'} onClick={runSearch}>
           {status.state === 'loading' ? '…' : 'Search'}
         </button>
       </div>
+
+      {showAdvanced && (
+        <div className="lblx-filterbar lblx-filterbar--advanced">
+          <label className="lblx-field lblx-oldloc">
+            <span>Old Loc</span>
+            <LabelMultiPicker options={sublocOptions} selected={selectedSublocs} onChange={setSelectedSublocs} placeholder="Any location" noun="location" />
+          </label>
+
+          <label className="lblx-field lblx-box">
+            <span>Box</span>
+            <input value={boxNumber} onChange={(event) => setBoxNumber(event.target.value.toUpperCase())} placeholder="Any box" />
+          </label>
+
+          <label className="lblx-check" title="Only products with no sub-location">
+            <input type="checkbox" checked={onlyNullSublocation} disabled={!!boxNumber} onChange={(event) => setOnlyNullSublocation(event.target.checked)} />
+            <span>Subloc&nbsp;null</span>
+          </label>
+
+          <label className="lblx-check" title="Only products with sale unit greater than 1">
+            <input type="checkbox" checked={onlySaleUnitGtOne} onChange={(event) => setOnlySaleUnitGtOne(event.target.checked)} />
+            <span>Sale&nbsp;&gt;1</span>
+          </label>
+        </div>
+      )}
 
       <div className="lblx-statusbar">
         <span className="lblx-kbd">
@@ -3558,9 +4615,13 @@ function LabelExporter({ session, settings }) {
         <span className="lblx-progress">
           {rows.length > 0 ? (
             <>
-              <b>{progress.total}</b> products
-              <i>·</i> <b className="lblx-reviewed">{progress.reviewed}</b> reviewed
-              <i>·</i> <b className="lblx-remaining">{progress.remaining}</b> remaining
+              <b>{progress.total}</b> Total{hasColFilters && rows.length !== progress.total ? <span className="lblx-of"> of {rows.length}</span> : ''}
+              <i>·</i> <b className="lblx-reviewed">{progress.reviewed}</b> Reviewed
+              <i>·</i> <b className="lblx-cnt-y">{progress.included}</b> Incl
+              <i>·</i> <b className="lblx-cnt-n">{progress.excluded}</b> Excl
+              <i>·</i> <b className="lblx-remaining">{progress.remaining}</b> Remaining
+              <i>·</i> <b className="lblx-cnt-pending">{progress.pending}</b> Pending
+              <i>·</i> <b className="lblx-cnt-assigned">{progress.assigned}</b> Assigned
               <span className="lblx-progbar" aria-hidden="true"><span style={{ width: `${progress.pct}%` }} /></span>
             </>
           ) : (
@@ -3573,40 +4634,122 @@ function LabelExporter({ session, settings }) {
           )}
         </span>
 
-        {!admin && <span className="lblx-note">Review only — sublocation is super-admin</span>}
+        {!admin && <span className="lblx-note">Review only — assignment is super-admin</span>}
+        {selectedCodes.size > 0 && <span className="lblx-sel">{selectedCodes.size} selected</span>}
         <span className="lblx-spacer" />
-        <button type="button" className="lblx-mark lblx-mark-y" disabled={!rows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
-        <button type="button" className="lblx-mark lblx-mark-n" disabled={!rows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
+        <button
+          type="button"
+          className={`lblx-mark lblx-colfilter-toggle ${showColFilters ? 'is-on' : ''}`}
+          disabled={!rows.length}
+          onClick={() => setShowColFilters((v) => !v)}
+          title="Excel-style per-column filters (numbers accept >, <, >=, <=, =)"
+        >
+          Column filters{hasColFilters ? ' •' : ''}
+        </button>
+        <button
+          type="button"
+          ref={colSettingsBtnRef}
+          className={`lblx-mark lblx-colsettings-toggle ${colSettingsOpen ? 'is-on' : ''}`}
+          aria-expanded={colSettingsOpen}
+          onClick={() => setColSettingsOpen((v) => !v)}
+          title="Column settings — show/hide, reorder & resize columns"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d={OW_GEAR_PATH} /></svg>
+          Columns
+        </button>
+        <button type="button" className="lblx-mark lblx-mark-y" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
+        <button type="button" className="lblx-mark lblx-mark-n" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
+        {admin && (
+          <button type="button" className="lblx-mark lblx-assign" disabled={!assignTargets.length} onClick={openAssignDrawer} title="Assign locations to reviewed-Y products (does not print)">
+            Assign Locations{assignTargets.length ? ` (${assignTargets.length})` : ''}
+          </button>
+        )}
+        <button type="button" className="lblx-mark lblx-queue" onClick={openQueue} title="Open the label print queue">Label Queue</button>
+        {admin && (
+          <div className="lblx-more" ref={moreRef}>
+            <button
+              type="button"
+              className={`lblx-mark lblx-more-btn ${moreOpen ? 'is-on' : ''}`}
+              aria-expanded={moreOpen}
+              aria-haspopup="menu"
+              onClick={() => setMoreOpen((v) => !v)}
+              title="More actions"
+            >
+              More ▾
+            </button>
+            {moreOpen && (
+              <div className="lblx-more-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="lblx-more-item lblx-more-danger"
+                  disabled={!visibleRows.length || bulkBusy}
+                  onClick={() => { setMoreOpen(false); requestClearAssignment(); }}
+                  title="Reset assignment result only (keeps review + master data)"
+                >
+                  Clear Assignment…
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="lblx-more-item lblx-more-danger"
+                  disabled={!visibleRows.length || bulkBusy}
+                  onClick={() => { setMoreOpen(false); requestClearReview(); }}
+                  title="Reset Y/N review + assignment (keeps master data)"
+                >
+                  Clear Review…
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="ow-body">
         <div className="ow-left">
           <div className="ow-main">
-            <div className="ow-grid lbl-grid" tabIndex={0} ref={gridRef} onKeyDown={handleGridKeyDown}>
-              <table className="ow-fixed">
-                <colgroup>
-                  {LABEL_COLS.map((w, i) => <col key={i} style={{ width: w }} />)}
-                </colgroup>
+            <div
+              className="ow-grid lbl-grid"
+              tabIndex={0}
+              ref={gridRef}
+              onKeyDown={handleGridKeyDown}
+              onScroll={(event) => { scrollTopRef.current = event.currentTarget.scrollTop; scheduleSave(); }}
+            >
+              <table className="ow-fixed lbl-table">
+                <colgroup>{owColgroupExact(labelCols)}</colgroup>
                 <thead>
                   <tr>
-                    <th className="ow-num" title="Serial number">#</th>
-                    <th>Code</th>
-                    <th className="ow-grow">Product</th>
-                    <th className="ow-num" title="Stock on hand">Stock</th>
-                    <th className="lbl-review-head">Review</th>
-                    <th title="Sub location">Sub Location</th>
-                    <th>Unit</th>
-                    <th className="ow-num">MRP</th>
-                    <th className="ow-num" title="Packing / sale unit">Pack</th>
-                    <th className="ow-num lbl-lrd-head" title="Last receipt (days ago)">LRD</th>
-                    <th className="ow-num lbl-lsd-head" title="Last sale (days ago)">LSD</th>
-                    <th>Remarks</th>
+                    {labelCols.map((col) => (
+                      <th key={col.key} className={col.thClass || ''} title={col.title}>{col.label}</th>
+                    ))}
+                    <th className="lbl-filler" aria-hidden="true" />
                   </tr>
+                  {showColFilters && (
+                    <tr className="lbl-filter-row">
+                      {labelCols.map((col) => (
+                        <th key={col.key}>
+                          {col.noFilter ? (
+                            <button type="button" className="lbl-colfilter-clear" title="Clear all column filters" onClick={() => setColFilters({})}>✕</button>
+                          ) : (
+                            <input
+                              className="lbl-colfilter-input"
+                              value={colFilters[col.key] || ''}
+                              placeholder="filter"
+                              title={'Type to filter. Numbers accept >, <, >=, <=, = (e.g. >90)'}
+                              onChange={(event) => setColFilters((cur) => ({ ...cur, [col.key]: event.target.value }))}
+                              onKeyDown={(event) => event.stopPropagation()}
+                            />
+                          )}
+                        </th>
+                      ))}
+                      <th className="lbl-filler" aria-hidden="true" />
+                    </tr>
+                  )}
                 </thead>
                 <tbody>
-                  {rows.length === 0 ? (
+                  {visibleRows.length === 0 ? (
                     <tr>
-                      <td colSpan={12} className={`ow-empty lblx-empty lblx-empty-${status.state}`}>
+                      <td colSpan={labelCols.length + 1} className={`ow-empty lblx-empty lblx-empty-${status.state}`}>
                         {status.state === 'loading' ? (
                           <span className="lblx-empty-loading"><span className="lblx-spin" aria-hidden="true" /> Loading products…</span>
                         ) : status.state === 'error' ? (
@@ -3614,80 +4757,26 @@ function LabelExporter({ session, settings }) {
                             <b>Unable to load products.</b> {status.message}
                             <button type="button" className="lblx-retry" onClick={runSearch}>Retry</button>
                           </span>
+                        ) : rows.length > 0 ? (
+                          <span>No rows match the column filters. <button type="button" className="lblx-retry" onClick={() => setColFilters({})}>Clear filters</button></span>
                         ) : (
                           <span>Pick a store &amp; letter, then <b>Search</b> to load products.</span>
                         )}
                       </td>
                     </tr>
                   ) : (
-                    rows.map((row, index) => {
+                    visibleRows.map((row, index) => {
                       const code = row.product_code;
-                      const review = row.include_label || null;
-                      const existingSubLoc = (row.current_sublocation || '').trim();
-                      const draftSubLoc = subLocDrafts[code] ?? '';
-                      const subLocChanged = admin && draftSubLoc.trim() !== existingSubLoc;
-                      // Display rule: existing sublocation always wins. When empty,
-                      // show "New" only if Review = Y, else nothing. "New" is a
-                      // display-only default — never written back over real data.
-                      const subLocPlaceholder = review === 'Y' && !existingSubLoc ? 'New' : '';
-                      const reviewBadge = review === 'Y' ? 'Y' : review === 'N' ? 'N' : '—';
-                      const reviewCls = review === 'Y' ? 'is-yes' : review === 'N' ? 'is-no' : 'is-none';
+                      const selected = selectedCodes.has(code);
                       return (
                         <tr
                           key={code}
                           ref={(node) => { rowRefs.current[index] = node; }}
-                          className={index === activeIndex ? 'ow-row-sel' : ''}
+                          className={`${index === activeIndex ? 'ow-row-sel' : ''} ${selected ? 'lbl-row-picked' : ''} ${row.include_label === 'Y' ? 'lbl-row-y' : row.include_label === 'N' ? 'lbl-row-n' : ''}`}
                           onClick={(event) => selectRow(index, event)}
                         >
-                          <td className="ow-num lbl-sno-cell">{index + 1}</td>
-                          <td className="lbl-code-cell" title={row.product_code}>{row.product_code}</td>
-                          <td className="ow-grow" title={row.product_name}>{row.product_name}</td>
-                          <td className={`ow-num ${Number(row.total_stock) === 0 ? 'ow-stock-zero' : ''}`}>{fmtOwQty(row.total_stock)}</td>
-                          <td className="lbl-review-cell">
-                            <button
-                              type="button"
-                              className={`lbl-review-badge ${reviewCls}`}
-                              disabled={savingCode === code}
-                              title="Click to cycle —/Y/N · or use Enter/Y, Esc/N"
-                              onClick={(event) => { event.stopPropagation(); cycleReview(row); }}
-                            >{reviewBadge}</button>
-                          </td>
-                          <td className="lbl-subloc-td" onClick={(event) => event.stopPropagation()}>
-                            {admin ? (
-                              <input
-                                className={`lbl-inline-input lbl-subloc-input ${subLocChanged ? 'lbl-subloc-dirty' : ''}`}
-                                list="lbl-subloc-options"
-                                placeholder={subLocPlaceholder}
-                                value={draftSubLoc}
-                                disabled={savingCode === code}
-                                onChange={(event) => setSubLocDrafts((current) => ({ ...current, [code]: event.target.value.toUpperCase() }))}
-                                onBlur={() => saveSubLocation(row)}
-                              />
-                            ) : existingSubLoc ? (
-                              <span className="lbl-subloc-text" title={existingSubLoc}>{existingSubLoc}</span>
-                            ) : review === 'Y' ? (
-                              <span className="lbl-subloc-new">New</span>
-                            ) : (
-                              <span className="lbl-null">—</span>
-                            )}
-                          </td>
-                          <td className="lbl-unit-cell" title={row.unit_description}>{row.unit_description || '-'}</td>
-                          <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
-                          <td className="ow-num">{fmtOwQty(row.sale_unit)}</td>
-                          <td className="ow-num lbl-lrd">{row.purchase_days ?? '-'}</td>
-                          <td className="ow-num lbl-lsd">{row.sale_days ?? '-'}</td>
-                          <td onClick={(event) => event.stopPropagation()}>
-                            <input
-                              ref={(node) => { remarksRefs.current[code] = node; }}
-                              className="lbl-inline-input lbl-remarks-input"
-                              list="lbl-remarks-options"
-                              value={remarksDrafts[code] ?? ''}
-                              disabled={savingCode === code}
-                              placeholder="Counter, SYP..."
-                              onChange={(event) => setRemarksDrafts((current) => ({ ...current, [code]: event.target.value }))}
-                              onBlur={() => saveRemarks(row)}
-                            />
-                          </td>
+                          {labelCols.map((col) => renderLabelCell(col, row, index))}
+                          <td className="lbl-filler" aria-hidden="true" />
                         </tr>
                       );
                     })
@@ -3697,32 +4786,74 @@ function LabelExporter({ session, settings }) {
               <datalist id="lbl-remarks-options">
                 {remarksOptions.map((option) => <option key={option} value={option} />)}
               </datalist>
-              <datalist id="lbl-subloc-options">
-                {sublocOptions.map((option) => <option key={option} value={option} />)}
+              <datalist id="lbl-unit-options">
+                {Array.from(new Set([...LABEL_UNIT_PRESETS, ...unitOptions])).map((option) => <option key={option} value={option} />)}
               </datalist>
             </div>
           </div>
         </div>
 
         <aside className="ow-side">
-          <div className="ow-side-head">
+          {/* Evidence-first summary (spec §4/§5/§23-§25): name + tiny review
+              chip, then the two review signals that AREN'T in the grid (Sale /
+              Purchase days), one tiny muted context line, then Remarks. No
+              duplicated Stock/Pack/MRP/Unit/Location/Status/LPD/LSD block. */}
+          <div className="ow-side-head lbl-side-head">
             {activeRow ? (
               <>
-                <strong className="ow-side-name" title={activeRow.product_name}>{activeRow.product_name}</strong>
-                <span className="ow-side-meta">Stock <b className={Number(activeRow.total_stock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(activeRow.total_stock)}</b></span>
-                <span className="ow-side-meta">Pack <b>{fmtOwQty(activeRow.sale_unit)}</b></span>
-                <span className="ow-side-meta">MRP <b>{fmtOwMoney(activeRow.mrp)}</b></span>
+                <div className="lbl-side-titlerow">
+                  <strong className="ow-side-name" title={activeRow.product_name}>{activeRow.product_name}</strong>
+                  <span
+                    className={`lbl-side-review ${activeRow.include_label === 'Y' ? 'is-yes' : activeRow.include_label === 'N' ? 'is-no' : 'is-none'}`}
+                    title="Review status (set in the grid)"
+                  >{activeRow.include_label === 'Y' ? 'Y' : activeRow.include_label === 'N' ? 'N' : '—'}</span>
+                </div>
+                <div className="lbl-side-evidence">
+                  <span><span className="lbl-fact-k">Sale</span> <b>{activeRow.last_sale_date ? `${activeRow.sale_days}d` : '—'}</b></span>
+                  <span className="lbl-side-sep" aria-hidden="true">·</span>
+                  <span><span className="lbl-fact-k">Purchase</span> <b>{activeRow.last_purchase_date ? `${activeRow.purchase_days}d` : '—'}</b></span>
+                </div>
+                <div className="lbl-side-context" title="Also shown in the grid">
+                  Stock <b className={Number(activeRow.total_stock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(activeRow.total_stock)}</b>
+                  {' · '}{lblNewUnit(activeRow) || '—'}
+                  {' · '}{lblNewLoc(activeRow) || lblOldLoc(activeRow) || 'Unassigned'}
+                </div>
               </>
             ) : <span className="ow-side-hint">Select a product to see its trend, purchase &amp; sales.</span>}
           </div>
+          {activeRow && (
+            <div className="lbl-side-facts">
+              <label className="lbl-side-remarks">
+                <span className="lbl-fact-k">Remarks</span>
+                <input
+                  className="lbl-side-remarks-input"
+                  list="lbl-remarks-options"
+                  value={remarksDrafts[activeRow.product_code] ?? ''}
+                  disabled={savingCode === activeRow.product_code}
+                  placeholder="Counter, SYP, unit fix…"
+                  onChange={(event) => setRemarksDrafts((current) => ({ ...current, [activeRow.product_code]: event.target.value }))}
+                  onBlur={() => saveRemarks(activeRow)}
+                />
+              </label>
+            </div>
+          )}
           <div className="ow-side-panels">
             <section className="ow-panel ow-panel--chart">
-              <div className="ow-panel-title">
-                Monthly Trend<span className="ow-panel-subtitle">Stock movement — last {trendRows.length || 12} months</span>
-                {intelLoading && <span className="ow-intel-loading">…</span>}
+              <div className="ow-panel-title lbl-trend-title">
+                <span>Monthly Trend{intelLoading && <span className="ow-intel-loading">…</span>}</span>
+                <label className="lbl-trend-months">
+                  Months
+                  <select
+                    value={trendMonths}
+                    onChange={(event) => setTrendMonths(Number(event.target.value))}
+                    title="Number of months to show (4-12)"
+                  >
+                    {[4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
               </div>
               <div className="ow-panel-body">
-                {!activeRow ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={chartRows} loading={intelLoading} />}
+                {!activeRow ? <div className="ow-empty">Select a product.</div> : <LabelTrendChart rows={chartRows} loading={intelLoading} />}
               </div>
             </section>
 
@@ -3775,6 +4906,152 @@ function LabelExporter({ session, settings }) {
           </div>
         </aside>
       </div>
+
+      {colSettingsOpen && (
+        <OwGridSettings
+          title="Label Grid"
+          anchorRef={colSettingsBtnRef}
+          base={LABEL_COLUMNS}
+          cfg={labelColCfg}
+          onToggle={cfgToggle}
+          onMove={cfgMove}
+          onWidth={cfgWidth}
+          onReset={cfgReset}
+          onClose={() => setColSettingsOpen(false)}
+        />
+      )}
+
+      {assignOpen && (
+        <div className="modal-overlay" onClick={() => !assignBusy && setAssignOpen(false)}>
+          <div className="lbl-assign-drawer" role="dialog" aria-modal="true" aria-label="Assign locations" onClick={(event) => event.stopPropagation()}>
+            <div className="lbl-assign-head">
+              <strong>Location Assignment</strong>
+              <button type="button" className="lbl-assign-close" onClick={() => setAssignOpen(false)} aria-label="Close">✕</button>
+            </div>
+
+            <div className="lbl-assign-body">
+              <div className="lbl-assign-summary">
+                Assigning <b>{assignTargets.length}</b> reviewed-Y product{assignTargets.length === 1 ? '' : 's'}
+                {selectedCodes.size ? ' (from your selection)' : ' (all Y in this load)'}.
+              </div>
+
+              <div className="lbl-assign-modes">
+                <label className={`lbl-assign-mode ${assignForm.assignmentType === 'standard_box' && assignForm.mode === 'continue' ? 'is-on' : ''}`}>
+                  <input type="radio" name="lbl-mode" checked={assignForm.assignmentType === 'standard_box' && assignForm.mode === 'continue'}
+                    onChange={() => setAssignForm((f) => ({ ...f, mode: 'continue', assignmentType: 'standard_box' }))} />
+                  <span><b>Continue Existing Locations</b><i>Fill the last partial box first, then open new boxes.</i></span>
+                </label>
+                <label className={`lbl-assign-mode ${assignForm.assignmentType === 'standard_box' && assignForm.mode === 'new_label' ? 'is-on' : ''}`}>
+                  <input type="radio" name="lbl-mode" checked={assignForm.assignmentType === 'standard_box' && assignForm.mode === 'new_label'}
+                    onChange={() => setAssignForm((f) => ({ ...f, mode: 'new_label', assignmentType: 'standard_box' }))} />
+                  <span><b>New Label for Entire Letter</b><i>Ignore existing locations — fresh box sequence.</i></span>
+                </label>
+                <label className={`lbl-assign-mode ${assignForm.assignmentType === 'single_product_box' ? 'is-on' : ''}`}>
+                  <input type="radio" name="lbl-mode" checked={assignForm.assignmentType === 'single_product_box'}
+                    onChange={() => setAssignForm((f) => ({ ...f, assignmentType: 'single_product_box' }))} />
+                  <span><b>Single Product Box</b><i>One product per box (e.g. DOLO 650).</i></span>
+                </label>
+              </div>
+
+              <div className="lbl-assign-fields">
+                <label><span>Unit</span>
+                  <input value={assignForm.unit} onChange={(e) => setAssignForm((f) => ({ ...f, unit: e.target.value.toUpperCase() }))} placeholder="TAB / SYP" />
+                </label>
+                <label><span>Letter</span>
+                  <input value={assignForm.letter} maxLength={1} onChange={(e) => setAssignForm((f) => ({ ...f, letter: e.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1) }))} placeholder="A" />
+                </label>
+                {assignForm.mode === 'new_label' && assignForm.assignmentType === 'standard_box' && (
+                  <label><span>Start box #</span>
+                    <input type="number" min={1} value={assignForm.startNumber} onChange={(e) => setAssignForm((f) => ({ ...f, startNumber: e.target.value }))} />
+                  </label>
+                )}
+              </div>
+
+              {assignError && <div className="lbl-assign-error">{assignError}</div>}
+
+              {assignPreview && (
+                <div className="lbl-assign-preview">
+                  <div className="lbl-assign-preview-head">Preview — {assignPreview.assigned_count} product(s) into {assignPreview.boxes.length} box(es)</div>
+                  <div className="lbl-assign-preview-boxes">
+                    {assignPreview.boxes.map((b) => (
+                      <div key={b.box} className="lbl-assign-box-row">
+                        <span className="lbl-assign-box-id">{b.box}</span>
+                        <span className="lbl-assign-box-fill">
+                          {b.existing > 0 ? `${b.existing} existing + ${b.added} new = ${b.total}` : `${b.added} new`}
+                          {b.capacity ? ` / ${b.capacity}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="lbl-assign-foot">
+              <button type="button" className="lbl-assign-btn" disabled={assignBusy} onClick={runPreview}>
+                {assignBusy && !assignPreview ? 'Previewing…' : 'Preview'}
+              </button>
+              <button type="button" className="lbl-assign-btn lbl-assign-btn--primary" disabled={assignBusy || !assignPreview} onClick={runCommit}>
+                {assignBusy && assignPreview ? 'Assigning…' : 'Assign'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {queueOpen && (
+        <div className="modal-overlay" onClick={() => setQueueOpen(false)}>
+          <div className="lbl-queue-modal" role="dialog" aria-modal="true" aria-label="Label queue" onClick={(event) => event.stopPropagation()}>
+            <div className="lbl-assign-head">
+              <strong>Label Queue{queueRows.length ? ` — ${queueRows.length}` : ''}</strong>
+              <div className="lbl-queue-actions">
+                <button type="button" className="lbl-assign-btn lbl-assign-btn--primary" disabled={!queueRows.length} onClick={printQueue}>Print / Export</button>
+                <button type="button" className="lbl-assign-close" onClick={() => setQueueOpen(false)} aria-label="Close">✕</button>
+              </div>
+            </div>
+            <div className="lbl-queue-body">
+              {queueBusy ? <div className="ow-empty">Loading queue…</div> : !queueRows.length ? (
+                <div className="ow-empty">No products assigned yet. Assign locations to build the queue.</div>
+              ) : (
+                <table className="ow-intel-table lbl-queue-table">
+                  <thead><tr><th>Location</th><th>Product</th><th>Unit</th><th className="ow-num">MRP</th><th>Assigned</th><th>Printed</th></tr></thead>
+                  <tbody>
+                    {queueRows.map((r) => (
+                      <tr key={r.product_code}>
+                        <td><b>{r.location}</b></td>
+                        <td title={r.product_name}>{r.product_name}</td>
+                        <td>{r.unit_description || '-'}</td>
+                        <td className="ow-num">{fmtOwMoney(r.mrp)}</td>
+                        <td>{fmtOwDate(r.assigned_at)}</td>
+                        <td>{r.label_created_at ? '✓' : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirm && (
+        <div className="modal-overlay" onClick={() => !bulkBusy && setConfirm(null)}>
+          <div className="lbl-confirm" role="dialog" aria-modal="true" aria-label={confirm.title} onClick={(event) => event.stopPropagation()}>
+            <div className="lbl-confirm-head"><strong>{confirm.title}</strong></div>
+            <div className="lbl-confirm-body">
+              {confirm.body.map((line, i) => <p key={i}>{line}</p>)}
+            </div>
+            <div className="lbl-confirm-foot">
+              <button type="button" className="lbl-assign-btn" disabled={bulkBusy} onClick={() => setConfirm(null)}>Cancel</button>
+              <button type="button" className="lbl-assign-btn lbl-confirm-danger" disabled={bulkBusy} onClick={confirm.onConfirm}>
+                {bulkBusy ? 'Working…' : confirm.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && <div className={`lbl-toast lbl-toast-${toast.kind}`} role="status">{toast.text}</div>}
     </section>
   );
 }
@@ -3792,6 +5069,9 @@ function NmwSalesReport({ session, settings }) {
   const [activeKey, setActiveKey] = useState(null);
   const [items, setItems] = useState({});
   const [statusFilter, setStatusFilter] = useState('all');
+  const [purchaseFilter, setPurchaseFilter] = useState('all');
+  const [purchaseEntries, setPurchaseEntries] = useState({});  // key -> { state, data }
+  const [purchaseError, setPurchaseError] = useState('');
   const [selected, setSelected] = useState(new Set());
   const [canApprove, setCanApprove] = useState(false);
   const [isBroad, setIsBroad] = useState(false);
@@ -3816,6 +5096,16 @@ function NmwSalesReport({ session, settings }) {
         .then((result) => setItems((prev) => ({ ...prev, [key]: asArray(result?.items) })))
         .catch(() => setItems((prev) => ({ ...prev, [key]: [] })));
     }
+    // Purchase-entry detail (GRN no/date) for this bill, fetched only when a bill
+    // is opened. A failed fetch is its own 'error' state — never shown as
+    // "Not Found" (which means the DB was checked and there is genuinely no
+    // matching store receipt).
+    if ((force || !purchaseEntries[key]) && bill.bill_no) {
+      setPurchaseEntries((prev) => ({ ...prev, [key]: { state: 'loading', data: null } }));
+      api.getNmwPurchaseEntry(bill.bill_no, bill.bill_date, session, { tenantId })
+        .then((data) => setPurchaseEntries((prev) => ({ ...prev, [key]: { state: 'ok', data } })))
+        .catch(() => setPurchaseEntries((prev) => ({ ...prev, [key]: { state: 'error', data: null } })));
+    }
   }
 
   function reload() {
@@ -3826,12 +5116,14 @@ function NmwSalesReport({ session, settings }) {
     setStatus({ state: 'loading', message: 'Loading bills...' });
     setSelected(new Set());
     setItems({});  // drop cached line items so a refresh pulls fresh server data
-    api.getNmwSalesBills(session, { status: statusFilter, tenantId, storeId: storeFilter, dateFrom: range.dateFrom, dateTo: range.dateTo })
+    setPurchaseEntries({});
+    api.getNmwSalesBills(session, { status: statusFilter, purchaseStatus: purchaseFilter, tenantId, storeId: storeFilter, dateFrom: range.dateFrom, dateTo: range.dateTo })
       .then((result) => {
         const rows = asArray(result?.bills);
         setBills(rows);
         setCanApprove(Boolean(result?.can_approve));
         setIsBroad(result?.scope === 'all');
+        setPurchaseError(result?.purchase_status_error || '');
         setStatus({ state: 'ok', message: rows.length ? `${rows.length} bill(s).` : 'No bills for this filter.' });
         if (rows.length) loadItems(rows[0], true);
         else setActiveKey(null);
@@ -3839,7 +5131,7 @@ function NmwSalesReport({ session, settings }) {
       .catch((error) => setStatus({ state: 'error', message: error.message }));
   }
 
-  useEffect(() => { reload(); }, [session, tenantId, statusFilter]);
+  useEffect(() => { reload(); }, [session, tenantId, statusFilter, purchaseFilter]);
 
   function toggleSelect(bill) {
     const key = nmwBillKey(bill);
@@ -3891,7 +5183,16 @@ function NmwSalesReport({ session, settings }) {
         lineItems = asArray(result?.items);
         setItems((prev) => ({ ...prev, [key]: lineItems }));
       }
-      const rows = nmwExportRows(bill, lineItems);
+      // Reuse the purchase-entry detail already fetched for the open bill; fetch
+      // it on demand only if the pane hasn't loaded it yet, so the export's
+      // Purchase Entry columns match exactly what the screen shows.
+      let purchaseEntry = purchaseEntries[key]?.data || null;
+      if (!purchaseEntry && purchaseEntries[key]?.state !== 'error') {
+        try {
+          purchaseEntry = await api.getNmwPurchaseEntry(bill.bill_no, bill.bill_date, session, { tenantId });
+        } catch { purchaseEntry = null; }
+      }
+      const rows = nmwExportRows(bill, lineItems, purchaseEntry);
       const filename = `nmw-bill-${bill.bill_no}-${bill.bill_date}`.replace(/[^\w-]/g, '_');
       if (format === 'csv') {
         const csv = [NMW_EXPORT_COLUMNS, ...rows].map((r) => r.map(nmwCsvCell).join(',')).join('\n');
@@ -3984,6 +5285,15 @@ function NmwSalesReport({ session, settings }) {
             <option value="approved">Approved</option>
           </select>
         </label>
+        <label className="nmw-toolbar-field">
+          Purchase entry
+          <select value={purchaseFilter} onChange={(event) => setPurchaseFilter(event.target.value)}>
+            <option value="all">All</option>
+            <option value="completed">Completed</option>
+            <option value="pending">Pending</option>
+            <option value="not_found">Not Found</option>
+          </select>
+        </label>
 
         <button className="secondary-button" onClick={reload}>Load</button>
 
@@ -3995,6 +5305,11 @@ function NmwSalesReport({ session, settings }) {
       </div>
 
       <div className={`status-line ${status.state}`}>{status.message}</div>
+      {purchaseError && (
+        <div className="status-line error">
+          {purchaseError} Sales bills are unaffected; the Purchase Entry column may be unavailable until retried.
+        </div>
+      )}
 
       {bills.length > 0 && (
         <div className="nmw-split">
@@ -4013,6 +5328,7 @@ function NmwSalesReport({ session, settings }) {
                   {isBroad && <th>Store</th>}
                   <th>Amount</th>
                   <th>Status</th>
+                  <th>Purchase Entry</th>
                 </tr>
               </thead>
               <tbody>
@@ -4038,6 +5354,14 @@ function NmwSalesReport({ session, settings }) {
                       {isBroad && <td>{bill.dest_store_code}</td>}
                       <td>{formatMoney(bill.bill_amount)}</td>
                       <td>{bill.is_cancelled ? 'Cancelled' : isApproved ? 'Approved' : 'Pending'}</td>
+                      <td>
+                        {bill.purchase_status
+                          ? <span className={nmwPurchaseClass(bill.purchase_status)}>{nmwPurchaseLabel(bill.purchase_status)}</span>
+                          : <span className="nmw-pe">—</span>}
+                        {bill.purchase_status === 'completed' && bill.purchase_entry_no && (
+                          <span className="nmw-pe-grn" title="Store GRN number">GRN {bill.purchase_entry_no}</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -4058,6 +5382,48 @@ function NmwSalesReport({ session, settings }) {
                       {' · '}{activeBill.is_cancelled ? 'Cancelled' : activeBill.status === 'approved' ? 'Approved' : 'Pending'}
                       {activeBill.approved_by ? ` by ${activeBill.approved_by}` : ''}
                     </span>
+                    <span className="nmw-bill-detail-sub nmw-pe-line">
+                      Purchase entry:{' '}
+                      {(() => {
+                        const pe = purchaseEntries[activeKey];
+                        if (!pe || pe.state === 'loading') return <span className="nmw-pe">Checking…</span>;
+                        if (pe.state === 'error') return <span className="nmw-pe nmw-pe--error">Unable to check</span>;
+                        const st = pe.data?.purchase_status || activeBill.purchase_status;
+                        const total = pe.data?.total_products || 0;
+                        return (
+                          <>
+                            <span className={nmwPurchaseClass(st)}>{nmwPurchaseLabel(st)}</span>
+                            {total > 0 ? <> · Received {pe.data.matched_products} of {total} item(s)</> : null}
+                            {pe.data?.entry_no ? <> · GRN No: <strong>{pe.data.entry_no}</strong></> : null}
+                            {pe.data?.entry_date ? <> · Entry Date: {formatDate(pe.data.entry_date)}</> : null}
+                            {pe.data?.match_basis === 'bill_number' ? (
+                              <>
+                                {' · matched by bill number'}
+                                {pe.data.grn_amount != null ? (
+                                  <> ({formatMoney(activeBill.bill_amount)} vs {formatMoney(pe.data.grn_amount)})</>
+                                ) : null}
+                              </>
+                            ) : null}
+                          </>
+                        );
+                      })()}
+                    </span>
+                    {(() => {
+                      const pe = purchaseEntries[activeKey];
+                      const missing = pe?.state === 'ok' ? (pe.data?.pending_products || []) : [];
+                      if (!missing.length) return null;
+                      return (
+                        <span className="nmw-bill-detail-sub nmw-pe-missing">
+                          Not yet entered:{' '}
+                          {missing.map((p, i) => (
+                            <span key={p.product_code}>
+                              {i > 0 ? ', ' : ''}{p.product_name}
+                              <span className="nmw-pe-missing-qty"> (need {p.required_qty}, got {p.received_qty})</span>
+                            </span>
+                          ))}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="nmw-bill-detail-actions">
                     {!activeBill.is_cancelled && (
@@ -6764,6 +8130,12 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }, [groups, session]);
 
   const activeSupplierProductName = selectedProductName || renderedMatch?.supplier_stock?.supplier_product_name || '';
+  // The left-list row for the current selection — supplies the supplier code +
+  // on-hand stock to the Similar Search header (req 3/22) without another fetch.
+  const activeSupplierRow = useMemo(
+    () => visibleProducts.find((row) => row.supplier_stock_id === selectedStockId) || null,
+    [visibleProducts, selectedStockId],
+  );
 
   useEffect(() => {
     if (!selectedStockId || !match || match.product_code || !activeSupplierProductName) return;
@@ -7658,7 +9030,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
                           <div className="procurement-product-cell">
                             <span className={`match-dot ${dotState}`} title={dotTitle} />
                             <div className="procurement-product-text">
-                              <strong>{row.supplier_product_name || 'Unnamed product'}</strong>
+                              <strong title={row.supplier_product_name || undefined}>{row.supplier_product_name || 'Unnamed product'}</strong>
                               <span>{row.supplier_product_code || row.product_code || '-'}</span>
                             </div>
                           </div>
@@ -7734,6 +9106,8 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
             <>
               <SimilarSearchHeader
                 supplierProductName={activeSupplierProductName}
+                supplierCode={activeSupplierRow?.supplier_product_code || activeSupplierRow?.supplier_code || renderedMatch?.supplier_stock?.supplier_product_code || ''}
+                supplierStock={activeSupplierRow?.available_stock ?? renderedMatch?.supplier_stock?.available_stock ?? null}
                 similar={similar}
                 selectedCandidate={selectedCandidate}
                 onConfirm={() => confirmMapping(selectedCandidate.product.product_code)}
@@ -7825,37 +9199,101 @@ function MappingBadge({ products }) {
 // match path). "Use this match" stays disabled until a candidate is picked in
 // any store's grid (see selectSimilarCandidate) - confirmMapping itself is
 // untouched, this just supplies the productCode it expects.
-function SimilarSearchHeader({ supplierProductName, similar, selectedCandidate, onConfirm, confirmBusy }) {
+function SimilarSearchHeader({ supplierProductName, supplierCode, supplierStock, similar, selectedCandidate, onConfirm, confirmBusy }) {
+  // Break the ranked candidates down by the REAL match method already computed
+  // per-candidate (candidateMatchMeta): priority 2 = exact name, 1 = normalized
+  // exact (same medicine, unit/dosage words differ), 0 = similar only. This is
+  // the authority for the availability call — a similar hit is NEVER reported
+  // as an exact match (req 4/5/6/12/14).
+  const breakdown = useMemo(() => {
+    let exact = 0;
+    let normalized = 0;
+    let similarOnly = 0;
+    if (similar?.byStore) {
+      similar.byStore.forEach((entry) => {
+        (entry.candidates || []).forEach((candidate) => {
+          const priority = candidate.matchPriority || 0;
+          if (priority >= 2) exact += 1;
+          else if (priority === 1) normalized += 1;
+          else similarOnly += 1;
+        });
+      });
+    }
+    return { exact, normalized, similarOnly };
+  }, [similar]);
+
+  const total = similar?.matchesFound ?? 0;
+  const stores = similar?.storesWithMatches ?? 0;
+  const name = supplierProductName || 'This product';
+
+  let status;
+  if (breakdown.exact > 0) {
+    status = { kind: 'exact', label: 'EXACT MATCH', available: true, detail: `${name} is available with an exact product name.` };
+  } else if (breakdown.normalized > 0) {
+    status = { kind: 'normalized', label: 'NORMALIZED MATCH', available: true, detail: `${name} matches after unit / dosage normalization — verify before ordering.` };
+  } else if (total > 0) {
+    status = { kind: 'similar', label: 'SIMILAR ONLY', available: false, detail: `${name} was NOT found. Only similar products exist across stores.` };
+  } else {
+    status = { kind: 'none', label: 'NO MATCH', available: false, detail: `${name} was not found in any store.` };
+  }
+
+  const selPriority = selectedCandidate?.product?.matchPriority || 0;
+  const useLabel = selPriority >= 2 ? 'Use Exact Match'
+    : selPriority === 1 ? 'Use Normalized Match'
+      : 'Use Similar Match';
+
   return (
     <div className="similar-search-header">
-      <div className="similar-search-field">
-        <span>Supplier Product</span>
-        <strong>{supplierProductName || '-'}</strong>
+      <div className="similar-search-idblock">
+        <div className="similar-search-field similar-search-name">
+          <span>Supplier Product</span>
+          <strong title={supplierProductName || undefined}>{supplierProductName || '-'}</strong>
+        </div>
+        <div className="similar-search-field">
+          <span>Supplier Code</span>
+          <strong>{supplierCode || '-'}</strong>
+        </div>
+        <div className="similar-search-field">
+          <span>Stock</span>
+          <strong>{supplierStock ?? '-'}</strong>
+        </div>
       </div>
-      <div className="similar-search-field">
-        <span>Search Mode</span>
-        <strong>Similar Search</strong>
+
+      <div className={`similar-availability is-${status.kind}`}>
+        <div className="similar-availability-head">
+          <span className="similar-availability-glyph">{status.available ? '✓' : '✕'}</span>
+          <div className="similar-availability-text">
+            <strong>{status.label}</strong>
+            <em>{status.detail}</em>
+          </div>
+        </div>
+        <div className="similar-availability-counts">
+          <span className="sa-count sa-exact"><b>{breakdown.exact}</b>Exact</span>
+          <span className="sa-count sa-norm"><b>{breakdown.normalized}</b>Normalized</span>
+          <span className="sa-count sa-sim"><b>{breakdown.similarOnly}</b>Similar</span>
+          <span className="sa-count sa-stores"><b>{stores}</b>Stores</span>
+        </div>
       </div>
-      <div className="similar-search-field">
-        <span>Search Key</span>
-        <strong>{similar?.searchKey || '-'}</strong>
+
+      <div className="similar-search-meta">
+        <div className="similar-search-field">
+          <span>Search Mode</span>
+          <strong>Similar Search</strong>
+        </div>
+        <div className="similar-search-field">
+          <span>Search Key</span>
+          <strong>{similar?.searchKey || '-'}</strong>
+        </div>
       </div>
-      <div className="similar-search-field">
-        <span>Matches Found</span>
-        <strong>{similar?.matchesFound ?? 0} products</strong>
-      </div>
-      <div className="similar-search-field">
-        <span>Stores</span>
-        <strong>{similar?.storesWithMatches ?? 0}</strong>
-      </div>
+
       <button
         type="button"
-        className="primary-button similar-use-match-btn"
+        className={`primary-button similar-use-match-btn ${selPriority >= 1 ? 'is-exact-use' : 'is-similar-use'}`}
         disabled={!selectedCandidate || confirmBusy}
         onClick={onConfirm}
-        title={selectedCandidate ? undefined : 'Click a candidate below first'}
+        title={selectedCandidate ? `Map "${supplierProductName}" → "${selectedCandidate.product.product_name}"` : 'Click a candidate below first'}
       >
-        {confirmBusy ? 'Saving...' : selectedCandidate ? `Use "${selectedCandidate.product.product_name}"` : 'Use this match'}
+        {confirmBusy ? 'Saving...' : selectedCandidate ? useLabel : 'Select a match'}
       </button>
     </div>
   );

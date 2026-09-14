@@ -1,6 +1,6 @@
 {
   "name": "nexora-supplier-stock-client",
-  "version": "0.1.6",
+  "version": "0.1.10",
   "private": true,
   "description": "Axythic supplier stock desktop client scaffold",
   "main": "electron/main.cjs",
@@ -55,7 +55,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
-    }
+    },
+    "asar": false
   },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",

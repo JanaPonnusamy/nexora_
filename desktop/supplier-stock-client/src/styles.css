@@ -3983,13 +3983,15 @@ th {
   color: var(--nx-accent-hover);
 }
 
-/* Widened from a fixed 228px to ~30% of the workspace (min-width floor so it
-   doesn't collapse on narrow windows) so product names almost never
-   truncate. */
+/* The supplier-product list is a compact work QUEUE, not the main workspace:
+   pinned to a fixed ~312px so the matching area keeps the majority of the
+   1600px width (was flex:0 0 27% ≈ 432px, which dominated the screen). It must
+   never grow proportionally with the window — extra width belongs to the
+   center. Product name is the dominant column inside (see .procurement-grid). */
 .product-list-panel-v2 {
-  flex: 0 0 25%;
-  min-width: 320px;
-  max-width: 480px;
+  flex: 0 0 312px;
+  min-width: 300px;
+  max-width: 340px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4005,11 +4007,21 @@ th {
   font-size: 11.5px;
 }
 
-/* Req 1: once the supplier rail auto-hides, the product list gets its width
-   back instead of staying pinned at 30%. */
+/* Even with the supplier rail hidden the queue stays a fixed width — the freed
+   space goes to the center matching workspace, not this list. */
 .product-list-panel-v2.expanded {
-  flex: 0 0 27%;
-  max-width: 520px;
+  flex: 0 0 312px;
+  max-width: 340px;
+}
+
+/* At 1366 the queue tightens a little more so the center keeps priority. */
+@media (max-width: 1440px) {
+  .product-list-panel-v2,
+  .product-list-panel-v2.expanded {
+    flex-basis: 288px;
+    min-width: 288px;
+    max-width: 300px;
+  }
 }
 
 .change-supplier-btn {
@@ -4074,17 +4086,17 @@ th {
 
 .procurement-grid th:nth-child(2),
 .procurement-grid td:nth-child(2) {
-  width: 52px;
+  width: 44px;
 }
 
 .procurement-grid th:nth-child(3),
 .procurement-grid td:nth-child(3) {
-  width: 42px;
+  width: 40px;
 }
 
 .procurement-grid th:nth-child(4),
 .procurement-grid td:nth-child(4) {
-  width: 88px;
+  width: 62px;
 }
 
 .procurement-grid th,
@@ -4289,6 +4301,42 @@ th {
   overflow-y: auto;
 }
 
+/* Center match grid, scoped to this screen only (the shared Stock Availability
+   screen keeps its own wider defaults). Product gets the biggest track and a
+   real 220px floor so common names like "RAZEL 40MG" never truncate, and the
+   Trend/Batches/Purchase/Billing floors are pulled in so the six tracks sum to
+   ~1134px — they fit the freed center width instead of forcing the whole card
+   to overflow horizontally (which was pinning Product at its old 210px min). */
+/* Mins kept small enough that all six tracks (~1000px) fit the center width at
+   1366; the fr weights let Product take the lion's share of any extra room at
+   1600+. Product floor stays 200px so "RAZEL 40MG"-class names never truncate. */
+.analysis-detail .store-column-headers,
+.analysis-detail .store-row-grid-body {
+  grid-template-columns:
+    34px
+    minmax(200px, 1.6fr)
+    minmax(160px, 1fr)
+    minmax(210px, 1.05fr)
+    minmax(210px, 1.1fr)
+    minmax(185px, 1fr);
+}
+
+.analysis-detail .store-column-headers.no-bill-column,
+.analysis-detail .store-row-grid-body.no-bill-column {
+  grid-template-columns:
+    34px
+    minmax(220px, 1.6fr)
+    minmax(180px, 1.1fr)
+    minmax(220px, 1.15fr)
+    minmax(210px, 1.1fr);
+}
+
+/* Don't force a 980px min on the workspace inside this screen — let it take
+   exactly the center width so no horizontal scrollbar appears on the page. */
+.analysis-detail .store-row-workspace.no-side-search {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 /* Single-line compact info bar (40-48px) replacing the old green "Matched to
    X" banner + 8-card KPI strip - the product is already highlighted in the
    left panel and Code/Name/Unit/Stock are already shown per-store in the
@@ -4333,38 +4381,165 @@ th {
 /* Req 9: Similar Search result header - Supplier Product / Search Mode /
    Search Key / Matches Found / Stores, plus the "Use this match" confirm
    action (wired to the existing confirmMapping - see App.jsx). */
+/* Two-row card: identity + search key on top, availability verdict + action
+   below. An explicit grid (not flex-wrap) keeps it tidy at any width — no lone
+   button row, no dead space. */
 .similar-search-header {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 18px;
-  padding: 10px 14px;
+  column-gap: 16px;
+  row-gap: 7px;
+  padding: 8px 12px;
   border: 1px solid var(--nx-rule);
   border-radius: 10px;
   background: var(--nx-surface);
-  box-shadow: 0 8px 24px rgba(20, 34, 56, 0.05);
+  box-shadow: 0 1px 2px rgba(20, 34, 56, 0.04);
 }
+
+.similar-search-idblock { grid-column: 1; grid-row: 1; }
+.similar-search-meta { grid-column: 2; grid-row: 1; justify-content: flex-end; }
+.similar-availability { grid-column: 1; grid-row: 2; }
+.similar-use-match-btn { grid-column: 2; grid-row: 2; }
 
 .similar-search-field {
   display: grid;
   gap: 2px;
 }
 
+.similar-search-field {
+  gap: 1px;
+}
+
 .similar-search-field span {
   color: var(--nx-text-muted);
-  font-size: 10.5px;
+  font-size: 8.5px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
 }
 
 .similar-search-field strong {
-  font-size: 12.5px;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.25;
   color: var(--nx-text);
 }
 
+.similar-search-idblock,
+.similar-search-meta {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+/* Supplier product name is the identity field — show it fully (wraps rather
+   than truncating), with a hover tooltip for very long names. */
+.similar-search-name {
+  max-width: 220px;
+}
+
+.similar-search-name strong {
+  font-size: 12.5px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Explicit availability verdict — the most prominent element in the header so
+   the operator never has to infer exact-vs-similar from the table (req 4/12/13). */
+.similar-availability {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 8px;
+  border: 1px solid var(--nx-rule);
+  border-left-width: 3px;
+  border-radius: 7px;
+  background: var(--nx-surface-sunk);
+}
+
+.similar-availability.is-exact { border-left-color: var(--nx-success-ink); background: var(--nx-success-sunk); }
+.similar-availability.is-normalized { border-left-color: var(--nx-warning-ink); background: var(--nx-warning-sunk); }
+.similar-availability.is-similar { border-left-color: var(--nx-accent); }
+.similar-availability.is-none { border-left-color: var(--nx-danger); background: var(--nx-danger-sunk); }
+
+.similar-availability-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.similar-availability-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 900;
+  color: #fff;
+  background: var(--nx-text-muted);
+}
+.similar-availability.is-exact .similar-availability-glyph { background: var(--nx-success-ink); }
+.similar-availability.is-normalized .similar-availability-glyph { background: var(--nx-warning-ink); }
+.similar-availability.is-similar .similar-availability-glyph { background: var(--nx-accent); }
+.similar-availability.is-none .similar-availability-glyph { background: var(--nx-danger); }
+
+.similar-availability-text { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.similar-availability-text strong { font-size: 10.5px; font-weight: 800; letter-spacing: 0.04em; white-space: nowrap; }
+.similar-availability-text em {
+  font-size: 9.5px; font-style: normal; color: var(--nx-text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px;
+}
+
+.similar-availability-counts {
+  display: flex;
+  gap: 4px;
+}
+
+/* Compact inline stat chips (e.g. "6 Normalized") — minimal footprint. */
+.sa-count {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 999px;
+  background: var(--nx-surface);
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--nx-text-muted);
+}
+.sa-count b { font-size: 11px; font-weight: 800; color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.sa-exact b { color: var(--nx-success-ink); }
+.sa-norm b { color: var(--nx-warning-ink); }
+
 .similar-use-match-btn {
-  margin-left: auto;
+  justify-self: end;
+  align-self: center;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.similar-use-match-btn:disabled {
+  /* Placeholder state ("Select a match") — quiet, small, not a call-to-action. */
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text-muted);
+  border: 1px solid var(--nx-rule);
+  box-shadow: none;
+}
+.similar-use-match-btn.is-similar-use:not(:disabled) {
+  background: var(--nx-accent);
 }
 
 /* Req 6/7: per-candidate badge rendered inline in the shared StoreProductGrid
@@ -4444,16 +4619,19 @@ th {
   color: var(--nx-danger);
 }
 
+/* Name + confidence badge share ONE line: the name flex-shrinks with an
+   ellipsis, the badge stays pinned right after it (never wraps to a 2nd line,
+   which used to add a whole row of vertical space per match). */
 .product-name-with-badge {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 3px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
 }
 
 .product-name-with-badge > span:first-child {
-  display: block;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4462,7 +4640,7 @@ th {
 }
 
 .match-badge {
-  justify-self: start;
+  flex: 0 0 auto;
   padding: 1px 6px;
   border-radius: 999px;
   font-size: 9.5px;
@@ -4786,6 +4964,9 @@ th {
   max-height: 76vh;
   overflow-y: auto;
   position: relative;
+  /* Own stacking context so the sticky header's z-index is never contested by
+     a row's background/hover paint underneath (see the thead th fix below). */
+  isolation: isolate;
 }
 
 /* Chromium renders a sticky <th> over collapsed borders incorrectly (the
@@ -4806,13 +4987,20 @@ th {
   font-size: 13px;
 }
 
-/* Column headers stay visible while the body rows scroll, in both panes. */
+/* Column headers stay visible while the body rows scroll, in both panes.
+   `transform: translateZ(0)` forces the sticky header onto its own GPU
+   compositing layer -- without it, Chromium (verified in this Electron build)
+   intermittently repaints the sticky <th> row into the middle of the table
+   during a scroll instead of keeping it pinned/painted on top, so it appears
+   to "float" between data rows. This is the standard, well-tested fix for
+   that specific sticky-header ghosting bug. */
 .nmw-compact-table thead th {
   position: sticky;
   top: 0;
   z-index: 2;
   background: var(--nx-surface);
   box-shadow: 0 1px 0 var(--nx-rule);
+  transform: translateZ(0);
 }
 
 .nmw-bill-list-pane tbody tr {
@@ -4865,6 +5053,49 @@ th {
 
 .nmw-bill-detail-head .nmw-row-cancelled .nmw-bill-detail-sub {
   color: var(--nx-danger);
+}
+
+/* Purchase-entry status pill: compact, colour-coded, does not enlarge the row.
+   Uses the shared sunk/ink token pairs so it reads correctly in light + dark. */
+.nmw-pe {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--nx-text-muted);
+}
+.nmw-pe--ok { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.nmw-pe--pending { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.nmw-pe--missing { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.nmw-pe--error { background: var(--nx-rule); color: var(--nx-text-muted); }
+
+/* Purchase-entry line in the detail header wraps below the bill sub-line. */
+.nmw-pe-line { display: block; }
+
+/* Store GRN number next to a Completed pill in the list -- small and muted so
+   it reads as supporting detail, not a second status. */
+.nmw-pe-grn {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--nx-text-muted);
+  white-space: nowrap;
+}
+
+/* Items the store hasn't entered a purchase receipt for yet -- shown under the
+   Purchase entry line so a Pending bill is self-explanatory at a glance. */
+.nmw-pe-missing {
+  display: block;
+  margin-top: 2px;
+  color: var(--nx-danger-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.nmw-pe-missing-qty {
+  color: var(--nx-text-muted);
+  font-weight: 400;
 }
 
 @media (max-width: 1200px) {
@@ -4922,7 +5153,7 @@ th {
 
 /* ---- Status strip: kbd hints · progress · Mark-all ---- */
 .lblx-statusbar {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 12px; min-height: 34px;
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-height: 40px;
   padding: 0 10px; font-size: 11px; color: var(--nx-text-muted); overflow: hidden;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface-sunk);
 }
@@ -4946,7 +5177,7 @@ th {
 .lblx-note { flex: 0 0 auto; font-size: 10px; color: var(--nx-text-muted); }
 .lblx-spacer { flex: 1 1 auto; }
 .lblx-mark {
-  flex: 0 0 auto; height: 24px; padding: 0 10px; border-radius: var(--nx-radius-sm);
+  flex: 0 0 auto; height: 30px; padding: 0 11px; border-radius: var(--nx-radius-sm);
   border: 1px solid var(--nx-rule-strong); background: var(--nx-surface); color: var(--nx-text-soft);
   font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;
 }
@@ -4979,9 +5210,52 @@ th {
 .lbl-unit-options label:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
 
 /* ---- Grid: compact 34px rows, single-line cells, fixed columns ---- */
-.lbl-grid tbody td { height: 34px; }
+/* Guarantee the colgroup percentage widths actually govern the label grid —
+   high-specificity so nothing can silently drop it back to content-driven
+   (auto) layout, which was cramping Code/Unit/Loc/Status to single chars. */
+.lbl-screen .ow-grid table.ow-fixed { table-layout: fixed; width: 100%; }
+/* ROOT CAUSE of the Product-eats-the-grid bug: the shared Order-Workspace cell
+   classes set widths at the CELL level — .ow-grow → width:100% (Product grabbed
+   all slack) and .ow-num → width:1% (Stock/MRP/Review collapsed to content) —
+   which OVERRIDE the <colgroup> percentages even under table-layout:fixed. In
+   the label grid the colgroup is the single source of truth, so neutralise the
+   cell widths here (their alignment + ellipsis declarations still apply). */
+.lbl-screen .ow-grid table.ow-fixed .ow-grow { width: auto; max-width: none; }
+.lbl-screen .ow-grid table.ow-fixed .ow-num { width: auto; }
+/* Trailing filler column absorbs leftover width so real columns keep their
+   exact px and Product never grows to fill (spec §5-7). */
+.lbl-grid table.ow-fixed .lbl-filler { padding: 0 !important; border: 0 !important; background: transparent; }
+.lbl-grid .lbl-date-cell { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Subtle zebra for scan-ability (spec §17) — brighter/cleaner, not muddy. Kept
+   below the reviewed-row + current-row rules so those win. */
+.lbl-grid tbody tr:nth-child(even) > td { background: rgba(15, 23, 42, 0.022); }
+:root[data-theme="dark"] .lbl-grid tbody tr:nth-child(even) > td { background: rgba(255, 255, 255, 0.022); }
+/* Subtle reviewed-row tint — quiet enough for hundreds of rows; the blue
+   current-row highlight (.ow-row-sel, defined with !important below) always
+   wins so navigation stays obvious (spec §18/§19). Kept mostly neutral. */
+.lbl-grid tbody tr.lbl-row-y > td { background: rgba(25, 135, 84, 0.05); }
+.lbl-grid tbody tr.lbl-row-n > td { background: rgba(220, 53, 69, 0.04); }
+:root[data-theme="dark"] .lbl-grid tbody tr.lbl-row-y > td { background: rgba(52, 211, 153, 0.09); }
+:root[data-theme="dark"] .lbl-grid tbody tr.lbl-row-n > td { background: rgba(248, 113, 113, 0.09); }
+/* Denser rows so many more products are visible at 1366x768 (spec §14), still
+   comfortably clickable. Header 11px / body 12px / filter 11px (spec §11). */
+.lbl-grid tbody td { height: 28px; font-size: 12px; }
 .lbl-grid tbody td, .lbl-grid thead th { padding: 1px 8px !important; }
-.lbl-grid thead th { font-size: 10px; }
+.lbl-grid thead th { font-size: 11px; }
+
+/* Sticky header + column-filter row (spec Part 3). The header th are already
+   position:sticky/top:0 via .ow-screen thead th; the FILTER row was NOT sticky
+   before, so it scrolled away. Pin it directly under the ~28px header, keep the
+   header above it, and make BOTH sticky rows' filler cells opaque so scrolling
+   body rows never show through them. Widths come from the shared <colgroup>, so
+   header / filter / body stay perfectly aligned on horizontal scroll too. */
+.lbl-grid thead tr:first-child th { z-index: 3; }
+.lbl-grid thead tr.lbl-filter-row th {
+  position: sticky; top: 27px; z-index: 2;
+  background: var(--nx-surface-sunk, var(--nx-surface));
+}
+.lbl-grid thead .lbl-filler { background: var(--nx-surface-raised) !important; }
+.lbl-grid thead tr.lbl-filter-row .lbl-filler { background: var(--nx-surface-sunk, var(--nx-surface)) !important; }
 
 .lbl-inline-input {
   width: 100%; min-width: 0; height: 24px; padding: 0 6px;
@@ -5059,12 +5333,55 @@ th {
 }
 @keyframes lblx-spin { to { transform: rotate(360deg); } }
 
-/* ---- Right detail panel: tighter inspector (less wasted padding) ---- */
-.lbl-screen .ow-side-head { padding: 5px 9px; gap: 1px 12px; }
-.lbl-screen .ow-side-name { font-size: 12px; }
-.lbl-screen .ow-side-panels { padding: 5px; gap: 5px; }
+/* ---- Right detail panel: compact summary + deterministic history space ----
+   Root cause of the collapsing history: .ow-panel--purchase/--sales were
+   flex-GROW panels (1.5 / 1.1) sharing whatever the tall product summary +
+   150px chart left over — at 1366x768 that was ~1 row each. Fix (spec Parts
+   1-22): keep summary + chart compact and content-sized; give BOTH history
+   panels a min-height that fits header + >=5 data rows (22px each) so they can
+   never collapse, but keep flex-grow so they expand naturally at 1600x900
+   (Part 18); each table already scrolls internally via .ow-panel-scroll; the
+   panel stack may scroll as a fallback when it all can't fit (Part 15/16). */
+.lbl-screen .ow-side-head { padding: 4px 9px; gap: 0 12px; }
+/* Full product name, up to 2 lines, then ellipsis (spec §3) — no premature
+   single-line truncation to "3 CARE BOL...". */
+.lbl-screen .ow-side-name {
+  font-size: 12px; white-space: normal; line-height: 1.2;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.lbl-screen .lbl-side-facts { gap: 3px; padding: 5px 10px; }
+.lbl-screen .lbl-fact { font-size: 11.5px; }
+.lbl-screen .lbl-fact-k { min-width: 46px; }
+.lbl-screen .lbl-side-remarks { gap: 2px; }
+.lbl-screen .lbl-side-remarks-input { height: 24px; }
+.lbl-screen .ow-side-panels { padding: 5px; gap: 5px; overflow-y: auto; overflow-x: hidden; }
 .lbl-screen .ow-panel-title { padding: 4px 8px; }
-.lbl-screen .ow-panel--chart { height: clamp(132px, 17vh, 190px); }
+.lbl-screen .ow-panel--chart { flex: 0 0 auto; height: clamp(142px, 18vh, 158px); }
+.lbl-screen .ow-panel--purchase,
+.lbl-screen .ow-panel--sales { flex: 1 1 156px; min-height: 156px; }
+
+/* Minimal evidence-first summary head (spec §4/§5/§23-§25): name + tiny review
+   chip on one row, then Sale/Purchase DAYS, then one tiny muted context line.
+   Overrides the shared .ow-side-head flex-row/wrap layout. */
+.lbl-side-head { flex-direction: column; align-items: stretch; gap: 3px; }
+.lbl-side-titlerow { display: flex; align-items: flex-start; gap: 6px; width: 100%; }
+.lbl-side-titlerow .ow-side-name { flex: 1 1 auto; min-width: 0; }
+.lbl-side-review {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 5px;
+  font-size: 11px; font-weight: 800; line-height: 1;
+}
+.lbl-side-review.is-yes { background: var(--nx-success, #198754); color: #fff; }
+.lbl-side-review.is-no { background: var(--nx-danger); color: #fff; }
+.lbl-side-review.is-none { background: var(--nx-surface-hover); color: var(--nx-text-muted); border: 1px solid var(--nx-rule); }
+.lbl-side-evidence { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--nx-text-soft); }
+.lbl-side-evidence .lbl-fact-k { font-size: 10px; }
+.lbl-side-evidence b { color: var(--nx-text); font-weight: 800; font-variant-numeric: tabular-nums; }
+.lbl-side-sep { color: var(--nx-rule-strong); }
+.lbl-side-context { font-size: 10.5px; color: var(--nx-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lbl-side-context b { color: var(--nx-text-soft); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Remarks is now the only facts row — keep it tight. */
+.lbl-screen .lbl-side-facts { border-bottom: none; padding-top: 2px; }
 
 /* Stock Availability workspace: compact, aligned desktop dashboard. */
 .store-workbench {
@@ -7449,6 +7766,60 @@ th {
 .ow-chart-tip-row.ow-chart-tip-single b { font-size: 13px; }
 .ow-chart-tip-note { font-size: 9px; color: var(--nx-text-muted); font-style: italic; margin-top: 1px; }
 
+/* ── Label Exporter Monthly Trend chart (spec Part 5) ─────────────────────
+   Four movement categories per month as a compact grouped-bar chart. Colours
+   reuse the Order-Workspace chart palette so IN/purchase, OUT/sales, stock and
+   adjustment stay visually consistent across the app. */
+.lbl-trend-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lbl-trend-months { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: var(--nx-text-soft); text-transform: none; letter-spacing: 0; }
+.lbl-trend-months select {
+  height: 20px; min-height: 0; padding: 0 4px; border: 1px solid var(--nx-rule); border-radius: 4px;
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 11px; font-weight: 700;
+}
+.lblc { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 4px; padding: 5px 9px 6px; }
+.lblc-plot { flex: 1 1 auto; min-height: 52px; display: flex; align-items: stretch; gap: 6px; border-bottom: 1px solid var(--nx-rule); }
+.lblc-group { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; border-radius: 5px; }
+.lblc-group:hover, .lblc-group:focus-visible { background: var(--nx-surface-hover); outline: none; }
+.lblc-bars { flex: 1 1 auto; min-height: 0; display: flex; align-items: flex-end; justify-content: center; gap: 3px; padding-top: 9px; }
+.lblc-bar {
+  position: relative; flex: 1 1 0; max-width: 13px; min-height: 3px; border-radius: 3px 3px 0 0;
+  transition: transform 0.12s ease; align-self: flex-end;
+}
+.lblc-bar:hover { transform: translateY(-1px); }
+.lblc-bar--in { background: linear-gradient(180deg, var(--ow-in-hi) 0%, var(--ow-in) 55%, var(--ow-in-lo) 100%); }
+.lblc-bar--out { background: linear-gradient(180deg, var(--ow-out-hi) 0%, var(--ow-out) 55%, var(--ow-out-lo) 100%); }
+.lblc-bar--stock { background: linear-gradient(180deg, var(--ow-stock-hi) 0%, var(--ow-stock) 55%, var(--ow-stock-lo) 100%); }
+.lblc-bar--adj { background: linear-gradient(180deg, var(--ow-adj-hi) 0%, var(--ow-adj) 55%, var(--ow-adj-lo) 100%); }
+.lblc-bar.is-neg { opacity: 0.9; border-radius: 0 0 3px 3px; }
+.lblc-bar.is-zero { min-height: 3px; opacity: 0.5; box-shadow: none; }
+.lblc-bar--in.is-zero { background: var(--ow-in-hi); }
+.lblc-bar--out.is-zero { background: var(--ow-out-hi); }
+.lblc-bar--stock.is-zero { background: var(--ow-stock-hi); }
+.lblc-bar--adj.is-zero { background: var(--ow-adj-hi); }
+.lblc-val {
+  position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 1px;
+  font-size: 8.5px; font-weight: 700; color: var(--nx-text-soft); font-variant-numeric: tabular-nums; white-space: nowrap;
+  opacity: 0; transition: opacity 0.1s ease; pointer-events: none;
+}
+.lblc-group:hover .lblc-val, .lblc-group:focus-visible .lblc-val { opacity: 1; }
+.lblc-month { flex: 0 0 auto; padding-top: 2px; display: flex; flex-direction: column; align-items: center; line-height: 1.02; }
+.lblc-mon { font-size: 9px; font-weight: 800; color: var(--nx-text-muted); letter-spacing: 0.02em; white-space: nowrap; }
+.lblc-yr { font-size: 7.5px; font-weight: 600; color: var(--nx-text-muted); opacity: 0.75; white-space: nowrap; }
+/* 2-column grid so all four categories (incl. Adjustment) are always fully
+   visible in the compact panel — never clipped by wrapping. */
+.lblc-legend { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 1px 10px; padding-top: 2px; }
+.lblc-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 9.5px; font-weight: 600; color: var(--nx-text-soft); white-space: nowrap; }
+.lblc-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: 0 0 auto; }
+.lblc-dot--in { background: linear-gradient(135deg, var(--ow-in-hi), var(--ow-in)); }
+.lblc-dot--out { background: linear-gradient(135deg, var(--ow-out-hi), var(--ow-out)); }
+.lblc-dot--stock { background: linear-gradient(135deg, var(--ow-stock-hi), var(--ow-stock)); }
+.lblc-dot--adj { background: linear-gradient(135deg, var(--ow-adj-hi), var(--ow-adj)); }
+.lblc-tip .lblc-tip-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 10.5px; font-weight: 700; color: var(--nx-text); line-height: 1.55; margin-top: 2px; }
+.lblc-tip .lblc-tip-row span { display: inline-flex; align-items: center; gap: 5px; }
+.lblc-tip .lblc-tip-row b { font-variant-numeric: tabular-nums; }
+.lblc-tip .lblc-tip-sub { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 9.5px; color: var(--nx-text-muted); line-height: 1.4; padding-left: 13px; }
+.lblc-tip .lblc-tip-sub b { font-variant-numeric: tabular-nums; font-weight: 600; }
+
 /* Narrow desktop: give the intelligence column a firmer minimum. */
 @media (max-width: 1180px) {
   .ow-body { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); }
@@ -7472,3 +7843,302 @@ th {
 .ow-icon-btn:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
 .ow-icon-btn[aria-expanded="true"] { border-color: var(--nx-accent); color: var(--nx-accent); }
 .ow-icon-btn svg { width: 17px; height: 17px; fill: currentColor; }
+
+/* ===== Label Exporter — redesign additions (review filter, advanced filters,
+   unit correction, location assignment drawer, label queue) ===== */
+.lblx-field.lblx-review select { min-width: 108px; }
+.lblx-adv-toggle {
+  align-self: end; height: 30px; padding: 0 10px; border: 1px solid var(--nx-rule-strong);
+  background: var(--nx-surface); color: var(--nx-text-soft); border-radius: 7px;
+  font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.lblx-adv-toggle:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.lblx-adv-toggle.is-open { border-color: var(--nx-accent); color: var(--nx-accent); background: var(--nx-accent-sunk); }
+.lblx-filterbar--advanced {
+  margin-top: -4px; padding-top: 8px; border-top: 1px dashed var(--nx-rule);
+  animation: lblx-adv-in 0.12s ease;
+}
+@keyframes lblx-adv-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.lblx-sel { color: var(--nx-accent-ink); font-weight: 700; font-size: 12px; }
+.lblx-mark.lblx-assign { background: var(--nx-accent); color: var(--nx-text-on); border-color: var(--nx-accent); }
+.lblx-mark.lblx-assign:disabled { opacity: 0.5; }
+.lblx-mark.lblx-queue { background: var(--nx-surface); color: var(--nx-text-soft); }
+
+/* selection + assigned/unit cells */
+.lbl-row-picked td { background: var(--nx-accent-sunk) !important; }
+.lbl-sno-cell { cursor: pointer; }
+.lbl-sno-cell.is-picked { color: var(--nx-accent-ink); font-weight: 800; }
+.lbl-oldunit-cell, .lbl-oldloc-cell { color: var(--nx-text-muted); font-size: 12px; }
+.lbl-unit-td { padding: 1px 2px; }
+.lbl-unit-input { width: 100%; text-transform: uppercase; }
+.lbl-unit-dirty { border-color: var(--nx-warning) !important; background: var(--nx-warning-sunk); }
+.lbl-assigned-cell { font-size: 12px; }
+.lbl-assigned-box { font-weight: 700; color: var(--nx-success-ink); background: var(--nx-success-sunk); padding: 1px 6px; border-radius: 5px; }
+.lbl-null { color: var(--nx-text-muted); }
+
+/* assignment drawer */
+.lbl-assign-drawer {
+  position: fixed; top: 0; right: 0; height: 100vh; width: 460px; max-width: 92vw;
+  background: var(--nx-surface); box-shadow: -6px 0 24px rgba(15, 23, 42, 0.22);
+  display: flex; flex-direction: column; animation: lbl-drawer-in 0.16s ease;
+}
+@keyframes lbl-drawer-in { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+.lbl-assign-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 14px 18px; border-bottom: 1px solid var(--nx-rule); font-size: 15px;
+}
+.lbl-assign-close {
+  border: none; background: transparent; font-size: 16px; cursor: pointer; color: var(--nx-text-muted);
+  width: 28px; height: 28px; border-radius: 6px;
+}
+.lbl-assign-close:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.lbl-assign-body { padding: 16px 18px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 14px; }
+.lbl-assign-summary { font-size: 13px; color: var(--nx-text-soft); }
+.lbl-assign-modes { display: flex; flex-direction: column; gap: 8px; }
+.lbl-assign-mode {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
+  border: 1px solid var(--nx-rule-strong); border-radius: 9px; background: var(--nx-surface);
+}
+.lbl-assign-mode.is-on { border-color: var(--nx-accent); background: var(--nx-accent-sunk); }
+.lbl-assign-mode input { margin-top: 3px; }
+.lbl-assign-mode span { display: flex; flex-direction: column; gap: 2px; }
+.lbl-assign-mode b { font-size: 13px; color: var(--nx-text); }
+.lbl-assign-mode i { font-size: 11.5px; color: var(--nx-text-muted); font-style: normal; }
+.lbl-assign-fields { display: flex; gap: 10px; flex-wrap: wrap; }
+.lbl-assign-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--nx-text-muted); font-weight: 600; }
+.lbl-assign-fields input { width: 96px; height: 30px; padding: 0 8px; border: 1px solid var(--nx-rule-strong); border-radius: 6px; background: var(--nx-surface); color: var(--nx-text); }
+.lbl-assign-error { font-size: 12.5px; color: var(--nx-danger-ink); background: var(--nx-danger-sunk); padding: 8px 10px; border-radius: 7px; }
+.lbl-assign-preview { border: 1px solid var(--nx-rule); border-radius: 9px; overflow: hidden; }
+.lbl-assign-preview-head { padding: 8px 12px; background: var(--nx-surface-sunk); font-size: 12.5px; font-weight: 700; color: var(--nx-text); }
+.lbl-assign-preview-boxes { max-height: 260px; overflow-y: auto; }
+.lbl-assign-box-row { display: flex; justify-content: space-between; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--nx-rule); font-size: 13px; }
+.lbl-assign-box-id { font-weight: 800; color: var(--nx-accent-ink); }
+.lbl-assign-box-fill { color: var(--nx-text-soft); }
+.lbl-assign-foot { display: flex; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--nx-rule); }
+.lbl-assign-btn { flex: 1; height: 38px; border-radius: 8px; border: 1px solid var(--nx-rule-strong); background: var(--nx-surface); color: var(--nx-text); font-weight: 700; cursor: pointer; }
+.lbl-assign-btn:hover:not(:disabled) { background: var(--nx-surface-hover); }
+.lbl-assign-btn--primary { background: var(--nx-accent); border-color: var(--nx-accent); color: var(--nx-text-on); }
+.lbl-assign-btn--primary:hover:not(:disabled) { background: var(--nx-accent-hover); }
+.lbl-assign-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* label queue modal */
+.lbl-queue-modal {
+  width: 760px; max-width: 94vw; max-height: 84vh; background: var(--nx-surface);
+  border-radius: 12px; display: flex; flex-direction: column; box-shadow: var(--nx-shadow-sm), 0 12px 40px rgba(15, 23, 42, 0.28);
+}
+.lbl-queue-actions { display: flex; align-items: center; gap: 8px; }
+.lbl-queue-actions .lbl-assign-btn { flex: none; height: 32px; padding: 0 14px; }
+.lbl-queue-body { padding: 8px 14px 16px; overflow: auto; }
+.lbl-queue-table { width: 100%; }
+
+/* ── Review workspace redesign (spec §4–§17) ─────────────────────────────── */
+
+/* Fix the Unit filter dropdown: the global `input{width:100%;min-height:42px}`
+   rule was inflating the option CHECKBOXES to full-width / 42px tall, pushing
+   the unit label to the far right and making rows huge. Constrain them to a
+   natural checkbox and left-align the row. Also tighten the panel width. */
+.ow-supplier-list.lbl-unit-list { width: 200px; }
+.lbl-unit-options label { justify-content: flex-start; min-height: 0; padding: 4px 8px; }
+.lbl-unit-options input[type="checkbox"] {
+  width: 15px; min-width: 15px; height: 15px; min-height: 0; flex: 0 0 auto; margin: 0; accent-color: var(--nx-accent);
+}
+/* Same global-input override for the inline New-Unit editor input. */
+.lbl-unit-combo-input { min-height: 0; }
+
+/* Excel-style per-column filter row */
+.lblx-colfilter-toggle.is-on { background: var(--nx-accent-sunk); border-color: var(--nx-accent); color: var(--nx-accent-ink); }
+.lbl-grid thead tr.lbl-filter-row th { padding: 2px 3px !important; background: var(--nx-surface-sunk, var(--nx-surface)); border-bottom: 1px solid var(--nx-rule); }
+.lbl-colfilter-input {
+  width: 100%; box-sizing: border-box; height: 22px; min-height: 0; padding: 0 5px;
+  border: 1px solid var(--nx-rule); border-radius: 4px; background: var(--nx-surface);
+  color: var(--nx-text); font: inherit; font-size: 11px; font-weight: 500;
+}
+.lbl-colfilter-input:focus { border-color: var(--nx-accent); outline: none; }
+.lbl-colfilter-input::placeholder { color: var(--nx-text-muted); font-weight: 400; }
+.lbl-colfilter-clear {
+  width: 100%; height: 22px; min-height: 0; padding: 0; border: 1px solid var(--nx-rule); border-radius: 4px;
+  background: var(--nx-surface); color: var(--nx-text-muted); cursor: pointer; font-size: 11px; line-height: 1;
+}
+.lbl-colfilter-clear:hover { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+
+/* Header stock/sale-days quick filter + Reset button */
+.lblx-stock-head { min-width: 150px; }
+.lblx-stock-head select { width: 100%; }
+.lblx-reset {
+  align-self: flex-end; height: 30px; padding: 0 12px; border-radius: 7px;
+  border: 1px solid var(--nx-rule-strong); background: var(--nx-surface); color: var(--nx-text);
+  font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.lblx-reset:hover:not(:disabled) { background: var(--nx-surface-hover); }
+.lblx-reset:disabled { opacity: 0.5; cursor: default; }
+
+/* New Unit cell: plain text normally, edit-on-demand chip (NOT a permanent box). */
+.lbl-newunit-td { padding: 0 4px; }
+.lbl-newunit-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  max-width: 100%; padding: 1px 5px; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.lbl-newunit-chip:hover:not(:disabled) { background: var(--nx-surface-hover); border-color: var(--nx-rule); }
+.lbl-newunit-chip.is-changed { background: var(--nx-warning-sunk); border-color: var(--nx-warning); font-weight: 700; }
+.lbl-newunit-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lbl-newunit-dot { color: var(--nx-warning-ink); font-size: 9px; line-height: 1; }
+
+/* Searchable edit-on-demand combobox */
+.lbl-unit-combo { position: relative; }
+.lbl-unit-combo-input {
+  width: 100%; box-sizing: border-box; height: 24px; padding: 0 6px;
+  border: 1px solid var(--nx-accent); border-radius: 5px; background: var(--nx-surface);
+  color: var(--nx-text); text-transform: uppercase; font: inherit;
+}
+.lbl-unit-combo-menu {
+  position: absolute; top: calc(100% + 2px); left: 0; z-index: 40; min-width: 160px; max-height: 220px; overflow-y: auto;
+  padding: 3px; border: 1px solid var(--nx-rule-strong); border-radius: 7px;
+  background: var(--nx-surface-raised, var(--nx-surface)); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
+}
+.lbl-unit-combo-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  padding: 4px 8px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.lbl-unit-combo-row.is-active { background: var(--nx-accent); color: var(--nx-text-on); }
+.lbl-unit-combo-row em { font-size: 10px; opacity: 0.7; font-style: normal; }
+.lbl-unit-combo-row.is-active em { color: var(--nx-text-on); opacity: 0.85; }
+
+/* Status badge (spec §13) */
+.lbl-status-cell { overflow: hidden; }
+.lbl-status-badge {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: 1px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700; white-space: nowrap;
+}
+.lbl-status-glyph { font-size: 9px; line-height: 1; }
+.lbl-status-badge.is-assigned { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.lbl-status-badge.is-pending  { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.lbl-status-badge.is-excluded { background: var(--nx-accent-sunk); color: var(--nx-text-muted); }
+.lbl-status-badge.is-none     { background: transparent; color: var(--nx-text-muted); }
+
+/* Counters */
+.lblx-cnt-y { color: var(--nx-success-ink); }
+.lblx-cnt-n { color: var(--nx-danger-ink); }
+.lblx-cnt-pending { color: var(--nx-warning-ink); }
+.lblx-cnt-assigned { color: var(--nx-success-ink); }
+
+/* Clear buttons (legacy — now surfaced inside the More ▾ menu) */
+.lblx-clear, .lblx-clear-review { border-color: var(--nx-danger); color: var(--nx-danger-ink); }
+.lblx-clear:hover:not(:disabled), .lblx-clear-review:hover:not(:disabled) { background: var(--nx-danger-sunk); }
+
+/* "More ▾" overflow menu — keeps destructive resets off the primary bar (§30) */
+.lblx-more { position: relative; flex: 0 0 auto; }
+.lblx-more-btn.is-on { background: var(--nx-surface-hover); }
+.lblx-more-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 50; min-width: 190px;
+  display: flex; flex-direction: column; padding: 4px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-raised, var(--nx-surface)); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
+}
+.lblx-more-item {
+  display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 5px;
+  background: transparent; color: var(--nx-text-soft); font: inherit; font-size: 12px; font-weight: 600;
+  text-align: left; cursor: pointer; white-space: nowrap;
+}
+.lblx-more-item:hover:not(:disabled) { background: var(--nx-surface-hover); color: var(--nx-text); }
+.lblx-more-item:disabled { opacity: 0.5; cursor: default; }
+.lblx-more-danger { color: var(--nx-danger-ink); }
+.lblx-more-danger:hover:not(:disabled) { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+
+/* Right-panel remarks editor (moved out of the grid, spec §10/§12) */
+.lbl-side-remarks { display: flex; flex-direction: column; gap: 3px; }
+.lbl-side-remarks-input {
+  width: 100%; box-sizing: border-box; height: 26px; padding: 2px 7px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
+}
+.lbl-side-remarks-input:focus { outline: none; border-color: var(--nx-accent); }
+.lbl-side-remarks-input:disabled { opacity: 0.6; }
+
+/* Right-panel facts (spec §16/§17) */
+.lbl-side-facts { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--nx-rule); }
+.lbl-fact { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.lbl-fact--split { justify-content: flex-start; gap: 18px; }
+.lbl-fact-k { min-width: 52px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--nx-text-muted); font-weight: 700; }
+.lbl-fact-v { color: var(--nx-text); }
+.lbl-fact-change i { font-style: normal; color: var(--nx-text-muted); }
+.lbl-corr { font-style: normal; font-size: 10.5px; color: var(--nx-warning-ink); font-weight: 700; }
+.lbl-corr--muted { color: var(--nx-text-muted); }
+
+/* Confirmation dialog (spec §11) */
+.lbl-confirm { width: 460px; max-width: 92vw; background: var(--nx-surface); border-radius: 12px; box-shadow: 0 12px 40px rgba(15, 23, 42, 0.32); overflow: hidden; }
+.lbl-confirm-head { padding: 12px 16px; border-bottom: 1px solid var(--nx-rule); font-size: 14px; }
+.lbl-confirm-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.lbl-confirm-body p { margin: 0; font-size: 12.5px; color: var(--nx-text); line-height: 1.4; }
+.lbl-confirm-foot { display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--nx-rule); }
+.lbl-confirm-danger { background: var(--nx-danger); border-color: var(--nx-danger); color: var(--nx-text-on); }
+.lbl-confirm-danger:hover:not(:disabled) { filter: brightness(1.05); }
+
+/* Transient auto-save toast (spec §8) */
+.lbl-toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 90; padding: 8px 14px; border-radius: 8px;
+  font-size: 13px; font-weight: 700; color: var(--nx-text-on); box-shadow: 0 8px 20px rgba(15, 23, 42, 0.3);
+  animation: lblToastIn 0.14s ease-out;
+}
+.lbl-toast-ok { background: var(--nx-success-ink); }
+.lbl-toast-err { background: var(--nx-danger); }
+@keyframes lblToastIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ---- Schema Sync page ---- */
+.schema-sync-conn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 16px 0;
+}
+.schema-sync-conn-card {
+  border: 1px solid var(--nx-border, #333);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.schema-sync-conn-card h3 {
+  margin: 0 0 4px;
+}
+.schema-sync-hint {
+  margin: 0 0 6px;
+  opacity: 0.75;
+  font-size: 0.85em;
+}
+.schema-sync-conn-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9em;
+}
+.schema-sync-conn-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.schema-sync-compare-actions,
+.schema-sync-apply-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+.schema-sync-report {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.schema-sync-diff-section h4 {
+  margin: 0 0 8px;
+}
+.schema-sync-diff-section tr.row-warn {
+  background: rgba(220, 90, 60, 0.12);
+}
+@media (max-width: 900px) {
+  .schema-sync-conn-grid {
+    grid-template-columns: 1fr;
+  }
+}

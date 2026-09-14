@@ -20,6 +20,8 @@ class LabelSearchRow(BaseModel):
     total_stock: float
     sale_days: Optional[float] = None
     purchase_days: Optional[float] = None
+    last_purchase_date: Optional[str] = None
+    last_sale_date: Optional[str] = None
     include_label: Optional[str] = None
     remarks: Optional[str] = None
     corrected_unit: Optional[str] = None
@@ -114,6 +116,9 @@ class LabelTrendRow(BaseModel):
     month: str
     sale_qty: float
     purchase_qty: float
+    transfer_in_qty: float = 0
+    transfer_out_qty: float = 0
+    adjustment_qty: float = 0
     stock_in_hand: float
 
 
@@ -158,6 +163,14 @@ class LabelSaleResult(BaseModel):
 class LabelUnitCorrectionRequest(BaseModel):
     unit_description: str
     current_unit: Optional[str] = None
+
+
+# ---------- Location correction (manual box override, super admin) ----------
+
+
+class LabelLocationCorrectionRequest(BaseModel):
+    location: str
+    current_location: Optional[str] = None
 
 
 # ---------- Location assignment (preview + commit) ----------
@@ -217,4 +230,14 @@ class LabelQueueResult(BaseModel):
 
 
 class LabelMarkPrintedRequest(BaseModel):
+    product_codes: List[str] = []
+
+
+# ---------- Explicit reset actions (confirmed in the UI) ----------
+
+
+class LabelClearRequest(BaseModel):
+    """Products to reset. Both clear actions touch ONLY dbo.label_review — never
+    sync.Products / master location data."""
+
     product_codes: List[str] = []

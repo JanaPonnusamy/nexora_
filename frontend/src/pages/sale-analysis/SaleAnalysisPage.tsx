@@ -168,7 +168,7 @@ export default function SaleAnalysisPage() {
   // Groups are keyed by product NAME (codes differ per store), so the builder
   // dedupes/keys picked products by their name.
   const addProduct = (p: SaleProductOption) => {
-    setPicked((cur) => new Map(cur).set(p.product_name, p))
+    setPicked((cur) => new Map(cur).set(p.product_name ?? '', p))
   }
   const removeProduct = (name: string) => {
     setPicked((cur) => { const m = new Map(cur); m.delete(name); return m })
@@ -183,7 +183,7 @@ export default function SaleAnalysisPage() {
     saleAnalysisService.products(tenantId, storeId, query.trim(), supplierFilter || undefined, 2000)
       .then((all) => setPicked((cur) => {
         const m = new Map(cur)
-        all.forEach((p) => m.set(p.product_name, p))
+        all.forEach((p) => m.set(p.product_name ?? '', p))
         return m
       }))
       .catch((err) => setError(err instanceof Error ? err.message : 'Add all failed'))
@@ -340,10 +340,10 @@ export default function SaleAnalysisPage() {
               {searchResults.length > 0 && (
                 <ul className="sa-results">
                   {searchResults.map((p) => {
-                    const isPicked = picked.has(p.product_name)
+                    const isPicked = picked.has(p.product_name ?? '')
                     return (
                       <li key={p.product_code} className={`sa-result-row${isPicked ? ' picked' : ''}`}
-                        onClick={() => (isPicked ? removeProduct(p.product_name) : addProduct(p))}>
+                        onClick={() => (isPicked ? removeProduct(p.product_name ?? '') : addProduct(p))}>
                         <div className="sa-result-main">
                           <div className="sa-result-name">{p.product_name}</div>
                           <div className="sa-result-sub">{p.product_code} · stock {num(p.current_stock)}{p.supplier_name ? ` · ${p.supplier_name}` : ''}</div>
@@ -359,7 +359,7 @@ export default function SaleAnalysisPage() {
                   {[...picked.values()].map((p) => (
                     <span key={p.product_name} className="sa-chip">
                       {p.product_name}
-                      <button title="Remove" onClick={() => removeProduct(p.product_name)}>×</button>
+                      <button title="Remove" onClick={() => removeProduct(p.product_name ?? '')}>×</button>
                     </span>
                   ))}
                 </div>

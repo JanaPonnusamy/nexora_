@@ -54,9 +54,17 @@ def get_status():
 def run_tick():
     """One scheduler pass. Safe to call on a timer from any number of backend
     worker processes: acquire_tick_lock() ensures only one of them actually
-    does anything on a given tick -- the others return immediately."""
-    conn = get_connection()
+    does anything on a given tick -- the others return immediately.
+
+    Everything, including opening the connection, is inside the try/except:
+    a transient DB outage (SQL Server restart, network blip) must degrade to
+    "this tick did nothing, try again next tick", never to an exception that
+    escapes this function -- the caller is a daemon thread with no
+    supervisor, so an uncaught exception here kills scheduling permanently
+    until the whole backend process is restarted."""
+    conn = None
     try:
+        conn = get_connection()
         if not repo.acquire_tick_lock(conn):
             return {"ran": False, "reason": "tick already in progress on another worker"}
         try:
@@ -73,7 +81,11 @@ def run_tick():
         _log("[SCHEDULER] Tick failed:\n" + _safe_tb())
         return {"ran": False, "error": str(ex)}
     finally:
-        conn.close()
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _safe_tb():
@@ -160,7 +172,17 @@ def _loop():
          "tick_seconds=%s | max_concurrent_syncs=%s"
          % (repo.WORKER_ID, TICK_SECONDS, MAX_CONCURRENT_SYNCS))
     while not _stop_event.is_set():
-        run_tick()
+        # run_tick() already catches everything it can identify, but this is
+        # a daemon thread with no supervisor -- belt and suspenders so that
+        # literally nothing (a bug, a library raising something unexpected)
+        # can ever take the loop down permanently the way a single uncaught
+        # DB-connect error did in production on 2026-09-13.
+        try:
+            run_tick()
+        except Exception:
+            _last_tick["at"] = _dt.datetime.now()
+            _last_tick["error"] = "loop caught: " + _safe_tb()
+            _log("[SCHEDULER] Tick raised past run_tick() -- loop continues:\n" + _safe_tb())
         _stop_event.wait(TICK_SECONDS)
     _log("[SCHEDULER] Background scheduler thread stopped | worker=%s" % repo.WORKER_ID)
 

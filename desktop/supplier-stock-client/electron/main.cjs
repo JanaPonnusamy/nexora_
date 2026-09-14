@@ -5,8 +5,14 @@
 // fine on Electron 22's Chromium.
 const path = require('node:path');
 const http = require('node:http');
+const fs = require('node:fs');
 const { app, BrowserWindow, shell, ipcMain, nativeTheme, Menu } = require('electron');
-const { autoUpdater } = require('electron-updater');
+// electron-updater's `autoUpdater` export is a lazy getter that constructs an
+// NsisUpdater the first time it's touched -- requiring it (and destructuring
+// autoUpdater out of it) at module load time can hang/throw before app is
+// ready. Required lazily inside initAutoUpdates() instead, and wrapped so a
+// broken updater never takes the whole app down with it (it's a background
+// nicety, not core functionality).
 
 if (!app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('temp'), 'nexora-supplier-stock-client-dev'));
@@ -43,6 +49,45 @@ function canReachDevServer(port) {
 
 ipcMain.handle('dev:isDev', () => isDev);
 
+// --------------------------------------------------------------------------
+// UI session persistence (Label Exporter, spec Parts 9-15).
+// Exactly ONE file per named session, in the app's userData dir. UI state
+// only — never product/review/business data (that lives in the backend DB).
+// Every write overwrites the same file (no history). Reads tolerate a
+// missing/corrupt file by returning null so the renderer falls back to
+// clean defaults.
+// --------------------------------------------------------------------------
+function sessionFilePath(name) {
+  const safe = String(name || '').replace(/[^a-z0-9._-]/gi, '');
+  if (!safe) return null;
+  return path.join(app.getPath('userData'), safe);
+}
+
+ipcMain.handle('session:path', (_event, name) => sessionFilePath(name));
+
+ipcMain.handle('session:read', (_event, name) => {
+  const file = sessionFilePath(name);
+  if (!file) return null;
+  try {
+    const raw = fs.readFileSync(file, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null; // missing or corrupt -> clean defaults
+  }
+});
+
+ipcMain.handle('session:write', (_event, name, data) => {
+  const file = sessionFilePath(name);
+  if (!file) return false;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 ipcMain.handle('dev:setViewport', (event, { width, height }) => {
   if (!isDev) return;
   const win = BrowserWindow.fromWebContents(event.sender);
@@ -66,10 +111,16 @@ ipcMain.handle('theme:setPreference', (event, { preference, resolvedTheme }) => 
 
 async function createWindow() {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 980,
-    minHeight: 680,
+    // Target display size: the app is designed for 1366x768. useContentSize
+    // makes the WEB CONTENT exactly 1366x768 (the chrome/title bar is extra),
+    // so the layout matches the design target on install. Resizable is left on
+    // (default) so it still works on larger/smaller screens.
+    width: 1366,
+    height: 768,
+    useContentSize: true,
+    minWidth: 1024,
+    minHeight: 700,
+    center: true,
     title: 'Axythic Supplier Stock',
     backgroundColor: '#f5f7fb',
     webPreferences: {
@@ -85,7 +136,9 @@ async function createWindow() {
     return { action: 'deny' };
   });
 
-  win.once('ready-to-show', () => win.maximize());
+  // Open at the 1366x768 design size (centered) instead of maximizing, so the
+  // installed app presents the intended layout. The user can still maximize.
+  win.once('ready-to-show', () => win.show());
 
   if (isDev) {
     const devPort = process.env.NEXORA_DEV_PORT || 5173;
@@ -113,12 +166,17 @@ async function createWindow() {
 // closed daily, so updates land without interrupting the user mid-session.
 function initAutoUpdates() {
   if (!app.isPackaged) return;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('error', () => { /* offline / feed unreachable - ignore */ });
-  autoUpdater.checkForUpdates().catch(() => {});
-  // Re-check every 6 hours in case a PC stays on for days.
-  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('error', () => { /* offline / feed unreachable - ignore */ });
+    autoUpdater.checkForUpdates().catch(() => {});
+    // Re-check every 6 hours in case a PC stays on for days.
+    setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
+  } catch {
+    // Update feed unreachable/misconfigured - the app must still run without it.
+  }
 }
 
 app.whenReady().then(() => {

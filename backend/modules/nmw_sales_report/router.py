@@ -13,6 +13,7 @@ from modules.nmw_sales_report import service
 from modules.nmw_sales_report.schemas import (
     ApproveRequest,
     ApproveResult,
+    NmwPurchaseEntry,
     NmwSalesBillItemList,
     NmwSalesBillList,
 )
@@ -27,9 +28,12 @@ def list_bills(
     status: str = "all",
     date_from: str = "",
     date_to: str = "",
+    purchase_status: str = "all",
     current_user: dict = Depends(get_current_user),
 ):
-    return service.list_bills(current_user, tenant_id, store_id.strip() or None, status, date_from, date_to)
+    return service.list_bills(
+        current_user, tenant_id, store_id.strip() or None, status, date_from, date_to, purchase_status,
+    )
 
 
 @router.get("/bills/{bill_no}/items", response_model=NmwSalesBillItemList)
@@ -40,6 +44,21 @@ def bill_items(
     current_user: dict = Depends(get_current_user),
 ):
     return service.get_bill_items(current_user, tenant_id, bill_no, bill_date)
+
+
+@router.get("/bills/{bill_no}/purchase-entry", response_model=NmwPurchaseEntry)
+def purchase_entry(
+    bill_no: str,
+    tenant_id: str,
+    bill_date: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    """Store-side purchase-entry status for one bill (Completed/Pending/Not
+    Found + the receiving GRN number(s)/date, when found). Called only when a
+    bill is opened in the detail panel -- the /bills list already carries a
+    per-bill purchase_status from one batched lookup, so this is never called
+    in a loop over the list."""
+    return service.get_purchase_entry(current_user, tenant_id, bill_no, bill_date)
 
 
 @router.post("/bills/approve", response_model=ApproveResult)

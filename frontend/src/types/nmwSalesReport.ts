@@ -11,18 +11,23 @@ export interface NmwSalesBill {
   customer_name: string | null
   is_transfer: number
   bill_type: string
+  is_cancelled: number
   dest_store_id: string | null
   dest_store_code: string | null
   dest_store_name: string | null
   status: 'pending' | 'approved'
+  is_shown: number
   approved_by: string | null
   approved_at: string | null
+  purchase_status: PurchaseStatus
+  purchase_entry_no: string | null
 }
 
 export interface NmwSalesBillList {
   bills: NmwSalesBill[]
   can_approve: boolean
   scope: 'store' | 'all'
+  purchase_status_error: string | null
 }
 
 export interface NmwSalesBillItem {
@@ -36,6 +41,8 @@ export interface NmwSalesBillItem {
   rate: number
   discount_percentage: number
   amount: number
+  packing: string | null
+  sublocation: string | null
 }
 
 export interface NmwSalesBillSummary {
@@ -59,4 +66,31 @@ export interface NmwStoreCustCode {
 export interface BillKey {
   bill_date: string
   bill_no: string
+}
+
+export type PurchaseStatus = 'completed' | 'pending' | 'not_found' | 'error'
+
+export type PurchaseStatusFilter = 'all' | PurchaseStatus
+
+export interface NmwPendingProduct {
+  product_code: string
+  product_name: string | null
+  required_qty: number
+  received_qty: number
+}
+
+export interface NmwPurchaseEntry {
+  purchase_status: PurchaseStatus
+  matched_products: number
+  total_products: number
+  entry_no: string | null
+  completing_grn: string | null
+  entry_date: string | null
+  pending_products: NmwPendingProduct[]
+  match_basis: 'bill_number' | 'product_qty' | 'none' | null
+  grn_amount: number | null
+  dest_store_id: string | null
+  dest_store_code: string | null
+  dest_store_name: string | null
+  reason: string | null
 }

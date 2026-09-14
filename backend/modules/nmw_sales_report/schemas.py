@@ -24,12 +24,38 @@ class NmwSalesBill(BaseModel):
     is_shown: int = 0                       # 1 once approved (visible to stores)
     approved_by: Optional[str] = None
     approved_at: Optional[str] = None
+    purchase_status: str = "not_found"      # completed | pending | not_found | error
+    purchase_entry_no: Optional[str] = None  # store's completing GRN number (only when completed)
 
 
 class NmwSalesBillList(BaseModel):
     bills: List[NmwSalesBill] = []
     can_approve: bool = False
     scope: str = "store"                    # store | all
+    purchase_status_error: Optional[str] = None  # set only if the batched purchase-status lookup itself failed
+
+
+class NmwPendingProduct(BaseModel):
+    product_code: str
+    product_name: Optional[str] = None
+    required_qty: float = 0
+    received_qty: float = 0
+
+
+class NmwPurchaseEntry(BaseModel):
+    purchase_status: str = "not_found"      # completed | pending | not_found
+    matched_products: int = 0
+    total_products: int = 0
+    entry_no: Optional[str] = None          # one or more GRN numbers (comma-separated), earliest first
+    completing_grn: Optional[str] = None    # the single latest GRN (matches the list column)
+    entry_date: Optional[str] = None        # earliest matching GRN date
+    pending_products: List[NmwPendingProduct] = []  # items not yet received (why a bill is still Pending)
+    match_basis: Optional[str] = None       # bill_number | product_qty | none -- how completion was decided
+    grn_amount: Optional[float] = None      # store's received value for the matched GRN (bill_number basis only)
+    dest_store_id: Optional[str] = None
+    dest_store_code: Optional[str] = None
+    dest_store_name: Optional[str] = None
+    reason: Optional[str] = None            # set when not_found because the lookup itself couldn't run
 
 
 class NmwSalesBillItem(BaseModel):

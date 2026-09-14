@@ -1317,9 +1317,18 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
-.lo-suppick__row.is-active,
-.lo-suppick__row:hover { background: rgba(var(--bs-primary-rgb), 0.14); }
+/* Single source of truth for the highlight: the JS `is-active` index, which
+ * onMouseEnter keeps in sync with the mouse. We deliberately do NOT style
+ * `:hover` separately — a pure-CSS :hover would light up whatever row the
+ * cursor rests on even when it hasn't moved, so keyboard-navigating to a
+ * different row would show two highlighted rows fighting each other. */
+.lo-suppick__row.is-active {
+  background: var(--bs-primary);
+  color: #fff;
+}
+.lo-suppick__row.is-active .lo-suppick__code { color: rgba(255, 255, 255, 0.82); }
 .lo-suppick__nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; }
 .lo-suppick__code { flex: 0 0 auto; color: var(--bs-secondary-color); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
 .lo-merged-filter .ds-filter-search > input { font-size: 0.76rem; padding-block: 0.2rem; }

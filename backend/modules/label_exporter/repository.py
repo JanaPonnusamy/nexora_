@@ -82,9 +82,14 @@ def search_products(
     (UnitDescription is blank/NULL) - 'null' ignores the unit_description
     text value. sublocation_filter is an optional comma-separated list of
     exact existing SubLocation values (multi-select 'old location' filter)."""
+    # Unit filtering uses the EFFECTIVE (current) unit — a reviewer's correction
+    # (dbo.label_review.unit_description) wins over the master p.UnitDescription
+    # (spec §18: filter CALPOL by its corrected TAB, not its old SYP).
+    eff_unit = "ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), ISNULL(p.UnitDescription, ''))"
+
     exact_values = [v.strip() for v in (unit_description or "").split(",") if v.strip()]
     if unit_description_mode == "exact" and exact_values:
-        exact_clause = "LTRIM(RTRIM(ISNULL(p.UnitDescription, ''))) IN (%s)" % ", ".join("?" for _ in exact_values)
+        exact_clause = "LTRIM(RTRIM(%s)) IN (%s)" % (eff_unit, ", ".join("?" for _ in exact_values))
         exact_params = list(exact_values)
     else:
         exact_clause = "1 = 1"
@@ -105,13 +110,15 @@ def search_products(
                 b.ProductCode,
                 DATEDIFF(DAY, MAX(b.GrnDate), GETDATE()) AS purchase_days,
                 DATEDIFF(DAY, MAX(b.LastSaleDate), GETDATE()) AS sale_days,
+                MAX(b.GrnDate) AS last_purchase_date,
+                MAX(b.LastSaleDate) AS last_sale_date,
                 SUM(CASE WHEN ISNULL(b.Stock, 0) > 0 THEN ISNULL(b.Stock, 0) ELSE 0 END) AS live_batch_stock
             FROM sync.Batches b
             WHERE b.tenant_id = ?
               AND b.store_id = ?
             GROUP BY b.ProductCode
         )
-        SELECT TOP 400
+        SELECT
             CAST(p.ProductCode AS NVARCHAR(50)) AS product_code,
             p.ProductName AS product_name,
             CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.UnitDescription)), ''), '') AS NVARCHAR(100)) AS unit_description,
@@ -121,6 +128,8 @@ def search_products(
             CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.SubLocation)), ''), '') AS NVARCHAR(50)) AS current_sublocation,
             CAST(ISNULL(agg.purchase_days, 0) AS INT) AS purchase_days,
             CAST(ISNULL(agg.sale_days, 0) AS INT) AS sale_days,
+            CONVERT(VARCHAR(10), agg.last_purchase_date, 23) AS last_purchase_date,
+            CONVERT(VARCHAR(10), agg.last_sale_date, 23) AS last_sale_date,
             CAST(ISNULL(agg.live_batch_stock, 0) AS DECIMAL(18, 2)) AS batch_stock,
             r.include_label,
             r.remarks,
@@ -151,11 +160,11 @@ def search_products(
               )
           AND (
                 ? = 'null'
-                AND LTRIM(RTRIM(ISNULL(p.UnitDescription, ''))) = ''
+                AND LTRIM(RTRIM({eff_unit})) = ''
                 OR ? = 'exact'
                 AND {exact_clause}
                 OR ? = 'contains'
-                AND (? = '' OR ISNULL(p.UnitDescription, '') LIKE '%' + ? + '%')
+                AND (? = '' OR {eff_unit} LIKE '%' + ? + '%')
               )
           AND (
                 ? = ''
@@ -481,15 +490,28 @@ def assign_sublocation(tenant_id, store_id, product_code, sublocation, user_id):
 
 
 def get_product_trend(tenant_id, store_id, product_code):
-    """Last 12 months of sale/purchase quantity + stock snapshot for the
-    right-side trend panel, from sync.ProductTrans (populated monthly by the
-    store agent)."""
+    """Last 12 months of movement for the right-side Monthly Trend chart, from
+    sync.ProductTrans (populated monthly by the store agent). The chart groups
+    the raw columns into four business movements; the mapping to real
+    sync.ProductTrans columns is:
+
+        Purchase + Tin  = PurchaseQuantity   + TransferInQuantity
+        Sales + Tout    = SaleQuantity       + TransferOutQuantity
+        Stock           = StockInHand
+        Adjustment      = AdjustmentQuantity
+
+    We return the raw components (never invent values); the frontend does the
+    grouping so the legend labels stay a UI concern, and slices to the
+    user-selected 4-12 month window client-side (no refetch on month change)."""
     return _fetch_all(
         """
         SELECT TOP 12
             CONVERT(VARCHAR(7), MonthOfStatistics, 120) AS month,
             CAST(ISNULL(SaleQuantity, 0) AS DECIMAL(18, 2)) AS sale_qty,
             CAST(ISNULL(PurchaseQuantity, 0) AS DECIMAL(18, 2)) AS purchase_qty,
+            CAST(ISNULL(TransferInQuantity, 0) AS DECIMAL(18, 2)) AS transfer_in_qty,
+            CAST(ISNULL(TransferOutQuantity, 0) AS DECIMAL(18, 2)) AS transfer_out_qty,
+            CAST(ISNULL(AdjustmentQuantity, 0) AS DECIMAL(18, 2)) AS adjustment_qty,
             CAST(ISNULL(StockInHand, 0) AS DECIMAL(18, 2)) AS stock_in_hand
         FROM sync.ProductTrans
         WHERE tenant_id = ?
@@ -747,6 +769,63 @@ def correct_unit(tenant_id, store_id, product_code, new_unit, current_unit, user
     )
 
 
+def correct_location(tenant_id, store_id, product_code, new_location, current_location, user_id):
+    """Manual single-product box/letter override (spec-parity with
+    correct_unit): lets a reviewer type/pick a location directly on the grid,
+    bypassing the standard-box/SYP-bucket assignment engine (assign_locations)
+    entirely. Captures whatever was previously assigned into old_sublocation
+    ONCE (never overwritten by a later correction, same COALESCE pattern as
+    correct_unit), sets assigned_sublocation to the new value, and marks
+    label_required = 1 so it enters the print queue like an algorithmic
+    assignment would. Logs to dbo.label_location_history for the same audit
+    trail assign_locations writes, when the location actually changed."""
+    new_location = (new_location or "").strip() or None
+    current_location = (current_location or "").strip() or None
+    existing = _fetch_one(
+        "SELECT id FROM dbo.label_review WHERE tenant_id = ? AND store_id = ? AND product_code = ?",
+        (tenant_id, store_id, product_code),
+    )
+    if existing is None:
+        _execute(
+            """
+            INSERT INTO dbo.label_review (
+                tenant_id, store_id, product_code, old_sublocation,
+                assigned_sublocation, assignment_mode, assignment_type,
+                assigned_by, assigned_at, label_required, reviewed_by, reviewed_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'manual', 'manual', ?, SYSUTCDATETIME(), 1, ?, SYSUTCDATETIME())
+            """,
+            (tenant_id, store_id, product_code, current_location, new_location, user_id, user_id),
+        )
+    else:
+        _execute(
+            """
+            UPDATE dbo.label_review
+            SET old_sublocation = COALESCE(NULLIF(LTRIM(RTRIM(old_sublocation)), ''), ?),
+                assigned_sublocation = ?,
+                assignment_mode = 'manual',
+                assignment_type = 'manual',
+                assigned_by = ?,
+                assigned_at = SYSUTCDATETIME(),
+                label_required = 1,
+                updated_at = SYSUTCDATETIME()
+            WHERE tenant_id = ? AND store_id = ? AND product_code = ?
+            """,
+            (current_location, new_location, user_id, tenant_id, store_id, product_code),
+        )
+    if current_location != new_location:
+        _execute(
+            """
+            INSERT INTO dbo.label_location_history (
+                tenant_id, store_id, product_code, old_location, new_location,
+                assignment_mode, assignment_type, assigned_by
+            )
+            VALUES (?, ?, ?, ?, ?, 'manual', 'manual', ?)
+            """,
+            (tenant_id, store_id, product_code, current_location, new_location, user_id),
+        )
+
+
 def get_label_queue(tenant_id, store_id):
     """Products with an assigned box and label_required = 1 (spec §W). Print/
     export reads from here; assignment and printing stay separate."""
@@ -794,6 +873,87 @@ def mark_labels_printed(tenant_id, store_id, product_codes):
             (tenant_id, store_id, *product_codes),
         )
         conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def clear_assignment_state(tenant_id, store_id, product_codes):
+    """Reset ONLY the Label-Exporter assignment result for the given products
+    (spec §10): null the assigned box + assignment/label bookkeeping so their
+    status falls back to PENDING (if still reviewed Y) or NOT_STARTED. Never
+    touches include_label (the Y/N review), old_sublocation, the unit
+    correction, or sync.Products — master/source data is left intact. Records a
+    history row for each box actually cleared."""
+    if not product_codes:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        placeholders = ", ".join("?" for _ in product_codes)
+        # Audit the boxes we are about to vacate before nulling them.
+        cursor.execute(
+            f"""
+            INSERT INTO dbo.label_location_history
+                (tenant_id, store_id, product_code, old_location, new_location, assignment_mode, assignment_type)
+            SELECT tenant_id, store_id, product_code, assigned_sublocation, NULL, 'clear', 'clear'
+            FROM dbo.label_review
+            WHERE tenant_id = ? AND store_id = ?
+              AND product_code IN ({placeholders})
+              AND NULLIF(LTRIM(RTRIM(assigned_sublocation)), '') IS NOT NULL
+            """,
+            (tenant_id, store_id, *product_codes),
+        )
+        cursor.execute(
+            f"""
+            UPDATE dbo.label_review
+            SET assigned_sublocation = NULL,
+                assignment_mode = NULL,
+                assignment_type = NULL,
+                assigned_by = NULL,
+                assigned_at = NULL,
+                label_required = 0,
+                label_created_at = NULL,
+                updated_at = SYSUTCDATETIME()
+            WHERE tenant_id = ? AND store_id = ? AND product_code IN ({placeholders})
+            """,
+            (tenant_id, store_id, *product_codes),
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        return affected
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def clear_review_state(tenant_id, store_id, product_codes):
+    """Reset the review workflow for the given products (spec §11): clear the
+    Y/N decision AND the assignment/label state so they return to NOT_REVIEWED.
+    Preserves the unit correction (old_unit_description/unit_description),
+    old_sublocation and remarks, and never touches sync.Products. Callers must
+    confirm first — this is the explicit 'Reset Review' action."""
+    if not product_codes:
+        return 0
+    # Vacate any assigned boxes first (audited), then clear the review flag.
+    clear_assignment_state(tenant_id, store_id, product_codes)
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        placeholders = ", ".join("?" for _ in product_codes)
+        cursor.execute(
+            f"""
+            UPDATE dbo.label_review
+            SET include_label = NULL,
+                reviewed_at = NULL,
+                updated_at = SYSUTCDATETIME()
+            WHERE tenant_id = ? AND store_id = ? AND product_code IN ({placeholders})
+            """,
+            (tenant_id, store_id, *product_codes),
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        return affected
     finally:
         cursor.close()
         conn.close()

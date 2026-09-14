@@ -11,6 +11,23 @@ function authHeaders(session) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// FastAPI error bodies aren't always a plain string: 422 validation errors send
+// `detail` as a list of {loc, msg, type} objects, and some handlers raise
+// HTTPException(detail=<dict>). Passing any of those straight into `new
+// Error(x)` silently stringifies it to the useless literal "[object Object]"
+// (or comma-joined objects for arrays) - extract real, readable text instead.
+function detailToMessage(data) {
+  const detail = data?.detail ?? data?.message ?? data?.error;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => (typeof item === 'string' ? item : `${(item?.loc || []).join('.')}: ${item?.msg || JSON.stringify(item)}`))
+      .join('; ');
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  return detail || '';
+}
+
 async function request(path, options = {}) {
   const settings = loadSettings();
   const session = options.session;
@@ -47,7 +64,7 @@ async function request(path, options = {}) {
   const data = text ? safeJson(text) : null;
 
   if (!response.ok) {
-    const message = data?.detail || data?.message || data?.error || `Request failed with ${response.status}`;
+    const message = detailToMessage(data) || `Request failed with ${response.status}`;
     // A 401 here means the stored token is missing/expired/invalid for a
     // request that did carry a session - the UI would otherwise sit showing
     // "Request failed with 401" on every panel forever with no way out. Let
@@ -435,13 +452,26 @@ export const api = {
       store_id: filters.storeId || '',
       status: filters.status || 'all',
       date_from: filters.dateFrom || '',
-      date_to: filters.dateTo || ''
+      date_to: filters.dateTo || '',
+      purchase_status: filters.purchaseStatus || 'all'
     })}`, { session });
   },
 
   getNmwSalesBillItems(billNo, billDate, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/nmw-sales-report/bills/${encodeURIComponent(billNo)}/items${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      bill_date: billDate ? String(billDate).slice(0, 10) : ''
+    })}`, { session });
+  },
+
+  // Store-side purchase-entry (GRN) status for one NMW bill. The /bills list
+  // already carries a per-bill purchase_status from a single batched lookup, so
+  // this per-bill call is only for the detail pane (never fired in a loop over
+  // the list).
+  getNmwPurchaseEntry(billNo, billDate, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/nmw-sales-report/bills/${encodeURIComponent(billNo)}/purchase-entry${toQuery({
       tenant_id: filters.tenantId || settings.tenantId,
       bill_date: billDate ? String(billDate).slice(0, 10) : ''
     })}`, { session });
@@ -568,8 +598,80 @@ export const api = {
       stock_filter: filters.stockFilter || 'all',
       only_null_sublocation: filters.onlyNullSublocation ? 1 : 0,
       only_sale_unit_gt_one: filters.onlySaleUnitGtOne ? 1 : 0,
-      sublocation_filter: filters.sublocationFilter || ''
+      sublocation_filter: filters.sublocationFilter || '',
+      review_status: filters.reviewStatus || ''
     })}`, { session });
+  },
+
+  // Reviewer corrects a product's unit (auto-saved, dbo.label_review only).
+  correctLabelUnit(productCode, tenantId, storeId, unitDescription, currentUnit, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/unit${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ unit_description: unitDescription, current_unit: currentUnit || '' })
+    });
+  },
+
+  // Super-admin manual box override (auto-saved). Bypasses the standard-box/
+  // SYP assignment engine for one product; old box is captured server-side.
+  correctLabelLocation(productCode, tenantId, storeId, location, currentLocation, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/location${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ location, current_location: currentLocation || '' })
+    });
+  },
+
+  // Preview a box plan (no commit) so the UI can show the assignment before
+  // the operator confirms. `body` = { unit, mode, assignment_type, letter,
+  // product_codes, start_number }.
+  previewLabelAssignment(tenantId, storeId, body, session) {
+    return request(`/api/label-exporter/assignments/preview${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Transactionally commit the box plan (super-admin only, backend re-plans).
+  commitLabelAssignment(tenantId, storeId, body, session) {
+    return request(`/api/label-exporter/assignments/commit${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Reset ONLY the assignment result (assigned box + label state) for the given
+  // products — review Y/N and master data are left intact (spec §10).
+  clearLabelAssignment(tenantId, storeId, productCodes, session) {
+    return request(`/api/label-exporter/assignments/clear${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
+    });
+  },
+
+  // Reset the Y/N review AND assignment/label state for the given products
+  // (spec §11). Preserves unit corrections, old locations and master data.
+  clearLabelReview(tenantId, storeId, productCodes, session) {
+    return request(`/api/label-exporter/review/clear${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
+    });
+  },
+
+  getLabelQueue(tenantId, storeId, session) {
+    return request(`/api/label-exporter/label-queue${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
+  markLabelsPrinted(tenantId, storeId, productCodes, session) {
+    return request(`/api/label-exporter/label-queue/mark-printed${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
+    });
   },
 
   updateLabelReview(productCode, tenantId, storeId, body, session) {
@@ -636,6 +738,41 @@ export const api = {
       filename: match?.[1] || `${supplierName} ${storeName}.xlsx`,
       exportedCount: Number(response.headers.get('X-Exported-Count') || 0)
     };
+  },
+
+  // ----- Schema Sync (Dev -> Production) - super admin only -----
+  testSchemaSyncConnection(connection, session) {
+    return request('/api/schema-sync/test-connection', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ connection })
+    });
+  },
+
+  ensureSchemaSyncDatabase(connection, session) {
+    return request('/api/schema-sync/ensure-database', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ connection })
+    });
+  },
+
+  compareSchemaSync(source, target, session) {
+    return request('/api/schema-sync/compare', {
+      method: 'POST',
+      session,
+      timeoutMs: 120000,
+      body: JSON.stringify({ source, target })
+    });
+  },
+
+  applySchemaSync(target, statements, session) {
+    return request('/api/schema-sync/apply', {
+      method: 'POST',
+      session,
+      timeoutMs: 300000,
+      body: JSON.stringify({ target, statements })
+    });
   }
 };
 

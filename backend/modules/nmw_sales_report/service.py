@@ -39,7 +39,7 @@ def can_view_all(user):
     return is_super_admin(user)
 
 
-def list_bills(user, tenant_id, store_id, status, date_from, date_to):
+def list_bills(user, tenant_id, store_id, status, date_from, date_to, purchase_status=None):
     _assert_can_view(user)
     nmw_store_id = repository.get_nmw_store_id(tenant_id)
     if not nmw_store_id:
@@ -66,15 +66,61 @@ def list_bills(user, tenant_id, store_id, status, date_from, date_to):
         dest_store_ids = allowed
         effective_status = "approved"
 
-    bills = repository.list_bills(
-        tenant_id, nmw_store_id, dest_store_ids, effective_status,
-        (date_from or "").strip() or None, (date_to or "").strip() or None,
-    )
+    date_from = (date_from or "").strip() or None
+    date_to = (date_to or "").strip() or None
+    bills = repository.list_bills(tenant_id, nmw_store_id, dest_store_ids, effective_status, date_from, date_to)
+
+    # Purchase-entry status: ONE extra batched query for every bill just
+    # fetched (never one lookup per bill -- see repository docstring for why
+    # there is no bill-number key to join on and how the match works).
+    purchase_error = None
+    try:
+        status_map = repository.get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, date_to)
+    except Exception:
+        status_map = None
+        purchase_error = "Purchase-entry status could not be checked right now."
+
+    for bill in bills:
+        if status_map is None:
+            bill["purchase_status"] = "error"
+            bill["purchase_entry_no"] = None
+        else:
+            info = status_map.get((bill.get("bill_no"), bill.get("bill_date")))
+            bill["purchase_status"] = info["purchase_status"] if info else "not_found"
+            # Only surface the GRN in the list for a genuinely completed entry, so
+            # a partial (Pending) bill's GRNs don't read as "done" at a glance.
+            bill["purchase_entry_no"] = (
+                info["entry_no"] if info and info["purchase_status"] == "completed" else None
+            )
+
+    if purchase_status and purchase_status.lower() != "all":
+        bills = [b for b in bills if b["purchase_status"] == purchase_status.lower()]
+
     return {
         "bills": bills,
         "can_approve": is_super_admin(user),
         "scope": "all" if broad else "store",
+        "purchase_status_error": purchase_error,
     }
+
+
+def get_purchase_entry(user, tenant_id, bill_no, bill_date):
+    _assert_can_view(user)
+    nmw_store_id = repository.get_nmw_store_id(tenant_id)
+    if not nmw_store_id:
+        raise HTTPException(status_code=404, detail="Warehouse store (NMW) not found for this tenant.")
+    detail = repository.get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, (bill_date or "").strip() or None)
+
+    if not can_view_all(user):
+        allowed = set(repository.user_store_ids(user.get("sub")))
+        dest_store_id = detail.get("dest_store_id")
+        # A store user may only see purchase-entry info for their own store's
+        # bills. If the bill didn't route to a store at all (dest_store_id is
+        # None), there's nothing store-specific to leak, so let it through as
+        # the same 'not_found'-shaped response a broad user would see.
+        if dest_store_id and dest_store_id not in allowed:
+            raise HTTPException(status_code=403, detail="You cannot view purchase-entry data for another store.")
+    return detail
 
 
 def get_bill_items(user, tenant_id, bill_no, bill_date):

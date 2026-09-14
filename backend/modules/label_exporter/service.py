@@ -92,6 +92,20 @@ def assign_sublocation(tenant_id: str, store_id: str, product_code: str, subloca
     repository.assign_sublocation(tenant_id, store_id, product_code, sublocation.strip(), user_id)
 
 
+def correct_location(
+    tenant_id: str, store_id: str, product_code: str, location: str, current_location: str, user_id
+):
+    """Manual single-product box override -- bypasses the standard-box/SYP
+    assignment engine entirely (see repository.correct_location)."""
+    new_location = (location or "").strip().upper()
+    if not new_location:
+        raise HTTPException(status_code=400, detail="location is required")
+    repository.ensure_schema()
+    repository.correct_location(
+        tenant_id, store_id, product_code, new_location, (current_location or "").strip().upper() or None, user_id
+    )
+
+
 def get_product_trend(tenant_id: str, store_id: str, product_code: str):
     return {"rows": repository.get_product_trend(tenant_id, store_id, product_code)}
 
@@ -236,3 +250,25 @@ def mark_labels_printed(tenant_id: str, store_id: str, product_codes: list[str])
     repository.ensure_schema()
     repository.mark_labels_printed(tenant_id, store_id, product_codes)
     return {"ok": True, "count": len(product_codes or [])}
+
+
+# --------------------------------------------------------------------------
+# Explicit reset actions (spec §10/§11) — label_review only, never master data
+# --------------------------------------------------------------------------
+
+def clear_assignment_state(tenant_id: str, store_id: str, product_codes: list[str]):
+    codes = [c for c in (product_codes or []) if str(c or "").strip()]
+    if not codes:
+        raise HTTPException(status_code=400, detail="No products selected")
+    repository.ensure_schema()
+    affected = repository.clear_assignment_state(tenant_id, store_id, codes)
+    return {"ok": True, "count": len(codes), "affected": affected}
+
+
+def clear_review_state(tenant_id: str, store_id: str, product_codes: list[str]):
+    codes = [c for c in (product_codes or []) if str(c or "").strip()]
+    if not codes:
+        raise HTTPException(status_code=400, detail="No products selected")
+    repository.ensure_schema()
+    affected = repository.clear_review_state(tenant_id, store_id, codes)
+    return {"ok": True, "count": len(codes), "affected": affected}

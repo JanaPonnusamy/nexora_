@@ -69,11 +69,17 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
         if not _object_exists(cur, "procurement.supplier_stock"):
             return []
         store_clause = "AND ss.store_id = ?" if store_id else ""
-        params = [tenant_id, tenant_id, supplier_code]
+        term = (search or "").strip()
+        # Placeholder order must match the CTEs below, top to bottom.
+        params = [tenant_id]                       # active_store_count
+        params += [tenant_id, supplier_code]       # supplier_keys
         if store_id:
             params.append(store_id)
-        term = (search or "").strip()
-        params.extend([1 if only_available else 0, term, term, term, term])
+        params += [tenant_id, tenant_id]           # map_resolved (source + target sides)
+        params += [tenant_id, supplier_code]       # final WHERE
+        if store_id:
+            params.append(store_id)
+        params += [1 if only_available else 0, term, term, term, term]
         cur.execute(
             f"""
             WITH active_store_count AS (
@@ -81,6 +87,48 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                 FROM dbo.stores
                 WHERE tenant_id = ?
                   AND ISNULL(is_active, 1) = 1
+            ),
+            -- Distinct (store, product_code) keys this supplier actually has, so
+            -- the cross-store mapping walk runs ONCE set-based instead of as a
+            -- correlated OUTER APPLY per candidate row (2342 rows x 1.1M-row
+            -- product_mapping = 55s / timeout; this is ~100x faster).
+            supplier_keys AS (
+                SELECT DISTINCT ss.store_id, ss.product_code
+                FROM procurement.supplier_stock ss
+                WHERE ss.tenant_id = ?
+                  AND ss.supplier_code = ?
+                  {store_clause}
+                  AND ss.is_active = 1
+                  AND ss.product_code IS NOT NULL
+            ),
+            -- Every OTHER store this supplier's products resolve to, in both
+            -- mapping directions. Raw (uncast) predicates keep the
+            -- source/target product_mapping index seeks sargable.
+            map_resolved AS (
+                SELECT sk.store_id AS key_store, sk.product_code AS key_code, pm.target_store_id AS other_store
+                FROM supplier_keys sk
+                JOIN dbo.product_mapping pm
+                  ON pm.tenant_id = ?
+                 AND pm.is_deleted = 0
+                 AND pm.status IN ('APPROVED', 'AUTO')
+                 AND pm.source_store_id = sk.store_id
+                 AND pm.source_product_code = sk.product_code
+                 AND pm.target_store_id <> sk.store_id
+                UNION
+                SELECT sk.store_id, sk.product_code, pm.source_store_id
+                FROM supplier_keys sk
+                JOIN dbo.product_mapping pm
+                  ON pm.tenant_id = ?
+                 AND pm.is_deleted = 0
+                 AND pm.status IN ('APPROVED', 'AUTO')
+                 AND pm.target_store_id = sk.store_id
+                 AND pm.target_product_code = sk.product_code
+                 AND pm.source_store_id <> sk.store_id
+            ),
+            mapagg AS (
+                SELECT key_store, key_code, COUNT(DISTINCT other_store) AS mapped_other_store_count
+                FROM map_resolved
+                GROUP BY key_store, key_code
             )
             SELECT TOP 3000
                 CAST(ss.supplier_stock_id AS VARCHAR(36)) AS supplier_stock_id,
@@ -109,55 +157,32 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                 ascnt.total_store_count,
                 CASE
                     WHEN ss.product_code IS NULL THEN 0
-                    ELSE 1 + ISNULL(mapstats.mapped_other_store_count, 0)
+                    ELSE 1 + ISNULL(mapagg.mapped_other_store_count, 0)
                 END AS mapped_store_count,
                 CASE
                     WHEN ss.product_code IS NULL THEN ascnt.total_store_count
-                    ELSE ascnt.total_store_count - (1 + ISNULL(mapstats.mapped_other_store_count, 0))
+                    ELSE ascnt.total_store_count - (1 + ISNULL(mapagg.mapped_other_store_count, 0))
                 END AS unmapped_store_count,
                 CASE
                     WHEN ss.product_code IS NULL THEN 'not_mapped'
-                    WHEN ascnt.total_store_count - (1 + ISNULL(mapstats.mapped_other_store_count, 0)) > 0 THEN 'partially_matched'
+                    WHEN ascnt.total_store_count - (1 + ISNULL(mapagg.mapped_other_store_count, 0)) > 0 THEN 'partially_matched'
                     ELSE 'fully_matched'
                 END AS mapping_scope_status
             FROM procurement.supplier_stock ss
             CROSS JOIN active_store_count ascnt
             LEFT JOIN dbo.stores st ON st.tenant_id = ss.tenant_id AND st.store_id = ss.store_id
+            -- sync.Products.productcode is INT; convert the varchar supplier code
+            -- to INT (TRY_CAST -> NULL, never errors) so the indexed INT column
+            -- stays sargable instead of CAST-ing both sides to VARCHAR.
             LEFT JOIN sync.Products p
                 ON p.tenant_id = ss.tenant_id
                AND p.store_id = ss.store_id
-               AND CAST(p.productcode AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
-            OUTER APPLY (
-                SELECT COUNT(DISTINCT resolved.store_id) AS mapped_other_store_count
-                FROM (
-                    SELECT CAST(pm.target_store_id AS VARCHAR(36)) AS store_id
-                    FROM dbo.product_mapping pm
-                    WHERE pm.tenant_id = ss.tenant_id
-                      AND pm.is_deleted = 0
-                      AND pm.status IN ('APPROVED', 'AUTO')
-                      AND pm.source_store_id = ss.store_id
-                      -- product_code / source|target_product_code are all
-                      -- varchar(50) with the same collation: compare raw so the
-                      -- index seeks fire (UX_product_mapping_source_target for the
-                      -- source side, IX_product_mapping_target_code for the target
-                      -- side). CAST-ing to VARCHAR(100) makes the indexed column
-                      -- non-sargable and forces a full scan of the 1.1M-row
-                      -- product_mapping table per candidate row -> 45s timeout.
-                      AND pm.source_product_code = ss.product_code
-                      AND pm.target_store_id <> ss.store_id
-                    UNION
-                    SELECT CAST(pm.source_store_id AS VARCHAR(36)) AS store_id
-                    FROM dbo.product_mapping pm
-                    WHERE pm.tenant_id = ss.tenant_id
-                      AND pm.is_deleted = 0
-                      AND pm.status IN ('APPROVED', 'AUTO')
-                      AND pm.target_store_id = ss.store_id
-                      AND pm.target_product_code = ss.product_code
-                      AND pm.source_store_id <> ss.store_id
-                ) resolved
-            ) mapstats
+               AND p.productcode = TRY_CAST(ss.product_code AS INT)
+            LEFT JOIN mapagg
+                ON mapagg.key_store = ss.store_id
+               AND mapagg.key_code = ss.product_code
             WHERE ss.tenant_id = ?
-              AND CAST(ss.supplier_code AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
+              AND ss.supplier_code = ?
               {store_clause}
               AND ss.is_active = 1
               AND (? = 0 OR ISNULL(ss.available_stock, 0) > 0)
@@ -203,7 +228,7 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
                     CAST(ss.supplier_code AS VARCHAR(100)) AS supplier_code,
                     CAST(ss.supplier_product_code AS VARCHAR(100)) AS supplier_product_code,
                     ss.supplier_product_name,
-                    CAST(ss.product_code AS VARCHAR(100)) AS product_code,
+                    ss.product_code AS product_code,
                     p.productname AS mapped_product_name,
                     ISNULL(ss.available_stock, 0) AS supplier_available_stock,
                     ss.ptr,
@@ -216,9 +241,9 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
                 LEFT JOIN sync.Products p
                   ON p.tenant_id = ss.tenant_id
                  AND p.store_id = ss.store_id
-                 AND CAST(p.productcode AS VARCHAR(100)) = CAST(ss.product_code AS VARCHAR(100))
+                 AND p.productcode = TRY_CAST(ss.product_code AS INT)
                 WHERE ss.tenant_id = ?
-                  AND CAST(ss.supplier_code AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
+                  AND ss.supplier_code = ?
                   {store_clause}
                   AND ss.is_active = 1
                   AND (? = 0 OR ISNULL(ss.available_stock, 0) > 0)
@@ -245,7 +270,7 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
                  AND pm.is_deleted = 0
                  AND pm.status IN ('APPROVED', 'AUTO')
                  AND pm.source_store_id = sr.source_store_id
-                 AND CAST(pm.source_product_code AS VARCHAR(100)) = CAST(sr.product_code AS VARCHAR(100))
+                 AND pm.source_product_code = sr.product_code
                  AND pm.target_product_code IS NOT NULL
                 WHERE sr.product_code IS NOT NULL
 
@@ -262,7 +287,7 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
                  AND pm.is_deleted = 0
                  AND pm.status IN ('APPROVED', 'AUTO')
                  AND pm.target_store_id = sr.source_store_id
-                 AND CAST(pm.target_product_code AS VARCHAR(100)) = CAST(sr.product_code AS VARCHAR(100))
+                 AND pm.target_product_code = sr.product_code
                  AND pm.source_product_code IS NOT NULL
                 WHERE sr.product_code IS NOT NULL
             ),
