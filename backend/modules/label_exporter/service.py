@@ -4,10 +4,15 @@ Thin pass-through to repository.py, which queries the real synced tables
 (sync.Products / sync.Batches).
 """
 
+import logging
+import time
+
 from fastapi import HTTPException
 
 from modules.label_exporter import assignment_engine as engine
 from modules.label_exporter import repository
+
+logger = logging.getLogger("label_exporter.service")
 
 _VALID_INCLUDE_LABEL = {"Y", "N"}
 _VALID_UNIT_DESCRIPTION_MODE = {"contains", "exact", "null"}
@@ -35,6 +40,13 @@ def search_products(
     if review_status not in _VALID_REVIEW_STATUS:
         raise HTTPException(status_code=400, detail="Invalid review_status")
     repository.ensure_schema()
+
+    # Each stage opens its own DB connection (no pooling - see
+    # config/database.get_connection), so a slow grid load can come from
+    # network/connection overhead as easily as the query itself. Timed and
+    # logged per-stage so a real "why is this slow" report doesn't require
+    # reproducing it under a profiler.
+    t0 = time.perf_counter()
     result = repository.search_products(
         tenant_id,
         store_id,
@@ -49,8 +61,24 @@ def search_products(
         sublocation_filter,
         review_status,
     )
+    t1 = time.perf_counter()
     result["unit_descriptions"] = repository.get_unit_descriptions(tenant_id, store_id, starts_with)
+    t2 = time.perf_counter()
     result["sublocations"] = repository.get_sublocations(tenant_id, store_id)
+    t3 = time.perf_counter()
+
+    total_ms = (t3 - t0) * 1000
+    logger.info(
+        "search_products store=%s letter=%r q=%r rows=%d | products=%.0fms units=%.0fms sublocs=%.0fms total=%.0fms",
+        store_id, starts_with, q, len(result["rows"]),
+        (t1 - t0) * 1000, (t2 - t1) * 1000, (t3 - t2) * 1000, total_ms,
+    )
+    if total_ms > 2000:
+        logger.warning(
+            "search_products SLOW (%.0fms) store=%s letter=%r q=%r rows=%d",
+            total_ms, store_id, starts_with, q, len(result["rows"]),
+        )
+    result["server_ms"] = round(total_ms)
     return result
 
 

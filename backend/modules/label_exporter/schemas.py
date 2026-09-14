@@ -37,6 +37,7 @@ class LabelSearchResult(BaseModel):
     unit_descriptions: List[str] = []
     sublocations: List[str] = []
     last_box_for_letter: Optional[str] = None
+    server_ms: Optional[int] = None
 
 
 # ---------- Box search ----------

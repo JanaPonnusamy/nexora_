@@ -96,6 +96,15 @@ class UserRepository:
         return rows
 
     def get_user_roles(self, user_id):
+        # roles[0] becomes "primary_role" at login (auth_controller.py) - the
+        # store_id/store_code stamped into the JWT and the frontend's default
+        # store selection. Order by usr.id (grant order), NOT store_code: for a
+        # tenant-wide login (e.g. a Purchase Manager) whose home store was
+        # granted first and broader access added later in one batch, sorting
+        # alphabetically picked whichever store code came first in the
+        # alphabet as "primary" - e.g. NMCPM's home store is NMC (granted
+        # first) but NMA sorted first, so the app defaulted to the wrong
+        # store's data on login.
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
@@ -104,13 +113,14 @@ class UserRepository:
             r.role_name,
             s.store_id,
             s.store_code,
-            s.store_name
+            s.store_name,
+            usr.id
         FROM dbo.user_store_roles usr
         INNER JOIN dbo.roles r ON r.role_id = usr.role_id
         INNER JOIN dbo.stores s ON s.store_id = usr.store_id
         WHERE usr.user_id = ?
           AND usr.is_active = 1
-        ORDER BY r.role_name, s.store_code
+        ORDER BY r.role_name, usr.id
         """, user_id)
         rows = cur.fetchall()
         conn.close()

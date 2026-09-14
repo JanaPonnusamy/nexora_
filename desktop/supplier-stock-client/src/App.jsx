@@ -3324,27 +3324,43 @@ function LabelTrendTip({ row, anchorRect }) {
 // Electron app it lives in userData via the preload session bridge; in a plain
 // browser (dev) it falls back to a single localStorage key. Every write
 // overwrites — no history.
-const LBL_SESSION_FILE = 'label-exporter-session.json';
-const LBL_SESSION_LS_KEY = 'nexora.desktop.labelExporterSession';
+//
+// Keyed per logged-in user (user_id, falling back to username): this file
+// persists the selected STORE along with the rest of the UI state, and a
+// purchase manager / NMW / super-admin login can pick any store. A single
+// shared file meant whichever user logged in on this PC last silently
+// determined which store's data the NEXT login saw, even though that next
+// login's own store selector correctly defaulted to their own store first -
+// the mount-time restore below then clobbered it with the stale value.
+function lblSessionUserKey(session) {
+  const raw = String(session?.user?.user_id || session?.user?.username || 'anon');
+  return raw.replace(/[^a-z0-9._-]/gi, '_') || 'anon';
+}
+function lblSessionFile(userKey) {
+  return `label-exporter-session.${userKey}.json`;
+}
+function lblSessionLsKey(userKey) {
+  return `nexora.desktop.labelExporterSession.${userKey}`;
+}
 const LBL_TREND_MONTHS_DEFAULT = 6;
 
-async function readLabelSession() {
+async function readLabelSession(userKey) {
   try {
     if (window.nexoraDesktop?.readSession) {
-      const data = await window.nexoraDesktop.readSession(LBL_SESSION_FILE);
+      const data = await window.nexoraDesktop.readSession(lblSessionFile(userKey));
       if (data && typeof data === 'object') return data;
     }
   } catch { /* fall through to localStorage */ }
   try {
-    const raw = localStorage.getItem(LBL_SESSION_LS_KEY);
+    const raw = localStorage.getItem(lblSessionLsKey(userKey));
     if (raw) { const p = JSON.parse(raw); if (p && typeof p === 'object') return p; }
   } catch { /* ignore corrupt */ }
   return null;
 }
 
-function writeLabelSession(data) {
-  try { window.nexoraDesktop?.writeSession?.(LBL_SESSION_FILE, data); } catch { /* ignore */ }
-  try { localStorage.setItem(LBL_SESSION_LS_KEY, JSON.stringify(data)); } catch { /* ignore */ }
+function writeLabelSession(userKey, data) {
+  try { window.nexoraDesktop?.writeSession?.(lblSessionFile(userKey), data); } catch { /* ignore */ }
+  try { localStorage.setItem(lblSessionLsKey(userKey), JSON.stringify(data)); } catch { /* ignore */ }
 }
 
 const LABEL_STOCK_FILTERS = [
@@ -3698,6 +3714,7 @@ function LabelExporter({ session, settings }) {
   const admin = isSuperAdmin(session);
   const canChangeStore = canChangeLabelStore(session);
   const ownStoreId = session?.user?.roles?.[0]?.store_id || settings?.storeId || '';
+  const sessionUserKey = useMemo(() => lblSessionUserKey(session), [session]);
 
   const [stores, setStores] = useState([]);
   const [storeId, setStoreId] = useState(ownStoreId);
@@ -3987,14 +4004,14 @@ function LabelExporter({ session, settings }) {
   const scheduleSave = useCallback(() => {
     if (!readyToSaveRef.current) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => writeLabelSession(buildSessionRef.current()), 500);
-  }, []);
+    saveTimer.current = setTimeout(() => writeLabelSession(sessionUserKey, buildSessionRef.current()), 500);
+  }, [sessionUserKey]);
 
   // 1) Restore once on mount; flush a final save on unmount.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const s = await readLabelSession();
+      const s = await readLabelSession(sessionUserKey);
       if (cancelled) return;
       if (s && typeof s === 'object') {
         if (s.storeId && canChangeStore) setStoreId(s.storeId);
@@ -4030,7 +4047,7 @@ function LabelExporter({ session, settings }) {
     return () => {
       cancelled = true;
       clearTimeout(saveTimer.current);
-      if (readyToSaveRef.current) writeLabelSession(buildSessionRef.current());
+      if (readyToSaveRef.current) writeLabelSession(sessionUserKey, buildSessionRef.current());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -4072,8 +4089,15 @@ function LabelExporter({ session, settings }) {
     showColFilters, colFilters, activeIndex, labelColCfg, trendMonths, activeRow?.product_code
   ]);
 
-  function runSearch() {
-    if (!tenantId || !storeId) {
+  // `overrides` lets a picker (Store / Letter) fire the search immediately
+  // with the value it just set, instead of waiting for a state update to
+  // land and a separate click on "Search" - state setters are async, so
+  // runSearch() called right after setStoreId(v) would still read the OLD
+  // storeId from this closure without it.
+  function runSearch(overrides = {}) {
+    const effStoreId = overrides.storeId ?? storeId;
+    const effStartsWith = overrides.startsWith ?? startsWith;
+    if (!tenantId || !effStoreId) {
       setStatus({ state: 'idle', message: 'Waiting for tenant/store...' });
       return;
     }
@@ -4081,11 +4105,12 @@ function LabelExporter({ session, settings }) {
     // now that we're clearly talking to the backend.
     if (stores.length === 0) loadStores();
     setStatus({ state: 'loading', message: 'Loading products...' });
+    const clientStart = performance.now();
     api.searchLabelProducts(session, {
       tenantId,
-      storeId,
+      storeId: effStoreId,
       q,
-      startsWith,
+      startsWith: effStartsWith,
       unitDescription: selectedUnits.size ? Array.from(selectedUnits).join(',') : '',
       unitDescriptionMode: selectedUnits.size ? 'exact' : 'contains',
       boxNumber,
@@ -4113,7 +4138,17 @@ function LabelExporter({ session, settings }) {
       setSubLocDrafts(nextSubLoc);
       setRemarksDrafts(nextRemarks);
       setUnitDrafts(nextUnit);
-      setStatus({ state: 'ok', message: nextRows.length ? `${nextRows.length} product(s).` : 'No products for this filter.' });
+      // Round-trip time vs. server-reported query time (schema field
+      // server_ms) - a big gap between the two points at network/transport
+      // as the bottleneck rather than the database query itself.
+      const roundTripMs = Math.round(performance.now() - clientStart);
+      const serverMs = Number.isFinite(result?.server_ms) ? result.server_ms : null;
+      console.log(`[label-exporter] search store=${effStoreId} letter=${effStartsWith || '(any)'} rows=${nextRows.length} roundTrip=${roundTripMs}ms server=${serverMs ?? '?'}ms`);
+      const timingSuffix = serverMs != null ? ` (${roundTripMs}ms, ${serverMs}ms server)` : ` (${roundTripMs}ms)`;
+      setStatus({
+        state: 'ok',
+        message: (nextRows.length ? `${nextRows.length} product(s).` : 'No products for this filter.') + timingSuffix
+      });
     }).catch((error) => {
       setRows([]);
       setStatus({ state: 'error', message: error.message });
@@ -4509,7 +4544,15 @@ function LabelExporter({ session, settings }) {
       <div className="lblx-filterbar">
         <label className="lblx-field lblx-store">
           <span>Store</span>
-          <select value={storeId} disabled={!canChangeStore} onChange={(event) => setStoreId(event.target.value)}>
+          <select
+            value={storeId}
+            disabled={!canChangeStore}
+            onChange={(event) => {
+              const v = event.target.value;
+              setStoreId(v);
+              runSearch({ storeId: v });
+            }}
+          >
             {stores.length === 0 && <option value={storeId}>{storeId ? (settings?.storeName || session?.user?.roles?.[0]?.store_name || 'Current store') : 'Loading…'}</option>}
             {(canChangeStore ? stores : stores.filter((s) => s.store_id === storeId)).map((s) => (
               <option key={s.store_id} value={s.store_id}>{s.store_code} — {s.store_name}</option>
@@ -4522,7 +4565,14 @@ function LabelExporter({ session, settings }) {
           <input
             value={startsWith}
             maxLength={1}
-            onChange={(event) => setStartsWith(event.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1))}
+            onChange={(event) => {
+              const letter = event.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1);
+              setStartsWith(letter);
+              // Only auto-search on a real letter - a backspace-to-clear
+              // mid-edit shouldn't fire a full, unfiltered store scan
+              // (thousands of rows) just because the field is briefly empty.
+              if (letter) runSearch({ startsWith: letter });
+            }}
             placeholder="A"
           />
         </label>
