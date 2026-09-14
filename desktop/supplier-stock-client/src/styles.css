@@ -5330,7 +5330,8 @@ th {
 .lbl-screen.ow-screen tbody tr.ow-row-sel > td.lbl-sno-cell,
 .lbl-screen.ow-screen tbody tr.ow-row-sel > td.lbl-oldunit-cell,
 .lbl-screen.ow-screen tbody tr.ow-row-sel > td.lbl-oldloc-cell,
-.lbl-screen.ow-screen tbody tr.ow-row-sel > td .lbl-review-badge.is-none {
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td .lbl-review-badge.is-none,
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td .lbl-newloc-clear {
   color: rgba(238, 243, 255, 0.78);
 }
 
@@ -7993,6 +7994,19 @@ th {
 }
 .lbl-newunit-chip:hover:not(:disabled) { background: var(--nx-surface-hover); border-color: var(--nx-rule); }
 .lbl-newunit-chip.is-changed { background: var(--nx-warning-sunk); border-color: var(--nx-warning); font-weight: 700; }
+
+/* New Loc cell: chip + a tiny unassign "x" (only shown once a box is set) so
+   a wrongly-picked location can go back to blank without resetting every
+   other filtered row via the toolbar's Clear Assignment. */
+.lbl-newloc-cell { display: flex; align-items: center; gap: 2px; overflow: hidden; }
+.lbl-newloc-cell .lbl-newunit-chip { flex: 1; min-width: 0; }
+.lbl-newloc-clear {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: var(--nx-text-muted); font-size: 13px; line-height: 1; cursor: pointer;
+}
+.lbl-newloc-clear:hover:not(:disabled) { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.lbl-newloc-clear:disabled { opacity: 0.4; cursor: default; }
 .lbl-newunit-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lbl-newunit-dot { color: var(--nx-warning-ink); font-size: 9px; line-height: 1; }
 
@@ -8007,6 +8021,11 @@ th {
   position: absolute; top: calc(100% + 2px); left: 0; z-index: 40; min-width: 160px; max-height: 220px; overflow-y: auto;
   padding: 3px; border: 1px solid var(--nx-rule-strong); border-radius: 7px;
   background: var(--nx-surface-raised, var(--nx-surface)); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
+  /* Reset the inheritance chain here — this popup floats on its own light
+     surface regardless of the parent row's state, so it must not pick up the
+     dark selected-row's forced light text color (was rendering white-on-white
+     when the combo opened on the current row). */
+  color: var(--nx-text);
 }
 .lbl-unit-combo-row {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;

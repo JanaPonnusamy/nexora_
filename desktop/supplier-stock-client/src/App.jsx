@@ -3487,6 +3487,10 @@ function lblColValue(row, key) {
 function lblColMatch(value, filter) {
   const f = String(filter || '').trim();
   if (!f) return true;
+  const isBlank = value === '' || value === null || value === undefined;
+  const fLower = f.toLowerCase();
+  if (fLower === 'null' || fLower === 'blank') return isBlank;
+  if (fLower === '!null' || fLower === '!blank') return !isBlank;
   const m = f.match(/^(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)$/);
   if (m) {
     const num = parseFloat(value);
@@ -3815,15 +3819,28 @@ function LabelExporter({ session, settings }) {
                 onCancel={() => setEditingLocationCode(null)}
               />
             ) : (
-              <button
-                type="button"
-                className="lbl-newunit-chip"
-                disabled={savingCode === code}
-                title={newLoc ? `Manually move from ${newLoc}` : 'Click to assign a location'}
-                onClick={() => { setActiveIndex(index); setEditingLocationCode(code); }}
-              >
-                <span className="lbl-newunit-val">{newLoc ? <span className="lbl-assigned-box">{newLoc}</span> : <span className="lbl-null">—</span>}</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="lbl-newunit-chip"
+                  disabled={savingCode === code}
+                  title={newLoc ? `Manually move from ${newLoc}` : 'Click to assign a location'}
+                  onClick={() => { setActiveIndex(index); setEditingLocationCode(code); }}
+                >
+                  <span className="lbl-newunit-val">{newLoc ? <span className="lbl-assigned-box">{newLoc}</span> : <span className="lbl-null">—</span>}</span>
+                </button>
+                {admin && newLoc && (
+                  <button
+                    type="button"
+                    className="lbl-newloc-clear"
+                    disabled={savingCode === code}
+                    title="Unassign — clear this product's location back to blank"
+                    onClick={() => { setActiveIndex(index); clearLocationForRow(row); }}
+                  >
+                    ×
+                  </button>
+                )}
+              </>
             )}
           </td>
         );
@@ -3888,6 +3905,7 @@ function LabelExporter({ session, settings }) {
   const [saleRows, setSaleRows] = useState([]);
   const [intelLoading, setIntelLoading] = useState(false);
   const intelRequestRef = useRef(0);
+  const searchRequestRef = useRef(0);
   const [bulkBusy, setBulkBusy] = useState(false);
   const rowRefs = useRef({});
   const gridRef = useRef(null);
@@ -4094,6 +4112,11 @@ function LabelExporter({ session, settings }) {
     if (stores.length === 0) loadStores();
     setStatus({ state: 'loading', message: 'Loading products...' });
     const clientStart = performance.now();
+    // Guard against an older, slower in-flight search resolving AFTER a newer
+    // one (or after a bulk mark's optimistic update) and clobbering fresher
+    // state with stale rows — same requestId pattern as the side panel's
+    // trend/purchases/sales fetch (intelRequestRef).
+    const requestId = ++searchRequestRef.current;
     api.searchLabelProducts(session, {
       tenantId,
       storeId: effStoreId,
@@ -4108,6 +4131,7 @@ function LabelExporter({ session, settings }) {
       onlySaleUnitGtOne,
       sublocationFilter: selectedSublocs.size ? Array.from(selectedSublocs).join(',') : ''
     }).then((result) => {
+      if (searchRequestRef.current !== requestId) return;
       const nextRows = asArray(result?.rows);
       setRows(nextRows);
       setActiveIndex(0);
@@ -4138,6 +4162,7 @@ function LabelExporter({ session, settings }) {
         message: (nextRows.length ? `${nextRows.length} product(s).` : 'No products for this filter.') + timingSuffix
       });
     }).catch((error) => {
+      if (searchRequestRef.current !== requestId) return;
       setRows([]);
       setStatus({ state: 'error', message: error.message });
     });
@@ -4254,6 +4279,20 @@ function LabelExporter({ session, settings }) {
         flashToast(`✓ Location → ${next}`);
       })
       .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Save failed', 'err'); })
+      .finally(() => setSavingCode(''));
+  }
+
+  // Unassign ONE row's location back to blank (a wrongly-picked box, without
+  // resetting the whole filtered scope via the toolbar's Clear Assignment).
+  // Reuses the same bulk clear-assignment endpoint with a single-code list.
+  function clearLocationForRow(row) {
+    setSavingCode(row.product_code);
+    api.clearLabelAssignment(tenantId, storeId, [row.product_code], session)
+      .then(() => {
+        patchRow(row.product_code, { assigned_sublocation: null, assignment_type: null, label_required: false });
+        flashToast(`✓ Location cleared — ${row.product_code}`);
+      })
+      .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Clear failed', 'err'); })
       .finally(() => setSavingCode(''));
   }
 
@@ -4681,7 +4720,7 @@ function LabelExporter({ session, settings }) {
           className={`lblx-mark lblx-colfilter-toggle ${showColFilters ? 'is-on' : ''}`}
           disabled={!rows.length}
           onClick={() => setShowColFilters((v) => !v)}
-          title="Excel-style per-column filters (numbers accept >, <, >=, <=, =)"
+          title="Excel-style per-column filters (numbers accept >, <, >=, <=, =; type null or !null to match/exclude blank cells, e.g. LSD/LPD)"
         >
           Column filters{hasColFilters ? ' •' : ''}
         </button>
