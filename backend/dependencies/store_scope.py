@@ -9,13 +9,16 @@ Supplier Stock client rendered every tenant's stores in one grid for every
 role, including purchase manager and salesman logins.
 
 The boundary here is the TENANT, not the individual store: Stock
-Availability, Reports, and Label Exporter are stock-lookup tools where a
-purchase manager or salesman is expected to check any store in their own
-tenant (that's the point of the multi-store grid) - they must simply never
-see another tenant's data. Screens that DO need a stricter per-store lock
-(e.g. NMW Sales Report's dispatch-bill approval queue) implement that
-themselves against dbo.user_store_roles rather than through this module -
-see modules/nmw_sales_report/repository.py:user_store_ids.
+Availability and Reports are stock-lookup tools where a purchase manager or
+salesman is expected to check any store in their own tenant (that's the
+point of the multi-store grid) - they must simply never see another
+tenant's data. Screens that DO need a stricter per-store lock implement
+that themselves: Label Exporter (labels physically go on one store's
+shelves - see assert_label_exporter_store_access) locks a purchase manager
+to their own store_id even though they're tenant-wide elsewhere, and NMW
+Sales Report's dispatch-bill approval queue scopes against
+dbo.user_store_roles directly rather than through this module - see
+modules/nmw_sales_report/repository.py:user_store_ids.
 
 Only a super admin (or platform user, i.e. no tenant_id at all) crosses
 tenants, and only with an explicit tenant picker in the UI. Supplier Stock
@@ -101,8 +104,11 @@ def assert_label_exporter_store_access(user: dict, tenant_id, store_id) -> None:
     on that store's shelves), not a lookup tool - so unlike assert_store_access
     it IS store-level, not just tenant-level. Only NMW (the warehouse, which
     prints for every store) and super admin/platform users may pick a store
-    other than their own; everyone else is locked to their own store_id, which
-    comes from the JWT's primary-role store_id/store_code (see
+    other than their own; everyone else - including purchase managers, who
+    are tenant-wide only for NMW Sales Report (see
+    modules/nmw_sales_report/repository.py:user_store_ids), not for printing
+    labels onto a specific store's shelves - is locked to their own store_id,
+    which comes from the JWT's primary-role store_id/store_code (see
     controllers.auth_controller.login)."""
     assert_tenant_access(user, tenant_id)
     if has_unrestricted_scope(user):
