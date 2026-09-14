@@ -5312,15 +5312,26 @@ th {
 .lbl-review-badge:disabled { opacity: 0.55; cursor: default; }
 .lbl-review-head { text-align: center !important; }
 
-/* Selected row: subtle tint + a strong left accent bar as the primary cue.
-   Repeats .ow-screen to out-specificity the shared .ow-row-sel rule. */
-.lbl-screen.ow-screen tbody tr.ow-row-sel > td { background: rgba(37, 99, 235, 0.08) !important; }
-.lbl-screen.ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-accent); }
-.lbl-screen.ow-screen tbody tr.ow-row-sel > td { font-weight: 600; }
-:root[data-theme="dark"] .lbl-screen.ow-screen tbody tr.ow-row-sel > td { background: rgba(96, 165, 250, 0.13) !important; }
-:root[data-theme="light"] .lbl-screen.ow-screen tbody tr.ow-row-sel > td { background: rgba(37, 99, 235, 0.08) !important; }
-@media (prefers-color-scheme: dark) {
-  .lbl-screen.ow-screen tbody tr.ow-row-sel > td { background: rgba(96, 165, 250, 0.13) !important; }
+/* Selected row: a solid dark-navy fill (not a washed tint) so the current row
+   reads unambiguously over the Y/N review tints + zebra striping, in either
+   app theme — same "rich fill" current-row treatment used on the Stock
+   Availability grid. Repeats .ow-screen to out-specificity the shared
+   .ow-row-sel rule. Text/ink is forced light; the few cell classes that set
+   their own muted/explicit color are re-pointed to a light tone so nothing
+   goes illegible on the dark fill. */
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td {
+  background: linear-gradient(to bottom, #2c4a8a, #142252) !important;
+  color: #eef3ff;
+  font-weight: 600;
+}
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 #8fb4ff; }
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td.lbl-code-cell,
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td .lbl-null,
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td.lbl-sno-cell,
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td.lbl-oldunit-cell,
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td.lbl-oldloc-cell,
+.lbl-screen.ow-screen tbody tr.ow-row-sel > td .lbl-review-badge.is-none {
+  color: rgba(238, 243, 255, 0.78);
 }
 
 /* ---- Empty / loading / error states in the grid body ---- */
@@ -8023,28 +8034,11 @@ th {
 .lblx-cnt-pending { color: var(--nx-warning-ink); }
 .lblx-cnt-assigned { color: var(--nx-success-ink); }
 
-/* Clear buttons (legacy — now surfaced inside the More ▾ menu) */
+/* Clear Assignment / Clear Review: standalone danger buttons on the primary
+   toolbar (previously tucked inside a "More ▾" overflow menu — pulled out so
+   both destructive resets are directly visible/clickable). */
 .lblx-clear, .lblx-clear-review { border-color: var(--nx-danger); color: var(--nx-danger-ink); }
 .lblx-clear:hover:not(:disabled), .lblx-clear-review:hover:not(:disabled) { background: var(--nx-danger-sunk); }
-
-/* "More ▾" overflow menu — keeps destructive resets off the primary bar (§30) */
-.lblx-more { position: relative; flex: 0 0 auto; }
-.lblx-more-btn.is-on { background: var(--nx-surface-hover); }
-.lblx-more-menu {
-  position: absolute; top: calc(100% + 4px); right: 0; z-index: 50; min-width: 190px;
-  display: flex; flex-direction: column; padding: 4px;
-  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
-  background: var(--nx-surface-raised, var(--nx-surface)); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
-}
-.lblx-more-item {
-  display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 5px;
-  background: transparent; color: var(--nx-text-soft); font: inherit; font-size: 12px; font-weight: 600;
-  text-align: left; cursor: pointer; white-space: nowrap;
-}
-.lblx-more-item:hover:not(:disabled) { background: var(--nx-surface-hover); color: var(--nx-text); }
-.lblx-more-item:disabled { opacity: 0.5; cursor: default; }
-.lblx-more-danger { color: var(--nx-danger-ink); }
-.lblx-more-danger:hover:not(:disabled) { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
 
 /* Right-panel remarks editor (moved out of the grid, spec §10/§12) */
 .lbl-side-remarks { display: flex; flex-direction: column; gap: 3px; }

@@ -3892,18 +3892,6 @@ function LabelExporter({ session, settings }) {
   const rowRefs = useRef({});
   const gridRef = useRef(null);
 
-  // "More ▾" overflow menu — keeps the destructive Clear actions out of the
-  // primary action row (spec §30) so they never sit at the same visual weight
-  // as Assign / Mark all.
-  const [moreOpen, setMoreOpen] = useState(false);
-  const moreRef = useRef(null);
-  useEffect(() => {
-    if (!moreOpen) return undefined;
-    function onDoc(e) { if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false); }
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [moreOpen]);
-
   // Load the store list, retrying a few times if it comes back empty/errors.
   // The list is only needed for the (super-admin/NMW) store switcher, so a
   // failure here must NOT clobber the grid's status — it used to set an error
@@ -4475,10 +4463,11 @@ function LabelExporter({ session, settings }) {
   function bulkMark(value) {
     if (!visibleRows.length || bulkBusy) return;
     const codes = visibleRows.map((row) => row.product_code);
+    const codeSet = new Set(codes);
     setBulkBusy(true);
     api.bulkSetLabelInclude(tenantId, storeId, codes, value, session)
       .then(() => {
-        setRows((current) => current.map((row) => ({ ...row, include_label: value })));
+        setRows((current) => current.map((row) => (codeSet.has(row.product_code) ? { ...row, include_label: value } : row)));
         setStatus({ state: 'ok', message: `Marked ${codes.length} product(s) ${value}.` });
         flashToast(`✓ ${codes.length} marked ${value}`);
       })
@@ -4492,6 +4481,7 @@ function LabelExporter({ session, settings }) {
   // box; Review reset also clears the Y/N decision.
   function requestClearAssignment() {
     const codes = visibleRows.map((r) => r.product_code);
+    const codeSet = new Set(codes);
     const nAssigned = visibleRows.filter((r) => lblIsAssigned(r)).length;
     if (!codes.length) return;
     setConfirm({
@@ -4506,7 +4496,7 @@ function LabelExporter({ session, settings }) {
         setBulkBusy(true);
         api.clearLabelAssignment(tenantId, storeId, codes, session)
           .then(() => {
-            setRows((cur) => cur.map((r) => ({ ...r, assigned_sublocation: null, assignment_type: null, label_required: false })));
+            setRows((cur) => cur.map((r) => (codeSet.has(r.product_code) ? { ...r, assigned_sublocation: null, assignment_type: null, label_required: false } : r)));
             flashToast(`✓ Assignment cleared (${codes.length})`);
           })
           .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Clear failed', 'err'); })
@@ -4517,6 +4507,7 @@ function LabelExporter({ session, settings }) {
 
   function requestClearReview() {
     const codes = visibleRows.map((r) => r.product_code);
+    const codeSet = new Set(codes);
     if (!codes.length) return;
     setConfirm({
       title: `Reset review for ${codes.length} loaded product(s)?`,
@@ -4529,8 +4520,8 @@ function LabelExporter({ session, settings }) {
         setBulkBusy(true);
         api.clearLabelReview(tenantId, storeId, codes, session)
           .then(() => {
-            setRows((cur) => cur.map((r) => ({ ...r, include_label: null, assigned_sublocation: null, assignment_type: null, label_required: false })));
-            setSelectedCodes(new Set());
+            setRows((cur) => cur.map((r) => (codeSet.has(r.product_code) ? { ...r, include_label: null, assigned_sublocation: null, assignment_type: null, label_required: false } : r)));
+            setSelectedCodes((cur) => new Set(Array.from(cur).filter((c) => !codeSet.has(c))));
             flashToast(`✓ Review reset (${codes.length})`);
           })
           .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Reset failed', 'err'); })
@@ -4714,42 +4705,26 @@ function LabelExporter({ session, settings }) {
         )}
         <button type="button" className="lblx-mark lblx-queue" onClick={openQueue} title="Open the label print queue">Label Queue</button>
         {admin && (
-          <div className="lblx-more" ref={moreRef}>
-            <button
-              type="button"
-              className={`lblx-mark lblx-more-btn ${moreOpen ? 'is-on' : ''}`}
-              aria-expanded={moreOpen}
-              aria-haspopup="menu"
-              onClick={() => setMoreOpen((v) => !v)}
-              title="More actions"
-            >
-              More ▾
-            </button>
-            {moreOpen && (
-              <div className="lblx-more-menu" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="lblx-more-item lblx-more-danger"
-                  disabled={!visibleRows.length || bulkBusy}
-                  onClick={() => { setMoreOpen(false); requestClearAssignment(); }}
-                  title="Reset assignment result only (keeps review + master data)"
-                >
-                  Clear Assignment…
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="lblx-more-item lblx-more-danger"
-                  disabled={!visibleRows.length || bulkBusy}
-                  onClick={() => { setMoreOpen(false); requestClearReview(); }}
-                  title="Reset Y/N review + assignment (keeps master data)"
-                >
-                  Clear Review…
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            type="button"
+            className="lblx-mark lblx-clear"
+            disabled={!visibleRows.length || bulkBusy}
+            onClick={requestClearAssignment}
+            title="Reset assignment result only (keeps review + master data)"
+          >
+            Clear Assignment…
+          </button>
+        )}
+        {admin && (
+          <button
+            type="button"
+            className="lblx-mark lblx-clear-review"
+            disabled={!visibleRows.length || bulkBusy}
+            onClick={requestClearReview}
+            title="Reset Y/N review + assignment (keeps master data)"
+          >
+            Clear Review…
+          </button>
         )}
       </div>
 
