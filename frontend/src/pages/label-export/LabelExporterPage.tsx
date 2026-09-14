@@ -325,7 +325,7 @@ export default function LabelExporterPage() {
     }
   }
 
-  // ---- Location correction (manual box override, super admin, auto-save) ----
+  // ---- Location correction (manual box override, any store user, auto-save) ----
   async function applyLocationCorrection(row: LabelSearchRow, newLocation: string) {
     setEditingLocationCode(null)
     const current = newLocationOf(row)
@@ -729,7 +729,7 @@ export default function LabelExporterPage() {
                                 onPick={(loc) => void applyLocationCorrection(row, loc)}
                                 onCancel={() => setEditingLocationCode(null)}
                               />
-                            ) : admin ? (
+                            ) : (
                               <button
                                 type="button"
                                 className="lx-unit-chip"
@@ -740,10 +740,6 @@ export default function LabelExporterPage() {
                                 <span className="lx-unit-chip__val">{newLoc ? <span className="lx-newloc">{newLoc}</span> : <span className="text-muted">—</span>}</span>
                                 <i className="bi bi-caret-down-fill lx-unit-chip__caret" aria-hidden="true" />
                               </button>
-                            ) : newLoc ? (
-                              <span className="lx-newloc">{newLoc}</span>
-                            ) : (
-                              <span className="text-muted">—</span>
                             )}
                           </td>
                           <td className="text-end">{row.total_stock}</td>

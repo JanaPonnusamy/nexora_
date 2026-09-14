@@ -184,11 +184,13 @@ def correct_location(
     store_id: str,
     product_code: str,
     body: LabelLocationCorrectionRequest,
-    current_user: dict = Depends(require_super_admin),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Manual single-product box override, bypassing the standard-box/SYP
-    assignment engine (auto-saved). Same permission level as commit_assignment
-    -- it writes the same assigned_sublocation/label_location_history data."""
+    """Manual single-product box override (auto-saved), same as correct_unit --
+    open to any store-scoped user, not just super-admin. Distinct from
+    commit_assignment, which bulk-assigns via the standard-box/SYP engine and
+    stays super-admin only."""
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
     service.correct_location(
         tenant_id, store_id, product_code, body.location, body.current_location or "", current_user.get("sub")
     )

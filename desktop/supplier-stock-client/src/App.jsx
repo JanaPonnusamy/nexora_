@@ -3788,9 +3788,6 @@ function LabelExporter({ session, settings }) {
       }
       case 'newLoc': {
         const newLoc = lblNewLoc(row);
-        if (!admin) {
-          return <td key="newLoc" className="lbl-newloc-cell">{newLoc ? <span className="lbl-assigned-box">{newLoc}</span> : <span className="lbl-null">—</span>}</td>;
-        }
         return (
           <td key="newLoc" className="lbl-newloc-cell" onClick={(event) => event.stopPropagation()}>
             {editingLocationCode === code ? (
@@ -4213,9 +4210,10 @@ function LabelExporter({ session, settings }) {
       .finally(() => setSavingCode(''));
   }
 
-  // Manual box override (super admin): bypasses the standard-box/SYP
-  // assignment engine for one product. Old box is captured backend-side from
-  // whatever was last assigned and is never overwritten (same rule as unit).
+  // Manual box override (any store-scoped user, like unit correction):
+  // bypasses the standard-box/SYP assignment engine for one product. Old box
+  // is captured backend-side from whatever was last assigned and is never
+  // overwritten (same rule as unit).
   function commitLocation(row, value) {
     setEditingLocationCode(null);
     const next = String(value || '').trim().toUpperCase();
