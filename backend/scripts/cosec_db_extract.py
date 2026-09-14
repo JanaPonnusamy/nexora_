@@ -758,6 +758,14 @@ class ScriptBuilder:
         self.add("")
         self.add("USE [$(TargetDatabaseName)];")
         self.add("GO")
+        self.add("")
+        self.add("-- Required before CREATE TABLE for any table with a computed column /")
+        self.add("-- filtered index / indexed view (Msg 1934 otherwise). Standard SSMS-")
+        self.add("-- script boilerplate.")
+        self.add("SET ANSI_NULLS ON;")
+        self.add("GO")
+        self.add("SET QUOTED_IDENTIFIER ON;")
+        self.add("GO")
 
     # -- 2. Schemas ----------------------------------------------------
     def write_schema_section(self, schemas: list[str]):
