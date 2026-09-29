@@ -39,6 +39,7 @@ const DEV_STORE = import.meta.env.DEV ? (import.meta.env.VITE_DEV_STORE || '') :
 
 const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
+  { id: 'network_stock', label: 'Network Stock', module: 'stock_availability' },
   { id: 'label_exporter', label: 'Label Exporter', module: 'label_exporter' },
   { id: 'analysis', label: 'Supplier Stock Analysis', module: 'supplier_stock_analysis' },
   { id: 'nmw_sales', label: 'NMW Sales Report', module: 'nmw_sales_report' },
@@ -190,6 +191,12 @@ const STOCK_FIELD_LABELS = {
 // Product name / Supplier / Bill No — absorbing the leftover space.
 const PRODUCT_COL_WIDTHS = { name: 'minmax(0, 1fr)', unit: '44px', stock: '50px' };
 const PRODUCT_COL_LABELS = { name: 'Product', unit: 'Unit', stock: 'Stock' };
+// Network Stock branch cards are ~220px wide (6-per-row) — narrower than the
+// main Stock Availability screen's grid, so it gets its own scoped column
+// widths (unit/stock just wide enough for a short unit code / a 6-digit
+// stock number) instead of sharing PRODUCT_COL_WIDTHS with that screen.
+const NS_BRANCH_COL_WIDTHS = { unit: 24, stock: 36 };
+const NS_BRANCH_PRODUCT_GRID = 'minmax(0, 1fr) 24px 36px';
 const BATCH_COL_WIDTHS = { expiry: '56px', stock: '34px', mrp: '46px', purchaseAge: '42px', salesAge: '42px' };
 const BATCH_COL_LABELS = { expiry: 'Exp', stock: 'Stk', mrp: 'MRP', purchaseAge: 'P.Age', salesAge: 'S.Age' };
 // GRN No lives in the purchase detail card now (not a dedicated row column), so
@@ -559,6 +566,13 @@ function AppShell() {
           ) : (
             <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
           )
+        ) : activeScreen === 'network_stock' ? (
+          <NetworkStockView
+            session={session}
+            settings={runtimeSettings}
+            tenants={tenants}
+            onTenantChange={(tenantId) => persistSettings({ ...settings, tenantId })}
+          />
         ) : activeScreen === 'analysis' ? (
           <SupplierStockAnalysis
             session={session}
@@ -1934,6 +1948,9 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
             columnWidths={columnWidths}
           />
           <section className="store-row-grid" ref={storeGridRef}>
+            {otherStores.length === 0 && (
+              <div className="empty-state">No stores to show yet.</div>
+            )}
             {otherStores.map((store, index) => (
               <StoreDataRow
                 key={store.store_id || store.store_code}
@@ -1974,6 +1991,603 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
         <BatchDetailCard detail={batchDetail} visibility={visibility} onClose={() => setBatchDetail(null)} />
       )}
     </section>
+  );
+}
+
+// A separate, simpler "all stores side by side" network-stock comparison
+// screen (additive to StockAvailability, not a replacement for it — req: keep
+// the existing Stock Availability screen exactly as-is). Reuses the same API
+// layer, row/detail components and selection helpers as StockAvailability;
+// it just drops that screen's NMW/non-moving carousel and grid-column
+// customization panel for a denser, uniform store-card grid.
+function NetworkStockView({ session, settings, tenants = [], onTenantChange }) {
+  // 'product' = search by product name; 'batch' = search by batch no / MRP /
+  // product name — mirrors the web Stock Availability screen's two tabs
+  // (frontend/src/pages/stock/StockAvailabilityPage.tsx) exactly, including
+  // its field set per mode.
+  const [mode, setMode] = useState('product');
+  const [productQuery, setProductQuery] = useState('');
+  const [onlyStock, setOnlyStock] = useState(false);
+  const [batchNo, setBatchNo] = useState('');
+  const [mrp, setMrp] = useState('');
+  const [batchProduct, setBatchProduct] = useState('');
+  const [allStores, setAllStores] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('nexora.desktop.storesCache') || '[]'); } catch { return []; }
+  });
+  const [searchStores, setSearchStores] = useState([]);
+  const [storeDetails, setStoreDetails] = useState({});
+  const [selectionState, setSelectionState] = useState(emptySelectionState);
+  const [selectedStoreId, setSelectedStoreId] = useState(session?.user?.roles?.[0]?.store_id || '');
+  const [hasSearched, setHasSearched] = useState(false);
+  const [status, setStatus] = useState({ state: 'idle', message: 'Type at least 2 characters to search.' });
+  const [purchaseDetail, setPurchaseDetail] = useState(null);
+  const [billDetail, setBillDetail] = useState(null);
+  const [batchDetail, setBatchDetail] = useState(null);
+  const searchInputRef = useRef(null);
+
+  async function openBatchDetail(store, productCode, batchNo) {
+    if (!store || !productCode || !batchNo) return;
+    setBatchDetail({ store, batchNo, loading: true, row: null });
+    try {
+      const row = await api.getBatchDetail(store.store_id, productCode, batchNo, session, { tenantId: settings?.tenantId });
+      setBatchDetail({ store, batchNo, loading: false, row });
+    } catch {
+      setBatchDetail({ store, batchNo, loading: false, row: null, error: true });
+    }
+  }
+
+  const loginStoreId = session?.user?.roles?.[0]?.store_id || loadSettings().storeId;
+  const visibility = historyVisibility(session);
+  const canViewPurchase = visibility !== 'NONE';
+  const hideSupplierColumn = isSalesmanOnly(session);
+  const searchIdRef = useRef(0);
+  const searchCacheRef = useRef(new Map());
+  const detailCacheRef = useRef(new Map());
+  const syncTicketRef = useRef(0);
+
+  const tenantStores = useMemo(() => {
+    const tenantId = settings?.tenantId;
+    if (!tenantId) return allStores;
+    return allStores.filter((store) => String(store?.tenant_id || '') === String(tenantId));
+  }, [allStores, settings?.tenantId]);
+
+  useEffect(() => {
+    api.listStores(session).then((rows) => {
+      const items = asArray(rows);
+      setAllStores(items);
+      try { localStorage.setItem('nexora.desktop.storesCache', JSON.stringify(items)); } catch { /* best effort */ }
+    }).catch(() => {});
+  }, [session]);
+
+  useEffect(() => {
+    searchIdRef.current += 1;
+    setSearchStores([]);
+    setStoreDetails({});
+  }, [settings?.tenantId]);
+
+  const trimmedProductQuery = productQuery.trim().replace(/\s+/g, ' ');
+  const trimmedBatchNo = batchNo.trim();
+  const trimmedMrp = mrp.trim();
+  const trimmedBatchProduct = batchProduct.trim().replace(/\s+/g, ' ');
+  // Search-mode switch resets the OTHER mode's fields' effect from firing
+  // stale requests, and the cache key below folds every relevant field in so
+  // a mode switch never serves a wrong-mode cached result.
+  useEffect(() => {
+    const hasProductTerm = mode === 'product' && trimmedProductQuery.length >= 2;
+    const hasBatchTerm = mode === 'batch' && (trimmedBatchNo || trimmedMrp || trimmedBatchProduct);
+    if (!hasProductTerm && !hasBatchTerm) {
+      searchIdRef.current += 1;
+      setSearchStores([]);
+      setStoreDetails({});
+      setHasSearched(false);
+      setStatus({ state: 'idle', message: mode === 'product' ? 'Type at least 2 characters to search.' : 'Enter a batch number, MRP or product name.' });
+      return;
+    }
+    const cacheKey = mode === 'product'
+      ? `p|${settings?.tenantId || ''}|${onlyStock ? '1' : '0'}|${trimmedProductQuery.toLowerCase()}`
+      : `b|${settings?.tenantId || ''}|${trimmedBatchNo.toLowerCase()}|${trimmedMrp.toLowerCase()}|${trimmedBatchProduct.toLowerCase()}`;
+    if (searchCacheRef.current.has(cacheKey)) {
+      runSearch(cacheKey);
+      return;
+    }
+    const timer = setTimeout(() => runSearch(cacheKey), 150);
+    return () => clearTimeout(timer);
+  }, [mode, trimmedProductQuery, onlyStock, trimmedBatchNo, trimmedMrp, trimmedBatchProduct, settings?.tenantId]);
+
+  async function loadStoreCore(storeId, product) {
+    const cacheKey = `${storeId}:${product.product_code}`;
+    const cached = detailCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+    const result = await api.getStockCore(storeId, product.product_code, session, { months: 4 });
+    const core = {
+      product,
+      batches: asArray(result?.batches),
+      purchases: asArray(result?.purchases),
+      sales: asArray(result?.sales),
+      movement: asArray(result?.movement),
+      billItems: []
+    };
+    if (core.batches.length || core.purchases.length || core.sales.length || core.movement.length) {
+      detailCacheRef.current.set(cacheKey, core);
+    }
+    return core;
+  }
+
+  function primeStoreCoreCache(items, productsByStore) {
+    const seeded = {};
+    asArray(items).forEach((item) => {
+      const product = productsByStore.get(item.store_id);
+      if (!product) return;
+      const core = {
+        product,
+        batches: asArray(item?.batches),
+        purchases: asArray(item?.purchases),
+        sales: asArray(item?.sales),
+        movement: asArray(item?.movement),
+        billItems: asArray(item?.billItems),
+        activeBillNo: item?.activeBillNo || null,
+      };
+      const cacheKey = `${item.store_id}:${product.product_code}`;
+      if (core.batches.length || core.purchases.length || core.sales.length || core.movement.length || core.billItems.length) {
+        detailCacheRef.current.set(cacheKey, core);
+      }
+      seeded[item.store_id] = core;
+    });
+    return seeded;
+  }
+
+  async function runSearch(cacheKey) {
+    const searchId = ++searchIdRef.current;
+    setHasSearched(true);
+    const startedAt = performance.now();
+    const cachedStores = searchCacheRef.current.get(cacheKey);
+
+    try {
+      let stores;
+      if (cachedStores) {
+        stores = cachedStores;
+      } else {
+        setStatus({ state: 'loading', message: 'Searching...' });
+        const response = mode === 'product'
+          ? await api.searchStockProducts(trimmedProductQuery, session, { onlyStock })
+          : await api.searchStockBatches({ batch: trimmedBatchNo, mrp: trimmedMrp, product: trimmedBatchProduct }, session, { tenantId: settings?.tenantId });
+        if (searchIdRef.current !== searchId) return;
+        stores = asArray(response?.stores);
+        searchCacheRef.current.set(cacheKey, stores);
+      }
+
+      setSearchStores(stores);
+      const total = stores.reduce((sum, store) => sum + (store.products || []).length, 0);
+
+      const storesWithProduct = stores.filter((store) => (store.products || [])[0]);
+      if (!storesWithProduct.length) {
+        setStoreDetails({});
+        setStatus({ state: 'ok', message: total ? `${total} products found` : 'No products matched in any store.' });
+        return;
+      }
+
+      const seeded = {};
+      const toFetch = [];
+      storesWithProduct.forEach((store) => {
+        const product = store.products[0];
+        const cached = detailCacheRef.current.get(`${store.store_id}:${product.product_code}`);
+        if (cached) seeded[store.store_id] = cached;
+        else toFetch.push(store);
+      });
+      setStoreDetails(seeded);
+
+      if (!toFetch.length) {
+        const elapsedMs = Math.round(performance.now() - startedAt);
+        setStatus({ state: 'ok', message: `${total} products found · All stores loaded in ${elapsedMs}ms (cached)` });
+        return;
+      }
+
+      setStatus({ state: 'loading', message: `${total} products found · Loading ${toFetch.length} store(s)...` });
+
+      const productsByStore = new Map(toFetch.map((store) => [store.store_id, store.products[0]]));
+      try {
+        const bulk = await api.getStockCoreBulk(
+          toFetch.map((store) => ({ store_id: store.store_id, product_code: store.products[0].product_code })),
+          session,
+          { months: 4 }
+        );
+        if (searchIdRef.current !== searchId) return;
+        const resolved = primeStoreCoreCache(bulk?.items, productsByStore);
+        const misses = {};
+        toFetch.forEach((store) => {
+          if (!resolved[store.store_id]) misses[store.store_id] = null;
+        });
+        setStoreDetails((prev) => ({ ...prev, ...resolved, ...misses }));
+        const elapsedMs = Math.round(performance.now() - startedAt);
+        setStatus({ state: 'ok', message: `${total} products found · All stores loaded in ${elapsedMs}ms` });
+      } catch (bulkError) {
+        let settled = 0;
+        toFetch.forEach((store) => {
+          const product = store.products[0];
+          loadStoreCore(store.store_id, product)
+            .then((core) => {
+              if (searchIdRef.current !== searchId) return;
+              setStoreDetails((prev) => ({ ...prev, [store.store_id]: core }));
+            })
+            .catch(() => {
+              if (searchIdRef.current !== searchId) return;
+              setStoreDetails((prev) => ({ ...prev, [store.store_id]: null }));
+            })
+            .finally(() => {
+              settled += 1;
+              if (settled === toFetch.length && searchIdRef.current === searchId) {
+                const elapsedMs = Math.round(performance.now() - startedAt);
+                setStatus({ state: 'ok', message: `${total} products found · All stores loaded in ${elapsedMs}ms` });
+              }
+            });
+        });
+      }
+    } catch (error) {
+      if (searchIdRef.current !== searchId) return;
+      setSearchStores([]);
+      setStoreDetails({});
+      setStatus({ state: 'error', message: error.message });
+    }
+  }
+
+  function handleProductSelect(storeId, product) {
+    const searchId = searchIdRef.current;
+    setSelectionState(selectionStateForClick(storeId, product.product_code));
+
+    // Every branch in this tenant shares the same product catalogue, so the
+    // reliable way to select "the same product" in every other store is a
+    // direct product_code match against what's already loaded from the
+    // search results — instant, no network round trip. This runs BEFORE the
+    // slower fuzzy cross-store matcher below (which only fills in any store
+    // where this exact code didn't come back in the search results).
+    const exactResults = [];
+    const exactStoreIds = new Set();
+    searchStores.forEach((store) => {
+      if (store.store_id === storeId) return;
+      const match = (store.products || []).find((p) => p.product_code === product.product_code);
+      if (match) {
+        exactResults.push({
+          store_id: store.store_id,
+          product: { product_code: match.product_code, product_name: match.product_name, mrp: match.mrp },
+          match_type: 'EXACT_PRODUCT_CODE',
+          score: 100
+        });
+        exactStoreIds.add(store.store_id);
+      }
+    });
+    if (exactResults.length) {
+      const exactSynchronized = buildSynchronizedMap(exactResults);
+      setSelectionState((current) => applySyncResult(current, storeId, product.product_code, exactSynchronized));
+      exactResults.forEach((match) => {
+        loadStoreCore(match.store_id, match.product)
+          .then((core) => {
+            if (searchIdRef.current !== searchId) return;
+            setStoreDetails((prev) => ({ ...prev, [match.store_id]: core }));
+          })
+          .catch(() => {});
+      });
+    }
+
+    loadStoreCore(storeId, product)
+      .then((core) => {
+        if (searchIdRef.current !== searchId) return;
+        setStoreDetails((prev) => ({ ...prev, [storeId]: core }));
+      })
+      .catch(() => {});
+    syncCrossStoreSelection(storeId, product, searchId, exactStoreIds, exactResults);
+  }
+
+  async function syncCrossStoreSelection(sourceStoreId, product, searchId, exactStoreIds = new Set(), exactResults = []) {
+    if (!product?.product_code) return;
+    const targetStoreIds = searchStores
+      .map((store) => store.store_id)
+      .filter((storeId) => storeId && storeId !== sourceStoreId && !exactStoreIds.has(storeId));
+    if (!targetStoreIds.length) return; // every other store already resolved by an exact product_code match
+
+    const ticket = ++syncTicketRef.current;
+    let response;
+    try {
+      response = await api.syncStockSelection(
+        sourceStoreId,
+        product.product_code,
+        product.product_name,
+        targetStoreIds,
+        session,
+        { tenantId: settings?.tenantId }
+      );
+    } catch {
+      return;
+    }
+    if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
+
+    const matches = asArray(response?.results).filter((r) => r.product && r.match_type !== 'NO_MATCH');
+    // Recombine with the exact matches resolved synchronously above — applySyncResult
+    // replaces `synchronized` wholesale, so the fuzzy response alone would otherwise
+    // wipe out the exact-match stores' blue highlight.
+    const freshSynchronized = buildSynchronizedMap([...exactResults, ...asArray(response?.results)]);
+    setSelectionState((current) => applySyncResult(current, sourceStoreId, product.product_code, freshSynchronized));
+
+    await Promise.all(matches.map(async (match) => {
+      const knownRow = (searchProductsByStore.get(match.store_id) || [])
+        .find((row) => row.product_code === match.product.product_code);
+      const targetProduct = knownRow || {
+        product_code: match.product.product_code,
+        product_name: match.product.product_name,
+        mrp: match.product.mrp
+      };
+      try {
+        const core = await loadStoreCore(match.store_id, targetProduct);
+        if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
+        setStoreDetails((prev) => ({ ...prev, [match.store_id]: core }));
+      } catch {
+        // leave that store's previously loaded detail rather than clearing it on a transient fetch failure
+      }
+    }));
+  }
+
+  const selectionFor = (storeId) => selectionForStore(selectionState, storeId);
+  const searchProductsByStore = new Map(searchStores.map((store) => [store.store_id, store.products || []]));
+  const visibleStoresUnfiltered = allStores.length ? allStores : searchStores;
+  const visibleStores = allStores.length && settings?.tenantId ? tenantStores : visibleStoresUnfiltered;
+  const stores = orderStores(visibleStores, loginStoreId, settings?.storeOrder || []);
+  const selectedStore = stores.find((store) => store.store_id === selectedStoreId) || null;
+  const selectedDetail = selectedStoreId ? storeDetails[selectedStoreId] : undefined;
+
+  // Header stat strip — Branches | Products | With stock | Total stock,
+  // named/ordered exactly like the web Stock Availability screen's KPI row,
+  // computed live from the current search result (no invented figures).
+  const networkStats = useMemo(() => {
+    let productRows = 0;
+    let withStock = 0;
+    let totalStock = 0;
+    searchStores.forEach((store) => {
+      (store.products || []).forEach((product) => {
+        productRows += 1;
+        const qty = Number(product.stock) || 0;
+        if (qty > 0) withStock += 1;
+        totalStock += qty;
+      });
+    });
+    return { branches: stores.length, products: productRows, withStock, totalStock };
+  }, [searchStores, stores.length]);
+
+  const selectedProductName = selectedDetail?.product?.product_name;
+
+  return (
+    <div className="network-stock-screen">
+      <header className="ns-head">
+        <div>
+          <h2>Network Stock</h2>
+          <p>Live stock across every branch, side by side.</p>
+        </div>
+        <div className="ns-head__right">
+          <div className="ns-kpis" aria-label="Search summary">
+            <span className="ns-kpi"><strong>{networkStats.branches}</strong><i>Branches</i></span>
+            <span className="ns-kpi ns-kpi--accent"><strong>{networkStats.products}</strong><i>Products</i></span>
+            <span className="ns-kpi ns-kpi--ok"><strong>{networkStats.withStock}</strong><i>With stock</i></span>
+            <span className="ns-kpi"><strong>{networkStats.totalStock}</strong><i>Total stock</i></span>
+          </div>
+          {tenants.length > 1 && (
+            <TenantFilterPicker tenants={tenants} tenantId={settings?.tenantId || ''} onTenantChange={onTenantChange} />
+          )}
+        </div>
+      </header>
+
+      <div className="ns-search">
+        <div className="ns-search__tabs" role="tablist" aria-label="Search mode">
+          <button type="button" role="tab" aria-selected={mode === 'product'} className={`ns-search__tab${mode === 'product' ? ' ns-search__tab--active' : ''}`} onClick={() => setMode('product')}>Product</button>
+          <button type="button" role="tab" aria-selected={mode === 'batch'} className={`ns-search__tab${mode === 'batch' ? ' ns-search__tab--active' : ''}`} onClick={() => setMode('batch')}>Batch / MRP</button>
+        </div>
+        <div className="ns-search__fields">
+          {mode === 'product' ? (
+            <>
+              <div className="stock-search-field ns-field--grow">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.7 19.3-4.2-4.2a7.5 7.5 0 1 0-1.4 1.4l4.2 4.2 1.4-1.4ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
+                <input
+                  ref={searchInputRef}
+                  autoFocus
+                  aria-label="Search product name"
+                  value={productQuery}
+                  onChange={(event) => setProductQuery(event.target.value)}
+                  placeholder="Search product name"
+                />
+              </div>
+              <label className="stock-only-filter">
+                <input type="checkbox" checked={onlyStock} onChange={(event) => setOnlyStock(event.target.checked)} />
+                <span>In-stock only</span>
+              </label>
+            </>
+          ) : (
+            <>
+              <div className="stock-search-field">
+                <input aria-label="Batch number" value={batchNo} onChange={(event) => setBatchNo(event.target.value)} placeholder="Batch number" />
+              </div>
+              <div className="stock-search-field">
+                <input aria-label="MRP" value={mrp} onChange={(event) => setMrp(event.target.value)} placeholder="MRP" />
+              </div>
+              <div className="stock-search-field ns-field--grow">
+                <input aria-label="Product name" value={batchProduct} onChange={(event) => setBatchProduct(event.target.value)} placeholder="Product name" />
+              </div>
+            </>
+          )}
+          <div className={`stock-search-status status-line ${status.state}`} title={status.message}>
+            <span className="stock-search-status-dot" aria-hidden="true" />
+            <span>{status.message}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* STORE STOCK - fully independent section (own container, background,
+          heading), sized by its own fixed 7-row cards (see .ns-branch in
+          styles.css). It does NOT flex-grow; whatever height it doesn't use
+          is never reclaimed by it, and it never shrinks Product Details
+          below - purely a cross-store comparison view, no batch/sales/
+          purchase data lives in here. */}
+      <section className="ns-store-section">
+        <div className="ns-section-head">Store Stock</div>
+        <div className="ns-branches-section">
+          {!hasSearched && <div className="ns-branches-head">Search a product or batch to view branch stock</div>}
+
+          {stores.length === 0 ? (
+            <div className="empty-state">No branches to show yet.</div>
+          ) : (
+            <div className="ns-branches">
+              {stores.map((store) => {
+                const selection = selectionFor(store.store_id);
+                return (
+                  <div key={store.store_id || store.store_code} className={`ns-branch ${selectedStoreId === store.store_id ? 'ns-branch--active' : ''}`}>
+                    <div className="ns-branch__head">
+                      <strong>{store.store_code || '—'}</strong>
+                      <span>{store.store_name || ''}</span>
+                    </div>
+                    <GridRow
+                      cols={NS_BRANCH_PRODUCT_GRID}
+                      cells={['Product', 'Unit', 'Stock']}
+                      tag="span"
+                      className="ns-branch__cols-row"
+                    />
+                    <StoreProductGrid
+                      products={searchProductsByStore.get(store.store_id) || []}
+                      hasSearched={hasSearched}
+                      sourceProductCode={selection?.sourceProductCode ?? null}
+                      syncProductCode={selection?.syncProductCode ?? null}
+                      onProductSelect={(product) => { setSelectedStoreId(store.store_id); handleProductSelect(store.store_id, product); }}
+                      columnWidths={{ product: NS_BRANCH_COL_WIDTHS }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* PRODUCT DETAILS - fully independent section (own container,
+          background, heading), takes whatever height Store Stock above
+          didn't use (flex:1 1 auto in CSS). Changing the store grid's height
+          never resizes this, and vice versa. Selected-product summary,
+          batches, sales, purchases and the chart live ONLY here. */}
+      <section className="ns-product-section">
+        <div className="ns-section-head">Product Details</div>
+        <div className="ns-detail">
+          {selectedStore && selectedDetail ? (
+            <div className="ns-detail__context">
+              <strong>{selectedProductName || 'Selected product'}</strong>
+              <span className="ns-detail__context-store">{selectedStore.store_name || selectedStore.store_code}</span>
+              {selectedDetail.product?.mrp != null && <span>MRP {formatMoney(selectedDetail.product.mrp)}</span>}
+              {selectedDetail.product?.stock != null && <span>Stock <b className="ns-detail__context-stock">{formatQty(selectedDetail.product.stock)}</b></span>}
+              {(selectedDetail.product?.sale_unit || selectedDetail.product?.unitdescription) && (
+                <span>Unit {selectedDetail.product.sale_unit || selectedDetail.product.unitdescription}</span>
+              )}
+              {/* Newest row of the already-loaded Recent Sales/Purchase Details
+                  lists below - no extra API call, just reads row [0] of data
+                  that's already fetched for those two panels. */}
+              <span>Last Sale {selectedDetail.sales?.[0]?.date ? formatDate(selectedDetail.sales[0].date) : '—'}</span>
+              <span>Last Purchase {selectedDetail.purchases?.[0]?.date ? formatDate(selectedDetail.purchases[0].date) : '—'}</span>
+            </div>
+          ) : null}
+          <div className="ns-detail__grid">
+            <div className="ns-area ns-area--batch">
+              <div className="ns-card__head">
+                <span>Batch Details</span>
+                {selectedDetail?.batches?.length ? <em>{selectedDetail.batches.length}</em> : null}
+              </div>
+              {selectedStore && selectedDetail ? (
+                (selectedDetail.batches || []).length ? (
+                  <>
+                    <GridRow cols="56px 34px 46px 42px 42px" cells={['Exp', 'Stk', 'MRP', 'P.Age', 'S.Age']} tag="span" className="ns-batch-head-row" />
+                    <BatchTable
+                      rows={selectedDetail.batches || []}
+                      pending={false}
+                      visibleFields={DEFAULT_STOCK_FIELDS.batches}
+                      columnOrder={{}}
+                      columnWidths={{}}
+                      onBatchSelect={selectedDetail.product?.product_code ? (batchNoVal) => openBatchDetail(selectedStore, selectedDetail.product.product_code, batchNoVal) : undefined}
+                    />
+                  </>
+                ) : <div className="ns-card__waiting">No batches found.</div>
+              ) : (
+                <div className="ns-card__waiting">Batch rows appear once a product is selected.</div>
+              )}
+            </div>
+
+            <div className="ns-area ns-area--sales">
+              <div className="ns-card__head">
+                <span>Recent Sales</span>
+                {selectedDetail?.sales?.length ? <em>{Math.min(selectedDetail.sales.length, 20)}</em> : null}
+              </div>
+              {selectedStore && selectedDetail ? (
+                (selectedDetail.sales || []).length ? (
+                  <table className="ns-mini-table">
+                    <thead><tr><th>Date</th><th>Bill No</th><th>Customer</th><th className="num-col">Qty</th></tr></thead>
+                    <tbody>
+                      {(selectedDetail.sales || []).slice(0, 20).map((row, index) => (
+                        <tr key={index} onClick={() => setBillDetail({ store: selectedStore, sale: row })}>
+                          <td>{formatDate(row.date)}</td>
+                          <td>{row.bill_no || '-'}</td>
+                          <td>{row.customer || '-'}</td>
+                          <td className="num-col">{formatQty(row.qty)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : <div className="ns-card__waiting">No recent sales found.</div>
+              ) : (
+                <div className="ns-card__waiting">Sales history appears after a product is opened.</div>
+              )}
+            </div>
+
+            <div className="ns-area ns-area--purchase">
+              <div className="ns-card__head">
+                <span>Purchase Details</span>
+                {selectedDetail?.purchases?.length ? <em>{Math.min(selectedDetail.purchases.length, 20)}</em> : null}
+              </div>
+              {selectedStore && selectedDetail ? (
+                (selectedDetail.purchases || []).length ? (
+                  <table className="ns-mini-table">
+                    <thead><tr><th>Date</th><th>Supplier</th><th className="num-col">Qty</th><th className="num-col">Rate</th></tr></thead>
+                    <tbody>
+                      {(selectedDetail.purchases || []).slice(0, 20).map((row, index) => (
+                        <tr key={index} onClick={canViewPurchase ? () => setPurchaseDetail({ store: selectedStore, row }) : undefined}>
+                          <td>{formatDate(row.date)}</td>
+                          <td>{visibility === 'FULL' ? (row.supplier || '-') : abbreviateSupplierName(row.supplier)}</td>
+                          <td className="num-col">{formatQty(row.qty)}</td>
+                          <td className="num-col">{formatMoney(row.rate ?? row.ptr)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : <div className="ns-card__waiting">No recent purchases found.</div>
+              ) : (
+                <div className="ns-card__waiting">Purchase history appears after a product is opened.</div>
+              )}
+            </div>
+
+            <div className="ns-area ns-area--chart">
+              <div className="ns-card__head">
+                <span>Monthly Movement</span>
+                <ProductStatusLegend salesTrendOnly />
+              </div>
+              {selectedStore && selectedDetail ? (
+                <MonthlyMovementChart rows={selectedDetail.movement || []} purchases={selectedDetail.purchases || []} sales={selectedDetail.sales || []} visibleFields={DEFAULT_STOCK_FIELDS.trend} maxBarWidth={14} />
+              ) : (
+                <div className="ns-card__waiting">Monthly movement appears once a product is loaded.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {purchaseDetail && (
+        <PurchaseDetailCard detail={purchaseDetail} onClose={() => setPurchaseDetail(null)} visibility={visibility} />
+      )}
+      {billDetail && (
+        <BillDetailCard detail={billDetail} session={session} visibility={visibility} onClose={() => setBillDetail(null)} />
+      )}
+      {batchDetail && (
+        <BatchDetailCard detail={batchDetail} visibility={visibility} onClose={() => setBatchDetail(null)} />
+      )}
+    </div>
   );
 }
 
@@ -3364,6 +3978,7 @@ function writeLabelSession(userKey, data) {
 }
 
 const LABEL_STOCK_FILTERS = [
+  { value: 'every', short: 'All', label: 'Every product, no stock/sale filter' },
   { value: 'all', short: '>0 or zero (sold <90d)', label: 'Stock > 0 or zero stock sale within 90 days' },
   { value: 'in_stock', short: 'In stock only', label: 'Stock > 0 only' },
   { value: 'zero_recent_sale', short: 'Zero, sold <90d', label: 'Stock = 0 and sale within 90 days' },
@@ -3394,8 +4009,9 @@ const LABEL_COLUMNS = [
   { key: 'product', label: 'Product', width: 220, thClass: 'ow-grow', title: 'Product name', locked: true },
   { key: 'oldUnit', label: 'Old Unit', width: 75, title: 'Original / master unit — read-only' },
   { key: 'newUnit', label: 'New Unit', width: 85, title: 'Corrected / current unit — click to edit, auto-saves' },
+  { key: 'saleUnit', label: 'Sale Unit', width: 65, thClass: 'ow-num', title: 'Sale unit qty from master (SaleUnit) — read-only' },
   { key: 'oldLoc', label: 'Old Loc', width: 75, title: 'Location before this workflow' },
-  { key: 'newLoc', label: 'New Loc', width: 80, title: 'Box assigned by this workflow' },
+  { key: 'newLoc', label: 'New Loc', width: 120, title: 'Box assigned by this workflow' },
   { key: 'stock', label: 'Stock', width: 55, thClass: 'ow-num', title: 'Stock on hand' },
   { key: 'lpd', label: 'LPD', width: 80, thClass: 'ow-num', title: 'Last purchase date' },
   { key: 'lsd', label: 'LSD', width: 80, thClass: 'ow-num', title: 'Last sale date' },
@@ -3475,6 +4091,7 @@ function lblColValue(row, key) {
     case 'product': return row.product_name;
     case 'oldUnit': return lblOldUnit(row);
     case 'newUnit': return lblNewUnit(row);
+    case 'saleUnit': return row.sale_unit;
     case 'oldLoc': return lblOldLoc(row);
     case 'newLoc': return lblNewLoc(row);
     case 'stock': return row.total_stock;
@@ -3803,6 +4420,8 @@ function LabelExporter({ session, settings }) {
           </td>
         );
       }
+      case 'saleUnit':
+        return <td key="saleUnit" className="ow-num">{fmtOwQty(row.sale_unit)}</td>;
       case 'oldLoc': {
         const oldLoc = lblOldLoc(row);
         return <td key="oldLoc" className="lbl-oldloc-cell">{oldLoc || <span className="lbl-null">—</span>}</td>;
@@ -3898,6 +4517,7 @@ function LabelExporter({ session, settings }) {
   const [queueOpen, setQueueOpen] = useState(false);
   const [queueRows, setQueueRows] = useState([]);
   const [queueBusy, setQueueBusy] = useState(false);
+  const [queuePrintFilter, setQueuePrintFilter] = useState('all'); // 'all' | 'ready' | 'printed'
 
   const [trendRows, setTrendRows] = useState([]);
   const [trendMonths, setTrendMonths] = useState(LBL_TREND_MONTHS_DEFAULT); // 4-12, default 6 (spec §5A/5B)
@@ -4371,17 +4991,28 @@ function LabelExporter({ session, settings }) {
   function openQueue() {
     setQueueOpen(true);
     setQueueBusy(true);
+    setQueuePrintFilter('all');
     api.getLabelQueue(tenantId, storeId, session)
       .then((result) => setQueueRows(asArray(result?.rows)))
       .catch((error) => setStatus({ state: 'error', message: error.message }))
       .finally(() => setQueueBusy(false));
   }
 
+  // Ready to print = never printed (label_created_at null); Already printed =
+  // stamped by a prior Print/Export or Export PDF run. Print/Export + the
+  // printed-mark call below act on this filtered set, so switching to "Ready
+  // to print" and printing only stamps the ones actually printed just now.
+  const filteredQueueRows = useMemo(() => queueRows.filter((r) => (
+    queuePrintFilter === 'ready' ? !r.label_created_at
+      : queuePrintFilter === 'printed' ? !!r.label_created_at
+        : true
+  )), [queueRows, queuePrintFilter]);
+
   function printQueue() {
-    if (!queueRows.length) return;
+    if (!filteredQueueRows.length) return;
     const win = window.open('', '_blank');
     if (!win) return;
-    const body = queueRows.map((r) => `
+    const body = filteredQueueRows.map((r) => `
       <div class="lbl">
         <div class="nm">${escapeLabelHtml(r.product_name || '')}</div>
         <div class="mt"><span>${escapeLabelHtml(r.location || '')}</span><span>${escapeLabelHtml(r.unit_description || '')}</span></div>
@@ -4395,9 +5026,54 @@ function LabelExporter({ session, settings }) {
     win.document.close();
     win.focus();
     setTimeout(() => win.print(), 400);
-    api.markLabelsPrinted(tenantId, storeId, queueRows.map((r) => r.product_code), session)
+    api.markLabelsPrinted(tenantId, storeId, filteredQueueRows.map((r) => r.product_code), session)
       .then(() => setQueueRows((current) => current.map((r) => ({ ...r, label_created_at: r.label_created_at || 'printed' }))))
       .catch(() => {});
+  }
+
+  // Real A3 PDF of box-cards (one card per assigned location, up to 7 products
+  // each), sized to match the legacy VB6 Excel export's column/row dimensions
+  // -- distinct from printQueue's per-product 50x25mm browser-print sheet.
+  const [pdfBusy, setPdfBusy] = useState(false);
+  function exportQueuePdf() {
+    if (!filteredQueueRows.length || pdfBusy) return;
+    setPdfBusy(true);
+    api.exportLabelQueuePdf(tenantId, storeId, session)
+      .then((blob) => {
+        owDownloadBlob(blob, `label-queue-a3-${new Date().toISOString().slice(0, 10)}.pdf`);
+        return api.markLabelsPrinted(tenantId, storeId, filteredQueueRows.map((r) => r.product_code), session);
+      })
+      .then(() => setQueueRows((current) => current.map((r) => ({ ...r, label_created_at: r.label_created_at || 'printed' }))))
+      .catch((error) => setStatus({ state: 'error', message: error.message }))
+      .finally(() => setPdfBusy(false));
+  }
+
+  // Reset ONLY the printed stamp for currently-printed rows in view — keeps
+  // the assigned box intact so they can be reprinted without re-assigning
+  // locations (distinct from the main grid's "Clear Assignment…").
+  const [queueClearBusy, setQueueClearBusy] = useState(false);
+  function clearPrintedInView() {
+    const codes = filteredQueueRows.filter((r) => r.label_created_at).map((r) => r.product_code);
+    if (!codes.length) return;
+    const codeSet = new Set(codes);
+    setConfirm({
+      title: `Clear printed status for ${codes.length} label(s)?`,
+      body: [
+        'This resets the Printed mark so they show as Ready to print again.',
+        'It will NOT change the assigned box/location — only the print stamp.'
+      ],
+      confirmLabel: 'Clear Printed',
+      onConfirm: () => {
+        setQueueClearBusy(true);
+        api.clearPrintedLabels(tenantId, storeId, codes, session)
+          .then(() => {
+            setQueueRows((current) => current.map((r) => (codeSet.has(r.product_code) ? { ...r, label_created_at: null } : r)));
+            flashToast(`✓ Printed status cleared (${codes.length})`);
+          })
+          .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Clear failed', 'err'); })
+          .finally(() => { setQueueClearBusy(false); setConfirm(null); });
+      }
+    });
   }
 
   const remarksOptions = useMemo(() => {
@@ -5017,7 +5693,7 @@ function LabelExporter({ session, settings }) {
 
               <div className="lbl-assign-fields">
                 <label><span>Unit</span>
-                  <input value={assignForm.unit} onChange={(e) => setAssignForm((f) => ({ ...f, unit: e.target.value.toUpperCase() }))} placeholder="TAB / SYP" />
+                  <input value={assignForm.unit} onChange={(e) => setAssignForm((f) => ({ ...f, unit: e.target.value.toUpperCase() }))} placeholder="TAB / SYP" title="TAB and CAP share the same 7-per-box rule — a mixed TAB+CAP selection can be assigned in one Continue run with either value here" />
                 </label>
                 <label><span>Letter</span>
                   <input value={assignForm.letter} maxLength={1} onChange={(e) => setAssignForm((f) => ({ ...f, letter: e.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1) }))} placeholder="A" />
@@ -5065,20 +5741,44 @@ function LabelExporter({ session, settings }) {
         <div className="modal-overlay" onClick={() => setQueueOpen(false)}>
           <div className="lbl-queue-modal" role="dialog" aria-modal="true" aria-label="Label queue" onClick={(event) => event.stopPropagation()}>
             <div className="lbl-assign-head">
-              <strong>Label Queue{queueRows.length ? ` — ${queueRows.length}` : ''}</strong>
+              <strong>Label Queue{filteredQueueRows.length ? ` — ${filteredQueueRows.length}` : ''}</strong>
               <div className="lbl-queue-actions">
-                <button type="button" className="lbl-assign-btn lbl-assign-btn--primary" disabled={!queueRows.length} onClick={printQueue}>Print / Export</button>
+                <label className="lblx-field lbl-queue-filter">
+                  <span>Show</span>
+                  <select value={queuePrintFilter} onChange={(event) => setQueuePrintFilter(event.target.value)}>
+                    <option value="all">All</option>
+                    <option value="ready">Ready to print</option>
+                    <option value="printed">Already printed</option>
+                  </select>
+                </label>
+                {admin && (
+                  <button
+                    type="button"
+                    className="lbl-assign-btn"
+                    disabled={!filteredQueueRows.some((r) => r.label_created_at) || queueClearBusy}
+                    onClick={clearPrintedInView}
+                    title="Reset the printed mark (keeps the assigned box) so these can be reprinted"
+                  >
+                    {queueClearBusy ? 'Clearing…' : 'Clear Printed'}
+                  </button>
+                )}
+                <button type="button" className="lbl-assign-btn lbl-assign-btn--primary" disabled={!filteredQueueRows.length} onClick={printQueue}>Print / Export</button>
+                <button type="button" className="lbl-assign-btn" disabled={!filteredQueueRows.length || pdfBusy} onClick={exportQueuePdf} title="Box-wise A3 PDF matching the legacy label sheet layout">
+                  {pdfBusy ? 'Building PDF…' : 'Export PDF (A3)'}
+                </button>
                 <button type="button" className="lbl-assign-close" onClick={() => setQueueOpen(false)} aria-label="Close">✕</button>
               </div>
             </div>
             <div className="lbl-queue-body">
               {queueBusy ? <div className="ow-empty">Loading queue…</div> : !queueRows.length ? (
                 <div className="ow-empty">No products assigned yet. Assign locations to build the queue.</div>
+              ) : !filteredQueueRows.length ? (
+                <div className="ow-empty">No labels match this filter.</div>
               ) : (
                 <table className="ow-intel-table lbl-queue-table">
                   <thead><tr><th>Location</th><th>Product</th><th>Unit</th><th className="ow-num">MRP</th><th>Assigned</th><th>Printed</th></tr></thead>
                   <tbody>
-                    {queueRows.map((r) => (
+                    {filteredQueueRows.map((r) => (
                       <tr key={r.product_code}>
                         <td><b>{r.location}</b></td>
                         <td title={r.product_name}>{r.product_name}</td>
@@ -5856,9 +6556,9 @@ function GridSettingsPanel({
   );
 }
 
-function GridRow({ cols, cells, tag: Tag = 'div', className = '', onClick, rowRef }) {
+function GridRow({ cols, cells, tag: Tag = 'div', className = '', onClick, rowRef, style }) {
   return (
-    <div ref={rowRef} className={`grid-row ${className}`} style={{ gridTemplateColumns: cols }} onClick={onClick}>
+    <div ref={rowRef} className={`grid-row ${className}`} style={{ gridTemplateColumns: cols, ...style }} onClick={onClick}>
       {cells.map((cell, index) => (
         <Tag
           key={index}
@@ -5967,7 +6667,7 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
               <RowDataCell
                 className={`purchase-table ${hideSupplierColumn ? 'summary-cols' : ''} ${onPurchaseSelect ? 'clickable' : ''}`}
                 cols={purchaseGrid}
-                emptyMessage="No"
+                emptyMessage="No purchases"
                 pending={pending}
                 rows={purchases.slice(0, 20).map((row) => {
                   // Full supplier name is always available on hover (req §9) even
@@ -6026,7 +6726,7 @@ function StoreDataRow({ store, colorIndex, hasSearched, searchProducts, detail, 
                     })}
                   </div>
                 ) : (
-                  <div className="row-empty-state">No</div>
+                  <div className="row-empty-state">No bills</div>
                 )}
               </section>
             )}
@@ -6343,7 +7043,7 @@ function BatchTable({ rows, pending, visibleFields = DEFAULT_STOCK_FIELDS.batche
   if (!rows.length) {
     return (
       <section className="row-cell row-data-cell batch-table">
-        <div className="row-empty-state">No</div>
+        <div className="row-empty-state">No batches</div>
       </section>
     );
   }
@@ -6448,7 +7148,7 @@ function StoreProductGrid({ products, hasSearched, sourceProductCode, syncProduc
   }, [highlightedProductCode]);
 
   if (!products.length) {
-    return <div className={hasSearched ? 'not-found-card' : 'waiting-card'}>{hasSearched ? 'No' : 'Waiting'}</div>;
+    return <div className={hasSearched ? 'not-found-card' : 'waiting-card'}>{hasSearched ? 'No match' : 'Waiting'}</div>;
   }
 
   const definitions = applyColumnConfig(
@@ -6485,12 +7185,31 @@ function StoreProductGrid({ products, hasSearched, sourceProductCode, syncProduc
         const isSourceSelected = product.product_code === sourceProductCode;
         const isSyncSelected = !isSourceSelected && product.product_code === syncProductCode;
         const matchBadge = product.matchBadge;
+        // Inline color override (in addition to the source-row/active-row
+        // classes): guarantees the GREEN/BLUE two-color distinction always
+        // renders correctly regardless of ancestor-scoped CSS specificity —
+        // an inline style always wins the cascade, so this can't silently
+        // regress if a future ancestor wrapper changes.
+        // Plain rgba(), NOT color-mix(): this app's Electron (22.3.27) ships
+        // Chromium ~108, and color-mix() only landed in Chromium 111 - the
+        // browser silently drops the entire (otherwise-valid) `background`
+        // declaration when it hits the unsupported function, so every row
+        // rendered with NO highlight at all regardless of selection state.
+        // Solid fills, not a translucent tint over white - a ~50% alpha wash
+        // reads as pale/washed-out rather than a confident "this is selected"
+        // state, and forces text color into ambiguous half-contrast territory.
+        const rowStyle = isSourceSelected
+          ? { background: '#15803d', color: '#ffffff', fontWeight: 700 }
+          : isSyncSelected
+            ? { background: '#2563eb', color: '#ffffff', fontWeight: 700 }
+            : undefined;
         return (
           <GridRow
             key={`${product.product_code || product.product_name}-${index}`}
             cols={grid}
             tag="span"
             className={isSourceSelected ? 'source-row' : isSyncSelected ? 'active-row' : ''}
+            style={rowStyle}
             rowRef={isSourceSelected || isSyncSelected ? activeRowRef : undefined}
             cells={definitions.map(([key]) => ({
               name: <span className="product-cell-main" title={product.product_name || '-'}>
@@ -6516,7 +7235,25 @@ function StoreProductGrid({ products, hasSearched, sourceProductCode, syncProduc
   );
 }
 
-function ProductStatusLegend() {
+// salesTrendOnly (Network Stock only - see its call site): this screen has
+// no batch-status column of its own to key the Expired/Near Expiry/Non
+// Moving/Healthy dots against, so that half of the legend was dead weight
+// here - drop it and keep just the Sales Trend swatch group, grouped into
+// its own labeled control so Purchase/Sales/Stock read as "this is what the
+// chart's colors mean", not as page-level filters.
+function ProductStatusLegend({ salesTrendOnly = false }) {
+  if (salesTrendOnly) {
+    return (
+      <div className="product-status-legend product-status-legend--trend-only">
+        <span className="sales-trend-group">
+          <span className="legend-group-label">Sales Trend</span>
+          <span><i className="trend-swatch trend-swatch--purchase" aria-hidden="true" />Purchase</span>
+          <span><i className="trend-swatch trend-swatch--sales" aria-hidden="true" />Sales</span>
+          <span><i className="trend-swatch trend-swatch--stock" aria-hidden="true" />Stock</span>
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="product-status-legend">
       {Object.values(BATCH_STATUS_META).map((meta) => (
@@ -6782,7 +7519,7 @@ function useChartSize() {
 // plot with gridlines + a Y-axis, value labels on each bar, a floating
 // per-month tooltip and a focused-month readout row. Transfer in/out stay
 // folded into Purchase/Sales to match the desktop data model + field toggles.
-function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields = DEFAULT_STOCK_FIELDS.trend }) {
+function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields = DEFAULT_STOCK_FIELDS.trend, maxBarWidth }) {
   const months = buildChartRows(rows, purchases, sales);
   const [hover, setHover] = useState(null);
   const [tip, setTip] = useState({ x: 0, y: 0 });
@@ -6794,7 +7531,7 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
     visibleFields.stock && { key: 'stk', label: 'Stock', short: 'STK', color: '#dc2626', light: '#fb8686', dark: '#9c1414', value: (row) => Number(row.stk || 0) }
   ].filter(Boolean);
 
-  if (!months.length || !series.length) return <div className="row-empty-state">No</div>;
+  if (!months.length || !series.length) return <div className="row-empty-state">No data</div>;
 
   const n = months.length || 1;
   const focus = hover ?? months.length - 1;
@@ -6817,9 +7554,16 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
   const groupW = plotW / n;
   // Wider bars / tighter gaps for a bold, clear view (max usable bar width).
   const groupGap = Math.min(groupW * 0.14, 12);
-  const innerW = Math.max(series.length * 9, groupW - groupGap);
-  const barGap = Math.max(1, innerW * 0.035);
-  const barW = (innerW - barGap * (series.length - 1)) / series.length;
+  const rawInnerW = Math.max(series.length * 9, groupW - groupGap);
+  const rawBarGap = Math.max(1, rawInnerW * 0.035);
+  const rawBarW = (rawInnerW - rawBarGap * (series.length - 1)) / series.length;
+  // maxBarWidth (opt-in, only passed by the Network Stock branch cards' more
+  // compact chart panel): caps bar width instead of letting bars stretch to
+  // fill all available groupW, and widens the gap with the reclaimed space
+  // so month groups stay visually separated rather than touching.
+  const barW = maxBarWidth ? Math.min(rawBarW, maxBarWidth) : rawBarW;
+  const barGap = maxBarWidth && barW < rawBarW ? Math.max(rawBarGap, 6) : rawBarGap;
+  const innerW = barW * series.length + barGap * (series.length - 1);
 
   return (
     <div className="sa-chart">
@@ -7602,6 +8346,48 @@ const SUPPLIER_MAPPING_FILTERS = [
   { value: 'fully_matched', label: 'Fully matched' }
 ];
 
+// Warehouse-relative stock filter - "own" store here is always the selected
+// warehouse. Unlike SUPPLIER_MAPPING_FILTERS this is NOT a client-side
+// narrowing of the already-fetched supplier list: picking anything but "all"
+// switches the whole left panel to the warehouse's OWN product catalogue
+// (backend warehouse-stock/* routes), independent of the selected supplier -
+// see warehouseCountsQuery/warehouseItemsQuery.
+const STOCK_STATUS_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'zero', label: 'Stock = 0' },
+  { value: 'positive', label: 'Stock > 0' },
+  { value: 'zero_other_positive', label: 'Mine=0 + Others>0' },
+  { value: 'zero_all_zero', label: 'Mine=0 + All=0' }
+];
+
+const WAREHOUSE_ROW_PREFIX = 'wh:';
+function isWarehouseRowId(id) {
+  return typeof id === 'string' && id.startsWith(WAREHOUSE_ROW_PREFIX);
+}
+
+// Shapes a warehouse-catalogue row (backend warehouse-stock/products) into
+// the same row shape the existing supplier-product list/detail-panel code
+// already reads (row.supplier_stock_id, row.available_stock, etc.) so none
+// of that code needs to branch on where the row came from - only the detail
+// fetch (selectedStockId starting with "wh:") needs to know.
+function warehouseItemToRow(item) {
+  return {
+    supplier_stock_id: `${WAREHOUSE_ROW_PREFIX}${item.product_code}`,
+    supplier_product_code: item.product_code,
+    supplier_product_name: item.product_name,
+    product_code: item.product_code,
+    mapped_product_name: item.product_name,
+    available_stock: item.own_store_stock,
+    ptr: item.ptr,
+    mrp: item.mrp,
+    own_store_stock: item.own_store_stock,
+    other_store_has_stock: item.other_store_has_stock,
+    has_mapping: 1,
+    mapping_scope_status: 'fully_matched',
+    _stable_key: `wh::${item.product_code}`
+  };
+}
+
 function analysisBucketLabel(bucket) {
   return ({
     already_mapped: 'Already mapped',
@@ -7667,6 +8453,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const [productSearch, setProductSearch] = useState('');
   const [onlyAvailable, setOnlyAvailable] = useState(true);
   const [mappingFilter, setMappingFilter] = useState('all');
+  const [stockStatusFilter, setStockStatusFilter] = useState('all');
   const [productStatus, setProductStatus] = useState({ state: 'idle', message: 'Select a supplier to list products.' });
   const [reportStatus, setReportStatus] = useState({ state: 'idle', message: '' });
   const [reportBusy, setReportBusy] = useState(false);
@@ -7740,12 +8527,45 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }, [selectedWarehouse, tenantId, onTenantChange]);
   // The supplier/product list is scoped to the selected warehouse store.
   const scopeStoreId = selectedWarehouse?.store_id ?? '';
+  // The stock-status filter's values (own_store_stock/other_store_has_stock)
+  // are relative to scopeStoreId - drop any active selection when the
+  // warehouse changes so nothing stale from NMW lingers after switching to NMA.
+  useEffect(() => { setStockStatusFilter('all'); }, [scopeStoreId]);
   // Suppliers are always warehouse-scoped, so a resolved warehouse is required
   // before loading — in every mode, not just all-tenants. Without this, a tenant
   // that has no warehouse (selectedWarehouse === null) would load with tenant_id
   // undefined and the API would fall back to the previously-queried tenant,
   // leaking another tenant's suppliers.
   const needWarehousePick = !selectedWarehouse;
+
+  // NMW-Stock filter dataset - the store's OWN full product catalogue,
+  // independent of the selected supplier (see warehouse-stock/* backend
+  // routes). Counts are fetched once per warehouse regardless of which
+  // filter option is active (the dropdown shows all 5 counts at once);
+  // items are fetched only while a non-"all" filter is selected, since
+  // "All" keeps showing the existing supplier-scoped list untouched.
+  const warehouseTenantId = selectedWarehouse?.tenant_id || tenantId;
+  const warehouseCountsQuery = useQuery({
+    queryKey: ['warehouse-stock-counts', warehouseTenantId, scopeStoreId],
+    queryFn: ({ signal }) => api.getWarehouseStockCounts(warehouseTenantId, scopeStoreId, session, { signal }),
+    enabled: Boolean(scopeStoreId)
+  });
+  // Network round-trip per keystroke (unlike the supplier list's instant
+  // client-side search over an already-fetched array) - debounce so typing
+  // doesn't fire a request per character.
+  const [warehouseSearchDebounced, setWarehouseSearchDebounced] = useState('');
+  useEffect(() => {
+    const handle = setTimeout(() => setWarehouseSearchDebounced(productSearch.trim()), 300);
+    return () => clearTimeout(handle);
+  }, [productSearch]);
+  const isWarehouseStockMode = stockStatusFilter !== 'all';
+  const warehouseItemsQuery = useQuery({
+    queryKey: ['warehouse-stock-products', warehouseTenantId, scopeStoreId, stockStatusFilter, warehouseSearchDebounced],
+    queryFn: ({ signal }) => api.getWarehouseStockProducts(
+      warehouseTenantId, scopeStoreId, stockStatusFilter, session, { search: warehouseSearchDebounced, signal }
+    ),
+    enabled: isWarehouseStockMode && Boolean(scopeStoreId)
+  });
   // { searchKey, matchesFound, storesWithMatches, byStore: Map(store_id -> {storeMeta, candidates[]}) }
   const [similar, setSimilar] = useState(null);
   const [similarStatus, setSimilarStatus] = useState({ state: 'idle', message: '' });
@@ -7773,36 +8593,76 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const [billDetail, setBillDetail] = useState(null);
   const [orderDrafts, setOrderDrafts] = useState({});
   const [remarkDrafts, setRemarkDrafts] = useState({});
-  const [activeGridCell, setActiveGridCell] = useState('qty');
+  const [activeGridCell, setActiveGridCell] = useState('row');
   const [exportStatus, setExportStatus] = useState({ state: 'idle', message: '' });
   const qtyRefs = useRef({});
+  const rowRefs = useRef({});
+
+  const isWarehouseSelection = isWarehouseRowId(selectedStockId);
+  const selectedWarehouseProductCode = isWarehouseSelection ? selectedStockId.slice(WAREHOUSE_ROW_PREFIX.length) : null;
 
   // Stage 1 (fast): match resolution + all-store stock in one batched query.
   // React Query gives cancellation (switching products aborts the previous
   // product's in-flight fetch via queryFn's signal) and caching (req 5, req 8)
   // for free, replacing the old dashboardCacheRef + selectedStockIdRef guards.
+  // Disabled for a warehouse-catalogue row: there's no procurement.supplier_stock
+  // row to resolve a match for (see warehouseProductQuery below instead).
   const stockQuery = useQuery({
     queryKey: ['supplier-dashboard-stock', selectedStockId],
     queryFn: ({ signal }) => api.getSupplierDashboardStock(selectedStockId, session, { signal }),
-    enabled: Boolean(selectedStockId)
+    enabled: Boolean(selectedStockId) && !isWarehouseSelection
   });
-  const match = stockQuery.data || null;
+
+  // Warehouse-catalogue row detail: product_code + store are already known
+  // (no supplier_stock_id / mapping-resolution step needed), so this reuses
+  // the existing product-code-keyed dashboard endpoint directly - one call
+  // gets stock + movement + batches + purchases + sales together (no
+  // stock/details split like the supplier flow above; a single manual row
+  // click doesn't need that staged-loading optimization).
+  const warehouseProductQuery = useQuery({
+    queryKey: ['warehouse-product-dashboard', warehouseTenantId, scopeStoreId, selectedWarehouseProductCode],
+    queryFn: ({ signal }) => api.getProductDashboard(selectedWarehouseProductCode, session, {
+      signal, tenantId: warehouseTenantId, sourceStoreId: scopeStoreId, months: 4
+    }),
+    enabled: isWarehouseSelection && Boolean(selectedWarehouseProductCode) && Boolean(scopeStoreId)
+  });
+
+  const match = isWarehouseSelection
+    ? (warehouseProductQuery.data ? {
+      supplier_stock: {
+        supplier_stock_id: selectedStockId,
+        tenant_id: warehouseTenantId,
+        store_id: scopeStoreId,
+        product_code: selectedWarehouseProductCode,
+        supplier_product_code: selectedWarehouseProductCode,
+        supplier_product_name: selectedProductName,
+        available_stock: warehouseProductQuery.data.all_store_stock?.find((s) => s.store_id === scopeStoreId)?.total_stock ?? null
+      },
+      match_status: 'resolved',
+      exact_match: null,
+      product_code: selectedWarehouseProductCode,
+      suggestions: [],
+      dashboard: warehouseProductQuery.data
+    } : null)
+    : (stockQuery.data || null);
   const productCode = match?.product_code || null;
   const sourceStoreId = match?.supplier_stock?.store_id || null;
 
   // Stage 2 (slower): batches/purchases/sales/movement history, only once
   // stage 1 resolved a product_code - streams in after the stock grid is
-  // already visible instead of blocking it (req 4, 9, 11).
+  // already visible instead of blocking it (req 4, 9, 11). Not used for a
+  // warehouse row - warehouseProductQuery above already returned everything.
   const detailsQuery = useQuery({
     queryKey: ['supplier-dashboard-details', sourceStoreId, productCode, 4],
     queryFn: ({ signal }) => api.getSupplierDashboardDetails(selectedStockId, session, {
       signal, productCode, sourceStoreId, months: 4
     }),
-    enabled: Boolean(selectedStockId) && Boolean(productCode) && Boolean(sourceStoreId)
+    enabled: Boolean(selectedStockId) && Boolean(productCode) && Boolean(sourceStoreId) && !isWarehouseSelection
   });
 
   const dashboard = useMemo(() => {
     if (!match?.dashboard) return null;
+    if (isWarehouseSelection) return match.dashboard;
     return {
       ...match.dashboard,
       movement: detailsQuery.data?.movement || [],
@@ -7810,7 +8670,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
       purchases: detailsQuery.data?.purchases || [],
       sales: detailsQuery.data?.sales || []
     };
-  }, [match, detailsQuery.data]);
+  }, [match, detailsQuery.data, isWarehouseSelection]);
 
   useEffect(() => {
     if (!selectedStockId) return;
@@ -7897,17 +8757,24 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
 
   const detailStatus = useMemo(() => {
     if (!selectedStockId) return { state: 'idle', message: 'Select a product to analyze.' };
+    if (isWarehouseSelection) {
+      if (warehouseProductQuery.isLoading) return { state: 'loading', message: 'Loading warehouse product details...' };
+      if (warehouseProductQuery.isError) return { state: 'error', message: warehouseProductQuery.error.message };
+      return { state: 'ok', message: 'Warehouse product - not tied to the selected supplier.' };
+    }
     if (stockQuery.isLoading) return { state: 'loading', message: 'Loading match and stock details...' };
     if (stockQuery.isError) return { state: 'error', message: stockQuery.error.message };
     if (match?.product_code) {
       return { state: 'ok', message: match.match_status === 'exact' ? 'Exact mapping found.' : 'Resolved from a saved mapping.' };
     }
     return { state: 'ok', message: 'No exact match. Searching similar products...' };
-  }, [selectedStockId, stockQuery.isLoading, stockQuery.isError, stockQuery.error, match]);
+  }, [selectedStockId, isWarehouseSelection, warehouseProductQuery.isLoading, warehouseProductQuery.isError, warehouseProductQuery.error, stockQuery.isLoading, stockQuery.isError, stockQuery.error, match]);
 
-  const detailsStage = detailsQuery.isLoading || (Boolean(productCode) && !detailsQuery.data)
-    ? 'loading'
-    : (detailsQuery.data ? 'done' : 'idle');
+  const detailsStage = isWarehouseSelection
+    ? (warehouseProductQuery.isLoading ? 'loading' : (warehouseProductQuery.data ? 'done' : 'idle'))
+    : (detailsQuery.isLoading || (Boolean(productCode) && !detailsQuery.data)
+      ? 'loading'
+      : (detailsQuery.data ? 'done' : 'idle'));
 
   function rememberRecentAnalysis(stockId, snapshot) {
     if (!stockId || !snapshot) return;
@@ -8054,7 +8921,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     ));
   }, [products, mappingFilter]);
 
-  const visibleProducts = useMemo(() => {
+  const warehouseStockFilterLabel = selectedWarehouse?.store_code ? `${selectedWarehouse.store_code} Stock` : 'Warehouse Stock';
+
+  // Supplier-scoped list (existing behavior, fully unchanged) - only shown
+  // while stockStatusFilter === 'all'.
+  const supplierVisibleProducts = useMemo(() => {
     const term = productSearch.trim().toLowerCase();
     return mappingFilteredProducts.filter((row) => {
       const shouldApplyStockOnly = onlyAvailable && mappingFilter !== 'not_mapped';
@@ -8066,7 +8937,39 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     });
   }, [mappingFilteredProducts, productSearch, onlyAvailable]);
 
-  const filteredOutByStockOnly = mappingFilteredProducts.length > 0 && visibleProducts.length === 0 && onlyAvailable;
+  // Always the true store-wide totals (server aggregates over the WHOLE
+  // active catalogue of scopeStoreId), never derived from the supplier list -
+  // independent of mappingFilter/search/which stock filter is active.
+  const stockStatusCounts = warehouseCountsQuery.data
+    || { all: 0, zero: 0, positive: 0, zero_other_positive: 0, zero_all_zero: 0 };
+
+  const warehouseVisibleProducts = useMemo(
+    () => (warehouseItemsQuery.data?.items || []).map(warehouseItemToRow),
+    [warehouseItemsQuery.data],
+  );
+
+  const visibleProducts = isWarehouseStockMode ? warehouseVisibleProducts : supplierVisibleProducts;
+
+  // The backend caps rows returned per filter+search combo (same TOP-N
+  // convention the supplier list already uses) - total_matching tells us
+  // when there's more than is currently on screen, so we can say so instead
+  // of silently truncating.
+  const warehouseTotalMatching = warehouseItemsQuery.data?.total_matching ?? 0;
+  const warehouseResultsCapped = isWarehouseStockMode && warehouseTotalMatching > warehouseVisibleProducts.length;
+
+  const warehouseStatusLine = warehouseItemsQuery.isLoading
+    ? { state: 'loading', message: `Loading ${warehouseStockFilterLabel.replace(' Stock', '')} products...` }
+    : warehouseItemsQuery.isError
+      ? { state: 'error', message: warehouseItemsQuery.error?.message || 'Failed to load warehouse products.' }
+      : {
+        state: 'ok',
+        message: warehouseResultsCapped
+          ? `Showing ${warehouseVisibleProducts.length} of ${warehouseTotalMatching} matching products - refine search to narrow.`
+          : `${warehouseTotalMatching} product(s)`
+      };
+
+  const filteredOutByStockOnly = !isWarehouseStockMode
+    && mappingFilteredProducts.length > 0 && supplierVisibleProducts.length === 0 && onlyAvailable;
 
   useEffect(() => {
     if (!visibleProducts.length) {
@@ -8114,7 +9017,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }
 
   async function prefetchProductRow(row) {
-    if (!row?.supplier_stock_id) return null;
+    // Warehouse-catalogue rows have no procurement.supplier_stock row to
+    // resolve - see warehouseProductQuery/isWarehouseSelection instead.
+    // Skipping prefetch for them is just a smaller hover-prefetch window,
+    // not a functional gap.
+    if (!row?.supplier_stock_id || isWarehouseRowId(row.supplier_stock_id)) return null;
     const stockKey = ['supplier-dashboard-stock', row.supplier_stock_id];
     const stock = await queryClient.fetchQuery({
       queryKey: stockKey,
@@ -8477,11 +9384,16 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }
 
   function focusGridCell(stockId, cell) {
-    const ref = qtyRefs.current[stockId];
-    if (ref?.focus) {
-      ref.focus();
-      if (ref.select) ref.select();
+    if (cell === 'qty') {
+      const ref = qtyRefs.current[stockId];
+      if (ref?.focus) {
+        ref.focus();
+        if (ref.select) ref.select();
+      }
+      return;
     }
+    const rowRef = rowRefs.current[stockId];
+    if (rowRef?.focus) rowRef.focus();
   }
 
   function moveGridSelection(currentStockId, direction, cell = activeGridCell) {
@@ -8493,6 +9405,16 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     selectProduct(nextRow);
     setActiveGridCell(cell);
     requestAnimationFrame(() => focusGridCell(nextRow.supplier_stock_id, cell));
+  }
+
+  function handleProductRowKeyDown(event, row) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveGridSelection(row.supplier_stock_id, 1, 'row');
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveGridSelection(row.supplier_stock_id, -1, 'row');
+    }
   }
 
   function exportOrderedRows() {
@@ -8966,22 +9888,38 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
         </select>
         <input
           className="toolbar-search"
-          placeholder="Search supplier products..."
+          placeholder={isWarehouseStockMode ? `Search ${warehouseStockFilterLabel.replace(' Stock', '')} products...` : 'Search supplier products...'}
           value={productSearch}
           onChange={(event) => setProductSearch(event.target.value)}
           onKeyDown={handleProductSearchKeyDown}
-          disabled={!selectedSupplier}
+          disabled={!selectedSupplier && !isWarehouseStockMode}
         />
         <select
           className="toolbar-supplier-select toolbar-mapping-filter"
           value={mappingFilter}
           onChange={(event) => setMappingFilter(event.target.value)}
-          disabled={!selectedSupplier}
+          disabled={!selectedSupplier || isWarehouseStockMode}
+          title={isWarehouseStockMode ? 'Mapping filter applies to the supplier-scoped "All" view only' : undefined}
         >
           {SUPPLIER_MAPPING_FILTERS.map((filter) => (
             <option key={filter.value} value={filter.value}>{filter.label}</option>
           ))}
         </select>
+        <label className="tenant-filter toolbar-stock-status-filter" title={`Stock status across all of ${warehouseStockFilterLabel.replace(' Stock', '')}'s products, independent of the selected supplier`}>
+          {warehouseStockFilterLabel}
+          <select
+            className="toolbar-supplier-select toolbar-mapping-filter"
+            value={stockStatusFilter}
+            onChange={(event) => setStockStatusFilter(event.target.value)}
+            disabled={!scopeStoreId}
+          >
+            {STOCK_STATUS_FILTERS.map((filter) => (
+              <option key={filter.value} value={filter.value}>
+                {filter.label} ({stockStatusCounts[filter.value] ?? 0})
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="similar-search-slider" title="When no saved mapping is found, search stores using the first N characters of the product name.">
           <span>Fallback chars</span>
           <input
@@ -8994,8 +9932,8 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
           />
           <strong>{similarSearchChars}</strong>
         </label>
-        <label className="stock-only-filter">
-          <input type="checkbox" checked={onlyAvailable} onChange={(event) => setOnlyAvailable(event.target.checked)} />
+        <label className="stock-only-filter" title={isWarehouseStockMode ? 'Applies to the supplier-scoped "All" view only - the warehouse stock filter already picks the stock condition' : undefined}>
+          <input type="checkbox" checked={onlyAvailable} disabled={isWarehouseStockMode} onChange={(event) => setOnlyAvailable(event.target.checked)} />
           In stock only
         </label>
         <button type="button" className="secondary-button toolbar-import-btn" onClick={exportAnalysisReport} disabled={!selectedSupplier || reportBusy}>
@@ -9045,17 +9983,20 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
               &larr; Change Supplier
             </button>
           )}
-          {selectedSupplier && <div className={`status-line ${productStatus.state}`}>{productStatus.message}</div>}
-          {selectedSupplier && (
+          {isWarehouseStockMode && <div className={`status-line ${warehouseStatusLine.state}`}>{warehouseStatusLine.message}</div>}
+          {!isWarehouseStockMode && selectedSupplier && <div className={`status-line ${productStatus.state}`}>{productStatus.message}</div>}
+          {(selectedSupplier || isWarehouseStockMode) && (
             <div className="procurement-grid-toolbar">
               <span className="procurement-grid-count">{visibleProducts.length} row(s)</span>
-              <button type="button" className="secondary-button procurement-export-btn" onClick={exportOrderedRows}>
-                Export Ordered Rows
-              </button>
+              {!isWarehouseStockMode && (
+                <button type="button" className="secondary-button procurement-export-btn" onClick={exportOrderedRows}>
+                  Export Ordered Rows
+                </button>
+              )}
             </div>
           )}
-          {selectedSupplier && exportStatus.message && <div className={`status-line ${exportStatus.state}`}>{exportStatus.message}</div>}
-          {selectedSupplier && reportStatus.message && <div className={`status-line ${reportStatus.state}`}>{reportStatus.message}</div>}
+          {!isWarehouseStockMode && selectedSupplier && exportStatus.message && <div className={`status-line ${exportStatus.state}`}>{exportStatus.message}</div>}
+          {!isWarehouseStockMode && selectedSupplier && reportStatus.message && <div className={`status-line ${reportStatus.state}`}>{reportStatus.message}</div>}
           <div className="supplier-product-rows procurement-grid-scroll" ref={productListScrollRef}>
             {visibleProducts.length ? (
               <table className="procurement-grid">
@@ -9083,9 +10024,12 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
                     return (
                       <tr
                         key={row.supplier_stock_id}
+                        ref={(node) => { rowRefs.current[row.supplier_stock_id] = node; }}
                         className={`${isSelected ? 'selected' : ''} ${edited ? 'edited' : ''}`}
+                        tabIndex={0}
                         onClick={() => selectProduct(row)}
                         onMouseEnter={() => prefetchAdjacentProducts(index)}
+                        onKeyDown={(event) => handleProductRowKeyDown(event, row)}
                         title={productTooltip(row)}
                       >
                         <td>
@@ -9136,11 +10080,15 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
                 </tbody>
               </table>
             ) : <div className="empty-state">
-              {selectedSupplier
-                ? filteredOutByStockOnly
-                  ? `No ${mappingFilterLabel(mappingFilter).toLowerCase()} products are currently in stock. Turn off "In stock only" to view them.`
-                  : 'No products for this supplier.'
-                : 'Pick a supplier above to list its products.'}
+              {isWarehouseStockMode
+                ? warehouseItemsQuery.isLoading
+                  ? `Loading ${warehouseStockFilterLabel.replace(' Stock', '')} products...`
+                  : `No ${warehouseStockFilterLabel.replace(' Stock', '')} products match "${STOCK_STATUS_FILTERS.find((f) => f.value === stockStatusFilter)?.label || stockStatusFilter}"${warehouseSearchDebounced ? ` for "${warehouseSearchDebounced}"` : ''}.`
+                : selectedSupplier
+                  ? filteredOutByStockOnly
+                    ? `No ${mappingFilterLabel(mappingFilter).toLowerCase()} products are currently in stock. Turn off "In stock only" to view them.`
+                    : 'No products for this supplier.'
+                  : 'Pick a supplier above to list its products.'}
             </div>}
           </div>
         </div>

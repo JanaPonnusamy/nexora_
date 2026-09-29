@@ -161,7 +161,14 @@ def _display_name(item):
     name = (item.get("product_name") or "").replace("-", " ")
     name = re.sub(r"\s+", " ", name).strip()
     name = _strip_trailing_noise(name)
-    return name[:NAME_MAX_CHARS]
+    truncated = name[:NAME_MAX_CHARS].rstrip()
+    # A hard 18-char cut can land on a dangling opener/separator
+    # ("ABOUND [LABOUND] [STRIP]" -> "ABOUND [LABOUND] ["), leaving a stray
+    # bracket on the printed label. Trim any trailing run of bracket/paren/
+    # separator characters so the name ends cleanly. A closing ")" is kept —
+    # "APPELLA (APPELLAR)" is a complete, balanced name.
+    truncated = re.sub(r"[\s\[\(,/]+$", "", truncated)
+    return truncated
 
 
 def _fit_fontsize(text, max_size, min_size, avail_width):
@@ -201,12 +208,25 @@ def _draw_card(page, x0, y0, card_w, group):
     row_y = [y0 + i * _ROW_H for i in range(_NUM_ROWS + 1)]
 
     items = group["items"]
+
+    # Uniform name size per box: pick the single largest size at which EVERY
+    # name in this box still fits its column, and draw all lines at it. Sizing
+    # each name independently let one long 18-char name shrink to ~9pt right
+    # next to a 13.6pt short name, so every box read as a ragged mix of sizes;
+    # one shared size per printed box looks like a proper label instead.
+    names = [_display_name(items[idx]) for idx in range(min(len(items), MAX_PRODUCTS_PER_CARD))]
+    avail_w = col_w - 2 * _CELL_PAD_X
+    box_font = min(
+        (_fit_fontsize(n, _NAME_FONT_MAX, _NAME_FONT_MIN, avail_w) for n in names if n),
+        default=_NAME_FONT_MAX,
+    )
+
     for idx in range(MAX_PRODUCTS_PER_CARD):
         row, col = _SLOT_POSITIONS[idx]
         cell = fitz.Rect(col_x[col], row_y[row], col_x[col + 1], row_y[row + 1])
         page.draw_rect(cell, color=(0, 0, 0), width=_INNER_BORDER_W)
         if idx < len(items):
-            _draw_text(page, cell, _display_name(items[idx]), _NAME_FONT_MAX, _NAME_FONT_MIN, _NAME_COLOR, "left")
+            _draw_text(page, cell, names[idx], box_font, box_font, _NAME_COLOR, "left")
 
     label_rect = fitz.Rect(col_x[1], row_y[2], col_x[2], row_y[_NUM_ROWS])
     page.draw_rect(label_rect, color=(0, 0, 0), width=_INNER_BORDER_W)

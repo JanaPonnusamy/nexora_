@@ -21,6 +21,7 @@
   --nx-accent: #2563eb;
   --nx-accent-hover: #1d4ed8;
   --nx-accent-sunk: #e8f0fe;
+  --nx-accent-selected: #cbdcfd;
   --nx-accent-ink: #1d4ed8;
   --nx-header: #172033;
   --nx-success: #059669;
@@ -138,6 +139,7 @@
   --nx-accent: #4f8df7;
   --nx-accent-hover: #6d9fff;
   --nx-accent-sunk: #15243d;
+  --nx-accent-selected: #24457c;
   --nx-accent-ink: #93b8fd;
   --nx-header: #111823;
   --nx-success: #10b981;
@@ -459,11 +461,19 @@ button:disabled {
   overflow: auto;
 }
 
-/* The stock workbench manages its own internal scrolling and must fill the
-   viewport exactly — give it a tight frame and stop the page from scrolling
-   so only the data region scrolls. Scoped with :has() so the other screens
-   (settings / analysis / NMW) keep their roomy 32px frame. */
-.workspace:has(> .store-workbench) {
+/* The stock workbench (and Network Stock) manage their own internal
+   scrolling and must fill the viewport exactly — give them a tight frame and
+   stop the PAGE from scrolling so only the data regions inside scroll.
+   Scoped with :has() so the other screens (settings / analysis / NMW) keep
+   their roomy 32px frame.
+   This :has() selector not matching .network-stock-screen was the actual
+   cause of the page-level right-side scrollbar: .network-stock-screen's own
+   height calc() assumes --ui-workspace-padding (16-20px), but without this
+   rule the page was still getting the default 32px .workspace padding PLUS
+   overflow:auto - a real ~32px mismatch that overflowed the frame and forced
+   a page scrollbar, not something hideable with a CSS scrollbar tweak. */
+.workspace:has(> .store-workbench),
+.workspace:has(> .network-stock-screen) {
   padding: var(--ui-workspace-padding);
   overflow: hidden;
 }
@@ -1462,7 +1472,7 @@ th {
 
 .store-filter-icon-btn.is-scoped {
   border-color: var(--stock-blue);
-  background: color-mix(in srgb, var(--stock-blue) 35%, transparent);
+  background: rgba(91, 141, 239, 0.35);
 }
 
 /* Store-selection popover (portal), same anchored-under-the-button pattern
@@ -1512,7 +1522,7 @@ th {
 
 .store-filter-card__pill:hover {
   border-color: var(--stock-blue);
-  background: color-mix(in srgb, var(--stock-blue) 14%, var(--nx-surface));
+  background: rgba(91, 141, 239, 0.14);
 }
 
 .store-filter-card__pill.is-active {
@@ -1592,7 +1602,7 @@ th {
 }
 
 .non-moving-panel-row.clickable:hover {
-  background: color-mix(in srgb, var(--nx-success-sunk) 78%, var(--nx-success) 22%);
+  background: var(--nx-success-sunk);
 }
 
 .non-moving-panel-row.clickable:focus-visible {
@@ -1793,7 +1803,7 @@ th {
   border: 1px solid var(--nx-rule-strong);
   border-radius: 8px;
   padding: 10px;
-  background: color-mix(in srgb, var(--nx-surface) 92%, transparent);
+  background: var(--nx-surface);
 }
 
 .search-results-panel h3 {
@@ -2541,7 +2551,7 @@ th {
 }
 
 .store-header-cell {
-  border-right: 1px solid color-mix(in srgb, var(--store-color, #334155) 18%, var(--nx-surface));
+  border-right: 1px solid var(--nx-rule);
 }
 
 .grid-row {
@@ -2582,7 +2592,7 @@ th {
 
 .store-data-row.selected {
   border-color: var(--store-color, var(--nx-accent));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--store-color, var(--nx-accent)) 35%, transparent);
+  box-shadow: 0 0 0 2px var(--store-color, var(--nx-accent));
 }
 
 /* NMW (product panel) keeps its current fixed panel size — only the
@@ -3068,13 +3078,13 @@ th {
 
 .row-cell .grid-row.active-row,
 .store-product-grid-wrap .grid-row.active-row {
-  background: color-mix(in srgb, var(--store-color, var(--nx-accent)) 22%, var(--nx-surface));
+  background: var(--nx-accent-sunk);
   font-weight: 700;
 }
 
 .row-cell .grid-row.source-row,
 .store-product-grid-wrap .grid-row.source-row {
-  background: color-mix(in srgb, #16a34a 22%, var(--nx-surface));
+  background: rgba(22, 163, 74, 0.22);
   font-weight: 700;
 }
 
@@ -3098,7 +3108,7 @@ th {
 .purchase-detail-card {
   position: relative;
   width: min(680px, 94vw);
-  border: 1px solid color-mix(in srgb, var(--nx-rule-strong) 68%, transparent);
+  border: 1px solid var(--nx-rule-strong);
   background: var(--nx-surface);
   border-radius: 20px;
   box-shadow: 0 28px 80px rgba(2, 6, 23, 0.48), 0 0 0 1px rgba(255, 255, 255, 0.04);
@@ -3217,7 +3227,7 @@ th {
 .purchase-reference {
   flex: 0 0 auto;
   padding: 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--nx-accent) 25%, var(--nx-rule));
+  border: 1px solid rgba(37, 99, 235, 0.30);
   border-radius: 999px;
   background: var(--nx-accent-sunk);
   color: var(--nx-accent-ink);
@@ -3281,11 +3291,11 @@ th {
   border: 1px solid var(--nx-rule);
   border-left: 3px solid var(--nx-text-muted);
   border-radius: 9px;
-  background: color-mix(in srgb, var(--nx-surface-sunk) 60%, var(--nx-surface));
+  background: var(--nx-surface-sunk);
 }
 
 .purchase-party--transfer {
-  border-color: color-mix(in srgb, var(--nx-accent) 30%, var(--nx-rule));
+  border-color: rgba(37, 99, 235, 0.35);
   border-left-color: var(--nx-accent);
   background: var(--nx-accent-sunk);
 }
@@ -3304,7 +3314,7 @@ th {
    real supplier is shown, tinted with the info accent so it reads distinctly
    from a plain in-store purchase without masquerading as an internal transfer. */
 .purchase-party--via-warehouse {
-  border-color: color-mix(in srgb, var(--nx-info) 30%, var(--nx-rule));
+  border-color: rgba(8, 145, 178, 0.35);
   border-left-color: var(--nx-info);
 }
 
@@ -3350,7 +3360,7 @@ th {
   padding: 7px 9px;
   border: 1px solid var(--nx-rule);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--nx-surface-sunk) 55%, var(--nx-surface));
+  background: var(--nx-surface-sunk);
 }
 
 .purchase-metric span {
@@ -3394,7 +3404,7 @@ th {
   padding: 14px 16px;
   border: 1px solid var(--nx-rule);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--nx-surface-sunk) 64%, var(--nx-surface));
+  background: var(--nx-surface-sunk);
 }
 
 .purchase-detail-item--supplier {
@@ -3518,7 +3528,7 @@ th {
   border-radius: 5px;
   padding: 16px 8px;
   color: var(--nx-text-muted);
-  background: color-mix(in srgb, var(--nx-surface) 55%, transparent);
+  background: var(--nx-surface-sunk);
   text-align: center;
   font-size: 12px;
 }
@@ -3728,9 +3738,9 @@ th {
   border-radius: 4px;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--store-color, var(--nx-text-muted)) 14%, var(--nx-surface)) 25%,
-    color-mix(in srgb, var(--store-color, var(--nx-text-muted)) 28%, var(--nx-surface)) 50%,
-    color-mix(in srgb, var(--store-color, var(--nx-text-muted)) 14%, var(--nx-surface)) 75%
+    var(--nx-surface-sunk) 25%,
+    var(--nx-surface-hover) 50%,
+    var(--nx-surface-sunk) 75%
   );
   background-size: 200% 100%;
   animation: skeleton-pulse 1.1s ease-in-out infinite;
@@ -3989,9 +3999,9 @@ th {
    never grow proportionally with the window — extra width belongs to the
    center. Product name is the dominant column inside (see .procurement-grid). */
 .product-list-panel-v2 {
-  flex: 0 0 312px;
-  min-width: 300px;
-  max-width: 340px;
+  flex: 0 0 336px;
+  min-width: 320px;
+  max-width: 368px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4010,17 +4020,17 @@ th {
 /* Even with the supplier rail hidden the queue stays a fixed width — the freed
    space goes to the center matching workspace, not this list. */
 .product-list-panel-v2.expanded {
-  flex: 0 0 312px;
-  max-width: 340px;
+  flex: 0 0 336px;
+  max-width: 368px;
 }
 
 /* At 1366 the queue tightens a little more so the center keeps priority. */
 @media (max-width: 1440px) {
   .product-list-panel-v2,
   .product-list-panel-v2.expanded {
-    flex-basis: 288px;
-    min-width: 288px;
-    max-width: 300px;
+    flex-basis: 308px;
+    min-width: 308px;
+    max-width: 324px;
   }
 }
 
@@ -4086,22 +4096,22 @@ th {
 
 .procurement-grid th:nth-child(2),
 .procurement-grid td:nth-child(2) {
-  width: 44px;
+  width: 42px;
 }
 
 .procurement-grid th:nth-child(3),
 .procurement-grid td:nth-child(3) {
-  width: 40px;
+  width: 38px;
 }
 
 .procurement-grid th:nth-child(4),
 .procurement-grid td:nth-child(4) {
-  width: 62px;
+  width: 84px;
 }
 
 .procurement-grid th,
 .procurement-grid td {
-  padding: 8px 8px;
+  padding: 10px 9px;
   border-bottom: 1px solid var(--nx-rule);
   vertical-align: middle;
 }
@@ -4125,9 +4135,18 @@ th {
   background: var(--nx-surface-sunk);
 }
 
+.procurement-grid tbody tr:focus,
+.procurement-grid tbody tr:focus-visible {
+  outline: none;
+}
+
 .procurement-grid tbody tr.selected {
-  background: var(--nx-accent-sunk);
-  box-shadow: inset 3px 0 0 var(--nx-accent);
+  background: var(--nx-accent-selected, #cfe0fd);
+  box-shadow: inset 4px 0 0 var(--nx-accent);
+}
+
+.procurement-grid tbody tr.selected td {
+  font-weight: 600;
 }
 
 .procurement-grid tbody tr.edited {
@@ -4135,19 +4154,19 @@ th {
 }
 
 .procurement-grid tbody tr.selected.edited {
-  background: linear-gradient(90deg, var(--nx-success-sunk) 0%, var(--nx-accent-sunk) 100%);
+  background: linear-gradient(90deg, var(--nx-success-sunk) 0%, var(--nx-accent-selected, #cfe0fd) 100%);
 }
 
 .procurement-product-cell {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
 }
 
 .procurement-product-text {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -4159,9 +4178,9 @@ th {
 
 .procurement-product-text strong {
   color: var(--nx-text);
-  font-size: 12.5px;
+  font-size: 13px;
   display: -webkit-box;
-  line-height: 1.18;
+  line-height: 1.32;
   white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -4169,7 +4188,7 @@ th {
 
 .procurement-product-text span {
   color: var(--nx-text-muted);
-  font-size: 11px;
+  font-size: 11.5px;
   white-space: nowrap;
 }
 
@@ -4710,7 +4729,7 @@ th {
 
 .store-overview-card.active {
   border-color: var(--store-color, var(--nx-accent));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--store-color, var(--nx-accent)) 30%, transparent);
+  box-shadow: 0 0 0 2px var(--store-color, var(--nx-accent));
 }
 
 .store-overview-label {
@@ -4782,7 +4801,7 @@ th {
 .store-tab.active {
   border-color: var(--store-color, var(--nx-accent));
   border-bottom-color: var(--store-color, var(--nx-accent));
-  background: color-mix(in srgb, var(--store-color, var(--nx-accent)) 10%, var(--nx-surface));
+  background: var(--nx-surface-sunk);
   color: var(--store-color, var(--nx-text));
 }
 
@@ -5395,6 +5414,520 @@ th {
 /* Remarks is now the only facts row — keep it tight. */
 .lbl-screen .lbl-side-facts { border-bottom: none; padding-top: 2px; }
 
+/* Network Stock — additive page next to Stock Availability, laid out to
+   match the web app's Stock Availability screen (frontend/src/pages/stock/
+   StockAvailabilityPage.tsx): header+KPIs+tenant, mode-tab search row, a
+   wrapping grid of one card per branch (each just Product/Unit/Stock, via
+   the existing StoreProductGrid), and a single 5-panel detail row below for
+   whichever product got selected. Sized to fit 1366×768 without page scroll;
+   wider viewports just fit more branch cards per row. */
+.network-stock-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: calc(100vh - var(--ui-nav-height) - var(--ui-workspace-padding) * 2);
+  min-height: 0;
+  overflow: hidden;
+}
+/* Subtle, narrow scrollbars for this screen's internal scroll regions
+   (branch product lists, batch/sales/purchase tables) instead of the fat
+   browser-default bar - thin enough to stay out of the way, visible enough
+   to signal there's more data below. */
+.network-stock-screen ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.network-stock-screen ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.network-stock-screen ::-webkit-scrollbar-thumb {
+  background: var(--nx-rule-strong, rgba(100,116,139,0.35));
+  border-radius: 4px;
+}
+.network-stock-screen ::-webkit-scrollbar-thumb:hover {
+  background: var(--nx-text-muted, rgba(100,116,139,0.55));
+}
+
+.ns-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding-bottom: 2px;
+}
+.ns-head h2 { margin: 0; font-size: 19px; font-weight: 700; color: var(--nx-text); line-height: 1.15; }
+.ns-head p { margin: 1px 0 0; font-size: 11px; color: var(--nx-text-muted); }
+.ns-head__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ns-kpis {
+  display: flex;
+  gap: 6px;
+}
+.ns-kpi {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 0;
+  padding: 3px 10px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 6px;
+  background: var(--nx-surface-raised);
+  min-width: 56px;
+}
+.ns-kpi strong { font-size: 14px; color: var(--nx-text); font-variant-numeric: tabular-nums; line-height: 1.15; }
+.ns-kpi i { font-style: normal; font-size: 9.5px; color: var(--nx-text-muted); text-transform: uppercase; letter-spacing: .02em; }
+.ns-kpi--accent strong { color: var(--stock-blue, #5b8def); }
+.ns-kpi--ok strong { color: var(--nx-success, #198754); }
+
+.ns-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
+}
+.ns-search__tabs {
+  display: flex;
+  border: 1px solid var(--nx-rule);
+  border-radius: 6px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.ns-search__tab {
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  background: var(--nx-surface);
+  color: var(--nx-text-soft);
+  cursor: pointer;
+}
+.ns-search__tab--active {
+  background: var(--stock-blue, #5b8def);
+  color: #fff;
+}
+/* nowrap (not wrap): tabs + search + in-stock + status all fit comfortably
+   on one row at 1366px with the search box capped below - wrap was letting
+   status fall to its own line despite there being plenty of room, which read
+   as an oversized empty second row. */
+.ns-search__fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+/* Bounded, not stretched: was flex:1 1 260px, which let the search box eat
+   almost the full toolbar width. A fixed sane range keeps the toolbar
+   balanced (Product/Batch toggle, search, in-stock checkbox, status) instead
+   of one control dominating the row. */
+.ns-field--grow {
+  flex: 0 1 520px;
+  min-width: 300px;
+}
+.ns-search__fields .stock-search-status {
+  font-size: 11.5px;
+}
+/* This screen's search row isn't wrapped in .global-search-row (that class
+   owns the height:32px / left-padding-for-the-icon fix on the original Stock
+   Availability screen), so without this the input fell back to a generic
+   input{min-height:42px} rule with no left padding - too tall, and the
+   magnifying-glass icon sat directly on top of the typed text. */
+.ns-search .stock-search-field input {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px 0 36px;
+  text-transform: uppercase;
+}
+/* This screen has no batch-status column of its own, so the Expired/Near
+   Expiry/Non Moving/Healthy dots (ProductStatusLegend's default content)
+   were dead weight here - App.jsx renders it with salesTrendOnly, which
+   drops them and keeps just one grouped "Sales Trend" control. It lives in
+   the Monthly Movement panel's own header (not the page header) since that's
+   the chart it actually describes - .ns-card__head is already a
+   space-between flex row, so this just takes the right-hand slot. */
+.ns-card__head .product-status-legend--trend-only {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-transform: none;
+}
+.ns-card__head .sales-trend-group {
+  height: 20px;
+  padding: 0 8px;
+  gap: 8px;
+  font-size: 9.5px;
+}
+.sales-trend-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 6px;
+  background: var(--nx-surface-sunk);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--nx-text-soft);
+}
+
+/* Two clearly separate work areas, each its own container with its own
+   background/border/heading - Store Stock (cross-store comparison only) and
+   Product Details (everything about the one selected product) are visually
+   distinct sections, not one continuous block. */
+.ns-store-section,
+.ns-product-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 10px;
+  min-height: 0;
+}
+/* Proportional, not content-fixed: a % flex-basis (not flex:0 0 auto) so
+   BOTH sections grow together when the window/resolution changes, keeping
+   their ratio - at a taller window the store cards get taller too (more
+   rows become visible before scrolling) instead of every extra pixel going
+   only to Product Details. Row height itself stays fixed (25px, see
+   .ns-branch .store-product-grid-wrap .grid-row below) so text never grows
+   oversized; what scales is how many of those fixed-height rows fit. */
+.ns-store-section {
+  flex: 0 0 43%;
+  background: var(--nx-surface-sunk, rgba(100,116,139,0.05));
+}
+.ns-product-section {
+  flex: 1 1 auto;
+  background: var(--nx-surface);
+  overflow: hidden;
+}
+.ns-section-head {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--nx-text-muted);
+}
+.ns-branches-section {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ns-branches-head {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nx-text-muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+/* Real CSS grid, not flex-wrap: six even columns that always use the full
+   width (no leftover horizontal gap). grid-auto-rows: minmax(0,1fr) makes
+   the single row stretch to fill whatever height .ns-branches-section has
+   (which is now itself a % of the viewport, see .ns-store-section above) -
+   every card gets the same stretched height by construction (one grid row),
+   so they stay identical while still growing/shrinking with the window.
+   Narrower windows fall back to 3 columns (media query below) rather than
+   clipping or wrapping oddly. */
+.ns-branches {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 1100px) {
+  .ns-branches { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.ns-branch {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--nx-rule);
+  border-radius: 8px;
+  background: var(--nx-surface-raised);
+  overflow: hidden;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.ns-branch--active {
+  border-color: var(--stock-blue, #5b8def);
+  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.35);
+}
+.ns-branch__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--nx-rule);
+  background: var(--nx-surface);
+}
+.ns-branch__head strong { font-size: 13px; font-weight: 700; color: var(--nx-text); }
+.ns-branch__head span { font-size: 10px; color: var(--nx-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-branch--active .ns-branch__head {
+  background: rgba(91, 141, 239, 0.10);
+}
+/* Fills whatever height the card has (itself a % of the viewport via the
+   .ns-store-section/.ns-branches chain above) instead of a hardcoded 175px -
+   this is what lets the store grid grow/shrink proportionally when the
+   window is resized, not just Product Details. Still never depends on the
+   MATCH COUNT: a 1-product result leaves empty space in the same box a
+   30-product result scrolls inside of, so all six cards stay
+   pixel-identical in height regardless of what each branch matched -
+   that guarantee is unchanged, only the source of the height changed from a
+   fixed number to "however tall this resolution's store section is". */
+.ns-branch .store-product-grid-wrap {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 3px;
+}
+/* Narrow cards (~220px, 6-per-row) starve the product-name column against
+   the fixed unit/stock columns — claw back every spare px via tighter
+   row gap/padding (column widths themselves are narrowed via the
+   columnWidths prop passed to this StoreProductGrid instance in App.jsx,
+   scoped to this screen only). Row height stays a fixed 25px regardless of
+   resolution (only the number of rows the card can show changes) - text
+   never grows oversized, and single-line truncated name (not wrapped) keeps
+   every row exactly this height. */
+.ns-branch .store-product-grid-wrap .grid-row {
+  gap: 2px;
+  height: 25px;
+  min-height: 25px;
+  padding: 0 2px;
+  box-sizing: border-box;
+  align-items: center;
+}
+.ns-branch .store-product-grid-wrap .grid-row span.product-cell-unit,
+.ns-branch .store-product-grid-wrap .grid-row span.product-cell-stock {
+  font-size: 10.5px;
+}
+/* GridRow wraps every cell in its own unclassed <span> (the real grid item —
+   blockified by the grid, and the thing text-align actually has to be set on
+   to align its inline content); .product-cell-unit/.product-cell-stock are
+   inline spans NESTED inside that wrapper, so text-align on THEM (the old,
+   ineffective rule above) never did anything — the wrapper's inherited
+   text-align:left (from the base ".grid-row span" rule) was what actually
+   rendered. Targeting the wrapper itself by position is what the header row
+   above already does correctly (see .ns-branch__cols-row), mirrored here. */
+.ns-branch .store-product-grid-wrap .grid-row > span:nth-child(2) {
+  text-align: center;
+}
+.ns-branch .store-product-grid-wrap .grid-row > span:nth-child(3) {
+  text-align: right;
+  padding-right: 1px;
+}
+.ns-branch .store-product-grid-wrap .grid-row span.product-cell-main {
+  line-height: 1.2;
+}
+/* The darker source/sync row fills (App.jsx rowStyle) set their own text
+   color for contrast, but product-cell-stock's --available/--zero classes
+   are more specific and would otherwise keep rendering green-on-green /
+   red-on-blue - force a legible ink on top of the highlight instead. */
+.ns-branch .store-product-grid-wrap .grid-row.source-row .product-cell-stock,
+.ns-branch .store-product-grid-wrap .grid-row.active-row .product-cell-stock {
+  color: inherit;
+}
+/* Hover must never be mistaken for the persistent green(source)/blue(sync)
+   selection fill - var(--nx-surface-hover) is a pale BLUE-tinted gray in
+   this theme, which sat too close to the sync-blue highlight to read as
+   "just hovering" next to several genuinely-selected blue rows. Neutral
+   warm gray instead, and it's temporary (:hover only, gone on mouseleave -
+   no JS/persisted state involved). */
+.ns-branch .store-product-grid-wrap .grid-row:not(.source-row):not(.active-row):hover {
+  background: rgba(148, 163, 184, 0.18);
+}
+.ns-branch .store-product-grid-wrap .grid-row:nth-child(even):not(.source-row):not(.active-row) {
+  background: rgba(100,116,139,0.035);
+}
+.ns-branch__cols-row {
+  padding: 5px 3px;
+  border-bottom: 1px solid var(--nx-rule);
+  background: var(--nx-surface-muted, rgba(100,116,139,0.06));
+}
+.ns-branch__cols-row span {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--nx-text-muted);
+}
+.ns-branch__cols-row span:nth-child(2),
+.ns-branch__cols-row span:nth-child(3) {
+  text-align: right;
+}
+
+.ns-detail {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+/* ONE bordered "selected record" summary box, ONE LINE - product/branch/
+   MRP/Stock/Unit/Last Sale/Last Purchase all in a single flex row with thin
+   vertical separators, target ~34px. Last Sale/Purchase are read straight
+   off row [0] of the already-loaded sales/purchases arrays in App.jsx - no
+   extra fetch, no invented data. */
+.ns-detail__context {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 8px;
+  background: var(--nx-surface-raised);
+  color: var(--nx-text-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ns-detail__context strong { flex: 0 0 auto; font-size: 13.5px; font-weight: 700; color: var(--nx-text); }
+.ns-detail__context-store { flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); }
+.ns-detail__context-stock {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--nx-success, #198754);
+}
+.ns-detail__context > span {
+  position: relative;
+  flex: 0 0 auto;
+  padding-left: 10px;
+}
+.ns-detail__context > span:not(:first-of-type)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--nx-rule);
+}
+/* Four columns filling the full width in one row - batch/sales/purchase get
+   a lighter share, chart gets the most room (~20/22/22/36 target ratio). */
+.ns-detail__grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1.15fr 1.15fr 1.9fr;
+  gap: 8px;
+}
+.ns-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--nx-rule);
+  border-radius: 8px;
+  background: var(--nx-surface-raised);
+  overflow: hidden;
+}
+.ns-card__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  color: var(--nx-text-soft);
+  border-bottom: 1px solid var(--nx-rule);
+  background: var(--nx-surface);
+}
+.ns-card__head em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--nx-text-muted);
+  background: var(--nx-surface-sunk, rgba(100,116,139,0.12));
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-variant-numeric: tabular-nums;
+}
+.ns-card__waiting {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  font-size: 11.5px;
+  color: var(--nx-text-muted);
+  text-align: center;
+}
+.ns-mini-table {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.ns-mini-table th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 4px 6px;
+  background: var(--nx-surface);
+  color: var(--nx-text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--nx-rule);
+}
+.ns-mini-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--nx-rule-soft, var(--nx-rule));
+  color: var(--nx-text-soft);
+}
+.ns-mini-table td.num-col, .ns-mini-table th.num-col { text-align: right; font-variant-numeric: tabular-nums; }
+.ns-mini-table tbody tr:hover { background: var(--nx-surface-hover); cursor: pointer; }
+
+.ns-area--chart { padding: 4px; }
+.ns-area--chart .ns-card__head { margin: -4px -4px 4px; }
+
+/* Column-label row above BatchTable's data rows (BatchTable itself only
+   renders data — the column headers normally come from the shared
+   StoreColumnHeaders component, which this screen's compact branch cards
+   don't use). */
+.ns-batch-head-row {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--nx-text-muted);
+  border-bottom: 1px solid var(--nx-rule);
+  text-transform: uppercase;
+}
+/* Stk/MRP/P.Age/S.Age are numeric columns - right-align the header labels to
+   match (Exp stays left, it's a date). */
+.ns-batch-head-row > span:nth-child(2),
+.ns-batch-head-row > span:nth-child(3),
+.ns-batch-head-row > span:nth-child(4),
+.ns-batch-head-row > span:nth-child(5) {
+  text-align: right;
+}
+
 /* Stock Availability workspace: compact, aligned desktop dashboard. */
 .store-workbench {
   display: grid;
@@ -5593,7 +6126,7 @@ th {
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--nx-accent) 55%, transparent);
+  border: 1px solid rgba(37, 99, 235, 0.55);
   border-radius: 8px;
   background: var(--nx-accent-sunk);
   color: var(--nx-accent-ink);
@@ -5638,7 +6171,7 @@ th {
 }
 
 .non-moving-wrap {
-  border-color: color-mix(in srgb, var(--nx-success) 60%, var(--nx-rule));
+  border-color: rgba(5, 150, 105, 0.60);
   border-radius: 10px;
   background: var(--nx-surface);
   box-shadow: var(--nx-shadow-sm);
@@ -5656,7 +6189,7 @@ th {
 .non-moving-panel-row {
   gap: 6px;
   padding: 7px;
-  background: color-mix(in srgb, var(--nx-success-sunk) 45%, var(--nx-surface));
+  background: var(--nx-success-sunk);
 }
 
 .non-moving-panel-row > div {
@@ -6074,7 +6607,7 @@ th {
 }
 
 .store-workbench .global-search-row {
-  border-color: color-mix(in srgb, var(--nx-rule) 82%, var(--stock-blue) 18%);
+  border-color: var(--nx-rule);
   background: linear-gradient(180deg, var(--nx-surface-raised), var(--nx-surface));
   box-shadow: var(--nx-shadow-md);
 }
@@ -6084,18 +6617,18 @@ th {
 .store-workbench .stock-only-filter,
 .store-workbench .current-store-badge {
   border-color: var(--nx-rule);
-  background: color-mix(in srgb, var(--nx-surface-sunk) 82%, var(--nx-surface) 18%);
+  background: var(--nx-surface-sunk);
 }
 
 .store-workbench .stock-search-field input:focus {
   border-color: var(--stock-blue);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--stock-blue) 22%, transparent);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.22);
 }
 
 .store-workbench .store-order-button {
-  border-color: color-mix(in srgb, var(--stock-blue) 46%, var(--nx-rule));
-  background: color-mix(in srgb, var(--stock-blue) 12%, var(--nx-surface));
-  color: color-mix(in srgb, var(--stock-blue) 82%, var(--nx-text));
+  border-color: rgba(91, 141, 239, 0.46);
+  background: rgba(91, 141, 239, 0.12);
+  color: var(--stock-blue);
 }
 
 .store-workbench .store-column-headers {
@@ -6167,12 +6700,12 @@ th {
 }
 
 .store-workbench .store-data-row.selected {
-  border-color: color-mix(in srgb, var(--stock-blue) 72%, var(--nx-rule));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--stock-blue) 16%, transparent);
+  border-color: rgba(91, 141, 239, 0.72);
+  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.16);
 }
 
 .store-workbench .store-row-label {
-  border-right-color: color-mix(in srgb, var(--store-color) 70%, var(--nx-rule));
+  border-right-color: var(--store-color, var(--nx-rule));
   background: var(--nx-surface-sunk);
   color: var(--nx-text-soft);
 }
@@ -6183,8 +6716,8 @@ th {
 }
 
 .store-workbench .stock-cell-status {
-  border: 1px solid color-mix(in srgb, var(--nx-rule) 86%, var(--stock-blue) 14%);
-  background: color-mix(in srgb, var(--nx-surface-sunk) 88%, var(--stock-blue) 12%);
+  border: 1px solid var(--nx-rule);
+  background: var(--nx-surface-sunk);
 }
 
 .store-workbench .store-product-grid-wrap .grid-row.active-row,
@@ -6240,7 +6773,7 @@ th {
 
 .store-workbench .row-cell .grid-row:hover,
 .store-workbench .store-product-grid-wrap .grid-row:hover {
-  background: color-mix(in srgb, var(--stock-blue) 8%, var(--nx-surface));
+  background: rgba(91, 141, 239, 0.08);
 }
 
 .store-workbench .product-cell-stock--available {
@@ -6273,7 +6806,7 @@ th {
 }
 
 .store-workbench .non-moving-wrap {
-  border-color: color-mix(in srgb, var(--stock-amber) 64%, var(--nx-rule));
+  border-color: rgba(214, 162, 71, 0.64);
   background: var(--nx-surface);
   box-shadow: var(--nx-shadow-md);
 }
@@ -6299,15 +6832,15 @@ th {
 }
 
 .store-workbench .non-moving-panel-row {
-  background: color-mix(in srgb, var(--nx-warning-sunk) 48%, var(--nx-surface));
+  background: var(--nx-warning-sunk);
 }
 
 .store-workbench .non-moving-panel-row.clickable:hover {
-  background: color-mix(in srgb, var(--nx-warning-sunk) 72%, var(--nx-surface));
+  background: var(--nx-warning-sunk);
 }
 
 .store-workbench .non-moving-panel-row > div {
-  border-color: color-mix(in srgb, var(--nx-rule) 88%, var(--stock-amber) 12%);
+  border-color: var(--nx-rule);
   background: var(--nx-surface-raised);
 }
 
@@ -6354,15 +6887,15 @@ th {
 }
 
 .store-workbench .non-moving-store-card:hover {
-  border-color: color-mix(in srgb, var(--nx-success) 58%, var(--nx-rule));
+  border-color: rgba(5, 150, 105, 0.58);
   box-shadow: var(--nx-shadow-md);
   transform: translateY(-1px);
 }
 
 .store-workbench .non-moving-store-card.active {
   border-color: var(--nx-success);
-  background: color-mix(in srgb, var(--nx-success-sunk) 28%, var(--nx-surface-raised));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nx-success) 18%, transparent);
+  background: var(--nx-success-sunk);
+  box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.18);
 }
 
 .store-workbench .non-moving-store-card--near-expiry {
@@ -6605,15 +7138,15 @@ th {
 }
 
 .store-workbench .batch-row--non-moving {
-  background: color-mix(in srgb, var(--nx-warning-sunk) 42%, transparent);
+  background: rgba(217, 119, 6, 0.12);
 }
 
 .store-workbench .batch-row--near-expiry {
-  background: color-mix(in srgb, var(--nx-warning-sunk) 64%, transparent);
+  background: rgba(217, 119, 6, 0.20);
 }
 
 .store-workbench .batch-row--expired {
-  background: color-mix(in srgb, var(--nx-danger-sunk) 62%, transparent);
+  background: rgba(220, 38, 38, 0.14);
 }
 
 .store-workbench .batch-cell-status {
@@ -6803,7 +7336,7 @@ th {
 
 .grid-settings-button[aria-expanded="true"] {
   border-color: var(--stock-blue);
-  background: color-mix(in srgb, var(--stock-blue) 14%, var(--nx-surface));
+  background: rgba(91, 141, 239, 0.14);
   color: var(--stock-blue);
 }
 
@@ -6853,7 +7386,7 @@ th {
   padding: 4px 10px;
   border: 1px solid var(--stock-blue);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--stock-blue) 12%, var(--nx-surface));
+  background: rgba(91, 141, 239, 0.12);
   color: var(--stock-blue);
   font-size: 10.5px;
   font-weight: 700;
@@ -6862,7 +7395,7 @@ th {
 }
 
 .grid-settings-panel__reset-all:hover {
-  background: color-mix(in srgb, var(--stock-blue) 22%, var(--nx-surface));
+  background: rgba(91, 141, 239, 0.22);
 }
 
 .grid-settings-panel__body {
@@ -7052,7 +7585,7 @@ th {
   cursor: pointer;
 }
 .store-workbench .batch-row.clickable:hover {
-  background: color-mix(in srgb, var(--stock-amber) 14%, var(--nx-surface));
+  background: rgba(214, 162, 71, 0.14);
 }
 
 /* Batch detail popup reuses the purchase-card shell but is a bit narrower. */
@@ -7192,7 +7725,7 @@ th {
 
 .grid-settings-panel__movebtn:hover:not(:disabled) {
   border-color: var(--stock-blue);
-  background: color-mix(in srgb, var(--stock-blue) 14%, var(--nx-surface));
+  background: rgba(91, 141, 239, 0.14);
   color: var(--stock-blue);
 }
 
@@ -7258,7 +7791,7 @@ th {
 
 .grid-settings-panel__chip.is-on {
   border-color: var(--stock-blue);
-  background: color-mix(in srgb, var(--stock-blue) 18%, var(--nx-surface));
+  background: rgba(91, 141, 239, 0.18);
   color: var(--stock-blue);
 }
 
@@ -7891,47 +8424,83 @@ th {
 /* assignment drawer */
 .lbl-assign-drawer {
   position: fixed; top: 0; right: 0; height: 100vh; width: 460px; max-width: 92vw;
-  background: var(--nx-surface); box-shadow: -6px 0 24px rgba(15, 23, 42, 0.22);
-  display: flex; flex-direction: column; animation: lbl-drawer-in 0.16s ease;
+  background: var(--nx-surface); box-shadow: -12px 0 40px rgba(15, 23, 42, 0.28);
+  border-radius: 22px 0 0 22px; overflow: hidden;
+  display: flex; flex-direction: column; animation: lbl-drawer-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes lbl-drawer-in { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
 .lbl-assign-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 14px 18px; border-bottom: 1px solid var(--nx-rule); font-size: 15px;
+  padding: 20px 22px; border-bottom: 1px solid var(--nx-rule); font-size: 16px; font-weight: 800;
 }
 .lbl-assign-close {
-  border: none; background: transparent; font-size: 16px; cursor: pointer; color: var(--nx-text-muted);
-  width: 28px; height: 28px; border-radius: 6px;
+  border: none; background: var(--nx-surface-sunk); font-size: 15px; cursor: pointer; color: var(--nx-text-muted);
+  width: 32px; height: 32px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+  transition: background 0.12s, color 0.12s;
 }
 .lbl-assign-close:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
-.lbl-assign-body { padding: 16px 18px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 14px; }
+.lbl-assign-body { padding: 20px 22px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 18px; }
 .lbl-assign-summary { font-size: 13px; color: var(--nx-text-soft); }
-.lbl-assign-modes { display: flex; flex-direction: column; gap: 8px; }
+.lbl-assign-modes { display: flex; flex-direction: column; gap: 10px; }
 .lbl-assign-mode {
-  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
-  border: 1px solid var(--nx-rule-strong); border-radius: 9px; background: var(--nx-surface);
+  display: flex; gap: 14px; align-items: center; padding: 16px 18px; cursor: pointer;
+  border: 2px solid var(--nx-rule-strong); border-radius: 18px; background: var(--nx-surface);
+  transition: border-color 0.14s, background 0.14s, box-shadow 0.14s, transform 0.08s;
 }
-.lbl-assign-mode.is-on { border-color: var(--nx-accent); background: var(--nx-accent-sunk); }
-.lbl-assign-mode input { margin-top: 3px; }
-.lbl-assign-mode span { display: flex; flex-direction: column; gap: 2px; }
-.lbl-assign-mode b { font-size: 13px; color: var(--nx-text); }
-.lbl-assign-mode i { font-size: 11.5px; color: var(--nx-text-muted); font-style: normal; }
-.lbl-assign-fields { display: flex; gap: 10px; flex-wrap: wrap; }
-.lbl-assign-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--nx-text-muted); font-weight: 600; }
-.lbl-assign-fields input { width: 96px; height: 30px; padding: 0 8px; border: 1px solid var(--nx-rule-strong); border-radius: 6px; background: var(--nx-surface); color: var(--nx-text); }
-.lbl-assign-error { font-size: 12.5px; color: var(--nx-danger-ink); background: var(--nx-danger-sunk); padding: 8px 10px; border-radius: 7px; }
-.lbl-assign-preview { border: 1px solid var(--nx-rule); border-radius: 9px; overflow: hidden; }
-.lbl-assign-preview-head { padding: 8px 12px; background: var(--nx-surface-sunk); font-size: 12.5px; font-weight: 700; color: var(--nx-text); }
-.lbl-assign-preview-boxes { max-height: 260px; overflow-y: auto; }
-.lbl-assign-box-row { display: flex; justify-content: space-between; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--nx-rule); font-size: 13px; }
+.lbl-assign-mode:hover { border-color: var(--nx-accent); transform: translateY(-1px); }
+.lbl-assign-mode.is-on {
+  border-color: var(--nx-accent); background: var(--nx-accent-sunk);
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.16);
+}
+/* Custom oversized radio dot — the native control is kept for a11y/behavior
+   but visually hidden behind this ring+dot, which is easier to see and
+   matches the "heavy" card look than a stock OS radio. */
+.lbl-assign-mode input {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: 0 0 auto;
+  width: 22px; height: 22px; border-radius: 999px; border: 2px solid var(--nx-rule-strong);
+  background: var(--nx-surface); display: grid; place-content: center; cursor: pointer;
+  transition: border-color 0.14s;
+}
+.lbl-assign-mode input::before {
+  content: ''; width: 11px; height: 11px; border-radius: 999px; background: var(--nx-accent);
+  transform: scale(0); transition: transform 0.12s ease-out;
+}
+.lbl-assign-mode input:checked { border-color: var(--nx-accent); }
+.lbl-assign-mode input:checked::before { transform: scale(1); }
+.lbl-assign-mode span { display: flex; flex-direction: column; gap: 3px; }
+.lbl-assign-mode b { font-size: 14px; color: var(--nx-text); }
+.lbl-assign-mode i { font-size: 12px; color: var(--nx-text-muted); font-style: normal; line-height: 1.35; }
+.lbl-assign-fields { display: flex; gap: 12px; flex-wrap: wrap; }
+.lbl-assign-fields label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--nx-text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+.lbl-assign-fields input {
+  width: 104px; height: 38px; padding: 0 12px; border: 1.5px solid var(--nx-rule-strong);
+  border-radius: 12px; background: var(--nx-surface); color: var(--nx-text); font-size: 13.5px;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.lbl-assign-fields input:focus {
+  outline: none; border-color: var(--nx-accent); box-shadow: 0 0 0 3px var(--nx-accent-sunk);
+}
+.lbl-assign-error { font-size: 12.5px; color: var(--nx-danger-ink); background: var(--nx-danger-sunk); padding: 10px 12px; border-radius: 12px; }
+.lbl-assign-preview { border: 1px solid var(--nx-rule); border-radius: 16px; overflow: hidden; }
+.lbl-assign-preview-head { padding: 10px 14px; background: var(--nx-surface-sunk); font-size: 12.5px; font-weight: 700; color: var(--nx-text); }
+.lbl-assign-preview-boxes { max-height: 260px; overflow-y: auto; padding-bottom: 6px; }
+.lbl-assign-box-row { display: flex; justify-content: space-between; gap: 10px; padding: 7px 14px; border-top: 1px solid var(--nx-rule); font-size: 13px; }
 .lbl-assign-box-id { font-weight: 800; color: var(--nx-accent-ink); }
 .lbl-assign-box-fill { color: var(--nx-text-soft); }
-.lbl-assign-foot { display: flex; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--nx-rule); }
-.lbl-assign-btn { flex: 1; height: 38px; border-radius: 8px; border: 1px solid var(--nx-rule-strong); background: var(--nx-surface); color: var(--nx-text); font-weight: 700; cursor: pointer; }
-.lbl-assign-btn:hover:not(:disabled) { background: var(--nx-surface-hover); }
-.lbl-assign-btn--primary { background: var(--nx-accent); border-color: var(--nx-accent); color: var(--nx-text-on); }
+.lbl-assign-foot { display: flex; gap: 12px; padding: 18px 22px; border-top: 1px solid var(--nx-rule); }
+.lbl-assign-btn {
+  flex: 1; height: 46px; border-radius: 16px; border: 1.5px solid var(--nx-rule-strong);
+  background: var(--nx-surface); color: var(--nx-text); font-weight: 800; font-size: 14px; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
+}
+.lbl-assign-btn:hover:not(:disabled) { background: var(--nx-surface-hover); transform: translateY(-1px); }
+.lbl-assign-btn:active:not(:disabled) { transform: translateY(0); }
+.lbl-assign-btn--primary {
+  background: var(--nx-accent); border-color: var(--nx-accent); color: var(--nx-text-on);
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.32);
+}
 .lbl-assign-btn--primary:hover:not(:disabled) { background: var(--nx-accent-hover); }
-.lbl-assign-btn:disabled { opacity: 0.5; cursor: default; }
+.lbl-assign-btn:disabled { opacity: 0.5; cursor: default; transform: none; box-shadow: none; }
 
 /* label queue modal */
 .lbl-queue-modal {
@@ -8131,6 +8700,24 @@ th {
   display: flex;
   gap: 8px;
   margin-top: 4px;
+}
+.schema-sync-toggle {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+.schema-sync-local-source {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9em;
+  background: rgba(120, 120, 120, 0.08);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.schema-sync-conn-card .schema-sync-conn-card {
+  border: none;
+  padding: 0;
 }
 .schema-sync-compare-actions,
 .schema-sync-apply-actions {
