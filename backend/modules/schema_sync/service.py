@@ -68,6 +68,19 @@ def _render_type(col: dict) -> str:
     return dt
 
 
+def _render_type_with_collation(col: dict) -> str:
+    """Type + explicit COLLATE, when the column has one (char types only).
+
+    Without this, a newly created column inherits the TARGET database's
+    default collation instead of Dev's - harmless until a synced stored
+    procedure compares/joins it against another column with Dev's collation,
+    which then fails "Cannot resolve the collation conflict".
+    """
+    rendered = _render_type(col)
+    collation = col.get("CollationName")
+    return f"{rendered} COLLATE {collation}" if collation else rendered
+
+
 def _col_key(c: dict):
     return (c["SchemaName"], c["TableName"])
 
@@ -133,13 +146,32 @@ def _normalize_sql(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
-def _to_create_or_alter(definition: str) -> str:
-    return re.sub(
-        r"^\s*CREATE\s+(PROCEDURE|PROC|VIEW|FUNCTION|TRIGGER)\b",
-        r"CREATE OR ALTER \1",
+_DROP_KEYWORD = {"procedure": "PROCEDURE", "view": "VIEW", "function": "FUNCTION", "trigger": "TRIGGER"}
+
+
+def _programmable_apply_sql(schema: str, name: str, kind: str, definition: str) -> str:
+    """DROP-if-exists + dynamic-EXEC CREATE, not CREATE OR ALTER.
+
+    CREATE OR ALTER needs compat level 130+ (SQL Server 2016 SP1) - on an
+    older target it fails "Incorrect syntax near 'OR'". CREATE PROCEDURE/
+    VIEW/FUNCTION/TRIGGER also must be the first statement in its batch, so
+    it can't simply be preceded by a DROP in the same execute() call -
+    wrapping it in EXEC(N'...') sidesteps that rule since the dynamic string
+    is compiled as its own batch.
+    """
+    drop_kw = _DROP_KEYWORD.get(kind, "PROCEDURE")
+    qualified = f"{schema}.{name}"
+    normalized = re.sub(
+        r"^\s*CREATE\s+(?:OR\s+ALTER\s+)?(PROCEDURE|PROC|VIEW|FUNCTION|TRIGGER)\b",
+        r"CREATE \1",
         definition,
         count=1,
         flags=re.IGNORECASE,
+    )
+    escaped = normalized.replace("'", "''")
+    return (
+        f"IF OBJECT_ID(N'{qualified}') IS NOT NULL EXEC('DROP {drop_kw} {qualified}');\n"
+        f"EXEC(N'{escaped}');"
     )
 
 
@@ -181,6 +213,21 @@ def compare(source_conn: dict, target_conn: dict) -> CompareResult:
             object_name=object_name, description=description, sql=sql,
         ))
 
+    # ---- 0. Ensure every Dev schema exists in Production first ------------
+    # A brand-new target only has 'dbo' - every CREATE TABLE/INDEX/procedure
+    # into a non-dbo schema (e.g. 'procurement') otherwise fails with
+    # "schema does not exist". CREATE SCHEMA must also be the first statement
+    # in its batch, so it's wrapped in dynamic EXEC like the programmables.
+    dev_schemas = sorted({s for (s, _t) in dev_cols} | {p["SchemaName"] for p in src["programmables"]})
+    for schema_name in dev_schemas:
+        if _ci(schema_name) == "dbo":
+            continue
+        sql = (
+            f"IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'{schema_name}') "
+            f"EXEC('CREATE SCHEMA [{schema_name}]');"
+        )
+        add_stmt("schema", schema_name, schema_name, f"Ensure schema {schema_name} exists", sql)
+
     create_tables = []
     skip_keys = set()
     common_tables = []
@@ -215,7 +262,7 @@ def compare(source_conn: dict, target_conn: dict) -> CompareResult:
         cols = dev_cols[key]
         lines = []
         for c in cols:
-            decl = f"    [{c['ColumnName']}] {_render_type(c)}"
+            decl = f"    [{c['ColumnName']}] {_render_type_with_collation(c)}"
             if c["IsIdentity"]:
                 decl += " IDENTITY(1,1)"
             decl += " NOT NULL" if not c["IsNullable"] else " NULL"
@@ -244,7 +291,7 @@ def compare(source_conn: dict, target_conn: dict) -> CompareResult:
             name = c["ColumnName"]
             existing = pmap.get(_ci(name))
             if existing is None:
-                decl = f"[{name}] {_render_type(c)}"
+                decl = f"[{name}] {_render_type_with_collation(c)}"
                 decl += " NOT NULL" if not c["IsNullable"] else " NULL"
                 dd = (c.get("DefaultDefinition") or "").strip()
                 if dd:
@@ -274,19 +321,57 @@ def compare(source_conn: dict, target_conn: dict) -> CompareResult:
                 continue
 
             if dev_type != prod_type or dev_null != prod_null:
-                null_kw = "NULL" if dev_null else "NOT NULL"
-                sql = f"ALTER TABLE {q(ps, pt)} ALTER COLUMN [{name}] {dev_type} {null_kw};"
-                add_stmt(
-                    "column-alter", ps, pt,
-                    f"Alter {name}: {prod_type}{'' if prod_null else ' NOT NULL'} -> {dev_type}{'' if dev_null else ' NOT NULL'}",
-                    sql,
-                )
-                column_diffs.append(DiffItem(
-                    category="column", schema_name=ps, object_name=f"{pt}.{name}",
-                    detail=f"Type/nullability differs: dev={dev_type} {'NULL' if dev_null else 'NOT NULL'} "
-                           f"vs prod={prod_type} {'NULL' if prod_null else 'NOT NULL'} (forced)",
-                    severity="destructive-skipped" if not prod_null and prod_type != dev_type else "warn",
-                ))
+                # Type actually narrowing/changing while Production already enforces
+                # NOT NULL - existing rows may not fit the new type, can't be forced
+                # blindly (was previously labeled "Manual review required" but the
+                # ALTER still ran anyway and failed loudly - now it's actually skipped).
+                destructive = not prod_null and prod_type != dev_type
+                tightening_not_null = (not dev_null) and prod_null
+                if destructive:
+                    column_diffs.append(DiffItem(
+                        category="column", schema_name=ps, object_name=f"{pt}.{name}",
+                        detail=f"Type differs and Production already enforces NOT NULL: dev={dev_type} "
+                               f"vs prod={prod_type} NOT NULL - changing in place risks rejecting/truncating "
+                               f"existing data, requires manual review",
+                        severity="destructive-skipped",
+                    ))
+                elif tightening_not_null and not dev_dd:
+                    column_diffs.append(DiffItem(
+                        category="column", schema_name=ps, object_name=f"{pt}.{name}",
+                        detail="Dev requires NOT NULL but Production allows NULL and Dev has no default to "
+                               "backfill existing NULLs with - requires manual review",
+                        severity="destructive-skipped",
+                    ))
+                else:
+                    null_kw = "NULL" if dev_null else "NOT NULL"
+                    backfill = ""
+                    if tightening_not_null and dev_dd:
+                        # Seed existing NULLs with Dev's own default before tightening,
+                        # so the ALTER doesn't fail on rows that predate the NOT NULL rule.
+                        backfill = f"UPDATE {q(ps, pt)} SET [{name}] = {dev_dd} WHERE [{name}] IS NULL;\n"
+                    # A dependent DEFAULT constraint blocks ALTER COLUMN even when the
+                    # default itself isn't changing - drop it first (name isn't in this
+                    # snapshot, looked up dynamically); re-added by the default-sync
+                    # step below if Dev still wants a default on this column.
+                    drop_default = (
+                        f"DECLARE @dfname sysname = (SELECT dc.name FROM sys.default_constraints dc "
+                        f"JOIN sys.columns col ON col.object_id = dc.parent_object_id AND col.column_id = dc.parent_column_id "
+                        f"WHERE dc.parent_object_id = OBJECT_ID(N'{ps}.{pt}') AND col.name = N'{name}');\n"
+                        f"IF @dfname IS NOT NULL EXEC('ALTER TABLE {q(ps, pt)} DROP CONSTRAINT [' + @dfname + ']');\n"
+                    )
+                    sql = f"{backfill}{drop_default}ALTER TABLE {q(ps, pt)} ALTER COLUMN [{name}] {_render_type_with_collation(c)} {null_kw};"
+                    add_stmt(
+                        "column-alter", ps, pt,
+                        f"Alter {name}: {prod_type}{'' if prod_null else ' NOT NULL'} -> {dev_type}{'' if dev_null else ' NOT NULL'}",
+                        sql,
+                    )
+                    column_diffs.append(DiffItem(
+                        category="column", schema_name=ps, object_name=f"{pt}.{name}",
+                        detail=f"Type/nullability differs: dev={dev_type} {'NULL' if dev_null else 'NOT NULL'} "
+                               f"vs prod={prod_type} {'NULL' if prod_null else 'NOT NULL'} (forced)"
+                               + (" - existing NULLs backfilled from Dev's default" if backfill else ""),
+                        severity="warn",
+                    ))
 
             if dev_dd != prod_dd and dev_dd:
                 drop_sql = ""
@@ -398,14 +483,14 @@ def compare(source_conn: dict, target_conn: dict) -> CompareResult:
         if kind == "trigger" and p.get("ParentTableName") and is_skip(p["SchemaName"], p["ParentTableName"]):
             continue
         if existing is None:
-            sql = _to_create_or_alter(p["Definition"])
+            sql = _programmable_apply_sql(p["SchemaName"], p["ObjectName"], kind, p["Definition"])
             add_stmt(kind, p["SchemaName"], p["ObjectName"], f"Create missing {kind} {p['ObjectName']}", sql)
             programmable_diffs.append(DiffItem(
                 category=kind, schema_name=p["SchemaName"], object_name=p["ObjectName"],
                 detail="Missing in Production", severity="warn",
             ))
         elif _normalize_sql(existing["Definition"]) != _normalize_sql(p["Definition"]):
-            sql = _to_create_or_alter(p["Definition"])
+            sql = _programmable_apply_sql(p["SchemaName"], p["ObjectName"], kind, p["Definition"])
             add_stmt(kind, p["SchemaName"], p["ObjectName"], f"Update {kind} {p['ObjectName']} to match Dev", sql)
             programmable_diffs.append(DiffItem(
                 category=kind, schema_name=p["SchemaName"], object_name=p["ObjectName"],

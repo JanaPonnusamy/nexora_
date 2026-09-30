@@ -4,23 +4,52 @@ Unlike backend/config/database.py (which always connects to THIS tenant's
 fixed HO database from env vars), every connection here is user-supplied at
 request time: an arbitrary Dev (source, read-only) server and an arbitrary
 Production/HO (target) server, each identified by host/port/database/
-username/password from the UI form. Nothing here reads or writes env vars.
+username/password from the UI form. The one exception is
+local_connection_from_env(), used only when the caller opts into "use this
+server's own database" as Source instead of re-typing credentials the
+backend already has.
 """
 from __future__ import annotations
+
+import os
 
 import pyodbc
 
 _DEFAULT_DRIVER = "ODBC Driver 17 for SQL Server"
 
 
+def local_connection_from_env() -> dict:
+    """Connection dict for THIS server's own configured platform database -
+    the same env vars backend/config/database.py resolves (DB_SERVER,
+    DB_DATABASE, DB_USERNAME, DB_PASSWORD, DB_DRIVER). Lets Schema Sync use
+    "this server's database" as Source without the caller re-entering
+    credentials that are already deployed on this machine.
+    """
+    return {
+        "host": os.getenv("DB_SERVER", "192.168.10.73"),
+        "port": 1433,
+        "database": os.getenv("DB_DATABASE", "NEXORA_PLATFORM"),
+        "username": os.getenv("DB_USERNAME", "sa"),
+        "password": os.getenv("DB_PASSWORD", "Admin123"),
+        "driver": os.getenv("DB_DRIVER") or None,
+    }
+
+
 def _conn_str(conn: dict, database: str | None = None, autocommit_master: bool = False) -> str:
     driver = conn.get("driver") or _DEFAULT_DRIVER
-    host = conn["host"]
+    host = str(conn["host"]).strip()
     port = conn.get("port") or 1433
     db = database if database is not None else conn["database"]
+    # Named instance (e.g. "192.168.10.32\SQLEXPRESS") usually listens on a
+    # dynamic port - an explicit ",1433" would bypass SQL Browser and time out.
+    # Only pin the port for a named instance when a non-default one is given.
+    if "\\" in host and int(port) == 1433:
+        server = host
+    else:
+        server = f"{host},{port}"
     parts = [
         f"DRIVER={{{driver}}};",
-        f"SERVER={host},{port};",
+        f"SERVER={server};",
         f"DATABASE={db};",
         "TrustServerCertificate=yes;",
         f"UID={conn['username']};",
@@ -93,6 +122,7 @@ SELECT
     c.scale AS Scale,
     c.is_nullable AS IsNullable,
     c.is_identity AS IsIdentity,
+    c.collation_name AS CollationName,
     dc.definition AS DefaultDefinition
 FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id = t.schema_id

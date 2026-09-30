@@ -132,8 +132,16 @@ async function createWindow() {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
+    // window.open('', '_blank') (label-queue print sheet) resolves to
+    // 'about:blank' — let that open as a real popup window instead of
+    // routing it through shell.openExternal, which hands 'about:' off to
+    // Windows and pops "Get an app to open this 'about' link". Only genuine
+    // http(s) links should leave the app via the OS shell.
+    if (/^https?:/i.test(url)) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
   });
 
   // Open at the 1366x768 design size (centered) instead of maximizing, so the
@@ -151,7 +159,12 @@ async function createWindow() {
       // steals ~1/3 of the renderer width, which compressed the store grid and
       // clipped the Billing History columns during development. Detached keeps
       // devtools available without distorting the 1366-wide layout.
-      win.webContents.openDevTools({ mode: 'detach' });
+      // Detached DevTools creates another Chromium renderer and was being
+      // opened on every development launch, even when nobody needed it. Keep
+      // F12/Ctrl+Shift+I available and allow explicit opt-in for diagnostics.
+      if (process.env.NEXORA_OPEN_DEVTOOLS === '1') {
+        win.webContents.openDevTools({ mode: 'detach' });
+      }
     } else {
       win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
     }

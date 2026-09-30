@@ -28,10 +28,15 @@ from typing import Iterable
 TAB_BOX_CAPACITY = 7
 
 # Units with a deterministic auto-assignment rule. Everything else
-# (CAP / LOT / PACK / CREAM / ...) is manual — the engine refuses to invent a
-# location for them (spec §R).
+# (LOT / PACK / CREAM / ...) is manual — the engine refuses to invent a
+# location for them (spec §R). CAP shares the TAB 7-per-box rule (owner-
+# directed, 2026-09) rather than getting its own bucket scheme.
 UNIT_TAB = "TAB"
+UNIT_CAP = "CAP"
 UNIT_SYP = "SYP"
+
+# Units that use the standard 7-per-box, <LETTER><3-digit> numbering.
+STANDARD_BOX_UNITS = (UNIT_TAB, UNIT_CAP)
 
 
 class AssignmentError(ValueError):
@@ -165,13 +170,14 @@ def plan_new_label(
     products: Iterable[Product],
     capacity: int = TAB_BOX_CAPACITY,
     start_number: int = 1,
+    unit: str = UNIT_TAB,
 ) -> AssignmentPlan:
     """Fresh box sequence, 7 per box, ignoring any existing occupancy
     (spec §O). Products are sorted by name, then chunked."""
     ordered = _sorted_by_name(products)
     if not ordered:
         raise AssignmentError("No products to assign")
-    plan = AssignmentPlan(unit=UNIT_TAB, mode="new_label", assignment_type="standard_box")
+    plan = AssignmentPlan(unit=unit, mode="new_label", assignment_type="standard_box")
     for index, product in enumerate(ordered):
         box_index, slot = divmod(index, capacity)
         box = format_tab_box(letter, start_number + box_index)
@@ -191,6 +197,7 @@ def plan_continue(
     products: Iterable[Product],
     existing_boxes: dict[str, int],
     capacity: int = TAB_BOX_CAPACITY,
+    unit: str = UNIT_TAB,
 ) -> AssignmentPlan:
     """Fill the last partial box of ``letter`` to capacity, then open new boxes
     (spec §N). ``existing_boxes`` maps box id -> current product count, read
@@ -200,7 +207,7 @@ def plan_continue(
         raise AssignmentError("No products to assign")
 
     max_num, occupied = _highest_box_for_letter(letter, existing_boxes)
-    plan = AssignmentPlan(unit=UNIT_TAB, mode="continue", assignment_type="standard_box")
+    plan = AssignmentPlan(unit=unit, mode="continue", assignment_type="standard_box")
 
     queue = list(ordered)
     existing_for_summary: dict[str, int] = {}

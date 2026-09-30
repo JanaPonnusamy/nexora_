@@ -76,6 +76,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
         if store_id:
             params.append(store_id)
         params += [tenant_id, tenant_id]           # map_resolved (source + target sides)
+        params += [tenant_id]                       # mapagg (sync.Products.tenant_id, other-store stock join)
         params += [tenant_id, supplier_code]       # final WHERE
         if store_id:
             params.append(store_id)
@@ -102,10 +103,13 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                   AND ss.product_code IS NOT NULL
             ),
             -- Every OTHER store this supplier's products resolve to, in both
-            -- mapping directions. Raw (uncast) predicates keep the
-            -- source/target product_mapping index seeks sargable.
+            -- mapping directions, along with that store's own product_code for
+            -- the mapping (needed to look up its stock below - codes differ
+            -- across stores). Raw (uncast) predicates keep the source/target
+            -- product_mapping index seeks sargable.
             map_resolved AS (
-                SELECT sk.store_id AS key_store, sk.product_code AS key_code, pm.target_store_id AS other_store
+                SELECT sk.store_id AS key_store, sk.product_code AS key_code,
+                       pm.target_store_id AS other_store, pm.target_product_code AS other_code
                 FROM supplier_keys sk
                 JOIN dbo.product_mapping pm
                   ON pm.tenant_id = ?
@@ -115,7 +119,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                  AND pm.source_product_code = sk.product_code
                  AND pm.target_store_id <> sk.store_id
                 UNION
-                SELECT sk.store_id, sk.product_code, pm.source_store_id
+                SELECT sk.store_id, sk.product_code, pm.source_store_id, pm.source_product_code
                 FROM supplier_keys sk
                 JOIN dbo.product_mapping pm
                   ON pm.tenant_id = ?
@@ -125,10 +129,22 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                  AND pm.target_product_code = sk.product_code
                  AND pm.source_store_id <> sk.store_id
             ),
+            -- mapped_other_store_count and other_store_has_stock both aggregate
+            -- off map_resolved - computed together in one pass (not as two CTEs
+            -- each referencing map_resolved) because SQL Server re-evaluates a
+            -- CTE for every reference to it rather than materializing it once;
+            -- two references here doubled the product_mapping walk and turned a
+            -- ~2s query into ~29s (measured against a 1600-row supplier).
             mapagg AS (
-                SELECT key_store, key_code, COUNT(DISTINCT other_store) AS mapped_other_store_count
-                FROM map_resolved
-                GROUP BY key_store, key_code
+                SELECT mr.key_store, mr.key_code,
+                       COUNT(DISTINCT mr.other_store) AS mapped_other_store_count,
+                       MAX(CASE WHEN ISNULL(op.totalstock, 0) > 0 THEN 1 ELSE 0 END) AS other_store_has_stock
+                FROM map_resolved mr
+                LEFT JOIN sync.Products op
+                  ON op.tenant_id = ?
+                 AND op.store_id = mr.other_store
+                 AND op.productcode = TRY_CAST(mr.other_code AS INT)
+                GROUP BY mr.key_store, mr.key_code
             )
             SELECT TOP 3000
                 CAST(ss.supplier_stock_id AS VARCHAR(36)) AS supplier_stock_id,
@@ -167,7 +183,14 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                     WHEN ss.product_code IS NULL THEN 'not_mapped'
                     WHEN ascnt.total_store_count - (1 + ISNULL(mapagg.mapped_other_store_count, 0)) > 0 THEN 'partially_matched'
                     ELSE 'fully_matched'
-                END AS mapping_scope_status
+                END AS mapping_scope_status,
+                -- Stock of this row's own store (the selected warehouse, since
+                -- this list is always warehouse-scoped via store_id) and whether
+                -- any OTHER mapped store carries stock - feeds the stock-status
+                -- filter. NULL/no product resolves to 0, matching this module's
+                -- existing ISNULL(...,0) stock convention throughout.
+                ISNULL(p.totalstock, 0) AS own_store_stock,
+                ISNULL(mapagg.other_store_has_stock, 0) AS other_store_has_stock
             FROM procurement.supplier_stock ss
             CROSS JOIN active_store_count ascnt
             LEFT JOIN dbo.stores st ON st.tenant_id = ss.tenant_id AND st.store_id = ss.store_id
@@ -197,6 +220,203 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
         return rows_to_dicts(cur)
     finally:
         conn.close()
+
+
+def _warehouse_search_clause(search):
+    """Shared LIKE predicate + its 3 bound params, reused by both the counts
+    and products queries below so their `base` CTEs stay identical."""
+    term = (search or "").strip()
+    clause = "(? = '' OR p.productname LIKE '%' + ? + '%' OR CAST(p.productcode AS VARCHAR(100)) LIKE ? + '%')"
+    return clause, [term, term, term]
+
+
+def warehouse_stock_counts(tenant_id, store_id):
+    """Store-wide (not supplier-scoped) stock-status counts for the NMW Stock
+    filter dropdown - authoritative over the WHOLE active catalogue of
+    `store_id`, independent of any supplier selection. Cross-store comparison
+    (other_store_has_stock) only ever runs against the zero-stock subset
+    (zero_base), not the full ~59k-row catalogue, since that's the only
+    subset the "Mine=0 + ..." buckets need - keeps the product_mapping walk
+    bounded to however many products are actually out of stock, not the
+    whole store."""
+    search_clause, search_params = _warehouse_search_clause("")
+    rows = _fetch(
+        f"""
+        WITH base AS (
+            SELECT CAST(p.productcode AS VARCHAR(100)) AS product_code,
+                   ISNULL(p.totalstock, 0) AS own_store_stock
+            FROM sync.Products p
+            WHERE p.tenant_id = ? AND p.store_id = ? AND ISNULL(p.isactive, 1) = 1
+              AND {search_clause}
+        ),
+        zero_base AS (
+            SELECT product_code FROM base WHERE own_store_stock <= 0
+        ),
+        -- Driven FROM product_mapping (filtered on the fixed store_id, which
+        -- is a cheap ~200k-row index-seek range on this store regardless of
+        -- catalogue size - see IX_product_mapping_source_seek/target_seek),
+        -- not from zero_base out to product_mapping per-row: with a 30k-row
+        -- zero-stock set that correlated-seek shape measured 68s (one nested
+        -- seek per product); this hash/merge-friendly shape is the fix.
+        map_resolved AS (
+            SELECT pm.source_product_code AS key_code, pm.target_store_id AS other_store, pm.target_product_code AS other_code
+            FROM dbo.product_mapping pm
+            WHERE pm.tenant_id = ?
+              AND pm.is_deleted = 0
+              AND pm.status IN ('APPROVED', 'AUTO')
+              AND pm.source_store_id = ?
+              AND pm.target_store_id <> ?
+            UNION
+            SELECT pm.target_product_code, pm.source_store_id, pm.source_product_code
+            FROM dbo.product_mapping pm
+            WHERE pm.tenant_id = ?
+              AND pm.is_deleted = 0
+              AND pm.status IN ('APPROVED', 'AUTO')
+              AND pm.target_store_id = ?
+              AND pm.source_store_id <> ?
+        ),
+        other_stock AS (
+            SELECT mr.key_code, MAX(CASE WHEN ISNULL(op.totalstock, 0) > 0 THEN 1 ELSE 0 END) AS other_store_has_stock
+            FROM map_resolved mr
+            JOIN zero_base zb ON zb.product_code = mr.key_code
+            LEFT JOIN sync.Products op
+              ON op.tenant_id = ?
+             AND op.store_id = mr.other_store
+             AND op.productcode = TRY_CAST(mr.other_code AS INT)
+            GROUP BY mr.key_code
+        )
+        SELECT
+            COUNT(1) AS total,
+            SUM(CASE WHEN b.own_store_stock <= 0 THEN 1 ELSE 0 END) AS zero,
+            SUM(CASE WHEN b.own_store_stock > 0 THEN 1 ELSE 0 END) AS positive,
+            SUM(CASE WHEN b.own_store_stock <= 0 AND ISNULL(os.other_store_has_stock, 0) = 1 THEN 1 ELSE 0 END) AS zero_other_positive,
+            SUM(CASE WHEN b.own_store_stock <= 0 AND ISNULL(os.other_store_has_stock, 0) = 0 THEN 1 ELSE 0 END) AS zero_all_zero
+        FROM base b
+        LEFT JOIN other_stock os ON os.key_code = b.product_code
+        """,
+        (
+            tenant_id, store_id, *search_params,
+            tenant_id, store_id, store_id,
+            tenant_id, store_id, store_id,
+            tenant_id,
+        ),
+    )
+    row = rows[0] if rows else {}
+    return {
+        "all": int(row.get("total") or 0),
+        "zero": int(row.get("zero") or 0),
+        "positive": int(row.get("positive") or 0),
+        "zero_other_positive": int(row.get("zero_other_positive") or 0),
+        "zero_all_zero": int(row.get("zero_all_zero") or 0),
+    }
+
+
+def warehouse_stock_products(tenant_id, store_id, stock_filter, search="", limit=3000):
+    """The NMW-Stock-filtered product list itself (not supplier-scoped - see
+    warehouse_stock_counts). 'zero'/'positive' need no cross-store join at all
+    (cheap, capped directly). The 'zero_other_positive'/'zero_all_zero'
+    buckets must resolve cross-store stock for every zero-stock product
+    BEFORE capping to `limit`, since the cross-store predicate decides which
+    rows even qualify - capping first (then joining) could arbitrarily drop
+    qualifying rows whose product name happens to sort after row `limit`."""
+    search_clause, search_params = _warehouse_search_clause(search)
+    base_where = f"p.tenant_id = ? AND p.store_id = ? AND ISNULL(p.isactive, 1) = 1 AND {search_clause}"
+
+    if stock_filter not in ("zero", "positive", "zero_other_positive", "zero_all_zero"):
+        return {"items": [], "total_matching": 0}
+
+    if stock_filter in ("zero", "positive"):
+        stock_predicate = "ISNULL(p.totalstock, 0) <= 0" if stock_filter == "zero" else "ISNULL(p.totalstock, 0) > 0"
+        rows = _fetch(
+            f"""
+            SELECT TOP (?)
+                CAST(p.productcode AS VARCHAR(100)) AS product_code,
+                p.productname AS product_name,
+                ISNULL(p.totalstock, 0) AS own_store_stock,
+                0 AS other_store_has_stock,
+                p.saleunit AS sale_unit,
+                p.unitdescription AS unit_description,
+                p.mrp,
+                p.purchaseprice AS ptr,
+                COUNT(1) OVER() AS total_matching
+            FROM sync.Products p
+            WHERE {base_where} AND {stock_predicate}
+            ORDER BY p.productname
+            """,
+            (limit, tenant_id, store_id, *search_params),
+        )
+    else:
+        want_other_stock = 1 if stock_filter == "zero_other_positive" else 0
+        rows = _fetch(
+            f"""
+            WITH base AS (
+                SELECT CAST(p.productcode AS VARCHAR(100)) AS product_code,
+                       p.productname AS product_name,
+                       ISNULL(p.totalstock, 0) AS own_store_stock,
+                       p.saleunit AS sale_unit,
+                       p.unitdescription AS unit_description,
+                       p.mrp,
+                       p.purchaseprice AS ptr
+                FROM sync.Products p
+                WHERE {base_where} AND ISNULL(p.totalstock, 0) <= 0
+            ),
+            -- Driven FROM product_mapping (see warehouse_stock_counts for why:
+            -- a per-row correlated seek from a large zero-stock set measured
+            -- 68s; filtering product_mapping on the fixed store_id first and
+            -- joining back to base is the fast shape).
+            map_resolved AS (
+                SELECT pm.source_product_code AS key_code, pm.target_store_id AS other_store, pm.target_product_code AS other_code
+                FROM dbo.product_mapping pm
+                WHERE pm.tenant_id = ?
+                  AND pm.is_deleted = 0
+                  AND pm.status IN ('APPROVED', 'AUTO')
+                  AND pm.source_store_id = ?
+                  AND pm.target_store_id <> ?
+                UNION
+                SELECT pm.target_product_code, pm.source_store_id, pm.source_product_code
+                FROM dbo.product_mapping pm
+                WHERE pm.tenant_id = ?
+                  AND pm.is_deleted = 0
+                  AND pm.status IN ('APPROVED', 'AUTO')
+                  AND pm.target_store_id = ?
+                  AND pm.source_store_id <> ?
+            ),
+            other_stock AS (
+                SELECT mr.key_code, MAX(CASE WHEN ISNULL(op.totalstock, 0) > 0 THEN 1 ELSE 0 END) AS other_store_has_stock
+                FROM map_resolved mr
+                JOIN base b ON b.product_code = mr.key_code
+                LEFT JOIN sync.Products op
+                  ON op.tenant_id = ?
+                 AND op.store_id = mr.other_store
+                 AND op.productcode = TRY_CAST(mr.other_code AS INT)
+                GROUP BY mr.key_code
+            ),
+            matched AS (
+                SELECT b.product_code, b.product_name, b.own_store_stock,
+                       ISNULL(os.other_store_has_stock, 0) AS other_store_has_stock,
+                       b.sale_unit, b.unit_description, b.mrp, b.ptr
+                FROM base b
+                LEFT JOIN other_stock os ON os.key_code = b.product_code
+                WHERE ISNULL(os.other_store_has_stock, 0) = ?
+            )
+            SELECT TOP (?) *, COUNT(1) OVER() AS total_matching
+            FROM matched
+            ORDER BY product_name
+            """,
+            (
+                tenant_id, store_id, *search_params,
+                tenant_id, store_id, store_id,
+                tenant_id, store_id, store_id,
+                tenant_id,
+                want_other_stock,
+                limit,
+            ),
+        )
+
+    total_matching = int(rows[0]["total_matching"]) if rows else 0
+    for row in rows:
+        row.pop("total_matching", None)
+    return {"items": rows, "total_matching": total_matching}
 
 
 def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_available=False):

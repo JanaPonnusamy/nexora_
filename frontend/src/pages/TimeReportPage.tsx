@@ -72,11 +72,12 @@ export default function TimeReportPage() {
   const [reportKey, setReportKey] = useState('daily')
 
   const today = useMemo(() => new Date(), [])
+  const yesterday = useMemo(() => iso(new Date(today.getTime() - 86400000)), [today])
   const [date, setDate] = useState(iso(today))
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
-  const [start, setStart] = useState(iso(new Date(today.getFullYear(), today.getMonth(), 1)))
-  const [end, setEnd] = useState(iso(today))
+  const [start, setStart] = useState(yesterday)
+  const [end, setEnd] = useState(yesterday)
   const [deptId, setDeptId] = useState('')
   const [userId, setUserId] = useState('')
   const [mode, setMode] = useState<'detail' | 'summary'>('detail')
@@ -258,7 +259,12 @@ export default function TimeReportPage() {
             className="form-select form-select-sm"
             value={reportKey}
             onChange={(e) => {
-              setReportKey(e.target.value)
+              const next = e.target.value
+              setReportKey(next)
+              if (next === 'misspunch') {
+                setStart(yesterday)
+                setEnd(yesterday)
+              }
               setResult(null)
               setError(null)
             }}

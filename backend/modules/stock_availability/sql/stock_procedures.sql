@@ -67,25 +67,73 @@ BEGIN
     -- be a live incremental-search box, not a full catalogue browse.
     DECLARE @CandidateCap INT = @PerStore * 15;
 
-    ;WITH filtered AS
+    -- Whether the typed term could match a ProductCode (INT) at all -- only a
+    -- purely numeric term can. Guarding the code branch with this flag AND the
+    -- OPTION (RECOMPILE) below lets the optimizer ELIMINATE the non-sargable
+    -- CAST(ProductCode) branch for the common alpha search (e.g. "crevast").
+    -- Previously the single OR predicate mixing ProductName LIKE with
+    -- CAST(ProductCode) LIKE was non-sargable, so EVERY keystroke forced a full
+    -- scan of sync.Products across all stores (~12s live) -- even for a
+    -- letters-only term that never needed the code branch. Splitting into a
+    -- UNION keeps the name-prefix arm a pure index seek on
+    -- IX_Products_TenantProductName.
+    DECLARE @IsNumeric BIT =
+        CASE WHEN @Search IS NOT NULL AND @Search NOT LIKE '%[^0-9]%'
+             THEN 1 ELSE 0 END;
+
+    ;WITH matched AS
     (
-        SELECT
-            s.store_id, s.store_code, s.store_name, s.store_order,
-            p.ProductCode, p.ProductName, p.UnitDescription,
-            p.TotalStock AS RawTotalStock,
-            ISNULL(p.MRP, 0) AS MRP,
-            ROW_NUMBER() OVER (PARTITION BY s.store_id ORDER BY p.ProductName) AS pre_rn
+        -- Blank browse: no term -> every active product (inherently a scan;
+        -- capped downstream to @CandidateCap per store).
+        SELECT s.store_id, s.store_code, s.store_name, s.store_order,
+               p.ProductCode, p.ProductName, p.UnitDescription,
+               p.TotalStock AS RawTotalStock, ISNULL(p.MRP, 0) AS MRP
         FROM sync.Products p
         INNER JOIN dbo.stores s
                 ON s.store_id  = p.store_id
                AND s.tenant_id = p.tenant_id
         WHERE p.tenant_id = @TenantId
           AND ISNULL(p.isActive, 1) = 1
-          AND (
-                @Search IS NULL
-                OR p.ProductName LIKE @Search + '%'
-                OR CAST(p.ProductCode AS NVARCHAR(50)) LIKE @Search + '%'
-              )
+          AND @Search IS NULL
+
+        UNION
+
+        -- Name prefix: sargable seek on IX_Products_TenantProductName.
+        SELECT s.store_id, s.store_code, s.store_name, s.store_order,
+               p.ProductCode, p.ProductName, p.UnitDescription,
+               p.TotalStock AS RawTotalStock, ISNULL(p.MRP, 0) AS MRP
+        FROM sync.Products p
+        INNER JOIN dbo.stores s
+                ON s.store_id  = p.store_id
+               AND s.tenant_id = p.tenant_id
+        WHERE p.tenant_id = @TenantId
+          AND ISNULL(p.isActive, 1) = 1
+          AND @Search IS NOT NULL
+          AND p.ProductName LIKE @Search + '%'
+
+        UNION
+
+        -- Code prefix: numeric terms only, so a letters-only search never pays
+        -- for this CAST scan (branch removed at compile time by RECOMPILE).
+        SELECT s.store_id, s.store_code, s.store_name, s.store_order,
+               p.ProductCode, p.ProductName, p.UnitDescription,
+               p.TotalStock AS RawTotalStock, ISNULL(p.MRP, 0) AS MRP
+        FROM sync.Products p
+        INNER JOIN dbo.stores s
+                ON s.store_id  = p.store_id
+               AND s.tenant_id = p.tenant_id
+        WHERE p.tenant_id = @TenantId
+          AND ISNULL(p.isActive, 1) = 1
+          AND @IsNumeric = 1
+          AND CAST(p.ProductCode AS NVARCHAR(50)) LIKE @Search + '%'
+    ),
+    filtered AS
+    (
+        SELECT
+            store_id, store_code, store_name, store_order,
+            ProductCode, ProductName, UnitDescription, RawTotalStock, MRP,
+            ROW_NUMBER() OVER (PARTITION BY store_id ORDER BY ProductName) AS pre_rn
+        FROM matched
     ),
     capped AS
     (
@@ -157,7 +205,10 @@ BEGIN
         MRP                               AS mrp
     FROM ranked
     WHERE rn <= @PerStore
-    ORDER BY store_order, store_code, product_name;
+    ORDER BY store_order, store_code, product_name
+    -- Forces the @IsNumeric/@Search literals to be treated as constants so the
+    -- unused UNION arms (blank-browse / code-prefix) are pruned per keystroke.
+    OPTION (RECOMPILE);
 END
 GO
 

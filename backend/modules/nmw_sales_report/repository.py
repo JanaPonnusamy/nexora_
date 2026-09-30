@@ -783,64 +783,84 @@ def _classify_purchase_status(total_products, matched_products, unmapped, bill_d
     return "pending" if age_days <= grace_days else "not_found"
 
 
-def _name_fallback_completes(cursor, tenant_id, nmw_store_id, dest_store_id, raw_code, series, bnumber, bill_date):
-    """True if every product on this bill that missed the ProductCode match
-    can be accounted for by NAME instead (see _normalize_name). Two small,
-    tightly-scoped queries -- cheap enough to run per-bill for the small
-    residual set get_purchase_status_map calls this on."""
-    cursor.execute(
-        """
-        SELECT psi.ProductCode, MAX(p.ProductName) AS product_name, SUM(psi.Quantity) AS req_qty
-        FROM sync.ProductSaleInformation psi
-        LEFT JOIN sync.Products p
-            ON p.tenant_id = psi.tenant_id AND p.store_id = psi.store_id AND p.ProductCode = psi.ProductCode
-        WHERE psi.tenant_id = ? AND psi.store_id = ? AND psi.Bnumber = ?
-          AND CAST(psi.TransactionDate AS DATE) = ? AND ISNULL(psi.TransactionValidity, 0) = 0
-        GROUP BY psi.ProductCode
-        """,
-        (tenant_id, nmw_store_id, bnumber, bill_date),
-    )
-    products = cursor.fetchall()
-    if not products:
-        return False
-    codes = [p[0] for p in products]
-    cph = ", ".join("?" for _ in codes)
-    cursor.execute(
-        f"""
-        SELECT ProductCode, SUM(stockreceived)
-        FROM sync.PurchaseTrans
-        WHERE tenant_id = ? AND store_id = ? AND SupplierCode = ? AND LTRIM(RTRIM(InvoiceSeries)) = ?
-          AND ProductCode IN ({cph})
-          AND CAST(grndate AS DATE) BETWEEN ? AND DATEADD(DAY, {PURCHASE_MATCH_WINDOW_DAYS}, ?)
-        GROUP BY ProductCode
-        """,
-        (tenant_id, dest_store_id, raw_code, series, *codes, bill_date, bill_date),
-    )
-    got_by_code = {code: float(qty or 0) for code, qty in cursor.fetchall()}
+def _name_fallback_batch(cursor, tenant_id, nmw_store_id, candidates):
+    """Batched version of _name_fallback_matched for every bill still short
+    after the main pass, grouped by (dest_store_id, raw_code, series) so the
+    report pays a handful of extra queries total instead of one pair per bill.
+    The per-bill version this replaces was designed for "a few percent" of
+    the range still needing a name-based check (see docstring below), but on
+    a range where MOST bills are still pending (e.g. early in the day, before
+    stores have keyed their GRNs) that degenerates into one DB round trip per
+    bill -- confirmed as the cause of the report timing out (45s+) on an
+    all-status load. candidates: iterable of
+    (bnumber, bill_date, dest_store_id, raw_code, series).
+    Returns {(bnumber, bill_date): (matched_products, total_products)}."""
+    groups = {}
+    for bnumber, bill_date, dest_store_id, raw_code, series in candidates:
+        groups.setdefault((dest_store_id, raw_code, series), []).append((bnumber, bill_date))
 
-    still_short = [(code, name, float(req or 0)) for code, name, req in products
-                   if got_by_code.get(code, 0.0) < float(req or 0) - 0.01]
-    if not still_short:
-        return True
+    out = {}
+    for (dest_store_id, raw_code, series), bills in groups.items():
+        bnumbers = sorted({bn for bn, _ in bills})
+        bph = ", ".join("?" for _ in bnumbers)
+        cursor.execute(
+            f"""
+            SELECT psi.Bnumber, CAST(psi.TransactionDate AS DATE) AS bill_date, psi.ProductCode,
+                   MAX(p.ProductName) AS product_name, SUM(psi.Quantity) AS req_qty
+            FROM sync.ProductSaleInformation psi
+            LEFT JOIN sync.Products p
+                ON p.tenant_id = psi.tenant_id AND p.store_id = psi.store_id AND p.ProductCode = psi.ProductCode
+            WHERE psi.tenant_id = ? AND psi.store_id = ? AND psi.Bnumber IN ({bph})
+              AND ISNULL(psi.TransactionValidity, 0) = 0
+            GROUP BY psi.Bnumber, CAST(psi.TransactionDate AS DATE), psi.ProductCode
+            """,
+            (tenant_id, nmw_store_id, *bnumbers),
+        )
+        products_by_bill = {}
+        for bn, txn_date, code, name, qty in cursor.fetchall():
+            products_by_bill.setdefault((bn, txn_date), []).append((code, name, float(qty or 0)))
 
-    cursor.execute(
-        f"""
-        SELECT p.ProductName, pt.stockreceived
-        FROM sync.PurchaseTrans pt
-        LEFT JOIN sync.Products p
-            ON p.tenant_id = pt.tenant_id AND p.store_id = pt.store_id AND p.ProductCode = pt.ProductCode
-        WHERE pt.tenant_id = ? AND pt.store_id = ? AND pt.SupplierCode = ? AND LTRIM(RTRIM(pt.InvoiceSeries)) = ?
-          AND CAST(pt.grndate AS DATE) BETWEEN ? AND DATEADD(DAY, {PURCHASE_MATCH_WINDOW_DAYS}, ?)
-        """,
-        (tenant_id, dest_store_id, raw_code, series, bill_date, bill_date),
-    )
-    name_qty = {}
-    for pname, recv in cursor.fetchall():
-        key = _normalize_name(pname)
-        if key:
-            name_qty[key] = name_qty.get(key, 0.0) + float(recv or 0)
+        bill_dates = [bd for _, bd in bills]
+        window_start = min(bill_dates)
+        window_end = max(bill_dates) + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
+        cursor.execute(
+            """
+            SELECT pt.ProductCode, pt.stockreceived, CAST(pt.grndate AS DATE), p2.ProductName
+            FROM sync.PurchaseTrans pt
+            LEFT JOIN sync.Products p2
+                ON p2.tenant_id = pt.tenant_id AND p2.store_id = pt.store_id AND p2.ProductCode = pt.ProductCode
+            WHERE pt.tenant_id = ? AND pt.store_id = ? AND pt.SupplierCode = ? AND LTRIM(RTRIM(pt.InvoiceSeries)) = ?
+              AND CAST(pt.grndate AS DATE) BETWEEN ? AND ?
+            """,
+            (tenant_id, dest_store_id, raw_code, series, window_start, window_end),
+        )
+        pt_rows = [(code, float(recv or 0), grndate, pname) for code, recv, grndate, pname in cursor.fetchall()]
 
-    return all(name_qty.get(_normalize_name(name), 0.0) >= req - 0.01 for _code, name, req in still_short)
+        for bnumber, bill_date in bills:
+            products = products_by_bill.get((bnumber, bill_date), [])
+            if not products:
+                out[(bnumber, bill_date)] = (0, 0)
+                continue
+            win_end = bill_date + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
+            got_by_code = {}
+            name_qty = {}
+            for code, recv, grndate, pname in pt_rows:
+                if bill_date <= grndate <= win_end:
+                    got_by_code[code] = got_by_code.get(code, 0.0) + recv
+                    key = _normalize_name(pname)
+                    if key:
+                        name_qty[key] = name_qty.get(key, 0.0) + recv
+
+            still_short = [(code, name, qty) for code, name, qty in products
+                           if got_by_code.get(code, 0.0) < qty - 0.01]
+            matched_by_code = len(products) - len(still_short)
+            matched_by_name = sum(
+                1 for _code, name, qty in still_short
+                if name_qty.get(_normalize_name(name), 0.0) >= qty - 0.01
+            )
+            out[(bnumber, bill_date)] = (matched_by_code + matched_by_name, len(products))
+
+    return out
 
 
 def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, date_to):
@@ -1020,21 +1040,36 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                 "entry_no": str(int(completing_grn)) if completing_grn is not None else None,
             }
 
-        # Name-fallback pass (small residual set only -- see
-        # nmw-purchase-entry-matching memory): a bill can still read short on
-        # ProductCode even though every item physically arrived, because NMW
-        # and the store disagree on the code for that item. Re-checked here by
-        # product NAME instead, one cheap per-bill lookup, for whatever the
-        # passes above left short -- typically a few percent of the range, so
-        # this stays fast even though it isn't batched into the main query.
+        # Name-fallback pass: a bill can still read short on ProductCode even
+        # though every item physically arrived, because NMW and the store
+        # disagree on the code for that item. Re-checked here by product NAME
+        # instead, for whatever the passes above left short -- batched by
+        # (dest_store, supplier code, series) via _name_fallback_batch rather
+        # than one DB round trip per bill (that degenerated to O(bills) and
+        # was the confirmed cause of the report timing out when most bills in
+        # the range are still pending -- see nmw-purchase-entry-matching
+        # memory for the original per-bill design and why it seemed fine).
+        need_fallback = [
+            (bnumber, bill_date, dest_store_id, raw_code, series)
+            for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn in rows
+            if dest_store_id and raw_code
+            and out.get((bnumber, bill_date.isoformat() if hasattr(bill_date, "isoformat") else str(bill_date)), {}).get("purchase_status") != "completed"
+        ]
+        fallback_results = _name_fallback_batch(cursor, tenant_id, nmw_store_id, need_fallback) if need_fallback else {}
         for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn in rows:
             bd_iso = bill_date.isoformat() if hasattr(bill_date, "isoformat") else str(bill_date)
             entry = out.get((bnumber, bd_iso))
             if not entry or entry["purchase_status"] == "completed" or not dest_store_id or not raw_code:
                 continue
-            if _name_fallback_completes(cursor, tenant_id, nmw_store_id, dest_store_id, raw_code, series, bnumber, bill_date):
-                entry["purchase_status"] = "completed"
-                entry["matched_products"] = entry["total_products"]
+            name_matched, name_total = fallback_results.get((bnumber, bill_date), (0, 0))
+            if name_total and name_matched > entry["matched_products"]:
+                # A partial name-match keeps the bill out of 'not_found' (it
+                # can still land on 'pending') even when it doesn't clear
+                # every product -- only a full match promotes it further.
+                entry["matched_products"] = name_matched
+                entry["purchase_status"] = _classify_purchase_status(
+                    entry["total_products"], name_matched, False, bill_date
+                )
 
         return out
     finally:
@@ -1183,14 +1218,23 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
                 if not key:
                     continue
                 name_qty[key] = name_qty.get(key, 0.0) + float(stockreceived or 0)
-                grns_by_name.setdefault(key, set()).add((grnnumber, grndate))
+                grns_by_name.setdefault(key, []).append((grndate, grnnumber, float(stockreceived or 0)))
 
         matched_by_name = set()
         for code in still_short:
             key = _normalize_name(name_by_product.get(code))
             if key and name_qty.get(key, 0.0) >= req_by_product[code] - 0.01:
                 matched_by_name.add(code)
-                grns_seen.update({g: True for g in grns_by_name.get(key, ())})
+                # Attribute only the GRN(s) actually needed to cover the
+                # requirement, earliest first -- not every later, unrelated
+                # restock of the same product that happens to also fall
+                # inside the (generous, 30-day) match window.
+                remaining = req_by_product[code]
+                for grndate, grnnumber, qty in sorted(grns_by_name.get(key, [])):
+                    if remaining <= 0.01:
+                        break
+                    grns_seen[(grnnumber, grndate)] = True
+                    remaining -= qty
 
         matched_products = sum(
             1 for code, req_qty in req_by_product.items()

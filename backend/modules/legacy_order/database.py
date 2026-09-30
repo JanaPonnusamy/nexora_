@@ -334,7 +334,18 @@ def recover_database(allow_data_loss=False):
     }
 
 
-def get_central_connection(timeout=30):
+def get_central_connection(timeout=10):
+    # No connection pooling here -- every call opens a fresh pyodbc.connect().
+    # A short connect timeout matters because this is on the critical path of
+    # cheap, frequently-hit endpoints (GET /stores, workflow summary, etc.)
+    # that every Order Workspace screen loads on mount. The old default
+    # (30s) let a single slow/unreachable OrderNMC server pin a worker thread
+    # for 30s, then (on failure) add recover_database()'s own connects on top
+    # -- comfortably blowing past the desktop client's 45s request timeout
+    # and surfacing as a bare "Request timed out after 45s" with an empty
+    # store list, instead of the real "database unavailable" message below.
+    # Same root cause/fix as config.database.get_connection() for the
+    # platform DB: fail fast so errors surface instead of cascading.
     conn_string = central_connection_string()
     try:
         return pyodbc.connect(conn_string, timeout=timeout)

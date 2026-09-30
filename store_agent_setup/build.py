@@ -1,14 +1,16 @@
 """Package the Store Agent into a SELF-CONTAINED deployment with PyInstaller.
 
-    python -m store_agent_setup.build            # build everything
-    python -m store_agent_setup.build agent      # only the agent
-    python -m store_agent_setup.build watchdog   # only the watchdog
+    python -m store_agent_setup.build              # build everything
+    python -m store_agent_setup.build agent        # only the agent
+    python -m store_agent_setup.build watchdog     # only the watchdog
+    python -m store_agent_setup.build mail_transfer # only the mail transfer service
 
 Outputs in E:\\Nexora\\dist\\:
     NexoraStoreAgent.exe              (onefile: single self-contained binary)
     NexoraStoreAgentWatchdog.exe      (onefile: remote start/stop/update companion)
+    NexoraMailTransfer.exe            (onefile: EMAIL package delivery + ACK poll)
     NexoraStoreAgentSettings.exe      (standalone settings utility)
-    NexoraStoreAgentSetup.exe         (the wizard; bundles the two above)
+    NexoraStoreAgentSetup.exe         (the wizard; bundles the exes above)
 
 Design notes (SYNC-029B, revised for onefile):
 * The agent is built ONEFILE: a single distributable binary, no accompanying
@@ -89,6 +91,24 @@ def build_watchdog():
     _pyinstaller(*args)
 
 
+def build_mail_transfer():
+    """Standalone ONEFILE EMAIL-delivery service (Phase 2 extraction). Embeds
+    the same store_agent.file_transfer.* modules the main agent uses for
+    SMTP/IMAP -- no separate email implementation, just a separate process
+    hosting the existing one."""
+    args = ["--onefile", "--name", "NexoraMailTransfer", "--console",
+            "--paths", str(REPO),
+            "--collect-submodules", "store_agent",
+            "--hidden-import", "store_agent_setup.mail_transfer_service",
+            "--hidden-import", "store_agent_setup.service_manager",
+            "--exclude-module", "tkinter",
+            "--exclude-module", "_tkinter"]
+    for h in _HIDDEN:
+        args += ["--hidden-import", h]
+    args.append(str(PKG / "launch_mail_transfer_service.py"))
+    _pyinstaller(*args)
+
+
 def _require_tkinter():
     """Fail loudly if the build Python lacks Tk, instead of silently shipping a
     GUI exe that dies with 'No module named tkinter' on the target machine."""
@@ -122,12 +142,15 @@ def build_wizard():
             "--paths", str(REPO), "--collect-all", "tkinter"]
     agent_exe = DIST / "NexoraStoreAgent.exe"
     watchdog_exe = DIST / "NexoraStoreAgentWatchdog.exe"
+    mail_transfer_exe = DIST / "NexoraMailTransfer.exe"
     settings_exe = DIST / "NexoraStoreAgentSettings.exe"
     if agent_exe.is_file():
         # Single agent binary -> _MEIPASS/agent/NexoraStoreAgent.exe.
         args += ["--add-data", f"{agent_exe}{SEP}agent"]
     if watchdog_exe.is_file():
         args += ["--add-data", f"{watchdog_exe}{SEP}."]
+    if mail_transfer_exe.is_file():
+        args += ["--add-data", f"{mail_transfer_exe}{SEP}."]
     if settings_exe.is_file():
         args += ["--add-data", f"{settings_exe}{SEP}."]
     args.append(str(PKG / "launch_wizard.py"))
@@ -153,6 +176,8 @@ def main(argv=None):
         build_agent()
     if target in ("all", "watchdog"):
         build_watchdog()
+    if target in ("all", "mail_transfer"):
+        build_mail_transfer()
     if target in ("all", "settings"):
         build_settings()
     if target in ("all", "wizard"):

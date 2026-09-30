@@ -42,6 +42,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Shelf Category Training', to: '/procurement/shelf-categories', icon: 'bi-mortarboard', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Pharmacy Reports', to: '/procurement/reports', icon: 'bi-bar-chart', cap: 'REPORTS' },
       { label: 'Supplier Stock Distribution', to: '/procurement/distribution', icon: 'bi-broadcast', cap: 'PROCUREMENT_ADMIN' },
+      { label: 'NMW Bill Export', to: '/nmw-sales-report', icon: 'bi-receipt', cap: 'INVENTORY' },
     ],
   },
   {
@@ -74,6 +75,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Sync Config', to: '/sync/config', icon: 'bi-table', cap: 'SYNC' },
       { label: 'Sync Mapping', to: '/sync/mapping', icon: 'bi-diagram-3', cap: 'SYNC' },
       { label: 'Sync Agents', to: '/sync/agents', icon: 'bi-router', cap: 'SYNC' },
+      { label: 'Mail Transfer', to: '/sync/mail-transfer', icon: 'bi-envelope', cap: 'SYNC' },
     ],
   },
   {

@@ -18,6 +18,7 @@ const SyncSchedulesPage = lazy(() => import('../pages/sync/SyncSchedulesPage'))
 const SyncConfigPage = lazy(() => import('../pages/sync/SyncConfigPage'))
 const SyncMappingPage = lazy(() => import('../pages/sync/SyncMappingPage'))
 const SyncAgentsPage = lazy(() => import('../pages/sync/SyncAgentsPage'))
+const SyncMailTransferPage = lazy(() => import('../pages/sync/SyncMailTransferPage'))
 const ProductMappingPage = lazy(() => import('../pages/mapping/ProductMappingPage'))
 const StockAvailabilityPage = lazy(() => import('../pages/stock/StockAvailabilityPage'))
 const StockCheckReportPage = lazy(() => import('../pages/stock-check/StockCheckReportPage'))
@@ -109,6 +110,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/sync/live" element={<RequireCapability cap="SYNC"><SyncLivePage /></RequireCapability>} />
         <Route path="/sync/schedules" element={<RequireCapability cap="SYNC"><SyncSchedulesPage /></RequireCapability>} />
         <Route path="/sync/config" element={<RequireCapability cap="SYNC"><SyncConfigPage /></RequireCapability>} />
+        <Route path="/sync/mail-transfer" element={<RequireCapability cap="SYNC"><SyncMailTransferPage /></RequireCapability>} />
         <Route path="/sync/mapping" element={<RequireCapability cap="SYNC"><SyncMappingPage /></RequireCapability>} />
         <Route path="/sync/store-health" element={<Navigate to="/sync/live" replace />} />
         <Route path="/sync/history" element={<Navigate to="/sync/live" replace />} />

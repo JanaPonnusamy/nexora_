@@ -6,6 +6,8 @@ import concurrent.futures
 import json
 import re
 import shutil
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -370,7 +372,7 @@ def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
     driver = _ensure_playwright_driver()
     session_dir = _firefox_profile_dir(profile)
     session_dir.mkdir(parents=True, exist_ok=True)
-    context = driver.firefox.launch_persistent_context(
+    launch_kwargs = dict(
         user_data_dir=str(session_dir),
         headless=headless,
         viewport={"width": 1280, "height": 960} if headless else None,
@@ -392,6 +394,27 @@ def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
         # progress.
         timeout=120000,
     )
+    try:
+        context = driver.firefox.launch_persistent_context(**launch_kwargs)
+    except Exception as exc:
+        # A `pip install` that bumps the `playwright` package silently bumps
+        # the bundled-Firefox revision it expects too -- if `playwright
+        # install firefox` isn't rerun in lockstep, every send fails with
+        # "Executable doesn't exist at .../firefox-<rev>/firefox/firefox.exe"
+        # (bit us on 2026-09-28: package updated, browser didn't, every
+        # store's WhatsApp send failed for a full day before anyone noticed).
+        # Self-heal once instead of failing forever: download the browser
+        # revision this exact package expects, then retry the same launch.
+        if "Executable doesn't exist" not in str(exc):
+            raise
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "firefox"],
+                check=True, timeout=300,
+            )
+        except Exception:
+            raise exc
+        context = driver.firefox.launch_persistent_context(**launch_kwargs)
     page = context.pages[0] if context.pages else context.new_page()
     return context, page
 
@@ -795,15 +818,6 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
     label = target["target_name"] or target["target_ref"]
     query = target["target_ref"] or target["target_name"]
 
-    search = _first_locator(page, _SEARCH_BOX_SELECTORS, wait_seconds)
-    _safe_click(search)
-    search.press("Control+a")
-    search.press("Delete")
-    search.type(query, delay=8)
-    # Brief settle for the search index to return results; the chat-result
-    # _first_locator below then polls, so no fixed multi-second wait is needed.
-    time.sleep(0.6)
-
     # Case-insensitive fallbacks: WhatsApp group names are configured
     # elsewhere (e.g. dbo.stores.w_group_name) and easily drift in case from
     # the real chat title ("NMV GROUP" vs the actual "NMV Group") -- XPath 1.0
@@ -813,37 +827,81 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
     # the whole page. The open conversation's header (#main) ALSO carries a
     # span[@title=...]; matching page-wide could click/leave the previously-open
     # chat active and send this store's file into the wrong group.
+    #
+    # CRITICAL: each search-result row carries TWO title-bearing spans --
+    # the row's own name in a div[data-testid='cell-frame-title'], and its
+    # last-message preview in a SIBLING div[data-testid='cell-frame-secondary'].
+    # Once a wrong-group send has ever happened (this exact bug), the mistaken
+    # text (e.g. "NMV GROUP") becomes another chat's last message, so its
+    # preview span's title now ALSO equals/contains the target label -- e.g.
+    # NMG group's preview title became "NMV GROUP" after a prior misfire, and
+    # an unscoped selector clicked that row instead of the real NMV Group row.
+    # Every selector below MUST require the title span to live inside
+    # cell-frame-title -- never match cell-frame-secondary (or the global
+    # "Messages" search section, which isn't a chat row at all).
     _UPPER, _LOWER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
     label_lower = json.dumps(label.lower())
     _pane = "//div[@id='pane-side']"
+    _title_cell = f"{_pane}//div[@data-testid='cell-frame-title']"
     chat_selectors = [
-        f"xpath={_pane}//span[@title={json.dumps(label)}]",
-        f"xpath={_pane}//*[@title={json.dumps(label)}]",
-        f"xpath={_pane}//span[contains(@title, {json.dumps(label)})]",
-        f"xpath={_pane}//span[translate(@title, '{_UPPER}', '{_LOWER}')={label_lower}]",
-        f"xpath={_pane}//span[contains(translate(@title, '{_UPPER}', '{_LOWER}'), {label_lower})]",
+        f"xpath={_title_cell}//span[@title={json.dumps(label)}]",
+        f"xpath={_title_cell}//*[@title={json.dumps(label)}]",
+        f"xpath={_title_cell}//span[contains(@title, {json.dumps(label)})]",
+        f"xpath={_title_cell}//span[translate(@title, '{_UPPER}', '{_LOWER}')={label_lower}]",
+        f"xpath={_title_cell}//span[contains(translate(@title, '{_UPPER}', '{_LOWER}'), {label_lower})]",
     ]
-    try:
-        chat = _first_locator(page, chat_selectors, wait_seconds)
-    except Exception:
-        raise ValueError(
-            f"No WhatsApp chat named '{label}' was found for this account. "
-            "Use the exact chat/group name as it appears in WhatsApp."
-        )
-    _safe_click(chat)
-    # CRITICAL: WhatsApp switches the open conversation asynchronously. Do NOT
-    # proceed to attach/type on a fixed sleep -- wait until the header actually
-    # shows THIS group, and refuse to send (rather than spam the wrong group)
-    # if the intended chat never becomes active. This is the guard that stops a
-    # store's stock file landing in another store's group during the sequential
-    # multi-store distribution run.
-    if not _wait_chat_opened(page, label, wait_seconds):
-        opened = _current_chat_title(page)
-        raise ValueError(
-            f"Opened chat '{opened or 'unknown'}' does not match target '{label}'. "
-            "Aborting the send to avoid delivering to the wrong WhatsApp chat."
-        )
-    return "https://web.whatsapp.com/"
+
+    # CRITICAL: in a sequential multi-store run, WhatsApp Web's search-results
+    # list is virtualized and can recycle a row's DOM node between the moment
+    # we locate the "next" target's row and the moment the click actually
+    # lands, leaving the PREVIOUSLY-open chat active with no error (observed
+    # live: after opening 'NMG group', every attempt to open 'NMV GROUP' next
+    # silently re-lands on 'NMG group'). A plain Ctrl+A/Delete re-search reuses
+    # the same possibly-poisoned list state, so a retry must fully close the
+    # search panel (Escape) first, not just clear the text, before searching
+    # again. Never relax the match check below -- retry the search, don't
+    # widen what counts as a match.
+    attempts = 3
+    last_opened = ""
+    for attempt in range(attempts):
+        if attempt > 0:
+            page.keyboard.press("Escape")
+            time.sleep(0.5)
+        search = _first_locator(page, _SEARCH_BOX_SELECTORS, wait_seconds)
+        _safe_click(search)
+        search.press("Control+a")
+        search.press("Delete")
+        search.type(query, delay=8)
+        # Brief settle for the search index to return results; the chat-result
+        # _first_locator below then polls, so no fixed multi-second wait is needed.
+        time.sleep(0.6)
+
+        try:
+            chat = _first_locator(page, chat_selectors, wait_seconds)
+        except Exception:
+            if attempt == attempts - 1:
+                raise ValueError(
+                    f"No WhatsApp chat named '{label}' was found for this account. "
+                    "Use the exact chat/group name as it appears in WhatsApp."
+                )
+            continue
+
+        chat.scroll_into_view_if_needed()
+        _safe_click(chat)
+        # WhatsApp switches the open conversation asynchronously. Do NOT
+        # proceed to attach/type on a fixed sleep -- wait until the header
+        # actually shows THIS group, and refuse to send (rather than spam the
+        # wrong group) if the intended chat never becomes active. This is the
+        # guard that stops a store's stock file landing in another store's
+        # group during the sequential multi-store distribution run.
+        if _wait_chat_opened(page, label, wait_seconds):
+            return "https://web.whatsapp.com/"
+        last_opened = _current_chat_title(page)
+
+    raise ValueError(
+        f"Opened chat '{last_opened or 'unknown'}' does not match target '{label}'. "
+        "Aborting the send to avoid delivering to the wrong WhatsApp chat."
+    )
 
 
 def _attach_file(page: Any, settings: dict[str, Any], attachment_path: str) -> None:

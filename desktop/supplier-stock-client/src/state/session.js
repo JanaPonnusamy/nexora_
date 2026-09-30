@@ -5,7 +5,7 @@ const defaultSettings = {
   serverMode: 'LAN',
   // Default to the HO server on the LAN so a fresh install connects with no
   // manual Settings step. Override per-PC in Settings for remote/static-IP stores.
-  apiBaseUrl: 'http://192.168.10.80:8000',
+  apiBaseUrl: 'http://192.168.10.73:8000',
   bootstrapUrl: '',
   tenantId: '',
   storeId: '',

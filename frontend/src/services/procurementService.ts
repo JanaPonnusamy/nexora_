@@ -9,6 +9,7 @@ import type {
   GrnResult,
   ManualProduct,
   MappingTarget,
+  NetworkOpportunityPage,
   OptimizationAuditRow,
   OptimizationMoveResult,
   OptimizationResult,
@@ -411,6 +412,14 @@ export const procurementService = {
     api.post<{ order_item_id: string; product_code: string; is_manual: boolean; already_exists?: boolean }>(
       `/api/procurement/refreshes/${refreshId}/manual-items${qs({ tenant_id: tenantId })}`,
       { product_code: code, product_name: name, qty, created_by: by },
+    ),
+
+  // Network Opportunities — reads the persisted network movement cache only
+  // (never recomputes on request): products locally NONMOVING but genuinely
+  // FAST/MEDIUM elsewhere in the network, not already on this store's VPL.
+  networkOpportunities: (tenantId: string, refreshId: string, page = 1, pageSize = 50) =>
+    api.get<NetworkOpportunityPage>(
+      `/api/procurement/refreshes/${refreshId}/network-opportunities${qs({ tenant_id: tenantId, page, page_size: pageSize })}`,
     ),
 
   // Manual Add Product search over the real Product Master (sync.Products).

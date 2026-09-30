@@ -4,15 +4,18 @@
 release\\HO_Setup.exe). This module is the cross-platform-friendly equivalent of
 the PyInstaller half, driving the spec files:
 
-    python -m ho_setup.build            # build all three exes
-    python -m ho_setup.build backend    # only HO_Backend
-    python -m ho_setup.build deploy      # only HO_Deploy
-    python -m ho_setup.build uninstall   # only HO_Uninstall
+    python -m ho_setup.build              # build all exes
+    python -m ho_setup.build backend      # only HO_Backend
+    python -m ho_setup.build deploy       # only HO_Deploy
+    python -m ho_setup.build uninstall    # only HO_Uninstall
+    python -m ho_setup.build mail_receiver  # only NexoraHOMailReceiver
 
 Outputs in E:\\Nexora\\dist\\:
     HO_Backend\\HO_Backend.exe   (onedir service host; embedded Python + backend)
     HO_Deploy.exe                (headless deployment helper)
     HO_Uninstall.exe             (standalone uninstaller)
+    NexoraHOMailReceiver\\NexoraHOMailReceiver.exe (onedir; EMAIL FILE_TRANSFER
+                                  receiver -- Phase 2 extraction, opt-in)
 
 Then compile the installer with Inno Setup:
     ISCC installer\\HO_Setup.iss   ->  release\\HO_Setup.exe
@@ -31,6 +34,7 @@ _SPECS = {
     "backend": PKG / "HO_Backend.spec",
     "deploy": PKG / "HO_Deploy.spec",
     "uninstall": PKG / "HO_Uninstall.spec",
+    "mail_receiver": PKG / "HO_MailReceiver.spec",
 }
 
 

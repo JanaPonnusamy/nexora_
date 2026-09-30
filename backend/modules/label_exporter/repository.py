@@ -7,6 +7,7 @@ _DDL_FILES = (
     os.path.join(_SQL_DIR, "0001_label_review.sql"),
     os.path.join(_SQL_DIR, "0002_label_review_remarks.sql"),
     os.path.join(_SQL_DIR, "0003_label_assignment.sql"),
+    os.path.join(_SQL_DIR, "0004_products_grid_covering_index.sql"),
 )
 _schema_ready = False
 
@@ -105,7 +106,69 @@ def search_products(
 
     rows = _fetch_all(
         f"""
-        ;WITH ProductAgg AS (
+        ;WITH FilteredProducts AS (
+            SELECT
+                CAST(p.ProductCode AS NVARCHAR(50)) AS product_code,
+                p.ProductName AS product_name,
+                CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.UnitDescription)), ''), '') AS NVARCHAR(100)) AS unit_description,
+                CAST(ISNULL(p.SaleUnit, 0) AS DECIMAL(18, 2)) AS sale_unit,
+                CAST(ISNULL(p.MRP, 0) AS DECIMAL(18, 2)) AS mrp,
+                CAST(ISNULL(p.TotalStock, 0) AS DECIMAL(18, 2)) AS total_stock,
+                CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.SubLocation)), ''), '') AS NVARCHAR(50)) AS current_sublocation,
+                r.include_label,
+                r.remarks,
+                CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), '') AS NVARCHAR(100)) AS corrected_unit,
+                CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.old_unit_description)), ''), '') AS NVARCHAR(100)) AS old_unit_description,
+                CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.assigned_sublocation)), ''), '') AS NVARCHAR(50)) AS assigned_sublocation,
+                CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.old_sublocation)), ''), '') AS NVARCHAR(50)) AS old_sublocation,
+                r.assignment_type,
+                CAST(ISNULL(r.label_required, 0) AS BIT) AS label_required
+            FROM sync.Products p
+            LEFT JOIN dbo.label_review r
+                ON r.tenant_id = p.tenant_id
+               AND r.store_id = p.store_id
+               AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+            WHERE p.tenant_id = ?
+              AND p.store_id = ?
+              AND ISNULL(p.isactive, 1) = 1
+              AND (
+                    ? = ''
+                    OR p.ProductName LIKE '%' + ? + '%'
+                    OR CAST(p.ProductCode AS NVARCHAR(50)) LIKE '%' + ? + '%'
+                  )
+              AND (
+                    ? = ''
+                    OR p.ProductName LIKE ? + '%'
+                  )
+              AND (
+                    ? = 'null'
+                    AND LTRIM(RTRIM({eff_unit})) = ''
+                    OR ? = 'exact'
+                    AND {exact_clause}
+                    OR ? = 'contains'
+                    AND (? = '' OR {eff_unit} LIKE '%' + ? + '%')
+                  )
+              AND (
+                    ? = ''
+                    OR ISNULL(LTRIM(RTRIM(p.SubLocation)), '') = ?
+                  )
+              AND (
+                    ? = 0
+                    OR ? <> ''
+                    OR ISNULL(LTRIM(RTRIM(p.SubLocation)), '') = ''
+                  )
+              AND ({subloc_clause})
+              AND (
+                    ? = 0
+                    OR TRY_CAST(p.SaleUnit AS DECIMAL(18, 2)) > 1
+                  )
+              AND (
+                    ? = ''
+                    OR (? = 'unreviewed' AND r.include_label IS NULL)
+                    OR (? IN ('Y', 'N') AND r.include_label = ?)
+                  )
+        ),
+        ProductAgg AS (
             SELECT
                 b.ProductCode,
                 DATEDIFF(DAY, MAX(b.GrnDate), GETDATE()) AS purchase_days,
@@ -116,77 +179,43 @@ def search_products(
             FROM sync.Batches b
             WHERE b.tenant_id = ?
               AND b.store_id = ?
+              AND EXISTS (
+                    SELECT 1 FROM FilteredProducts fp WHERE fp.product_code = b.ProductCode
+                  )
             GROUP BY b.ProductCode
         )
         SELECT
-            CAST(p.ProductCode AS NVARCHAR(50)) AS product_code,
-            p.ProductName AS product_name,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.UnitDescription)), ''), '') AS NVARCHAR(100)) AS unit_description,
-            CAST(ISNULL(p.SaleUnit, 0) AS DECIMAL(18, 2)) AS sale_unit,
-            CAST(ISNULL(p.MRP, 0) AS DECIMAL(18, 2)) AS mrp,
-            CAST(ISNULL(p.TotalStock, 0) AS DECIMAL(18, 2)) AS total_stock,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(p.SubLocation)), ''), '') AS NVARCHAR(50)) AS current_sublocation,
+            fp.product_code,
+            fp.product_name,
+            fp.unit_description,
+            fp.sale_unit,
+            fp.mrp,
+            fp.total_stock,
+            fp.current_sublocation,
             CAST(ISNULL(agg.purchase_days, 0) AS INT) AS purchase_days,
             CAST(ISNULL(agg.sale_days, 0) AS INT) AS sale_days,
             CONVERT(VARCHAR(10), agg.last_purchase_date, 23) AS last_purchase_date,
             CONVERT(VARCHAR(10), agg.last_sale_date, 23) AS last_sale_date,
             CAST(ISNULL(agg.live_batch_stock, 0) AS DECIMAL(18, 2)) AS batch_stock,
-            r.include_label,
-            r.remarks,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), '') AS NVARCHAR(100)) AS corrected_unit,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.old_unit_description)), ''), '') AS NVARCHAR(100)) AS old_unit_description,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.assigned_sublocation)), ''), '') AS NVARCHAR(50)) AS assigned_sublocation,
-            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.old_sublocation)), ''), '') AS NVARCHAR(50)) AS old_sublocation,
-            r.assignment_type,
-            CAST(ISNULL(r.label_required, 0) AS BIT) AS label_required
-        FROM sync.Products p
+            fp.include_label,
+            fp.remarks,
+            fp.corrected_unit,
+            fp.old_unit_description,
+            fp.assigned_sublocation,
+            fp.old_sublocation,
+            fp.assignment_type,
+            fp.label_required
+        FROM FilteredProducts fp
         LEFT JOIN ProductAgg agg
-            ON agg.ProductCode = p.ProductCode
-        LEFT JOIN dbo.label_review r
-            ON r.tenant_id = p.tenant_id
-           AND r.store_id = p.store_id
-           AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
-        WHERE p.tenant_id = ?
-          AND p.store_id = ?
-          AND ISNULL(p.isactive, 1) = 1
-          AND (
-                ? = ''
-                OR p.ProductName LIKE '%' + ? + '%'
-                OR CAST(p.ProductCode AS NVARCHAR(50)) LIKE '%' + ? + '%'
-              )
-          AND (
-                ? = ''
-                OR p.ProductName LIKE ? + '%'
-              )
-          AND (
-                ? = 'null'
-                AND LTRIM(RTRIM({eff_unit})) = ''
-                OR ? = 'exact'
-                AND {exact_clause}
-                OR ? = 'contains'
-                AND (? = '' OR {eff_unit} LIKE '%' + ? + '%')
-              )
-          AND (
-                ? = ''
-                OR ISNULL(LTRIM(RTRIM(p.SubLocation)), '') = ?
-              )
-          AND (
-                ? = 0
-                OR ? <> ''
-                OR ISNULL(LTRIM(RTRIM(p.SubLocation)), '') = ''
-              )
-          AND ({subloc_clause})
-          AND (
-                ? = 0
-                OR TRY_CAST(p.SaleUnit AS DECIMAL(18, 2)) > 1
-              )
-          AND (
-                (
+            ON agg.ProductCode = fp.product_code
+        WHERE (
+                ? = 'every'
+                OR (
                     ? = 'all'
                     AND (
-                        ISNULL(p.TotalStock, 0) > 0
+                        fp.total_stock > 0
                         OR (
-                            ISNULL(p.TotalStock, 0) = 0
+                            fp.total_stock = 0
                             AND agg.sale_days IS NOT NULL
                             AND agg.sale_days <= 90
                         )
@@ -194,33 +223,26 @@ def search_products(
                 )
                 OR (
                     ? = 'in_stock'
-                    AND ISNULL(p.TotalStock, 0) > 0
+                    AND fp.total_stock > 0
                 )
                 OR (
                     ? = 'zero_recent_sale'
-                    AND ISNULL(p.TotalStock, 0) = 0
+                    AND fp.total_stock = 0
                     AND agg.sale_days IS NOT NULL
                     AND agg.sale_days <= 90
                 )
                 OR (
                     ? = 'zero_stale'
-                    AND ISNULL(p.TotalStock, 0) = 0
+                    AND fp.total_stock = 0
                     AND (agg.sale_days IS NULL OR agg.sale_days > 90)
                 )
               )
-          AND (
-                ? = ''
-                OR (? = 'unreviewed' AND r.include_label IS NULL)
-                OR (? IN ('Y', 'N') AND r.include_label = ?)
-              )
         ORDER BY
-            CASE WHEN ISNULL(LTRIM(RTRIM(p.SubLocation)), '') = '' THEN 0 ELSE 1 END,
-            ISNULL(LTRIM(RTRIM(p.SubLocation)), ''),
-            p.ProductName
+            CASE WHEN fp.current_sublocation = '' THEN 0 ELSE 1 END,
+            fp.current_sublocation,
+            fp.product_name
         """,
         (
-            tenant_id,
-            store_id,
             tenant_id,
             store_id,
             q,
@@ -237,14 +259,17 @@ def search_products(
             box_number,
             *subloc_params,
             1 if only_sale_unit_gt_one else 0,
-            stock_filter,
-            stock_filter,
-            stock_filter,
-            stock_filter,
             review_status,
             review_status,
             review_status,
             review_status,
+            tenant_id,
+            store_id,
+            stock_filter,
+            stock_filter,
+            stock_filter,
+            stock_filter,
+            stock_filter,
         ),
     )
     suggestion = _fetch_one(
@@ -873,6 +898,31 @@ def mark_labels_printed(tenant_id, store_id, product_codes):
             (tenant_id, store_id, *product_codes),
         )
         conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def clear_printed_state(tenant_id, store_id, product_codes):
+    """Reset ONLY the printed stamp (label_created_at) so already-assigned
+    products can be reprinted, without touching the assigned box/location."""
+    if not product_codes:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        placeholders = ", ".join("?" for _ in product_codes)
+        cursor.execute(
+            f"""
+            UPDATE dbo.label_review
+            SET label_created_at = NULL, updated_at = SYSUTCDATETIME()
+            WHERE tenant_id = ? AND store_id = ? AND product_code IN ({placeholders})
+            """,
+            (tenant_id, store_id, *product_codes),
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        return affected
     finally:
         cursor.close()
         conn.close()

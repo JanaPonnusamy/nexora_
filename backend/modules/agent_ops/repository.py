@@ -1,4 +1,42 @@
+from pathlib import Path
+from threading import Lock
+
 from config.database import get_connection
+
+
+_SCHEMA_FILE = Path(__file__).with_name("sql") / "0001_agent_ops.sql"
+_schema_lock = Lock()
+_schema_ready = False
+
+
+def ensure_schema():
+    """Apply the idempotent Agent Ops DDL once per backend process.
+
+    The migration existed but was never connected to runtime startup/use. A
+    partially provisioned database therefore accepted watchdog status updates
+    and then failed every audit insert, rolling back the whole heartbeat and
+    producing a large traceback every cycle on every store.
+    """
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            script = _SCHEMA_FILE.read_text(encoding="utf-8")
+            for batch in (part.strip() for part in script.split("\nGO")):
+                if batch:
+                    cur.execute(batch)
+            conn.commit()
+            _schema_ready = True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 def _rows_to_dicts(cursor):
@@ -18,6 +56,7 @@ def _insert_audit(cursor, store_id, event_type, detail=None, target_version=None
 
 
 def get_current_release():
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -35,6 +74,7 @@ def get_current_release():
 
 
 def get_watchdog_state(store_id):
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -57,6 +97,7 @@ def get_watchdog_state(store_id):
 
 def record_watchdog_heartbeat(store_id, watchdog_version, installed_agent_version,
                               service_state, last_action):
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -111,6 +152,7 @@ def record_watchdog_heartbeat(store_id, watchdog_version, installed_agent_versio
 
 
 def list_agent_ops(tenant_id=None):
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -146,6 +188,7 @@ def list_agent_ops(tenant_id=None):
 
 
 def list_releases():
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -162,6 +205,7 @@ def list_releases():
 
 
 def list_agent_logs(limit=100, store_id=None):
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -193,6 +237,7 @@ def list_agent_logs(limit=100, store_id=None):
 
 
 def set_desired_state(store_ids, desired_state):
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -219,6 +264,7 @@ def set_desired_state(store_ids, desired_state):
 
 
 def set_desired_version(store_ids, desired_version):
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -251,6 +297,7 @@ def set_desired_version(store_ids, desired_version):
 
 
 def publish_release(version, file_name, sha256, file_size, notes=None):
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -277,6 +324,7 @@ def publish_release(version, file_name, sha256, file_size, notes=None):
 
 
 def get_release(version):
+    ensure_schema()
     conn = get_connection()
     try:
         cur = conn.cursor()

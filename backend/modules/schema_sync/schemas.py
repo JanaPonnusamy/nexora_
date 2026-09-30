@@ -35,8 +35,17 @@ class EnsureDatabaseResult(BaseModel):
     message: str = ""
 
 
+class LocalSourceInfo(BaseModel):
+    host: str
+    port: int
+    database: str
+    username: str
+
+
 class CompareRequest(BaseModel):
-    source: ConnectionInput  # Dev - read-only
+    # Omit source to use this server's own configured database (see
+    # repository.local_connection_from_env) instead of re-entering credentials.
+    source: Optional[ConnectionInput] = None  # Dev - read-only
     target: ConnectionInput  # Production / HO - gets updated
 
 

@@ -8,6 +8,7 @@ trend panel.
 """
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 
 from dependencies.auth import get_current_user
 from dependencies.store_scope import assert_label_exporter_store_access, require_super_admin
@@ -254,10 +255,34 @@ def clear_review_state(
     return service.clear_review_state(tenant_id, store_id, body.product_codes)
 
 
+@router.post("/label-queue/clear-printed")
+def clear_printed_state(
+    tenant_id: str,
+    store_id: str,
+    body: LabelMarkPrintedRequest,
+    current_user: dict = Depends(require_super_admin),
+):
+    """Reset ONLY the printed stamp for the given products so they can be
+    reprinted, without touching their assigned box/location. Super-admin
+    only, mirroring the other explicit reset actions."""
+    return service.clear_printed_state(tenant_id, store_id, body.product_codes)
+
+
 @router.get("/label-queue", response_model=LabelQueueResult)
 def get_label_queue(tenant_id: str, store_id: str, current_user: dict = Depends(get_current_user)):
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
     return service.get_label_queue(tenant_id, store_id)
+
+
+@router.get("/label-queue/pdf")
+def export_label_queue_pdf(tenant_id: str, store_id: str, current_user: dict = Depends(get_current_user)):
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    pdf_bytes = service.build_label_queue_pdf(tenant_id, store_id)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="label-queue.pdf"'},
+    )
 
 
 @router.post("/label-queue/mark-printed")

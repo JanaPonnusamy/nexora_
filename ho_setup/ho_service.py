@@ -106,6 +106,11 @@ class HoBackendService(win32serviceutil.ServiceFramework):
         _prepare_environment()
         self.worker = threading.Thread(target=self._guarded_run, daemon=True)
         self.worker.start()
+        # Tell the SCM startup is complete -- without this the service sits in
+        # START_PENDING (sc query shows STATE: 2) until the SCM's wait-hint
+        # timeout kills it, which looks like a working service that simply
+        # never opens its port (connection refused on /health).
+        self.ReportServiceStatus(win32service.SERVICE_RUNNING)
         win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
 
     def _guarded_run(self):

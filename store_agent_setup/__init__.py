@@ -24,3 +24,13 @@ WATCHDOG_SERVICE_NAME = "NexoraStoreAgentWatchdog"
 WATCHDOG_DISPLAY_NAME = "Nexora Store Agent Watchdog"
 WATCHDOG_EXE_NAME = "NexoraStoreAgentWatchdog.exe"
 WATCHDOG_VERSION = "1.0.0"
+
+# Phase 2 extraction: EMAIL package delivery (SMTP send + IMAP ACK poll) runs
+# as its own always-on service, separate from NexoraStoreAgent (which keeps
+# building packages) -- only relevant to stores configured for
+# file_transfer.transport.mode == EMAIL; installing/starting it is opt-in via
+# NexoraStoreAgentSettings, not part of the default DIRECT_HTTP wizard flow.
+MAIL_TRANSFER_SERVICE_NAME = "NexoraMailTransfer"
+MAIL_TRANSFER_DISPLAY_NAME = "Nexora Mail Transfer"
+MAIL_TRANSFER_EXE_NAME = "NexoraMailTransfer.exe"
+MAIL_TRANSFER_VERSION = "1.0.0"

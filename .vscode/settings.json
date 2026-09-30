@@ -1,0 +1,32 @@
+{
+  "files.watcherExclude": {
+    "**/.git/**": true,
+    "**/.venv/**": true,
+    "**/node_modules/**": true,
+    "**/__pycache__/**": true,
+    "**/.pytest_cache/**": true,
+    "**/.ms-playwright/**": true,
+    "**/.builddeps/**": true,
+    "**/.buildvenv/**": true,
+    "**/dist/**": true,
+    "**/release/**": true,
+    "**/build/**": true,
+    "**/.antigravity-*/**": true,
+    "**/logs/**": true,
+    "**/temp/**": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/node_modules": true,
+    "**/.ms-playwright": true,
+    "**/.builddeps": true,
+    "**/.buildvenv": true,
+    "**/dist": true,
+    "**/release": true,
+    "**/build": true,
+    "**/.antigravity-*": true,
+    "**/logs": true,
+    "**/temp": true
+  },
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false
+}

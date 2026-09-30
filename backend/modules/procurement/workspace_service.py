@@ -10,8 +10,46 @@ import logging
 from fastapi import HTTPException
 
 from modules.procurement import workspace_repository as repo
+from modules.procurement import network_movement_repository as network_repo
 
 logger = logging.getLogger("procurement.workspace")
+
+
+def _merge_network_class(items, store_id):
+    """Grid-row merge: one bulk lookup per page, keyed by product_code — same
+    shape as the existing offer/supplier merges. Informational only: adds
+    `network_movement` (full object, small — reused by the Decision Panel's
+    Network Movement section without a second fetch) and the flat
+    `network_movement_class` convenience field the grid badge reads. Neither
+    ever touches a procurement field."""
+    if not items or not store_id:
+        return items
+    codes = [it.get("product_code") for it in items]
+    try:
+        by_code = network_repo.get_for_store_products(items[0]["tenant_id"], store_id, codes)
+    except Exception:
+        logger.exception("Network movement lookup failed store=%s (non-fatal)", store_id)
+        by_code = {}
+    for it in items:
+        row = by_code.get(str(it.get("product_code")))
+        it["network_movement"] = row
+        it["network_movement_class"] = row["network_movement_class"] if row else None
+    return items
+
+
+def _merge_network_detail(decision, store_id):
+    """Decision Panel merge: the full network object for one product."""
+    if not decision or not store_id:
+        return decision
+    try:
+        row = network_repo.get_for_store_product(
+            decision["tenant_id"], store_id, decision.get("product_code")
+        )
+    except Exception:
+        logger.exception("Network movement detail lookup failed store=%s (non-fatal)", store_id)
+        row = None
+    decision["network_movement"] = row
+    return decision
 
 
 def _require_item(tenant_id, order_item_id):
@@ -25,6 +63,8 @@ def list_workspace(tenant_id, refresh_id, filters, sort_by, sort_dir, page, page
     items, total = repo.list_items(
         tenant_id, refresh_id, filters, sort_by, sort_dir, page, page_size
     )
+    store_id = items[0].get("store_id") if items else None
+    items = _merge_network_class(items, store_id)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
@@ -56,6 +96,7 @@ def get_decision(tenant_id, order_item_id):
     if not decision:
         raise HTTPException(status_code=404, detail="Working item not found")
     decision["business_rules_applied"] = _RULES_APPLIED
+    decision = _merge_network_detail(decision, decision.get("store_id"))
     return decision
 
 

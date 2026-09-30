@@ -9,6 +9,7 @@ from dependencies.store_scope import has_unrestricted_scope
 from modules.audit.writer import record_audit
 from modules.audit.diff import compute_mutation_diff
 from modules.audit.context import AuditContext
+from modules.licensing.service import start_trial
 
 router = APIRouter(prefix="/api/tenants", tags=["Tenants"])
 
@@ -47,6 +48,8 @@ def create_tenant(body: TenantRequest, request: Request, current_user: dict = De
     )
     r = TenantService().get_by_id(str(new_id))
     serialized = _serialize(r)
+
+    start_trial(str(new_id))
 
     record_audit(
         ctx=AuditContext.from_request(request, user=current_user),

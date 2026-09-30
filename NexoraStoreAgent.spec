@@ -6,10 +6,10 @@ hiddenimports += collect_submodules('store_agent')
 
 
 a = Analysis(
-    ['E:\\Nexora\\store_agent_setup\\launch_agent_service.py'],
-    pathex=['E:\\Nexora'],
+    ['E:/Nexora/store_agent_setup/launch_agent_service.py'],
+    pathex=['E:/Nexora'],
     binaries=[],
-    datas=[('E:\\Nexora\\store_agent\\config\\fernet.key', 'store_agent/config')],
+    datas=[('E:/Nexora/store_agent/config/fernet.key', 'store_agent/config')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

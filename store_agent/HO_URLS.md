@@ -23,7 +23,7 @@ static IP, then domain — and restart the agent service:
 {
   "store_id": "…",
   "ho_urls": [
-    "http://192.168.10.80:8000",   // local LAN (tried first)
+    "http://192.168.10.73:8000",   // local LAN (tried first)
     "https://ho.qvault.in",        // public domain / tunnel
     "http://203.0.113.10:8000"     // static IP
   ],
@@ -34,7 +34,7 @@ static IP, then domain — and restart the agent service:
 Then restart the store agent service.
 
 **Back-compat:** the old single `"ho_url": "…"` still works, and it may be a
-comma-separated list (`"ho_url": "http://192.168.10.80:8000, https://ho.qvault.in"`).
+comma-separated list (`"ho_url": "http://192.168.10.73:8000, https://ho.qvault.in"`).
 The env var `NEXORA_HO_URLS` (comma separated) overrides the file for a quick ops
 fix without editing configs.
 

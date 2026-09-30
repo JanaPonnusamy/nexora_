@@ -16,6 +16,17 @@ REPO = os.path.dirname(SPECPATH)            # noqa: F821 (SPECPATH injected)
 hiddenimports = ["pyodbc", "requests", "dotenv", "win32timezone"]
 hiddenimports += collect_submodules("ho_setup")
 
+# This helper never touches backend/modules (OCR/paddleocr/torch) -- exclude
+# them explicitly in case PyInstaller's graph walk reaches them via the
+# shared, non-isolated Python environment (see HO_Backend.spec for why).
+ML_EXCLUDES = [
+    "paddle", "paddleocr", "paddlepaddle", "torch", "torchvision", "torchaudio",
+    "cv2", "opencv", "tensorflow", "jax", "jaxlib", "triton",
+    "IPython", "jupyter", "notebook", "pytest", "gunicorn",
+    "numba", "llvmlite", "transformers", "sentencepiece",
+    "skimage", "albumentations", "albucore", "shapely", "pyclipper", "lmdb",
+]
+
 a = Analysis(
     [os.path.join(REPO, "ho_setup", "launch_deploy.py")],
     pathex=[REPO],
@@ -25,7 +36,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=ML_EXCLUDES,
     noarchive=False,
     optimize=0,
 )

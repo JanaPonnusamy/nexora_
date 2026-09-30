@@ -10,6 +10,7 @@ import time
 from fastapi import HTTPException
 
 from modules.label_exporter import assignment_engine as engine
+from modules.label_exporter import pdf_export
 from modules.label_exporter import repository
 
 logger = logging.getLogger("label_exporter.service")
@@ -207,14 +208,14 @@ def _build_assignment_plan(
             plan = engine.plan_single_boxes(letter, products, occ)
         elif unit_u == engine.UNIT_SYP:
             plan = engine.plan_syp(products)
-        elif unit_u == engine.UNIT_TAB:
+        elif unit_u in engine.STANDARD_BOX_UNITS:
             if not letter:
-                raise HTTPException(status_code=400, detail="A letter is required for TAB assignment")
+                raise HTTPException(status_code=400, detail=f"A letter is required for {unit_u} assignment")
             if mode == "new_label":
-                plan = engine.plan_new_label(letter, products, start_number=int(start_number or 1))
+                plan = engine.plan_new_label(letter, products, start_number=int(start_number or 1), unit=unit_u)
             else:
                 occ = repository.get_box_occupancy(tenant_id, store_id, letter, exclude_codes=codes)
-                plan = engine.plan_continue(letter, products, occ)
+                plan = engine.plan_continue(letter, products, occ, unit=unit_u)
         else:
             raise HTTPException(
                 status_code=400,
@@ -278,6 +279,21 @@ def mark_labels_printed(tenant_id: str, store_id: str, product_codes: list[str])
     repository.ensure_schema()
     repository.mark_labels_printed(tenant_id, store_id, product_codes)
     return {"ok": True, "count": len(product_codes or [])}
+
+
+def clear_printed_state(tenant_id: str, store_id: str, product_codes: list[str]):
+    codes = [c for c in (product_codes or []) if str(c or "").strip()]
+    if not codes:
+        raise HTTPException(status_code=400, detail="No products selected")
+    repository.ensure_schema()
+    affected = repository.clear_printed_state(tenant_id, store_id, codes)
+    return {"ok": True, "count": len(codes), "affected": affected}
+
+
+def build_label_queue_pdf(tenant_id: str, store_id: str) -> bytes:
+    repository.ensure_schema()
+    rows = repository.get_label_queue(tenant_id, store_id)
+    return pdf_export.build_label_queue_pdf(rows)
 
 
 # --------------------------------------------------------------------------

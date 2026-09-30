@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './api/client.js';
 
 const EMPTY_CONNECTION = { host: '', port: 1433, database: '', username: '', password: '' };
@@ -20,7 +20,7 @@ function ConnectionForm({ title, hint, value, onChange, testResult, onTest, onEn
   }
   return (
     <div className="schema-sync-conn-card">
-      <h3>{title}</h3>
+      {title && <h3>{title}</h3>}
       {hint && <p className="schema-sync-hint">{hint}</p>}
       <label>
         Host / Static IP
@@ -111,6 +111,24 @@ export default function SchemaSyncPage({ session }) {
   const [applyStatus, setApplyStatus] = useState({ state: 'idle', message: '' });
   const [applyResult, setApplyResult] = useState(null);
 
+  // Default Source to THIS backend's own configured database — the operator
+  // already reached it (Test Connection on the API base URL, e.g.
+  // http://122.252.246.181:8443), so re-typing its SQL host/db/user/password
+  // is redundant and is what caused the "backend URL pasted into SQL Host
+  // field" confusion. Manual entry is still available for the rare case of
+  // syncing from a genuinely different Dev server.
+  const [useLocalSource, setUseLocalSource] = useState(true);
+  const [localSource, setLocalSource] = useState(null);
+  const [localSourceError, setLocalSourceError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getSchemaSyncLocalSource(session)
+      .then((info) => { if (!cancelled) setLocalSource(info); })
+      .catch((error) => { if (!cancelled) setLocalSourceError(error.message); });
+    return () => { cancelled = true; };
+  }, [session]);
+
   async function testSource() {
     setTestingSource(true);
     setSourceTest(null);
@@ -149,14 +167,17 @@ export default function SchemaSyncPage({ session }) {
     }
   }
 
-  const canCompare = Boolean(source.host && source.database && source.username && target.host && target.database && target.username);
+  const sourceReady = useLocalSource
+    ? Boolean(localSource)
+    : Boolean(source.host && source.database && source.username);
+  const canCompare = Boolean(sourceReady && target.host && target.database && target.username);
 
   async function runCompare() {
     setCompareStatus({ state: 'loading', message: 'Reading both schemas and comparing…' });
     setCompareResult(null);
     setApplyResult(null);
     try {
-      const result = await api.compareSchemaSync(source, target, session);
+      const result = await api.compareSchemaSync(useLocalSource ? null : source, target, session);
       setCompareResult(result);
       setCompareStatus({
         state: 'ok',
@@ -194,16 +215,41 @@ export default function SchemaSyncPage({ session }) {
       />
 
       <div className="schema-sync-conn-grid">
-        <ConnectionForm
-          title="Source — Development (read-only)"
-          hint="Never written to."
-          value={source}
-          onChange={setSource}
-          testResult={sourceTest}
-          onTest={testSource}
-          testing={testingSource}
-          showCreateDb={false}
-        />
+        <div className="schema-sync-conn-card">
+          <h3>Source — Development (read-only)</h3>
+          <p className="schema-sync-hint">Never written to.</p>
+          <label className="schema-sync-toggle">
+            <input
+              type="checkbox"
+              checked={useLocalSource}
+              onChange={(e) => setUseLocalSource(e.target.checked)}
+            />
+            Use this server's own database (no credentials needed)
+          </label>
+          {useLocalSource ? (
+            localSource ? (
+              <div className="schema-sync-local-source">
+                <div><strong>Host</strong> {localSource.host}:{localSource.port}</div>
+                <div><strong>Database</strong> {localSource.database}</div>
+                <div><strong>Username</strong> {localSource.username}</div>
+              </div>
+            ) : (
+              <span className={`status ${localSourceError ? 'error' : 'loading'}`}>
+                {localSourceError || 'Loading this server\'s database info…'}
+              </span>
+            )
+          ) : (
+            <ConnectionForm
+              title=""
+              value={source}
+              onChange={setSource}
+              testResult={sourceTest}
+              onTest={testSource}
+              testing={testingSource}
+              showCreateDb={false}
+            />
+          )}
+        </div>
         <ConnectionForm
           title="Target — Production / HO"
           hint="Schema changes are applied here. If the database doesn't exist yet, it will be created."

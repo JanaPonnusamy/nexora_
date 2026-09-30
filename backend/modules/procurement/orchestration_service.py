@@ -12,6 +12,7 @@ order_items_repository (working items). Business logic stays in the Decision
 Engine; this layer only sequences and validates.
 """
 
+import threading
 from datetime import date
 
 from fastapi import HTTPException
@@ -26,6 +27,7 @@ from modules.procurement import comparison_service
 from modules.procurement import reconciliation_service
 from modules.procurement import supplier_exclusion_repository as exclusion_repo
 from modules.procurement import platform_source_repository as platform_repo
+from modules.procurement import network_movement_service
 from repositories.store_repository import StoreRepository
 
 import logging
@@ -217,6 +219,26 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
         "carried=%s prev=%s", tenant_id, cycle_id, refresh_id,
         engine["generated_product_count"], working_items, carried, previous_refresh_id,
     )
+
+    # 5) Network Movement Intelligence — informational-only, tenant-wide cache
+    #    (cross-store, not this Refresh's own data). Measured at ~230s for a
+    #    real 6-store/54k-product tenant (store_metrics' 730-day scan is the
+    #    cost, same query Product Intelligence already pays per store) — far
+    #    too slow to run inline in the Refresh request/response cycle, so it is
+    #    fired on a background thread and allowed to finish after the Refresh
+    #    has already returned. Never allowed to fail OR delay the Refresh: this
+    #    is a visibility feature layered on the completed, published pipeline,
+    #    not part of the procurement-critical path.
+    def _refresh_network_movement_async():
+        try:
+            network_movement_service.refresh_network_movement(tenant_id)
+        except Exception:
+            logger.exception(
+                "Network movement refresh failed tenant=%s refresh=%s (non-fatal)",
+                tenant_id, refresh_id,
+            )
+
+    threading.Thread(target=_refresh_network_movement_async, daemon=True).start()
     return {
         "refresh_id": refresh_id,
         "cycle_id": cycle_id,

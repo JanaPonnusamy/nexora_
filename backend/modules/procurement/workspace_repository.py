@@ -103,7 +103,7 @@ def get_item(tenant_id, order_item_id):
 
 
 _DECISION_SELECT = """
-    oi.order_item_id, oi.product_id, oi.product_code, oi.item_status,
+    oi.order_item_id, oi.tenant_id, oi.store_id, oi.product_id, oi.product_code, oi.item_status,
     oi.suggested_qty AS oi_suggested_qty, oi.final_qty, oi.assigned_qty,
     oi.received_qty, oi.remaining_qty, oi.is_manual, oi.manual_override,
     oi.override_reason, oi.skip_reason, oi.pending_status,

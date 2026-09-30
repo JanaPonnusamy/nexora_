@@ -34,6 +34,21 @@ BACKEND_EXE_NAME = "HO_Backend.exe"        # Windows-service host (embedded Pyth
 SETUP_EXE_NAME = "HO_Setup.exe"            # the wizard
 UNINSTALL_EXE_NAME = "HO_Uninstall.exe"    # the uninstaller
 
+# Phase 2 extraction: EMAIL package receiving (IMAP poll + validate/import +
+# ACK send) runs as its own always-on service, separate from UniNexHO (which
+# keeps serving the API). Only relevant when NEXORA_FILE_TRANSFER_MODE=EMAIL;
+# installing it is a separate, opt-in step, not part of the default HO_Setup
+# wizard flow (most deployments never touch FILE_TRANSFER at all).
+MAIL_RECEIVER_SERVICE_NAME = "NexoraHOMailReceiver"
+MAIL_RECEIVER_DISPLAY_NAME = "Nexora HO Mail Receiver"
+MAIL_RECEIVER_SERVICE_DESCRIPTION = (
+    "Nexora HO Mail Receiver: polls a mailbox for FILE_TRANSFER packages, "
+    "imports them through the existing staging/MERGE pipeline, and emails "
+    "acknowledgements back, for stores configured with "
+    "file_transfer.transport.mode = EMAIL."
+)
+MAIL_RECEIVER_EXE_NAME = "NexoraHOMailReceiver.exe"
+
 # --- Deployment defaults ----------------------------------------------------
 DEFAULT_INSTALL_PATH = r"C:\Program Files\UniNex\HO"
 DEFAULT_DATABASE = "NEXORA_PLATFORM"

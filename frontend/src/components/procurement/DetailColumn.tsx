@@ -207,6 +207,21 @@ export function DetailColumn({
           {supplierRemarks && (
             <div className="pm-dhead__meta"><span><b>Remarks</b>{supplierRemarks}</span></div>
           )}
+          {/* Network Movement — informational only, never a purchase directive
+              (see ProductGrid's networkBadge comment for the suppression rule
+              this mirrors). Null when the product has no reliable cross-store
+              mapping or no sales/stock presence anywhere else. */}
+          {item.network_movement && (
+            <div className="pm-dhead__meta pm-dhead__network" title="Cross-store movement — informational only; local procurement decisions are unaffected.">
+              <span><b>Local</b>{item.movement_class ?? '—'}</span>
+              <span><b>Network</b>{item.network_movement.network_movement_class ?? '—'}</span>
+              <span><b>Network Sales</b>{num(item.network_movement.network_sales_qty ?? 0)} / {item.network_movement.rolling_days ?? '—'}d</span>
+              <span><b>Active Stores</b>{item.network_movement.active_store_count}/{item.network_movement.mapped_store_count}</span>
+              {item.network_movement.fast_store_count > 0 && (
+                <span><b>Fast Stores</b>{item.network_movement.fast_store_count}</span>
+              )}
+            </div>
+          )}
           {/* Inline Change Supplier (§4) — reassignment reachable from Review
               All mode too, not only Supplier Purchasing's own review panel. */}
           {assignedSupplier && onChangeSupplier && (

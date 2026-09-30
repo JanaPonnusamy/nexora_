@@ -67,15 +67,17 @@ _FONT_NAME = "hebo"
 _FONT = fitz.Font(_FONT_NAME)
 _NAME_COLOR = (0.0, 0.2, 0.0)       # dark green, sampled from the reference printout
 _LOC_COLOR = (0.0, 0.2, 0.0)        # same dark green — matches the reference printout exactly
+# Owner request: EVERY product name renders at one fixed size, bold, dark, so
+# the whole sheet is uniform and easy to read from a distance (e.g. a box shelved
+# above eye level). Max == min locks the size — no per-name or per-box shrinking.
+# The rare name too wide to fit at this size is width-trimmed in _display_name
+# rather than shrunk, so the size stays constant across every cell.
 _NAME_FONT_MAX = 11.0
-_NAME_FONT_MIN = 6.0
-# The reference printout uses 13.6pt names / 48pt codes — a fixed ~3.53x
-# ratio. Scaling off our actual name size (not a hardcoded number) keeps the
-# code proportionate to whatever the name font ends up being, instead of
-# looking oversized against a smaller name font.
-_REFERENCE_NAME_FONT = 13.6
-_REFERENCE_LOC_FONT = 48.0
-_LOC_FONT_MAX = round(_NAME_FONT_MAX * (_REFERENCE_LOC_FONT / _REFERENCE_NAME_FONT), 1)
+_NAME_FONT_MIN = 11.0
+# Location code stays large and independent of the name size — it's the shelf
+# identifier and wants to be readable across the room. It may still shrink for
+# unusually long codes (e.g. "SYPA012"), down to the floor.
+_LOC_FONT_MAX = 48.0
 _LOC_FONT_MIN = 16.0
 
 # Legacy (pRINTING.frm) stored letter and box-number in separate `let`/`locn`
@@ -168,6 +170,13 @@ def _display_name(item):
     # separator characters so the name ends cleanly. A closing ")" is kept —
     # "APPELLA (APPELLAR)" is a complete, balanced name.
     truncated = re.sub(r"[\s\[\(,/]+$", "", truncated)
+    # Names all render at one locked size (_NAME_FONT_MAX). A few unusually wide
+    # 18-char names ("BECOSULES PERFORMA") would spill past the cell at that
+    # size, so drop trailing characters until the name fits the column width —
+    # only those few names lose a char or two; the size never changes.
+    avail = _NAME_COL_W - 2 * _CELL_PAD_X
+    while truncated and fitz.get_text_length(truncated, fontname=_FONT_NAME, fontsize=_NAME_FONT_MAX) > avail:
+        truncated = truncated[:-1].rstrip()
     return truncated
 
 
@@ -209,24 +218,13 @@ def _draw_card(page, x0, y0, card_w, group):
 
     items = group["items"]
 
-    # Uniform name size per box: pick the single largest size at which EVERY
-    # name in this box still fits its column, and draw all lines at it. Sizing
-    # each name independently let one long 18-char name shrink to ~9pt right
-    # next to a 13.6pt short name, so every box read as a ragged mix of sizes;
-    # one shared size per printed box looks like a proper label instead.
-    names = [_display_name(items[idx]) for idx in range(min(len(items), MAX_PRODUCTS_PER_CARD))]
-    avail_w = col_w - 2 * _CELL_PAD_X
-    box_font = min(
-        (_fit_fontsize(n, _NAME_FONT_MAX, _NAME_FONT_MIN, avail_w) for n in names if n),
-        default=_NAME_FONT_MAX,
-    )
-
     for idx in range(MAX_PRODUCTS_PER_CARD):
         row, col = _SLOT_POSITIONS[idx]
         cell = fitz.Rect(col_x[col], row_y[row], col_x[col + 1], row_y[row + 1])
         page.draw_rect(cell, color=(0, 0, 0), width=_INNER_BORDER_W)
         if idx < len(items):
-            _draw_text(page, cell, names[idx], box_font, box_font, _NAME_COLOR, "left")
+            # Fixed size for every name (see _NAME_FONT_MAX == _NAME_FONT_MIN).
+            _draw_text(page, cell, _display_name(items[idx]), _NAME_FONT_MAX, _NAME_FONT_MIN, _NAME_COLOR, "left")
 
     label_rect = fitz.Rect(col_x[1], row_y[2], col_x[2], row_y[_NUM_ROWS])
     page.draw_rect(label_rect, color=(0, 0, 0), width=_INNER_BORDER_W)

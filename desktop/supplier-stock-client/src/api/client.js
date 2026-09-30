@@ -11,6 +11,20 @@ function authHeaders(session) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+const TRANSIENT_STATUS = new Set([408, 425, 429, 502, 503, 504]);
+const RETRY_DELAYS_MS = [350, 1000];
+
+function delay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    if (!signal) return;
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
 // FastAPI error bodies aren't always a plain string: 422 validation errors send
 // `detail` as a list of {loc, msg, type} objects, and some handlers raise
 // HTTPException(detail=<dict>). Passing any of those straight into `new
@@ -32,32 +46,43 @@ async function request(path, options = {}) {
   const settings = loadSettings();
   const session = options.session;
   const timeoutMs = options.timeoutMs ?? 45000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // React Query passes its own per-query AbortSignal so switching products
-  // cancels the previous product's in-flight request (req 5) - forward its
-  // abort into our internal controller without losing the timeout behavior.
-  if (options.signal) {
-    if (options.signal.aborted) controller.abort();
-    else options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-  }
+  const method = String(options.method || 'GET').toUpperCase();
+  const retries = options.transientRetries ?? (method === 'GET' ? RETRY_DELAYS_MS.length : 0);
+  const { session: _session, timeoutMs: _timeoutMs, transientRetries: _transientRetries, ...fetchOptions } = options;
   let response;
-  try {
-    response = await fetch(joinUrl(settings.apiBaseUrl, path), {
-      ...options,
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-        ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-        ...authHeaders(session),
-        ...(options.headers || {})
-      }
-    });
-  } catch (err) {
-    if (err.name === 'AbortError') throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
-    throw err;
-  } finally {
-    clearTimeout(timer);
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    const onCallerAbort = () => controller.abort();
+    if (options.signal) {
+      if (options.signal.aborted) controller.abort();
+      else options.signal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, path), {
+        ...fetchOptions,
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+          ...authHeaders(session),
+          ...(options.headers || {})
+        }
+      });
+      if (!TRANSIENT_STATUS.has(response.status) || attempt === retries) break;
+      // Drain the body so Chromium can reuse the keep-alive connection.
+      await response.arrayBuffer().catch(() => {});
+    } catch (err) {
+      if (options.signal?.aborted) throw err;
+      if (timedOut) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+      if (attempt === retries) throw err;
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onCallerAbort);
+    }
+    await delay(RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)], options.signal);
   }
 
   const text = await response.text();
@@ -202,12 +227,46 @@ export const api = {
     })}`, { session });
   },
 
+  // Tab 2 of the web Stock Availability screen — search by batch number, MRP
+  // and/or product name across branches (same {stores:[...]} shape as
+  // searchStockProducts, so callers can render either result identically).
+  searchStockBatches(query, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/stock-availability/batches/search${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      batch: query.batch || '',
+      mrp: query.mrp || '',
+      product: query.product || ''
+    })}`, { session });
+  },
+
   getProductDashboard(productCode, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/supplier-stock-analysis/products/${productCode}/dashboard${toQuery({
       tenant_id: filters.tenantId || settings.tenantId,
+      source_store_id: filters.sourceStoreId,
       months: filters.months || 6
-    })}`, { session });
+    })}`, { session, signal: filters.signal });
+  },
+
+  // Store-wide (not supplier-scoped) stock-status counts for the NMW-Stock
+  // filter dropdown - see backend/modules/supplier_stock_analysis/router.py.
+  getWarehouseStockCounts(tenantId, storeId, session, filters = {}) {
+    return request(`/api/supplier-stock-analysis/warehouse-stock/counts${toQuery({
+      tenant_id: tenantId,
+      store_id: storeId
+    })}`, { session, signal: filters.signal });
+  },
+
+  // The store's own product catalogue filtered by stock status, independent
+  // of any supplier selection.
+  getWarehouseStockProducts(tenantId, storeId, stockFilter, session, filters = {}) {
+    return request(`/api/supplier-stock-analysis/warehouse-stock/products${toQuery({
+      tenant_id: tenantId,
+      store_id: storeId,
+      stock_filter: stockFilter,
+      search: filters.search || ''
+    })}`, { session, signal: filters.signal });
   },
   getStockCore(storeId, productCode, session, filters = {}) {
     const settings = loadSettings();
@@ -338,7 +397,18 @@ export const api = {
       supplier_code: supplierCode,
       search: filters.search || '',
       only_available: filters.onlyAvailable ?? 1
-    })}`, { session });
+    })}`, {
+      session,
+      // The underlying query cold-reads from disk on the DB server (limited
+      // RAM there means product_mapping/Products pages routinely fall out of
+      // the buffer pool between uses) -- a first touch for a given supplier
+      // can legitimately take ~35-40s even though it's back down to ~1-2s on
+      // a warm cache. That's right at the default 45s wall, so a slightly
+      // busy moment tips it into a client-side timeout even though the query
+      // would have finished. Not a query-design problem (verified directly
+      // against the DB); this just gives the cold case room to land.
+      timeoutMs: 90000
+    });
   },
 
   getSupplierAnalysisReport(supplierCode, session, filters = {}) {
@@ -674,6 +744,14 @@ export const api = {
     });
   },
 
+  clearPrintedLabels(tenantId, storeId, productCodes, session) {
+    return request(`/api/label-exporter/label-queue/clear-printed${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
+    });
+  },
+
   updateLabelReview(productCode, tenantId, storeId, body, session) {
     return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/review${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
       method: 'PUT',
@@ -696,6 +774,24 @@ export const api = {
       session,
       body: JSON.stringify({ sublocation })
     });
+  },
+
+  async exportLabelQueuePdf(tenantId, storeId, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/label-exporter/label-queue/pdf${toQuery({ tenant_id: tenantId, store_id: storeId })}`), {
+        headers: { ...authHeaders(session) }
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'PDF export failed';
+      try { const parsed = await response.json(); detail = parsed?.detail || parsed?.message || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    return response.blob();
   },
 
   getLabelProductTrend(productCode, tenantId, storeId, session) {
@@ -741,6 +837,10 @@ export const api = {
   },
 
   // ----- Schema Sync (Dev -> Production) - super admin only -----
+  getSchemaSyncLocalSource(session) {
+    return request('/api/schema-sync/local-source-info', { session });
+  },
+
   testSchemaSyncConnection(connection, session) {
     return request('/api/schema-sync/test-connection', {
       method: 'POST',
@@ -761,7 +861,11 @@ export const api = {
     return request('/api/schema-sync/compare', {
       method: 'POST',
       session,
-      timeoutMs: 120000,
+      // Legacy DBs like OrderNMC can have far more tables/columns/SPs than
+      // NEXORA_PLATFORM - a full metadata snapshot of both Source and Target
+      // can run past two minutes. 120s clipped that mid-read (nothing gets
+      // created because Apply never fires without a compare result).
+      timeoutMs: 600000,
       body: JSON.stringify({ source, target })
     });
   },

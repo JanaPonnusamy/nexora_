@@ -39,6 +39,12 @@ COVERAGE = "COVERAGE"
 SPIKE_PROTECTION = "SPIKE_PROTECTION"
 MAX_BILL_TRIGGER = "MAX_BILL_TRIGGER"
 
+# Legacy parity additions (VB.NET order_local/remote.sql):
+#   minqty = MAX(CEIL((slsqty/RollingDays)*MinDays), CEIL(slsqty/Frequency))
+#   "Additional Row" branch tops up rare/low-frequency near-zero-stock movers.
+INCLUDED_RARE_MOVER_TOPUP = "INCLUDED_RARE_MOVER_TOPUP"
+RARE_MOVER_TOPUP = "RARE_MOVER_TOPUP"
+
 ACTION_INCLUDE = "INCLUDE"
 ACTION_EXCLUDE = "EXCLUDE"
 
@@ -125,13 +131,30 @@ def target_stock(avg_daily_sales, max_days):
     return avg_daily_sales * max_days
 
 
+def min_qty_floor(avg_daily_sales, min_days, window_sales_qty, billing_frequency):
+    """Legacy parity: minqty = MAX(CEIL(AvgDailySales*MinDays), CEIL(slsqty/Frequency)).
+
+    order_local/remote.sql floors MinQty by the **average quantity per bill**
+    (``CEIL(slsqty/Frequence)``), not just the days-average — a lumpy/slow
+    mover that sells rarely but in large single-bill quantities still floors
+    high even though its day-average looks small. NEXORA's day-cover gate
+    (``cover < MinDays``) has no equivalent of this on its own; this floor is
+    combined with days-cover as an OR in the qualification gate (see
+    `evaluate`), not substituted for it — legacy parity ADDED, not swapped in.
+    ``AvgDailySales*MinDays`` generalizes legacy's hardcoded ``slsqty/90``
+    (NEXORA's `RollingDays` replaces the legacy-fixed 90)."""
+    by_days = math.ceil(avg_daily_sales * min_days) if avg_daily_sales > 0 else 0
+    by_bill = math.ceil(window_sales_qty / billing_frequency) if billing_frequency else 0
+    return max(by_days, by_bill)
+
+
 def coverage_required(target_stock_qty, effective_avail):
     """PR-BR-006: CoverageRequired = TargetStockQty - EffectiveAvailable."""
     return target_stock_qty - effective_avail
 
 
 def final_required(target_stock_qty, effective_avail, max_day_sale_qty,
-                   max_bill_qty, sale_unit=0.0):
+                   max_bill_qty, sale_unit=0.0, max_line_sale_qty=0.0):
     """PR-BR-007/008/009 (stock-netted): the demand floors are gross required
     STOCK LEVELS, and current stock is subtracted exactly once at the end.
 
@@ -140,29 +163,38 @@ def final_required(target_stock_qty, effective_avail, max_day_sale_qty,
         maxqty   = MAX((slsqty/90)*maxDays, MaxSalesQtyInBill)   -- gross target incl. spike
         OrderQty = CEILING((maxqty - TotalStock) / SaleUnit)     -- ONE stock subtraction
 
-    A spike floor (max-day / max-bill) is therefore a required stock LEVEL, not
-    an extra order stacked on top of the stock already on hand. The previous
-    implementation applied the floors to the *net* coverage requirement, i.e.
-    ``MAX(target - stock, max_day, max_bill)``, which never subtracted stock from
-    the spike floors and so over-ordered spiky-but-stocked products (e.g. order
-    the full 300-unit single-day spike while 5 are already in stock). We now mirror
-    legacy: gross target first, subtract stock once.
+    A spike floor (max-day / max-bill / max-line) is therefore a required stock
+    LEVEL, not an extra order stacked on top of the stock already on hand. The
+    previous implementation applied the floors to the *net* coverage
+    requirement, i.e. ``MAX(target - stock, max_day, max_bill)``, which never
+    subtracted stock from the spike floors and so over-ordered spiky-but-stocked
+    products (e.g. order the full 300-unit single-day spike while 5 are already
+    in stock). We now mirror legacy: gross target first, subtract stock once.
+
+    ``max_line_sale_qty`` is legacy's exact spike metric (``MaxSalesQtyInBill``
+    = MAX single-row Quantity, i.e. the biggest ONE sale-line, not a day/bill
+    sum). NEXORA's day-sum and bill-sum floors are additional, stronger
+    safeguards the legacy engine never had; max_line_sale_qty restores legacy's
+    own floor as a third (superset) term so NEXORA orders at least as much
+    spike protection as legacy did, plus its own.
 
     Returns (required, final_required_qty, suggested_strip_qty, determinant).
     The determinant is the term that set the gross target, preferring COVERAGE
-    (days-cover), then SPIKE_PROTECTION (max-day), then MAX_BILL_TRIGGER.
-    When SaleUnit is missing/<=0 the strip quantity falls back to loose units.
+    (days-cover), then SPIKE_PROTECTION (max-day / max-line), then
+    MAX_BILL_TRIGGER. When SaleUnit is missing/<=0 the strip quantity falls
+    back to loose units.
     """
     target_stock_qty = target_stock_qty or 0.0
     effective_avail = effective_avail or 0.0
     max_day_sale_qty = max_day_sale_qty or 0.0
     max_bill_qty = max_bill_qty or 0.0
-    gross_target = max(target_stock_qty, max_day_sale_qty, max_bill_qty)
+    max_line_sale_qty = max_line_sale_qty or 0.0
+    gross_target = max(target_stock_qty, max_day_sale_qty, max_bill_qty, max_line_sale_qty)
     required = gross_target - effective_avail
     final_qty = max(0, math.ceil(required))
     if target_stock_qty >= gross_target:
         determinant = COVERAGE
-    elif max_day_sale_qty >= gross_target:
+    elif max(max_day_sale_qty, max_line_sale_qty) >= gross_target:
         determinant = SPIKE_PROTECTION
     else:
         determinant = MAX_BILL_TRIGGER
@@ -196,7 +228,10 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
     reserved = src.get("reserved", 0.0) or 0.0
     max_day = src.get("max_day_sale_qty", 0.0) or 0.0
     max_bill = src.get("max_bill_qty", 0.0) or 0.0
+    max_line = src.get("max_line_sale_qty", 0.0) or 0.0
     sale_unit = src.get("sale_unit", 0.0) or 0.0
+    billing_frequency = src.get("billing_frequency", 0) or 0
+    window_sales_qty = src.get("window_sales_qty", 0.0) or 0.0
 
     # Stage 2 — metrics
     avg = average_daily_sales(src.get("window_sales_qty", 0.0), params.rolling_days)
@@ -281,19 +316,51 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         )
         return out
 
-    if cover >= params.min_days:
+    # Qualification gate — legacy parity ADDED (OR), not swapped in: NEXORA's
+    # own days-cover test stays, plus legacy's average-per-bill MinQty floor
+    # (order_local/remote.sql: minqty = MAX(CEIL(avg*MinDays), CEIL(slsqty/
+    # Frequency)); candidate iff minqty > TotalStock). A lumpy/slow mover that
+    # sells rarely but in big single-bill quantities can look "adequately
+    # covered" by the day-average ratio alone while still failing legacy's
+    # per-bill floor — that product must still qualify.
+    mqf = min_qty_floor(avg, params.min_days, window_sales_qty, billing_frequency)
+    qualifies_by_cover = cover < params.min_days
+    qualifies_by_min_qty_floor = eff < mqf
+    if not qualifies_by_cover and not qualifies_by_min_qty_floor:
+        # Legacy "Additional Row" parity: a token top-up order for rare,
+        # low-frequency movers sitting at near-zero stock that neither
+        # candidate gate above catches (legacy: TotalStock<=1 AND minqty<=1
+        # AND Frequency>1 AND slsqty>1, already past the recency/GRN gates
+        # above). Forces a single strip so these don't silently drop off the
+        # order the way plain day-cover math would exclude them.
+        if eff <= 1 and mqf <= 1 and billing_frequency > 1 and window_sales_qty > 1:
+            out["target_days"] = params.max_days
+            out["trigger_reason"] = RARE_MOVER_TOPUP
+            out["procurement_action"] = ACTION_INCLUDE
+            out["suggested_qty"] = 1
+            out["final_required_qty"] = 1
+            out["reason_code"] = INCLUDED_RARE_MOVER_TOPUP
+            out["reason_text"] = (
+                "Included: rare-mover top-up (legacy 'Additional Row' parity) — "
+                f"stock {eff:.0f}<=1, sold {billing_frequency:.0f}x/"
+                f"{window_sales_qty:.0f} units in window, adequately covered by "
+                "days-cover/min-qty floor but effectively out of stock."
+            )
+            return out
         out["reason_code"] = EXCLUDED_ADEQUATE_COVER
         out["reason_text"] = (
-            f"Excluded: {cover:.1f}d cover >= {params.min_days:g}d minimum."
+            f"Excluded: {cover:.1f}d cover >= {params.min_days:g}d minimum "
+            f"and stock {eff:.0f} >= per-bill MinQty floor {mqf:g}."
         )
         return out
 
     # Included candidate — Stages 6-9. Gross target = MAX(days-cover target,
-    # spike floors); subtract stock ONCE (see final_required — stock-netted).
+    # spike floors incl. legacy's single-line max); subtract stock ONCE (see
+    # final_required — stock-netted).
     tgt = target_stock(avg, params.max_days)
     cov_req = coverage_required(tgt, eff)
     required, final_qty, suggested_qty, determinant = final_required(
-        tgt, eff, max_day, max_bill, sale_unit
+        tgt, eff, max_day, max_bill, sale_unit, max_line
     )
 
     out["target_days"] = params.max_days
@@ -307,15 +374,18 @@ def evaluate(src: dict, params: DecisionParameters) -> dict:
         out["reason_text"] = "Excluded: already sufficiently covered (required <= 0)."
         return out
 
-    gross_target = max(tgt, max_day, max_bill)
+    gross_target = max(tgt, max_day, max_bill, max_line)
     out["procurement_action"] = ACTION_INCLUDE
     out["suggested_qty"] = suggested_qty
     out["final_required_qty"] = suggested_qty
     out["reason_code"] = INCLUDED_BELOW_MIN_DAYS
+    qualifier = "cover" if qualifies_by_cover else "per-bill MinQty floor"
     out["reason_text"] = (
-        f"Included; {suggested_qty} strip(s) ({final_qty} loose units); cover "
-        f"{cover:.1f}d < min {params.min_days:g}d; driven by {determinant} "
+        f"Included; {suggested_qty} strip(s) ({final_qty} loose units); "
+        f"qualified by {qualifier} (cover {cover:.1f}d, min {params.min_days:g}d, "
+        f"MinQty floor {mqf:g}); driven by {determinant} "
         f"(gross target {gross_target:.0f} = max(cover {tgt:.0f}, "
-        f"maxDay {max_day:g}, maxBill {max_bill:g}) - stock {eff:.0f})."
+        f"maxDay {max_day:g}, maxBill {max_bill:g}, maxLine {max_line:g}) - "
+        f"stock {eff:.0f})."
     )
     return out
