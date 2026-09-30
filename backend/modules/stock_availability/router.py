@@ -28,6 +28,14 @@ def search_products(tenant_id: str, q: str = "", only_stock: int = 0, current_us
     return service.search_products(current_user, tenant_id, q, only_stock)
 
 
+@router.get("/products/index")
+def product_index(tenant_id: str, store_id: Optional[str] = None,
+                  current_user: dict = Depends(get_current_user)):
+    """Compact full-catalogue index (code/name/unit/stock) for the desktop
+    client's permanent local cache. Optionally scoped to one store_id."""
+    return service.product_index(current_user, tenant_id, store_id)
+
+
 @router.get("/batches/search", response_model=SearchResult)
 def search_batches(
     tenant_id: str,

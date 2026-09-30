@@ -207,6 +207,51 @@ def search_products(user, tenant_id, query, only_stock):
     return _group_by_store(rows)
 
 
+def product_index(user, tenant_id, store_id=None):
+    """Compact full-catalogue index for the desktop client's PERMANENT local
+    cache: only product_code / product_name / unit / stock per store. The client
+    seeds this once and refreshes it in the background, then serves typeahead
+    locally (instant, zero per-keystroke network) and works offline off the
+    cached names + last-known stock. Deliberately minimal fields to stay light
+    on low-spec machines (bandwidth + client memory)."""
+    assert_tenant_access(user, tenant_id)
+    rows = repository.search_products(tenant_id, None, 0)
+    stores = {}
+    order = []
+    for row in rows:
+        sid = str(row.get("store_id")) if row.get("store_id") is not None else ""
+        if store_id and sid != str(store_id):
+            continue
+        if sid not in stores:
+            stores[sid] = {
+                "store_id": sid,
+                "store_code": row.get("store_code"),
+                "store_name": row.get("store_name"),
+                "products": [],
+                "_seen": set(),
+            }
+            order.append(sid)
+        bucket = stores[sid]
+        code = row.get("product_code")
+        if code in bucket["_seen"]:
+            continue  # one row per product; dedupe defensively
+        bucket["_seen"].add(code)
+        bucket["products"].append({
+            "product_code": code,
+            "product_name": row.get("product_name"),
+            "unit": row.get("sale_unit"),
+            "stock": _to_number(row.get("stock")),
+        })
+    cards = []
+    total = 0
+    for sid in order:
+        b = stores[sid]
+        b.pop("_seen", None)
+        total += len(b["products"])
+        cards.append(b)
+    return {"stores": cards, "product_count": total}
+
+
 def search_batches(user, tenant_id, batch_no, mrp, product_name):
     assert_tenant_access(user, tenant_id)
     rows = repository.search_batches(
