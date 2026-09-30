@@ -89,3 +89,100 @@ def get_active_routes():
         ]
     finally:
         conn.close()
+
+
+# ---- admin management (super-admin maintenance UI) ------------------------
+
+def list_all_routes():
+    """Every route incl. inactive, with ids, for the maintenance UI."""
+    ensure_schema()
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT route_id, label, url, route_order, is_active, updated_at
+            FROM dbo.ho_routes
+            ORDER BY route_order, route_id
+            """
+        )
+        return [
+            {
+                "route_id": r[0],
+                "label": r[1],
+                "url": r[2],
+                "route_order": r[3],
+                "is_active": bool(r[4]),
+                "updated_at": r[5].isoformat() if r[5] else None,
+            }
+            for r in cur.fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def add_route(label, url, route_order=100, is_active=True):
+    ensure_schema()
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        # De-dupe on url: adding an existing url just re-activates / re-orders it
+        # rather than erroring on the unique index.
+        cur.execute(
+            """
+            MERGE dbo.ho_routes AS target
+            USING (SELECT ? AS url) AS source ON target.url = source.url
+            WHEN MATCHED THEN UPDATE SET label = ?, route_order = ?, is_active = ?,
+                updated_at = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN INSERT (label, url, route_order, is_active)
+                VALUES (?, ?, ?, ?)
+            OUTPUT INSERTED.route_id;
+            """,
+            (url.strip().rstrip("/"), label, route_order, 1 if is_active else 0,
+             label, url.strip().rstrip("/"), route_order, 1 if is_active else 0),
+        )
+        route_id = cur.fetchone()[0]
+        conn.commit()
+        return route_id
+    finally:
+        conn.close()
+
+
+def update_route(route_id, label=None, url=None, route_order=None, is_active=None):
+    ensure_schema()
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE dbo.ho_routes SET
+                label = COALESCE(?, label),
+                url = COALESCE(?, url),
+                route_order = COALESCE(?, route_order),
+                is_active = COALESCE(?, is_active),
+                updated_at = SYSUTCDATETIME()
+            WHERE route_id = ?
+            """,
+            (label,
+             url.strip().rstrip("/") if url else None,
+             route_order,
+             None if is_active is None else (1 if is_active else 0),
+             route_id),
+        )
+        affected = cur.rowcount
+        conn.commit()
+        return affected
+    finally:
+        conn.close()
+
+
+def delete_route(route_id):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM dbo.ho_routes WHERE route_id = ?", route_id)
+        affected = cur.rowcount
+        conn.commit()
+        return affected
+    finally:
+        conn.close()
