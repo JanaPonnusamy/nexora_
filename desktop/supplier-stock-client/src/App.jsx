@@ -14,6 +14,12 @@ import {
 import { buildBrandKey, buildPrefixSearchKey, normalizeForBadge, normalizeForLooseExact } from './lib/similarSearch.js';
 import { getCachedProducts, syncCachedProducts } from './lib/productCache.js';
 import {
+  syncStoreIndex,
+  loadScope,
+  filterProducts,
+  getLastSync
+} from './lib/productIndexCache.js';
+import {
   applySyncResult,
   buildSynchronizedMap,
   emptySelectionState,
@@ -1186,6 +1192,12 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   const [selectedStoreId, setSelectedStoreId] = useState(session?.user?.roles?.[0]?.store_id || '');
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState({ state: 'idle', message: 'Type product name to search.' });
+  // Permanent-cache / offline state: `offline` flips true when a search falls
+  // back to the local product index; `lastSync` is the newest cache timestamp,
+  // shown as "Last sync: <time>" so the operator knows how fresh the offline
+  // data is. See lib/productIndexCache.js.
+  const [offline, setOffline] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
   const [purchaseDetail, setPurchaseDetail] = useState(null);
   const [billDetail, setBillDetail] = useState(null);
   const [batchDetail, setBatchDetail] = useState(null);
@@ -1364,6 +1376,11 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   // detailCacheRef: "storeId:productCode" -> fully loaded store detail (incl. bill items).
   const searchCacheRef = useRef(new Map());
   const detailCacheRef = useRef(new Map());
+  // Offline search index: storeId -> in-memory product list (loaded lazily from
+  // the permanent IndexedDB cache the first time an offline search runs, then
+  // reused so subsequent offline keystrokes filter in memory instantly).
+  // Invalidated whenever a background re-seed refreshes the cache.
+  const offlineIndexRef = useRef(new Map());
   // Cross-store product-selection sync: lets a superseded sync response (an
   // older click's result arriving after a newer click) be dropped instead of
   // clobbering fresher selections. The sync path below calls loadStoreCore /
@@ -1378,6 +1395,50 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
       try { localStorage.setItem('nexora.desktop.storesCache', JSON.stringify(items)); } catch { /* best effort */ }
     }).catch(() => {});
   }, [session]);
+
+  // Show the last cache timestamp as soon as the screen mounts (before any
+  // refresh), so an offline launch still reports how fresh the data is.
+  useEffect(() => {
+    let cancelled = false;
+    getLastSync(settings?.tenantId).then((ts) => { if (!cancelled) setLastSync(ts); });
+    return () => { cancelled = true; };
+  }, [settings?.tenantId]);
+
+  // Seed + keep fresh the PERMANENT local product index (code/name/unit/stock)
+  // in the background: enables instant offline search and background stock
+  // updates without ever blocking the UI. Re-runs on a slow interval; a full
+  // re-seed also refreshes cached stock. Fail-soft: a fetch error just leaves
+  // the last-known cache in place.
+  useEffect(() => {
+    const tenantId = settings?.tenantId;
+    if (!tenantId || !session) return undefined;
+    let cancelled = false;
+
+    async function refreshIndex() {
+      try {
+        const resp = await api.getProductIndex(session, { tenantId });
+        if (cancelled) return;
+        for (const store of asArray(resp?.stores)) {
+          await syncStoreIndex(tenantId, store.store_id,
+            { store_code: store.store_code, store_name: store.store_name },
+            asArray(store.products));
+        }
+        if (!cancelled) {
+          offlineIndexRef.current.clear(); // cache changed - drop stale in-memory scopes
+          setLastSync(Date.now());
+          setOffline(false);
+        }
+      } catch {
+        // Offline / HO down: keep serving the existing cache.
+      }
+    }
+
+    refreshIndex();
+    // Background stock refresh: re-pull the compact index periodically so cached
+    // stock stays current. 10 min is light on a low-spec box + the DB server.
+    const timer = setInterval(refreshIndex, 10 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [session, settings?.tenantId]);
 
   useEffect(() => {
     // Guard on settings.tenantId too: for a platform user (e.g. super admin) it
@@ -1544,6 +1605,44 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
     return seeded;
   }
 
+  function formatSyncTime(ts) {
+    if (!ts) return 'never';
+    try { return new Date(ts).toLocaleString(); } catch { return 'unknown'; }
+  }
+
+  // Build the same per-store result shape runSearch expects, but entirely from
+  // the permanent local index - used when HO is unreachable so the operator
+  // still sees product names + last-known stock. Scopes are loaded once into
+  // offlineIndexRef then filtered in memory (instant on subsequent keystrokes).
+  async function buildOfflineStores(value) {
+    const tenantId = settings?.tenantId;
+    const out = [];
+    for (const store of tenantStores) {
+      let list = offlineIndexRef.current.get(store.store_id);
+      if (!list) {
+        list = await loadScope(tenantId, store.store_id);
+        offlineIndexRef.current.set(store.store_id, list);
+      }
+      const matches = filterProducts(list, value, 50);
+      if (matches.length) {
+        out.push({
+          store_id: store.store_id,
+          store_code: store.store_code,
+          store_name: store.store_name,
+          products: matches.map((p) => ({
+            product_code: p.product_code,
+            product_name: p.product_name,
+            sale_unit: p.unit,
+            stock: p.stock,
+            mrp: null,
+            batch_no: null,
+          })),
+        });
+      }
+    }
+    return out;
+  }
+
   async function runSearch(value) {
     if (!value || value.length < 2) {
       searchIdRef.current += 1;
@@ -1563,7 +1662,30 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
         stores = cachedStores; // instant: skip the network round trip entirely
       } else {
         setStatus({ state: 'loading', message: 'Searching products...' });
-        const response = await api.searchStockProducts(value, session, { onlyStock });
+        let response;
+        try {
+          response = await api.searchStockProducts(value, session, { onlyStock });
+          if (offline) setOffline(false);
+        } catch (netErr) {
+          // OFFLINE / HO unreachable: serve the permanent local index so the
+          // operator still gets product names + last-known stock.
+          if (searchIdRef.current !== searchId) return;
+          const offlineStores = await buildOfflineStores(value);
+          if (searchIdRef.current !== searchId) return;
+          setOffline(true);
+          const ts = await getLastSync(settings?.tenantId);
+          setLastSync(ts);
+          setSearchStores(offlineStores);
+          setStoreDetails({}); // detail panels need HO; unavailable offline
+          const oTotal = offlineStores.reduce((s, st) => s + (st.products || []).length, 0);
+          setStatus({
+            state: oTotal ? 'ok' : 'idle',
+            message: oTotal
+              ? `Offline — ${oTotal} cached match(es). Last sync ${formatSyncTime(ts)}.`
+              : `Offline — no cached match. Last sync ${formatSyncTime(ts)}.`,
+          });
+          return;
+        }
         if (searchIdRef.current !== searchId) return; // superseded by a newer search
         stores = asArray(response?.stores);
         searchCacheRef.current.set(cacheKey, stores);
@@ -1839,6 +1961,15 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
           <span className="stock-search-status-dot" aria-hidden="true" />
           <span>{status.message}</span>
         </div>
+        {(offline || lastSync) && (
+          <div
+            className="stock-sync-badge"
+            title={lastSync ? `Cached data as of ${formatSyncTime(lastSync)}` : 'No cached data yet'}
+            style={{ fontSize: '0.78rem', color: offline ? '#b00020' : '#6b7280', whiteSpace: 'nowrap' }}
+          >
+            {offline ? '● Offline — cached' : '● Online'} · Last sync {formatSyncTime(lastSync)}
+          </div>
+        )}
         <div className="current-store-badge">
           <button type="button" className="store-order-button" onClick={onOpenSettings} title="Manage store display order">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10v2H4V6Zm0 5h7v2H4v-2Zm0 5h4v2H4v-2Zm14.6-6.4L21 12l-2.4 2.4-1.4-1.4.7-.7H13v-2h4.9l-.7-.7 1.4-1.4Z" /></svg>
