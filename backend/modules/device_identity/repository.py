@@ -1,6 +1,19 @@
 """Data access for device registrations + device->store assignments."""
 
+import uuid
+
 from config.database import get_connection
+
+
+def _valid_guid(value):
+    """True if value is a well-formed GUID. Guards uniqueidentifier casts so a
+    malformed device_id from the PUBLIC token endpoint returns a clean 403
+    rather than a 500 SQL conversion error."""
+    try:
+        uuid.UUID(str(value))
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 def ensure_schema():
@@ -116,6 +129,8 @@ def register_device(device_fingerprint, public_key, key_algo, machine_name,
 
 
 def get_device(device_id):
+    if not _valid_guid(device_id):
+        return None
     conn = get_connection()
     try:
         cur = conn.cursor()
