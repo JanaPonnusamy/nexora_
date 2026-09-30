@@ -189,6 +189,22 @@ SQL_PASSWORD = ""
 
 STORE_ID = _CFG.get("store_id") or _DEFAULTS["store_id"]
 
+# Device mode (zero-config, multi-store): the installer writes {"mode":"device"}
+# and the machine's identity (device_id + DPAPI-sealed key) lives under
+# DEVICE_STATE_DIR. Absent this, the agent runs the legacy single-store path
+# keyed on STORE_ID exactly as before, so existing deployments are unaffected.
+AGENT_MODE = (_CFG.get("mode") or ("device" if _CFG.get("device_id") else "store")).lower()
+DEVICE_MODE = AGENT_MODE == "device"
+
+
+def _device_state_dir():
+    install = os.environ.get("NEXORA_INSTALL_PATH")
+    base = Path(install) if install else Path(__file__).resolve().parent
+    return base / "config"
+
+
+DEVICE_STATE_DIR = _device_state_dir()
+
 # All configured HO routes, and a back-compat single value (the first/preferred).
 HO_API_URLS = _candidate_urls(_CFG)
 HO_API_URL = HO_API_URLS[0]
