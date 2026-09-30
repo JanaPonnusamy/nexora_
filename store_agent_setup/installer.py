@@ -16,7 +16,10 @@ import json
 import shutil
 from pathlib import Path
 
-from . import AGENT_EXE_NAME, AGENT_VERSION, SETTINGS_EXE_NAME, WATCHDOG_EXE_NAME
+from . import (
+    AGENT_EXE_NAME, AGENT_VERSION, MAIL_TRANSFER_EXE_NAME, SETTINGS_EXE_NAME,
+    WATCHDOG_EXE_NAME,
+)
 from .agent_config import write_config
 from .paths import repo_root, resource_root
 
@@ -134,6 +137,20 @@ class Installer:
                 self.log(f"copied {dst.name}")
                 break
 
+        # Optional: only present for stores configured with
+        # file_transfer.transport.mode = EMAIL (see mail_transfer_service.py).
+        # Installing/starting the service itself is a separate, opt-in step
+        # in NexoraStoreAgentSettings -- copying the exe here just makes it
+        # available so that step doesn't need its own distribution flow.
+        for base in (resource_root(), repo_root() / "dist"):
+            mail_transfer = base / MAIL_TRANSFER_EXE_NAME
+            if mail_transfer.is_file():
+                dst = self.root / MAIL_TRANSFER_EXE_NAME
+                shutil.copy2(mail_transfer, dst)
+                copied.append(dst)
+                self.log(f"copied {dst.name}")
+                break
+
         self._verify_standalone()
         return copied
 
@@ -159,5 +176,15 @@ class Installer:
         self.create_directories()
         self.copy_runtime_files()
         self.save_ho_agent_config(ho_agent_config)
+        cfg_path = self.save_agent_config_json(agent_config_json)
+        return cfg_path
+
+    def install_device(self, agent_config_json):
+        """Device-mode install: no per-store ho_agent_config is written (the
+        agent fetches every assigned store's config from HO at runtime). The
+        device key + id are already sealed under <install>/config by the
+        registration step before this runs."""
+        self.create_directories()
+        self.copy_runtime_files()
         cfg_path = self.save_agent_config_json(agent_config_json)
         return cfg_path

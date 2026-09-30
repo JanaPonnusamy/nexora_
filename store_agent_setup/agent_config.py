@@ -10,6 +10,7 @@ CONFIG_FILE_NAME = "agent_config.json"
 
 # Keys persisted in agent_config.json.
 FIELDS = (
+    "mode",
     "ho_url",
     "ho_urls",
     "tenant_id",
@@ -63,6 +64,21 @@ def build_config(ho_url, tenant, store, install_path, log_level="INFO",
         "store_id": store.get("store_id"),
         "store_name": store.get("store_name"),
         "store_code": store.get("store_code"),
+        "install_path": str(install_path),
+        "log_level": log_level,
+    }
+
+
+def build_device_config(ho_url, install_path, log_level="INFO", fallback_urls=None):
+    """Device-mode config for the zero-config / multi-store agent. No tenant or
+    store is baked in -- the agent learns its assigned stores from HO at runtime
+    (GET /api/agent/stores) using its device key. ``mode`` = "device" is what
+    switches store_agent.run_agent onto the multi-store runtime."""
+    urls = _url_list(ho_url, fallback_urls)
+    return {
+        "mode": "device",
+        "ho_url": urls[0],
+        "ho_urls": urls,
         "install_path": str(install_path),
         "log_level": log_level,
     }

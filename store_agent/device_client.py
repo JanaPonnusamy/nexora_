@@ -40,6 +40,32 @@ def generate_keypair() -> tuple[str, str]:
     return private_pem, public_pem
 
 
+def machine_fingerprint() -> str:
+    """Stable per-machine id used to dedupe device registrations. Prefers the
+    Windows MachineGuid (survives reinstalls of the agent), falling back to
+    hostname + the primary MAC so it still works off-Windows / if the registry
+    read fails."""
+    import socket
+    import uuid as _uuid
+
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Cryptography",
+                0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+            ) as k:
+                guid, _ = winreg.QueryValueEx(k, "MachineGuid")
+                if guid:
+                    return f"NX-{guid}"
+        except OSError:
+            pass
+    host = socket.gethostname() or "unknown"
+    mac = _uuid.getnode()
+    return f"NX-{host}-{mac:012x}"
+
+
 def _canonical_message(device_id: str, timestamp: str, nonce: str) -> bytes:
     return f"{device_id}.{timestamp}.{nonce}".encode("utf-8")
 
