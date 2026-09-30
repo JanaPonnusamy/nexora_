@@ -52,9 +52,16 @@ from modules.sync.runtime_router import (
 from modules.sync.shared_table_builder_router import (
     router as sync_shared_table_router,
 )
+from controllers.file_transfer_admin_controller import (
+    router as file_transfer_admin_router,
+)
 from modules.agent_ops.router import (
     router as agent_ops_router,
     agent_router as agent_ops_agent_router,
+)
+from modules.licensing.router import (
+    router as licensing_router,
+    agent_router as licensing_agent_router,
 )
 from modules.stock_availability.router import (
     router as stock_availability_router
@@ -98,9 +105,16 @@ from modules.time_report.router import (
 from modules.product_mapping.router import (
     router as product_mapping_router
 )
-from modules.document_extraction.router import (
-    router as document_extraction_router
-)
+try:
+    from modules.document_extraction.router import (
+        router as document_extraction_router
+    )
+except ImportError:
+    # Not bundled in lite HO builds (excludes cv2/paddleocr/torch to keep the
+    # installer under Inno Setup's single-file size limit) -- the module's own
+    # OCR engine is already designed to degrade gracefully; this extends that
+    # to preprocessing.py's top-level `import cv2` so the app still starts.
+    document_extraction_router = None
 from modules.pass_gen.router import (
     router as pass_gen_router
 )
@@ -125,6 +139,7 @@ from modules.audit.middleware import AuditFailureMiddleware
 from modules.audit.repository import ensure_schema as ensure_audit_schema
 from modules.mobile_bff.router import router as mobile_bff_router
 from modules.mobile_bff.repository import ensure_schema as ensure_mobile_bff_schema
+from modules.bootstrap.router import router as bootstrap_router
 
 try:
     ensure_audit_schema()
@@ -167,6 +182,10 @@ _cors_regex_compiled = re.compile(_cors_regex)
 _PUBLIC_API_PATHS = {
     '/api/auth/login',
     '/api/auth/setup-login',
+    # HO discovery: a store agent / desktop client calls this BEFORE it has any
+    # credential, precisely to learn where HO currently lives. Returns only
+    # public routing info (URLs + ordering), no secrets.
+    '/api/bootstrap/routes',
     # Mobile BFF. /handshake must answer before a client has any credential, and
     # /auth/refresh authenticates with the refresh token in its body precisely
     # because the bearer token has expired by the time it is called.
@@ -299,6 +318,7 @@ app.include_router(store_agent_config_router)
 app.include_router(sync_runtime_router)
 app.include_router(sync_agent_router)
 app.include_router(sync_shared_table_router)
+app.include_router(file_transfer_admin_router)
 app.include_router(stock_availability_router)
 app.include_router(stock_check_report_router)
 app.include_router(label_exporter_router)
@@ -313,7 +333,8 @@ app.include_router(nonmoving_report_router)
 app.include_router(sale_analysis_router)
 app.include_router(time_report_router)
 app.include_router(product_mapping_router)
-app.include_router(document_extraction_router)
+if document_extraction_router is not None:
+    app.include_router(document_extraction_router)
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
 app.include_router(desktop_client_router)
@@ -323,7 +344,10 @@ app.include_router(whatsapp_router)
 app.include_router(schema_sync_router)
 app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)
+app.include_router(licensing_router)
+app.include_router(licensing_agent_router)
 app.include_router(mobile_bff_router)
+app.include_router(bootstrap_router)
 
 @app.on_event('startup')
 def _start_sync_scheduler_on_startup():
@@ -337,6 +361,18 @@ def _start_sync_scheduler_on_startup():
     except Exception:
         import traceback
         print("[SCHEDULER] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _start_file_transfer_receiver_on_startup():
+    # Additive to DIRECT_HTTP sync (objective 20): a no-op unless
+    # NEXORA_FILE_TRANSFER_ENABLED=true is set. See
+    # modules/sync/file_transfer_scheduler.py / file_transfer_config.py.
+    try:
+        from modules.sync import file_transfer_scheduler
+        file_transfer_scheduler.start_background_loop()
+    except Exception:
+        import traceback
+        print("[FILE_TRANSFER] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
 def _warmup_whatsapp_on_startup():
@@ -353,7 +389,11 @@ def _warmup_whatsapp_on_startup():
         pass
 
 @app.get('/health')
-def health():
+async def health():
+    # This endpoint does no blocking work. Keeping it on the event loop avoids
+    # queuing it behind database-heavy sync calls in Starlette's shared worker
+    # thread pool, which previously made desktop readiness probes stall even
+    # while the API process was alive.
     return {'status':'healthy'}
 
 @app.get('/health/db')

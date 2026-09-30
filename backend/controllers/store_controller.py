@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from services.store_service import StoreService
-from dtos.store_request import StoreRequest, StoreStatusRequest
+from dtos.store_request import StoreRequest, StoreStatusRequest, StoreCredentialRequest
 from dependencies.auth import get_current_user_optional, get_current_user
-from dependencies.store_scope import has_unrestricted_scope
+from dependencies.store_scope import has_unrestricted_scope, require_super_admin
 from modules.audit.writer import record_audit
 from modules.audit.diff import compute_mutation_diff
 from modules.audit.context import AuditContext
@@ -220,3 +220,78 @@ def set_store_status(store_id: str, body: StoreStatusRequest, request: Request, 
         metadata={"is_active": body.is_active},
     )
     return after
+
+
+@router.get("/{store_id}/credentials")
+def get_store_credentials(store_id: str, _: dict = Depends(require_super_admin)):
+    """Current DB connection details for the HO credential-edit form. The
+    password itself is never returned — only `has_password` tells the UI
+    whether one is already set."""
+    row = StoreService().get_connection_details(store_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Store Not Found")
+    return {
+        "store_id": str(row[0]),
+        "store_code": row[1],
+        "store_name": row[2],
+        "server_name": row[3],
+        "database_name": row[4],
+        "username": row[5],
+        "connection_type": row[6],
+        "has_password": bool(row[7]),
+    }
+
+
+@router.put("/{store_id}/credentials")
+def update_store_credentials(store_id: str, body: StoreCredentialRequest,
+                             request: Request,
+                             current_user: dict = Depends(require_super_admin)):
+    """Update a store's DB connection from the HO UI (server / database /
+    username / password / connection type), encrypting the password into
+    dbo.stores.password_encrypted. This replaces the old manual `UPDATE
+    dbo.stores` provisioning step. Super-admin only; the password is never
+    written to the audit log."""
+    svc = StoreService()
+    existing = svc.get_connection_details(store_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Store Not Found")
+
+    password_changed = bool(body.password)
+    svc.update_credentials(
+        store_id,
+        body.server_name,
+        body.database_name,
+        body.username,
+        body.connection_type,
+        password=body.password,
+    )
+    after = svc.get_connection_details(store_id)
+
+    record_audit(
+        ctx=AuditContext.from_request(request, user=current_user),
+        action="store.credentials.update",
+        target_type="store",
+        target_id=store_id,
+        target_label=f"{existing[2]} ({existing[1]})",
+        reason=f"Updated DB connection for store '{existing[2]}' ({existing[1]})",
+        # Redacted: server/db/user/conn-type are operational, the password is not
+        # logged — only whether it was changed this call.
+        metadata={
+            "server_name": body.server_name,
+            "database_name": body.database_name,
+            "username": body.username,
+            "connection_type": body.connection_type,
+            "password_changed": password_changed,
+        },
+    )
+    return {
+        "store_id": str(after[0]),
+        "store_code": after[1],
+        "store_name": after[2],
+        "server_name": after[3],
+        "database_name": after[4],
+        "username": after[5],
+        "connection_type": after[6],
+        "has_password": bool(after[7]),
+        "password_changed": password_changed,
+    }
