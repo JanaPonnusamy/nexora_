@@ -140,6 +140,11 @@ from modules.audit.repository import ensure_schema as ensure_audit_schema
 from modules.mobile_bff.router import router as mobile_bff_router
 from modules.mobile_bff.repository import ensure_schema as ensure_mobile_bff_schema
 from modules.bootstrap.router import router as bootstrap_router
+from modules.device_identity.router import (
+    auth_router as device_auth_router,
+    agent_router as device_agent_router,
+    admin_router as device_admin_router,
+)
 
 try:
     ensure_audit_schema()
@@ -186,6 +191,10 @@ _PUBLIC_API_PATHS = {
     # credential, precisely to learn where HO currently lives. Returns only
     # public routing info (URLs + ordering), no secrets.
     '/api/bootstrap/routes',
+    # Device token issuance is authenticated by an Ed25519 signature in the body
+    # (verified against the device's registered public key), not by a bearer
+    # token - the device has none yet, that's the whole point of this call.
+    '/api/auth/device/token',
     # Mobile BFF. /handshake must answer before a client has any credential, and
     # /auth/refresh authenticates with the refresh token in its body precisely
     # because the bearer token has expired by the time it is called.
@@ -348,6 +357,9 @@ app.include_router(licensing_router)
 app.include_router(licensing_agent_router)
 app.include_router(mobile_bff_router)
 app.include_router(bootstrap_router)
+app.include_router(device_auth_router)
+app.include_router(device_agent_router)
+app.include_router(device_admin_router)
 
 @app.on_event('startup')
 def _start_sync_scheduler_on_startup():
