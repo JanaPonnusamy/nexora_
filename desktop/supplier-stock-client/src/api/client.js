@@ -227,6 +227,17 @@ export const api = {
     })}`, { session });
   },
 
+  // Compact full-catalogue index (code/name/unit/stock) that seeds + refreshes
+  // the permanent local cache (see lib/productIndexCache.js). Larger payload, so
+  // a generous timeout; called in the background, not on the keystroke path.
+  getProductIndex(session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/stock-availability/products/index${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: filters.storeId || ''
+    })}`, { session, timeoutMs: filters.timeoutMs || 120000 });
+  },
+
   // Tab 2 of the web Stock Availability screen — search by batch number, MRP
   // and/or product name across branches (same {stores:[...]} shape as
   // searchStockProducts, so callers can render either result identically).
