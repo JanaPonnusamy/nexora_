@@ -75,6 +75,8 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Sync Config', to: '/sync/config', icon: 'bi-table', cap: 'SYNC' },
       { label: 'Sync Mapping', to: '/sync/mapping', icon: 'bi-diagram-3', cap: 'SYNC' },
       { label: 'Sync Agents', to: '/sync/agents', icon: 'bi-router', cap: 'SYNC' },
+      { label: 'Store Agent Devices', to: '/sync/devices', icon: 'bi-pc-display', cap: 'SYNC' },
+      { label: 'HO Routes', to: '/sync/ho-routes', icon: 'bi-signpost-2', cap: 'SYNC' },
       { label: 'Mail Transfer', to: '/sync/mail-transfer', icon: 'bi-envelope', cap: 'SYNC' },
     ],
   },
