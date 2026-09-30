@@ -30,6 +30,7 @@ from store_agent.runtime_sql_connection_service import RuntimeSqlConnectionServi
 from store_agent.services.heartbeat_service import HeartbeatService
 from store_agent.services.sync_runtime_orchestrator import SyncRuntimeOrchestrator
 from store_agent.services.sqlite_cache_service import SqliteCacheService
+from store_agent.services.maintenance_service import start_cache_maintenance_thread
 
 HEARTBEAT_SECONDS = 30
 SYNC_POLL_SECONDS = 60
@@ -195,6 +196,10 @@ def run_multi_store():
             _log(f"[AGENT] register store {rc['store_id']} failed (will retry)")
 
     threading.Thread(target=_heartbeat_loop, args=(registry,), daemon=True).start()
+
+    # Keep the shared SQLite cache trimmed + VACUUMed so it never bloats across
+    # N stores. One pass covers every store's rows in the shared DB.
+    start_cache_maintenance_thread(SqliteCacheService().db_path, log=_log)
 
     last_store_refresh = time.time()
     while True:

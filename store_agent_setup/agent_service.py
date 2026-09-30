@@ -34,8 +34,66 @@ def _agent_install_path():
     return Path(env) if env else Path.cwd()
 
 
+class _RotatingLogStream:
+    """Minimal size-capped rotating writer for stdout/stderr redirection.
+
+    A plain append stream grew unbounded -- during a sustained failure (e.g. HO
+    unreachable, a traceback every 30s) agent.log could fill the disk. This caps
+    each file at max_bytes and keeps a few backups (~max_bytes*(backups+1)
+    total). Deliberately hand-rolled rather than logging.handlers because the
+    runtime writes via print()->sys.stdout, not the logging framework, and
+    logging must never be able to raise into the service loop."""
+
+    def __init__(self, path, max_bytes=5_000_000, backups=3):
+        self.path = Path(path)
+        self.max_bytes = max_bytes
+        self.backups = backups
+        self._open()
+
+    def _open(self):
+        self._f = open(self.path, "a", buffering=1, encoding="utf-8")
+        try:
+            self._size = self.path.stat().st_size
+        except OSError:
+            self._size = 0
+
+    def _rotate(self):
+        try:
+            self._f.close()
+        except Exception:
+            pass
+        try:
+            oldest = f"{self.path}.{self.backups}"
+            if os.path.exists(oldest):
+                os.remove(oldest)
+            for i in range(self.backups - 1, 0, -1):
+                src, dst = f"{self.path}.{i}", f"{self.path}.{i + 1}"
+                if os.path.exists(src):
+                    os.replace(src, dst)
+            os.replace(str(self.path), f"{self.path}.1")
+        except OSError:
+            pass
+        self._open()
+
+    def write(self, data):
+        try:
+            self._f.write(data)
+            self._size += len(data.encode("utf-8", "replace"))
+            if self._size >= self.max_bytes:
+                self._rotate()
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self._f.flush()
+        except Exception:
+            pass
+
+
 def _redirect_logs(root):
-    """Send the agent's stdout/stderr to <install>/logs/agent.log.
+    """Send the agent's stdout/stderr to a size-capped, rotating
+    <install>/logs/agent.log.
 
     A Windows service has no console, so without this any sync error printed by
     the runtime would be invisible (the failure mode behind PENDING tasks).
@@ -43,7 +101,7 @@ def _redirect_logs(root):
     try:
         logs = root / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        stream = open(logs / "agent.log", "a", buffering=1, encoding="utf-8")
+        stream = _RotatingLogStream(logs / "agent.log")
         stream.write(f"\n==== agent start {datetime.now().isoformat()} ====\n")
         sys.stdout = stream
         sys.stderr = stream

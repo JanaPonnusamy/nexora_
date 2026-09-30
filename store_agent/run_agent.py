@@ -203,6 +203,10 @@ def main():
     cache.set_config("ho_url", ho_url)
     cache.set_config("tenant_id", runtime_config.get("tenant_id"))
 
+    # Keep store_agent.db trimmed + VACUUMed on a timer so it never bloats.
+    from store_agent.services.maintenance_service import start_cache_maintenance_thread
+    start_cache_maintenance_thread(cache.db_path, log=_log)
+
     threading.Thread(
         target=_heartbeat_loop,
         args=(runtime_config.get("connection_type"), cache),
