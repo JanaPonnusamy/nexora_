@@ -2870,6 +2870,31 @@ function orderOwKeys(base, cfg) {
   return saved;
 }
 
+// Heal a saved column config written by a build that predates a column: if an
+// explicit order was persisted but is missing a base column, splice that column
+// in right after its default left-neighbour instead of letting orderOwKeys
+// append it to the far right (where users read a mid-grid column as "gone").
+// Currently rescues 'saleUnit', added to the Label grid after some sessions were
+// already saved. Width/hidden state is untouched.
+function healColOrder(base, cfg, rescueKeys) {
+  if (!cfg || !Array.isArray(cfg.order) || !cfg.order.length) return cfg;
+  const order = [...cfg.order];
+  let changed = false;
+  for (const key of rescueKeys) {
+    if (order.includes(key)) continue;
+    const basePos = base.findIndex((c) => c.key === key);
+    if (basePos < 0) continue;
+    let insertAt = order.length;
+    for (let i = basePos - 1; i >= 0; i--) {
+      const idx = order.indexOf(base[i].key);
+      if (idx >= 0) { insertAt = idx + 1; break; }
+    }
+    order.splice(insertAt, 0, key);
+    changed = true;
+  }
+  return changed ? { ...cfg, order } : cfg;
+}
+
 // Visible, ordered columns with any user width override applied.
 function resolveOwColumns(base, cfg) {
   const byKey = new Map(base.map((c) => [c.key, c]));
@@ -4212,6 +4237,15 @@ function lblUnitChanged(row) {
 function lblOldLoc(row) { return String(row.old_sublocation || row.current_sublocation || '').trim(); }
 function lblNewLoc(row) { return String(row.assigned_sublocation || '').trim(); }
 
+// Engine-assigned TAB box codes look like <LETTER>0NN — A001, B025, C099: first
+// char a letter, second char '0'. Hand-picked named locations ("Counter",
+// "SYP A", "Consumer", "Cold Storage") never match. "Clear New Location" uses
+// this to wipe only auto-generated boxes and leave named locations intact (owner
+// rule: starts with a letter AND second char 0). NOTE: boxes >= 100 (A100..)
+// fall outside this pattern by design — the rule is literally "second char 0".
+const LBL_AUTO_BOX_RE = /^[A-Za-z]0/;
+function lblIsAutoBoxLoc(row) { return LBL_AUTO_BOX_RE.test(lblNewLoc(row)); }
+
 // Excel-style per-column filtering. lblColValue returns the comparable value for
 // a column key; lblColMatch supports numeric operators (>,<,>=,<=,=) and falls
 // back to case-insensitive substring; lblRowMatchesFilters ANDs every active
@@ -4785,7 +4819,7 @@ function LabelExporter({ session, settings }) {
         if (typeof s.advancedOpen === 'boolean') setShowAdvanced(s.advancedOpen);
         if (typeof s.columnFiltersEnabled === 'boolean') setShowColFilters(s.columnFiltersEnabled);
         if (s.columnFilters && typeof s.columnFilters === 'object') setColFilters(s.columnFilters);
-        if (s.columns && typeof s.columns === 'object') setLabelColCfg(s.columns);
+        if (s.columns && typeof s.columns === 'object') setLabelColCfg(healColOrder(LABEL_COLUMNS, s.columns, ['saleUnit']));
         if (Number.isFinite(s.trendMonths)) setTrendMonths(Math.min(12, Math.max(4, s.trendMonths)));
         restoreTargetRef.current = {
           productId: s.currentProductId || null,
@@ -5351,6 +5385,42 @@ function LabelExporter({ session, settings }) {
     });
   }
 
+  // Clear ONLY the auto-assigned NEW LOCATION (engine box codes like A001) for
+  // the loaded store+letter scope — set assigned_sublocation back to NULL while
+  // leaving everything else alone. Named/hand-picked locations ("Counter",
+  // "SYP A") are KEPT (owner rule: only clear boxes whose code starts with a
+  // letter AND has '0' as the second char). Reuses the same assignment-clear
+  // endpoint as Clear Assignment — it nulls the box + assignment bookkeeping
+  // only, never the Y/N review, old location, unit correction or master data.
+  function requestClearNewLocation() {
+    const targets = visibleRows.filter((r) => lblIsAutoBoxLoc(r));
+    const codes = targets.map((r) => r.product_code);
+    const codeSet = new Set(codes);
+    if (!codes.length) {
+      flashToast('No auto-box (letter+0, e.g. A001) locations in view', 'err');
+      return;
+    }
+    setConfirm({
+      title: `Clear new location for ${codes.length} product(s)?`,
+      body: [
+        `Reset the NEW LOCATION (box) to blank for ${codes.length} product(s) whose box is an auto-assigned code (starts with a letter, second char 0 — e.g. A001).`,
+        'Named/hand-picked locations like "Counter", "SYP A" or "Consumer" are KEPT.',
+        'It will NOT change: Y/N review, OLD LOCATION, unit correction, or any master/product data.'
+      ],
+      confirmLabel: 'Clear New Location',
+      onConfirm: () => {
+        setBulkBusy(true);
+        api.clearLabelAssignment(tenantId, storeId, codes, session)
+          .then(() => {
+            setRows((cur) => cur.map((r) => (codeSet.has(r.product_code) ? { ...r, assigned_sublocation: null, assignment_type: null, label_required: false } : r)));
+            flashToast(`✓ New location cleared (${codes.length})`);
+          })
+          .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Clear failed', 'err'); })
+          .finally(() => { setBulkBusy(false); setConfirm(null); });
+      }
+    });
+  }
+
   function requestClearReview() {
     const codes = visibleRows.map((r) => r.product_code);
     const codeSet = new Set(codes);
@@ -5559,6 +5629,17 @@ function LabelExporter({ session, settings }) {
             title="Reset assignment result only (keeps review + master data)"
           >
             Clear Assignment…
+          </button>
+        )}
+        {admin && (
+          <button
+            type="button"
+            className="lblx-mark lblx-clear"
+            disabled={!visibleRows.length || bulkBusy}
+            onClick={requestClearNewLocation}
+            title="Clear only auto-assigned box locations (letter+0, e.g. A001); keeps named locations like Counter/SYP + review"
+          >
+            Clear New Loc…
           </button>
         )}
         {admin && (
