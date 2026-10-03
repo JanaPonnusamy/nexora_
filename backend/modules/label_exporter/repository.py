@@ -8,6 +8,7 @@ _DDL_FILES = (
     os.path.join(_SQL_DIR, "0002_label_review_remarks.sql"),
     os.path.join(_SQL_DIR, "0003_label_assignment.sql"),
     os.path.join(_SQL_DIR, "0004_products_grid_covering_index.sql"),
+    os.path.join(_SQL_DIR, "0005_batches_covering_index.sql"),
 )
 _schema_ready = False
 
@@ -104,6 +105,20 @@ def search_products(
         subloc_clause = "1 = 1"
         subloc_params = []
 
+    # starts_with may be a single first-letter OR a comma-separated list (the
+    # multi-letter checkbox filter, e.g. "A,B,C"). Build an OR of sargable prefix
+    # matches; empty -> no letter restriction. One letter behaves exactly as
+    # before (a single ProductName LIKE 'X%').
+    letter_values = [v.strip()[:1].upper() for v in (starts_with or "").split(",") if v.strip()]
+    if letter_values:
+        letter_clause = "(" + " OR ".join("p.ProductName LIKE ? + '%'" for _ in letter_values) + ")"
+        letter_params = list(letter_values)
+    else:
+        letter_clause = "1 = 1"
+        letter_params = []
+    # Box-suggestion only makes sense for a single chosen letter.
+    single_letter = letter_values[0] if len(letter_values) == 1 else ""
+
     rows = _fetch_all(
         f"""
         ;WITH FilteredProducts AS (
@@ -136,10 +151,7 @@ def search_products(
                     OR p.ProductName LIKE '%' + ? + '%'
                     OR CAST(p.ProductCode AS NVARCHAR(50)) LIKE '%' + ? + '%'
                   )
-              AND (
-                    ? = ''
-                    OR p.ProductName LIKE ? + '%'
-                  )
+              AND ({letter_clause})
               AND (
                     ? = 'null'
                     AND LTRIM(RTRIM({eff_unit})) = ''
@@ -248,8 +260,7 @@ def search_products(
             q,
             q,
             q,
-            starts_with,
-            starts_with,
+            *letter_params,
             unit_description_mode,
             unit_description_mode, *exact_params,
             unit_description_mode, unit_description, unit_description,
@@ -284,7 +295,7 @@ def search_products(
           AND LTRIM(RTRIM(SubLocation)) LIKE ? + '%'
         ORDER BY LTRIM(RTRIM(SubLocation)) DESC
         """,
-        (tenant_id, store_id, starts_with, starts_with),
+        (tenant_id, store_id, single_letter, single_letter),
     )
     return {
         "rows": rows,
@@ -293,8 +304,17 @@ def search_products(
 
 
 def get_unit_descriptions(tenant_id, store_id, starts_with):
+    # starts_with may be a comma-separated list of first-letters (multi-letter
+    # filter) - scope the unit options to products under ANY selected letter.
+    letter_values = [v.strip()[:1].upper() for v in (starts_with or "").split(",") if v.strip()]
+    if letter_values:
+        letter_clause = "(" + " OR ".join("ProductName LIKE ? + '%'" for _ in letter_values) + ")"
+        letter_params = list(letter_values)
+    else:
+        letter_clause = "1 = 1"
+        letter_params = []
     rows = _fetch_all(
-        """
+        f"""
         SELECT DISTINCT TOP 100
             CAST(LTRIM(RTRIM(UnitDescription)) AS NVARCHAR(100)) AS unit_description
         FROM sync.Products
@@ -302,10 +322,10 @@ def get_unit_descriptions(tenant_id, store_id, starts_with):
           AND store_id = ?
           AND ISNULL(isactive, 1) = 1
           AND LTRIM(RTRIM(ISNULL(UnitDescription, ''))) <> ''
-          AND (? = '' OR ProductName LIKE ? + '%')
+          AND ({letter_clause})
         ORDER BY CAST(LTRIM(RTRIM(UnitDescription)) AS NVARCHAR(100))
         """,
-        (tenant_id, store_id, starts_with, starts_with),
+        (tenant_id, store_id, *letter_params),
     )
     return [row["unit_description"] for row in rows if row.get("unit_description")]
 

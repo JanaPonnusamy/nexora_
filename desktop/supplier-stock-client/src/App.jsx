@@ -4200,6 +4200,9 @@ function fmtLblDateFull(iso) {
 // merged with whatever units the current load actually contains.
 const LABEL_UNIT_PRESETS = ['TAB', 'CAP', 'SYP', 'INJ', 'CREAM', 'LOT', 'PACK', 'SUG', 'DROPS', 'POWDER'];
 
+// A-Z options for the multi-select Letter filter (product-name first letter).
+const LABEL_LETTER_OPTIONS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
+
 function escapeLabelHtml(text) {
   return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -4506,7 +4509,9 @@ function LabelExporter({ session, settings }) {
   const [storeId, setStoreId] = useState(ownStoreId);
 
   const [q, setQ] = useState('');
-  const [startsWith, setStartsWith] = useState('');
+  // Letter filter is multi-select (checkbox dropdown): a Set of first-letters.
+  // Sent to the backend as a comma-separated list; empty = no letter restriction.
+  const [selectedLetters, setSelectedLetters] = useState(() => new Set());
   const [unitOptions, setUnitOptions] = useState([]);
   const [selectedUnits, setSelectedUnits] = useState(() => new Set());
   const [sublocOptions, setSublocOptions] = useState([]);
@@ -4767,7 +4772,7 @@ function LabelExporter({ session, settings }) {
     return {
       version: 2,
       storeId,
-      letter: startsWith,
+      letters: Array.from(selectedLetters),
       filters: {
         search: q,
         units: Array.from(selectedUnits),
@@ -4806,7 +4811,10 @@ function LabelExporter({ session, settings }) {
       if (cancelled) return;
       if (s && typeof s === 'object') {
         if (s.storeId && canChangeStore) setStoreId(s.storeId);
-        if (typeof s.letter === 'string') setStartsWith(s.letter);
+        // New multi-letter sessions store `letters` (array); older ones stored a
+        // single `letter` string — seed the Set from whichever is present.
+        if (Array.isArray(s.letters)) setSelectedLetters(new Set(s.letters.map((c) => String(c).slice(0, 1).toUpperCase()).filter(Boolean)));
+        else if (typeof s.letter === 'string' && s.letter.trim()) setSelectedLetters(new Set([s.letter.trim().slice(0, 1).toUpperCase()]));
         const f = s.filters || {};
         if (typeof f.search === 'string') setQ(f.search);
         if (Array.isArray(f.units)) setSelectedUnits(new Set(f.units));
@@ -4826,7 +4834,7 @@ function LabelExporter({ session, settings }) {
           rowIndex: Number.isInteger(s.currentRowIndex) ? s.currentRowIndex : 0,
           scrollTop: Number.isFinite(s.scrollTop) ? s.scrollTop : 0
         };
-        if ((s.letter && s.letter.trim()) || (f.search && f.search.trim())) {
+        if ((Array.isArray(s.letters) && s.letters.length) || (s.letter && s.letter.trim()) || (f.search && f.search.trim())) {
           setRestoreSearchToken((t) => t + 1);   // auto-run the saved search
         } else {
           readyToSaveRef.current = true;          // nothing to restore-search
@@ -4875,10 +4883,31 @@ function LabelExporter({ session, settings }) {
 
   // 4) Autosave (debounced) whenever any tracked UI state changes.
   useEffect(() => { scheduleSave(); }, [
-    scheduleSave, storeId, startsWith, q, selectedUnits, selectedSublocs, reviewStatus,
+    scheduleSave, storeId, selectedLetters, q, selectedUnits, selectedSublocs, reviewStatus,
     stockFilter, boxNumber, onlyNullSublocation, onlySaleUnitGtOne, showAdvanced,
     showColFilters, colFilters, activeIndex, labelColCfg, trendMonths, activeRow?.product_code
   ]);
+
+  // 5) Auto-search: re-run the product search — applying EVERY current filter — a
+  //    short beat after the operator edits the Search box, the Letter set, or any
+  //    filter, so no "Search" click (and no Enter) is ever needed: pure
+  //    search-as-you-type. Store keeps its own immediate onChange handler (it
+  //    shouldn't wait for the debounce, and leaving it out of the deps prevents a
+  //    double search when the store changes). Gated so it never fires during the
+  //    initial session-restore pass (readyToSaveRef) and never kicks off a full
+  //    unfiltered store scan (needs a letter, a query, or at least one filter).
+  useEffect(() => {
+    if (!readyToSaveRef.current) return;
+    if (!tenantId || !storeId) return;
+    const hasCriteria = !!(
+      selectedLetters.size || q.trim() || reviewStatus || selectedUnits.size || selectedSublocs.size
+      || boxNumber || onlyNullSublocation || onlySaleUnitGtOne || stockFilter !== 'all'
+    );
+    if (!hasCriteria) return;
+    const timer = setTimeout(() => runSearch(), 320);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, selectedLetters, selectedUnits, reviewStatus, stockFilter, selectedSublocs, boxNumber, onlyNullSublocation, onlySaleUnitGtOne]);
 
   // `overrides` lets a picker (Store / Letter) fire the search immediately
   // with the value it just set, instead of waiting for a state update to
@@ -4887,7 +4916,8 @@ function LabelExporter({ session, settings }) {
   // storeId from this closure without it.
   function runSearch(overrides = {}) {
     const effStoreId = overrides.storeId ?? storeId;
-    const effStartsWith = overrides.startsWith ?? startsWith;
+    const effLetters = overrides.letters ?? selectedLetters;
+    const startsWithParam = Array.from(effLetters).join(',');
     if (!tenantId || !effStoreId) {
       setStatus({ state: 'idle', message: 'Waiting for tenant/store...' });
       return;
@@ -4906,7 +4936,7 @@ function LabelExporter({ session, settings }) {
       tenantId,
       storeId: effStoreId,
       q,
-      startsWith: effStartsWith,
+      startsWith: startsWithParam,
       unitDescription: selectedUnits.size ? Array.from(selectedUnits).join(',') : '',
       unitDescriptionMode: selectedUnits.size ? 'exact' : 'contains',
       boxNumber,
@@ -4940,7 +4970,7 @@ function LabelExporter({ session, settings }) {
       // as the bottleneck rather than the database query itself.
       const roundTripMs = Math.round(performance.now() - clientStart);
       const serverMs = Number.isFinite(result?.server_ms) ? result.server_ms : null;
-      console.log(`[label-exporter] search store=${effStoreId} letter=${effStartsWith || '(any)'} rows=${nextRows.length} roundTrip=${roundTripMs}ms server=${serverMs ?? '?'}ms`);
+      console.log(`[label-exporter] search store=${effStoreId} letters=${startsWithParam || '(any)'} rows=${nextRows.length} roundTrip=${roundTripMs}ms server=${serverMs ?? '?'}ms`);
       const timingSuffix = serverMs != null ? ` (${roundTripMs}ms, ${serverMs}ms server)` : ` (${roundTripMs}ms)`;
       setStatus({
         state: 'ok',
@@ -4961,7 +4991,7 @@ function LabelExporter({ session, settings }) {
   // touches loaded review data. Search again to reload with the defaults.
   function resetFilters() {
     setQ('');
-    setStartsWith('');
+    setSelectedLetters(new Set());
     setSelectedUnits(new Set());
     setSelectedSublocs(new Set());
     setBoxNumber('');
@@ -5108,7 +5138,10 @@ function LabelExporter({ session, settings }) {
     // or first letter of the first target product name.
     const first = assignTargets[0];
     const unit = (first.corrected_unit || first.unit_description || '').toUpperCase();
-    const letter = (startsWith || (first.product_name || '').trim().charAt(0)).toUpperCase();
+    // Default the box letter to the single chosen filter-letter if exactly one is
+    // selected, otherwise the first target product's initial.
+    const onlyLetter = selectedLetters.size === 1 ? Array.from(selectedLetters)[0] : '';
+    const letter = (onlyLetter || (first.product_name || '').trim().charAt(0)).toUpperCase();
     setAssignForm({ mode: 'continue', assignmentType: 'standard_box', unit, letter, startNumber: 1 });
     setAssignPreview(null);
     setAssignError('');
@@ -5469,24 +5502,27 @@ function LabelExporter({ session, settings }) {
 
         <label className="lblx-field lblx-letter">
           <span>Letter</span>
-          <input
-            value={startsWith}
-            maxLength={1}
-            onChange={(event) => {
-              const letter = event.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1);
-              setStartsWith(letter);
-              // Only auto-search on a real letter - a backspace-to-clear
-              // mid-edit shouldn't fire a full, unfiltered store scan
-              // (thousands of rows) just because the field is briefly empty.
-              if (letter) runSearch({ startsWith: letter });
-            }}
-            placeholder="A"
+          <LabelMultiPicker
+            options={LABEL_LETTER_OPTIONS}
+            selected={selectedLetters}
+            onChange={setSelectedLetters}
+            placeholder="Any letter"
+            noun="letter"
           />
         </label>
 
         <label className="lblx-field lblx-search">
           <span>Search</span>
-          <input type="search" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Product or code…" aria-label="Search products" />
+          <span className="lblx-search-box">
+            <svg className="lblx-search-ico" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14Z" /></svg>
+            <input
+              type="search"
+              value={q}
+              onChange={(event) => setQ(event.target.value)}
+              placeholder="Product name or code — updates as you type"
+              aria-label="Search products"
+            />
+          </span>
         </label>
 
         <label className="lblx-field lblx-unit">
@@ -5513,29 +5549,29 @@ function LabelExporter({ session, settings }) {
           </select>
         </label>
 
-        <button
-          type="button"
-          className={`lblx-adv-toggle ${showAdvanced ? 'is-open' : ''}`}
-          onClick={() => setShowAdvanced((v) => !v)}
-          aria-expanded={showAdvanced}
-          title="More filters"
-        >
-          Advanced {showAdvanced ? '▲' : '▼'}
-        </button>
+        <span className="lblx-filterspace" />
 
-        <button
-          type="button"
-          className="lblx-reset"
-          onClick={resetFilters}
-          disabled={status.state === 'loading'}
-          title="Reset all filters to defaults"
-        >
-          Reset
-        </button>
-
-        <button type="button" className="lblx-search-btn" disabled={!tenantId || !storeId || status.state === 'loading'} onClick={runSearch}>
-          {status.state === 'loading' ? '…' : 'Search'}
-        </button>
+        <div className="lblx-filteractions">
+          {status.state === 'loading' && <span className="lblx-searching" aria-live="polite">Searching…</span>}
+          <button
+            type="button"
+            className={`lblx-adv-toggle ${showAdvanced ? 'is-open' : ''}`}
+            onClick={() => setShowAdvanced((v) => !v)}
+            aria-expanded={showAdvanced}
+            title="More filters"
+          >
+            Advanced {showAdvanced ? '▲' : '▾'}
+          </button>
+          <button
+            type="button"
+            className="lblx-reset"
+            onClick={resetFilters}
+            disabled={status.state === 'loading'}
+            title="Reset all filters to defaults"
+          >
+            Reset
+          </button>
+        </div>
       </div>
 
       {showAdvanced && (
@@ -5562,6 +5598,73 @@ function LabelExporter({ session, settings }) {
         </div>
       )}
 
+      {/* Action toolbar — review/assignment/clear on the left, grid-view toggles on
+          the right. A dedicated row (not the status strip) so nothing ever clips,
+          even once a third Clear button was added. Wraps instead of overflowing. */}
+      <div className="lblx-actionbar">
+        <button type="button" className="lblx-mark lblx-mark-y" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
+        <button type="button" className="lblx-mark lblx-mark-n" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
+        {admin && (
+          <button type="button" className="lblx-mark lblx-assign" disabled={!assignTargets.length} onClick={openAssignDrawer} title="Assign locations to reviewed-Y products (does not print)">
+            Assign Locations{assignTargets.length ? ` (${assignTargets.length})` : ''}
+          </button>
+        )}
+        <button type="button" className="lblx-mark lblx-queue" onClick={openQueue} title="Open the label print queue">Label Queue</button>
+        {admin && (
+          <span className="lblx-clear-group">
+            <button
+              type="button"
+              className="lblx-mark lblx-clear"
+              disabled={!visibleRows.length || bulkBusy}
+              onClick={requestClearAssignment}
+              title="Reset assignment result only (keeps review + master data)"
+            >
+              Clear Assignment…
+            </button>
+            <button
+              type="button"
+              className="lblx-mark lblx-clear"
+              disabled={!visibleRows.length || bulkBusy}
+              onClick={requestClearNewLocation}
+              title="Clear only auto-assigned box locations (letter+0, e.g. A001); keeps named locations like Counter/SYP + review"
+            >
+              Clear New Loc…
+            </button>
+            <button
+              type="button"
+              className="lblx-mark lblx-clear-review"
+              disabled={!visibleRows.length || bulkBusy}
+              onClick={requestClearReview}
+              title="Reset Y/N review + assignment (keeps master data)"
+            >
+              Clear Review…
+            </button>
+          </span>
+        )}
+        <span className="lblx-spacer" />
+        <button
+          type="button"
+          className={`lblx-mark lblx-colfilter-toggle ${showColFilters ? 'is-on' : ''}`}
+          disabled={!rows.length}
+          onClick={() => setShowColFilters((v) => !v)}
+          title="Excel-style per-column filters (numbers accept >, <, >=, <=, =; type null or !null to match/exclude blank cells, e.g. LSD/LPD)"
+        >
+          Column filters{hasColFilters ? ' •' : ''}
+        </button>
+        <button
+          type="button"
+          ref={colSettingsBtnRef}
+          className={`lblx-mark lblx-colsettings-toggle ${colSettingsOpen ? 'is-on' : ''}`}
+          aria-expanded={colSettingsOpen}
+          onClick={() => setColSettingsOpen((v) => !v)}
+          title="Column settings — show/hide, reorder & resize columns"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d={OW_GEAR_PATH} /></svg>
+          Columns
+        </button>
+      </div>
+
+      {/* Status strip — purely informational: shortcut hints + live progress. */}
       <div className="lblx-statusbar">
         <span className="lblx-kbd">
           <kbd>Enter</kbd>/<kbd>Y</kbd> Include <i>·</i> <kbd>Esc</kbd>/<kbd>N</kbd> Exclude <i>·</i> <kbd>↑↓</kbd> Navigate
@@ -5591,73 +5694,21 @@ function LabelExporter({ session, settings }) {
 
         {!admin && <span className="lblx-note">Review only — assignment is super-admin</span>}
         {selectedCodes.size > 0 && <span className="lblx-sel">{selectedCodes.size} selected</span>}
-        <span className="lblx-spacer" />
-        <button
-          type="button"
-          className={`lblx-mark lblx-colfilter-toggle ${showColFilters ? 'is-on' : ''}`}
-          disabled={!rows.length}
-          onClick={() => setShowColFilters((v) => !v)}
-          title="Excel-style per-column filters (numbers accept >, <, >=, <=, =; type null or !null to match/exclude blank cells, e.g. LSD/LPD)"
-        >
-          Column filters{hasColFilters ? ' •' : ''}
-        </button>
-        <button
-          type="button"
-          ref={colSettingsBtnRef}
-          className={`lblx-mark lblx-colsettings-toggle ${colSettingsOpen ? 'is-on' : ''}`}
-          aria-expanded={colSettingsOpen}
-          onClick={() => setColSettingsOpen((v) => !v)}
-          title="Column settings — show/hide, reorder & resize columns"
-        >
-          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d={OW_GEAR_PATH} /></svg>
-          Columns
-        </button>
-        <button type="button" className="lblx-mark lblx-mark-y" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
-        <button type="button" className="lblx-mark lblx-mark-n" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
-        {admin && (
-          <button type="button" className="lblx-mark lblx-assign" disabled={!assignTargets.length} onClick={openAssignDrawer} title="Assign locations to reviewed-Y products (does not print)">
-            Assign Locations{assignTargets.length ? ` (${assignTargets.length})` : ''}
-          </button>
-        )}
-        <button type="button" className="lblx-mark lblx-queue" onClick={openQueue} title="Open the label print queue">Label Queue</button>
-        {admin && (
-          <button
-            type="button"
-            className="lblx-mark lblx-clear"
-            disabled={!visibleRows.length || bulkBusy}
-            onClick={requestClearAssignment}
-            title="Reset assignment result only (keeps review + master data)"
-          >
-            Clear Assignment…
-          </button>
-        )}
-        {admin && (
-          <button
-            type="button"
-            className="lblx-mark lblx-clear"
-            disabled={!visibleRows.length || bulkBusy}
-            onClick={requestClearNewLocation}
-            title="Clear only auto-assigned box locations (letter+0, e.g. A001); keeps named locations like Counter/SYP + review"
-          >
-            Clear New Loc…
-          </button>
-        )}
-        {admin && (
-          <button
-            type="button"
-            className="lblx-mark lblx-clear-review"
-            disabled={!visibleRows.length || bulkBusy}
-            onClick={requestClearReview}
-            title="Reset Y/N review + assignment (keeps master data)"
-          >
-            Clear Review…
-          </button>
-        )}
       </div>
 
       <div className="ow-body">
         <div className="ow-left">
           <div className="ow-main">
+            {status.state === 'loading' && (
+              <div className="lbl-loading" role="status" aria-live="polite">
+                <div className="lbl-loading-card">
+                  <span className="lbl-loading-spinner" aria-hidden="true" />
+                  <span className="lbl-loading-text">Loading products…</span>
+                  <span className="lbl-loading-bar" aria-hidden="true"><span /></span>
+                  <span className="lbl-loading-hint">Large letters can take a while on the first load</span>
+                </div>
+              </div>
+            )}
             <div
               className="ow-grid lbl-grid"
               tabIndex={0}
