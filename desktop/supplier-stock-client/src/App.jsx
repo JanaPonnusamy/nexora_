@@ -10996,10 +10996,10 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
     return core && core.product?.product_code === code ? core : null;
   }
 
-  function gridCell(store, isWarehouse) {
-    if (isWarehouse && !superAdmin) {
-      return <div className="svb-restricted">🔒 Super-admin / HO only</div>;
-    }
+  // The Store Grid (stock list) is visible for EVERY store, including NMW — all
+  // branches may see the warehouse stock list. Only NMW's detail rows below are
+  // gated to super-admin (owner ruling: see the NMW list, not its details).
+  function gridCell(store) {
     const products = asArray(store.products);
     if (!products.length) return <div className="scm-empty">No matching product</div>;
     const sel = selectionFor(store.store_id);
@@ -11077,7 +11077,7 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
                   key={store.store_id}
                   style={{ '--store-color': color }}
                 >
-                  {row.key === 'grid' ? gridCell(store, isWarehouse) : detailCell(store, row.key, isWarehouse)}
+                  {row.key === 'grid' ? gridCell(store) : detailCell(store, row.key, isWarehouse)}
                 </div>
               );
             })}
@@ -11128,6 +11128,10 @@ function StockVerticalView({ session, settings }) {
 
   const searchProductsByStore = useMemo(
     () => new Map(stores.map((s) => [s.store_id, s.products || []])),
+    [stores]
+  );
+  const warehouseStoreIds = useMemo(
+    () => new Set(stores.filter((s) => isWarehouseStore(s)).map((s) => s.store_id)),
     [stores]
   );
 
@@ -11307,6 +11311,11 @@ function StockVerticalView({ session, settings }) {
     return core;
   }
 
+  // NMW (warehouse) detail is super-admin only: a store user still SEES the NMW
+  // stock list and its selection highlight (no core needed for that), but we
+  // never fetch its chart/batch/purchase/sales core.
+  const canLoadDetail = (storeId) => superAdmin || !warehouseStoreIds.has(storeId);
+
   function handleProductSelect(sourceStore, product) {
     const storeId = sourceStore.store_id;
     const searchId = searchIdRef.current;
@@ -11325,14 +11334,17 @@ function StockVerticalView({ session, settings }) {
     if (exactResults.length) {
       setSelectionState((cur) => applySyncResult(cur, storeId, product.product_code, buildSynchronizedMap(exactResults)));
       exactResults.forEach((match) => {
+        if (!canLoadDetail(match.store_id)) return; // NMW detail gated for store users
         loadStoreCore(match.store_id, match.product)
           .then((core) => { if (searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [match.store_id]: core })); })
           .catch(() => setStoreDetails((prev) => ({ ...prev, [match.store_id]: { product: match.product, batches: [], purchases: [], sales: [], movement: [] } })));
       });
     }
-    loadStoreCore(storeId, product)
-      .then((core) => { if (searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [storeId]: core })); })
-      .catch(() => setStoreDetails((prev) => ({ ...prev, [storeId]: { product, batches: [], purchases: [], sales: [], movement: [] } })));
+    if (canLoadDetail(storeId)) {
+      loadStoreCore(storeId, product)
+        .then((core) => { if (searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [storeId]: core })); })
+        .catch(() => setStoreDetails((prev) => ({ ...prev, [storeId]: { product, batches: [], purchases: [], sales: [], movement: [] } })));
+    }
     syncCrossStoreSelection(storeId, product, searchId, exactStoreIds, exactResults);
   }
 
@@ -11350,6 +11362,7 @@ function StockVerticalView({ session, settings }) {
     const freshSynchronized = buildSynchronizedMap([...exactResults, ...asArray(response?.results)]);
     setSelectionState((cur) => applySyncResult(cur, sourceStoreId, product.product_code, freshSynchronized));
     await Promise.all(matches.map(async (match) => {
+      if (!canLoadDetail(match.store_id)) return; // NMW detail gated for store users
       const known = (searchProductsByStore.get(match.store_id) || []).find((row) => row.product_code === match.product.product_code);
       const targetProduct = known || { product_code: match.product.product_code, product_name: match.product.product_name, mrp: match.product.mrp };
       try {
