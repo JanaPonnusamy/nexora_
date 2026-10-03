@@ -314,9 +314,11 @@ function AppShell() {
     // module-grant early-return below so it also applies to logins with no
     // module list.
     let base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
-    // Salesman-only logins must not see NMW dispatch bills (warehouse->store
-    // billing). The API also 403s these endpoints server-side (see
-    // modules/nmw_sales_report/service.py); this just keeps the nav honest.
+    // NMW dispatch-bill LIST: every branch/store login may see it (owner ruling
+    // 2026-10-03: "all branches must see the NMW stock list"); only pure salesman
+    // logins are barred outright. The per-product DETAILS inside a bill are
+    // super-admin only and gated inside the screen + server-side (see
+    // modules/nmw_sales_report/service.py _assert_can_view_details).
     const nmwBlocked = isSalesmanOnly(session);
     if (nmwBlocked) base = base.filter((s) => s.id !== 'nmw_sales');
     // Order Workspace (VB-style ordering console) is a Purchase-Manager tool:
@@ -6153,6 +6155,11 @@ function LabelExporter({ session, settings }) {
 
 function NmwSalesReport({ session, settings }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
+  // All branches may browse the dispatch-bill LIST, but the per-bill PRODUCT
+  // DETAILS (line items, purchase-entry drill-down, export) are super-admin / HO
+  // only (owner ruling 2026-10-03). Mirrors backend _assert_can_view_details; the
+  // server also 403s those endpoints, so this is defence-in-depth + clean UX.
+  const canViewDetails = isSuperAdmin(session);
 
   const [tenants, setTenants] = useState([]);
   const [stores, setStores] = useState([]);
@@ -6183,6 +6190,8 @@ function NmwSalesReport({ session, settings }) {
   function loadItems(bill, force = false) {
     const key = nmwBillKey(bill);
     setActiveKey(key);
+    // Branches see the list only — never fetch product details / purchase entry.
+    if (!canViewDetails) return;
     // Cache line items per bill, but always refetch when `force` (a Load/refresh)
     // so a server-side data change (e.g. duplicate-line reconcile) is reflected
     // without needing an app restart.
@@ -6267,7 +6276,7 @@ function NmwSalesReport({ session, settings }) {
   // (not the whole visible list) — the buttons live in that pane's header.
   // Cancelled bills are view-only: never exportable.
   async function exportBillAs(bill, format) {
-    if (!bill || bill.is_cancelled || exporting) return;
+    if (!canViewDetails || !bill || bill.is_cancelled || exporting) return;
     setExporting(true);
     setStatus({ state: 'loading', message: `Preparing ${format.toUpperCase()} export...` });
     try {
@@ -6477,6 +6486,7 @@ function NmwSalesReport({ session, settings }) {
                       {' · '}{activeBill.is_cancelled ? 'Cancelled' : activeBill.status === 'approved' ? 'Approved' : 'Pending'}
                       {activeBill.approved_by ? ` by ${activeBill.approved_by}` : ''}
                     </span>
+                    {canViewDetails && (
                     <span className="nmw-bill-detail-sub nmw-pe-line">
                       Purchase entry:{' '}
                       {(() => {
@@ -6503,7 +6513,8 @@ function NmwSalesReport({ session, settings }) {
                         );
                       })()}
                     </span>
-                    {(() => {
+                    )}
+                    {canViewDetails && (() => {
                       const pe = purchaseEntries[activeKey];
                       const missing = pe?.state === 'ok' ? (pe.data?.pending_products || []) : [];
                       if (!missing.length) return null;
@@ -6521,7 +6532,7 @@ function NmwSalesReport({ session, settings }) {
                     })()}
                   </div>
                   <div className="nmw-bill-detail-actions">
-                    {!activeBill.is_cancelled && (
+                    {canViewDetails && !activeBill.is_cancelled && (
                       <div className="nmw-export-group">
                         <button className="nmw-icon-button" disabled={exporting} onClick={() => exportBillAs(activeBill, 'csv')} title="Export this bill as CSV">
                           ⬇ CSV
@@ -6540,7 +6551,11 @@ function NmwSalesReport({ session, settings }) {
                   </div>
                 </div>
 
-                {!activeItems ? (
+                {!canViewDetails ? (
+                  <div className="empty-state nmw-detail-restricted">
+                    🔒 Product details are available to super-admin / HO logins only.
+                  </div>
+                ) : !activeItems ? (
                   <div className="empty-state">Loading items...</div>
                 ) : activeItems.length === 0 ? (
                   <div className="empty-state">No line items.</div>

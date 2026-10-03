@@ -5329,8 +5329,13 @@ th {
 
 /* ---- Runtime column resize & reorder (directly on the header) ----
    Drag the header to reorder; drag its right-edge handle to resize. State is
-   persisted via labelColCfg (same as the Columns gear). */
-.lbl-grid thead th.lbl-col-th { position: relative; cursor: grab; user-select: none; }
+   persisted via labelColCfg (same as the Columns gear).
+   NOTE: do NOT set position:relative here — the header th is already
+   position:sticky (.ow-screen thead th) which keeps it pinned on scroll AND is a
+   valid containing block for the absolute .lbl-col-resize handle. Overriding it
+   with relative un-sticks the header (it scrolls away and the filter row floats
+   over the rows). */
+.lbl-grid thead th.lbl-col-th { cursor: grab; user-select: none; }
 .lbl-grid thead th.lbl-col-th.is-dragging { opacity: 0.45; cursor: grabbing; }
 .lbl-grid thead th.lbl-col-th.is-dragover { box-shadow: inset 3px 0 0 var(--nx-accent); }
 .lbl-col-label { pointer-events: none; }

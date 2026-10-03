@@ -10,11 +10,22 @@ def _role_names(user):
 
 
 def _assert_can_view(user):
-    """Salesman-only logins may not view NMW dispatch bills at all. Everyone
-    else (store admin/manager/purchase manager, super admin) keeps their
-    store-scoped or network-wide view from list_bills()."""
+    """Who may see the NMW dispatch-bill LIST: every branch/store login keeps
+    its store-scoped view (owner ruling 2026-10-03: "all branches must see the
+    NMW stock list"). Only pure salesman logins are barred outright. The
+    per-product DETAILS inside a bill are gated separately — see
+    _assert_can_view_details(). Guards list_bills()."""
     if is_salesman_only(user):
         raise HTTPException(status_code=403, detail="Salesman logins cannot view NMW dispatch bills.")
+
+
+def _assert_can_view_details(user):
+    """Who may drill into a bill's product/line-item DETAILS (and purchase-entry
+    drill-down): super-admin / HO only (owner ruling 2026-10-03: branches see the
+    stock list but NOT the product details; super admin sees all details).
+    Guards get_bill_items() and get_purchase_entry()."""
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="NMW product details are restricted to super-admin / HO logins.")
 
 
 def is_super_admin(user):
@@ -105,7 +116,7 @@ def list_bills(user, tenant_id, store_id, status, date_from, date_to, purchase_s
 
 
 def get_purchase_entry(user, tenant_id, bill_no, bill_date):
-    _assert_can_view(user)
+    _assert_can_view_details(user)
     nmw_store_id = repository.get_nmw_store_id(tenant_id)
     if not nmw_store_id:
         raise HTTPException(status_code=404, detail="Warehouse store (NMW) not found for this tenant.")
@@ -124,7 +135,7 @@ def get_purchase_entry(user, tenant_id, bill_no, bill_date):
 
 
 def get_bill_items(user, tenant_id, bill_no, bill_date):
-    _assert_can_view(user)
+    _assert_can_view_details(user)
     nmw_store_id = repository.get_nmw_store_id(tenant_id)
     if not nmw_store_id:
         return {"items": [], "summary": None}
