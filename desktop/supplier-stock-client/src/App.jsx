@@ -45,6 +45,7 @@ const DEV_STORE = import.meta.env.DEV ? (import.meta.env.VITE_DEV_STORE || '') :
 
 const screens = [
   { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
+  { id: 'stock_vertical', label: 'Stock (Vertical)', module: 'stock_availability' },
   { id: 'network_stock', label: 'Network Stock', module: 'stock_availability' },
   { id: 'label_exporter', label: 'Label Exporter', module: 'label_exporter' },
   { id: 'analysis', label: 'Supplier Stock Analysis', module: 'supplier_stock_analysis' },
@@ -522,6 +523,7 @@ function AppShell() {
         </nav>
 
         <div className="menubar-right">
+          <LastSyncBadge tenantId={runtimeSettings?.tenantId || session?.user?.tenant_id || ''} />
           <ThemeToggle
             resolvedTheme={resolvedTheme}
             onCycle={cycleTheme}
@@ -574,6 +576,8 @@ function AppShell() {
           ) : (
             <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
           )
+        ) : activeScreen === 'stock_vertical' ? (
+          <StockVerticalView session={session} settings={runtimeSettings} />
         ) : activeScreen === 'network_stock' ? (
           <NetworkStockView
             session={session}
@@ -611,6 +615,35 @@ function AppShell() {
           />
         )}
       </main>
+    </div>
+  );
+}
+
+function formatSyncTimeGlobal(ts) {
+  if (!ts) return 'never';
+  try { return new Date(ts).toLocaleString(); } catch { return 'unknown'; }
+}
+
+// App-wide "last sync" chip shown in the top bar on EVERY screen. Reads the
+// newest permanent product-index cache timestamp for the active tenant
+// (lib/productIndexCache.getLastSync) and refreshes every 60s, so the operator
+// always sees how fresh the local data is regardless of which screen they're on.
+function LastSyncBadge({ tenantId }) {
+  const [ts, setTs] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => getLastSync(tenantId).then((v) => { if (!cancelled) setTs(v); }).catch(() => {});
+    load();
+    const timer = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [tenantId]);
+  return (
+    <div
+      className={`last-sync-badge ${ts ? '' : 'is-never'}`}
+      title={ts ? `Local cache last synced ${formatSyncTimeGlobal(ts)}` : 'No local cache yet'}
+    >
+      <span className="last-sync-dot" aria-hidden="true" />
+      <span className="last-sync-text">Last sync <strong>{formatSyncTimeGlobal(ts)}</strong></span>
     </div>
   );
 }
@@ -10845,6 +10878,388 @@ function StoreDetailBody({ group, colorIndex }) {
         </section>
       </div>
     </div>
+  );
+}
+
+// ── Vertical "all stores stacked" stock view ────────────────────────────────
+// A new screen (alongside the horizontal Stock Availability) that, for one
+// searched product, stacks EVERY store vertically. Each store block shows its
+// product row on top, then Chart -> Batch -> Purchase -> Sales full-width below.
+// Reuses the same APIs as the horizontal screen (searchStockProducts +
+// getStockCore[Bulk]) and the same panel renderers (GridRow / RowDataCell /
+// MonthlyMovementChart). The device's own (native) store is listed LAST; the NMW
+// warehouse shows product details to super-admin only, with its lower panels
+// intentionally left blank for now (owner ruling 2026-10-03).
+const SVB_PRODUCT_COLS = '96px minmax(0, 1fr) 72px 70px 72px';
+
+function SvbSection({ title, cols, headers, rows, emptyMessage, children }) {
+  return (
+    <section className="svb-section">
+      <h4>{title}</h4>
+      {children ? children : (
+        <>
+          <GridRow cols={cols} tag="span" className="svb-grid-head" cells={headers} />
+          {rows.length ? (
+            <RowDataCell className="svb-table" cols={cols} rows={rows} emptyMessage={emptyMessage} />
+          ) : <div className="detail-compact-placeholder">{emptyMessage}</div>}
+        </>
+      )}
+    </section>
+  );
+}
+
+function StoreVerticalBlock({ store, core, colorIndex, isWarehouse, canViewWarehouse }) {
+  const storeColor = STORE_COLORS[colorIndex % STORE_COLORS.length];
+  const product = core?.product;
+  const productRows = product
+    ? [[
+        product.product_code,
+        product.product_name || '-',
+        product.sale_unit || product.unit_description || '-',
+        product.stock ?? product.total_stock ?? 0,
+        formatMoney(product.mrp),
+      ]]
+    : [];
+  const head = (
+    <header className="svb-head">
+      <span className="svb-badge">{storeLabel(store)}</span>
+      <span className="svb-name">{store.store_name || ''}</span>
+      {isWarehouse && <span className="svb-wh-tag">Warehouse</span>}
+    </header>
+  );
+
+  if (isWarehouse) {
+    // NMW: product details super-admin only; lower panels left blank for now.
+    return (
+      <section className="svb svb--warehouse" style={{ '--store-color': storeColor }}>
+        {head}
+        {canViewWarehouse ? (
+          <SvbSection
+            title="Product"
+            cols={SVB_PRODUCT_COLS}
+            headers={['Code', 'Product', 'Unit', 'Stock', 'MRP']}
+            rows={productRows}
+            emptyMessage="No product match in this warehouse."
+          />
+        ) : (
+          <div className="svb-restricted">🔒 NMW product details are available to super-admin / HO logins only.</div>
+        )}
+        <div className="svb-blank" aria-hidden="true" />
+      </section>
+    );
+  }
+
+  const batches = asArray(core?.batches);
+  const purchases = asArray(core?.purchases);
+  const sales = asArray(core?.sales);
+  const movement = asArray(core?.movement);
+  return (
+    <section className="svb" style={{ '--store-color': storeColor }}>
+      {head}
+      <SvbSection
+        title="Product"
+        cols={SVB_PRODUCT_COLS}
+        headers={['Code', 'Product', 'Unit', 'Stock', 'MRP']}
+        rows={productRows}
+        emptyMessage="No product match."
+      />
+      <section className="svb-section">
+        <h4>4-Month Trend</h4>
+        {(movement.length || purchases.length || sales.length)
+          ? <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} />
+          : <div className="detail-compact-placeholder">No chart data.</div>}
+      </section>
+      <SvbSection
+        title="Batch"
+        cols={BATCH_COLS}
+        headers={['Expiry', 'Stock', 'MRP', 'Batch']}
+        rows={batches.slice(0, 50).map((row) => [formatDate(row.expirydate), formatQty(row.stock), formatMoney(row.mrp), row.batchcode || '-'])}
+        emptyMessage="No batch details."
+      />
+      <SvbSection
+        title="Purchase"
+        cols={PURCHASE_COLS}
+        headers={['Qty', 'Free', 'Disc', 'P.Disc', 'GRN Date', 'GRN No', 'Supplier']}
+        rows={purchases.slice(0, 50).map((row) => [
+          formatQty(row.qty), formatQty(row.free ?? 0), formatMoney(row.overall_discount),
+          formatMoney(row.discount), formatDate(row.grndate), row.grn_no || '-', row.supplier || '-',
+        ])}
+        emptyMessage="No purchase details."
+      />
+      <SvbSection
+        title="Sales"
+        cols={SALES_COLS}
+        headers={['Qty', 'Bill Date', 'Bill No', 'Dis', 'Customer', 'MRP']}
+        rows={sales.slice(0, 50).map((row) => [
+          formatQty(row.qty), formatDate(row.bill_date), row.bill_no || '-',
+          formatMoney(row.discount), row.customer_name || '-', formatMoney(row.mrp),
+        ])}
+        emptyMessage="No sales details."
+      />
+    </section>
+  );
+}
+
+function StockVerticalView({ session, settings }) {
+  const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
+  const nativeStoreId = session?.user?.roles?.[0]?.store_id || '';
+  const superAdmin = isSuperAdmin(session);
+  const [query, setQuery] = useState('');
+  const [onlyStock, setOnlyStock] = useState(false);
+  const [stores, setStores] = useState([]);
+  const [details, setDetails] = useState({});
+  const [status, setStatus] = useState({ state: 'idle', message: 'Type at least 2 characters to search.' });
+  // Offline / permanent-cache state (mirrors the horizontal Stock Availability
+  // screen). When a search can't reach HO we serve the permanent LOCAL product
+  // index (lib/productIndexCache.js) — an on-disk IndexedDB that SURVIVES a
+  // system restart / logoff — so product names + last-known stock still render,
+  // stamped with a "Last sync" time. Detail panels (batch/purchase/sales/chart)
+  // need HO, so they stay blank offline.
+  const [offline, setOffline] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
+  // Store list for the offline scan — seeded from the SAME on-disk cache key the
+  // horizontal screen writes, and refreshed from HO whenever reachable.
+  const [allStores, setAllStores] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('nexora.desktop.storesCache') || '[]'); } catch { return []; }
+  });
+  const searchIdRef = useRef(0);
+  const offlineIndexRef = useRef(new Map());
+
+  const tenantStores = useMemo(() => {
+    if (!tenantId) return allStores;
+    return allStores.filter((store) => String(store?.tenant_id || '') === String(tenantId));
+  }, [allStores, tenantId]);
+
+  // Keep the store list fresh when HO is reachable (shared cache key with the
+  // horizontal screen) so the offline scan below knows every store.
+  useEffect(() => {
+    api.listStores(session).then((rows) => {
+      const items = asArray(rows);
+      setAllStores(items);
+      try { localStorage.setItem('nexora.desktop.storesCache', JSON.stringify(items)); } catch { /* best effort */ }
+    }).catch(() => { /* offline: keep the cached store list */ });
+  }, [session]);
+
+  // Show the last cache timestamp as soon as the screen mounts (before any
+  // refresh), so an offline launch still reports how fresh the data is.
+  useEffect(() => {
+    let cancelled = false;
+    getLastSync(tenantId).then((ts) => { if (!cancelled) setLastSync(ts); });
+    return () => { cancelled = true; };
+  }, [tenantId]);
+
+  // Seed + keep fresh the PERMANENT on-disk product index so this screen works
+  // offline even if the horizontal screen was never opened. Fail-soft and light
+  // (10-min interval) — identical to the horizontal screen's seeder, and writing
+  // the same IndexedDB so the two screens share one cache.
+  useEffect(() => {
+    if (!tenantId || !session) return undefined;
+    let cancelled = false;
+    async function refreshIndex() {
+      try {
+        const resp = await api.getProductIndex(session, { tenantId });
+        if (cancelled) return;
+        for (const store of asArray(resp?.stores)) {
+          await syncStoreIndex(tenantId, store.store_id,
+            { store_code: store.store_code, store_name: store.store_name },
+            asArray(store.products));
+        }
+        if (!cancelled) {
+          offlineIndexRef.current.clear(); // cache changed — drop stale in-memory scopes
+          setLastSync(Date.now());
+          setOffline(false);
+        }
+      } catch { /* offline / HO down: keep serving the existing cache */ }
+    }
+    refreshIndex();
+    const timer = setInterval(refreshIndex, 10 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [session, tenantId]);
+
+  function formatSyncTime(ts) {
+    if (!ts) return 'never';
+    try { return new Date(ts).toLocaleString(); } catch { return 'unknown'; }
+  }
+
+  // Build the per-store search shape entirely from the permanent local index —
+  // used when HO is unreachable. Scopes are loaded once into offlineIndexRef
+  // then filtered in memory (instant on later keystrokes).
+  async function buildOfflineStores(value) {
+    const out = [];
+    for (const store of tenantStores) {
+      let list = offlineIndexRef.current.get(store.store_id);
+      if (!list) {
+        list = await loadScope(tenantId, store.store_id);
+        offlineIndexRef.current.set(store.store_id, list);
+      }
+      let matches = filterProducts(list, value, 50);
+      if (onlyStock) matches = matches.filter((p) => Number(p.stock) > 0);
+      if (matches.length) {
+        out.push({
+          store_id: store.store_id,
+          store_code: store.store_code,
+          store_name: store.store_name,
+          is_warehouse: store.is_warehouse,
+          tenant_id: store.tenant_id,
+          products: matches.map((p) => ({
+            product_code: p.product_code,
+            product_name: p.product_name,
+            sale_unit: p.unit,
+            stock: p.stock,
+            mrp: null,
+            batch_no: null,
+          })),
+        });
+      }
+    }
+    return out;
+  }
+
+  async function runSearch(value) {
+    const searchId = ++searchIdRef.current;
+    setStatus({ state: 'loading', message: 'Searching products…' });
+    let all;
+    try {
+      const response = await api.searchStockProducts(value, session, { onlyStock });
+      if (searchIdRef.current !== searchId) return;
+      if (offline) setOffline(false);
+      all = asArray(response?.stores);
+    } catch (netErr) {
+      // OFFLINE / HO unreachable: serve the permanent local index so the
+      // operator still gets product names + last-known stock from cache.
+      if (searchIdRef.current !== searchId) return;
+      const offlineStores = await buildOfflineStores(value);
+      if (searchIdRef.current !== searchId) return;
+      setOffline(true);
+      const ts = await getLastSync(tenantId);
+      setLastSync(ts);
+      setStores(offlineStores);
+      const seeded = {};
+      offlineStores.forEach((s) => {
+        const p = (s.products || [])[0];
+        if (p) seeded[s.store_id] = { product: p, batches: [], purchases: [], sales: [], movement: [] };
+      });
+      setDetails(seeded);
+      const oTotal = offlineStores.reduce((sum, s) => sum + (s.products || []).length, 0);
+      setStatus({
+        state: oTotal ? 'ok' : 'idle',
+        message: oTotal
+          ? `Offline — ${oTotal} cached match(es). Last sync ${formatSyncTime(ts)}.`
+          : `Offline — no cached match. Last sync ${formatSyncTime(ts)}.`,
+      });
+      return;
+    }
+
+    setStores(all);
+    setDetails({});
+    const withProduct = all.filter((s) => (s.products || [])[0]);
+    const total = all.reduce((sum, s) => sum + (s.products || []).length, 0);
+    if (!withProduct.length) {
+      setStatus({ state: 'ok', message: total ? `${total} match(es).` : 'No products matched in any store.' });
+      return;
+    }
+    setStatus({ state: 'loading', message: `${total} match(es). Loading ${withProduct.length} store(s)…` });
+    const byStore = new Map(withProduct.map((s) => [s.store_id, s.products[0]]));
+    const finalize = (next) => {
+      if (searchIdRef.current !== searchId) return;
+      withProduct.forEach((s) => {
+        if (!next[s.store_id]) next[s.store_id] = { product: s.products[0], batches: [], purchases: [], sales: [], movement: [] };
+      });
+      setDetails(next);
+      setStatus({ state: 'ok', message: `${total} match(es) across ${withProduct.length} store(s).` });
+    };
+    try {
+      const bulk = await api.getStockCoreBulk(
+        withProduct.map((s) => ({ store_id: s.store_id, product_code: s.products[0].product_code })),
+        session, { months: 4 }
+      );
+      if (searchIdRef.current !== searchId) return;
+      const next = {};
+      asArray(bulk?.items).forEach((item) => {
+        next[item.store_id] = {
+          product: byStore.get(item.store_id),
+          batches: asArray(item.batches), purchases: asArray(item.purchases),
+          sales: asArray(item.sales), movement: asArray(item.movement),
+        };
+      });
+      finalize(next);
+    } catch {
+      // Fallback to per-store fetch if the bulk endpoint is unavailable.
+      const next = {};
+      await Promise.all(withProduct.map(async (s) => {
+        try {
+          const r = await api.getStockCore(s.store_id, s.products[0].product_code, session, { months: 4 });
+          next[s.store_id] = { product: s.products[0], batches: asArray(r?.batches), purchases: asArray(r?.purchases), sales: asArray(r?.sales), movement: asArray(r?.movement) };
+        } catch { /* leave missing; finalize seeds an empty core */ }
+      }));
+      finalize(next);
+    }
+  }
+
+  useEffect(() => {
+    const value = query.trim().replace(/\s+/g, ' ');
+    if (value.length < 2) {
+      searchIdRef.current += 1;
+      setStores([]); setDetails({});
+      setStatus({ state: 'idle', message: 'Type at least 2 characters to search.' });
+      return;
+    }
+    const timer = setTimeout(() => runSearch(value), 200);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, onlyStock, tenantId]);
+
+  // Stores that matched, in backend order but with the device's OWN (native)
+  // store pushed to the very end (owner ruling 2026-10-03).
+  const orderedStores = useMemo(() => {
+    const withProduct = stores.filter((s) => (s.products || [])[0]);
+    const rest = withProduct.filter((s) => s.store_id !== nativeStoreId);
+    const native = withProduct.filter((s) => s.store_id === nativeStoreId);
+    return [...rest, ...native];
+  }, [stores, nativeStoreId]);
+
+  return (
+    <section className="screen-panel sv-screen">
+      <ScreenHeader title="Stock — Vertical" subtitle="All stores stacked — product, 4-month trend, batch, purchase & sales per store." />
+      <div className="sv-toolbar">
+        <input
+          className="sv-search"
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search product name or code…"
+          aria-label="Search products"
+          autoFocus
+        />
+        <label className="sv-check" title="Only stores where the product has stock">
+          <input type="checkbox" checked={onlyStock} onChange={(event) => setOnlyStock(event.target.checked)} />
+          <span>In-stock only</span>
+        </label>
+        {offline && (
+          <span
+            className="sv-offline"
+            title={lastSync ? `Cached data as of ${formatSyncTime(lastSync)}` : 'No cached data yet'}
+          >
+            ● Offline — cached
+          </span>
+        )}
+        <span className={`sv-status sv-status--${status.state}`}>{status.message}</span>
+      </div>
+      <div className="sv-stack">
+        {orderedStores.length === 0 ? (
+          <div className="empty-state">{status.state === 'loading' ? 'Loading…' : 'Search a product above to see every store stacked here.'}</div>
+        ) : orderedStores.map((store, index) => (
+          <StoreVerticalBlock
+            key={store.store_id}
+            store={store}
+            core={details[store.store_id]}
+            colorIndex={index}
+            isWarehouse={isWarehouseStore(store)}
+            canViewWarehouse={superAdmin}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 

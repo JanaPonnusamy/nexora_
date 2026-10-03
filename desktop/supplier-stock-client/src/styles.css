@@ -8830,3 +8830,79 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
     grid-template-columns: 1fr;
   }
 }
+
+/* ===================== Last-sync badge (global top bar) ===================== */
+.last-sync-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--nx-rule); background: var(--nx-surface-sunk);
+  font-size: 11px; color: var(--nx-text-soft); white-space: nowrap;
+}
+.last-sync-badge .last-sync-text strong { color: var(--nx-text); font-weight: 700; }
+.last-sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--nx-success-ink); }
+.last-sync-badge.is-never .last-sync-dot { background: var(--nx-rule-strong); }
+
+/* ===================== Vertical stock view (all stores stacked) ============= */
+.sv-screen { display: flex; flex-direction: column; min-height: 0; gap: 10px; }
+.sv-toolbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+  padding: 8px 10px; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
+}
+.sv-search {
+  flex: 0 1 360px; min-width: 180px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 13px;
+}
+.sv-search:focus { outline: none; border-color: var(--nx-accent); box-shadow: 0 0 0 2px var(--nx-accent-sunk); }
+.sv-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text-soft); white-space: nowrap; cursor: pointer; }
+.sv-check input { width: 14px; height: 14px; accent-color: var(--nx-accent); }
+.sv-status { font-size: 12px; color: var(--nx-text-muted); margin-left: auto; text-align: right; }
+.sv-status--error { color: var(--nx-danger); font-weight: 600; }
+.sv-status--loading { color: var(--nx-text-soft); }
+/* Offline pill: shown only when a search fell back to the on-disk product
+   cache (survives restart / logoff). Sits before the right-aligned status. */
+.sv-offline {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 11px; font-weight: 600; color: var(--nx-danger);
+  padding: 3px 9px; border: 1px solid var(--nx-danger);
+  border-radius: 999px;
+  background: var(--nx-danger-sunk, transparent); /* fallback for Chromium <111 */
+  background: color-mix(in srgb, var(--nx-danger) 10%, transparent);
+}
+
+.sv-stack { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px; }
+
+.svb {
+  border: 1px solid var(--nx-rule); border-left: 4px solid var(--store-color, var(--nx-accent));
+  border-radius: var(--nx-radius); background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.svb-head { display: flex; align-items: center; gap: 10px; }
+.svb-badge {
+  display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px;
+  background: var(--store-color, var(--nx-accent)); color: #fff; font-weight: 800; font-size: 12px; letter-spacing: 0.04em;
+}
+.svb-name { font-size: 12px; color: var(--nx-text-soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.svb-wh-tag {
+  margin-left: auto; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  border: 1px solid var(--nx-rule-strong); color: var(--nx-text-muted); background: var(--nx-surface-sunk);
+}
+.svb-section { display: flex; flex-direction: column; gap: 4px; }
+.svb-section > h4 {
+  margin: 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--nx-text-muted);
+}
+.svb-section .grid-row.svb-grid-head {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  color: var(--nx-text-muted); border-bottom: 1px solid var(--nx-rule); padding-bottom: 2px;
+}
+/* .sa-chart is height:100% of its parent, so the trend section needs a concrete
+   height for the chart (and its flex:1 plot) to size instead of collapsing. */
+.svb-section .sa-chart { height: 170px; }
+.svb-restricted {
+  padding: 14px; border: 1px dashed var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-sunk); color: var(--nx-text-muted); font-size: 12px; text-align: center;
+}
+.svb--warehouse .svb-blank { min-height: 6px; }
