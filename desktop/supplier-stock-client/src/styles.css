@@ -8889,18 +8889,15 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   text-transform: uppercase; letter-spacing: 0.05em;
   border: 1px solid var(--nx-rule-strong); color: var(--nx-text-muted); background: var(--nx-surface-sunk);
 }
-.svb-section { display: flex; flex-direction: column; gap: 4px; }
-.svb-section > h4 {
-  margin: 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--nx-text-muted);
-}
-.svb-section .grid-row.svb-grid-head {
-  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
-  color: var(--nx-text-muted); border-bottom: 1px solid var(--nx-rule); padding-bottom: 2px;
-}
-/* .sa-chart is height:100% of its parent, so the trend section needs a concrete
-   height for the chart (and its flex:1 plot) to size instead of collapsing. */
-.svb-section .sa-chart { height: 170px; }
+/* The four detail panels sit SIDE BY SIDE in one row (reusing the horizontal
+   screen's ns-detail__grid), with a FIXED height so each store block stays
+   compact and fully visible in the viewport — the mini-tables scroll inside
+   their own panel rather than stretching the block down the page. */
+.svb .ns-detail__grid { flex: 0 0 auto; height: 230px; }
+.svb .ns-detail__context { margin-top: 2px; }
+/* .sa-chart is height:100% of its parent, so the chart panel needs the fixed
+   grid height to flow down (ns-area is a flex column) instead of collapsing. */
+.svb .ns-area--chart .sa-chart { height: 100%; min-height: 0; }
 .svb-restricted {
   padding: 14px; border: 1px dashed var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface-sunk); color: var(--nx-text-muted); font-size: 12px; text-align: center;

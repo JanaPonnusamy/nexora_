@@ -10883,43 +10883,44 @@ function StoreDetailBody({ group, colorIndex }) {
 
 // ── Vertical "all stores stacked" stock view ────────────────────────────────
 // A new screen (alongside the horizontal Stock Availability) that, for one
-// searched product, stacks EVERY store vertically. Each store block shows its
-// product row on top, then Chart -> Batch -> Purchase -> Sales full-width below.
-// Reuses the same APIs as the horizontal screen (searchStockProducts +
-// getStockCore[Bulk]) and the same panel renderers (GridRow / RowDataCell /
-// MonthlyMovementChart). The device's own (native) store is listed LAST; the NMW
-// warehouse shows product details to super-admin only, with its lower panels
-// intentionally left blank for now (owner ruling 2026-10-03).
-const SVB_PRODUCT_COLS = '96px minmax(0, 1fr) 72px 70px 72px';
+// searched product, stacks EVERY store vertically. Each store block shows a
+// compact product-context strip on top, then the SAME four detail panels as the
+// horizontal screen's Product Details — Batch | Recent Sales | Purchase |
+// Monthly Movement — laid out SIDE BY SIDE in one row, so a whole store fits in
+// the viewport (owner request: don't make each store a tall vertical stack).
+// Reuses the horizontal screen's ns-* panel styling + the same APIs
+// (searchStockProducts + getStockCore[Bulk]) and the MonthlyMovementChart. The
+// device's own (native) store is listed LAST; the NMW warehouse shows product
+// details to super-admin only, with its lower panels intentionally left blank
+// for now (owner ruling 2026-10-03).
 
-function SvbSection({ title, cols, headers, rows, emptyMessage, children }) {
+// Column aliases match stock.usp_ProductCore result sets exactly (same shape the
+// horizontal screen consumes): batches → expiry_date/stock/mrp/*_age_days;
+// purchases → date/supplier/qty/ptr; sales → date/bill_no/customer/qty.
+function SvbMiniTable({ head, rows, emptyMessage }) {
+  if (!rows.length) return <div className="ns-card__waiting">{emptyMessage}</div>;
   return (
-    <section className="svb-section">
-      <h4>{title}</h4>
-      {children ? children : (
-        <>
-          <GridRow cols={cols} tag="span" className="svb-grid-head" cells={headers} />
-          {rows.length ? (
-            <RowDataCell className="svb-table" cols={cols} rows={rows} emptyMessage={emptyMessage} />
-          ) : <div className="detail-compact-placeholder">{emptyMessage}</div>}
-        </>
-      )}
-    </section>
+    <table className="ns-mini-table">
+      <thead>
+        <tr>{head.map((col, i) => <th key={i} className={col.num ? 'num-col' : undefined}>{col.label}</th>)}</tr>
+      </thead>
+      <tbody>
+        {rows.map((cells, r) => (
+          <tr key={r}>{cells.map((cell, i) => <td key={i} className={head[i]?.num ? 'num-col' : undefined}>{cell}</td>)}</tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
 function StoreVerticalBlock({ store, core, colorIndex, isWarehouse, canViewWarehouse }) {
   const storeColor = STORE_COLORS[colorIndex % STORE_COLORS.length];
   const product = core?.product;
-  const productRows = product
-    ? [[
-        product.product_code,
-        product.product_name || '-',
-        product.sale_unit || product.unit_description || '-',
-        product.stock ?? product.total_stock ?? 0,
-        formatMoney(product.mrp),
-      ]]
-    : [];
+  const batches = asArray(core?.batches);
+  const purchases = asArray(core?.purchases);
+  const sales = asArray(core?.sales);
+  const movement = asArray(core?.movement);
+
   const head = (
     <header className="svb-head">
       <span className="svb-badge">{storeLabel(store)}</span>
@@ -10928,20 +10929,27 @@ function StoreVerticalBlock({ store, core, colorIndex, isWarehouse, canViewWareh
     </header>
   );
 
+  const context = product ? (
+    <div className="ns-detail__context">
+      <strong>{product.product_name || 'Selected product'}</strong>
+      <span className="ns-detail__context-store">{store.store_name || store.store_code}</span>
+      {product.mrp != null && <span>MRP {formatMoney(product.mrp)}</span>}
+      <span>Stock <b className="ns-detail__context-stock">{formatQty(product.stock ?? product.total_stock ?? 0)}</b></span>
+      {(product.sale_unit || product.unit_description) && <span>Unit {product.sale_unit || product.unit_description}</span>}
+      <span>Last Sale {sales[0]?.date ? formatDate(sales[0].date) : '—'}</span>
+      <span>Last Purchase {purchases[0]?.date ? formatDate(purchases[0].date) : '—'}</span>
+    </div>
+  ) : (
+    <div className="ns-detail__context"><strong>No product match{isWarehouse ? ' in this warehouse' : ''}.</strong></div>
+  );
+
+  // NMW warehouse: product context to super-admin only; the four detail panels
+  // are intentionally left blank for now (owner ruling 2026-10-03).
   if (isWarehouse) {
-    // NMW: product details super-admin only; lower panels left blank for now.
     return (
       <section className="svb svb--warehouse" style={{ '--store-color': storeColor }}>
         {head}
-        {canViewWarehouse ? (
-          <SvbSection
-            title="Product"
-            cols={SVB_PRODUCT_COLS}
-            headers={['Code', 'Product', 'Unit', 'Stock', 'MRP']}
-            rows={productRows}
-            emptyMessage="No product match in this warehouse."
-          />
-        ) : (
+        {canViewWarehouse ? context : (
           <div className="svb-restricted">🔒 NMW product details are available to super-admin / HO logins only.</div>
         )}
         <div className="svb-blank" aria-hidden="true" />
@@ -10949,53 +10957,45 @@ function StoreVerticalBlock({ store, core, colorIndex, isWarehouse, canViewWareh
     );
   }
 
-  const batches = asArray(core?.batches);
-  const purchases = asArray(core?.purchases);
-  const sales = asArray(core?.sales);
-  const movement = asArray(core?.movement);
   return (
     <section className="svb" style={{ '--store-color': storeColor }}>
       {head}
-      <SvbSection
-        title="Product"
-        cols={SVB_PRODUCT_COLS}
-        headers={['Code', 'Product', 'Unit', 'Stock', 'MRP']}
-        rows={productRows}
-        emptyMessage="No product match."
-      />
-      <section className="svb-section">
-        <h4>4-Month Trend</h4>
-        {(movement.length || purchases.length || sales.length)
-          ? <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} />
-          : <div className="detail-compact-placeholder">No chart data.</div>}
-      </section>
-      <SvbSection
-        title="Batch"
-        cols={BATCH_COLS}
-        headers={['Expiry', 'Stock', 'MRP', 'Batch']}
-        rows={batches.slice(0, 50).map((row) => [formatDate(row.expirydate), formatQty(row.stock), formatMoney(row.mrp), row.batchcode || '-'])}
-        emptyMessage="No batch details."
-      />
-      <SvbSection
-        title="Purchase"
-        cols={PURCHASE_COLS}
-        headers={['Qty', 'Free', 'Disc', 'P.Disc', 'GRN Date', 'GRN No', 'Supplier']}
-        rows={purchases.slice(0, 50).map((row) => [
-          formatQty(row.qty), formatQty(row.free ?? 0), formatMoney(row.overall_discount),
-          formatMoney(row.discount), formatDate(row.grndate), row.grn_no || '-', row.supplier || '-',
-        ])}
-        emptyMessage="No purchase details."
-      />
-      <SvbSection
-        title="Sales"
-        cols={SALES_COLS}
-        headers={['Qty', 'Bill Date', 'Bill No', 'Dis', 'Customer', 'MRP']}
-        rows={sales.slice(0, 50).map((row) => [
-          formatQty(row.qty), formatDate(row.bill_date), row.bill_no || '-',
-          formatMoney(row.discount), row.customer_name || '-', formatMoney(row.mrp),
-        ])}
-        emptyMessage="No sales details."
-      />
+      {context}
+      <div className="ns-detail__grid svb-grid">
+        <div className="ns-area ns-area--batch">
+          <div className="ns-card__head"><span>Batch Details</span>{batches.length ? <em>{batches.length}</em> : null}</div>
+          <SvbMiniTable
+            head={[{ label: 'Exp' }, { label: 'Stk', num: true }, { label: 'MRP', num: true }, { label: 'P.Age', num: true }, { label: 'S.Age', num: true }]}
+            rows={batches.slice(0, 50).map((row) => [
+              formatDate(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp),
+              row.purchase_age_days ?? '-', row.sales_age_days ?? '-',
+            ])}
+            emptyMessage="No batches found."
+          />
+        </div>
+        <div className="ns-area ns-area--sales">
+          <div className="ns-card__head"><span>Recent Sales</span>{sales.length ? <em>{Math.min(sales.length, 50)}</em> : null}</div>
+          <SvbMiniTable
+            head={[{ label: 'Date' }, { label: 'Bill No' }, { label: 'Customer' }, { label: 'Qty', num: true }]}
+            rows={sales.slice(0, 50).map((row) => [formatDate(row.date), row.bill_no || '-', row.customer || '-', formatQty(row.qty)])}
+            emptyMessage="No recent sales found."
+          />
+        </div>
+        <div className="ns-area ns-area--purchase">
+          <div className="ns-card__head"><span>Purchase Details</span>{purchases.length ? <em>{Math.min(purchases.length, 50)}</em> : null}</div>
+          <SvbMiniTable
+            head={[{ label: 'Date' }, { label: 'Supplier' }, { label: 'Qty', num: true }, { label: 'Rate', num: true }]}
+            rows={purchases.slice(0, 50).map((row) => [formatDate(row.date), row.supplier || '-', formatQty(row.qty), formatMoney(row.rate ?? row.ptr)])}
+            emptyMessage="No recent purchases found."
+          />
+        </div>
+        <div className="ns-area ns-area--chart">
+          <div className="ns-card__head"><span>Monthly Movement</span></div>
+          {(movement.length || purchases.length || sales.length)
+            ? <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} maxBarWidth={14} />
+            : <div className="ns-card__waiting">No chart data.</div>}
+        </div>
+      </div>
     </section>
   );
 }
