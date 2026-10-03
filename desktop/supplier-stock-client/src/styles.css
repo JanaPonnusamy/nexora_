@@ -473,7 +473,8 @@ button:disabled {
    overflow:auto - a real ~32px mismatch that overflowed the frame and forced
    a page scrollbar, not something hideable with a CSS scrollbar tweak. */
 .workspace:has(> .store-workbench),
-.workspace:has(> .network-stock-screen) {
+.workspace:has(> .network-stock-screen),
+.workspace:has(> .sv-screen) {
   padding: var(--ui-workspace-padding);
   overflow: hidden;
 }
@@ -8843,7 +8844,7 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .last-sync-badge.is-never .last-sync-dot { background: var(--nx-rule-strong); }
 
 /* ===================== Vertical stock view (all stores stacked) ============= */
-.sv-screen { display: flex; flex-direction: column; min-height: 0; gap: 10px; }
+.sv-screen { display: flex; flex-direction: column; min-height: 0; height: 100%; max-width: none; gap: 10px; }
 .sv-toolbar {
   flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
   padding: 8px 10px; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
@@ -8871,35 +8872,88 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   background: color-mix(in srgb, var(--nx-danger) 10%, transparent);
 }
 
-.sv-stack { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px; }
+.sv-empty { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; }
 
-.svb {
-  border: 1px solid var(--nx-rule); border-left: 4px solid var(--store-color, var(--nx-accent));
-  border-radius: var(--nx-radius); background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
-  padding: 10px 12px; display: flex; flex-direction: column; gap: 10px;
+/* ── Store Comparison Matrix ────────────────────────────────────────────────
+   STORES = COLUMNS, INFORMATION TYPES = ROWS. One CSS grid: a NARROW sticky
+   rotated row-label column + a sticky store-header row + the cells. Cells in a
+   row share the row's height track so columns line up perfectly. STRONG 2px
+   vertical borders separate the stores and run continuously from the header
+   through Sales, so each column reads as one vertical store board; thin 1px
+   horizontal rules divide the info sections. Only this container scrolls —
+   vertically for the whole matrix, horizontally for the store columns. */
+.scm-scroll {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface);
 }
-.svb-head { display: flex; align-items: center; gap: 10px; }
-.svb-badge {
-  display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px;
-  background: var(--store-color, var(--nx-accent)); color: #fff; font-weight: 800; font-size: 12px; letter-spacing: 0.04em;
+.scm-grid {
+  --scm-label-w: 34px;   /* narrow — reclaim width for the store columns */
+  --scm-col-w: 210px;    /* six stores fit at 1366 without page overflow */
+  display: grid;
+  /* grid-template-columns is set inline (store count is dynamic). */
+  grid-template-rows: auto 150px 140px 150px 150px 150px;
+  background: var(--nx-surface);
+  min-width: min-content;
 }
-.svb-name { font-size: 12px; color: var(--nx-text-soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.svb-wh-tag {
-  margin-left: auto; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.05em;
-  border: 1px solid var(--nx-rule-strong); color: var(--nx-text-muted); background: var(--nx-surface-sunk);
+/* Header row (store names) — sticks to the top on vertical scroll. */
+.scm-corner,
+.scm-colhead {
+  position: sticky; top: 0; z-index: 3; background: var(--nx-surface-raised);
+  border-bottom: 2px solid var(--nx-rule-strong);
 }
-/* The four detail panels sit SIDE BY SIDE in one row (reusing the horizontal
-   screen's ns-detail__grid), with a FIXED height so each store block stays
-   compact and fully visible in the viewport — the mini-tables scroll inside
-   their own panel rather than stretching the block down the page. */
-.svb .ns-detail__grid { flex: 0 0 auto; height: 230px; }
-.svb .ns-detail__context { margin-top: 2px; }
-/* .sa-chart is height:100% of its parent, so the chart panel needs the fixed
-   grid height to flow down (ns-area is a flex column) instead of collapsing. */
-.svb .ns-area--chart .sa-chart { height: 100%; min-height: 0; }
+.scm-corner { left: 0; z-index: 4; border-right: 2px solid var(--nx-rule-strong); }
+.scm-colhead {
+  display: flex; align-items: center; gap: 6px; padding: 6px 9px;
+  border-top: 3px solid var(--store-color, var(--nx-accent));
+  border-right: 2px solid var(--nx-rule-strong);
+}
+.scm-colhead__code { flex: 0 0 auto; font-size: 14px; font-weight: 800; letter-spacing: 0.04em; color: var(--store-color, var(--nx-text)); }
+.scm-colhead__name { flex: 1 1 auto; min-width: 0; font-size: 10px; color: var(--nx-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scm-wh {
+  flex: 0 0 auto; padding: 1px 5px; border-radius: 999px; font-size: 9px; font-weight: 800;
+  text-transform: uppercase; border: 1px solid var(--nx-rule-strong); color: var(--nx-text-muted); background: var(--nx-surface-sunk);
+}
+.scm-colhead__loading { flex: 0 0 auto; font-size: 11px; }
+/* Left row-label column — narrow, rotated text, sticks on horizontal scroll. */
+.scm-rowlabel {
+  position: sticky; left: 0; z-index: 2; background: var(--nx-surface-raised);
+  display: flex; align-items: center; justify-content: center;
+  border-right: 2px solid var(--nx-rule-strong); border-bottom: 1px solid var(--nx-rule);
+}
+.scm-rowlabel span {
+  writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap;
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--nx-text-soft);
+}
+/* Data cells. Fixed row height → each cell scrolls internally if its table is
+   taller, so rows stay aligned and nothing overlaps or clips. The 2px right
+   border is the continuous vertical store separator. */
+.scm-cell {
+  background: var(--nx-surface); overflow: auto; min-width: 0;
+  border-right: 2px solid var(--nx-rule-strong); border-bottom: 1px solid var(--nx-rule);
+}
+.scm-cell--chart { overflow: hidden; padding: 4px; }
+.scm-chart { height: 100%; min-height: 0; }
+.scm-chart .sa-chart { height: 100%; min-height: 0; }
+.scm-sales, .scm-cell--sales { border-bottom: none; }
+/* Clean per-cell empty state (product not stocked here / restricted). */
+.scm-empty {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  padding: 8px; font-size: 11px; color: var(--nx-text-muted); text-align: center;
+}
+
+/* The matrix reuses the compact mini-table; let it flow at natural height
+   inside the (scrollable) cell instead of the horizontal screen's flex rules. */
+.scm-cell .ns-mini-table { flex: none; overflow: visible; }
+.svb-sec__table { flex: none; overflow: visible; }
+.svb-prod-table tbody tr { cursor: pointer; }
+/* GREEN = the clicked source product; BLUE = the same product auto-synced here. */
+.svb-prod-table tbody tr.is-source { background: var(--nx-success-sunk, #e7f6ec); }
+.svb-prod-table tbody tr.is-source td { font-weight: 700; }
+.svb-prod-table tbody tr.is-synced { background: var(--nx-accent-sunk); }
+.svb-prod-table tbody tr.is-synced td { font-weight: 600; }
 .svb-restricted {
-  padding: 14px; border: 1px dashed var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
-  background: var(--nx-surface-sunk); color: var(--nx-text-muted); font-size: 12px; text-align: center;
+  padding: 12px; margin: 6px; border: 1px dashed var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-sunk); color: var(--nx-text-muted); font-size: 11px; text-align: center;
 }
-.svb--warehouse .svb-blank { min-height: 6px; }

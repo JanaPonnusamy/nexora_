@@ -10883,24 +10883,22 @@ function StoreDetailBody({ group, colorIndex }) {
 
 // ── Vertical "all stores stacked" stock view ────────────────────────────────
 // A new screen (alongside the horizontal Stock Availability) that, for one
-// searched product, stacks EVERY store vertically. Each store block shows a
-// compact product-context strip on top, then the SAME four detail panels as the
-// horizontal screen's Product Details — Batch | Recent Sales | Purchase |
-// Monthly Movement — laid out SIDE BY SIDE in one row, so a whole store fits in
-// the viewport (owner request: don't make each store a tall vertical stack).
-// Reuses the horizontal screen's ns-* panel styling + the same APIs
-// (searchStockProducts + getStockCore[Bulk]) and the MonthlyMovementChart. The
-// device's own (native) store is listed LAST; the NMW warehouse shows product
-// details to super-admin only, with its lower panels intentionally left blank
-// for now (owner ruling 2026-10-03).
+// searched product, lists EVERY store ONE AFTER ANOTHER vertically. Each store
+// block shows the matched PRODUCT GRID on top, then the detail panels stacked
+// VERTICALLY below it, full-width, one under the other (legacy layout, owner
+// ruling 2026-10-03): Sales Trend → Batches → Purchase History → Billing
+// History. Clicking a product row switches the panels to that product (its core
+// is lazy-loaded via getStockCore the first time). The device's own (native)
+// store is listed LAST; the NMW warehouse shows the product grid to super-admin
+// only, with its lower panels intentionally left blank for now.
 
 // Column aliases match stock.usp_ProductCore result sets exactly (same shape the
 // horizontal screen consumes): batches → expiry_date/stock/mrp/*_age_days;
-// purchases → date/supplier/qty/ptr; sales → date/bill_no/customer/qty.
+// purchases → date/supplier/qty/free/dis/ptr; sales → date/bill_no/customer/qty/mrp/discount.
 function SvbMiniTable({ head, rows, emptyMessage }) {
   if (!rows.length) return <div className="ns-card__waiting">{emptyMessage}</div>;
   return (
-    <table className="ns-mini-table">
+    <table className="ns-mini-table svb-sec__table">
       <thead>
         <tr>{head.map((col, i) => <th key={i} className={col.num ? 'num-col' : undefined}>{col.label}</th>)}</tr>
       </thead>
@@ -10913,90 +10911,180 @@ function SvbMiniTable({ head, rows, emptyMessage }) {
   );
 }
 
-function StoreVerticalBlock({ store, core, colorIndex, isWarehouse, canViewWarehouse }) {
-  const storeColor = STORE_COLORS[colorIndex % STORE_COLORS.length];
-  const product = core?.product;
-  const batches = asArray(core?.batches);
+// Per-store detail renderers for one matrix cell. `core` is that store's
+// selected product's { batches, purchases, sales, movement } (column aliases
+// from stock.usp_ProductCore). Each returns the cell body for its info row.
+function svbChartCell(core) {
+  const movement = asArray(core?.movement);
   const purchases = asArray(core?.purchases);
   const sales = asArray(core?.sales);
-  const movement = asArray(core?.movement);
-
-  const head = (
-    <header className="svb-head">
-      <span className="svb-badge">{storeLabel(store)}</span>
-      <span className="svb-name">{store.store_name || ''}</span>
-      {isWarehouse && <span className="svb-wh-tag">Warehouse</span>}
-    </header>
+  return (movement.length || purchases.length || sales.length)
+    ? <div className="scm-chart"><MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} maxBarWidth={14} /></div>
+    : <div className="ns-card__waiting">No chart data.</div>;
+}
+function svbBatchCell(core) {
+  const batches = asArray(core?.batches);
+  return (
+    <SvbMiniTable
+      head={[{ label: 'Exp' }, { label: 'Stk', num: true }, { label: 'MRP', num: true }, { label: 'P.Age', num: true }, { label: 'S.Age', num: true }]}
+      rows={batches.slice(0, 40).map((row) => [
+        formatDate(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp),
+        row.purchase_age_days ?? '-', row.sales_age_days ?? '-',
+      ])}
+      emptyMessage="No batches found."
+    />
   );
-
-  const context = product ? (
-    <div className="ns-detail__context">
-      <strong>{product.product_name || 'Selected product'}</strong>
-      <span className="ns-detail__context-store">{store.store_name || store.store_code}</span>
-      {product.mrp != null && <span>MRP {formatMoney(product.mrp)}</span>}
-      <span>Stock <b className="ns-detail__context-stock">{formatQty(product.stock ?? product.total_stock ?? 0)}</b></span>
-      {(product.sale_unit || product.unit_description) && <span>Unit {product.sale_unit || product.unit_description}</span>}
-      <span>Last Sale {sales[0]?.date ? formatDate(sales[0].date) : '—'}</span>
-      <span>Last Purchase {purchases[0]?.date ? formatDate(purchases[0].date) : '—'}</span>
-    </div>
-  ) : (
-    <div className="ns-detail__context"><strong>No product match{isWarehouse ? ' in this warehouse' : ''}.</strong></div>
+}
+function svbPurchaseCell(core) {
+  const purchases = asArray(core?.purchases);
+  return (
+    <SvbMiniTable
+      head={[{ label: 'Qty', num: true }, { label: 'Free', num: true }, { label: 'Dis%', num: true }, { label: 'GRN Date' }, { label: 'Supplier' }]}
+      rows={purchases.slice(0, 40).map((row) => [
+        formatQty(row.qty), formatQty(row.free ?? 0), formatMoney(row.dis), formatDate(row.date), row.supplier || '-',
+      ])}
+      emptyMessage="No purchase history."
+    />
   );
+}
+function svbSalesCell(core) {
+  const sales = asArray(core?.sales);
+  return (
+    <SvbMiniTable
+      head={[{ label: 'Date' }, { label: 'Bill No' }, { label: 'Customer' }, { label: 'Qty', num: true }, { label: 'MRP', num: true }, { label: 'Dis%', num: true }]}
+      rows={sales.slice(0, 40).map((row) => [
+        formatDate(row.date), row.bill_no || '-', row.customer || '-', formatQty(row.qty), formatMoney(row.mrp), formatMoney(row.discount),
+      ])}
+      emptyMessage="No billing history."
+    />
+  );
+}
 
-  // NMW warehouse: product context to super-admin only; the four detail panels
-  // are intentionally left blank for now (owner ruling 2026-10-03).
-  if (isWarehouse) {
+// ── Store Comparison Matrix ────────────────────────────────────────────────
+// Transposed layout: STORES are COLUMNS (across the top), INFORMATION TYPES are
+// ROWS (down the left). One CSS-grid lays out a sticky row-label column + a
+// sticky store-header row + the cells, so every cell in a row shares the row's
+// height and columns line up perfectly. Each store column reads as a continuous
+// vertical store card: Store Grid → Chart → Batch → Purchase → Sales.
+//
+// Per-store product selection + core cache are lifted HERE (not inside a cell)
+// because clicking a product in a store's Store Grid cell must drive that same
+// store's Chart/Batch/Purchase/Sales cells, which live in different grid rows.
+const SCM_ROWS = [
+  { key: 'grid', label: 'Store Grid' },
+  { key: 'chart', label: 'Chart' },
+  { key: 'batch', label: 'Batch' },
+  { key: 'purchase', label: 'Purchase' },
+  { key: 'sales', label: 'Sales' },
+];
+
+function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSelect, superAdmin }) {
+  // The product selected in a store = its GREEN source (the column the user
+  // clicked) OR its BLUE synchronized match (the same product auto-resolved
+  // here). ONE common product drives every column — selection lives in the
+  // parent; this component only renders it. See state/productSelection.js.
+  function selectedCode(store) {
+    const sel = selectionFor(store.store_id);
+    return sel.sourceProductCode || sel.syncProductCode || null;
+  }
+  function storeCore(store) {
+    const code = selectedCode(store);
+    if (!code) return null;
+    const core = storeDetails[store.store_id];
+    // Only use the core if it actually belongs to the selected product (guards
+    // against showing a previous product's data while the new one loads).
+    return core && core.product?.product_code === code ? core : null;
+  }
+
+  function gridCell(store, isWarehouse) {
+    if (isWarehouse && !superAdmin) {
+      return <div className="svb-restricted">🔒 Super-admin / HO only</div>;
+    }
+    const products = asArray(store.products);
+    if (!products.length) return <div className="scm-empty">No matching product</div>;
+    const sel = selectionFor(store.store_id);
+    const code = sel.sourceProductCode || sel.syncProductCode || null;
+    const isSource = sel.sourceProductCode != null;
     return (
-      <section className="svb svb--warehouse" style={{ '--store-color': storeColor }}>
-        {head}
-        {canViewWarehouse ? context : (
-          <div className="svb-restricted">🔒 NMW product details are available to super-admin / HO logins only.</div>
-        )}
-        <div className="svb-blank" aria-hidden="true" />
-      </section>
+      <table className="ns-mini-table svb-sec__table svb-prod-table">
+        <thead><tr><th>Product</th><th>Unit</th><th className="num-col">Stock</th><th className="num-col">MRP</th></tr></thead>
+        <tbody>
+          {products.map((p) => {
+            const isSel = p.product_code === code;
+            const cls = isSel ? (isSource ? 'is-source' : 'is-synced') : undefined;
+            return (
+              <tr key={p.product_code} className={cls} onClick={() => onProductSelect(store, p)}>
+                <td title={p.product_name}>{p.product_name || '-'}</td>
+                <td>{p.sale_unit || p.unit_description || '-'}</td>
+                <td className="num-col">{formatQty(p.stock ?? p.total_stock ?? 0)}</td>
+                <td className="num-col">{formatMoney(p.mrp)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     );
   }
 
+  // A store's Chart/Batch/Purchase/Sales: if the common product isn't stocked
+  // here, a clean "not available" state; else its real data once loaded. NMW
+  // stays gated to super-admin / HO. Never fabricated, never cross-store mixed.
+  function detailCell(store, rowKey, isWarehouse) {
+    if (isWarehouse && !superAdmin) return <div className="scm-empty">🔒 Super-admin / HO only</div>;
+    const code = selectedCode(store);
+    if (!code) return <div className="scm-empty">Not stocked here</div>;
+    const core = storeCore(store);
+    if (!core) return <div className="ns-card__waiting">Loading…</div>;
+    if (rowKey === 'chart') return svbChartCell(core);
+    if (rowKey === 'batch') return svbBatchCell(core);
+    if (rowKey === 'purchase') return svbPurchaseCell(core);
+    if (rowKey === 'sales') return svbSalesCell(core);
+    return null;
+  }
+
+  const gridTemplateColumns = `var(--scm-label-w) repeat(${stores.length}, minmax(var(--scm-col-w), 1fr))`;
+
   return (
-    <section className="svb" style={{ '--store-color': storeColor }}>
-      {head}
-      {context}
-      <div className="ns-detail__grid svb-grid">
-        <div className="ns-area ns-area--batch">
-          <div className="ns-card__head"><span>Batch Details</span>{batches.length ? <em>{batches.length}</em> : null}</div>
-          <SvbMiniTable
-            head={[{ label: 'Exp' }, { label: 'Stk', num: true }, { label: 'MRP', num: true }, { label: 'P.Age', num: true }, { label: 'S.Age', num: true }]}
-            rows={batches.slice(0, 50).map((row) => [
-              formatDate(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp),
-              row.purchase_age_days ?? '-', row.sales_age_days ?? '-',
-            ])}
-            emptyMessage="No batches found."
-          />
-        </div>
-        <div className="ns-area ns-area--sales">
-          <div className="ns-card__head"><span>Recent Sales</span>{sales.length ? <em>{Math.min(sales.length, 50)}</em> : null}</div>
-          <SvbMiniTable
-            head={[{ label: 'Date' }, { label: 'Bill No' }, { label: 'Customer' }, { label: 'Qty', num: true }]}
-            rows={sales.slice(0, 50).map((row) => [formatDate(row.date), row.bill_no || '-', row.customer || '-', formatQty(row.qty)])}
-            emptyMessage="No recent sales found."
-          />
-        </div>
-        <div className="ns-area ns-area--purchase">
-          <div className="ns-card__head"><span>Purchase Details</span>{purchases.length ? <em>{Math.min(purchases.length, 50)}</em> : null}</div>
-          <SvbMiniTable
-            head={[{ label: 'Date' }, { label: 'Supplier' }, { label: 'Qty', num: true }, { label: 'Rate', num: true }]}
-            rows={purchases.slice(0, 50).map((row) => [formatDate(row.date), row.supplier || '-', formatQty(row.qty), formatMoney(row.rate ?? row.ptr)])}
-            emptyMessage="No recent purchases found."
-          />
-        </div>
-        <div className="ns-area ns-area--chart">
-          <div className="ns-card__head"><span>Monthly Movement</span></div>
-          {(movement.length || purchases.length || sales.length)
-            ? <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} maxBarWidth={14} />
-            : <div className="ns-card__waiting">No chart data.</div>}
-        </div>
+    <div className="scm-scroll">
+      <div className="scm-grid" style={{ gridTemplateColumns }}>
+        {/* Header row: corner + one header per store */}
+        <div className="scm-corner" aria-hidden="true" />
+        {stores.map((store, index) => {
+          const color = STORE_COLORS[index % STORE_COLORS.length];
+          const isWarehouse = isWarehouseStore(store);
+          const code = selectedCode(store);
+          const loading = code && !storeCore(store) && !(isWarehouse && !superAdmin);
+          return (
+            <div className="scm-colhead" key={store.store_id} style={{ '--store-color': color }}>
+              <span className="scm-colhead__code">{storeLabel(store)}</span>
+              <span className="scm-colhead__name" title={store.store_name || ''}>{store.store_name || ''}</span>
+              {isWarehouse && <span className="scm-wh">WH</span>}
+              {loading && <span className="scm-colhead__loading" aria-label="loading">⏳</span>}
+            </div>
+          );
+        })}
+
+        {/* One grid row per information type */}
+        {SCM_ROWS.map((row) => (
+          <Fragment key={row.key}>
+            <div className={`scm-rowlabel scm-rowlabel--${row.key}`}><span>{row.label}</span></div>
+            {stores.map((store, index) => {
+              const color = STORE_COLORS[index % STORE_COLORS.length];
+              const isWarehouse = isWarehouseStore(store);
+              return (
+                <div
+                  className={`scm-cell scm-cell--${row.key}`}
+                  key={store.store_id}
+                  style={{ '--store-color': color }}
+                >
+                  {row.key === 'grid' ? gridCell(store, isWarehouse) : detailCell(store, row.key, isWarehouse)}
+                </div>
+              );
+            })}
+          </Fragment>
+        ))}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -11007,7 +11095,13 @@ function StockVerticalView({ session, settings }) {
   const [query, setQuery] = useState('');
   const [onlyStock, setOnlyStock] = useState(false);
   const [stores, setStores] = useState([]);
-  const [details, setDetails] = useState({});
+  // storeId -> loaded core ({product,batches,purchases,sales,movement}) for the
+  // ONE common selected product in that store.
+  const [storeDetails, setStoreDetails] = useState({});
+  // Two-colour cross-store selection (GREEN source + BLUE synchronized matches)
+  // — the SAME model/state the main Stock Availability screen uses, so a product
+  // clicked in ANY column selects the equivalent product in every other store.
+  const [selectionState, setSelectionState] = useState(emptySelectionState);
   const [status, setStatus] = useState({ state: 'idle', message: 'Type at least 2 characters to search.' });
   // Offline / permanent-cache state (mirrors the horizontal Stock Availability
   // screen). When a search can't reach HO we serve the permanent LOCAL product
@@ -11024,11 +11118,18 @@ function StockVerticalView({ session, settings }) {
   });
   const searchIdRef = useRef(0);
   const offlineIndexRef = useRef(new Map());
+  const detailCacheRef = useRef(new Map());   // storeId:product_code -> core
+  const syncTicketRef = useRef(0);            // drops out-of-order sync responses
 
   const tenantStores = useMemo(() => {
     if (!tenantId) return allStores;
     return allStores.filter((store) => String(store?.tenant_id || '') === String(tenantId));
   }, [allStores, tenantId]);
+
+  const searchProductsByStore = useMemo(
+    () => new Map(stores.map((s) => [s.store_id, s.products || []])),
+    [stores]
+  );
 
   // Keep the store list fresh when HO is reachable (shared cache key with the
   // horizontal screen) so the offline scan below knows every store.
@@ -11134,12 +11235,27 @@ function StockVerticalView({ session, settings }) {
       const ts = await getLastSync(tenantId);
       setLastSync(ts);
       setStores(offlineStores);
-      const seeded = {};
-      offlineStores.forEach((s) => {
-        const p = (s.products || [])[0];
-        if (p) seeded[s.store_id] = { product: p, batches: [], purchases: [], sales: [], movement: [] };
-      });
-      setDetails(seeded);
+      // Offline: pick the first store's top product as the common product and
+      // exact-match it across cached stores (same product_code). Detail cores
+      // are empty here — HO is needed for batch/purchase/sales/chart — so those
+      // cells show their normal empty state, not a stuck spinner.
+      const oFirst = offlineStores.find((s) => (s.products || [])[0]);
+      if (oFirst) {
+        const src = oFirst.products[0];
+        const exact = [];
+        offlineStores.forEach((s) => {
+          if (s.store_id === oFirst.store_id) return;
+          const m = (s.products || []).find((p) => p.product_code === src.product_code);
+          if (m) exact.push({ store_id: s.store_id, product: { product_code: m.product_code, product_name: m.product_name, mrp: m.mrp }, match_type: 'EXACT_PRODUCT_CODE', score: 100 });
+        });
+        setSelectionState(applySyncResult(selectionStateForClick(oFirst.store_id, src.product_code), oFirst.store_id, src.product_code, buildSynchronizedMap(exact)));
+        const seeded = { [oFirst.store_id]: { product: src, batches: [], purchases: [], sales: [], movement: [] } };
+        exact.forEach((e) => { seeded[e.store_id] = { product: e.product, batches: [], purchases: [], sales: [], movement: [] }; });
+        setStoreDetails(seeded);
+      } else {
+        setSelectionState(emptySelectionState());
+        setStoreDetails({});
+      }
       const oTotal = offlineStores.reduce((sum, s) => sum + (s.products || []).length, 0);
       setStatus({
         state: oTotal ? 'ok' : 'idle',
@@ -11150,57 +11266,106 @@ function StockVerticalView({ session, settings }) {
       return;
     }
 
+    // New result set → reset the common selection + loaded detail. The
+    // auto-select effect then picks the first product as the shared context and
+    // the cross-store matcher loads each store's core for it.
     setStores(all);
-    setDetails({});
+    setStoreDetails({});
+    setSelectionState(emptySelectionState());
     const withProduct = all.filter((s) => (s.products || [])[0]);
     const total = all.reduce((sum, s) => sum + (s.products || []).length, 0);
-    if (!withProduct.length) {
-      setStatus({ state: 'ok', message: total ? `${total} match(es).` : 'No products matched in any store.' });
-      return;
-    }
-    setStatus({ state: 'loading', message: `${total} match(es). Loading ${withProduct.length} store(s)…` });
-    const byStore = new Map(withProduct.map((s) => [s.store_id, s.products[0]]));
-    const finalize = (next) => {
-      if (searchIdRef.current !== searchId) return;
-      withProduct.forEach((s) => {
-        if (!next[s.store_id]) next[s.store_id] = { product: s.products[0], batches: [], purchases: [], sales: [], movement: [] };
-      });
-      setDetails(next);
-      setStatus({ state: 'ok', message: `${total} match(es) across ${withProduct.length} store(s).` });
-    };
-    try {
-      const bulk = await api.getStockCoreBulk(
-        withProduct.map((s) => ({ store_id: s.store_id, product_code: s.products[0].product_code })),
-        session, { months: 4 }
-      );
-      if (searchIdRef.current !== searchId) return;
-      const next = {};
-      asArray(bulk?.items).forEach((item) => {
-        next[item.store_id] = {
-          product: byStore.get(item.store_id),
-          batches: asArray(item.batches), purchases: asArray(item.purchases),
-          sales: asArray(item.sales), movement: asArray(item.movement),
-        };
-      });
-      finalize(next);
-    } catch {
-      // Fallback to per-store fetch if the bulk endpoint is unavailable.
-      const next = {};
-      await Promise.all(withProduct.map(async (s) => {
-        try {
-          const r = await api.getStockCore(s.store_id, s.products[0].product_code, session, { months: 4 });
-          next[s.store_id] = { product: s.products[0], batches: asArray(r?.batches), purchases: asArray(r?.purchases), sales: asArray(r?.sales), movement: asArray(r?.movement) };
-        } catch { /* leave missing; finalize seeds an empty core */ }
-      }));
-      finalize(next);
-    }
+    setStatus({
+      state: 'ok',
+      message: withProduct.length
+        ? `${total} match(es) across ${withProduct.length} store(s).`
+        : (total ? `${total} match(es).` : 'No products matched in any store.'),
+    });
   }
+
+  // ── Cross-store selection (reused from the main Stock Availability screen) ──
+  // One product is the GREEN "source" (the row clicked); the same product is
+  // auto-resolved (BLUE) in every other store — first by an instant exact
+  // product_code match against the loaded results, then by the server-side
+  // fuzzy matcher (api.syncStockSelection) for any store the exact code missed.
+  // Each resolved store's core is loaded so its Chart/Batch/Purchase/Sales show
+  // that product. Never fabricated, never cross-store mixed.
+  async function loadStoreCore(storeId, product) {
+    const cacheKey = `${storeId}:${product.product_code}`;
+    const cached = detailCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+    const result = await api.getStockCore(storeId, product.product_code, session, { months: 4 });
+    const core = {
+      product,
+      batches: asArray(result?.batches),
+      purchases: asArray(result?.purchases),
+      sales: asArray(result?.sales),
+      movement: asArray(result?.movement),
+    };
+    if (core.batches.length || core.purchases.length || core.sales.length || core.movement.length) {
+      detailCacheRef.current.set(cacheKey, core);
+    }
+    return core;
+  }
+
+  function handleProductSelect(sourceStore, product) {
+    const storeId = sourceStore.store_id;
+    const searchId = searchIdRef.current;
+    setSelectionState(selectionStateForClick(storeId, product.product_code));
+
+    const exactResults = [];
+    const exactStoreIds = new Set();
+    stores.forEach((s) => {
+      if (s.store_id === storeId) return;
+      const m = (s.products || []).find((p) => p.product_code === product.product_code);
+      if (m) {
+        exactResults.push({ store_id: s.store_id, product: { product_code: m.product_code, product_name: m.product_name, mrp: m.mrp }, match_type: 'EXACT_PRODUCT_CODE', score: 100 });
+        exactStoreIds.add(s.store_id);
+      }
+    });
+    if (exactResults.length) {
+      setSelectionState((cur) => applySyncResult(cur, storeId, product.product_code, buildSynchronizedMap(exactResults)));
+      exactResults.forEach((match) => {
+        loadStoreCore(match.store_id, match.product)
+          .then((core) => { if (searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [match.store_id]: core })); })
+          .catch(() => setStoreDetails((prev) => ({ ...prev, [match.store_id]: { product: match.product, batches: [], purchases: [], sales: [], movement: [] } })));
+      });
+    }
+    loadStoreCore(storeId, product)
+      .then((core) => { if (searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [storeId]: core })); })
+      .catch(() => setStoreDetails((prev) => ({ ...prev, [storeId]: { product, batches: [], purchases: [], sales: [], movement: [] } })));
+    syncCrossStoreSelection(storeId, product, searchId, exactStoreIds, exactResults);
+  }
+
+  async function syncCrossStoreSelection(sourceStoreId, product, searchId, exactStoreIds, exactResults) {
+    if (!product?.product_code) return;
+    const targetStoreIds = stores.map((s) => s.store_id).filter((id) => id && id !== sourceStoreId && !exactStoreIds.has(id));
+    if (!targetStoreIds.length) return;
+    const ticket = ++syncTicketRef.current;
+    let response;
+    try {
+      response = await api.syncStockSelection(sourceStoreId, product.product_code, product.product_name, targetStoreIds, session, { tenantId });
+    } catch { return; }
+    if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
+    const matches = asArray(response?.results).filter((r) => r.product && r.match_type !== 'NO_MATCH');
+    const freshSynchronized = buildSynchronizedMap([...exactResults, ...asArray(response?.results)]);
+    setSelectionState((cur) => applySyncResult(cur, sourceStoreId, product.product_code, freshSynchronized));
+    await Promise.all(matches.map(async (match) => {
+      const known = (searchProductsByStore.get(match.store_id) || []).find((row) => row.product_code === match.product.product_code);
+      const targetProduct = known || { product_code: match.product.product_code, product_name: match.product.product_name, mrp: match.product.mrp };
+      try {
+        const core = await loadStoreCore(match.store_id, targetProduct);
+        if (ticket === syncTicketRef.current && searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [match.store_id]: core }));
+      } catch { /* keep previously loaded detail on a transient failure */ }
+    }));
+  }
+
+  const selectionFor = (storeId) => selectionForStore(selectionState, storeId);
 
   useEffect(() => {
     const value = query.trim().replace(/\s+/g, ' ');
     if (value.length < 2) {
       searchIdRef.current += 1;
-      setStores([]); setDetails({});
+      setStores([]); setStoreDetails({}); setSelectionState(emptySelectionState());
       setStatus({ state: 'idle', message: 'Type at least 2 characters to search.' });
       return;
     }
@@ -11218,9 +11383,21 @@ function StockVerticalView({ session, settings }) {
     return [...rest, ...native];
   }, [stores, nativeStoreId]);
 
+  // On a NEW online result set, auto-select the first store's top product as the
+  // shared comparison context (offline selection is handled in runSearch). A
+  // user's later click supersedes it; this only fires when the result set
+  // changes, never on a selection change, so it can't fight the user.
+  const resultKey = stores.map((s) => `${s.store_id}:${(s.products || [])[0]?.product_code ?? ''}`).join('|');
+  useEffect(() => {
+    if (offline) return;
+    const first = orderedStores.find((s) => (s.products || [])[0]);
+    if (first) handleProductSelect(first, first.products[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultKey]);
+
   return (
     <section className="screen-panel sv-screen">
-      <ScreenHeader title="Stock — Vertical" subtitle="All stores stacked — product, 4-month trend, batch, purchase & sales per store." />
+      <ScreenHeader title="Store Comparison" subtitle="Stores across the top, information down the side — compare product, trend, batch, purchase & sales side by side." />
       <div className="sv-toolbar">
         <input
           className="sv-search"
@@ -11245,20 +11422,17 @@ function StockVerticalView({ session, settings }) {
         )}
         <span className={`sv-status sv-status--${status.state}`}>{status.message}</span>
       </div>
-      <div className="sv-stack">
-        {orderedStores.length === 0 ? (
-          <div className="empty-state">{status.state === 'loading' ? 'Loading…' : 'Search a product above to see every store stacked here.'}</div>
-        ) : orderedStores.map((store, index) => (
-          <StoreVerticalBlock
-            key={store.store_id}
-            store={store}
-            core={details[store.store_id]}
-            colorIndex={index}
-            isWarehouse={isWarehouseStore(store)}
-            canViewWarehouse={superAdmin}
-          />
-        ))}
-      </div>
+      {orderedStores.length === 0 ? (
+        <div className="empty-state sv-empty">{status.state === 'loading' ? 'Loading…' : 'Search a product above to compare it across every store.'}</div>
+      ) : (
+        <StoreComparisonMatrix
+          stores={orderedStores}
+          storeDetails={storeDetails}
+          selectionFor={selectionFor}
+          onProductSelect={handleProductSelect}
+          superAdmin={superAdmin}
+        />
+      )}
     </section>
   );
 }
