@@ -4543,6 +4543,54 @@ function LabelExporter({ session, settings }) {
   const cfgReset = () => setLabelColCfg({});
   const labelCols = useMemo(() => resolveOwColumns(LABEL_COLUMNS, labelColCfg), [labelColCfg]);
 
+  // ── Runtime column size & position, directly on the header ──────────────────
+  // Drag a column's right-edge handle to RESIZE; drag the header body to REORDER.
+  // Both persist through the same labelColCfg (widths / order) that the Columns
+  // gear writes and the session saves — so a user's hand-tuned layout survives a
+  // reload. Min width 36px keeps a column grabbable.
+  const colResizeRef = useRef(null);
+  function startColResize(event, key) {
+    event.preventDefault();
+    event.stopPropagation();
+    const base = LABEL_COLUMNS.find((c) => c.key === key);
+    const startW = (labelColCfg.widths && labelColCfg.widths[key] != null)
+      ? Number(labelColCfg.widths[key])
+      : (base ? base.width : 80);
+    colResizeRef.current = { key, startX: event.clientX, startW };
+    const onMove = (e) => {
+      const r = colResizeRef.current;
+      if (!r) return;
+      cfgWidth(r.key, Math.max(36, Math.round(r.startW + (e.clientX - r.startX))));
+    };
+    const onUp = () => {
+      colResizeRef.current = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.classList.remove('lbl-col-resizing');
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.classList.add('lbl-col-resizing');
+  }
+  const [dragColKey, setDragColKey] = useState(null);
+  const [dragOverColKey, setDragOverColKey] = useState(null);
+  function cfgReorderTo(key, targetKey) {
+    if (!key || !targetKey || key === targetKey) return;
+    setLabelColCfg((c) => {
+      const order = orderOwKeys(LABEL_COLUMNS, c);
+      if (order.indexOf(key) < 0 || order.indexOf(targetKey) < 0) return c;
+      const without = order.filter((k) => k !== key);
+      const at = without.indexOf(targetKey);
+      without.splice(at, 0, key);          // drop places the column before the target
+      return { ...c, order: without };
+    });
+  }
+  function onColDrop(targetKey) {
+    cfgReorderTo(dragColKey, targetKey);
+    setDragColKey(null);
+    setDragOverColKey(null);
+  }
+
   // One body cell for a given column key — keeps header/body driven by the SAME
   // ordered column list so reordering/hiding can never misalign them.
   function renderLabelCell(col, row, index) {
@@ -5721,7 +5769,29 @@ function LabelExporter({ session, settings }) {
                 <thead>
                   <tr>
                     {labelCols.map((col) => (
-                      <th key={col.key} className={col.thClass || ''} title={col.title}>{col.label}</th>
+                      <th
+                        key={col.key}
+                        className={`lbl-col-th ${col.thClass || ''} ${dragColKey === col.key ? 'is-dragging' : ''} ${dragOverColKey === col.key && dragColKey && dragColKey !== col.key ? 'is-dragover' : ''}`}
+                        title={`${col.title || col.label}\nDrag to reorder · drag the right edge to resize`}
+                        draggable
+                        onDragStart={(e) => { setDragColKey(col.key); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', col.key); } catch { /* some engines need a payload */ } }}
+                        onDragOver={(e) => { if (dragColKey && dragColKey !== col.key) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverColKey(col.key); } }}
+                        onDragLeave={() => setDragOverColKey((k) => (k === col.key ? null : k))}
+                        onDrop={(e) => { e.preventDefault(); onColDrop(col.key); }}
+                        onDragEnd={() => { setDragColKey(null); setDragOverColKey(null); }}
+                      >
+                        <span className="lbl-col-label">{col.label}</span>
+                        <span
+                          className="lbl-col-resize"
+                          role="separator"
+                          aria-label={`Resize ${col.label} column`}
+                          title={`Resize ${col.label}`}
+                          draggable={false}
+                          onMouseDown={(e) => startColResize(e, col.key)}
+                          onClick={(e) => e.stopPropagation()}
+                          onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        />
+                      </th>
                     ))}
                     <th className="lbl-filler" aria-hidden="true" />
                   </tr>

@@ -5327,6 +5327,24 @@ th {
 .lbl-grid tbody td, .lbl-grid thead th { padding: 1px 8px !important; }
 .lbl-grid thead th { font-size: 11px; }
 
+/* ---- Runtime column resize & reorder (directly on the header) ----
+   Drag the header to reorder; drag its right-edge handle to resize. State is
+   persisted via labelColCfg (same as the Columns gear). */
+.lbl-grid thead th.lbl-col-th { position: relative; cursor: grab; user-select: none; }
+.lbl-grid thead th.lbl-col-th.is-dragging { opacity: 0.45; cursor: grabbing; }
+.lbl-grid thead th.lbl-col-th.is-dragover { box-shadow: inset 3px 0 0 var(--nx-accent); }
+.lbl-col-label { pointer-events: none; }
+.lbl-col-resize {
+  position: absolute; top: 0; right: 0; width: 8px; height: 100%;
+  cursor: col-resize; z-index: 4;
+}
+.lbl-col-resize::after {
+  content: ''; position: absolute; top: 18%; bottom: 18%; right: 3px; width: 2px;
+  border-radius: 2px; background: var(--nx-accent); opacity: 0; transition: opacity 0.12s;
+}
+.lbl-grid thead th.lbl-col-th:hover .lbl-col-resize::after { opacity: 0.8; }
+body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; user-select: none !important; }
+
 /* Sticky header + column-filter row (spec Part 3). The header th are already
    position:sticky/top:0 via .ow-screen thead th; the FILTER row was NOT sticky
    before, so it scrolled away. Pin it directly under the ~28px header, keep the
