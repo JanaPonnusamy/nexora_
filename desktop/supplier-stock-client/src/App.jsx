@@ -10904,7 +10904,9 @@ function SvbMiniTable({ head, rows, emptyMessage }) {
       </thead>
       <tbody>
         {rows.map((cells, r) => (
-          <tr key={r}>{cells.map((cell, i) => <td key={i} className={head[i]?.num ? 'num-col' : undefined}>{cell}</td>)}</tr>
+          <tr key={r}>{cells.map((cell, i) => (
+            <td key={i} className={head[i]?.num ? 'num-col' : undefined} title={typeof cell === 'string' ? cell : undefined}>{cell}</td>
+          ))}</tr>
         ))}
       </tbody>
     </table>
@@ -10949,11 +10951,12 @@ function svbPurchaseCell(core) {
 }
 function svbSalesCell(core) {
   const sales = asArray(core?.sales);
+  // MRP dropped; Bill No moved to the last column (owner request).
   return (
     <SvbMiniTable
-      head={[{ label: 'Date' }, { label: 'Bill No' }, { label: 'Customer' }, { label: 'Qty', num: true }, { label: 'MRP', num: true }, { label: 'Dis%', num: true }]}
+      head={[{ label: 'Date' }, { label: 'Customer' }, { label: 'Qty', num: true }, { label: 'Dis%', num: true }, { label: 'Bill No' }]}
       rows={sales.slice(0, 40).map((row) => [
-        formatDate(row.date), row.bill_no || '-', row.customer || '-', formatQty(row.qty), formatMoney(row.mrp), formatMoney(row.discount),
+        formatDate(row.date), row.customer || '-', formatQty(row.qty), formatMoney(row.discount), row.bill_no || '-',
       ])}
       emptyMessage="No billing history."
     />
@@ -11042,7 +11045,10 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
     return null;
   }
 
-  const gridTemplateColumns = `var(--scm-label-w) repeat(${stores.length}, minmax(var(--scm-col-w), 1fr))`;
+  // minmax(0, 1fr): all store columns always share the available width equally,
+  // so six stores NEVER cause a horizontal scrollbar between stores — they just
+  // get narrower (text ellipsises) as the window shrinks toward 1366×768.
+  const gridTemplateColumns = `var(--scm-label-w) repeat(${stores.length}, minmax(0, 1fr))`;
 
   return (
     <div className="scm-scroll">

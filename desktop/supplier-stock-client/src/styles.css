@@ -8889,13 +8889,22 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 }
 .scm-grid {
   --scm-label-w: 34px;   /* narrow — reclaim width for the store columns */
-  --scm-col-w: 210px;    /* six stores fit at 1366 without page overflow */
   display: grid;
-  /* grid-template-columns is set inline (store count is dynamic). */
+  /* grid-template-columns set inline: label + N × minmax(0,1fr) so all six
+     stores ALWAYS fit the width (no horizontal scroll between stores) — they
+     just get narrower (text ellipsises) toward 1366×768. */
   grid-template-rows: auto 150px 140px 150px 150px 150px;
   background: var(--nx-surface);
-  min-width: min-content;
+  min-width: 0;
 }
+/* Per-SECTION colour (information type). The left label band and every cell's
+   sub-grid header in that row share it, so the eye tracks a row across stores
+   and tells Store Grid / Chart / Batch / Purchase / Sales apart at a glance. */
+.scm-rowlabel--grid,     .scm-cell--grid     { --sec-color: #2563eb; }
+.scm-rowlabel--chart,    .scm-cell--chart    { --sec-color: #0d9488; }
+.scm-rowlabel--batch,    .scm-cell--batch    { --sec-color: #7c3aed; }
+.scm-rowlabel--purchase, .scm-cell--purchase { --sec-color: #c2410c; }
+.scm-rowlabel--sales,    .scm-cell--sales    { --sec-color: #15803d; }
 /* Header row (store names) — sticks to the top on vertical scroll. */
 .scm-corner,
 .scm-colhead {
@@ -8917,14 +8926,15 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .scm-colhead__loading { flex: 0 0 auto; font-size: 11px; }
 /* Left row-label column — narrow, rotated text, sticks on horizontal scroll. */
 .scm-rowlabel {
-  position: sticky; left: 0; z-index: 2; background: var(--nx-surface-raised);
+  position: sticky; left: 0; z-index: 2;
+  background: var(--sec-color, var(--nx-surface-raised));
   display: flex; align-items: center; justify-content: center;
-  border-right: 2px solid var(--nx-rule-strong); border-bottom: 1px solid var(--nx-rule);
+  border-right: 2px solid var(--nx-rule-strong); border-bottom: 1px solid rgba(255, 255, 255, 0.28);
 }
 .scm-rowlabel span {
   writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap;
   font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--nx-text-soft);
+  color: #fff;
 }
 /* Data cells. Fixed row height → each cell scrolls internally if its table is
    taller, so rows stay aligned and nothing overlaps or clips. The 2px right
@@ -8943,9 +8953,27 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   padding: 8px; font-size: 11px; color: var(--nx-text-muted); text-align: center;
 }
 
-/* The matrix reuses the compact mini-table; let it flow at natural height
-   inside the (scrollable) cell instead of the horizontal screen's flex rules. */
-.scm-cell .ns-mini-table { flex: none; overflow: visible; }
+/* The matrix reuses the compact mini-table. Fixed layout + no-wrap/ellipsis so
+   long names (supplier/customer/product) never word-wrap and never force a
+   horizontal scrollbar — they truncate with a hover tooltip. */
+.scm-cell .ns-mini-table { flex: none; overflow: visible; table-layout: fixed; width: 100%; }
+.scm-cell .ns-mini-table th,
+.scm-cell .ns-mini-table td {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Numeric columns stay narrow so text columns get the remaining width. */
+.scm-cell .ns-mini-table .num-col { width: 42px; }
+/* COLOURFUL sub-grid header, matching the section's colour (same as the left
+   band), pinned to the top of the cell. Scoped to the matrix only. */
+.scm-cell .ns-mini-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--sec-color, var(--nx-text-muted));
+  color: #fff;
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.02em;
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+}
+.scm-cell .ns-mini-table tbody td { padding: 4px 6px; }
 .svb-sec__table { flex: none; overflow: visible; }
 .svb-prod-table tbody tr { cursor: pointer; }
 /* GREEN = the clicked source product; BLUE = the same product auto-synced here. */
@@ -8956,4 +8984,22 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .svb-restricted {
   padding: 12px; margin: 6px; border: 1px dashed var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface-sunk); color: var(--nx-text-muted); font-size: 11px; text-align: center;
+}
+
+/* Compact the screen header on the dense matrix so more height goes to data. */
+.sv-screen .screen-header h2 { font-size: 21px; line-height: 1.15; }
+.sv-screen .screen-header p { font-size: 11px; margin-top: 2px; }
+.sv-screen { gap: 8px; }
+
+/* ── 1366×768 (and any ≤1440 desktop): columns already auto-fit (minmax(0,1fr)),
+   so this only shrinks the row tracks + type a little so more of the matrix is
+   visible before the (allowed) vertical scroll, and tightens cell padding. */
+@media (max-width: 1440px) {
+  .scm-grid { grid-template-rows: auto 132px 120px 128px 128px 128px; }
+  .scm-colhead { padding: 5px 8px; }
+  .scm-colhead__code { font-size: 13px; }
+  .scm-cell .ns-mini-table { font-size: 10px; }
+  .scm-cell .ns-mini-table thead th { padding: 4px 5px; }
+  .scm-cell .ns-mini-table tbody td { padding: 3px 5px; }
+  .scm-cell .ns-mini-table .num-col { width: 38px; }
 }
