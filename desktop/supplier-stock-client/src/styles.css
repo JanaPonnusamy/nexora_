@@ -8987,12 +8987,15 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .svb-sec__table { flex: none; overflow: visible; }
 .svb-prod-table tbody tr { cursor: pointer; }
 .svb-prod-table tbody tr:hover td { background: rgba(0, 0, 0, 0.04); }
-/* SAME-TONE selection (owner request): the clicked SOURCE product is a STRONG
-   green; the SAME product auto-synced in other stores is a lighter green. */
-.svb-prod-table tbody tr.is-source td { background: rgba(22, 163, 74, 0.30); font-weight: 800; }
-.svb-prod-table tbody tr.is-source td:first-child { box-shadow: inset 3px 0 0 #15803d; }
-.svb-prod-table tbody tr.is-synced td { background: rgba(22, 163, 74, 0.13); font-weight: 600; }
-.svb-prod-table tbody tr.is-synced td:first-child { box-shadow: inset 3px 0 0 #86efac; }
+/* Selection (owner request): the CURRENT store's clicked product is a DARK
+   STRONG green with a clearly visible (white) font; the SAME product synced in
+   the OTHER stores is BLUE — so the source column stands apart from the matches. */
+.svb-prod-table tbody tr.is-source td { background: #15803d; color: #fff; font-weight: 800; }
+.svb-prod-table tbody tr.is-source td:first-child { box-shadow: inset 3px 0 0 #052e16; }
+.svb-prod-table tbody tr.is-source td.scm-zero { color: #fecaca; } /* keep zero readable on green */
+.svb-prod-table tbody tr.is-source:hover td { background: #15803d; }
+.svb-prod-table tbody tr.is-synced td { background: rgba(37, 99, 235, 0.16); font-weight: 600; }
+.svb-prod-table tbody tr.is-synced td:first-child { box-shadow: inset 3px 0 0 #2563eb; }
 /* Zero stock flagged red. */
 .scm-cell .ns-mini-table td.scm-zero { color: var(--nx-danger); font-weight: 800; }
 /* Clickable detail rows (purchase / sales open a card). */
