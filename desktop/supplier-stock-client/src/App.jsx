@@ -267,7 +267,7 @@ export default function App() {
 function AppShell() {
   const [settings, setSettings] = useState(loadSettings);
   const [session, setSession] = useState(loadSession);
-  const [activeScreen, setActiveScreen] = useState('stock');
+  const [activeScreen, setActiveScreen] = useState('stock_vertical');
   // Guards the one-time "land on Settings on a fresh device" auto-route below.
   const didAutoRoute = useRef(false);
   const didDevScreen = useRef(false);
@@ -405,11 +405,14 @@ function AppShell() {
     });
     setSettings(nextSettings);
     setSession(savedSession);
-    setActiveScreen('stock');
+    // Always land on Stock (Vertical) / Store Comparison after login (owner
+    // request). The navItems effect falls back to the first accessible screen
+    // for any login without stock access (e.g. label-review-only).
+    setActiveScreen('stock_vertical');
   }
 
   // Dev convenience: sign in automatically as the seeded dev super admin so
-  // `npm run dev` opens directly on Stock Availability. No-op in production
+  // `npm run dev` opens directly on Stock (Vertical). No-op in production
   // (DEV_AUTO_LOGIN is false) and whenever a real session already exists.
   useEffect(() => {
     if (!DEV_AUTO_LOGIN || session || devAutoLoginTried.current) return;
