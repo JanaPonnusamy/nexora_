@@ -108,3 +108,8 @@ cosec_*.json
 cosec_*.txt
 matrix_device_probe.txt
 matrix_*_report.txt
+
+# Stock Client fleet: published installer binaries + the HO release-signing
+# PRIVATE key must never be committed (public key stays tracked for the watchdog).
+backend/stock_client_releases/
+backend/config/stock_release_signing_key.pem

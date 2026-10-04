@@ -59,6 +59,10 @@ from modules.agent_ops.router import (
     router as agent_ops_router,
     agent_router as agent_ops_agent_router,
 )
+from modules.stock_client_ops.router import (
+    router as stock_client_ops_router,
+    agent_router as stock_client_ops_agent_router,
+)
 from modules.licensing.router import (
     router as licensing_router,
     agent_router as licensing_agent_router,
@@ -356,6 +360,8 @@ app.include_router(whatsapp_router)
 app.include_router(schema_sync_router)
 app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)
+app.include_router(stock_client_ops_router)
+app.include_router(stock_client_ops_agent_router)
 app.include_router(licensing_router)
 app.include_router(licensing_agent_router)
 app.include_router(mobile_bff_router)
