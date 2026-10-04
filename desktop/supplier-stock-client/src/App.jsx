@@ -10945,11 +10945,17 @@ function svbChartCell(core, onOpen) {
   );
 }
 function svbBatchCell(core) {
-  const batches = asArray(core?.batches);
+  const all = asArray(core?.batches);
+  // Show EVERY in-stock batch; if the product is fully out of stock, fall back
+  // to the 5 most recently purchased batches for reference (owner request).
+  const inStock = all.filter((b) => Number(b.stock) > 0);
+  const list = inStock.length
+    ? inStock
+    : [...all].sort((a, b) => new Date(b.last_purchase_date || 0) - new Date(a.last_purchase_date || 0)).slice(0, 5);
   return (
     <SvbMiniTable
       head={[{ label: 'Exp' }, { label: 'Stk', num: true }, { label: 'MRP', num: true }, { label: 'P.Age', num: true }, { label: 'S.Age', num: true }]}
-      rows={batches.slice(0, 40).map((row) => [
+      rows={list.slice(0, 50).map((row) => [
         formatMonthYear(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp),
         row.purchase_age_days ?? '-', row.sales_age_days ?? '-',
       ])}
