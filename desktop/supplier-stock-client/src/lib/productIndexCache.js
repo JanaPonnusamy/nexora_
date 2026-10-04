@@ -114,6 +114,53 @@ export async function syncStoreIndex(tenantId, storeId, meta, products) {
   }
 }
 
+// Incremental upsert: add/update the given products WITHOUT deleting the rest
+// of the store's cached index (unlike syncStoreIndex, which replaces it). Used
+// to GROW the cache from live search results and refresh the "last sync" stamp
+// even when the dedicated full-catalogue /products/index endpoint isn't present
+// on the backend (older HO build). Never throws — the cache is an optimization.
+export async function upsertProducts(tenantId, storeId, meta, products) {
+  if (!products || !products.length) return false;
+  try {
+    const db = await openDb();
+    const scope = scopeKey(tenantId, storeId);
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE, META], 'readwrite');
+      const store = tx.objectStore(STORE);
+      products.forEach((p) => {
+        store.put({
+          _key: rowKey(tenantId, storeId, p.product_code),
+          _scope: scope,
+          product_code: p.product_code,
+          product_name: p.product_name,
+          name_lc: String(p.product_name || '').toLowerCase(),
+          unit: p.unit,
+          stock: p.stock,
+        });
+      });
+      const metaStore = tx.objectStore(META);
+      const getReq = metaStore.get(scope);
+      getReq.onsuccess = () => {
+        const prev = getReq.result || {};
+        metaStore.put({
+          _scope: scope,
+          tenant_id: tenantId,
+          store_id: storeId,
+          store_code: meta?.store_code || prev.store_code || null,
+          store_name: meta?.store_name || prev.store_name || null,
+          last_synced: Date.now(),
+          product_count: prev.product_count || products.length,
+        });
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Background stock refresh: patch just the `stock` of already-cached rows for a
 // store from {product_code: stock}. Cheaper than a full re-seed.
 export async function applyStockUpdates(tenantId, storeId, stockByCode) {
