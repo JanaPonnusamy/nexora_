@@ -8844,16 +8844,17 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .last-sync-badge.is-never .last-sync-dot { background: var(--nx-rule-strong); }
 
 /* ===================== Vertical stock view (all stores stacked) ============= */
-.sv-screen { display: flex; flex-direction: column; min-height: 0; height: 100%; max-width: none; gap: 10px; }
+.sv-screen { display: flex; flex-direction: column; min-height: 0; height: 100%; max-width: none; gap: 6px; }
+/* Compact toolbar (owner request: reclaim the search-box height for the data). */
 .sv-toolbar {
   flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
-  padding: 8px 10px; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
+  padding: 4px 8px; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
 }
 .sv-search {
-  flex: 0 1 360px; min-width: 180px; height: 32px; padding: 0 10px;
+  flex: 0 1 340px; min-width: 180px; height: 26px; padding: 0 9px;
   border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
-  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 13px;
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12.5px;
 }
 .sv-search:focus { outline: none; border-color: var(--nx-accent); box-shadow: 0 0 0 2px var(--nx-accent-sunk); }
 .sv-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text-soft); white-space: nowrap; cursor: pointer; }
@@ -8882,18 +8883,27 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    through Sales, so each column reads as one vertical store board; thin 1px
    horizontal rules divide the info sections. Only this container scrolls —
    vertically for the whole matrix, horizontally for the store columns. */
+/* No MASTER scroll (owner request): the matrix fills the viewport exactly and
+   each CELL scrolls internally if its table is longer. Fully fluid — rows are
+   fr tracks and columns are minmax(0,1fr), so at any resolution every panel
+   grows/shrinks on the same scale to fill the available space. */
 .scm-scroll {
-  flex: 1 1 auto; min-height: 0; overflow: auto;
+  /* flex-basis 0 (not auto): take exactly the available flex height instead of
+     sizing to the tables' content — otherwise the fr rows have no definite
+     parent height and blow up to fit all 40 rows, pushing Sales off-screen. */
+  flex: 1 1 0; min-height: 0; overflow: hidden;
   border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface);
 }
 .scm-grid {
-  --scm-label-w: 34px;   /* narrow — reclaim width for the store columns */
+  --scm-label-w: 32px;   /* narrow — reclaim width for the store columns */
   display: grid;
-  /* grid-template-columns set inline: label + N × minmax(0,1fr) so all six
-     stores ALWAYS fit the width (no horizontal scroll between stores) — they
-     just get narrower (text ellipsises) toward 1366×768. */
-  grid-template-rows: auto 150px 140px 150px 150px 150px;
+  height: 100%;
+  /* grid-template-columns set inline: label + N × minmax(0,1fr). Rows are fr so
+     all five info rows + the header always fit one viewport (Sales never hides
+     below a master scroll) and grow proportionally on larger screens. Sales
+     gets a slightly larger share (full Date+Customer view). */
+  grid-template-rows: auto minmax(60px, 1fr) minmax(56px, 0.9fr) minmax(60px, 1fr) minmax(60px, 1fr) minmax(64px, 1.15fr);
   background: var(--nx-surface);
   min-width: 0;
 }
@@ -8976,30 +8986,68 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .scm-cell .ns-mini-table tbody td { padding: 4px 6px; }
 .svb-sec__table { flex: none; overflow: visible; }
 .svb-prod-table tbody tr { cursor: pointer; }
-/* GREEN = the clicked source product; BLUE = the same product auto-synced here. */
-.svb-prod-table tbody tr.is-source { background: var(--nx-success-sunk, #e7f6ec); }
-.svb-prod-table tbody tr.is-source td { font-weight: 700; }
-.svb-prod-table tbody tr.is-synced { background: var(--nx-accent-sunk); }
-.svb-prod-table tbody tr.is-synced td { font-weight: 600; }
+.svb-prod-table tbody tr:hover td { background: rgba(0, 0, 0, 0.04); }
+/* SAME-TONE selection (owner request): the clicked SOURCE product is a STRONG
+   green; the SAME product auto-synced in other stores is a lighter green. */
+.svb-prod-table tbody tr.is-source td { background: rgba(22, 163, 74, 0.30); font-weight: 800; }
+.svb-prod-table tbody tr.is-source td:first-child { box-shadow: inset 3px 0 0 #15803d; }
+.svb-prod-table tbody tr.is-synced td { background: rgba(22, 163, 74, 0.13); font-weight: 600; }
+.svb-prod-table tbody tr.is-synced td:first-child { box-shadow: inset 3px 0 0 #86efac; }
+/* Zero stock flagged red. */
+.scm-cell .ns-mini-table td.scm-zero { color: var(--nx-danger); font-weight: 800; }
+/* Clickable detail rows (purchase / sales open a card). */
+.scm-cell .ns-mini-table tr.is-clickable { cursor: pointer; }
+.scm-cell .ns-mini-table tr.is-clickable:hover td { background: rgba(0, 0, 0, 0.06); }
+
+/* Per-section column widths so text columns (Product / Supplier / Customer /
+   GRN Date) get room while numerics stay tight. */
+.scm-cell--grid .ns-mini-table td:nth-child(2), .scm-cell--grid .ns-mini-table th:nth-child(2) { width: 38px; }
+.scm-cell--grid .ns-mini-table td:nth-child(3), .scm-cell--grid .ns-mini-table th:nth-child(3) { width: 46px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(1), .scm-cell--purchase .ns-mini-table th:nth-child(1) { width: 30px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(2), .scm-cell--purchase .ns-mini-table th:nth-child(2) { width: 28px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(3), .scm-cell--purchase .ns-mini-table th:nth-child(3) { width: 38px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(4), .scm-cell--purchase .ns-mini-table th:nth-child(4) { width: 58px; }
+.scm-cell--sales .ns-mini-table td:nth-child(1), .scm-cell--sales .ns-mini-table th:nth-child(1) { width: 56px; }
+.scm-cell--sales .ns-mini-table td:nth-child(3), .scm-cell--sales .ns-mini-table th:nth-child(3) { width: 32px; }
+.scm-cell--sales .ns-mini-table td:nth-child(4), .scm-cell--sales .ns-mini-table th:nth-child(4) { width: 38px; }
+
+.scm-chart--click { cursor: zoom-in; }
+.scm-empty--muted { font-size: 10px; opacity: 0.85; }
+/* NMW useful tile for store users: warehouse availability of the selected product. */
+.scm-nmw { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 6px; }
+.scm-nmw__label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--nx-text-muted); }
+.scm-nmw__value { font-size: 22px; font-weight: 800; color: var(--nx-success-ink, #15803d); font-variant-numeric: tabular-nums; }
+.scm-nmw__value.scm-zero { color: var(--nx-danger); }
+.scm-nmw__hint { font-size: 9px; color: var(--nx-text-muted); }
+
+/* Enlarged chart card (click a chart; Esc or overlay click closes). ~2× size. */
+.scm-chart-modal {
+  width: min(88vw, 940px); height: min(72vh, 480px);
+  display: flex; flex-direction: column;
+  background: var(--nx-surface); border: 1px solid var(--nx-rule-strong);
+  border-radius: var(--nx-radius); box-shadow: 0 20px 50px rgba(2, 6, 23, 0.35);
+}
+.scm-chart-modal__head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--nx-rule); }
+.scm-chart-modal__head strong { font-size: 13px; color: var(--nx-text); }
+.scm-chart-modal__body { flex: 1 1 auto; min-height: 0; padding: 10px 14px; }
+.scm-chart-modal__body .sa-chart { height: 100%; }
+
 .svb-restricted {
   padding: 12px; margin: 6px; border: 1px dashed var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface-sunk); color: var(--nx-text-muted); font-size: 11px; text-align: center;
 }
 
 /* Compact the screen header on the dense matrix so more height goes to data. */
-.sv-screen .screen-header h2 { font-size: 21px; line-height: 1.15; }
-.sv-screen .screen-header p { font-size: 11px; margin-top: 2px; }
-.sv-screen { gap: 8px; }
+.sv-screen .screen-header h2 { font-size: 20px; line-height: 1.1; }
+.sv-screen .screen-header p { font-size: 11px; margin-top: 1px; }
 
-/* ── 1366×768 (and any ≤1440 desktop): columns already auto-fit (minmax(0,1fr)),
-   so this only shrinks the row tracks + type a little so more of the matrix is
-   visible before the (allowed) vertical scroll, and tightens cell padding. */
+/* ── 1366×768 (and any ≤1440 desktop): columns auto-fit and rows are fr, so this
+   only tightens type/padding so more rows are visible within each fluid cell. */
 @media (max-width: 1440px) {
-  .scm-grid { grid-template-rows: auto 132px 120px 128px 128px 128px; }
   .scm-colhead { padding: 5px 8px; }
   .scm-colhead__code { font-size: 13px; }
   .scm-cell .ns-mini-table { font-size: 10px; }
-  .scm-cell .ns-mini-table thead th { padding: 4px 5px; }
-  .scm-cell .ns-mini-table tbody td { padding: 3px 5px; }
+  .scm-cell .ns-mini-table thead th { padding: 3px 5px; }
+  .scm-cell .ns-mini-table tbody td { padding: 2px 5px; }
   .scm-cell .ns-mini-table .num-col { width: 38px; }
 }

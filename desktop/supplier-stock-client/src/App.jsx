@@ -1471,7 +1471,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
     refreshIndex();
     // Background stock refresh: re-pull the compact index periodically so cached
     // stock stays current. 10 min is light on a low-spec box + the DB server.
-    const timer = setInterval(refreshIndex, 10 * 60 * 1000);
+    const timer = setInterval(refreshIndex, 15 * 60 * 1000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [session, settings?.tenantId]);
 
@@ -10895,7 +10895,16 @@ function StoreDetailBody({ group, colorIndex }) {
 // Column aliases match stock.usp_ProductCore result sets exactly (same shape the
 // horizontal screen consumes): batches → expiry_date/stock/mrp/*_age_days;
 // purchases → date/supplier/qty/free/dis/ptr; sales → date/bill_no/customer/qty/mrp/discount.
-function SvbMiniTable({ head, rows, emptyMessage }) {
+// Batch expiry shown as MMM/YY (e.g. Sep/28) per owner request.
+function formatMonthYear(value) {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return formatDate(value);
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  return `${mon}/${String(d.getFullYear()).slice(-2)}`;
+}
+
+function SvbMiniTable({ head, rows, emptyMessage, raw, onRowClick }) {
   if (!rows.length) return <div className="ns-card__waiting">{emptyMessage}</div>;
   return (
     <table className="ns-mini-table svb-sec__table">
@@ -10904,9 +10913,16 @@ function SvbMiniTable({ head, rows, emptyMessage }) {
       </thead>
       <tbody>
         {rows.map((cells, r) => (
-          <tr key={r}>{cells.map((cell, i) => (
-            <td key={i} className={head[i]?.num ? 'num-col' : undefined} title={typeof cell === 'string' ? cell : undefined}>{cell}</td>
-          ))}</tr>
+          <tr
+            key={r}
+            className={onRowClick ? 'is-clickable' : undefined}
+            onClick={onRowClick ? () => onRowClick(raw?.[r]) : undefined}
+          >
+            {cells.map((cell, i) => {
+              const cls = [head[i]?.num ? 'num-col' : null, head[i]?.cls || null].filter(Boolean).join(' ') || undefined;
+              return <td key={i} className={cls} title={typeof cell === 'string' ? cell : undefined}>{cell}</td>;
+            })}
+          </tr>
         ))}
       </tbody>
     </table>
@@ -10916,13 +10932,17 @@ function SvbMiniTable({ head, rows, emptyMessage }) {
 // Per-store detail renderers for one matrix cell. `core` is that store's
 // selected product's { batches, purchases, sales, movement } (column aliases
 // from stock.usp_ProductCore). Each returns the cell body for its info row.
-function svbChartCell(core) {
+// Clicking a chart / purchase / sales opens a reusable detail card (Esc closes).
+function svbChartCell(core, onOpen) {
   const movement = asArray(core?.movement);
   const purchases = asArray(core?.purchases);
   const sales = asArray(core?.sales);
-  return (movement.length || purchases.length || sales.length)
-    ? <div className="scm-chart"><MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} maxBarWidth={14} /></div>
-    : <div className="ns-card__waiting">No chart data.</div>;
+  if (!(movement.length || purchases.length || sales.length)) return <div className="ns-card__waiting">No chart data.</div>;
+  return (
+    <div className="scm-chart scm-chart--click" onClick={onOpen} title="Click to enlarge">
+      <MonthlyMovementChart rows={movement} purchases={purchases} sales={sales} maxBarWidth={14} />
+    </div>
+  );
 }
 function svbBatchCell(core) {
   const batches = asArray(core?.batches);
@@ -10930,34 +10950,39 @@ function svbBatchCell(core) {
     <SvbMiniTable
       head={[{ label: 'Exp' }, { label: 'Stk', num: true }, { label: 'MRP', num: true }, { label: 'P.Age', num: true }, { label: 'S.Age', num: true }]}
       rows={batches.slice(0, 40).map((row) => [
-        formatDate(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp),
+        formatMonthYear(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp),
         row.purchase_age_days ?? '-', row.sales_age_days ?? '-',
       ])}
       emptyMessage="No batches found."
     />
   );
 }
-function svbPurchaseCell(core) {
-  const purchases = asArray(core?.purchases);
+function svbPurchaseCell(core, onRowClick) {
+  const rows = asArray(core?.purchases).slice(0, 40);
   return (
     <SvbMiniTable
       head={[{ label: 'Qty', num: true }, { label: 'Free', num: true }, { label: 'Dis%', num: true }, { label: 'GRN Date' }, { label: 'Supplier' }]}
-      rows={purchases.slice(0, 40).map((row) => [
+      rows={rows.map((row) => [
         formatQty(row.qty), formatQty(row.free ?? 0), formatMoney(row.dis), formatDate(row.date), row.supplier || '-',
       ])}
+      raw={rows}
+      onRowClick={onRowClick}
       emptyMessage="No purchase history."
     />
   );
 }
-function svbSalesCell(core) {
-  const sales = asArray(core?.sales);
-  // MRP dropped; Bill No moved to the last column (owner request).
+function svbSalesCell(core, onRowClick) {
+  // Bill No + MRP dropped from the panel (owner request): Date + Customer get the
+  // room; the bill number and full bill detail open in a card on row click.
+  const rows = asArray(core?.sales).slice(0, 40);
   return (
     <SvbMiniTable
-      head={[{ label: 'Date' }, { label: 'Customer' }, { label: 'Qty', num: true }, { label: 'Dis%', num: true }, { label: 'Bill No' }]}
-      rows={sales.slice(0, 40).map((row) => [
-        formatDate(row.date), row.customer || '-', formatQty(row.qty), formatMoney(row.discount), row.bill_no || '-',
+      head={[{ label: 'Date' }, { label: 'Customer' }, { label: 'Qty', num: true }, { label: 'Dis%', num: true }]}
+      rows={rows.map((row) => [
+        formatDate(row.date), row.customer || '-', formatQty(row.qty), formatMoney(row.discount),
       ])}
+      raw={rows}
+      onRowClick={onRowClick}
       emptyMessage="No billing history."
     />
   );
@@ -10981,11 +11006,43 @@ const SCM_ROWS = [
   { key: 'sales', label: 'Sales' },
 ];
 
-function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSelect, superAdmin }) {
+// For a store user, NMW detail rows stay gated — but instead of a bare lock we
+// surface the ONE useful, non-sensitive fact: how much of the selected product
+// the warehouse is holding (so the branch knows whether a transfer is worth
+// requesting). Everything else stays HO-only.
+function NmwLockedCell({ rowKey, store, selectionFor }) {
+  const sel = selectionFor(store.store_id);
+  const code = sel.sourceProductCode || sel.syncProductCode || null;
+  const product = code ? asArray(store.products).find((p) => p.product_code === code) : null;
+  if (rowKey === 'chart') {
+    const stock = product ? (product.stock ?? product.total_stock ?? 0) : null;
+    return (
+      <div className="scm-nmw">
+        <span className="scm-nmw__label">In warehouse</span>
+        <span className={`scm-nmw__value${Number(stock) === 0 ? ' scm-zero' : ''}`}>{product ? formatQty(stock) : '—'}</span>
+        <span className="scm-nmw__hint">Transfer from HO</span>
+      </div>
+    );
+  }
+  return <div className="scm-empty scm-empty--muted">HO only</div>;
+}
+
+function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSelect, superAdmin, session }) {
+  const [billDetail, setBillDetail] = useState(null);         // { store, sale }
+  const [purchaseDetail, setPurchaseDetail] = useState(null); // { store, row }
+  const [chartModal, setChartModal] = useState(null);         // { store, core }
+  const visibility = historyVisibility(session);
+
+  // Esc closes any open detail / chart card and returns to the matrix.
+  useEffect(() => {
+    if (!billDetail && !purchaseDetail && !chartModal) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') { setBillDetail(null); setPurchaseDetail(null); setChartModal(null); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [billDetail, purchaseDetail, chartModal]);
+
   // The product selected in a store = its GREEN source (the column the user
-  // clicked) OR its BLUE synchronized match (the same product auto-resolved
-  // here). ONE common product drives every column — selection lives in the
-  // parent; this component only renders it. See state/productSelection.js.
+  // clicked) OR its synchronized match (the same product auto-resolved here).
   function selectedCode(store) {
     const sel = selectionFor(store.store_id);
     return sel.sourceProductCode || sel.syncProductCode || null;
@@ -10994,14 +11051,13 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
     const code = selectedCode(store);
     if (!code) return null;
     const core = storeDetails[store.store_id];
-    // Only use the core if it actually belongs to the selected product (guards
-    // against showing a previous product's data while the new one loads).
     return core && core.product?.product_code === code ? core : null;
   }
 
-  // The Store Grid (stock list) is visible for EVERY store, including NMW — all
-  // branches may see the warehouse stock list. Only NMW's detail rows below are
-  // gated to super-admin (owner ruling: see the NMW list, not its details).
+  // Store Grid (stock list) visible for EVERY store incl. NMW. MRP dropped so
+  // the product name gets full width; a zero stock is flagged red; the selected
+  // row (source or synced) is auto-scrolled into view so it's never hidden
+  // below the fold in a column where it sits far down the list.
   function gridCell(store) {
     const products = asArray(store.products);
     if (!products.length) return <div className="scm-empty">No matching product</div>;
@@ -11010,17 +11066,22 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
     const isSource = sel.sourceProductCode != null;
     return (
       <table className="ns-mini-table svb-sec__table svb-prod-table">
-        <thead><tr><th>Product</th><th>Unit</th><th className="num-col">Stock</th><th className="num-col">MRP</th></tr></thead>
+        <thead><tr><th>Product</th><th>Unit</th><th className="num-col">Stock</th></tr></thead>
         <tbody>
           {products.map((p) => {
             const isSel = p.product_code === code;
             const cls = isSel ? (isSource ? 'is-source' : 'is-synced') : undefined;
+            const stock = p.stock ?? p.total_stock ?? 0;
             return (
-              <tr key={p.product_code} className={cls} onClick={() => onProductSelect(store, p)}>
+              <tr
+                key={p.product_code}
+                className={cls}
+                onClick={() => onProductSelect(store, p)}
+                ref={isSel ? (el) => { if (el) el.scrollIntoView({ block: 'nearest' }); } : undefined}
+              >
                 <td title={p.product_name}>{p.product_name || '-'}</td>
                 <td>{p.sale_unit || p.unit_description || '-'}</td>
-                <td className="num-col">{formatQty(p.stock ?? p.total_stock ?? 0)}</td>
-                <td className="num-col">{formatMoney(p.mrp)}</td>
+                <td className={`num-col${Number(stock) === 0 ? ' scm-zero' : ''}`}>{formatQty(stock)}</td>
               </tr>
             );
           })}
@@ -11029,25 +11090,21 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
     );
   }
 
-  // A store's Chart/Batch/Purchase/Sales: if the common product isn't stocked
-  // here, a clean "not available" state; else its real data once loaded. NMW
-  // stays gated to super-admin / HO. Never fabricated, never cross-store mixed.
   function detailCell(store, rowKey, isWarehouse) {
-    if (isWarehouse && !superAdmin) return <div className="scm-empty">🔒 Super-admin / HO only</div>;
+    if (isWarehouse && !superAdmin) return <NmwLockedCell rowKey={rowKey} store={store} selectionFor={selectionFor} />;
     const code = selectedCode(store);
     if (!code) return <div className="scm-empty">Not stocked here</div>;
     const core = storeCore(store);
     if (!core) return <div className="ns-card__waiting">Loading…</div>;
-    if (rowKey === 'chart') return svbChartCell(core);
+    if (rowKey === 'chart') return svbChartCell(core, () => setChartModal({ store, core }));
     if (rowKey === 'batch') return svbBatchCell(core);
-    if (rowKey === 'purchase') return svbPurchaseCell(core);
-    if (rowKey === 'sales') return svbSalesCell(core);
+    if (rowKey === 'purchase') return svbPurchaseCell(core, (row) => { if (row) setPurchaseDetail({ store, row }); });
+    if (rowKey === 'sales') return svbSalesCell(core, (row) => { if (row) setBillDetail({ store, sale: row }); });
     return null;
   }
 
   // minmax(0, 1fr): all store columns always share the available width equally,
-  // so six stores NEVER cause a horizontal scrollbar between stores — they just
-  // get narrower (text ellipsises) as the window shrinks toward 1366×768.
+  // so six stores NEVER cause a horizontal scrollbar between stores.
   const gridTemplateColumns = `var(--scm-label-w) repeat(${stores.length}, minmax(0, 1fr))`;
 
   return (
@@ -11090,6 +11147,26 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
           </Fragment>
         ))}
       </div>
+
+      {billDetail && (
+        <BillDetailCard detail={billDetail} session={session} visibility={visibility} onClose={() => setBillDetail(null)} />
+      )}
+      {purchaseDetail && (
+        <PurchaseDetailCard detail={purchaseDetail} visibility={visibility} onClose={() => setPurchaseDetail(null)} />
+      )}
+      {chartModal && (
+        <div className="modal-overlay" onClick={() => setChartModal(null)}>
+          <div className="scm-chart-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="scm-chart-modal__head">
+              <strong>{(chartModal.store.store_name || storeLabel(chartModal.store))} — {chartModal.core.product?.product_name || 'Sales trend'}</strong>
+              <button type="button" className="ghost-button" onClick={() => setChartModal(null)}>Close (Esc)</button>
+            </div>
+            <div className="scm-chart-modal__body">
+              <MonthlyMovementChart rows={asArray(chartModal.core.movement)} purchases={asArray(chartModal.core.purchases)} sales={asArray(chartModal.core.sales)} maxBarWidth={30} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -11183,7 +11260,7 @@ function StockVerticalView({ session, settings }) {
       } catch { /* offline / HO down: keep serving the existing cache */ }
     }
     refreshIndex();
-    const timer = setInterval(refreshIndex, 10 * 60 * 1000);
+    const timer = setInterval(refreshIndex, 15 * 60 * 1000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [session, tenantId]);
 
@@ -11450,6 +11527,7 @@ function StockVerticalView({ session, settings }) {
           selectionFor={selectionFor}
           onProductSelect={handleProductSelect}
           superAdmin={superAdmin}
+          session={session}
         />
       )}
     </section>
