@@ -8907,14 +8907,17 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   background: var(--nx-surface);
   min-width: 0;
 }
-/* Per-SECTION colour (information type). The left label band and every cell's
-   sub-grid header in that row share it, so the eye tracks a row across stores
-   and tells Store Grid / Chart / Batch / Purchase / Sales apart at a glance. */
-.scm-rowlabel--grid,     .scm-cell--grid     { --sec-color: #2563eb; }
-.scm-rowlabel--chart,    .scm-cell--chart    { --sec-color: #0d9488; }
-.scm-rowlabel--batch,    .scm-cell--batch    { --sec-color: #7c3aed; }
-.scm-rowlabel--purchase, .scm-cell--purchase { --sec-color: #c2410c; }
-.scm-rowlabel--sales,    .scm-cell--sales    { --sec-color: #15803d; }
+/* Per-SECTION colour (information type) — SEMANTIC and LIGHT. The meaning
+   matches the chart's bars: BLUE = Purchase, GREEN = Sales, RED = Stock/Batch;
+   Store Grid + Chart are neutral (slate). ONLY the sub-grid HEADER and the
+   narrow left label band carry a light tint (dark readable text) — table
+   bodies stay neutral. `--sec-head-*` = sub-grid header; `--sec-label-*` = the
+   rotated left band (a touch stronger as a pure accent strip). */
+.scm-rowlabel--grid,     .scm-cell--grid     { --sec-head-bg: #f1f5f9; --sec-head-fg: #334155; --sec-label-bg: #e2e8f0; --sec-label-fg: #334155; }
+.scm-rowlabel--chart,    .scm-cell--chart    { --sec-head-bg: #f1f5f9; --sec-head-fg: #334155; --sec-label-bg: #e2e8f0; --sec-label-fg: #334155; }
+.scm-rowlabel--batch,    .scm-cell--batch    { --sec-head-bg: #fee2e2; --sec-head-fg: #991b1b; --sec-label-bg: #fecaca; --sec-label-fg: #991b1b; }
+.scm-rowlabel--purchase, .scm-cell--purchase { --sec-head-bg: #dbeafe; --sec-head-fg: #1e40af; --sec-label-bg: #bfdbfe; --sec-label-fg: #1e40af; }
+.scm-rowlabel--sales,    .scm-cell--sales    { --sec-head-bg: #dcfce7; --sec-head-fg: #166534; --sec-label-bg: #bbf7d0; --sec-label-fg: #166534; }
 /* Header row (store names) — sticks to the top on vertical scroll. */
 .scm-corner,
 .scm-colhead {
@@ -8922,12 +8925,15 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   border-bottom: 2px solid var(--nx-rule-strong);
 }
 .scm-corner { left: 0; z-index: 4; border-right: 2px solid var(--nx-rule-strong); }
+/* Store headers are UNIFORM (owner ruling): every store uses the same neutral
+   styling — no per-store colour — so the six columns read as ONE comparison
+   matrix. The store code is bold; the store name is small + muted. */
 .scm-colhead {
   display: flex; align-items: center; gap: 6px; padding: 6px 9px;
-  border-top: 3px solid var(--store-color, var(--nx-accent));
+  border-top: 2px solid var(--nx-rule-strong);
   border-right: 2px solid var(--nx-rule-strong);
 }
-.scm-colhead__code { flex: 0 0 auto; font-size: 14px; font-weight: 800; letter-spacing: 0.04em; color: var(--store-color, var(--nx-text)); }
+.scm-colhead__code { flex: 0 0 auto; font-size: 14px; font-weight: 800; letter-spacing: 0.04em; color: var(--nx-text); }
 .scm-colhead__name { flex: 1 1 auto; min-width: 0; font-size: 10px; color: var(--nx-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scm-wh {
   flex: 0 0 auto; padding: 1px 5px; border-radius: 999px; font-size: 9px; font-weight: 800;
@@ -8937,14 +8943,14 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 /* Left row-label column — narrow, rotated text, sticks on horizontal scroll. */
 .scm-rowlabel {
   position: sticky; left: 0; z-index: 2;
-  background: var(--sec-color, var(--nx-surface-raised));
+  background: var(--sec-label-bg, var(--nx-surface-raised));
   display: flex; align-items: center; justify-content: center;
-  border-right: 2px solid var(--nx-rule-strong); border-bottom: 1px solid rgba(255, 255, 255, 0.28);
+  border-right: 2px solid var(--nx-rule-strong); border-bottom: 1px solid var(--nx-rule);
 }
 .scm-rowlabel span {
   writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap;
   font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em;
-  color: #fff;
+  color: var(--sec-label-fg, var(--nx-text));
 }
 /* Data cells. Fixed row height → each cell scrolls internally if its table is
    taller, so rows stay aligned and nothing overlaps or clips. The 2px right
@@ -8973,15 +8979,16 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 }
 /* Numeric columns stay narrow so text columns get the remaining width. */
 .scm-cell .ns-mini-table .num-col { width: 42px; }
-/* COLOURFUL sub-grid header, matching the section's colour (same as the left
-   band), pinned to the top of the cell. Scoped to the matrix only. */
+/* Light-tinted sub-grid header carrying the section's semantic colour (same
+   family as the left band), with dark readable text; pinned to the top of the
+   cell. Table BODY stays neutral. Scoped to the matrix only. */
 .scm-cell .ns-mini-table thead th {
   position: sticky; top: 0; z-index: 1;
-  background: var(--sec-color, var(--nx-text-muted));
-  color: #fff;
+  background: var(--sec-head-bg, var(--nx-surface-sunk));
+  color: var(--sec-head-fg, var(--nx-text));
   font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.02em;
   padding: 5px 6px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
 }
 .scm-cell .ns-mini-table tbody td { padding: 4px 6px; }
 .svb-sec__table { flex: none; overflow: visible; }

@@ -10963,7 +10963,7 @@ function svbBatchCell(core) {
         formatMonthYear(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp),
         row.purchase_age_days ?? '-', row.sales_age_days ?? '-',
       ])}
-      emptyMessage="No batches found."
+      emptyMessage="No batch data."
     />
   );
 }
@@ -10993,7 +10993,7 @@ function svbSalesCell(core, onRowClick) {
       ])}
       raw={rows}
       onRowClick={onRowClick}
-      emptyMessage="No billing history."
+      emptyMessage="No sales history."
     />
   );
 }
