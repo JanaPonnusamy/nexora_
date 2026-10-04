@@ -15,6 +15,7 @@ import { buildBrandKey, buildPrefixSearchKey, normalizeForBadge, normalizeForLoo
 import { getCachedProducts, syncCachedProducts } from './lib/productCache.js';
 import {
   syncStoreIndex,
+  upsertProducts,
   loadScope,
   filterProducts,
   getLastSync
@@ -635,7 +636,10 @@ function LastSyncBadge({ tenantId }) {
     const load = () => getLastSync(tenantId).then((v) => { if (!cancelled) setTs(v); }).catch(() => {});
     load();
     const timer = setInterval(load, 60000);
-    return () => { cancelled = true; clearInterval(timer); };
+    // Refresh the instant the cache is stamped (e.g. right after a search), so
+    // the badge reflects the latest sync without waiting for the 60s tick.
+    window.addEventListener('nexora:synced', load);
+    return () => { cancelled = true; clearInterval(timer); window.removeEventListener('nexora:synced', load); };
   }, [tenantId]);
   return (
     <div
@@ -11012,25 +11016,16 @@ const SCM_ROWS = [
   { key: 'sales', label: 'Sales' },
 ];
 
-// For a store user, NMW detail rows stay gated — but instead of a bare lock we
-// surface the ONE useful, non-sensitive fact: how much of the selected product
-// the warehouse is holding (so the branch knows whether a transfer is worth
-// requesting). Everything else stays HO-only.
-function NmwLockedCell({ rowKey, store, selectionFor }) {
-  const sel = selectionFor(store.store_id);
-  const code = sel.sourceProductCode || sel.syncProductCode || null;
-  const product = code ? asArray(store.products).find((p) => p.product_code === code) : null;
-  if (rowKey === 'chart') {
-    const stock = product ? (product.stock ?? product.total_stock ?? 0) : null;
-    return (
-      <div className="scm-nmw">
-        <span className="scm-nmw__label">In warehouse</span>
-        <span className={`scm-nmw__value${Number(stock) === 0 ? ' scm-zero' : ''}`}>{product ? formatQty(stock) : '—'}</span>
-        <span className="scm-nmw__hint">Transfer from HO</span>
-      </div>
-    );
-  }
-  return <div className="scm-empty scm-empty--muted">HO only</div>;
+// A single big label/value tile — used for the NMW warehouse summary a store
+// user sees in place of the full (HO-only) tables.
+function NmwTile({ label, value, hint, zero }) {
+  return (
+    <div className="scm-nmw">
+      <span className="scm-nmw__label">{label}</span>
+      <span className={`scm-nmw__value${zero ? ' scm-zero' : ''}`}>{value}</span>
+      {hint && <span className="scm-nmw__hint">{hint}</span>}
+    </div>
+  );
 }
 
 function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSelect, superAdmin, session }) {
@@ -11097,10 +11092,31 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
   }
 
   function detailCell(store, rowKey, isWarehouse) {
-    if (isWarehouse && !superAdmin) return <NmwLockedCell rowKey={rowKey} store={store} selectionFor={selectionFor} />;
     const code = selectedCode(store);
     if (!code) return <div className="scm-empty">Not stocked here</div>;
     const core = storeCore(store);
+
+    // NMW for a store user: not the full tables (HO-only), but a useful summary
+    // of the selected product in the warehouse — In warehouse / Expiry / PTR /
+    // MRP, one per row (owner request).
+    if (isWarehouse && !superAdmin) {
+      const product = asArray(store.products).find((p) => p.product_code === code);
+      if (rowKey === 'chart') {
+        const stock = product ? (product.stock ?? product.total_stock ?? 0) : null;
+        return <NmwTile label="In warehouse" value={product ? formatQty(stock) : '—'} hint="Transfer from HO" zero={Number(stock) === 0} />;
+      }
+      if (!core) return <div className="ns-card__waiting">Loading…</div>;
+      const batches = asArray(core.batches);
+      const ref = batches.find((b) => Number(b.stock) > 0) || batches[0]; // FEFO: in-stock, earliest expiry first
+      if (rowKey === 'batch') return <NmwTile label="Nearest expiry" value={ref ? formatMonthYear(ref.expiry_date) : '—'} />;
+      if (rowKey === 'purchase') return <NmwTile label="PTR" value={ref ? formatMoney(ref.ptr) : '—'} />;
+      if (rowKey === 'sales') {
+        const mrp = product?.mrp ?? ref?.mrp;
+        return <NmwTile label="MRP" value={mrp != null ? formatMoney(mrp) : '—'} />;
+      }
+      return null;
+    }
+
     if (!core) return <div className="ns-card__waiting">Loading…</div>;
     if (rowKey === 'chart') return svbChartCell(core, () => setChartModal({ store, core }));
     if (rowKey === 'batch') return svbBatchCell(core);
@@ -11122,7 +11138,7 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
           const color = STORE_COLORS[index % STORE_COLORS.length];
           const isWarehouse = isWarehouseStore(store);
           const code = selectedCode(store);
-          const loading = code && !storeCore(store) && !(isWarehouse && !superAdmin);
+          const loading = code && !storeCore(store);
           return (
             <div className="scm-colhead" key={store.store_id} style={{ '--store-color': color }}>
               <span className="scm-colhead__code">{storeLabel(store)}</span>
@@ -11217,10 +11233,6 @@ function StockVerticalView({ session, settings }) {
 
   const searchProductsByStore = useMemo(
     () => new Map(stores.map((s) => [s.store_id, s.products || []])),
-    [stores]
-  );
-  const warehouseStoreIds = useMemo(
-    () => new Set(stores.filter((s) => isWarehouseStore(s)).map((s) => s.store_id)),
     [stores]
   );
 
@@ -11365,6 +11377,21 @@ function StockVerticalView({ session, settings }) {
     setStores(all);
     setStoreDetails({});
     setSelectionState(emptySelectionState());
+
+    // Grow the on-disk cache + refresh the "last sync" stamp from these live
+    // results. This keeps the global Last-sync badge and offline search working
+    // even on backends that don't expose the dedicated /products/index endpoint.
+    if (tenantId) {
+      (async () => {
+        for (const s of all) {
+          const prods = asArray(s.products).map((p) => ({ product_code: p.product_code, product_name: p.product_name, unit: p.sale_unit, stock: p.stock }));
+          if (prods.length) await upsertProducts(tenantId, s.store_id, { store_code: s.store_code, store_name: s.store_name }, prods);
+        }
+        setLastSync(Date.now());
+        try { window.dispatchEvent(new Event('nexora:synced')); } catch { /* best effort */ }
+      })();
+    }
+
     const withProduct = all.filter((s) => (s.products || [])[0]);
     const total = all.reduce((sum, s) => sum + (s.products || []).length, 0);
     setStatus({
@@ -11400,11 +11427,6 @@ function StockVerticalView({ session, settings }) {
     return core;
   }
 
-  // NMW (warehouse) detail is super-admin only: a store user still SEES the NMW
-  // stock list and its selection highlight (no core needed for that), but we
-  // never fetch its chart/batch/purchase/sales core.
-  const canLoadDetail = (storeId) => superAdmin || !warehouseStoreIds.has(storeId);
-
   function handleProductSelect(sourceStore, product) {
     const storeId = sourceStore.store_id;
     const searchId = searchIdRef.current;
@@ -11420,20 +11442,20 @@ function StockVerticalView({ session, settings }) {
         exactStoreIds.add(s.store_id);
       }
     });
+    // Load EVERY matched store's core, including NMW — a store user doesn't see
+    // the NMW tables but the NMW summary tiles below (stock/expiry/PTR/MRP) need
+    // its batch data. The matrix handles the NMW display gating, not this.
     if (exactResults.length) {
       setSelectionState((cur) => applySyncResult(cur, storeId, product.product_code, buildSynchronizedMap(exactResults)));
       exactResults.forEach((match) => {
-        if (!canLoadDetail(match.store_id)) return; // NMW detail gated for store users
         loadStoreCore(match.store_id, match.product)
           .then((core) => { if (searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [match.store_id]: core })); })
           .catch(() => setStoreDetails((prev) => ({ ...prev, [match.store_id]: { product: match.product, batches: [], purchases: [], sales: [], movement: [] } })));
       });
     }
-    if (canLoadDetail(storeId)) {
-      loadStoreCore(storeId, product)
-        .then((core) => { if (searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [storeId]: core })); })
-        .catch(() => setStoreDetails((prev) => ({ ...prev, [storeId]: { product, batches: [], purchases: [], sales: [], movement: [] } })));
-    }
+    loadStoreCore(storeId, product)
+      .then((core) => { if (searchIdRef.current === searchId) setStoreDetails((prev) => ({ ...prev, [storeId]: core })); })
+      .catch(() => setStoreDetails((prev) => ({ ...prev, [storeId]: { product, batches: [], purchases: [], sales: [], movement: [] } })));
     syncCrossStoreSelection(storeId, product, searchId, exactStoreIds, exactResults);
   }
 
@@ -11451,7 +11473,6 @@ function StockVerticalView({ session, settings }) {
     const freshSynchronized = buildSynchronizedMap([...exactResults, ...asArray(response?.results)]);
     setSelectionState((cur) => applySyncResult(cur, sourceStoreId, product.product_code, freshSynchronized));
     await Promise.all(matches.map(async (match) => {
-      if (!canLoadDetail(match.store_id)) return; // NMW detail gated for store users
       const known = (searchProductsByStore.get(match.store_id) || []).find((row) => row.product_code === match.product.product_code);
       const targetProduct = known || { product_code: match.product.product_code, product_name: match.product.product_name, mrp: match.product.mrp };
       try {
