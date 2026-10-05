@@ -143,6 +143,7 @@ from modules.audit.middleware import AuditFailureMiddleware
 from modules.audit.repository import ensure_schema as ensure_audit_schema
 from modules.mobile_bff.router import router as mobile_bff_router
 from modules.mobile_bff.repository import ensure_schema as ensure_mobile_bff_schema
+from modules.ho_ops.router import router as ho_ops_router
 from modules.bootstrap.router import (
     router as bootstrap_router,
     admin_router as ho_routes_admin_router,
@@ -367,6 +368,7 @@ app.include_router(licensing_agent_router)
 app.include_router(mobile_bff_router)
 app.include_router(bootstrap_router)
 app.include_router(ho_routes_admin_router)
+app.include_router(ho_ops_router)
 app.include_router(device_auth_router)
 app.include_router(device_agent_router)
 app.include_router(device_admin_router)
