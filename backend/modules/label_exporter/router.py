@@ -19,6 +19,7 @@ from modules.label_exporter.schemas import (
     LabelAssignRequest,
     LabelAssignResult,
     LabelBulkReviewRequest,
+    LabelBulkUnitRequest,
     LabelClearRequest,
     LabelLocationCorrectionRequest,
     LabelMarkPrintedRequest,
@@ -179,6 +180,22 @@ def correct_unit(
     return {"ok": True}
 
 
+@router.put("/products/bulk-unit")
+def bulk_correct_unit(
+    tenant_id: str,
+    store_id: str,
+    body: LabelBulkUnitRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Find-and-replace a unit across many products at once (e.g. set every
+    selected RM product's NEW unit to TAB). Store-scoped, like the single-row
+    unit correction — writes only dbo.label_review, never master data."""
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    return service.bulk_correct_unit(
+        tenant_id, store_id, body.product_codes, body.unit_description, current_user.get("sub")
+    )
+
+
 @router.put("/products/{product_code}/location")
 def correct_location(
     tenant_id: str,
@@ -210,7 +227,7 @@ def preview_assignment(
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
     return service.preview_assignment(
         tenant_id, store_id, body.unit, body.mode, body.assignment_type,
-        body.letter, body.product_codes, body.start_number,
+        body.letter, body.product_codes, body.start_number, body.letter_plans,
     )
 
 
@@ -226,6 +243,7 @@ def commit_assignment(
     return service.commit_assignment(
         tenant_id, store_id, body.unit, body.mode, body.assignment_type,
         body.letter, body.product_codes, body.start_number, current_user.get("sub"),
+        body.letter_plans,
     )
 
 

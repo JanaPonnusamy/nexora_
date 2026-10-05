@@ -163,16 +163,63 @@ def correct_unit(
     )
 
 
+def bulk_correct_unit(
+    tenant_id: str, store_id: str, product_codes: list[str], unit_description: str, user_id
+):
+    """Find-and-replace a unit across many products (e.g. all selected RM rows
+    -> TAB). The original master unit is captured into old_unit_description
+    once per product (never overwritten), exactly like the single-row path."""
+    new_unit = (unit_description or "").strip().upper()
+    if not new_unit:
+        raise HTTPException(status_code=400, detail="unit_description is required")
+    codes = [c for c in (product_codes or []) if str(c or "").strip()]
+    if not codes:
+        raise HTTPException(status_code=400, detail="No products selected")
+    repository.ensure_schema()
+    affected = repository.bulk_correct_unit(tenant_id, store_id, codes, new_unit, user_id)
+    return {"ok": True, "count": len(codes), "affected": affected}
+
+
 # --------------------------------------------------------------------------
 # Location assignment (preview + commit share one plan builder)
 # --------------------------------------------------------------------------
 
+def _occupancy_for_letters(tenant_id, store_id, letters, exclude_codes):
+    """Merge per-letter occupancy maps into one {box: count} dict covering every
+    letter in a multi-letter selection (Continue/Single need live occupancy;
+    New-from-1 ignores it). A handful of letters, one query each."""
+    occ: dict[str, int] = {}
+    for one in letters:
+        if not one or not str(one).isalpha():
+            continue
+        occ.update(repository.get_box_occupancy(tenant_id, store_id, one, exclude_codes=exclude_codes))
+    return occ
+
+
+def _letter_specs_from(letter_plans):
+    """Turn the request's [{letter, mode, start_number}, ...] into
+    {LETTER: {"mode", "start_number"}} for the engine, validating modes."""
+    specs: dict[str, dict] = {}
+    for lp in letter_plans or []:
+        one = str(getattr(lp, "letter", "") or "").strip().upper()[:1]
+        if not one:
+            continue
+        mode = str(getattr(lp, "mode", "") or "continue").strip()
+        if mode not in _VALID_MODE:
+            raise HTTPException(status_code=400, detail=f"Invalid mode for letter {one}")
+        specs[one] = {"mode": mode, "start_number": int(getattr(lp, "start_number", 1) or 1)}
+    return specs
+
+
 def _build_assignment_plan(
-    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number
+    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number, letter_plans=None
 ):
     """Shared, backend-authoritative planner (spec §AG): the frontend never
     computes the final boxes - it previews and commits through here, and both
-    paths run the identical engine. Returns (plan, enriched_assignments)."""
+    paths run the identical engine. Each product is boxed under its OWN first
+    letter, and each letter can run its own mode (from ``letter_plans``), so a
+    multi-letter selection is never dumped under one letter. Returns
+    (plan, enriched_assignments)."""
     repository.ensure_schema()
     mode = (mode or "continue").strip()
     assignment_type = (assignment_type or "standard_box").strip()
@@ -199,23 +246,30 @@ def _build_assignment_plan(
 
     products = [engine.Product(p["product_code"], p["product_name"]) for p in products_raw]
     meta_by_code = {p["product_code"]: p for p in products_raw}
+    specs = _letter_specs_from(letter_plans)
+
+    # A legacy global "Single Product Box" choice means every letter is single.
+    default_mode = engine.LETTER_MODE_SINGLE if assignment_type == "single_product_box" else mode
 
     try:
-        if assignment_type == "single_product_box":
-            if not letter:
-                raise HTTPException(status_code=400, detail="A letter is required for box numbering")
-            occ = repository.get_box_occupancy(tenant_id, store_id, letter, exclude_codes=codes)
-            plan = engine.plan_single_boxes(letter, products, occ)
-        elif unit_u == engine.UNIT_SYP:
+        if unit_u == engine.UNIT_SYP:
+            # SYP ignores per-letter modes — it always buckets into SYP<letter>.
             plan = engine.plan_syp(products)
         elif unit_u in engine.STANDARD_BOX_UNITS:
-            if not letter:
-                raise HTTPException(status_code=400, detail=f"A letter is required for {unit_u} assignment")
-            if mode == "new_label":
-                plan = engine.plan_new_label(letter, products, start_number=int(start_number or 1), unit=unit_u)
-            else:
-                occ = repository.get_box_occupancy(tenant_id, store_id, letter, exclude_codes=codes)
-                plan = engine.plan_continue(letter, products, occ, unit=unit_u)
+            letters = engine.letters_in(products, fallback=letter)
+            # Occupancy only for letters that will Continue/Single (New-from-1 skips it).
+            need_occ = [
+                one for one in letters
+                if (specs.get(one, {}).get("mode", default_mode)) in (engine.LETTER_MODE_CONTINUE, engine.LETTER_MODE_SINGLE)
+            ]
+            occ = _occupancy_for_letters(tenant_id, store_id, need_occ, codes) if need_occ else {}
+            plan = engine.plan_by_letter(
+                products, specs, occ,
+                default_mode=default_mode,
+                default_start=int(start_number or 1),
+                unit=unit_u,
+                fallback_letter=letter,
+            )
         else:
             raise HTTPException(
                 status_code=400,
@@ -237,6 +291,9 @@ def _build_assignment_plan(
                 "product_name": a.product_name,
                 "box": a.box,
                 "slot": a.slot,
+                # Per-row mode/type so a mixed (per-letter) run audits honestly.
+                "mode": a.mode or plan.mode,
+                "assignment_type": "single_product_box" if a.mode == engine.LETTER_MODE_SINGLE else "standard_box",
                 "unit_description": meta.get("unit_description"),
                 "old_location": meta.get("current_location"),
                 "stock": meta.get("stock"),
@@ -246,19 +303,19 @@ def _build_assignment_plan(
 
 
 def preview_assignment(
-    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number=1
+    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number=1, letter_plans=None
 ):
     plan, _ = _build_assignment_plan(
-        tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number
+        tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number, letter_plans
     )
     return plan.to_dict()
 
 
 def commit_assignment(
-    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number, user_id
+    tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number, user_id, letter_plans=None
 ):
     plan, enriched = _build_assignment_plan(
-        tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number
+        tenant_id, store_id, unit, mode, assignment_type, letter, product_codes, start_number, letter_plans
     )
     repository.assign_locations(tenant_id, store_id, enriched, plan.mode, plan.assignment_type, user_id)
     result = plan.to_dict()

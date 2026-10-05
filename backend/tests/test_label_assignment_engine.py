@@ -12,7 +12,9 @@ from modules.label_exporter.assignment_engine import (
     AssignmentError,
     Product,
     format_tab_box,
+    letters_in,
     parse_tab_box,
+    plan_by_letter,
     plan_continue,
     plan_new_label,
     plan_single_boxes,
@@ -152,6 +154,66 @@ def test_single_product_boxes_one_each():
 def test_single_product_box_continues_after_existing():
     plan = plan_single_boxes("D", _products("DOLO 650"), {"D005": 1})
     assert _boxes(plan) == {"D006": 1}
+
+
+# --------------------------------------------------------------------------
+# Multi-letter orchestration (per-product first letter + per-letter modes)
+# --------------------------------------------------------------------------
+
+def test_letters_in_lists_distinct_first_letters():
+    products = _products("APPLE", "AVOCADO", "BANANA", "CHERRY")
+    assert letters_in(products) == ["A", "B", "C"]
+
+
+def test_plan_by_letter_boxes_each_product_under_its_own_letter():
+    # The reported bug: a 3-letter selection must NOT all land under one letter.
+    products = _products("APExDRUG", "AVODRUG", "BETADRUG", "CETADRUG")
+    plan = plan_by_letter(products, {}, {}, default_mode="new_label")
+    validate_plan(plan)
+    by_code = {a.product_name: a.box for a in plan.assignments}
+    assert by_code["APExDRUG"].startswith("A")
+    assert by_code["AVODRUG"].startswith("A")
+    assert by_code["BETADRUG"] == "B001"
+    assert by_code["CETADRUG"] == "C001"
+    assert _boxes(plan) == {"A001": 2, "B001": 1, "C001": 1}
+
+
+def test_plan_by_letter_new_label_chunks_7_per_letter():
+    products = _products(*[f"A {i:02d}" for i in range(8)], *[f"B {i:02d}" for i in range(3)])
+    plan = plan_by_letter(products, {}, {}, default_mode="new_label")
+    validate_plan(plan)
+    assert _boxes(plan) == {"A001": 7, "A002": 1, "B001": 3}
+
+
+def test_plan_by_letter_per_letter_modes_mix():
+    # A continues its partial box A005(=4); B starts a fresh label from 1;
+    # C puts each product in its own single box.
+    existing = {"A005": 4, "C009": 1}
+    products = _products("A ONE", "A TWO", "B ONE", "B TWO", "C ONE", "C TWO")
+    specs = {
+        "A": {"mode": "continue"},
+        "B": {"mode": "new_label", "start_number": 1},
+        "C": {"mode": "single"},
+    }
+    plan = plan_by_letter(products, specs, existing, default_mode="continue")
+    validate_plan(plan)
+    assert _boxes(plan) == {"A005": 2, "B001": 2, "C010": 1, "C011": 1}
+    # mixed modes -> batch label is 'mixed' but each row keeps its own mode
+    assert plan.mode == "mixed"
+    modes = {a.product_name: a.mode for a in plan.assignments}
+    assert modes["A ONE"] == "continue"
+    assert modes["B ONE"] == "new_label"
+    assert modes["C ONE"] == "single"
+
+
+def test_plan_by_letter_uniform_mode_keeps_single_label():
+    plan = plan_by_letter(_products("A ONE", "B ONE"), {}, {}, default_mode="continue")
+    assert plan.mode == "continue"
+
+
+def test_plan_by_letter_empty_raises():
+    with pytest.raises(AssignmentError):
+        plan_by_letter([], {}, {})
 
 
 # --------------------------------------------------------------------------

@@ -15,6 +15,11 @@ Business rules preserved from the legacy VB6 app (see memory
 * SYP  -> one bucket per first-letter-of-name: ``SYP`` + letter (``SYPA``).
 * Box numbers are zero-padded to 3 digits (A1 -> A001, A25 -> A025).
 * Products are allocated in product-name order.
+* The box LETTER is the first letter of each product's *own* name
+  (legacy ``let = UCase(Mid(name,1,1))``) — a selection spanning several
+  letters is boxed per letter (A-products -> A###, B-products -> B###, ...),
+  never dumped under one global letter. A single filter-letter is just the
+  common case of one group.
 
 New behaviour (owner-directed, not in the legacy app): Mode 1 fills the last
 *partial* box of a letter before opening new boxes.
@@ -60,6 +65,7 @@ class Assignment:
     product_name: str
     box: str
     slot: int  # 1-based position within its box
+    mode: str = ""  # per-letter mode that placed it (continue/new_label/single)
 
 
 @dataclass
@@ -93,6 +99,7 @@ class AssignmentPlan:
                     "product_name": a.product_name,
                     "box": a.box,
                     "slot": a.slot,
+                    "mode": a.mode,
                 }
                 for a in self.assignments
             ],
@@ -138,6 +145,40 @@ def parse_tab_box(box: str) -> tuple[str, int] | None:
 
 def _sorted_by_name(products: Iterable[Product]) -> list[Product]:
     return sorted(products, key=lambda p: (p.product_name or "").upper())
+
+
+def _group_by_letter(
+    products: Iterable[Product], fallback: str = ""
+) -> dict[str, list[Product]]:
+    """Group products by the first letter of their own name (legacy rule:
+    box letter = ``UCase(Mid(name,1,1))``). Products whose name does not start
+    with a letter fall back to ``fallback`` when that is a letter, otherwise
+    they are grouped under their raw initial and ``format_tab_box`` will reject
+    them with a clear error."""
+    fb = (fallback or "").strip().upper()[:1]
+    groups: dict[str, list[Product]] = {}
+    for product in products:
+        letter = product.first_letter
+        if not letter.isalpha() and fb.isalpha():
+            letter = fb
+        groups.setdefault(letter, []).append(product)
+    return groups
+
+
+def _iter_letter_groups(
+    products: Iterable[Product], fallback: str = ""
+) -> Iterable[tuple[str, list[Product]]]:
+    """Yield (letter, products) groups in A→Z order so a multi-letter plan lays
+    its boxes out alphabetically (A001…, B001…, C001…)."""
+    groups = _group_by_letter(products, fallback)
+    for letter in sorted(groups):
+        yield letter, groups[letter]
+
+
+def letters_in(products: Iterable[Product], fallback: str = "") -> list[str]:
+    """Distinct box letters a selection will produce, A→Z (for the UI's
+    per-letter mode controls and the service's occupancy fetch)."""
+    return sorted(_group_by_letter(products, fallback).keys())
 
 
 def _highest_box_for_letter(
@@ -288,6 +329,74 @@ def plan_single_boxes(
 
 
 # --------------------------------------------------------------------------
+# Multi-letter orchestration — each letter runs its OWN mode (Continue / New
+# from 1 / Single product box). This is what the drawer's per-letter dropdowns
+# drive, and it is also the correct single-letter path (one group).
+# --------------------------------------------------------------------------
+
+# Per-letter mode names accepted in a letter spec.
+LETTER_MODE_CONTINUE = "continue"
+LETTER_MODE_NEW = "new_label"
+LETTER_MODE_SINGLE = "single"
+_VALID_LETTER_MODES = {LETTER_MODE_CONTINUE, LETTER_MODE_NEW, LETTER_MODE_SINGLE}
+
+
+def plan_by_letter(
+    products: Iterable[Product],
+    letter_specs: dict[str, dict] | None = None,
+    existing_boxes: dict[str, int] | None = None,
+    *,
+    default_mode: str = LETTER_MODE_CONTINUE,
+    default_start: int = 1,
+    unit: str = UNIT_TAB,
+    capacity: int = TAB_BOX_CAPACITY,
+    fallback_letter: str = "",
+) -> AssignmentPlan:
+    """Assign TAB/CAP products letter-by-letter, each letter applying the mode
+    chosen for it (``letter_specs[LETTER] = {"mode": ..., "start_number": ...}``).
+    Letters without a spec use ``default_mode`` / ``default_start``. Delegates
+    each group to the single-letter planners and merges the results, so one box
+    can never span two letters. ``existing_boxes`` is the full occupancy map
+    (all letters) read live from the DB."""
+    ordered = _sorted_by_name(products)
+    if not ordered:
+        raise AssignmentError("No products to assign")
+    specs = letter_specs or {}
+    occ = existing_boxes or {}
+
+    master = AssignmentPlan(unit=unit, mode=default_mode, assignment_type="standard_box")
+    modes_used: set[str] = set()
+    types_used: set[str] = set()
+
+    for grp_letter, group in _iter_letter_groups(ordered, fallback=fallback_letter):
+        spec = specs.get(grp_letter) or {}
+        mode = (spec.get("mode") or default_mode or LETTER_MODE_CONTINUE).strip()
+        if mode not in _VALID_LETTER_MODES:
+            raise AssignmentError(f"Invalid mode {mode!r} for letter {grp_letter}")
+        start = int(spec.get("start_number") or default_start or 1)
+
+        if mode == LETTER_MODE_SINGLE:
+            sub = plan_single_boxes(grp_letter, group, occ)
+        elif mode == LETTER_MODE_NEW:
+            sub = plan_new_label(grp_letter, group, capacity=capacity, start_number=start, unit=unit)
+        else:
+            sub = plan_continue(grp_letter, group, occ, capacity=capacity, unit=unit)
+
+        for assignment in sub.assignments:
+            assignment.mode = mode  # per-row mode for an accurate audit trail
+        master.assignments.extend(sub.assignments)
+        master.boxes.extend(sub.boxes)
+        modes_used.add(mode)
+        types_used.add(sub.assignment_type)
+
+    # A uniform selection keeps its single mode/type label; a mixed one is tagged
+    # 'mixed' / 'standard_box' (each box still carries its own capacity).
+    master.mode = next(iter(modes_used)) if len(modes_used) == 1 else "mixed"
+    master.assignment_type = (
+        "single_product_box" if types_used == {"single_product_box"} else "standard_box"
+    )
+    return master
+
 
 def _summarise_boxes(
     assignments: list[Assignment], existing: dict[str, int], capacity: int | None

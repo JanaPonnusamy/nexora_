@@ -779,6 +779,16 @@ export const api = {
     });
   },
 
+  // Bulk find-and-replace a unit (e.g. set every selected RM product's NEW unit
+  // to TAB). Writes dbo.label_review only; master unit captured server-side.
+  bulkCorrectLabelUnit(tenantId, storeId, productCodes, unitDescription, session) {
+    return request(`/api/label-exporter/products/bulk-unit${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ product_codes: productCodes, unit_description: unitDescription })
+    });
+  },
+
   assignLabelSublocation(productCode, tenantId, storeId, sublocation, session) {
     return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/sublocation${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
       method: 'PUT',

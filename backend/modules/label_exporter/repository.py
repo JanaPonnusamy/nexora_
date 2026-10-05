@@ -713,6 +713,10 @@ def assign_locations(tenant_id, store_id, assignments, mode, assignment_type, us
             old_loc = (a.get("old_location") or "").strip() or None
             new_box = a["box"]
             unit = (a.get("unit_description") or "").strip() or None
+            # Per-row mode/type (a mixed, per-letter run) falls back to the batch
+            # values when a row doesn't carry its own.
+            row_mode = a.get("mode") or mode
+            row_type = a.get("assignment_type") or assignment_type
             cursor.execute(
                 "SELECT id FROM dbo.label_review WHERE tenant_id = ? AND store_id = ? AND product_code = ?",
                 (tenant_id, store_id, code),
@@ -731,7 +735,7 @@ def assign_locations(tenant_id, store_id, assignments, mode, assignment_type, us
                     """,
                     (
                         tenant_id, store_id, code, a.get("product_name"),
-                        unit, old_loc, new_box, mode, assignment_type, user_id,
+                        unit, old_loc, new_box, row_mode, row_type, user_id,
                         a.get("stock"), a.get("sale_days"), a.get("purchase_days"),
                     ),
                 )
@@ -755,8 +759,8 @@ def assign_locations(tenant_id, store_id, assignments, mode, assignment_type, us
                     WHERE tenant_id = ? AND store_id = ? AND product_code = ?
                     """,
                     (
-                        a.get("product_name"), unit, old_loc, new_box, mode,
-                        assignment_type, user_id, a.get("stock"), a.get("sale_days"),
+                        a.get("product_name"), unit, old_loc, new_box, row_mode,
+                        row_type, user_id, a.get("stock"), a.get("sale_days"),
                         a.get("purchase_days"), tenant_id, store_id, code,
                     ),
                 )
@@ -769,7 +773,7 @@ def assign_locations(tenant_id, store_id, assignments, mode, assignment_type, us
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (tenant_id, store_id, code, old_loc, new_box, unit, mode, assignment_type, user_id),
+                    (tenant_id, store_id, code, old_loc, new_box, unit, row_mode, row_type, user_id),
                 )
         conn.commit()
     except Exception:
@@ -812,6 +816,69 @@ def correct_unit(tenant_id, store_id, product_code, new_unit, current_unit, user
         """,
         (current_unit or None, new_unit or None, user_id, tenant_id, store_id, product_code),
     )
+
+
+def bulk_correct_unit(tenant_id, store_id, product_codes, new_unit, user_id):
+    """Find-and-replace a unit across many products in one transaction: set
+    unit_description = new_unit for every given code, capturing each product's
+    ORIGINAL master unit (sync.Products.UnitDescription) into
+    old_unit_description once (COALESCE keeps any prior capture). One UPDATE for
+    rows that already have a label_review, one set-based INSERT for the rest —
+    no connection-per-product loop. Returns the number of codes processed."""
+    codes = [c for c in (product_codes or []) if str(c or "").strip()]
+    if not codes:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        placeholders = ", ".join("?" for _ in codes)
+        # Update existing review rows, pulling the master unit for any that have
+        # not captured an old_unit_description yet.
+        cursor.execute(
+            f"""
+            UPDATE r
+            SET old_unit_description = COALESCE(
+                    NULLIF(LTRIM(RTRIM(r.old_unit_description)), ''),
+                    NULLIF(LTRIM(RTRIM(p.UnitDescription)), '')
+                ),
+                unit_description = ?,
+                reviewed_by = ?,
+                updated_at = SYSUTCDATETIME()
+            FROM dbo.label_review r
+            LEFT JOIN sync.Products p
+                ON p.tenant_id = r.tenant_id
+               AND p.store_id = r.store_id
+               AND CAST(p.ProductCode AS NVARCHAR(50)) = r.product_code
+            WHERE r.tenant_id = ? AND r.store_id = ? AND r.product_code IN ({placeholders})
+            """,
+            (new_unit, user_id, tenant_id, store_id, *codes),
+        )
+        # Insert review rows for products that have none yet, capturing the
+        # master unit as the old value.
+        cursor.execute(
+            f"""
+            INSERT INTO dbo.label_review (
+                tenant_id, store_id, product_code, old_unit_description,
+                unit_description, reviewed_by, reviewed_at
+            )
+            SELECT ?, ?, CAST(p.ProductCode AS NVARCHAR(50)),
+                   NULLIF(LTRIM(RTRIM(p.UnitDescription)), ''), ?, ?, SYSUTCDATETIME()
+            FROM sync.Products p
+            WHERE p.tenant_id = ? AND p.store_id = ?
+              AND CAST(p.ProductCode AS NVARCHAR(50)) IN ({placeholders})
+              AND NOT EXISTS (
+                  SELECT 1 FROM dbo.label_review r
+                  WHERE r.tenant_id = p.tenant_id AND r.store_id = p.store_id
+                    AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+              )
+            """,
+            (tenant_id, store_id, new_unit, user_id, tenant_id, store_id, *codes),
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+    return len(codes)
 
 
 def correct_location(tenant_id, store_id, product_code, new_location, current_location, user_id):

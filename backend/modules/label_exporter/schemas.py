@@ -166,6 +166,16 @@ class LabelUnitCorrectionRequest(BaseModel):
     current_unit: Optional[str] = None
 
 
+class LabelBulkUnitRequest(BaseModel):
+    """Find-and-replace a unit across many products at once (e.g. set every
+    selected RM product's NEW unit to TAB). Writes only dbo.label_review; the
+    master unit is captured into old_unit_description once, like the single-row
+    correction."""
+
+    product_codes: List[str] = []
+    unit_description: str
+
+
 # ---------- Location correction (manual box override, super admin) ----------
 
 
@@ -177,13 +187,25 @@ class LabelLocationCorrectionRequest(BaseModel):
 # ---------- Location assignment (preview + commit) ----------
 
 
+class LabelLetterPlan(BaseModel):
+    """Per-letter mode choice from the drawer's dropdowns. ``mode`` is one of
+    continue / new_label / single; ``start_number`` applies to new_label."""
+
+    letter: str
+    mode: str = "continue"
+    start_number: int = 1
+
+
 class LabelAssignRequest(BaseModel):
     unit: str = ""
-    mode: str = "continue"            # continue / new_label / single
+    mode: str = "continue"            # legacy/global fallback (continue/new_label/single)
     assignment_type: str = "standard_box"  # standard_box / single_product_box
-    letter: str = ""
+    letter: str = ""                  # legacy fallback for odd (non-letter) names
     product_codes: List[str] = []
     start_number: int = 1
+    # Per-letter modes (A→continue, B→new_label, …). When present, each letter
+    # is boxed under its own mode; letters omitted here use `mode`/`start_number`.
+    letter_plans: List[LabelLetterPlan] = []
 
 
 class LabelAssignBox(BaseModel):
@@ -199,6 +221,7 @@ class LabelAssignEntry(BaseModel):
     product_name: str
     box: str
     slot: int
+    mode: str = ""
 
 
 class LabelAssignResult(BaseModel):
