@@ -11,17 +11,30 @@ const nodeKey = (n: HoNodeStatus) => (n.is_self ? 'self' : n.url ?? '')
 const xs: React.CSSProperties = { fontSize: 11, color: 'var(--sx-dim, #8a94a6)' }
 const rowGap: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center' }
 
+const isExe = (n: HoNodeStatus) => n.kind === 'exe'
+const exeUpdatable = (n: HoNodeStatus) =>
+  isExe(n) && !!n.latest_release && n.exe_version !== n.latest_release
+const gitUpdatable = (n: HoNodeStatus) =>
+  !isExe(n) && !!n.behind_main && n.behind_main > 0
+const hasUpdate = (n: HoNodeStatus) =>
+  n.reachable && !!n.can_self_update && (exeUpdatable(n) || gitUpdatable(n))
+
 function versionTone(n: HoNodeStatus): Tone {
   if (!n.reachable) return 'danger'
   if (n.up_to_date === true) return 'success'
-  if (n.behind_main && n.behind_main > 0) return 'warning'
+  if (exeUpdatable(n) || gitUpdatable(n)) return 'warning'
   return 'muted'
 }
 
 function versionLabel(n: HoNodeStatus): string {
   if (!n.reachable) return 'UNREACHABLE'
   if (n.up_to_date === true) return 'UP TO DATE'
-  if (n.behind_main && n.behind_main > 0) return `${n.behind_main} BEHIND`
+  if (isExe(n)) {
+    if (!n.latest_release) return 'NO RELEASE'
+    if (exeUpdatable(n)) return `UPDATE → ${n.latest_release}`
+    return 'UNKNOWN'
+  }
+  if (gitUpdatable(n)) return `${n.behind_main} BEHIND`
   return 'UNKNOWN'
 }
 
@@ -35,9 +48,7 @@ export function BackendUpdatePanel() {
   const [flash, setFlash] = useState<string | null>(null)
 
   const nodes = nodesQuery.data?.nodes ?? []
-  const outOfDate = nodes.filter(
-    (n) => n.reachable && n.can_self_update && !!n.behind_main && n.behind_main > 0,
-  )
+  const outOfDate = nodes.filter(hasUpdate)
 
   async function runUpdate(targets: HoNodeStatus[]) {
     if (!targets.length) return
@@ -109,8 +120,8 @@ export function BackendUpdatePanel() {
               <tr>
                 <th>Node</th>
                 <th>Host</th>
-                <th>Branch</th>
-                <th>Running commit</th>
+                <th>Type</th>
+                <th>Running version</th>
                 <th>Fleet routes</th>
                 <th>Status</th>
                 <th style={{ textAlign: 'right' }}>Action</th>
@@ -124,11 +135,26 @@ export function BackendUpdatePanel() {
                     {!n.is_self && n.label && <div style={xs}>{n.url}</div>}
                   </td>
                   <td>{n.hostname ?? '—'}</td>
-                  <td>{n.branch ?? '—'}</td>
                   <td>
-                    {n.head ? (
+                    {n.reachable ? (
+                      <SxChip tone={isExe(n) ? 'teal' : 'muted'}>
+                        {isExe(n) ? 'exe' : n.kind === 'git' ? 'git' : '—'}
+                      </SxChip>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td>
+                    {isExe(n) ? (
                       <>
-                        <code>{n.head}</code>
+                        <code>{n.exe_version ?? 'unknown'}</code>
+                        {n.latest_release && (
+                          <div style={xs}>latest: {n.latest_release}</div>
+                        )}
+                      </>
+                    ) : n.head ? (
+                      <>
+                        <code>{n.branch ? `${n.branch} ` : ''}{n.head}</code>
                         {n.subject && <div style={xs} title={n.subject}>{n.subject.slice(0, 48)}</div>}
                         {n.committed_at && <div style={xs}>{formatDateTime(n.committed_at)}</div>}
                       </>
@@ -148,12 +174,17 @@ export function BackendUpdatePanel() {
                   <td style={{ textAlign: 'right' }}>
                     <SxButton
                       variant="ghost"
-                      disabled={!!busy || !n.reachable || !n.can_self_update}
+                      disabled={
+                        !!busy || !n.reachable || !n.can_self_update ||
+                        (isExe(n) && !n.latest_release)
+                      }
                       busy={busy === nodeKey(n)}
                       title={
                         !n.can_self_update
-                          ? 'This node cannot self-update (not a Windows git checkout, or deploy script missing)'
-                          : undefined
+                          ? 'This node cannot self-update (Windows only)'
+                          : isExe(n) && !n.latest_release
+                            ? 'No HO backend release has been published yet'
+                            : undefined
                       }
                       onClick={() => setConfirm(n)}
                     >
@@ -172,15 +203,25 @@ export function BackendUpdatePanel() {
           <SxCardHead title="Confirm backend update" />
           <SxCardBody>
             <p>
-              Pull <code>origin/main</code>, reinstall dependencies, and restart the backend on{' '}
+              {isExe(confirm) ? (
+                <>
+                  Pull backend bundle <strong>{confirm.latest_release}</strong> and hot-swap it
+                  behind the <code>{confirm.service_name || 'UniNexHO'}</code> service on{' '}
+                </>
+              ) : (
+                <>Pull <code>origin/main</code>, reinstall, and restart the backend on{' '}</>
+              )}
               <strong>{confirm.is_self ? 'this node' : confirm.label || confirm.url}</strong>
               {confirm.hostname ? ` (${confirm.hostname})` : ''}?
             </p>
             <p style={xs}>
-              The backend will be briefly unavailable (~20–40s) while it restarts.
-              {confirm.behind_main != null && confirm.behind_main > 0
-                ? ` This node is ${confirm.behind_main} commit(s) behind main.`
-                : ' This node is already up to date — updating will simply restart it.'}
+              The backend will be briefly unavailable (~20–90s) while it restarts; it
+              auto-rolls back if the new version fails to come up.
+              {isExe(confirm)
+                ? ` Updating ${confirm.exe_version ?? 'unknown'} → ${confirm.latest_release}.`
+                : confirm.behind_main != null && confirm.behind_main > 0
+                  ? ` This node is ${confirm.behind_main} commit(s) behind main.`
+                  : ' This node is already up to date — updating will simply restart it.'}
             </p>
             <div style={{ ...rowGap, marginTop: 12 }}>
               <SxButton variant="primary" busy={!!busy} disabled={!!busy} onClick={() => runUpdate([confirm])}>

@@ -11,8 +11,13 @@ import type {
 // talks to its own origin.
 export const hoOpsService = {
   status: () => api.get<HoNodeStatus>('/api/ho-ops/status'),
-  nodes: () => api.get<{ nodes: HoNodeStatus[] }>('/api/ho-ops/nodes'),
+  nodes: () => api.get<{ nodes: HoNodeStatus[]; latest_release?: string | null }>('/api/ho-ops/nodes'),
   selfUpdate: () => api.post<SelfUpdateResult>('/api/ho-ops/self-update', {}),
+  // source_url tells exe peers which node to pull the published bundle from —
+  // this (the build node) origin.
   update: (targets: UpdateNodeTarget[]) =>
-    api.post<UpdateNodesResult>('/api/ho-ops/update', { targets }),
+    api.post<UpdateNodesResult>('/api/ho-ops/update', {
+      targets,
+      source_url: window.location.origin,
+    }),
 }
