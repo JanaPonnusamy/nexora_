@@ -9,5 +9,11 @@ class NodeTarget(BaseModel):
     is_self: bool = Field(False, description="true to update the node serving this request")
 
 
+class SelfUpdateRequest(BaseModel):
+    # For exe nodes: where to pull the published bundle from (the build node).
+    source_url: Optional[str] = Field(None, description="base URL of the node that holds the release")
+
+
 class UpdateNodesRequest(BaseModel):
     targets: List[NodeTarget] = Field(default_factory=list)
+    source_url: Optional[str] = Field(None, description="build node base URL exe peers pull from")

@@ -113,3 +113,6 @@ matrix_*_report.txt
 # PRIVATE key must never be committed (public key stays tracked for the watchdog).
 backend/stock_client_releases/
 backend/config/stock_release_signing_key.pem
+
+# HO backend update bundles (built artifacts, never commit)
+backend/ho_backend_releases/

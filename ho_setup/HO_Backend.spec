@@ -51,6 +51,13 @@ for sql_dir in glob.glob(os.path.join(BACKEND, "modules", "*", "sql")):
     for sql_file in glob.glob(os.path.join(sql_dir, "*.sql")):
         datas.append((sql_file, os.path.join("modules", module_name, "sql")))
 
+# Release-signing PUBLIC key, so an exe HO node can verify (sha256 + Ed25519) a
+# pulled backend bundle before swapping it (modules.ho_ops.service._public_key
+# reads it from sys._MEIPASS). The private half is never bundled.
+_pub = os.path.join(BACKEND, "config", "stock_release_signing_key.pub.pem")
+if os.path.isfile(_pub):
+    datas.append((_pub, "."))
+
 a = Analysis(
     [os.path.join(REPO, "ho_setup", "launch_ho_service.py")],
     pathex=[REPO, BACKEND],
