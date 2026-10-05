@@ -3,6 +3,7 @@
     python -m store_agent_setup.build              # build everything
     python -m store_agent_setup.build agent        # only the agent
     python -m store_agent_setup.build watchdog     # only the watchdog
+    python -m store_agent_setup.build stock_client_watchdog # only the stock-client watchdog
     python -m store_agent_setup.build mail_transfer # only the mail transfer service
 
 Outputs in E:\\Nexora\\dist\\:
@@ -32,11 +33,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PKG = REPO / "store_agent_setup"
+BACKEND = REPO / "backend"
 DIST = REPO / "dist"
 BUILD = REPO / "build"
 SEP = ";"  # Windows add-data separator
 
 FERNET = REPO / "store_agent" / "config" / "fernet.key"
+STOCK_PUBKEY = BACKEND / "config" / "stock_release_signing_key.pub.pem"
 
 # Imports PyInstaller cannot always discover statically.
 _HIDDEN = [
@@ -88,6 +91,35 @@ def build_watchdog():
     for h in _HIDDEN:
         args += ["--hidden-import", h]
     args.append(str(PKG / "launch_watchdog_service.py"))
+    _pyinstaller(*args)
+
+
+def build_stock_client_watchdog():
+    """Standalone ONEFILE SYSTEM service that keeps the Electron Stock Client on
+    the HO-authorized version (Milestone 2). Reuses modules.device_identity.crypto
+    for Ed25519 verify, so the backend path is on sys.path and the release-signing
+    PUBLIC key is bundled for signature verification."""
+    args = ["--onefile", "--name", "NexoraStockClientWatchdog", "--console",
+            "--paths", str(REPO), "--paths", str(BACKEND),
+            "--hidden-import", "store_agent_setup.stock_client_watchdog_service",
+            "--hidden-import", "store_agent_setup.stock_client_host",
+            "--hidden-import", "modules.device_identity.crypto",
+            "--hidden-import", "win32timezone",
+            "--hidden-import", "win32com.client",
+            "--hidden-import", "win32gui",
+            "--hidden-import", "win32profile",
+            "--hidden-import", "win32ts",
+            "--collect-submodules", "cryptography",
+            "--exclude-module", "tkinter",
+            "--exclude-module", "_tkinter"]
+    if STOCK_PUBKEY.is_file():
+        # The release-signing public key is DATA the watchdog verifies against.
+        args += ["--add-data", f"{STOCK_PUBKEY}{SEP}."]
+    else:
+        print(f"WARNING: {STOCK_PUBKEY} not found -- publish a release first "
+              "(python -m store_agent_setup.publish_stock_release <v>) so the "
+              "watchdog can bundle the signing public key.")
+    args.append(str(PKG / "launch_stock_client_watchdog.py"))
     _pyinstaller(*args)
 
 
@@ -176,6 +208,8 @@ def main(argv=None):
         build_agent()
     if target in ("all", "watchdog"):
         build_watchdog()
+    if target in ("all", "stock_client_watchdog"):
+        build_stock_client_watchdog()
     if target in ("all", "mail_transfer"):
         build_mail_transfer()
     if target in ("all", "settings"):

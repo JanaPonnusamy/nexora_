@@ -173,23 +173,18 @@ async function createWindow() {
   }
 }
 
-// Remote auto-update: on launch, check the HO update feed (configured via
-// build.publish -> http://<HO>/updates), download a newer build silently, and
-// install it the next time the app quits (autoInstallOnAppQuit). Store PCs are
-// closed daily, so updates land without interrupting the user mid-session.
+// Remote updates are now owned by the SYSTEM-level NexoraStockClientWatchdog
+// service (store_agent_setup/stock_client_watchdog_service.py), NOT by the app
+// updating itself. The watchdog polls HO for the version AUTHORIZED for this
+// store, verifies the signed package (sha256 + Ed25519), closes this GUI, runs
+// the installer, health-checks, and rolls back on failure -- a running app
+// cannot safely replace itself, and self-install-on-quit gave HO no per-store
+// authorization, no verification, and no rollback. electron-updater's
+// self-install path is intentionally disabled; the dependency is kept only so
+// older installs that still call this can no-op cleanly.
 function initAutoUpdates() {
-  if (!app.isPackaged) return;
-  try {
-    const { autoUpdater } = require('electron-updater');
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.on('error', () => { /* offline / feed unreachable - ignore */ });
-    autoUpdater.checkForUpdates().catch(() => {});
-    // Re-check every 6 hours in case a PC stays on for days.
-    setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
-  } catch {
-    // Update feed unreachable/misconfigured - the app must still run without it.
-  }
+  // No-op by design. See the comment above: updates are handled out-of-process
+  // by the watchdog service, with HO authorization + integrity + rollback.
 }
 
 app.whenReady().then(() => {
