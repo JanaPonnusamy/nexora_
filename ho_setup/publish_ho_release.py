@@ -25,7 +25,7 @@ import hashlib
 import json
 import sys
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -104,7 +104,7 @@ def publish(version, notes=None):
         "file_size": size,
         "signature": signature,
         "notes": notes,
-        "published_at": datetime.utcnow().isoformat() + "Z",
+        "published_at": datetime.now(timezone.utc).isoformat(),
     }
     (dest_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (RELEASES_DIR / "latest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
