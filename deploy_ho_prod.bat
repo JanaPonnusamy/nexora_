@@ -73,17 +73,9 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000" ^| findstr LISTENING'
     taskkill /F /PID %%p >nul 2>&1
 )
 timeout /t 2 /nobreak >nul
-REM Ensure the boot auto-start task exists (correct path = backend\start-prod).
-REM Without it the backend would not come back after a reboot / power-cut.
-schtasks /query /tn "NexoraBackend" >nul 2>&1
-if errorlevel 1 (
-    echo     creating NexoraBackend auto-start task...
-    schtasks /create /tn "NexoraBackend" /tr "cmd /c %BACKEND%\start-prod-8000.bat" /sc onstart /ru SYSTEM /rl HIGHEST /f >nul 2>&1
-    if errorlevel 1 echo     NOTE: could not create task ^(run this deploy as Administrator to enable reboot auto-start^).
-)
 schtasks /run /tn "NexoraBackend" >nul 2>&1
 if errorlevel 1 (
-    echo     task unavailable; launching start-prod-8000.bat detached
+    echo     scheduled task not found; launching start-prod-8000.bat detached
     start "nexora-backend" /min cmd /c "%BACKEND%\start-prod-8000.bat"
 )
 
