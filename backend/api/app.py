@@ -52,9 +52,20 @@ from modules.sync.runtime_router import (
 from modules.sync.shared_table_builder_router import (
     router as sync_shared_table_router,
 )
+from controllers.file_transfer_admin_controller import (
+    router as file_transfer_admin_router,
+)
 from modules.agent_ops.router import (
     router as agent_ops_router,
     agent_router as agent_ops_agent_router,
+)
+from modules.stock_client_ops.router import (
+    router as stock_client_ops_router,
+    agent_router as stock_client_ops_agent_router,
+)
+from modules.licensing.router import (
+    router as licensing_router,
+    agent_router as licensing_agent_router,
 )
 from modules.stock_availability.router import (
     router as stock_availability_router
@@ -89,15 +100,25 @@ from modules.expiry_stock.router import (
 from modules.nonmoving_report.router import (
     router as nonmoving_report_router
 )
+from modules.sale_analysis.router import (
+    router as sale_analysis_router
+)
 from modules.time_report.router import (
     router as time_report_router
 )
 from modules.product_mapping.router import (
     router as product_mapping_router
 )
-from modules.document_extraction.router import (
-    router as document_extraction_router
-)
+try:
+    from modules.document_extraction.router import (
+        router as document_extraction_router
+    )
+except ImportError:
+    # Not bundled in lite HO builds (excludes cv2/paddleocr/torch to keep the
+    # installer under Inno Setup's single-file size limit) -- the module's own
+    # OCR engine is already designed to degrade gracefully; this extends that
+    # to preprocessing.py's top-level `import cv2` so the app still starts.
+    document_extraction_router = None
 from modules.pass_gen.router import (
     router as pass_gen_router
 )
@@ -116,11 +137,21 @@ from modules.automation_settings.router import (
 from modules.whatsapp.router import (
     router as whatsapp_router
 )
+from modules.schema_sync.router import router as schema_sync_router
 from modules.audit.router import router as audit_router
 from modules.audit.middleware import AuditFailureMiddleware
 from modules.audit.repository import ensure_schema as ensure_audit_schema
 from modules.mobile_bff.router import router as mobile_bff_router
 from modules.mobile_bff.repository import ensure_schema as ensure_mobile_bff_schema
+from modules.bootstrap.router import (
+    router as bootstrap_router,
+    admin_router as ho_routes_admin_router,
+)
+from modules.device_identity.router import (
+    auth_router as device_auth_router,
+    agent_router as device_agent_router,
+    admin_router as device_admin_router,
+)
 
 try:
     ensure_audit_schema()
@@ -163,6 +194,14 @@ _cors_regex_compiled = re.compile(_cors_regex)
 _PUBLIC_API_PATHS = {
     '/api/auth/login',
     '/api/auth/setup-login',
+    # HO discovery: a store agent / desktop client calls this BEFORE it has any
+    # credential, precisely to learn where HO currently lives. Returns only
+    # public routing info (URLs + ordering), no secrets.
+    '/api/bootstrap/routes',
+    # Device token issuance is authenticated by an Ed25519 signature in the body
+    # (verified against the device's registered public key), not by a bearer
+    # token - the device has none yet, that's the whole point of this call.
+    '/api/auth/device/token',
     # Mobile BFF. /handshake must answer before a client has any credential, and
     # /auth/refresh authenticates with the refresh token in its body precisely
     # because the bearer token has expired by the time it is called.
@@ -295,6 +334,7 @@ app.include_router(store_agent_config_router)
 app.include_router(sync_runtime_router)
 app.include_router(sync_agent_router)
 app.include_router(sync_shared_table_router)
+app.include_router(file_transfer_admin_router)
 app.include_router(stock_availability_router)
 app.include_router(stock_check_report_router)
 app.include_router(label_exporter_router)
@@ -306,21 +346,76 @@ app.include_router(reports_router)
 app.include_router(expiry_report_router)
 app.include_router(expiry_stock_router)
 app.include_router(nonmoving_report_router)
+app.include_router(sale_analysis_router)
 app.include_router(time_report_router)
 app.include_router(product_mapping_router)
-app.include_router(document_extraction_router)
+if document_extraction_router is not None:
+    app.include_router(document_extraction_router)
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
 app.include_router(desktop_client_router)
 app.include_router(automation_settings_router)
 app.include_router(grid_settings_router)
 app.include_router(whatsapp_router)
+app.include_router(schema_sync_router)
 app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)
+app.include_router(stock_client_ops_router)
+app.include_router(stock_client_ops_agent_router)
+app.include_router(licensing_router)
+app.include_router(licensing_agent_router)
 app.include_router(mobile_bff_router)
+app.include_router(bootstrap_router)
+app.include_router(ho_routes_admin_router)
+app.include_router(device_auth_router)
+app.include_router(device_agent_router)
+app.include_router(device_admin_router)
+
+@app.on_event('startup')
+def _start_sync_scheduler_on_startup():
+    # SYNC-SCHED-01: the Schedule Plan screen used to be pure metadata with no
+    # reader anywhere in the codebase -- this is the reader. Runs as a daemon
+    # thread so it survives for the life of the backend process and needs no
+    # browser tab open anywhere. See modules/sync/scheduler_service.py.
+    try:
+        from modules.sync import scheduler_service
+        scheduler_service.start_background_loop()
+    except Exception:
+        import traceback
+        print("[SCHEDULER] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _start_file_transfer_receiver_on_startup():
+    # Additive to DIRECT_HTTP sync (objective 20): a no-op unless
+    # NEXORA_FILE_TRANSFER_ENABLED=true is set. See
+    # modules/sync/file_transfer_scheduler.py / file_transfer_config.py.
+    try:
+        from modules.sync import file_transfer_scheduler
+        file_transfer_scheduler.start_background_loop()
+    except Exception:
+        import traceback
+        print("[FILE_TRANSFER] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _warmup_whatsapp_on_startup():
+    # The first WhatsApp send after a fresh backend start reliably fails against
+    # a cold / half-loaded WhatsApp Web (login not settled + the "What's new"
+    # startup modal blocking the search box); the second send then works. Warm
+    # the session in the background at startup and fire one self-message so the
+    # first real send of the day is already primed. Best-effort; never blocks or
+    # crashes startup.
+    try:
+        from modules.whatsapp.service import warmup_on_startup
+        warmup_on_startup()
+    except Exception:
+        pass
 
 @app.get('/health')
-def health():
+async def health():
+    # This endpoint does no blocking work. Keeping it on the event loop avoids
+    # queuing it behind database-heavy sync calls in Starlette's shared worker
+    # thread pool, which previously made desktop readiness probes stall even
+    # while the API process was alive.
     return {'status':'healthy'}
 
 @app.get('/health/db')
@@ -384,6 +479,15 @@ if _frontend_dir and os.path.isdir(_frontend_dir):
     # can resolve the path client-side.
     @app.get('/{full_path:path}')
     def spa_fallback(full_path: str):
+        # An /api/* request that reaches this catch-all means no API router
+        # matched it (a missing route, a typo, or - most commonly - a running
+        # backend process that predates the route and was never restarted).
+        # Falling back to index.html would answer the API call with a 200 +
+        # HTML body, which the SPA client then reports as the misleading
+        # "did not return JSON (got status 200)". Return a clean 404 JSON so a
+        # missing API route is never masked as SPA HTML.
+        if full_path.startswith('api/') or full_path == 'api':
+            return JSONResponse(status_code=404, content={'detail': 'Not Found'})
         candidate = os.path.join(_frontend_dir, full_path)
         if full_path and os.path.isfile(candidate):
             return FileResponse(candidate)

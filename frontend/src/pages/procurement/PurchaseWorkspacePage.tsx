@@ -40,6 +40,7 @@ import type { SupplierQueueGroup } from '../../components/procurement/SupplierQu
 import { SupplierOptimizationPanel } from '../../components/procurement/SupplierOptimizationPanel'
 import { downloadPurchaseOrderCsv } from '../../components/procurement/exportDocument'
 import { ManualProductModal } from '../../components/procurement/ManualProductModal'
+import { NetworkOpportunitiesModal } from '../../components/procurement/NetworkOpportunitiesModal'
 import { SupplierPicker } from '../../components/procurement/SupplierPicker'
 import { SupplierStockTable, stockRowKey, formatOffer } from '../../components/procurement/SupplierStockTable'
 import { exportSupplierStockExcel } from '../../components/procurement/exportSupplierStockExcel'
@@ -232,6 +233,7 @@ export default function PurchaseWorkspacePage() {
   const [viewAll, setViewAll] = useState<{ kind: ViewAllKind; item: WorkspaceItem } | null>(null)
   const [manualOpen, setManualOpen] = useState(false)
   const [manualBusy, setManualBusy] = useState(false)
+  const [opportunitiesOpen, setOpportunitiesOpen] = useState(false)
 
   // Supplier Queue
   const [queueLines, setQueueLines] = useState<SupplierQueueGroup[]>([])
@@ -2183,6 +2185,7 @@ export default function PurchaseWorkspacePage() {
                         canFilter={mode !== 'supplier-stock'}
                         onFilters={() => { setToolbarMenuOpen(false); setStatusFiltersOpen(true) }}
                         onAddProduct={() => { setToolbarMenuOpen(false); setManualOpen(true) }}
+                        onNetworkOpportunities={() => { setToolbarMenuOpen(false); setOpportunitiesOpen(true) }}
                         onSettings={() => { setToolbarMenuOpen(false); setSettingsOpen(true) }}
                         onClose={() => setToolbarMenuOpen(false)}
                       />
@@ -2730,6 +2733,15 @@ export default function PurchaseWorkspacePage() {
       {manualOpen && (
         <ManualProductModal tenantId={tenantId} storeId={storeId} busy={manualBusy} onAdd={addManual} onClose={() => setManualOpen(false)} />
       )}
+      {opportunitiesOpen && (
+        <NetworkOpportunitiesModal
+          tenantId={tenantId}
+          refreshId={refreshId}
+          busy={manualBusy}
+          onAdd={addManual}
+          onClose={() => setOpportunitiesOpen(false)}
+        />
+      )}
       {importFile && supplier && storeId && (
         <SupplierStockImportModal
           tenantId={tenantId}
@@ -2955,6 +2967,7 @@ function WorkspaceQuickActions({
   canFilter,
   onFilters,
   onAddProduct,
+  onNetworkOpportunities,
   onSettings,
   onClose,
 }: {
@@ -2964,6 +2977,7 @@ function WorkspaceQuickActions({
   canFilter: boolean
   onFilters: () => void
   onAddProduct: () => void
+  onNetworkOpportunities: () => void
   onSettings: () => void
   onClose: () => void
 }) {
@@ -3013,6 +3027,11 @@ function WorkspaceQuickActions({
           <i className="bi bi-chevron-right pm-quick-actions__arrow" aria-hidden="true" />
         </button>
       )}
+      <button type="button" role="menuitem" onClick={onNetworkOpportunities}>
+        <i className="bi bi-diagram-3" aria-hidden="true" />
+        <span><b>Network opportunities</b><small>Not moving here, but moving in other stores</small></span>
+        <i className="bi bi-chevron-right pm-quick-actions__arrow" aria-hidden="true" />
+      </button>
       <button type="button" role="menuitem" onClick={onSettings}>
         <i className="bi bi-gear" aria-hidden="true" />
         <span><b>Workspace settings</b><small>Columns, zoom and density</small></span>

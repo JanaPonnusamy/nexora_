@@ -55,6 +55,28 @@ def supplier_products(
     )
 
 
+@router.get("/warehouse-stock/counts")
+def warehouse_stock_counts(tenant_id: str, store_id: str, current_user: dict = Depends(require_admin_role)):
+    """Store-wide stock-status counts (all/zero/positive/cross-store), for the
+    NMW-Stock filter dropdown - independent of any supplier selection."""
+    _assert_scope(current_user, tenant_id, store_id)
+    return service.warehouse_stock_counts(tenant_id, store_id)
+
+
+@router.get("/warehouse-stock/products")
+def warehouse_stock_products(
+    tenant_id: str,
+    store_id: str,
+    stock_filter: str,
+    search: str = "",
+    current_user: dict = Depends(require_admin_role),
+):
+    """The store's own product catalogue filtered by stock status - NOT
+    scoped to any supplier's product list (see warehouse_stock_counts)."""
+    _assert_scope(current_user, tenant_id, store_id)
+    return service.warehouse_stock_products(tenant_id, store_id, stock_filter, search)
+
+
 @router.get("/supplier-stock/{supplier_stock_id}/match")
 def supplier_stock_match(supplier_stock_id: str, tenant_id: Optional[str] = None, current_user: dict = Depends(require_admin_role)):
     return service.match_for_supplier_stock(current_user, supplier_stock_id, tenant_id)

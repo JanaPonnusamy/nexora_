@@ -113,6 +113,12 @@ def load_source(conn, tenant_id, store_id, params):
         ),
         md AS (SELECT ProductCode, MAX(q) AS max_day_sale_qty FROM per_day GROUP BY ProductCode),
         mb AS (SELECT ProductCode, MAX(q) AS max_bill_qty FROM per_bill GROUP BY ProductCode),
+        -- Legacy parity spike metric (order_local/remote.sql MaxSalesQtyInBill):
+        -- MAX single-ROW Quantity, i.e. the biggest one sale line, NOT a day or
+        -- bill sum. NEXORA's day/bill sums above are additional, stronger
+        -- floors legacy never had; this restores legacy's own floor as a third
+        -- (superset) term in decision_rules.final_required.
+        ml AS (SELECT ProductCode, MAX(qty) AS max_line_sale_qty FROM sales GROUP BY ProductCode),
         -- Precise last-sale watermark: the REAL most-recent valid retail sale date
         -- per product (full history, not just the rolling window), for the recency
         -- and "sold since latest GRN" hard gates in decision_rules.evaluate. The
@@ -151,6 +157,7 @@ def load_source(conn, tenant_id, store_id, params):
             CAST(ISNULL(agg.window_sales_qty, 0) AS DECIMAL(18,3)) AS window_sales_qty,
             CAST(ISNULL(md.max_day_sale_qty, 0)  AS DECIMAL(18,3)) AS max_day_sale_qty,
             CAST(ISNULL(mb.max_bill_qty, 0)      AS DECIMAL(18,3)) AS max_bill_qty,
+            CAST(ISNULL(ml.max_line_sale_qty, 0) AS DECIMAL(18,3)) AS max_line_sale_qty,
             CAST(ISNULL(agg.billing_frequency, 0) AS INT)          AS billing_frequency,
             CAST({_store_stock_expr("p")} AS DECIMAL(18,3)) AS current_stock,
             CAST(ISNULL(p.SaleUnit, 0) AS DECIMAL(18,3))    AS sale_unit,
@@ -160,6 +167,7 @@ def load_source(conn, tenant_id, store_id, params):
         LEFT JOIN agg ON agg.ProductCode = p.ProductCode
         LEFT JOIN md  ON md.ProductCode  = p.ProductCode
         LEFT JOIN mb  ON mb.ProductCode  = p.ProductCode
+        LEFT JOIN ml  ON ml.ProductCode  = p.ProductCode
         LEFT JOIN ls  ON ls.ProductCode  = p.ProductCode
         LEFT JOIN grn ON grn.ProductCode = p.ProductCode
         WHERE p.tenant_id = ? AND p.store_id = ?

@@ -1,0 +1,141 @@
+==============================================================================
+COSEC LICENSE INFORMATION -- WEB / APPLICATION REVERSE-ENGINEERING (READ ONLY)
+Authorized educational investigation. No COSEC files, config, or DB were modified.
+No license was generated, forged, submitted, bypassed, or disabled.
+Evidence captured via backend/scripts/capture_cosec_license_api.cjs (Playwright,
+read-only traffic inspection) + anonymous bundle download.
+==============================================================================
+
+1. COSEC INSTALLATION ROOT
+   - COSEC is NOT installed on this machine (Nexora dev box, 192.168.10.80; no IIS).
+   - It runs on a REMOTE host: http://192.168.10.14/COSEC  (COSEC 14.3, build tag
+     v=14.3.101012019). Stack: ASP.NET (WebForms shell + ASP.NET Web API for data)
+     with an AngularJS SPA front-end.
+   - Remote reachability from here: TCP 80 OPEN; TCP 445 (SMB) CLOSED. The server
+     filesystem / compiled /bin assemblies are therefore NOT reachable from here.
+
+2. JS BUNDLE(S) CONTAINING licenseInformationAPI
+   - API path constant  : /COSEC/bundles/cosecscripts-app-module   (loaded post-login)
+       angular....constant("licenseInformationAPI",{
+         pageLoad:    "api/LicenseInformation/PageLoad/",
+         refreshClick:"api/LicenseInformation/RefreshClick/",
+         submitClick: "api/LicenseInformation/SubmitClick/",
+         openFile:    "api/LicenseInformation/openFile/"
+       })
+   - Service + Controller: /COSEC/bundles/cosecscripts-admin
+       module "services".factory("licenseInformationService",
+         [...,"licenseInformationAPI","Base64","commonService",function(...){
+            return { pageLoad:function(){return u.executeApi("get", i.pageLoad, {})},
+                     openFile:function(){return u.executeApi("get", i.openFile, {})} }}])
+       licenseInformationController: consumes n.result.AppMode / .MaxLicenseUsers /
+         .LabelActiveUsers and n.gridData; grid columns ["ModuleTitle","CurrentUsage",
+         "AllowedLimit"]; if !result.AppMode -> goToOtherModule("Menu.9997").
+   - URL builder: commonService.executeApi (in /COSEC/bundles/cosecscripts):
+       case "get": f.token = SecurityManager.generate(ModuleID);
+                   return $resource(e.hostUrl + path).get(f).$promise;
+     i.e. FULL URL = hostUrl + path + "?token=<anti-forgery token>".
+   - API host base observed live: http://192.168.10.14/cosec/   (see MultiApiOnStartup).
+
+3. EXACT pageLoad ENDPOINT
+   Relative : api/LicenseInformation/PageLoad/
+   Absolute : http://192.168.10.14/cosec/api/LicenseInformation/PageLoad/?token=<generated>
+   Method   : GET
+
+4. EXACT openFile ENDPOINT
+   Relative : api/LicenseInformation/openFile/
+   Absolute : http://192.168.10.14/cosec/api/LicenseInformation/openFile/?token=<generated>
+   Method   : GET  (returns result.FilePath, used to open EULA.pdf)
+   (Also present, NOT called -- would change data: submitClick =
+    api/LicenseInformation/SubmitClick/, refreshClick = .../RefreshClick/.)
+
+5. SERVER-SIDE ASSEMBLY
+   - The route "api/LicenseInformation/PageLoad" is an ASP.NET Web API endpoint,
+     implemented in a compiled COSEC assembly under \COSEC\bin\ on 192.168.10.14.
+   - The exact DLL name/namespace CANNOT be determined from this machine: the
+     server does not serve DLLs over HTTP and SMB/445 is closed. UNREACHABLE here.
+
+6. NAMESPACE / CLASS  (inferred from REST route; not confirmable without the DLL)
+   - Class : LicenseInformationController  (ASP.NET Web API convention for
+             "api/LicenseInformation/...").
+   - Namespace / assembly file: UNKNOWN (requires reading \COSEC\bin\*.dll).
+
+7. METHOD
+   - Action : PageLoad()  (GET api/LicenseInformation/PageLoad).
+   - Related actions in same controller: openFile(), RefreshClick(), SubmitClick().
+
+8. RELEVANT CALL CHAIN (verified end-to-end)
+   Browser SPA (AngularJS)
+     licenseInformationController.getData()
+       -> licenseInformationService.pageLoad()
+         -> commonService.executeApi("get", licenseInformationAPI.pageLoad, {})
+           -> GET http://192.168.10.14/cosec/api/LicenseInformation/PageLoad/?token=...
+             -> [server] LicenseInformationController.PageLoad()  (compiled, remote)
+               -> reads the operative license key + computes usage
+                 -> JSON { isValidation, validation, result{...}, gridData[...] }
+   Controller then binds: AppMode=result.AppMode, model=result,
+     getDataList=gridData, MaxLicenseUsers=result.MaxLicenseUsers (a LABEL),
+     LabelActiveUsers=result.LabelActiveUsers (a LABEL).
+
+   LIVE pageLoad RESPONSE captured (read-only GET; non-secret license data):
+     result.ProductVariant = "COSEC PLT"
+     result.AppMode        = true
+     result.MaxUser        = "100"      result.ActiveUser = "94"
+     result.LicDevice      = "65535"    result.PackageValidity = "February-2019"
+     result.MaxLicenseUsers   = "Max License Users"  (UI label)
+     result.LabelActiveUsers  = "Active Users"       (UI label)
+     result.LicenseKey     = 32-group hex blob (operative key; see item 9)
+     gridData = per-module {Module, CurrentUsage, AllowedLimit} for
+       Platform/ACM/CMM/VMM/TAM/CWM/JPC/FVM/ESS/FR Users.
+
+9. NewLicenseKey PROCESSING PATH
+   - DB table dbo.Mx_LicenseUpdateTrn stores NewLicenseKey (14 groups, e.g.
+     4041-7B95-...-1D87) as an AUDIT TRAIL only (prior phase established this).
+   - The OPERATIVE key returned by the live API is DIFFERENT and longer -- a
+     32-group hex-grouped blob (64 bytes):
+       88D3-587E-0670-A8FF-40A0-C8A1-A94C-D330-102F-009C-E000-5B00-32FE-585C-
+       0000-0000-0000-C000-0000-0200-0000-0000-0000-0000-2602-0000-3B94-1400-
+       0000-0000-0000-0000
+   - Structure (high level, from format only -- decoder is server-side):
+       * Fixed-length, uppercase hex, grouped in 4-hex (2-byte) segments.
+       * Server-side LicenseInformationController.PageLoad decodes it into typed
+         fields (ProductVariant, MaxUser, ActiveUser?, LicDevice, PackageValidity,
+         AppMode, per-module AllowedLimit). The many 0000 groups suggest reserved
+         / per-module capacity slots within a custom binary layout.
+   - Encoding vs crypto: CANNOT be determined remotely. Whether the blob is plain
+     packed-binary, checksummed, encrypted, keyed-hash/MAC, or digitally signed is
+     decided entirely inside the compiled server assembly (item 5), which is not
+     reachable from this machine. NOT DETERMINED. (No attempt was or will be made
+     to reproduce/forge a key.)
+
+10. WHAT CAN / CANNOT BE DETERMINED
+    CAN (done, from live HTTP evidence):
+      - Full front-end architecture and call chain.
+      - Exact pageLoad / openFile (and refresh/submit) endpoints + host base.
+      - The live License Information response shape and values.
+      - That AppMode/MaxUser/ActiveUser/gridData are produced by the server API at
+        runtime and are NOT stored as DB columns (consistent with the DB phase).
+    CANNOT (blocked by remote-only server + closed SMB):
+      - The concrete DLL/namespace implementing PageLoad.
+      - The NewLicenseKey/LicenseKey decode + validation algorithm and its crypto
+        class (item 9).
+
+11. BINARIES / FILES NEEDING FURTHER STATIC INSPECTION (on 192.168.10.14 only)
+    - \COSEC\bin\*.dll  -> the assembly exporting LicenseInformationController
+      (decompile read-only with ILSpy/dnSpy ON the server) to recover PageLoad()
+      and the license-key decoder.
+    - Wherever the server reads the operative key (a license file, registry, or a
+      server-side table other than Mx_LicenseUpdateTrn) -- identity TBD from the
+      decompiled PageLoad().
+    Access required: RDP to 192.168.10.14, or a read-only share to \COSEC\.
+
+==============================================================================
+COSEC ROOT:      REMOTE http://192.168.10.14/COSEC (COSEC 14.3; not on this box; SMB/445 closed)
+LICENSE JS:      /COSEC/bundles/cosecscripts-app-module (licenseInformationAPI constant) + /COSEC/bundles/cosecscripts-admin (service+controller)
+PAGELOAD API:    GET http://192.168.10.14/cosec/api/LicenseInformation/PageLoad/?token=...   (rel: api/LicenseInformation/PageLoad/)
+OPENFILE API:    GET http://192.168.10.14/cosec/api/LicenseInformation/openFile/?token=...   (rel: api/LicenseInformation/openFile/)
+SERVER ASSEMBLY: UNREACHABLE from this machine (remote \COSEC\bin\*.dll; SMB closed; not served over HTTP)
+SERVER CLASS:    LicenseInformationController (inferred from Web API route; DLL/namespace needs server access)
+SERVER METHOD:   PageLoad()  (siblings: openFile, RefreshClick, SubmitClick)
+KEY PROCESSING:  Operative key = 32-group hex blob decoded server-side into license fields; DB NewLicenseKey is audit-only; crypto type NOT determinable remotely
+NEXT REQUIRED FILE: \COSEC\bin\*.dll on 192.168.10.14 (read-only decompile of LicenseInformationController.PageLoad + key decoder) -- requires RDP/share to that host
+==============================================================================

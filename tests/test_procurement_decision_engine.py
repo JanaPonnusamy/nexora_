@@ -113,20 +113,24 @@ def test_stock_status_buckets():
 
 def test_final_required_determinants():
     # coverage binding (no sale_unit -> strip qty falls back to loose qty)
-    assert rules.final_required(130, 40, 60) == (130, 130, 130, rules.COVERAGE)
-    # spike floor binding
-    assert rules.final_required(10, 40, 20) == (40, 40, 40, rules.SPIKE_PROTECTION)
+    # target=130 dominates max_day=60/max_bill=20; required = 130-40 = 90
+    assert rules.final_required(130, 40, 60, 20) == (90, 90, 90, rules.COVERAGE)
+    # spike floor binding (day)
+    assert rules.final_required(10, 5, 40, 20) == (35, 35, 35, rules.SPIKE_PROTECTION)
     # max-bill floor binding
-    assert rules.final_required(10, 20, 55) == (55, 55, 55, rules.MAX_BILL_TRIGGER)
+    assert rules.final_required(10, 5, 20, 55) == (50, 50, 50, rules.MAX_BILL_TRIGGER)
+    # legacy single-line spike floor binding (max_line_sale_qty) -- parity add
+    assert rules.final_required(10, 5, 20, 25, max_line_sale_qty=70) == (65, 65, 65, rules.SPIKE_PROTECTION)
 
 
 def test_final_required_strip_conversion():
     # PR-BR-007/008/009 legacy parity: divide the loose shortfall by SaleUnit
     # and ceiling it, mirroring order_local/remote.sql's Orderqty.
-    assert rules.final_required(130, 40, 60, sale_unit=10) == (130, 130, 13, rules.COVERAGE)
-    assert rules.final_required(121, 40, 60, sale_unit=10) == (121, 121, 13, rules.COVERAGE)
+    # target=130 dominates; required = 130-40 = 90; strips = ceil(90/10) = 9
+    assert rules.final_required(130, 40, 60, 20, sale_unit=10) == (90, 90, 9, rules.COVERAGE)
+    assert rules.final_required(121, 40, 60, 20, sale_unit=10) == (81, 81, 9, rules.COVERAGE)
     # SaleUnit <= 0 falls back to loose quantity instead of zeroing the order.
-    assert rules.final_required(130, 40, 60, sale_unit=0) == (130, 130, 130, rules.COVERAGE)
+    assert rules.final_required(130, 40, 60, 20, sale_unit=0) == (90, 90, 90, rules.COVERAGE)
 
 
 # --------------------------------------------------------------------------
@@ -209,6 +213,94 @@ def test_spike_floor_included_binding():
     assert out["procurement_action"] == rules.ACTION_INCLUDE
     assert out["final_required_qty"] == 40
     assert out["trigger_reason"] == rules.SPIKE_PROTECTION
+
+
+# --------------------------------------------------------------------------
+# Legacy parity additions: average-per-bill MinQty floor, single-line spike
+# metric, and the "Additional Row" rare-mover top-up.
+# --------------------------------------------------------------------------
+
+def test_min_qty_floor_matches_legacy_formula():
+    # legacy: minqty = MAX(CEIL(avg*MinDays), CEIL(slsqty/Frequency))
+    assert rules.min_qty_floor(avg_daily_sales=2, min_days=10, window_sales_qty=90,
+                                billing_frequency=12) == 20   # by_days=20, by_bill=ceil(7.5)=8
+    assert rules.min_qty_floor(avg_daily_sales=1, min_days=5, window_sales_qty=900,
+                                billing_frequency=12) == 75   # by_days=5, by_bill=ceil(75)=75
+    assert rules.min_qty_floor(0, 10, 0, 0) == 0
+
+
+def test_qualifies_via_per_bill_floor_despite_adequate_days_cover():
+    # A lumpy/slow mover: low day-average (cover looks "adequate" by ratio)
+    # but a large per-bill floor from rare, big-quantity bills -- legacy's
+    # minqty>TotalStock gate would still order this; the pure days-cover gate
+    # would not. window=200 over 90d -> avg~2.22, but only 4 bills so
+    # avg-per-bill floor = ceil(200/4) = 50, well above the small stock held.
+    out = rules.evaluate(
+        _para500(window_sales_qty=200, billing_frequency=4, current_stock=12,
+                  pending_receivable=0, in_transit=0, reserved=0,
+                  max_day_sale_qty=0, max_bill_qty=0),
+        _params(min_days=5, max_days=10),
+    )
+    # avg=200/90=2.22, eff=12, cover=12/2.22=5.4 >= min_days(5) -> NOT qualified
+    # by cover alone, but min_qty_floor=max(ceil(2.22*5)=12, ceil(200/4)=50)=50 > eff(12)
+    assert out["days_cover"] >= 5
+    assert out["procurement_action"] == rules.ACTION_INCLUDE
+    assert "per-bill MinQty floor" in out["reason_text"]
+
+
+def test_excluded_adequate_cover_still_excludes_when_no_lumpy_pattern():
+    # Regression guard: the new OR gate must not re-qualify products that
+    # legitimately have adequate cover AND no meaningful per-bill floor.
+    out = rules.evaluate(_para500(current_stock=2000), _params())
+    assert out["reason_code"] == rules.EXCLUDED_ADEQUATE_COVER
+    assert out["suggested_qty"] == 0
+
+
+def test_max_line_sale_qty_spike_parity():
+    # Legacy's exact spike metric (MaxSalesQtyInBill = MAX single sale-line
+    # qty) must floor the gross target even when NEXORA's own day/bill sums
+    # are smaller -- restores legacy's own floor as a superset term.
+    out = rules.evaluate(
+        _para500(window_sales_qty=90, current_stock=5, pending_receivable=0,
+                  reserved=0, max_day_sale_qty=10, max_bill_qty=10,
+                  max_line_sale_qty=90),
+        _params(min_days=20, max_days=10),
+    )
+    assert out["procurement_action"] == rules.ACTION_INCLUDE
+    assert out["final_required_qty"] == 85       # ceil(max(10,10,10,90) - 5)
+    assert out["trigger_reason"] == rules.SPIKE_PROTECTION
+
+
+def test_rare_mover_topup_matches_legacy_additional_row():
+    # legacy "Additional Row": TotalStock<=1, minqty<=1, Frequency>1, slsqty>1,
+    # sold recently, sold after last GRN, not already a normal candidate ->
+    # forced OrderQty=1. Low, infrequent sales keep both cover and the
+    # per-bill floor from qualifying it any other way.
+    out = rules.evaluate(
+        _para500(window_sales_qty=3, billing_frequency=3, current_stock=1,
+                  pending_receivable=0, in_transit=0, reserved=0,
+                  max_day_sale_qty=0, max_bill_qty=0),
+        _params(min_days=1, max_days=5),
+    )
+    assert out["procurement_action"] == rules.ACTION_INCLUDE
+    assert out["reason_code"] == rules.INCLUDED_RARE_MOVER_TOPUP
+    assert out["trigger_reason"] == rules.RARE_MOVER_TOPUP
+    assert out["suggested_qty"] == 1
+    assert out["final_required_qty"] == 1
+
+
+def test_rare_mover_topup_not_triggered_for_single_bill():
+    # Frequency<=1 must NOT take the "Additional Row" top-up path (legacy
+    # requires Frequency>1) -- it still qualifies via the per-bill floor, but
+    # sizes to zero required units and is excluded on that basis instead.
+    out = rules.evaluate(
+        _para500(window_sales_qty=3, billing_frequency=1, current_stock=1,
+                  pending_receivable=0, in_transit=0, reserved=0,
+                  max_day_sale_qty=0, max_bill_qty=0),
+        _params(min_days=1, max_days=5),
+    )
+    assert out["reason_code"] != rules.INCLUDED_RARE_MOVER_TOPUP
+    assert out["procurement_action"] == rules.ACTION_EXCLUDE
 
 
 # --------------------------------------------------------------------------

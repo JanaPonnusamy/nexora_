@@ -5,10 +5,37 @@ import { storeService } from '../../services/storeService'
 import { nmwSalesReportService } from '../../services/nmwSalesReportService'
 import type { Tenant } from '../../types/tenant'
 import type { TenantStore } from '../../types/store'
-import type { NmwSalesBill, NmwSalesBillItem } from '../../types/nmwSalesReport'
+import type {
+  NmwPurchaseEntry,
+  NmwSalesBill,
+  NmwSalesBillItem,
+  NmwSalesBillSummary,
+  PurchaseStatusFilter,
+} from '../../types/nmwSalesReport'
 import { FilterBar } from '../../design-system/components/FilterBar'
+import { exportNmwBillCsv, exportNmwBillExcel, purchaseStatusLabel } from './exportNmwBill'
 
 type StatusFilter = 'all' | 'pending' | 'approved'
+
+type PurchaseEntryState =
+  | { kind: 'loading' }
+  | { kind: 'loaded'; data: NmwPurchaseEntry }
+  | { kind: 'error' }
+
+const PURCHASE_BADGE_CLASS: Record<string, string> = {
+  completed: 'text-bg-success',
+  pending: 'text-bg-warning',
+  not_found: 'text-bg-danger',
+  error: 'text-bg-secondary',
+}
+
+function purchaseBadge(status: string) {
+  return (
+    <span className={`badge ${PURCHASE_BADGE_CLASS[status] ?? 'text-bg-secondary'}`}>
+      {purchaseStatusLabel(status as never) || 'Unknown'}
+    </span>
+  )
+}
 
 function billKey(bill: NmwSalesBill): string {
   return `${bill.bill_date ?? ''}|${bill.bill_no ?? ''}`
@@ -25,11 +52,13 @@ export default function NmwSalesReportPage() {
   const [stores, setStores] = useState<TenantStore[]>([])
   const [storeId, setStoreId] = useState('')
   const [status, setStatus] = useState<StatusFilter>('all')
+  const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<PurchaseStatusFilter>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [purchaseStatusError, setPurchaseStatusError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [bills, setBills] = useState<NmwSalesBill[]>([])
   const [canApprove, setCanApprove] = useState(false)
@@ -38,6 +67,8 @@ export default function NmwSalesReportPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<string | null>(null)
   const [items, setItems] = useState<Record<string, NmwSalesBillItem[]>>({})
+  const [summaries, setSummaries] = useState<Record<string, NmwSalesBillSummary | null>>({})
+  const [purchaseEntries, setPurchaseEntries] = useState<Record<string, PurchaseEntryState>>({})
   const [showCustCodes, setShowCustCodes] = useState(false)
 
   useEffect(() => {
@@ -63,6 +94,7 @@ export default function NmwSalesReportPage() {
     if (!tenantId) return
     setLoading(true)
     setError(null)
+    setPurchaseStatusError(null)
     setNotice(null)
     setSelected(new Set())
     setExpanded(null)
@@ -72,17 +104,19 @@ export default function NmwSalesReportPage() {
         status,
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
+        purchaseStatus: purchaseStatusFilter,
       })
       setBills(result.bills)
       setCanApprove(result.can_approve)
       setScope(result.scope)
+      setPurchaseStatusError(result.purchase_status_error ?? null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load bills')
       setBills([])
     } finally {
       setLoading(false)
     }
-  }, [tenantId, storeId, status, dateFrom, dateTo])
+  }, [tenantId, storeId, status, purchaseStatusFilter, dateFrom, dateTo])
 
   async function toggleExpand(bill: NmwSalesBill) {
     const key = billKey(bill)
@@ -95,8 +129,21 @@ export default function NmwSalesReportPage() {
       try {
         const result = await nmwSalesReportService.billItems(tenantId, bill.bill_no, bill.bill_date)
         setItems((prev) => ({ ...prev, [key]: result.items }))
+        setSummaries((prev) => ({ ...prev, [key]: result.summary }))
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load bill items')
+      }
+    }
+    if (!purchaseEntries[key] && bill.bill_no && bill.bill_date) {
+      setPurchaseEntries((prev) => ({ ...prev, [key]: { kind: 'loading' } }))
+      try {
+        const data = await nmwSalesReportService.purchaseEntry(tenantId, bill.bill_no, bill.bill_date)
+        setPurchaseEntries((prev) => ({ ...prev, [key]: { kind: 'loaded', data } }))
+      } catch {
+        // A failed lookup is a distinct state from "not found" -- the bill row
+        // itself still shows whatever purchase_status the batched list query
+        // returned (never overwritten here), this only affects the detail panel.
+        setPurchaseEntries((prev) => ({ ...prev, [key]: { kind: 'error' } }))
       }
     }
   }
@@ -231,6 +278,20 @@ export default function NmwSalesReportPage() {
         </label>
 
         <label className="d-flex flex-column gap-1">
+          <span className="small text-muted">Purchase entry</span>
+          <select
+            className="form-select"
+            value={purchaseStatusFilter}
+            onChange={(e) => setPurchaseStatusFilter(e.target.value as PurchaseStatusFilter)}
+          >
+            <option value="all">All</option>
+            <option value="completed">Completed</option>
+            <option value="pending">Pending</option>
+            <option value="not_found">Not Found</option>
+          </select>
+        </label>
+
+        <label className="d-flex flex-column gap-1">
           <span className="small text-muted">From</span>
           <input type="date" className="form-control" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
         </label>
@@ -286,6 +347,11 @@ export default function NmwSalesReportPage() {
       )}
       {notice && <div className="alert alert-success py-2 small mb-0">{notice}</div>}
       {error && <div className="alert alert-danger py-2 small mb-0">{error}</div>}
+      {purchaseStatusError && (
+        <div className="alert alert-warning py-2 small mb-0">
+          {purchaseStatusError} Sales bill data below is unaffected; the Purchase Entry column may be unavailable until this is retried.
+        </div>
+      )}
 
       {showCustCodes && canApprove && <StoreCustCodePanel tenantId={tenantId} onDone={() => void load()} />}
 
@@ -314,6 +380,7 @@ export default function NmwSalesReportPage() {
                 <th style={{ whiteSpace: 'nowrap' }}>Cust Code</th>
                 <th className="text-end" style={{ whiteSpace: 'nowrap' }}>Amount</th>
                 <th style={{ whiteSpace: 'nowrap' }}>Status</th>
+                <th style={{ whiteSpace: 'nowrap' }}>Purchase Entry</th>
                 <th style={{ whiteSpace: 'nowrap' }} />
               </tr>
             </thead>
@@ -323,7 +390,7 @@ export default function NmwSalesReportPage() {
                 const isApproved = bill.status === 'approved'
                 return (
                   <Fragment key={key}>
-                    <tr>
+                    <tr className={bill.is_cancelled ? 'text-danger' : undefined}>
                       {canApprove && (
                         <td>
                           {!isApproved && (
@@ -357,6 +424,14 @@ export default function NmwSalesReportPage() {
                           <span className="badge text-bg-warning">Pending</span>
                         )}
                       </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {purchaseBadge(bill.purchase_status)}
+                        {bill.purchase_status === 'completed' && bill.purchase_entry_no && (
+                          <span className="text-muted ms-1 small" title="Store GRN number">
+                            GRN {bill.purchase_entry_no}
+                          </span>
+                        )}
+                      </td>
                       <td className="text-nowrap">
                         <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => void toggleExpand(bill)}>
                           {expanded === key ? 'Hide' : 'Items'}
@@ -370,8 +445,13 @@ export default function NmwSalesReportPage() {
                     </tr>
                     {expanded === key && (
                       <tr>
-                        <td colSpan={canApprove ? 10 : 9} className="p-0">
-                          <BillItemsTable rows={items[key]} />
+                        <td colSpan={canApprove ? 11 : 10} className="p-0">
+                          <BillDetailPanel
+                            bill={bill}
+                            items={items[key]}
+                            summary={summaries[key]}
+                            purchaseEntry={purchaseEntries[key]}
+                          />
                         </td>
                       </tr>
                     )}
@@ -388,9 +468,127 @@ export default function NmwSalesReportPage() {
   )
 }
 
-function BillItemsTable({ rows }: { rows: NmwSalesBillItem[] | undefined }) {
+function BillDetailPanel({
+  bill,
+  items: rows,
+  summary,
+  purchaseEntry,
+}: {
+  bill: NmwSalesBill
+  items: NmwSalesBillItem[] | undefined
+  summary?: NmwSalesBillSummary | null
+  purchaseEntry: PurchaseEntryState | undefined
+}) {
+  const purchaseEntryFailed = purchaseEntry?.kind === 'error'
+  const purchaseEntryData = purchaseEntry?.kind === 'loaded' ? purchaseEntry.data : null
+
+  function doExport(kind: 'csv' | 'xlsx') {
+    const exportData = { bill, items: rows ?? [], purchaseEntry: purchaseEntryData, purchaseEntryFailed }
+    const fileName = `NMW_${bill.bill_no ?? 'bill'}`
+    if (kind === 'csv') exportNmwBillCsv(exportData, fileName)
+    else void exportNmwBillExcel(exportData, fileName)
+  }
+
+  return (
+    <div className="p-2">
+      <div className="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-2">
+        <div className="d-flex flex-wrap gap-4">
+          <div>
+            <div className="small text-muted text-uppercase fw-semibold">Sales Bill</div>
+            <div className="small">
+              Bill No: <strong>{bill.bill_no}</strong>
+            </div>
+            <div className="small">Date: {bill.bill_date}</div>
+            <div className="small">Store: {bill.dest_store_code}</div>
+            <div className="small">Amount: {money(bill.bill_amount)}</div>
+            <div className="small">
+              Sales Status:{' '}
+              {bill.status === 'approved' ? (
+                <span className="badge text-bg-success">Approved</span>
+              ) : (
+                <span className="badge text-bg-warning">Pending</span>
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="small text-muted text-uppercase fw-semibold">Purchase Entry</div>
+            {!purchaseEntry || purchaseEntry.kind === 'loading' ? (
+              <div className="small text-muted">Checking…</div>
+            ) : purchaseEntry.kind === 'error' ? (
+              <div className="small text-danger">Unable to check purchase entry right now.</div>
+            ) : (
+              <>
+                <div className="small">
+                  Status: {purchaseBadge(purchaseEntry.data.purchase_status)}
+                  {purchaseEntry.data.total_products > 0 && (
+                    <span className="text-muted ms-2">
+                      Received {purchaseEntry.data.matched_products} of {purchaseEntry.data.total_products} item(s)
+                    </span>
+                  )}
+                </div>
+                <div className="small">GRN No: {purchaseEntry.data.entry_no ?? '—'}</div>
+                <div className="small">Entry Date: {purchaseEntry.data.entry_date ?? '—'}</div>
+                {purchaseEntry.data.match_basis === 'bill_number' && (
+                  <div className="small text-muted">
+                    Matched by bill number{purchaseEntry.data.grn_amount != null && (
+                      <> · Bill {money(bill.bill_amount)} vs GRN {money(purchaseEntry.data.grn_amount)}</>
+                    )}
+                  </div>
+                )}
+                {purchaseEntry.data.pending_products.length > 0 && (
+                  <div className="small mt-1">
+                    <span className="text-danger fw-semibold">Not yet entered:</span>
+                    <ul className="mb-0 ps-3">
+                      {purchaseEntry.data.pending_products.map((p) => (
+                        <li key={p.product_code}>
+                          {p.product_name} <span className="text-muted">(need {p.required_qty}, got {p.received_qty})</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        <div className="d-flex gap-2">
+          <button className="btn btn-sm btn-outline-secondary" onClick={() => doExport('csv')} title="Export this bill as CSV">
+            <i className="bi bi-filetype-csv me-1" />
+            CSV
+          </button>
+          <button className="btn btn-sm btn-outline-secondary" onClick={() => doExport('xlsx')} title="Export this bill as XLSX">
+            <i className="bi bi-file-earmark-excel me-1" />
+            XLSX
+          </button>
+        </div>
+      </div>
+      <BillItemsTable rows={rows} summary={summary} />
+    </div>
+  )
+}
+
+function BillItemsTable({
+  rows,
+  summary,
+}: {
+  rows: NmwSalesBillItem[] | undefined
+  summary?: NmwSalesBillSummary | null
+}) {
   if (!rows) return <div className="p-2 small text-muted">Loading items…</div>
   if (rows.length === 0) return <div className="p-2 small text-muted">No line items.</div>
+  // Amount column is the 9th (index 8): Product, Batch, Expiry, Qty, Free, MRP,
+  // Rate, Dis%, Amount. The footer labels span the first 8, value sits under it.
+  const labelSpan = 8
+  const footerRow = (label: string, value: number, opts: { bold?: boolean } = {}) => (
+    <tr className={opts.bold ? 'fw-semibold border-top' : undefined}>
+      <td colSpan={labelSpan} className="text-end text-muted">
+        {label}
+      </td>
+      <td className="text-end" style={{ whiteSpace: 'nowrap' }}>
+        {money(value)}
+      </td>
+    </tr>
+  )
   return (
     <table className="table table-sm mb-0">
       <thead>
@@ -421,6 +619,15 @@ function BillItemsTable({ rows }: { rows: NmwSalesBillItem[] | undefined }) {
           </tr>
         ))}
       </tbody>
+      {summary && (
+        <tfoot>
+          {footerRow('Sub-total', summary.subtotal)}
+          {summary.cgst > 0 && footerRow('CGST', summary.cgst)}
+          {summary.sgst > 0 && footerRow('SGST', summary.sgst)}
+          {Math.abs(summary.roundoff) >= 0.005 && footerRow('Round-off', summary.roundoff)}
+          {footerRow('Bill Amount', summary.bill_amount, { bold: true })}
+        </tfoot>
+      )}
     </table>
   )
 }

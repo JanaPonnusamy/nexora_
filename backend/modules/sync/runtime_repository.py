@@ -3,6 +3,7 @@ import pyodbc
 from config.database import get_connection
 from modules.sync import type_normalizer
 from modules.sync import schema_evolution
+from modules.sync import scheduler_repository
 
 
 def _audit(cursor, execution_id, action_name, message=None):
@@ -17,28 +18,19 @@ def _audit(cursor, execution_id, action_name, message=None):
 
 
 def create_task(tenant_id, store_id, execution_type, sync_mode, total_tables):
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO dbo.sync_execution
-            (tenant_id, store_id, execution_type, sync_mode,
-             execution_status, total_tables, initiated_by, created_by)
-            OUTPUT INSERTED.execution_id
-            VALUES (?, ?, ?, ?, 'PENDING', ?, NULL, NULL)
-            """,
-            (tenant_id, store_id, execution_type, sync_mode, total_tables)
-        )
-        execution_id = cursor.fetchone()[0]
-        _audit(cursor, execution_id, 'CREATED', 'Task created')
-        conn.commit()
-        return str(execution_id)
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    """Manual 'Sync Now' / 'Sync All' entry point (POST /api/sync/tasks/create).
+
+    ROOT CAUSE NOTE: this used to INSERT unconditionally, so clicking "Sync
+    All" in Live Operations while a store was already mid-sync queued a
+    second PENDING row behind the first -- the exact "Sync A #1 + Sync A #2"
+    duplicate this fix is required to prevent. It now goes through the same
+    atomic per-store sp_getapplock claim the scheduler uses (see
+    scheduler_repository.claim_manual), so a store already syncing is
+    reported back as-is instead of double-queued.
+    """
+    return scheduler_repository.claim_manual(
+        tenant_id, store_id, execution_type, sync_mode, total_tables
+    )
 
 
 def get_pending_tasks(store_id):

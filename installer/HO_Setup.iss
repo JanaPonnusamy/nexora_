@@ -217,7 +217,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DeployExe, Params, AppDir, LogFile, ErrText: String;
+  DeployExe, Params, AppDir, LogFile, ErrText, BackendText, SavedLogs: String;
   RC, Ignore: Integer;
 begin
   if CurStep = ssPostInstall then
@@ -247,20 +247,39 @@ begin
 
     if RC <> 0 then
     begin
+      { Keep the logs outside the install folder: the rollback below deletes
+        it, and backend.log is the only record of a backend crash. }
+      SavedLogs := ExpandConstant('{%TEMP}\UniNexHO_failed_install_logs');
+      ForceDirectories(SavedLogs);
+      FileCopy(LogFile, SavedLogs + '\deploy.log', False);
+      FileCopy(AppDir + '\logs\backend.log', SavedLogs + '\backend.log', False);
+
       ErrText := TailFile(LogFile);
       if ErrText = '' then
         ErrText := '(no deploy log was produced - the helper could not run, '
                  + 'or Administrator rights were missing).';
-      MsgBox('HO installation FAILED.' + #13#10
-           + 'The Windows service "UniNexHO" was NOT installed, so Setup cannot '
-           + 'complete.' + #13#10#13#10
+      BackendText := TailFile(AppDir + '\logs\backend.log');
+      if BackendText <> '' then
+        ErrText := ErrText + #13#10 + 'backend.log (last lines):' + #13#10 + BackendText;
+      MsgBox('HO installation FAILED.' + #13#10#13#10
            + 'Actual error:' + #13#10 + ErrText + #13#10
+           + 'Logs saved to: ' + SavedLogs + #13#10#13#10
            + 'The installation will now be rolled back. Re-run as Administrator.',
              mbCriticalError, MB_OK);
 
-      { Roll back: remove any partially created service, then delete the files. }
+      { Roll back: remove any partially created service, then delete the files.
+        sc.exe is a fallback in case the helper failed to remove the service -
+        a running service locks its exe and leaves a half-deleted folder. }
       Exec(DeployExe, 'uninstall --install-dir "' + AppDir + '" --keep-files',
            '', SW_HIDE, ewWaitUntilTerminated, Ignore);
+      Exec(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}', '',
+           SW_HIDE, ewWaitUntilTerminated, Ignore);
+      Sleep(5000);
+      Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '',
+           SW_HIDE, ewWaitUntilTerminated, Ignore);
+      Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM HO_Backend.exe', '',
+           SW_HIDE, ewWaitUntilTerminated, Ignore);
+      Sleep(2000);
       DelTree(AppDir, True, True, True);
 
       { ssPostInstall RaiseException/Abort are non-fatal in Inno, so terminate

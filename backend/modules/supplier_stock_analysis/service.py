@@ -45,6 +45,14 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
     }
 
 
+def warehouse_stock_counts(tenant_id, store_id):
+    return repository.warehouse_stock_counts(tenant_id, store_id)
+
+
+def warehouse_stock_products(tenant_id, store_id, stock_filter, search="", limit=3000):
+    return repository.warehouse_stock_products(tenant_id, store_id, stock_filter, search, limit)
+
+
 def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_available=False):
     rows = repository.supplier_analysis_report(tenant_id, supplier_code, store_id, only_available)
     summary = {
@@ -83,7 +91,14 @@ def match_for_supplier_stock(user, supplier_stock_id, tenant_id=None):
             row["store_id"],
             product_code,
         )
-        match_status = "resolved"
+        # The denormalized code can go stale (product deactivated/recoded,
+        # or a bad import wrote it directly without resolving it) - only
+        # call it "resolved" if that code is still a real, active product
+        # at this store. Otherwise fall through to candidate suggestions
+        # below instead of silently claiming a match that isn't there.
+        match_status = "resolved" if match else "stale"
+        if not match:
+            product_code = None
     else:
         match = repository.exact_mapping(
             row["tenant_id"],

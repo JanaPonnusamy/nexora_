@@ -146,6 +146,21 @@ class SqliteCacheService:
                     acked_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS file_sync_packages (
+                    package_id TEXT PRIMARY KEY,
+                    execution_id TEXT,
+                    zip_path TEXT,
+                    checksum TEXT,
+                    status TEXT DEFAULT 'CREATED',
+                    total_rows INTEGER,
+                    total_chunks INTEGER,
+                    attempts INTEGER DEFAULT 0,
+                    last_error TEXT,
+                    created_on TEXT DEFAULT CURRENT_TIMESTAMP,
+                    sent_on TEXT,
+                    acked_on TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS schema_catalog (
                     schema_name TEXT,
                     table_name TEXT,
@@ -406,6 +421,52 @@ class SqliteCacheService:
         finally:
             conn.close()
 
+    def prune_missing_row_hashes(self, table_name, current_pks):
+        """Reconcile the cache against a full-table extract: any cached PK not
+        present in current_pks means the source row was actually deleted (not
+        merely windowed out), so it's safe to drop. Only call this for UPSERT
+        (unfiltered, full-scan) tables -- for ROLLING_WINDOW/custom_where
+        tables, "not in this extract" usually just means "outside the window",
+        not "deleted", so use prune_stale_row_hashes for those instead."""
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "SELECT source_pk FROM sync_row_cache WHERE store_id=? AND table_name=?",
+                (self.store_id, table_name),
+            )
+            cached_pks = {row[0] for row in cur.fetchall()}
+            stale = cached_pks - set(current_pks)
+            if stale:
+                conn.executemany(
+                    "DELETE FROM sync_row_cache "
+                    "WHERE store_id=? AND table_name=? AND source_pk=?",
+                    [(self.store_id, table_name, pk) for pk in stale],
+                )
+                conn.commit()
+            return len(stale)
+        finally:
+            conn.close()
+
+    def prune_stale_row_hashes(self, table_name, older_than_days):
+        """For ROLLING_WINDOW/custom_where tables: drop cache entries not
+        touched in over older_than_days -- they've fallen outside the sync
+        window (or been excluded by a custom_where) and will never be
+        re-extracted, so their hash would otherwise never get cleaned up."""
+        conn = self._connect()
+        try:
+            cutoff = time.strftime(
+                "%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - older_than_days * 86400)
+            )
+            cur = conn.execute(
+                "DELETE FROM sync_row_cache "
+                "WHERE store_id=? AND table_name=? AND last_sync_time < ?",
+                (self.store_id, table_name, cutoff),
+            )
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
     def row_cache_count(self, table_name):
         conn = self._connect()
         try:
@@ -568,6 +629,164 @@ class SqliteCacheService:
         finally:
             conn.close()
 
+    # ---- active table config (FILE_TRANSFER mode) -------------------------
+
+    def get_active_table_config(self):
+        """Reassembles the cached HO configuration (populated by
+        save_sync_config, the same call DIRECT_HTTP makes after downloading
+        /api/sync/configuration/{task_id}) into the same shape HO's
+        get_configuration() returns: a list of table dicts each carrying its
+        own 'columns' list. FILE_TRANSFER mode has no live task to poll, so
+        it reuses whatever configuration the store last obtained -- a store
+        must have synced online at least once (or been bootstrapped with a
+        config) before FILE_TRANSFER packages can be produced."""
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                SELECT sync_table_id, table_name, sync_mode, watermark_column,
+                       window_days, window_months, custom_where, sync_order
+                FROM sync_table_config
+                WHERE is_active = 1
+                ORDER BY sync_order ASC
+                """
+            )
+            tables = [
+                {
+                    "sync_table_id": r[0], "table_name": r[1], "sync_mode": r[2],
+                    "watermark_column": r[3], "window_days": r[4],
+                    "window_months": r[5], "custom_where": r[6], "sync_order": r[7],
+                }
+                for r in cur.fetchall()
+            ]
+            for table in tables:
+                ccur = conn.execute(
+                    """
+                    SELECT column_name, data_type, is_selected, is_pk,
+                           is_hash, is_watermark, column_order
+                    FROM sync_column_config
+                    WHERE sync_table_id = ? AND is_selected = 1
+                    ORDER BY column_order ASC
+                    """,
+                    (table["sync_table_id"],),
+                )
+                table["columns"] = [
+                    {
+                        "column_name": r[0], "data_type": r[1],
+                        "is_selected": bool(r[2]), "is_pk": bool(r[3]),
+                        "is_hash": bool(r[4]), "is_watermark": bool(r[5]),
+                        "column_order": r[6],
+                    }
+                    for r in ccur.fetchall()
+                ]
+            return tables
+        finally:
+            conn.close()
+
+    # ---- FILE_TRANSFER package outbox --------------------------------------
+
+    def queue_package(self, package_id, execution_id, zip_path, checksum,
+                      total_rows, total_chunks):
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO file_sync_packages
+                (package_id, execution_id, zip_path, checksum, status,
+                 total_rows, total_chunks)
+                VALUES (?, ?, ?, ?, 'CREATED', ?, ?)
+                ON CONFLICT(package_id) DO UPDATE SET
+                    zip_path=excluded.zip_path, checksum=excluded.checksum
+                """,
+                (package_id, execution_id, zip_path, checksum, total_rows, total_chunks),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def set_package_status(self, package_id, status, error=None):
+        conn = self._connect()
+        try:
+            if status == "SENT":
+                conn.execute(
+                    "UPDATE file_sync_packages SET status=?, sent_on=CURRENT_TIMESTAMP, "
+                    "last_error=? WHERE package_id=?",
+                    (status, error, package_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE file_sync_packages SET status=?, last_error=? WHERE package_id=?",
+                    (status, error, package_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def increment_package_attempt(self, package_id):
+        conn = self._connect()
+        try:
+            conn.execute(
+                "UPDATE file_sync_packages SET attempts = attempts + 1 WHERE package_id=?",
+                (package_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def mark_package_acknowledged(self, package_id, result):
+        conn = self._connect()
+        try:
+            status = "ACKNOWLEDGED" if (result or {}).get("status") == "IMPORTED" else "FAILED"
+            conn.execute(
+                "UPDATE file_sync_packages SET status=?, acked_on=CURRENT_TIMESTAMP, "
+                "last_error=? WHERE package_id=?",
+                (status, (result or {}).get("error_message"), package_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_package(self, package_id):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                SELECT package_id, execution_id, zip_path, checksum, status,
+                       total_rows, total_chunks, attempts, last_error,
+                       created_on, sent_on, acked_on
+                FROM file_sync_packages WHERE package_id=?
+                """,
+                (package_id,),
+            )
+            row = cur.fetchone()
+            return _package_row_to_dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_packages_by_status(self, status):
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                SELECT package_id, execution_id, zip_path, checksum, status,
+                       total_rows, total_chunks, attempts, last_error,
+                       created_on, sent_on, acked_on
+                FROM file_sync_packages WHERE status=? ORDER BY created_on ASC
+                """,
+                (status,),
+            )
+            return [_package_row_to_dict(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def next_package_sequence(self):
+        conn = self._connect()
+        try:
+            cur = conn.execute("SELECT COUNT(*) FROM file_sync_packages")
+            return int(cur.fetchone()[0]) + 1
+        finally:
+            conn.close()
+
     def cache_size_bytes(self):
         try:
             return Path(self.db_path).stat().st_size
@@ -577,3 +796,12 @@ class SqliteCacheService:
 
 def _now():
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _package_row_to_dict(row):
+    return {
+        "package_id": row[0], "execution_id": row[1], "zip_path": row[2],
+        "checksum": row[3], "status": row[4], "total_rows": row[5],
+        "total_chunks": row[6], "attempts": row[7], "last_error": row[8],
+        "created_on": row[9], "sent_on": row[10], "acked_on": row[11],
+    }

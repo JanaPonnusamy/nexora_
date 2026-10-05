@@ -52,25 +52,95 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @Search NVARCHAR(100) = NULLIF(LTRIM(RTRIM(@SearchText)), '');
+    -- Candidate cap per store BEFORE the per-row stock lookup (the two
+    -- OUTER APPLYs into sync.Batches/sync.ProductTrans, ~1.5M rows each)
+    -- runs. Previously that stock lookup ran for EVERY name/code match
+    -- across every store, THEN limited to @PerStore -- measured against the
+    -- live DB: 19s for a blank search, 6.6s for a 1-char prefix, vs 0.19s
+    -- for a realistic 3-char prefix that already narrows the match count.
+    -- Ranking by name first and capping the candidate pool to @PerStore*15
+    -- per store before computing stock bounds that cost regardless of how
+    -- broad the typed search is. Trade-off: for a very broad/short search
+    -- with @OnlyStock=1, a genuinely high-stock match that falls outside
+    -- this window (alphabetically, per store) won't surface -- accepted
+    -- because @PerStore*15 (300 by default) is generous for what's meant to
+    -- be a live incremental-search box, not a full catalogue browse.
+    DECLARE @CandidateCap INT = @PerStore * 15;
 
-    ;WITH filtered AS
+    -- Whether the typed term could match a ProductCode (INT) at all -- only a
+    -- purely numeric term can. Guarding the code branch with this flag AND the
+    -- OPTION (RECOMPILE) below lets the optimizer ELIMINATE the non-sargable
+    -- CAST(ProductCode) branch for the common alpha search (e.g. "crevast").
+    -- Previously the single OR predicate mixing ProductName LIKE with
+    -- CAST(ProductCode) LIKE was non-sargable, so EVERY keystroke forced a full
+    -- scan of sync.Products across all stores (~12s live) -- even for a
+    -- letters-only term that never needed the code branch. Splitting into a
+    -- UNION keeps the name-prefix arm a pure index seek on
+    -- IX_Products_TenantProductName.
+    DECLARE @IsNumeric BIT =
+        CASE WHEN @Search IS NOT NULL AND @Search NOT LIKE '%[^0-9]%'
+             THEN 1 ELSE 0 END;
+
+    ;WITH matched AS
     (
-        SELECT
-            s.store_id, s.store_code, s.store_name, s.store_order,
-            p.ProductCode, p.ProductName, p.UnitDescription,
-            p.TotalStock AS RawTotalStock,
-            ISNULL(p.MRP, 0) AS MRP
+        -- Blank browse: no term -> every active product (inherently a scan;
+        -- capped downstream to @CandidateCap per store).
+        SELECT s.store_id, s.store_code, s.store_name, s.store_order,
+               p.ProductCode, p.ProductName, p.UnitDescription,
+               p.TotalStock AS RawTotalStock, ISNULL(p.MRP, 0) AS MRP
         FROM sync.Products p
         INNER JOIN dbo.stores s
                 ON s.store_id  = p.store_id
                AND s.tenant_id = p.tenant_id
         WHERE p.tenant_id = @TenantId
           AND ISNULL(p.isActive, 1) = 1
-          AND (
-                @Search IS NULL
-                OR p.ProductName LIKE @Search + '%'
-                OR CAST(p.ProductCode AS NVARCHAR(50)) LIKE @Search + '%'
-              )
+          AND @Search IS NULL
+
+        UNION
+
+        -- Name prefix: sargable seek on IX_Products_TenantProductName.
+        SELECT s.store_id, s.store_code, s.store_name, s.store_order,
+               p.ProductCode, p.ProductName, p.UnitDescription,
+               p.TotalStock AS RawTotalStock, ISNULL(p.MRP, 0) AS MRP
+        FROM sync.Products p
+        INNER JOIN dbo.stores s
+                ON s.store_id  = p.store_id
+               AND s.tenant_id = p.tenant_id
+        WHERE p.tenant_id = @TenantId
+          AND ISNULL(p.isActive, 1) = 1
+          AND @Search IS NOT NULL
+          AND p.ProductName LIKE @Search + '%'
+
+        UNION
+
+        -- Code prefix: numeric terms only, so a letters-only search never pays
+        -- for this CAST scan (branch removed at compile time by RECOMPILE).
+        SELECT s.store_id, s.store_code, s.store_name, s.store_order,
+               p.ProductCode, p.ProductName, p.UnitDescription,
+               p.TotalStock AS RawTotalStock, ISNULL(p.MRP, 0) AS MRP
+        FROM sync.Products p
+        INNER JOIN dbo.stores s
+                ON s.store_id  = p.store_id
+               AND s.tenant_id = p.tenant_id
+        WHERE p.tenant_id = @TenantId
+          AND ISNULL(p.isActive, 1) = 1
+          AND @IsNumeric = 1
+          AND CAST(p.ProductCode AS NVARCHAR(50)) LIKE @Search + '%'
+    ),
+    filtered AS
+    (
+        SELECT
+            store_id, store_code, store_name, store_order,
+            ProductCode, ProductName, UnitDescription, RawTotalStock, MRP,
+            ROW_NUMBER() OVER (PARTITION BY store_id ORDER BY ProductName) AS pre_rn
+        FROM matched
+    ),
+    capped AS
+    (
+        SELECT store_id, store_code, store_name, store_order,
+               ProductCode, ProductName, UnitDescription, RawTotalStock, MRP
+        FROM filtered
+        WHERE pre_rn <= @CandidateCap
     ),
     stocked AS
     (
@@ -90,7 +160,7 @@ BEGIN
                 f.RawTotalStock,
                 0
             ) AS TotalStock
-        FROM filtered f
+        FROM capped f
         OUTER APPLY (
             SELECT
                 SUM(CASE WHEN b.Stock > 0 THEN b.Stock ELSE 0 END) AS BatchStock,
@@ -135,7 +205,10 @@ BEGIN
         MRP                               AS mrp
     FROM ranked
     WHERE rn <= @PerStore
-    ORDER BY store_order, store_code, product_name;
+    ORDER BY store_order, store_code, product_name
+    -- Forces the @IsNumeric/@Search literals to be treated as constants so the
+    -- unused UNION arms (blank-browse / code-prefix) are pruned per keystroke.
+    OPTION (RECOMPILE);
 END
 GO
 
@@ -316,6 +389,48 @@ END
 GO
 
 /* ===========================================================================
+   4b) stock.usp_BatchDetail   (single-batch detail popup)
+   Full detail for ONE batch of a product, shown when the user clicks a batch
+   row. Everything comes straight off sync.Batches (which carries ItemCost +
+   SupplierCode per batch); supplier name resolved via sync.Suppliers.
+   OUTPUT: batch_no, batch_description, stock, expiry_date, cost, ptr, mrp,
+           supplier, last_purchase_date, last_sale_date
+   =========================================================================== */
+IF OBJECT_ID(N'stock.usp_BatchDetail', N'P') IS NOT NULL DROP PROCEDURE stock.usp_BatchDetail;
+GO
+CREATE PROCEDURE stock.usp_BatchDetail
+    @TenantId     UNIQUEIDENTIFIER,
+    @StoreId      UNIQUEIDENTIFIER,
+    @ProductCode  INT,
+    @BatchCode    VARCHAR(50)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP (1)
+        CAST(b.BatchCode AS VARCHAR(50))          AS batch_no,
+        LTRIM(RTRIM(ISNULL(b.BatchDescription, ''))) AS batch_description,
+        ISNULL(b.Stock, 0)                        AS stock,
+        CAST(b.ExpiryDate AS DATE)                 AS expiry_date,
+        ISNULL(b.ItemCost, 0)                     AS cost,
+        ISNULL(b.PurchasePrice, 0)                AS ptr,
+        ISNULL(b.MRP, 0)                          AS mrp,
+        ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(b.SupplierCode AS NVARCHAR(100))) AS supplier,
+        CAST(b.GrnDate AS DATE)                    AS last_purchase_date,
+        CAST(b.LastSaleDate AS DATE)               AS last_sale_date
+    FROM sync.Batches b
+    LEFT JOIN sync.Suppliers s
+           ON s.tenant_id = b.tenant_id
+          AND s.store_id  = b.store_id
+          AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(b.SupplierCode AS VARCHAR(100))
+    WHERE b.tenant_id = @TenantId
+      AND b.store_id  = @StoreId
+      AND b.ProductCode = @ProductCode
+      AND CAST(b.BatchCode AS VARCHAR(50)) = @BatchCode;
+END
+GO
+
+/* ===========================================================================
    5) stock.usp_PurchaseHistory   (Recent Purchases panel)
    Faithful to sp_nmstock_get_purchases, plus supplier name via
    PurchaseTrans.SupplierCode -> sync.Suppliers (same join pattern as
@@ -332,6 +447,15 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- Show ONLY this store's OWN PurchaseTrans - a satellite store's panel (e.g.
+    -- NMC) shows NMC's transactions, never NMW's. Internal 'TI' (Transfer-In)
+    -- lines are the store receiving stock from the tenant warehouse (NMW); their
+    -- SupplierCode is a transfer/source code that collides with the local
+    -- supplier namespace (e.g. code 2 = a real supplier "PENTACARE"), so it must
+    -- NOT resolve via sync.Suppliers - surface the warehouse (is_warehouse = 1)
+    -- as the source party instead. Genuine purchases (series <> 'TI') keep their
+    -- real supplier name. We do NOT trace transfers back into the warehouse's own
+    -- purchases. Kept byte-for-byte in sync with usp_ProductCore result set 2.
     SELECT TOP (15)
         CAST(pt.Grnnumber AS NVARCHAR(50)) AS grn_no,
         CAST(pt.grndate AS DATE)           AS [date],
@@ -341,12 +465,24 @@ BEGIN
         ISNULL(pt.itemcost, 0)             AS cost,
         ISNULL(pt.purchaseprice, 0)        AS ptr,
         ISNULL(pt.mrp, 0)                  AS mrp,
-        ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100))) AS supplier
+        RTRIM(pt.InvoiceSeries)            AS invoice_series,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN 'transfer' ELSE 'supplier' END AS party_type,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI'
+             THEN ISNULL(NULLIF(RTRIM(wh.store_code), ''), 'Transfer')
+             ELSE ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100)))
+        END                                AS supplier,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN wh.store_name END AS source_store_name
     FROM sync.PurchaseTrans pt
     LEFT JOIN sync.Suppliers s
            ON s.tenant_id = pt.tenant_id
           AND s.store_id  = pt.store_id
           AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(pt.SupplierCode AS VARCHAR(100))
+    OUTER APPLY (
+        SELECT TOP (1) w.store_code, w.store_name
+        FROM dbo.stores w
+        WHERE w.tenant_id = pt.tenant_id AND w.is_warehouse = 1
+        ORDER BY w.store_code
+    ) wh
     WHERE pt.tenant_id = @TenantId
       AND pt.store_id  = @StoreId
       AND pt.ProductCode = @ProductCode
@@ -489,7 +625,16 @@ BEGIN
         CASE WHEN ISNULL(b.Stock, 0) > 0 THEN 0 ELSE 1 END,
         b.ExpiryDate;
 
-    -- Result set 2: purchases (== stock.usp_PurchaseHistory)
+    -- Result set 2: purchases (== stock.usp_PurchaseHistory). Show ONLY this
+    -- store's OWN PurchaseTrans - NMC's panel shows NMC's transactions, never
+    -- NMW's. Internal 'TI' (Transfer-In) lines are the satellite store receiving
+    -- stock from the tenant warehouse (NMW); their SupplierCode is a transfer/
+    -- source code that collides with the local supplier namespace (e.g. code 2 =
+    -- a real supplier "PENTACARE"), so it must NOT resolve via sync.Suppliers -
+    -- we surface the warehouse (dbo.stores.is_warehouse = 1) as the source party
+    -- instead. Genuine purchases (series <> 'TI') keep their real supplier name.
+    -- We do NOT trace transfers back into the warehouse's own purchases here.
+    -- Kept byte-for-byte in sync with usp_PurchaseHistory.
     SELECT TOP (15)
         CAST(pt.Grnnumber AS NVARCHAR(50)) AS grn_no,
         CAST(pt.grndate AS DATE)           AS [date],
@@ -499,12 +644,24 @@ BEGIN
         ISNULL(pt.itemcost, 0)             AS cost,
         ISNULL(pt.purchaseprice, 0)        AS ptr,
         ISNULL(pt.mrp, 0)                  AS mrp,
-        ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100))) AS supplier
+        RTRIM(pt.InvoiceSeries)            AS invoice_series,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN 'transfer' ELSE 'supplier' END AS party_type,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI'
+             THEN ISNULL(NULLIF(RTRIM(wh.store_code), ''), 'Transfer')
+             ELSE ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100)))
+        END                                AS supplier,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN wh.store_name END AS source_store_name
     FROM sync.PurchaseTrans pt
     LEFT JOIN sync.Suppliers s
            ON s.tenant_id = pt.tenant_id
           AND s.store_id  = pt.store_id
           AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(pt.SupplierCode AS VARCHAR(100))
+    OUTER APPLY (
+        SELECT TOP (1) w.store_code, w.store_name
+        FROM dbo.stores w
+        WHERE w.tenant_id = pt.tenant_id AND w.is_warehouse = 1
+        ORDER BY w.store_code
+    ) wh
     WHERE pt.tenant_id = @TenantId
       AND pt.store_id  = @StoreId
       AND pt.ProductCode = @ProductCode

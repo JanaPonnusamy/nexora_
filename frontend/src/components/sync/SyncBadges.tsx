@@ -40,12 +40,14 @@ const STATUS_TONE: Record<string, Tone> = {
   PARTIAL_SUCCESS: 'warning',
   Online: 'success',
   Offline: 'muted',
+  STALE_SALES: 'danger',
 }
 
 const STATUS_LABEL: Record<string, string> = {
   Syncing: 'Syncing',
   PARTIAL: 'Partial Success',
   PARTIAL_SUCCESS: 'Partial Success',
+  STALE_SALES: 'No Bill 30m+',
 }
 
 export function SyncStatusBadge({ status, compact = false }: { status: string | null; compact?: boolean }) {

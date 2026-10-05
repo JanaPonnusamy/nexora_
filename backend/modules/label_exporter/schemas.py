@@ -14,17 +14,30 @@ class LabelSearchRow(BaseModel):
     product_code: str
     product_name: str
     unit_description: Optional[str] = None
-    box_number: Optional[str] = None
+    current_sublocation: Optional[str] = None
+    sale_unit: Optional[float] = None
     mrp: float
     total_stock: float
     sale_days: Optional[float] = None
     purchase_days: Optional[float] = None
+    last_purchase_date: Optional[str] = None
+    last_sale_date: Optional[str] = None
+    include_label: Optional[str] = None
+    remarks: Optional[str] = None
+    corrected_unit: Optional[str] = None
+    old_unit_description: Optional[str] = None
+    assigned_sublocation: Optional[str] = None
+    old_sublocation: Optional[str] = None
+    assignment_type: Optional[str] = None
+    label_required: bool = False
 
 
 class LabelSearchResult(BaseModel):
     rows: List[LabelSearchRow] = []
     unit_descriptions: List[str] = []
+    sublocations: List[str] = []
     last_box_for_letter: Optional[str] = None
+    server_ms: Optional[int] = None
 
 
 # ---------- Box search ----------
@@ -75,3 +88,180 @@ class LabelBatchRow(BaseModel):
 
 class ProductBatchResult(BaseModel):
     rows: List[LabelBatchRow] = []
+
+
+# ---------- Review (Y/N + remarks) ----------
+
+
+class LabelReviewUpdateRequest(BaseModel):
+    include_label: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+class LabelBulkReviewRequest(BaseModel):
+    product_codes: List[str] = []
+    include_label: str
+
+
+# ---------- Sublocation assignment (super admin) ----------
+
+
+class LabelSublocationAssignRequest(BaseModel):
+    sublocation: str = ""
+
+
+# ---------- Product trend panel ----------
+
+
+class LabelTrendRow(BaseModel):
+    month: str
+    sale_qty: float
+    purchase_qty: float
+    transfer_in_qty: float = 0
+    transfer_out_qty: float = 0
+    adjustment_qty: float = 0
+    stock_in_hand: float
+
+
+class LabelTrendResult(BaseModel):
+    rows: List[LabelTrendRow] = []
+
+
+# ---------- Purchase / sales intelligence panels ----------
+
+
+class LabelPurchaseRow(BaseModel):
+    stock: float
+    free_qty: float
+    discount_pct: float
+    item_cost: float
+    ptr: float
+    mrp: float
+    grn_date: Optional[str] = None
+    supplier_name: Optional[str] = None
+
+
+class LabelPurchaseResult(BaseModel):
+    rows: List[LabelPurchaseRow] = []
+
+
+class LabelSaleRow(BaseModel):
+    qty: float
+    bill_time: Optional[str] = None
+    salesman: Optional[str] = None
+    customer: Optional[str] = None
+    discount_pct: float
+    mrp: float
+
+
+class LabelSaleResult(BaseModel):
+    rows: List[LabelSaleRow] = []
+
+
+# ---------- Unit correction ----------
+
+
+class LabelUnitCorrectionRequest(BaseModel):
+    unit_description: str
+    current_unit: Optional[str] = None
+
+
+class LabelBulkUnitRequest(BaseModel):
+    """Find-and-replace a unit across many products at once (e.g. set every
+    selected RM product's NEW unit to TAB). Writes only dbo.label_review; the
+    master unit is captured into old_unit_description once, like the single-row
+    correction."""
+
+    product_codes: List[str] = []
+    unit_description: str
+
+
+# ---------- Location correction (manual box override, super admin) ----------
+
+
+class LabelLocationCorrectionRequest(BaseModel):
+    location: str
+    current_location: Optional[str] = None
+
+
+# ---------- Location assignment (preview + commit) ----------
+
+
+class LabelLetterPlan(BaseModel):
+    """Per-letter mode choice from the drawer's dropdowns. ``mode`` is one of
+    continue / new_label / single; ``start_number`` applies to new_label."""
+
+    letter: str
+    mode: str = "continue"
+    start_number: int = 1
+
+
+class LabelAssignRequest(BaseModel):
+    unit: str = ""
+    mode: str = "continue"            # legacy/global fallback (continue/new_label/single)
+    assignment_type: str = "standard_box"  # standard_box / single_product_box
+    letter: str = ""                  # legacy fallback for odd (non-letter) names
+    product_codes: List[str] = []
+    start_number: int = 1
+    # Per-letter modes (A→continue, B→new_label, …). When present, each letter
+    # is boxed under its own mode; letters omitted here use `mode`/`start_number`.
+    letter_plans: List[LabelLetterPlan] = []
+
+
+class LabelAssignBox(BaseModel):
+    box: str
+    existing: int = 0
+    added: int = 0
+    total: int = 0
+    capacity: Optional[int] = None
+
+
+class LabelAssignEntry(BaseModel):
+    product_code: str
+    product_name: str
+    box: str
+    slot: int
+    mode: str = ""
+
+
+class LabelAssignResult(BaseModel):
+    unit: str
+    mode: str
+    assignment_type: str
+    assignments: List[LabelAssignEntry] = []
+    boxes: List[LabelAssignBox] = []
+    assigned_count: int = 0
+    committed: bool = False
+
+
+# ---------- Label queue ----------
+
+
+class LabelQueueRow(BaseModel):
+    product_code: str
+    product_name: str
+    location: Optional[str] = None
+    unit_description: Optional[str] = None
+    mrp: float = 0
+    sale_unit: Optional[float] = None
+    assignment_type: Optional[str] = None
+    assigned_at: Optional[str] = None
+    label_created_at: Optional[str] = None
+
+
+class LabelQueueResult(BaseModel):
+    rows: List[LabelQueueRow] = []
+
+
+class LabelMarkPrintedRequest(BaseModel):
+    product_codes: List[str] = []
+
+
+# ---------- Explicit reset actions (confirmed in the UI) ----------
+
+
+class LabelClearRequest(BaseModel):
+    """Products to reset. Both clear actions touch ONLY dbo.label_review — never
+    sync.Products / master location data."""
+
+    product_codes: List[str] = []

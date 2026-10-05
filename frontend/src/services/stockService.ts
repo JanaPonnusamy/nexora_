@@ -3,6 +3,7 @@ import type {
   AvailabilityRow,
   BatchRow,
   BillItemRow,
+  CrossStoreMatchResult,
   CustomerBillRow,
   MovementRow,
   ProductDetails,
@@ -37,6 +38,20 @@ export const stockService = {
     api.get<StockSearchResult>(
       `${BASE}/batches/search${qs({ tenant_id: tenantId, batch, mrp, product })}`,
     ),
+  syncSelection: (
+    tenantId: string,
+    sourceStoreId: string,
+    sourceProductCode: string,
+    sourceProductName: string | null,
+    targetStoreIds: string[],
+  ) =>
+    api.post<CrossStoreMatchResult>(`${BASE}/products/sync-selection`, {
+      tenant_id: tenantId,
+      source_store_id: sourceStoreId,
+      source_product_code: sourceProductCode,
+      source_product_name: sourceProductName,
+      target_store_ids: targetStoreIds,
+    }),
 
   // ----- Detail panels (active product context) -----------------------------
   productDetails: (tenantId: string, storeId: string, product: string) =>

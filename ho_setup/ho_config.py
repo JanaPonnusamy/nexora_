@@ -106,7 +106,13 @@ class HoConfig:
             lines.append(f"DB_USERNAME={self.sql_username}")
             lines.append(f"DB_PASSWORD={self.sql_password}")
         lines += [
-            f"UNINEX_API_URL={self.api_url}",
+            # Empty = same-origin: the SPA calls whichever host served it, so the
+            # LAN IP, the public/static IP and the domain all work from one build
+            # (see backend/api/app.py). Setting an absolute URL here hard-pins
+            # EVERY browser to that single host — e.g. an internal LAN IP that is
+            # unreachable from outside, which breaks remote login. Only set this
+            # for a genuine cross-origin deploy (SPA and API on different hosts).
+            "UNINEX_API_URL=",
             f"UNINEX_FRONTEND_URL={self.frontend_url}",
             f"UNINEX_FRONTEND_DIR={self.frontend_dir}",
             f"UNINEX_CORS_ORIGINS={self.api_url}",

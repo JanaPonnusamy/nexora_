@@ -36,6 +36,10 @@ export const timeReportService = {
   exportPath: (report: string, p: TimeReportParams) =>
     `/api/time-report/${report}${qs({ ...clean(p), export: 'xlsx' })}`,
 
+  /** Path to a styled .png of a report (monthly/misspunch/user/inactive). */
+  imagePath: (report: string, p: TimeReportParams) =>
+    `/api/time-report/${report}${qs({ ...clean(p), export: 'image' })}`,
+
   /** PNG of a single department's Daily report (dept_id required — one store). */
   dailyImagePath: (p: TimeReportParams) => `/api/time-report/daily/image${qs(clean(p))}`,
   /** Zip with one PNG per department for the current Daily filter. */

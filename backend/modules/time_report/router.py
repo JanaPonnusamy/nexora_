@@ -27,6 +27,14 @@ def _xlsx(buf, filename):
     )
 
 
+def _png(buf, filename):
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 def _guard(fn):
     """Translate a COSEC connectivity failure into a clean 503."""
     try:
@@ -122,6 +130,8 @@ def monthly(
     data = _guard(lambda: service.monthly_report(year, month, dept_id))
     if export == "xlsx":
         return _xlsx(xls.monthly_xlsx(data), f"monthly_{year}_{month:02d}.xlsx")
+    if export == "image":
+        return _png(images.monthly_image(data), f"monthly_{year}_{month:02d}.png")
     return data
 
 
@@ -139,15 +149,17 @@ def misspunch(
     start = start or date.today().replace(day=1).isoformat()
     end = end or date.today().isoformat()
     data = _guard(lambda: service.misspunch_report(start, end, dept_id, user_id))
-    if export == "xlsx":
+    if export in ("xlsx", "image"):
         rows = [([d["pdate_str"], d["user_id"], d["name"], d["department"],
                   " | ".join(d["punches"]), d["punch_count"], d["work_hm"]],
                  config.STATUS["MISS_PUNCH"]["hex"]) for d in data["rows"]]
-        buf = xls.table_xlsx(
-            f"Miss Punch Report  {start} to {end}",
-            ["Date", "UserID", "Name", "Department", "Punches", "#Punch", "Work"],
-            rows, legend=data["legend"])
-        return _xlsx(buf, f"misspunch_{start}_{end}.xlsx")
+        title = f"Miss Punch Report  {start} to {end}"
+        headers = ["Date", "UserID", "Name", "Department", "Punches", "#Punch", "Work"]
+        if export == "image":
+            return _png(images.table_image(title, headers, rows, legend=data["legend"],
+                                           left_cols=(3, 4, 5)), f"misspunch_{start}_{end}.png")
+        return _xlsx(xls.table_xlsx(title, headers, rows, legend=data["legend"]),
+                     f"misspunch_{start}_{end}.xlsx")
     return data
 
 
@@ -168,26 +180,28 @@ def user(
     end = end or date.today().isoformat()
     data = _guard(lambda: service.user_report(start, end, user_id, dept_id, mode, search))
 
-    if export == "xlsx":
+    if export in ("xlsx", "image"):
         if mode == "summary":
             rows = [([d["user_id"], d["name"], d["department"], d["present"],
                       d["full"], d["short"], d["low"], d["miss_punch"],
                       d["absent"], d["late"], d["total_hm"]], None)
                     for d in data["rows"]]
-            buf = xls.table_xlsx(
-                f"User Summary  {start} to {end}",
-                ["UserID", "Name", "Department", "Present", "Full", "Short",
-                 "Low", "Miss", "Absent", "Late", "Total Hrs"], rows,
-                legend=data["legend"])
+            title = f"User Summary  {start} to {end}"
+            headers = ["UserID", "Name", "Department", "Present", "Full", "Short",
+                       "Low", "Miss", "Absent", "Late", "Total Hrs"]
+            left_cols = (2, 3)
         else:
             rows = [([d["pdate_str"], d["user_id"], d["name"],
                       " | ".join(d["punches"]), d["work_hm"], d["late_in"] or ""],
                      d["status_hex"]) for d in data["rows"]]
-            buf = xls.table_xlsx(
-                f"User Detail  {start} to {end}",
-                ["Date", "UserID", "Name", "Punches", "Work", "Late"],
-                rows, legend=data["legend"])
-        return _xlsx(buf, f"user_{mode}_{start}_{end}.xlsx")
+            title = f"User Detail  {start} to {end}"
+            headers = ["Date", "UserID", "Name", "Punches", "Work", "Late"]
+            left_cols = (3, 4)
+        if export == "image":
+            return _png(images.table_image(title, headers, rows, legend=data["legend"],
+                                           left_cols=left_cols), f"user_{mode}_{start}_{end}.png")
+        return _xlsx(xls.table_xlsx(title, headers, rows, legend=data["legend"]),
+                     f"user_{mode}_{start}_{end}.xlsx")
     return data
 
 
@@ -202,12 +216,13 @@ def inactive(
 ):
     days = days or config.INACTIVE_DAYS
     data = _guard(lambda: service.inactive_users(days, dept_id))
-    if export == "xlsx":
+    if export in ("xlsx", "image"):
         rows = [([d["user_id"], d["name"], d["department"], d["join_dt"],
                   d["last_seen"], d["days_since"]], None) for d in data["rows"]]
-        buf = xls.table_xlsx(
-            f"Inactive Users (no punch for {days}+ days)",
-            ["UserID", "Name", "Department", "Join Date", "Last Punch", "Days Since"],
-            rows)
-        return _xlsx(buf, f"inactive_users_{days}d.xlsx")
+        title = f"Inactive Users (no punch for {days}+ days)"
+        headers = ["UserID", "Name", "Department", "Join Date", "Last Punch", "Days Since"]
+        if export == "image":
+            return _png(images.table_image(title, headers, rows, left_cols=(2, 3)),
+                        f"inactive_users_{days}d.png")
+        return _xlsx(xls.table_xlsx(title, headers, rows), f"inactive_users_{days}d.xlsx")
     return data

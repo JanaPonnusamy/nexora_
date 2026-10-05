@@ -106,6 +106,16 @@ export const legacyOrderService = {
       + `?supplier_code=${encodeURIComponent(supplierCode)}&mode=${mode}`,
     ),
 
+  // Stock-mode exportable row count for this store/supplier -- what Export
+  // always acts on, independent of whichever History/Live Stock tab is
+  // currently displayed. Drives the Export button's label/enabled state
+  // without fetching the full stock grid.
+  ordersBySupplierExportCount: (storeName: string, supplierCode: string) =>
+    api.get<{ count: number }>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/by-supplier/export-count`
+      + `?supplier_code=${encodeURIComponent(supplierCode)}`,
+    ),
+
   assignedOrders: (storeName: string, supplierCode: string) =>
     api.get<AssignedOrderRow[]>(
       `${BASE}/orders/${encodeURIComponent(storeName)}/assigned`
@@ -119,6 +129,31 @@ export const legacyOrderService = {
       `${BASE}/orders/${encodeURIComponent(storeName)}/${productCode}/assign`,
       { supplier_code: supplierCode, supplier_name: supplierName },
     ),
+
+  // Bulk-assigns every OrderQty>0 row for this supplier (no per-product
+  // Assign/Unassign), then returns the Order Workspace Excel export (or a
+  // .zip of "Part N of M" files when splitSize splits it). Filename +
+  // assigned-count come back in response headers.
+  exportOrder: (
+    storeName: string, supplierCode: string, supplierName: string,
+    mode: SupplierOrderMode, splitSize = 0,
+  ) =>
+    api
+      .postBlobMeta(`${BASE}/orders/${encodeURIComponent(storeName)}/export`, {
+        supplier_code: supplierCode,
+        supplier_name: supplierName,
+        mode,
+        split_size: splitSize,
+      })
+      .then(({ blob, headers }) => {
+        const disposition = headers.get('Content-Disposition') ?? ''
+        const match = /filename="?([^"]+)"?/.exec(disposition)
+        return {
+          blob,
+          filename: match?.[1] ?? `${supplierName} ${storeName}.xlsx`,
+          exportedCount: Number(headers.get('X-Exported-Count') ?? 0),
+        }
+      }),
 
   previousOrders: (storeName: string) =>
     api.get<PreviousOrder[]>(`${BASE}/previous-orders/${encodeURIComponent(storeName)}`),

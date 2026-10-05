@@ -9,6 +9,7 @@ import type {
   GrnResult,
   ManualProduct,
   MappingTarget,
+  NetworkOpportunityPage,
   OptimizationAuditRow,
   OptimizationMoveResult,
   OptimizationResult,
@@ -413,6 +414,14 @@ export const procurementService = {
       { product_code: code, product_name: name, qty, created_by: by },
     ),
 
+  // Network Opportunities — reads the persisted network movement cache only
+  // (never recomputes on request): products locally NONMOVING but genuinely
+  // FAST/MEDIUM elsewhere in the network, not already on this store's VPL.
+  networkOpportunities: (tenantId: string, refreshId: string, page = 1, pageSize = 50) =>
+    api.get<NetworkOpportunityPage>(
+      `/api/procurement/refreshes/${refreshId}/network-opportunities${qs({ tenant_id: tenantId, page, page_size: pageSize })}`,
+    ),
+
   // Manual Add Product search over the real Product Master (sync.Products).
   searchProducts: (tenantId: string, storeId: string, q: string, limit = 25) =>
     api
@@ -798,4 +807,12 @@ export const procurementService = {
 
   distributionRunItemProducts: (runItemId: string) =>
     api.get<DistributionRunItemProducts>(`/api/procurement/distribution/run-items/${runItemId}/products`),
+
+  // (Re)send the item's already-generated Excel file to its mapped WhatsApp
+  // group -- the Excel itself, no image, no caption.
+  distributionSendWhatsApp: (runItemId: string) =>
+    api.post<{ run_item_id: string; status: string; error: string | null }>(
+      `/api/procurement/distribution/run-items/${runItemId}/send-whatsapp`,
+      {},
+    ),
 }

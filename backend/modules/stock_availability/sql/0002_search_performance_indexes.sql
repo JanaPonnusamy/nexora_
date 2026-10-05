@@ -30,8 +30,11 @@ IF NOT EXISTS (
 )
     CREATE NONCLUSTERED INDEX IX_Batches_Product
         ON sync.Batches (tenant_id, store_id, ProductCode)
-        INCLUDE (BatchCode, Stock, MRP, ExpiryDate, GrnDate, PurchasePrice);
+        INCLUDE (BatchCode, Stock, MRP, ExpiryDate, GrnDate, PurchasePrice, LastSaleDate);
 GO
+/* NOTE: LastSaleDate added to the INCLUDE list above (fresh installs get it
+   here). Existing databases already carrying this index without LastSaleDate
+   are upgraded in place by 0003_batches_lastsaledate_index.sql. */
 
 IF NOT EXISTS (
     SELECT 1 FROM sys.indexes

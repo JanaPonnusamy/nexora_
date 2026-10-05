@@ -11,6 +11,18 @@ import { DEFAULT_COLUMN_ORDER, DEFAULT_VISIBLE_COLUMNS, MANDATORY_COLUMNS } from
 
 const REVIEWED_STATES = ['review', 'assigned', 'partial']
 
+// Show the "network fast" badge only when it's a genuine signal the buyer
+// wouldn't already have — i.e. this store's own movement is NOT already fast.
+// A row that's fast locally AND fast on the network gains nothing from the
+// badge, so it stays off to keep the grid uncluttered (§I of the design
+// review: one small badge, never a second wide column).
+function networkBadge(item: WorkspaceItem): string | null {
+  if (item.network_movement_class === 'FAST' && item.movement_class !== 'FAST') {
+    return 'Fast-moving elsewhere in the network — see Decision Panel'
+  }
+  return null
+}
+
 // Keys that edit text / move the caret INSIDE a cell editor. While the caret is
 // inside an input these must reach the browser untouched (Excel/Tally/Busy feel)
 // — the grid must never hijack them to move between cells. ArrowLeft/ArrowRight
@@ -546,6 +558,9 @@ export function ProductGrid({
                   <span className="pm-prod__name" title={item.product_name ?? undefined}>{item.product_name ?? '—'}</span>
                   {item.is_manual && <span className="pm-tag pm-tag--manual">manual</span>}
                   {locked && <span className="pm-tag pm-tag--exported">exported</span>}
+                  {networkBadge(item) && (
+                    <span className="pm-tag pm-tag--network" title={networkBadge(item) ?? undefined}>network</span>
+                  )}
                 </td>
                 {activeColumns.map((id) => bodyCell(id, item, i, dirty, locked))}
                 <td className="pm-grid__status">

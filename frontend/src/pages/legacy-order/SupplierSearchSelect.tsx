@@ -53,8 +53,15 @@ export function SupplierSearchSelect({
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') { setOpen(false); return }
-    if (e.key === 'ArrowDown' && !open) { setOpen(true); return }
+    if (e.key === 'Escape') {
+      // Close the dropdown only; leave the current selection untouched. Stop
+      // propagation so we don't also trigger a parent (e.g. clearing the
+      // native search input or closing an enclosing panel).
+      if (open) { e.preventDefault(); e.stopPropagation(); setOpen(false) }
+      return
+    }
+    // Opening with ArrowDown must not scroll the page.
+    if (e.key === 'ArrowDown' && !open) { e.preventDefault(); setOpen(true); return }
     if (!open || matches.length === 0) return
     if (e.key === 'ArrowDown') { e.preventDefault(); nav.moveNext() }
     else if (e.key === 'ArrowUp') { e.preventDefault(); nav.movePrev() }

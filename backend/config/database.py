@@ -100,8 +100,19 @@ def _connection_string():
 
 
 def get_connection():
+    # An explicit connect timeout matters here specifically because there is
+    # NO connection pooling in this app -- every request opens a fresh
+    # pyodbc.connect(). Without a timeout, a single slow/busy moment on the
+    # DB server leaves that connect() hanging (driver-default login timeout
+    # can run well past a minute), pinning a FastAPI worker thread for the
+    # duration. Under concurrent load (e.g. Electron cold-start firing
+    # several requests at once) enough of those pile up to starve the
+    # threadpool entirely -- which is why even a trivially fast, unrelated
+    # endpoint (GET /api/stores, ~9 rows) can appear to "time out after 45s":
+    # it isn't slow, it's queued behind threads stuck on a hung connect.
+    # Fail fast instead so one bad connection attempt can't cascade.
     try:
-        return pyodbc.connect(_connection_string())
+        return pyodbc.connect(_connection_string(), timeout=10)
     except pyodbc.Error:
         if pytds is None:
             raise

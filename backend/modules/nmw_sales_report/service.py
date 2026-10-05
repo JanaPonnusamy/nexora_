@@ -10,11 +10,22 @@ def _role_names(user):
 
 
 def _assert_can_view(user):
-    """Salesman-only logins may not view NMW dispatch bills at all. Everyone
-    else (store admin/manager/purchase manager, super admin) keeps their
-    store-scoped or network-wide view from list_bills()."""
+    """Who may see the NMW dispatch-bill LIST: every branch/store login keeps
+    its store-scoped view (owner ruling 2026-10-03: "all branches must see the
+    NMW stock list"). Only pure salesman logins are barred outright. The
+    per-product DETAILS inside a bill are gated separately — see
+    _assert_can_view_details(). Guards list_bills()."""
     if is_salesman_only(user):
         raise HTTPException(status_code=403, detail="Salesman logins cannot view NMW dispatch bills.")
+
+
+def _assert_can_view_details(user):
+    """Who may drill into a bill's product/line-item DETAILS (and purchase-entry
+    drill-down): super-admin / HO only (owner ruling 2026-10-03: branches see the
+    stock list but NOT the product details; super admin sees all details).
+    Guards get_bill_items() and get_purchase_entry()."""
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="NMW product details are restricted to super-admin / HO logins.")
 
 
 def is_super_admin(user):
@@ -39,11 +50,19 @@ def can_view_all(user):
     return is_super_admin(user)
 
 
-def list_bills(user, tenant_id, store_id, status, date_from, date_to):
+def list_bills(user, tenant_id, store_id, status, date_from, date_to, purchase_status=None):
     _assert_can_view(user)
     nmw_store_id = repository.get_nmw_store_id(tenant_id)
     if not nmw_store_id:
         return {"bills": [], "can_approve": is_super_admin(user), "scope": "all" if can_view_all(user) else "store"}
+
+    # Throttled, best-effort self-heal: move any superseded (modified-bill) lines
+    # out of the live mirror before listing, so doubled bills never surface.
+    # Runs in the background and never blocks or fails the report.
+    try:
+        _reconcile.maybe_auto_reconcile(tenant_id, nmw_store_id)
+    except Exception:
+        pass
 
     broad = can_view_all(user)
     if broad:
@@ -58,24 +77,72 @@ def list_bills(user, tenant_id, store_id, status, date_from, date_to):
         dest_store_ids = allowed
         effective_status = "approved"
 
-    bills = repository.list_bills(
-        tenant_id, nmw_store_id, dest_store_ids, effective_status,
-        (date_from or "").strip() or None, (date_to or "").strip() or None,
-    )
+    date_from = (date_from or "").strip() or None
+    date_to = (date_to or "").strip() or None
+    bills = repository.list_bills(tenant_id, nmw_store_id, dest_store_ids, effective_status, date_from, date_to)
+
+    # Purchase-entry status: ONE extra batched query for every bill just
+    # fetched (never one lookup per bill -- see repository docstring for why
+    # there is no bill-number key to join on and how the match works).
+    purchase_error = None
+    try:
+        status_map = repository.get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, date_to)
+    except Exception:
+        status_map = None
+        purchase_error = "Purchase-entry status could not be checked right now."
+
+    for bill in bills:
+        if status_map is None:
+            bill["purchase_status"] = "error"
+            bill["purchase_entry_no"] = None
+        else:
+            info = status_map.get((bill.get("bill_no"), bill.get("bill_date")))
+            bill["purchase_status"] = info["purchase_status"] if info else "not_found"
+            # Only surface the GRN in the list for a genuinely completed entry, so
+            # a partial (Pending) bill's GRNs don't read as "done" at a glance.
+            bill["purchase_entry_no"] = (
+                info["entry_no"] if info and info["purchase_status"] == "completed" else None
+            )
+
+    if purchase_status and purchase_status.lower() != "all":
+        bills = [b for b in bills if b["purchase_status"] == purchase_status.lower()]
+
     return {
         "bills": bills,
         "can_approve": is_super_admin(user),
         "scope": "all" if broad else "store",
+        "purchase_status_error": purchase_error,
     }
 
 
-def get_bill_items(user, tenant_id, bill_no, bill_date):
-    _assert_can_view(user)
+def get_purchase_entry(user, tenant_id, bill_no, bill_date):
+    _assert_can_view_details(user)
     nmw_store_id = repository.get_nmw_store_id(tenant_id)
     if not nmw_store_id:
-        return {"items": []}
-    items = repository.get_bill_items(tenant_id, nmw_store_id, bill_no, (bill_date or "").strip() or None)
-    return {"items": items}
+        raise HTTPException(status_code=404, detail="Warehouse store (NMW) not found for this tenant.")
+    detail = repository.get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, (bill_date or "").strip() or None)
+
+    if not can_view_all(user):
+        allowed = set(repository.user_store_ids(user.get("sub")))
+        dest_store_id = detail.get("dest_store_id")
+        # A store user may only see purchase-entry info for their own store's
+        # bills. If the bill didn't route to a store at all (dest_store_id is
+        # None), there's nothing store-specific to leak, so let it through as
+        # the same 'not_found'-shaped response a broad user would see.
+        if dest_store_id and dest_store_id not in allowed:
+            raise HTTPException(status_code=403, detail="You cannot view purchase-entry data for another store.")
+    return detail
+
+
+def get_bill_items(user, tenant_id, bill_no, bill_date):
+    _assert_can_view_details(user)
+    nmw_store_id = repository.get_nmw_store_id(tenant_id)
+    if not nmw_store_id:
+        return {"items": [], "summary": None}
+    bd = (bill_date or "").strip() or None
+    items = repository.get_bill_items(tenant_id, nmw_store_id, bill_no, bd)
+    summary = repository.get_bill_summary(tenant_id, nmw_store_id, bill_no, bd)
+    return {"items": items, "summary": summary}
 
 
 def list_store_cust_codes(user, tenant_id):
@@ -116,8 +183,9 @@ def approve(user, req):
 
 
 def reconcile(user, tenant_id, store_id, apply_changes):
-    """Delete mirror bill-line rows the source POS no longer has (superseded by a
-    bill modification). Super admin only. store_id defaults to the NMW warehouse."""
+    """Move mirror bill-line rows the source POS no longer has (superseded by a
+    bill modification) into sync.MProductSaleInformation history. Super admin
+    only. store_id defaults to the NMW warehouse."""
     if not is_super_admin(user):
         raise HTTPException(status_code=403, detail="Only a super admin can reconcile NMW bill lines.")
     target_store = (store_id or "").strip() or repository.get_nmw_store_id(tenant_id)

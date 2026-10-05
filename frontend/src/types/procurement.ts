@@ -134,6 +134,10 @@ export interface WorkspaceItem {
   stock_status: string | null
   days_cover: number | null
   reason_code: string | null
+  /** Cross-store movement, informational only. Null when the product has no
+   *  reliable cross-store mapping or no network presence anywhere. */
+  network_movement_class: string | null
+  network_movement: NetworkMovement | null
   suggested_qty: number | null
   final_qty: number | null
   assigned_qty: number | null
@@ -162,6 +166,37 @@ export interface ManualProduct {
   unit: string | null
   current_stock: number | null
   mrp: number | null
+}
+
+/** A product this store shows as NONMOVING locally but the network movement
+ *  cache shows as genuinely FAST/MEDIUM elsewhere, and not already on this
+ *  store's live VPL — GET /refreshes/{id}/network-opportunities. Extends
+ *  ManualProduct so a row can be handed straight to the existing Add Manual
+ *  Product flow without reshaping it. Informational/discovery only: nothing
+ *  here changes suggested_qty, VPL membership or supplier recommendation. */
+export interface NetworkOpportunity extends ManualProduct {
+  local_sales_qty: number | null
+  local_avg_daily_sales: number | null
+  local_movement_class: string | null
+  network_movement_class: string | null
+  network_sales_qty: number | null
+  network_avg_daily_sales: number | null
+  network_stock_qty: number | null
+  network_last_sale_date: string | null
+  mapped_store_count: number
+  active_store_count: number
+  fast_store_count: number
+  medium_store_count: number
+  confidence: number | null
+  rolling_days: number | null
+  calculated_at: string
+}
+
+export interface NetworkOpportunityPage {
+  items: NetworkOpportunity[]
+  total: number
+  page: number
+  page_size: number
 }
 
 /** One row of a supplier's live stock (supplier_stock ∩ SupplierProductMatch ∩
@@ -367,6 +402,28 @@ export interface DecisionDetail {
   reason_code: string | null
   reason_text: string | null
   business_rules_applied: string[]
+  /** Null when the product has no cross-store presence/mapping to compare against. */
+  network_movement: NetworkMovement | null
+}
+
+/** Cross-store movement intelligence for one product at one store — informational
+ *  only. Never used to change suggested_qty, movement_class, stock_status or
+ *  supplier recommendation; those remain entirely local-store decisions. */
+export interface NetworkMovement {
+  network_movement_class: string | null
+  network_avg_daily_sales: number | null
+  network_sales_qty: number | null
+  network_stock_qty: number | null
+  network_last_sale_date: string | null
+  mapped_store_count: number
+  active_store_count: number
+  fast_store_count: number
+  medium_store_count: number
+  slow_store_count: number
+  non_moving_store_count: number
+  confidence: number | null
+  rolling_days: number | null
+  calculated_at: string
 }
 
 export interface GrnResult {

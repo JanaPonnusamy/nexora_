@@ -12,7 +12,9 @@ import type {
   PendingTask,
   TableStat,
   RegistryPopulateResult,
+  ScheduleBoardRow,
   ScheduleInput,
+  SchedulerStatus,
   StoreHealthRow,
   SyncHistoryFilters,
   SyncHistoryRow,
@@ -48,6 +50,8 @@ export const syncService = {
     api.delete<void>(`/api/sync/schedules/${scheduleId}`),
   seedSchedules: () =>
     api.post<{ created: number; stores: number }>('/api/sync/schedules/seed', {}),
+  scheduleBoard: () => api.get<ScheduleBoardRow[]>('/api/sync/schedules/board'),
+  schedulerStatus: () => api.get<SchedulerStatus>('/api/sync/scheduler/status'),
   storeHealth: () => api.get<StoreHealthRow[]>('/api/sync/store-health'),
   history: (filters: SyncHistoryFilters = {}) =>
     api.get<SyncHistoryRow[]>(`/api/sync/history${buildQuery(filters)}`),

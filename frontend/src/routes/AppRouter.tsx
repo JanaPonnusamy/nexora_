@@ -18,6 +18,10 @@ const SyncSchedulesPage = lazy(() => import('../pages/sync/SyncSchedulesPage'))
 const SyncConfigPage = lazy(() => import('../pages/sync/SyncConfigPage'))
 const SyncMappingPage = lazy(() => import('../pages/sync/SyncMappingPage'))
 const SyncAgentsPage = lazy(() => import('../pages/sync/SyncAgentsPage'))
+const DeviceManagementPage = lazy(() => import('../pages/sync/DeviceManagementPage'))
+const StockClientMonitorPage = lazy(() => import('../pages/sync/StockClientMonitorPage'))
+const HoRoutesPage = lazy(() => import('../pages/sync/HoRoutesPage'))
+const SyncMailTransferPage = lazy(() => import('../pages/sync/SyncMailTransferPage'))
 const ProductMappingPage = lazy(() => import('../pages/mapping/ProductMappingPage'))
 const StockAvailabilityPage = lazy(() => import('../pages/stock/StockAvailabilityPage'))
 const StockCheckReportPage = lazy(() => import('../pages/stock-check/StockCheckReportPage'))
@@ -42,10 +46,12 @@ const ReportsPage = lazy(() => import('../pages/ReportsPage'))
 const ExpiryReportPage = lazy(() => import('../pages/expiry-report/ExpiryReportPage'))
 const ExpiryStockReportPage = lazy(() => import('../pages/expiry-stock/ExpiryStockReportPage'))
 const NonMovingReportPage = lazy(() => import('../pages/non-moving-report/NonMovingReportPage'))
+const SaleAnalysisPage = lazy(() => import('../pages/sale-analysis/SaleAnalysisPage'))
 const TimeReportPage = lazy(() => import('../pages/TimeReportPage'))
 const PassGenPage = lazy(() => import('../pages/pass-gen/PassGenPage'))
 const LegacyOrderPage = lazy(() => import('../pages/legacy-order/LegacyOrderPage'))
 const OrderWorkspacePage = lazy(() => import('../pages/legacy-order/OrderWorkspacePage'))
+const WhatsAppPage = lazy(() => import('../pages/whatsapp/WhatsAppPage'))
 const SettingsPage = lazy(() => import('../pages/SettingsPage'))
 const PlatformShellPreviewPage = lazy(() => import('../pages/PlatformShellPreviewPage'))
 const DocumentExtractionReviewPage = lazy(() => import('../pages/document-extraction/ReviewPage'))
@@ -107,15 +113,20 @@ export const appRouter = createBrowserRouter(
         <Route path="/sync/live" element={<RequireCapability cap="SYNC"><SyncLivePage /></RequireCapability>} />
         <Route path="/sync/schedules" element={<RequireCapability cap="SYNC"><SyncSchedulesPage /></RequireCapability>} />
         <Route path="/sync/config" element={<RequireCapability cap="SYNC"><SyncConfigPage /></RequireCapability>} />
+        <Route path="/sync/mail-transfer" element={<RequireCapability cap="SYNC"><SyncMailTransferPage /></RequireCapability>} />
         <Route path="/sync/mapping" element={<RequireCapability cap="SYNC"><SyncMappingPage /></RequireCapability>} />
         <Route path="/sync/store-health" element={<Navigate to="/sync/live" replace />} />
         <Route path="/sync/history" element={<Navigate to="/sync/live" replace />} />
         <Route path="/sync/agents" element={<RequireCapability cap="SYNC"><SyncAgentsPage /></RequireCapability>} />
+        <Route path="/sync/devices" element={<RequireCapability cap="SYNC"><DeviceManagementPage /></RequireCapability>} />
+        <Route path="/sync/stock-clients" element={<RequireCapability cap="SYNC"><StockClientMonitorPage /></RequireCapability>} />
+        <Route path="/sync/ho-routes" element={<RequireCapability cap="SYNC"><HoRoutesPage /></RequireCapability>} />
         <Route path="/product-mapping" element={<RequireCapability cap="PRODUCT_MAPPING"><ProductMappingPage /></RequireCapability>} />
         <Route path="/stock-availability" element={<RequireCapability cap="INVENTORY"><StockAvailabilityPage /></RequireCapability>} />
         <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />
         <Route path="/label-exporter" element={<RequireCapability cap="INVENTORY"><LabelExporterPage /></RequireCapability>} />
         <Route path="/label-exporter/box-workspace" element={<RequireCapability cap="INVENTORY"><BoxWorkspacePage /></RequireCapability>} />
+        <Route path="/label-exporter/review" element={<Navigate to="/label-exporter" replace />} />
         <Route path="/nmw-sales-report" element={<RequireCapability cap="INVENTORY"><NmwSalesReportPage /></RequireCapability>} />
         <Route path="/stock-integrity" element={<RequireCapability cap="INVENTORY"><StockIntegrityReportPage /></RequireCapability>} />
         <Route path="/procurement/console" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleRefreshConsolePage /></RequireCapability>} />
@@ -136,11 +147,13 @@ export const appRouter = createBrowserRouter(
         <Route path="/expiry-report" element={<RequireCapability cap="REPORTS"><ExpiryReportPage /></RequireCapability>} />
         <Route path="/expiry-stock" element={<RequireCapability cap="REPORTS"><ExpiryStockReportPage /></RequireCapability>} />
         <Route path="/non-moving-report" element={<RequireCapability cap="INVENTORY"><NonMovingReportPage /></RequireCapability>} />
+        <Route path="/sale-analysis" element={<RequireCapability cap="INVENTORY"><SaleAnalysisPage /></RequireCapability>} />
         <Route path="/time-report" element={<RequireCapability cap="TIME_REPORT"><TimeReportPage /></RequireCapability>} />
         <Route path="/pass-gen" element={<RequireCapability cap="PASS_GEN"><PassGenPage /></RequireCapability>} />
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />
         <Route path="/legacy-order/qty-check" element={<Navigate to="/legacy-order/workspace" replace />} />
         <Route path="/legacy-order/workspace" element={<RequireCapability cap="LEGACY_ORDER"><OrderWorkspacePage /></RequireCapability>} />
+        <Route path="/whatsapp" element={<RequireCapability cap="SETTINGS"><WhatsAppPage /></RequireCapability>} />
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />
         <Route path="*" element={<RoleLanding />} />
       </Route>

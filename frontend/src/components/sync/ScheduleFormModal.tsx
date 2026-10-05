@@ -20,6 +20,8 @@ function initialTime(schedule?: SyncSchedule): string {
   return '06:15'
 }
 
+const INTERVAL_PRESETS = [15, 30, 60]
+
 function initialDateTime(schedule?: SyncSchedule): string {
   if (schedule?.schedule_type === 'ONCE' && schedule.start_time) {
     return schedule.start_time.slice(0, 16)
@@ -31,10 +33,11 @@ function initialDateTime(schedule?: SyncSchedule): string {
 
 export function ScheduleFormModal({ mode, schedule, stores, onClose, onSaved }: Props) {
   const [name, setName] = useState(schedule?.schedule_name ?? '')
-  const [type, setType] = useState(schedule?.schedule_type ?? 'DAILY')
+  const [type, setType] = useState(schedule?.schedule_type ?? 'INTERVAL')
   const [storeId, setStoreId] = useState(schedule?.store_id ?? '')
   const [time, setTime] = useState(initialTime(schedule))
   const [dateTime, setDateTime] = useState(initialDateTime(schedule))
+  const [intervalMinutes, setIntervalMinutes] = useState(schedule?.interval_minutes ?? 30)
   const [syncMode, setSyncMode] = useState(schedule?.sync_mode ?? 'FULL')
   const [enabled, setEnabled] = useState(schedule?.is_enabled ?? true)
   const [submitting, setSubmitting] = useState(false)
@@ -46,12 +49,19 @@ export function ScheduleFormModal({ mode, schedule, stores, onClose, onSaved }: 
       setError('Schedule name is required')
       return
     }
-    const startTime = type === 'DAILY' ? `2000-01-01T${time}:00` : `${dateTime}:00`
+    if (type === 'INTERVAL' && (!intervalMinutes || intervalMinutes <= 0)) {
+      setError('Interval minutes must be a positive number')
+      return
+    }
+    const startTime = type === 'DAILY' ? `2000-01-01T${time}:00`
+      : type === 'ONCE' ? `${dateTime}:00`
+      : null
     const input: ScheduleInput = {
       schedule_name: name.trim(),
       schedule_type: type,
       store_id: storeId || null,
       start_time: startTime,
+      interval_minutes: type === 'INTERVAL' ? intervalMinutes : null,
       sync_mode: syncMode,
       is_enabled: enabled,
     }
@@ -90,12 +100,29 @@ export function ScheduleFormModal({ mode, schedule, stores, onClose, onSaved }: 
                   <div className="col-md-6">
                     <label htmlFor="sch-type" className="form-label">Type</label>
                     <select id="sch-type" className="form-select" value={type} onChange={(e) => setType(e.target.value)}>
+                      <option value="INTERVAL">Every N minutes (recurring)</option>
                       <option value="DAILY">Daily (recurring)</option>
                       <option value="ONCE">One-time</option>
                     </select>
                   </div>
                   <div className="col-md-6">
-                    {type === 'DAILY' ? (
+                    {type === 'INTERVAL' ? (
+                      <>
+                        <label htmlFor="sch-interval" className="form-label">Run every</label>
+                        <div className="d-flex align-items-center gap-2">
+                          <input id="sch-interval" type="number" min={1} className="form-control" style={{ width: '5.5rem' }}
+                            value={intervalMinutes} onChange={(e) => setIntervalMinutes(Number(e.target.value) || 0)} />
+                          <span className="text-secondary">minutes</span>
+                          <div className="btn-group btn-group-sm ms-2">
+                            {INTERVAL_PRESETS.map((m) => (
+                              <button key={m} type="button"
+                                className={`btn ${intervalMinutes === m ? 'btn-primary' : 'btn-outline-secondary'}`}
+                                onClick={() => setIntervalMinutes(m)}>{m}</button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    ) : type === 'DAILY' ? (
                       <>
                         <label htmlFor="sch-time" className="form-label">Run At (daily)</label>
                         <input id="sch-time" type="time" className="form-control" value={time}

@@ -303,6 +303,63 @@ def non_moving_highlights(tenant_id, store_id, dwell_days, min_pur_age=10, limit
     return _run(sql, params)
 
 
+def non_moving_totals(tenant_id, store_id, sales_age=90, grn_age=10):
+    """Store-level NM / expiry valuation totals for the NM bar summary readout.
+
+    The NM bucket aggregates the **exact same product set as the non-moving list**
+    (see ``non_moving`` / ``non_moving_highlights``), uncapped — so the "Total NM
+    Value" equals the stock value of *every* non-moving product in the store, not a
+    stricter subset. Non-moving gate (product-level, from the collapsed
+    ``ProductTrans``): not sold for > ``sales_age`` days (or never sold) AND last
+    GRN >= ``grn_age`` days ago. Stock value = ``Stock * ItemCost`` (batch cost),
+    the same basis the list sorts by; summed over each qualifying product's
+    in-stock batches.
+
+    Expiry bucket = batches expiring on/before the end of the current month
+    ("Ex upto current month"), same ``Stock * ItemCost`` basis. Closing-stock
+    denominator = every active in-stock batch on the same basis, so NM% / Ex% are
+    directly comparable."""
+    sql = """
+        SELECT
+            ISNULL(SUM(v.val), 0)                                     AS StockValue,
+            ISNULL(SUM(CASE WHEN v.nm = 1 THEN v.val ELSE 0 END), 0)  AS NmValue,
+            ISNULL(SUM(CASE WHEN v.ex = 1 THEN v.val ELSE 0 END), 0)  AS ExValue,
+            SUM(CASE WHEN v.nm = 1 THEN 1 ELSE 0 END)                 AS NmItems,
+            COUNT(*)                                                  AS TotalItems
+        FROM (
+            SELECT
+                ISNULL(b.Stock, 0) * ISNULL(b.ItemCost, 0) AS val,
+                CASE WHEN (DATEDIFF(DAY, pt.LastBillDate, GETDATE()) > ? OR pt.LastBillDate IS NULL)
+                      AND DATEDIFF(DAY, pt.LastGrnDate, GETDATE()) >= ?
+                     THEN 1 ELSE 0 END AS nm,
+                CASE WHEN b.ExpiryDate IS NOT NULL
+                      AND b.ExpiryDate <= EOMONTH(GETDATE())
+                     THEN 1 ELSE 0 END AS ex
+            FROM sync.Products p
+            INNER JOIN (
+                -- Collapse ProductTrans to one row per product (it carries one row
+                -- per statistics month); joining raw fans batches across months.
+                SELECT tenant_id, store_id, ProductCode,
+                       MAX(LastBillDate) AS LastBillDate,
+                       MAX(LastGrnDate)  AS LastGrnDate
+                FROM sync.ProductTrans
+                WHERE tenant_id = ? AND store_id = ?
+                GROUP BY tenant_id, store_id, ProductCode
+            ) pt ON pt.tenant_id = p.tenant_id AND pt.store_id = p.store_id
+                AND pt.ProductCode = p.ProductCode
+            INNER JOIN sync.Batches b
+                ON b.tenant_id = p.tenant_id AND b.store_id = p.store_id
+               AND b.ProductCode = p.ProductCode
+            WHERE p.tenant_id = ? AND p.store_id = ?
+              AND p.isActive = 1
+              AND ISNULL(b.Stock, 0) > 0
+        ) v
+    """
+    params = (int(sales_age), int(grn_age), tenant_id, store_id, tenant_id, store_id)
+    _, rows = _run(sql, params)
+    return rows[0] if rows else {}
+
+
 # ---------------------------------------------------------------------------
 # 8. EYRUS — 7-day sales summary  (legacy Generate7DaySalesSummaryReport)
 #    Dynamic day columns for the trailing 7 days (server-generated dates → safe

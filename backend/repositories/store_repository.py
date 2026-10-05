@@ -1,4 +1,6 @@
 
+import pyodbc
+
 from config.database import get_connection
 
 class StoreRepository:
@@ -104,6 +106,51 @@ class StoreRepository:
         SET tenant_id = ?, store_code = ?, store_name = ?, server_name = ?, database_name = ?, updated_at = GETDATE()
         WHERE store_id = ?
         """, tenant_id, store_code, store_name, server_name, database_name, store_id)
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
+    def get_connection_details(self, store_id):
+        """Current DB connection columns for the HO credential-edit form.
+        Never returns the password itself, only whether one is set."""
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT store_id, store_code, store_name, server_name, database_name,
+               username, connection_type,
+               CASE WHEN password_encrypted IS NULL THEN 0 ELSE 1 END AS has_password
+        FROM dbo.stores
+        WHERE store_id = ?
+        """, store_id)
+        row = cur.fetchone()
+        conn.close()
+        return row
+
+    def update_credentials(self, store_id, server_name, database_name, username,
+                           connection_type, password_encrypted=None,
+                           update_password=False):
+        """Update the store's DB connection. password_encrypted is only written
+        when update_password is True, so editing server/username without
+        re-entering the password preserves the existing secret."""
+        conn = get_connection()
+        cur = conn.cursor()
+        if update_password:
+            cur.execute("""
+            UPDATE dbo.stores
+            SET server_name = ?, database_name = ?, username = ?, connection_type = ?,
+                password_encrypted = ?, updated_at = GETDATE()
+            WHERE store_id = ?
+            """, server_name, database_name, username, connection_type,
+                 pyodbc.Binary(password_encrypted) if password_encrypted is not None else None,
+                 store_id)
+        else:
+            cur.execute("""
+            UPDATE dbo.stores
+            SET server_name = ?, database_name = ?, username = ?, connection_type = ?,
+                updated_at = GETDATE()
+            WHERE store_id = ?
+            """, server_name, database_name, username, connection_type, store_id)
         affected = cur.rowcount
         conn.commit()
         conn.close()

@@ -1,5 +1,11 @@
 import { api } from './apiClient'
-import type { Store, StoreInput, TenantStore } from '../types/store'
+import type {
+  Store,
+  StoreInput,
+  StoreCredentials,
+  StoreCredentialInput,
+  TenantStore,
+} from '../types/store'
 
 export const storeService = {
   list: () => api.get<Store[]>('/api/stores'),
@@ -11,4 +17,10 @@ export const storeService = {
     api.put<Store>(`/api/stores/${storeId}`, input),
   setStatus: (storeId: string, isActive: boolean) =>
     api.patch<Store>(`/api/stores/${storeId}/status`, { is_active: isActive }),
+  // DB connection credentials (super-admin). Replaces the old manual UPDATE
+  // dbo.stores step; the password is encrypted server-side.
+  getCredentials: (storeId: string) =>
+    api.get<StoreCredentials>(`/api/stores/${storeId}/credentials`),
+  updateCredentials: (storeId: string, input: StoreCredentialInput) =>
+    api.put<StoreCredentials>(`/api/stores/${storeId}/credentials`, input),
 }

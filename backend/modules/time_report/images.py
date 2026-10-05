@@ -156,6 +156,179 @@ def department_image(dept, data) -> io.BytesIO:
     return buf
 
 
+# ============================================================
+# Generic flat-table image (miss punch, user detail/summary, inactive)
+# ============================================================
+CELL_PAD = 12          # horizontal breathing room added to measured text
+COL_W_MIN = 46
+COL_W_MAX = 360
+
+
+def _measure(draw, text, font):
+    return draw.textlength("" if text is None else str(text), font=font)
+
+
+def table_image(title, headers, rows, legend=None, left_cols=(2,)) -> io.BytesIO:
+    """Render a generic styled table to a PNG.
+
+    ``rows`` mirrors :func:`excel_export.table_xlsx` — a list of
+    ``(values_list, hex_or_None)`` tuples so the image never drifts from the
+    spreadsheet/screen. ``left_cols`` are 1-based column indices rendered
+    left-aligned (defaults to column 2, the Name column).
+    """
+    f_title = _font(15, bold=True)
+    f_head = _font(12, bold=True)
+    f_cell = _font(12)
+    f_small = _font(11)
+
+    # A throwaway canvas just to measure text before we know the final size.
+    scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    ncol = len(headers)
+    widths = []
+    for i in range(ncol):
+        w = _measure(scratch, headers[i], f_head)
+        for values, _hex in rows:
+            if i < len(values):
+                w = max(w, _measure(scratch, values[i], f_cell))
+        widths.append(int(max(COL_W_MIN, min(COL_W_MAX, w + CELL_PAD * 2))))
+
+    total_w = sum(widths)
+    n = len(rows)
+    height = (PAD * 2 + TITLE_H + HEAD_H + max(n, 1) * ROW_H
+              + (LEGEND_H if legend else 0) + 6)
+    width = total_w + PAD * 2
+
+    img = Image.new("RGB", (width, height), "white")
+    d = ImageDraw.Draw(img)
+
+    grid = _rgb("808080")
+    black = _rgb(config.BLACK)
+    head_bg = _rgb(config.COLOR_HEADER)
+    sub_bg = _rgb(config.COLOR_SUBHEAD)
+
+    x0, y = PAD, PAD
+
+    # 1. title bar (green)
+    d.rectangle([x0, y, x0 + total_w, y + TITLE_H], fill=head_bg, outline=grid)
+    _text(d, (x0, y, x0 + total_w, y + TITLE_H), title, f_title, black)
+    y += TITLE_H
+
+    # 2. column header (light grey)
+    cx = x0
+    for header, w in zip(headers, widths):
+        d.rectangle([cx, y, cx + w, y + HEAD_H], fill=sub_bg, outline=grid)
+        _text(d, (cx, y, cx + w, y + HEAD_H), header, f_head, black)
+        cx += w
+    y += HEAD_H
+
+    # 3. data rows
+    if not rows:
+        d.rectangle([x0, y, x0 + total_w, y + ROW_H], fill=(255, 255, 255), outline=grid)
+        _text(d, (x0, y, x0 + total_w, y + ROW_H), "No data.", f_cell, black)
+        y += ROW_H
+    for values, hex_ in rows:
+        bg = _rgb(hex_) if hex_ else (255, 255, 255)
+        cx = x0
+        for col, (w, val) in enumerate(zip(widths, values), 1):
+            d.rectangle([cx, y, cx + w, y + ROW_H], fill=bg, outline=grid)
+            _text(d, (cx, y, cx + w, y + ROW_H), val, f_cell, black,
+                  align="left" if col in left_cols else "center")
+            cx += w
+        y += ROW_H
+
+    # 4. legend
+    if legend:
+        lx = x0
+        _text(d, (lx, y, lx + 60, y + LEGEND_H), "Legend:", f_small, black, align="left")
+        lx += 58
+        for item in legend:
+            d.rectangle([lx, y + 5, lx + 15, y + 20], fill=_rgb(item["hex"]), outline=grid)
+            label = f"{item['code']} {item['label']}"
+            _text(d, (lx + 19, y, lx + 19 + d.textlength(label, font=f_small) + 4, y + LEGEND_H),
+                  label, f_small, black, align="left")
+            lx += 24 + d.textlength(label, font=f_small) + 14
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+def monthly_image(data) -> io.BytesIO:
+    """Render the monthly muster grid to a PNG (per-cell status colours)."""
+    f_title = _font(15, bold=True)
+    f_head = _font(11, bold=True)
+    f_cell = _font(11)
+    f_day = _font(10, bold=True)
+    f_small = _font(11)
+
+    scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    days = data["days"]
+    name_w = int(max(140, min(300,
+        max([_measure(scratch, u["name"], f_cell) for u in data["rows"]] + [80]) + CELL_PAD * 2)))
+    day_w = 24
+    tail = [("P", 34), ("Abs", 40), ("Miss", 44), ("Late", 40), ("Total", 56)]
+
+    fixed = [("Name", name_w)]
+    cols = fixed + [(str(dd), day_w) for dd in days] + tail
+    total_w = sum(w for _, w in cols)
+    n = len(data["rows"])
+    height = PAD * 2 + TITLE_H + HEAD_H + max(n, 1) * ROW_H + LEGEND_H + 6
+    width = total_w + PAD * 2
+
+    img = Image.new("RGB", (width, height), "white")
+    d = ImageDraw.Draw(img)
+    grid = _rgb("808080")
+    black = _rgb(config.BLACK)
+    head_bg = _rgb(config.COLOR_HEADER)
+    sub_bg = _rgb(config.COLOR_SUBHEAD)
+
+    x0, y = PAD, PAD
+    d.rectangle([x0, y, x0 + total_w, y + TITLE_H], fill=head_bg, outline=grid)
+    _text(d, (x0, y, x0 + total_w, y + TITLE_H), data["month_name"], f_title, black)
+    y += TITLE_H
+
+    cx = x0
+    for header, w in cols:
+        d.rectangle([cx, y, cx + w, y + HEAD_H], fill=sub_bg, outline=grid)
+        _text(d, (cx, y, cx + w, y + HEAD_H), header, f_head if header == "Name" else f_day, black,
+              align="left" if header == "Name" else "center")
+        cx += w
+    y += HEAD_H
+
+    for u in data["rows"]:
+        cx = x0
+        # Name (white)
+        d.rectangle([cx, y, cx + name_w, y + ROW_H], fill=(255, 255, 255), outline=grid)
+        _text(d, (cx, y, cx + name_w, y + ROW_H), u["name"][:NAME_MAX], f_cell, black, align="left")
+        cx += name_w
+        for cell in u["cells"]:
+            bg = _rgb(cell["hex"]) if cell["code"] else (255, 255, 255)
+            d.rectangle([cx, y, cx + day_w, y + ROW_H], fill=bg, outline=grid)
+            _text(d, (cx, y, cx + day_w, y + ROW_H), cell["code"], f_cell, black)
+            cx += day_w
+        for (_h, w), v in zip(tail, (u["present"], u["absent"], u["miss_punch"], u["late"], u["total_hm"])):
+            d.rectangle([cx, y, cx + w, y + ROW_H], fill=(255, 255, 255), outline=grid)
+            _text(d, (cx, y, cx + w, y + ROW_H), v, f_cell, black)
+            cx += w
+        y += ROW_H
+
+    lx = x0
+    _text(d, (lx, y, lx + 60, y + LEGEND_H), "Legend:", f_small, black, align="left")
+    lx += 58
+    for item in data["legend"]:
+        d.rectangle([lx, y + 5, lx + 15, y + 20], fill=_rgb(item["hex"]), outline=grid)
+        label = f"{item['code']} {item['label']}"
+        _text(d, (lx + 19, y, lx + 19 + d.textlength(label, font=f_small) + 4, y + LEGEND_H),
+              label, f_small, black, align="left")
+        lx += 24 + d.textlength(label, font=f_small) + 14
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
 def _safe(name) -> str:
     return "".join(c if c.isalnum() or c in " -_" else "_" for c in str(name)).strip()
 

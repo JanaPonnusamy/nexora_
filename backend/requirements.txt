@@ -2,12 +2,17 @@ fastapi
 uvicorn
 sqlalchemy
 pyodbc
+pandas
 python-tds
 pydantic
 python-dotenv
 rapidfuzz
-playwright
+playwright==1.63.0
 # after `pip install -r requirements.txt`, run once: python -m playwright install firefox
+# Pinned: an unpinned bump silently changes the bundled-Firefox revision
+# Playwright expects, and every WhatsApp send fails until `playwright install
+# firefox` is rerun to match (bit us 2026-09-28). service.py also self-heals
+# this at runtime, but keep the pin so routine reinstalls don't drift at all.
 
 # auth stack (controllers/auth_controller.py, services/auth_service.py) — was
 # previously installed ad hoc and not tracked here

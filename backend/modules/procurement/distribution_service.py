@@ -530,9 +530,13 @@ def generate(tenant_id, source_store_code, provider_name, only_store_ids=None,
             # Selected") -- "Generate Excel Only" must not send, "Update
             # Supplier Stock Only" must not export or send.
             if excel_path and excel_status == "success" and not supplier_update_only and not excel_only:
-                message = f"{source_store_code} Supplier Stock — {store['store_code']} ({run_stamp})"
+                # Send the stock file with NO caption -- the store owners asked
+                # for the file only, not a text line naming the group/store
+                # (the filename already carries store + date). An empty caption
+                # makes the attachment flow just click Send (see
+                # _caption_and_send_attachment's `if message:` guard).
                 wa_status, wa_error = _send_whatsapp(
-                    conn, run_item_id, tenant_id, store["store_id"], excel_path, message
+                    conn, run_item_id, tenant_id, store["store_id"], excel_path, ""
                 )
 
             duration_ms = int((time.time() - t0) * 1000)
@@ -651,6 +655,43 @@ def run_item_products(run_item_id):
                 "rack": r[header_idx.get("SubLocation")] if "SubLocation" in header_idx else None,
             })
         return {"store_code": store_code, "excel_path": excel_path, "rows": rows}
+    finally:
+        conn.close()
+
+
+def send_run_item_whatsapp(run_item_id):
+    """(Re)send the already-generated Excel file for ONE run item to its store's
+    configured WhatsApp group -- the Excel itself, not an image. Reuses the same
+    _send_whatsapp path as the auto pipeline (group mapping, queue row, status
+    update), so the manual 'Send' button and 'Generate All' behave identically.
+    No caption is sent (file only)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT i.store_id, i.excel_path, r.tenant_id "
+            "FROM procurement.distribution_run_item i "
+            "JOIN procurement.distribution_run r ON r.run_id = i.run_id "
+            "WHERE i.run_item_id = ?",
+            (run_item_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError("Run item not found.")
+        store_id, excel_path, tenant_id = row
+        if not excel_path or not os.path.exists(excel_path):
+            raise ValueError("No generated Excel file found for this store. Re-run the export first.")
+
+        status, error = _send_whatsapp(conn, run_item_id, tenant_id, store_id, excel_path, "")
+        # Mirror the outcome onto the run-item row so the UI's WhatsApp column
+        # reflects a manual resend, not just the original pipeline attempt.
+        cur.execute(
+            "UPDATE procurement.distribution_run_item SET whatsapp_status = ?, whatsapp_error = ? "
+            "WHERE run_item_id = ?",
+            (status, error, run_item_id),
+        )
+        conn.commit()
+        return {"run_item_id": run_item_id, "status": status, "error": error}
     finally:
         conn.close()
 

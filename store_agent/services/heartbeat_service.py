@@ -48,3 +48,17 @@ class HeartbeatService:
         )
         response.raise_for_status()
         return response.json()
+
+    def license_status(self):
+        """Checks in against the license-activation endpoint on the same
+        cadence as beat(). Returns {license_state, days_remaining,
+        trial_ends_at, message}. Raises on network/HTTP failure so the caller
+        can fail-soft on the last-known-good cached state - see
+        run_agent._heartbeat_loop."""
+        response = requests.post(
+            self.base + "/agent/license/checkin",
+            json={"store_id": self.store_id, "agent_version": self.agent_version},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()

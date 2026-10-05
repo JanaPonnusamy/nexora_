@@ -87,6 +87,57 @@ def _normalize_url(value):
     return (value or "").strip().rstrip("/")
 
 
+def _override_paths():
+    """Manual disaster-recovery override: if HO is rebuilt at a brand-new
+    address and every baked/learned route is dead, drop a file here (pushed via
+    remote access) and the agent tries it FIRST. One URL per line or comma
+    separated."""
+    yield Path(r"C:\ProgramData\Nexora\ho_override.txt")
+    install = os.environ.get("NEXORA_INSTALL_PATH")
+    if install:
+        yield Path(install) / "ho_override.txt"
+
+
+def _read_override_urls():
+    for path in _override_paths():
+        try:
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                return [p for line in text.splitlines() for p in line.split(",")]
+        except OSError:
+            continue
+    return []
+
+
+def _routes_cache_file():
+    install = os.environ.get("NEXORA_INSTALL_PATH")
+    base = Path(install) if install else Path(__file__).resolve().parent
+    return base / "cache" / "ho_routes_cache.json"
+
+
+def _read_persisted_routes():
+    """Routes previously learned from HO's /api/bootstrap/routes. Lets the agent
+    keep reaching a moved HO across restarts, as long as one learned route (or
+    the baked anchor) still answers."""
+    try:
+        path = _routes_cache_file()
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return list(data.get("urls") or [])
+    except (OSError, ValueError):
+        pass
+    return []
+
+
+def _save_persisted_routes(urls):
+    try:
+        path = _routes_cache_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"urls": list(urls)}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _candidate_urls(cfg):
     """Ordered, de-duplicated list of HO base URLs to try (first = preferred)."""
     out = []
@@ -95,6 +146,10 @@ def _candidate_urls(cfg):
         url = _normalize_url(value)
         if url and url not in out:
             out.append(url)
+
+    # 0) Manual override file (disaster recovery) wins over everything.
+    for value in _read_override_urls():
+        add(value)
 
     # 1) Environment override (comma separated) wins for ops overrides.
     env = os.environ.get("NEXORA_HO_URLS") or os.environ.get("NEXORA_HO_URL")
@@ -115,6 +170,11 @@ def _candidate_urls(cfg):
         for part in str(raw).split(","):
             add(part)
 
+    # 4) Routes previously learned from HO (self-refresh) - keeps a moved HO
+    #    reachable after a restart.
+    for value in _read_persisted_routes():
+        add(value)
+
     if not out:
         add(_DEFAULTS["ho_url"])
     return out
@@ -128,6 +188,22 @@ SQL_USERNAME = ""
 SQL_PASSWORD = ""
 
 STORE_ID = _CFG.get("store_id") or _DEFAULTS["store_id"]
+
+# Device mode (zero-config, multi-store): the installer writes {"mode":"device"}
+# and the machine's identity (device_id + DPAPI-sealed key) lives under
+# DEVICE_STATE_DIR. Absent this, the agent runs the legacy single-store path
+# keyed on STORE_ID exactly as before, so existing deployments are unaffected.
+AGENT_MODE = (_CFG.get("mode") or ("device" if _CFG.get("device_id") else "store")).lower()
+DEVICE_MODE = AGENT_MODE == "device"
+
+
+def _device_state_dir():
+    install = os.environ.get("NEXORA_INSTALL_PATH")
+    base = Path(install) if install else Path(__file__).resolve().parent
+    return base / "config"
+
+
+DEVICE_STATE_DIR = _device_state_dir()
 
 # All configured HO routes, and a back-compat single value (the first/preferred).
 HO_API_URLS = _candidate_urls(_CFG)
@@ -166,6 +242,58 @@ def active_ho_url(force=False, timeout=3):
                 return url
         _active_url["value"] = _active_url["value"] or HO_API_URLS[0]
         return _active_url["value"]
+
+
+def raw_config():
+    """The parsed agent_config.json (or {} if none was found) -- used by
+    optional blocks like "file_transfer" that config.py itself does not
+    model as top-level constants."""
+    return _CFG
+
+
+def refresh_routes_from_ho(timeout=5):
+    """Fetch HO's current route list and merge it into the candidate set, so a
+    URL added/changed in HO propagates to every agent without a reinstall (as
+    long as ONE current route still answers). Persists the learned routes so
+    they survive a restart. Never raises; returns the (possibly updated) list.
+
+    Called periodically by the runtime loop. Moving HO = update dbo.ho_routes
+    once; agents that can still reach any route pick up the rest automatically.
+    """
+    global HO_API_URLS, HO_API_URL
+    try:
+        import requests
+        base = active_ho_url()
+        resp = requests.get(base + "/api/bootstrap/routes", timeout=timeout)
+        if not resp.ok:
+            return HO_API_URLS
+        fetched = [u for u in (resp.json().get("urls") or []) if _normalize_url(u)]
+    except Exception:
+        return HO_API_URLS
+
+    if not fetched:
+        return HO_API_URLS
+
+    # Merge fetched (HO's advertised order) with what we already persisted, then
+    # persist the union so the freshest known-good set survives a restart.
+    merged = []
+    for u in fetched + _read_persisted_routes():
+        n = _normalize_url(u)
+        if n and n not in merged:
+            merged.append(n)
+    _save_persisted_routes(merged)
+
+    # Rebuild the live candidate list (override/env/config still take priority;
+    # the newly-persisted routes are folded in at the end).
+    new_list = _candidate_urls(_CFG)
+    with _active_lock:
+        changed = new_list != HO_API_URLS
+        HO_API_URLS = new_list
+        HO_API_URL = HO_API_URLS[0]
+        if changed:
+            # A route set change means re-probe so a newly-added URL can win.
+            _active_url["value"] = None
+    return HO_API_URLS
 
 
 def mark_ho_failure():

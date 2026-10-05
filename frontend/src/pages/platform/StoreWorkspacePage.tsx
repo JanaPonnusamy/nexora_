@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../../components/common/PageHeader'
 import { EmptyState } from '../../components/common/EmptyState'
@@ -10,11 +10,13 @@ import { useStore } from '../../hooks/useStore'
 import { useTenant } from '../../hooks/useTenant'
 import { useTenants } from '../../hooks/useTenants'
 import { storeService } from '../../services/storeService'
+import type { StoreCredentials } from '../../types/store'
 
-type WorkspaceTab = 'overview' | 'users' | 'roles'
+type WorkspaceTab = 'overview' | 'connection' | 'users' | 'roles'
 
 const TABS: { key: WorkspaceTab; label: string; icon: string }[] = [
   { key: 'overview', label: 'Overview', icon: 'bi-info-circle' },
+  { key: 'connection', label: 'Connection', icon: 'bi-hdd-network' },
   { key: 'users', label: 'Users', icon: 'bi-people' },
   { key: 'roles', label: 'Roles', icon: 'bi-person-badge' },
 ]
@@ -32,7 +34,9 @@ export default function StoreWorkspacePage() {
 
   const tabParam = searchParams.get('tab')
   const activeTab: WorkspaceTab =
-    tabParam === 'users' || tabParam === 'roles' ? tabParam : 'overview'
+    tabParam === 'users' || tabParam === 'roles' || tabParam === 'connection'
+      ? tabParam
+      : 'overview'
   const setTab = (tab: WorkspaceTab) =>
     setSearchParams(tab === 'overview' ? {} : { tab }, { replace: true })
 
@@ -191,6 +195,8 @@ export default function StoreWorkspacePage() {
           </div>
         )}
 
+        {activeTab === 'connection' && <StoreConnectionTab storeId={store.store_id} />}
+
         {activeTab === 'users' && (
           <EmptyState
             icon="bi-people"
@@ -230,6 +236,124 @@ export default function StoreWorkspacePage() {
           }}
         />
       )}
+    </div>
+  )
+}
+
+/** DB connection editor — the HO UI for a store's server/database/username/
+ *  password/connection type. Replaces the manual UPDATE dbo.stores step; the
+ *  password is encrypted server-side and never returned (leave blank to keep
+ *  the existing one). Super-admin only (the endpoint 403s otherwise). */
+function StoreConnectionTab({ storeId }: { storeId: string }) {
+  const [creds, setCreds] = useState<StoreCredentials | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [server, setServer] = useState('')
+  const [database, setDatabase] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [connType, setConnType] = useState('')
+
+  useEffect(() => {
+    let live = true
+    setLoading(true)
+    setError(null)
+    storeService
+      .getCredentials(storeId)
+      .then((c) => {
+        if (!live) return
+        setCreds(c)
+        setServer(c.server_name ?? '')
+        setDatabase(c.database_name ?? '')
+        setUsername(c.username ?? '')
+        setConnType(c.connection_type ?? '')
+      })
+      .catch((e) => live && setError(e instanceof Error ? e.message : 'Failed to load'))
+      .finally(() => live && setLoading(false))
+    return () => {
+      live = false
+    }
+  }, [storeId])
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    setSaved(false)
+    try {
+      const updated = await storeService.updateCredentials(storeId, {
+        server_name: server,
+        database_name: database,
+        username,
+        password: password || null,
+        connection_type: connType,
+      })
+      setCreds(updated)
+      setPassword('')
+      setSaved(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (loading) {
+    return <div className="card"><div className="card-body text-muted">Loading connection…</div></div>
+  }
+
+  return (
+    <div className="card">
+      <div className="card-body">
+        <p className="text-muted small">
+          The store agent fetches these credentials from HO and re-confirms them every sync — a
+          change here is picked up automatically, no visit to the store machine.
+        </p>
+        {error && <div className="alert alert-danger py-2">{error}</div>}
+        {saved && <div className="alert alert-success py-2">Connection saved.</div>}
+        <form className="row g-3" onSubmit={save} style={{ maxWidth: 640 }}>
+          <div className="col-md-6">
+            <label className="form-label">Server Name</label>
+            <input className="form-control" value={server} onChange={(e) => setServer(e.target.value)} placeholder="HOST\\SQLEXPRESS" />
+          </div>
+          <div className="col-md-6">
+            <label className="form-label">Database Name</label>
+            <input className="form-control" value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="shopaid" />
+          </div>
+          <div className="col-md-6">
+            <label className="form-label">Username</label>
+            <input className="form-control" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="sa" autoComplete="off" />
+          </div>
+          <div className="col-md-6">
+            <label className="form-label">
+              Password{' '}
+              <span className="text-muted small">
+                {creds?.has_password ? '(set — leave blank to keep)' : '(not set)'}
+              </span>
+            </label>
+            <input
+              type="password"
+              className="form-control"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={creds?.has_password ? '••••••••' : 'Enter password'}
+              autoComplete="new-password"
+            />
+          </div>
+          <div className="col-md-6">
+            <label className="form-label">Connection Type</label>
+            <input className="form-control" value={connType} onChange={(e) => setConnType(e.target.value)} placeholder="LAN / R / SQL" />
+          </div>
+          <div className="col-12">
+            <button type="submit" className="btn btn-primary" disabled={busy}>
+              {busy && <span className="spinner-border spinner-border-sm me-1" aria-hidden="true" />}
+              Save connection
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }

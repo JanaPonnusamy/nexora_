@@ -1,17 +1,33 @@
 import type { CSSProperties } from 'react'
-import type { BranchCard as BranchCardData, StockProductRow } from '../../types/stock'
+import type { BranchCard as BranchCardData, CrossStoreMatchType, StockProductRow } from '../../types/stock'
 import { num, storeColor } from './format'
+
+/** This store's own selection — either the row the user actually clicked
+ *  ('SOURCE') or a cross-store equivalent auto-resolved from it. */
+export interface BranchSelection {
+  productCode: string
+  matchType: CrossStoreMatchType | 'SOURCE'
+  score: number
+}
+
+const MATCH_LABELS: Record<CrossStoreMatchType | 'SOURCE', string> = {
+  SOURCE: 'Selected',
+  EXACT_SUPPLIER_MATCH: 'Matched via supplier link',
+  EXACT_NORMALIZED_NAME: 'Matched via name',
+  STRONG_ATTRIBUTE_MATCH: 'Matched via product attributes',
+  RELEVANT_FUZZY_MATCH: 'Matched via best-guess relevance',
+  NO_MATCH: 'No match',
+}
 
 interface BranchCardProps {
   card: BranchCardData
-  activeProductCode: string | null
-  activeStoreId: string | null
+  selection: BranchSelection | null
   onSelect: (card: BranchCardData, product: StockProductRow) => void
 }
 
 const MIN_PRODUCT_ROWS = 5
 
-export function BranchCard({ card, activeProductCode, activeStoreId, onSelect }: BranchCardProps) {
+export function BranchCard({ card, selection, onSelect }: BranchCardProps) {
   const label = card.store_code ?? card.store_name ?? 'Store'
   const color = storeColor(card.store_code ?? card.store_id)
   const fillerRows = Math.max(0, MIN_PRODUCT_ROWS - card.products.length)
@@ -30,18 +46,31 @@ export function BranchCard({ card, activeProductCode, activeStoreId, onSelect }:
           <span className="sa-num" role="columnheader">Stock</span>
         </div>
         {card.products.map((product, index) => {
-          const isActive =
-            activeStoreId === card.store_id && activeProductCode === product.product_code
+          const isActive = selection?.productCode === product.product_code
+          const isSource = isActive && selection?.matchType === 'SOURCE'
+          const isSync = isActive && !isSource
+          const title = isSync && selection
+            ? `${MATCH_LABELS[selection.matchType]} (score ${selection.score.toFixed(0)})`
+            : undefined
+          const stateClass = isSource
+            ? ' sa-branch__row--source'
+            : isSync
+              ? ' sa-branch__row--sync'
+              : ''
           return (
             <button
               key={`${product.product_code}-${index}`}
               type="button"
               role="row"
-              className={`sa-branch__row${isActive ? ' sa-branch__row--active' : ''}`}
+              title={title}
+              className={`sa-branch__row${stateClass}`}
               onClick={() => onSelect(card, product)}
             >
               <span className="sa-branch__pname" role="cell">
-                <span className={`sa-dot${isActive ? ' sa-dot--selected' : ' sa-dot--hidden'}`} aria-hidden="true" />
+                <span
+                  className={`sa-dot${isSource ? ' sa-dot--selected' : isSync ? ' sa-dot--sync' : ' sa-dot--hidden'}`}
+                  aria-hidden="true"
+                />
                 {product.product_name ?? '—'}
               </span>
               <span className="sa-dim" role="cell">{product.sale_unit ?? '—'}</span>

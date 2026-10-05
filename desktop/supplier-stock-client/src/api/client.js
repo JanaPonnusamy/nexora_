@@ -11,43 +11,85 @@ function authHeaders(session) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+const TRANSIENT_STATUS = new Set([408, 425, 429, 502, 503, 504]);
+const RETRY_DELAYS_MS = [350, 1000];
+
+function delay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    if (!signal) return;
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+// FastAPI error bodies aren't always a plain string: 422 validation errors send
+// `detail` as a list of {loc, msg, type} objects, and some handlers raise
+// HTTPException(detail=<dict>). Passing any of those straight into `new
+// Error(x)` silently stringifies it to the useless literal "[object Object]"
+// (or comma-joined objects for arrays) - extract real, readable text instead.
+function detailToMessage(data) {
+  const detail = data?.detail ?? data?.message ?? data?.error;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => (typeof item === 'string' ? item : `${(item?.loc || []).join('.')}: ${item?.msg || JSON.stringify(item)}`))
+      .join('; ');
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  return detail || '';
+}
+
 async function request(path, options = {}) {
   const settings = loadSettings();
   const session = options.session;
   const timeoutMs = options.timeoutMs ?? 45000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // React Query passes its own per-query AbortSignal so switching products
-  // cancels the previous product's in-flight request (req 5) - forward its
-  // abort into our internal controller without losing the timeout behavior.
-  if (options.signal) {
-    if (options.signal.aborted) controller.abort();
-    else options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-  }
+  const method = String(options.method || 'GET').toUpperCase();
+  const retries = options.transientRetries ?? (method === 'GET' ? RETRY_DELAYS_MS.length : 0);
+  const { session: _session, timeoutMs: _timeoutMs, transientRetries: _transientRetries, ...fetchOptions } = options;
   let response;
-  try {
-    response = await fetch(joinUrl(settings.apiBaseUrl, path), {
-      ...options,
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-        ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-        ...authHeaders(session),
-        ...(options.headers || {})
-      }
-    });
-  } catch (err) {
-    if (err.name === 'AbortError') throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
-    throw err;
-  } finally {
-    clearTimeout(timer);
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    const onCallerAbort = () => controller.abort();
+    if (options.signal) {
+      if (options.signal.aborted) controller.abort();
+      else options.signal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, path), {
+        ...fetchOptions,
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+          ...authHeaders(session),
+          ...(options.headers || {})
+        }
+      });
+      if (!TRANSIENT_STATUS.has(response.status) || attempt === retries) break;
+      // Drain the body so Chromium can reuse the keep-alive connection.
+      await response.arrayBuffer().catch(() => {});
+    } catch (err) {
+      if (options.signal?.aborted) throw err;
+      if (timedOut) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+      if (attempt === retries) throw err;
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onCallerAbort);
+    }
+    await delay(RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)], options.signal);
   }
 
   const text = await response.text();
   const data = text ? safeJson(text) : null;
 
   if (!response.ok) {
-    const message = data?.detail || data?.message || data?.error || `Request failed with ${response.status}`;
+    const message = detailToMessage(data) || `Request failed with ${response.status}`;
     // A 401 here means the stored token is missing/expired/invalid for a
     // request that did carry a session - the UI would otherwise sit showing
     // "Request failed with 401" on every panel forever with no way out. Let
@@ -185,12 +227,57 @@ export const api = {
     })}`, { session });
   },
 
+  // Compact full-catalogue index (code/name/unit/stock) that seeds + refreshes
+  // the permanent local cache (see lib/productIndexCache.js). Larger payload, so
+  // a generous timeout; called in the background, not on the keystroke path.
+  getProductIndex(session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/stock-availability/products/index${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: filters.storeId || ''
+    })}`, { session, timeoutMs: filters.timeoutMs || 120000 });
+  },
+
+  // Tab 2 of the web Stock Availability screen — search by batch number, MRP
+  // and/or product name across branches (same {stores:[...]} shape as
+  // searchStockProducts, so callers can render either result identically).
+  searchStockBatches(query, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/stock-availability/batches/search${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      batch: query.batch || '',
+      mrp: query.mrp || '',
+      product: query.product || ''
+    })}`, { session });
+  },
+
   getProductDashboard(productCode, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/supplier-stock-analysis/products/${productCode}/dashboard${toQuery({
       tenant_id: filters.tenantId || settings.tenantId,
+      source_store_id: filters.sourceStoreId,
       months: filters.months || 6
-    })}`, { session });
+    })}`, { session, signal: filters.signal });
+  },
+
+  // Store-wide (not supplier-scoped) stock-status counts for the NMW-Stock
+  // filter dropdown - see backend/modules/supplier_stock_analysis/router.py.
+  getWarehouseStockCounts(tenantId, storeId, session, filters = {}) {
+    return request(`/api/supplier-stock-analysis/warehouse-stock/counts${toQuery({
+      tenant_id: tenantId,
+      store_id: storeId
+    })}`, { session, signal: filters.signal });
+  },
+
+  // The store's own product catalogue filtered by stock status, independent
+  // of any supplier selection.
+  getWarehouseStockProducts(tenantId, storeId, stockFilter, session, filters = {}) {
+    return request(`/api/supplier-stock-analysis/warehouse-stock/products${toQuery({
+      tenant_id: tenantId,
+      store_id: storeId,
+      stock_filter: stockFilter,
+      search: filters.search || ''
+    })}`, { session, signal: filters.signal });
   },
   getStockCore(storeId, productCode, session, filters = {}) {
     const settings = loadSettings();
@@ -200,6 +287,26 @@ export const api = {
       product: productCode,
       months: filters.months || 3
     })}`, { session });
+  },
+
+  // Cross-store product-selection sync (see backend
+  // modules/stock_availability/service.py:match_cross_store_selection): for a
+  // product selected in one store, resolve its equivalent in every other
+  // store via SupplierProductMatch -> normalized name -> structured
+  // attributes -> relevance-scored fuzzy candidate.
+  syncStockSelection(sourceStoreId, sourceProductCode, sourceProductName, targetStoreIds, session, filters = {}) {
+    const settings = loadSettings();
+    return request('/api/stock-availability/products/sync-selection', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({
+        tenant_id: filters.tenantId || settings.tenantId,
+        source_store_id: sourceStoreId,
+        source_product_code: sourceProductCode,
+        source_product_name: sourceProductName,
+        target_store_ids: targetStoreIds || []
+      })
+    });
   },
 
   getStockCoreBulk(items, session, filters = {}) {
@@ -221,6 +328,16 @@ export const api = {
       tenant_id: filters.tenantId || settings.tenantId,
       store_id: storeId,
       product: productCode
+    })}`, { session });
+  },
+
+  getBatchDetail(storeId, productCode, batchNo, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/stock-availability/products/batch-detail${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: storeId,
+      product: productCode,
+      batch: batchNo
     })}`, { session });
   },
 
@@ -291,7 +408,18 @@ export const api = {
       supplier_code: supplierCode,
       search: filters.search || '',
       only_available: filters.onlyAvailable ?? 1
-    })}`, { session });
+    })}`, {
+      session,
+      // The underlying query cold-reads from disk on the DB server (limited
+      // RAM there means product_mapping/Products pages routinely fall out of
+      // the buffer pool between uses) -- a first touch for a given supplier
+      // can legitimately take ~35-40s even though it's back down to ~1-2s on
+      // a warm cache. That's right at the default 45s wall, so a slightly
+      // busy moment tips it into a client-side timeout even though the query
+      // would have finished. Not a query-design problem (verified directly
+      // against the DB); this just gives the cold case room to land.
+      timeoutMs: 90000
+    });
   },
 
   getSupplierAnalysisReport(supplierCode, session, filters = {}) {
@@ -377,6 +505,16 @@ export const api = {
     })}`, { session });
   },
 
+  getNonMovingTotals(storeId, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/reports/non-moving/totals${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: storeId,
+      sales_age: filters.salesAge || 90,
+      grn_age: filters.grnAge || 10
+    })}`, { session });
+  },
+
   updateSupplierMapping(payload, session) {
     return request('/api/supplier-stock-analysis/mapping', {
       method: 'POST',
@@ -395,7 +533,8 @@ export const api = {
       store_id: filters.storeId || '',
       status: filters.status || 'all',
       date_from: filters.dateFrom || '',
-      date_to: filters.dateTo || ''
+      date_to: filters.dateTo || '',
+      purchase_status: filters.purchaseStatus || 'all'
     })}`, { session });
   },
 
@@ -407,11 +546,357 @@ export const api = {
     })}`, { session });
   },
 
+  // Store-side purchase-entry (GRN) status for one NMW bill. The /bills list
+  // already carries a per-bill purchase_status from a single batched lookup, so
+  // this per-bill call is only for the detail pane (never fired in a loop over
+  // the list).
+  getNmwPurchaseEntry(billNo, billDate, session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/nmw-sales-report/bills/${encodeURIComponent(billNo)}/purchase-entry${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      bill_date: billDate ? String(billDate).slice(0, 10) : ''
+    })}`, { session });
+  },
+
   approveNmwBills(tenantId, bills, session, status = 'approved') {
     return request('/api/nmw-sales-report/bills/approve', {
       method: 'POST',
       session,
       body: JSON.stringify({ tenant_id: tenantId, bills, status })
+    });
+  },
+
+  // ----- Order Workspace (legacy VB-style ordering console) -----
+  // Store-scoped by store_name and authorised server-side; independent of the
+  // desktop tenant/store GUID context (mirrors the web legacyOrderService).
+  legacyStores(session, activeOnly = true) {
+    return request(`/api/legacy-order/stores${toQuery({ active_only: activeOnly })}`, { session });
+  },
+
+  legacyQtyCheckRows(storeName, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  legacyUpdateQtyCheck(storeName, productCode, orderQty, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}`, {
+      method: 'PATCH',
+      session,
+      body: JSON.stringify({ order_qty: orderQty })
+    });
+  },
+
+  legacyOrders(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  legacyUpdateOrderQty(storeName, productCode, orderQty, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/${productCode}`, {
+      method: 'PATCH',
+      session,
+      body: JSON.stringify({ order_qty: orderQty })
+    });
+  },
+
+  legacyOrderWorkflow(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/workflow`, { session });
+  },
+
+  legacyFinalizeOrder(storeName, note, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/workflow/finalize`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ note: note || null })
+    });
+  },
+
+  legacyReopenOrder(storeName, note, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/workflow/reopen`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ note: note || null })
+    });
+  },
+
+  legacyOrderHistory(storeName, productCode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/order-history`, { session });
+  },
+
+  // Product intelligence for the selected order row (purchase/GRN, bill/sales,
+  // monthly statistics). Same endpoints/semantics as the web ProductDetailPanel;
+  // transfers-vs-purchases distinction is handled server-side in the SP.
+  legacyPurchaseDetails(storeName, productCode, mode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/purchase-details${toQuery({ mode })}`, { session });
+  },
+
+  legacySalesDetails(storeName, productCode, mode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/sales-details${toQuery({ mode })}`, { session });
+  },
+
+  legacyMonthlyStats(storeName, productCode, mode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/monthly-stats${toQuery({ mode })}`, { session });
+  },
+
+  // Supplier assignment: supplier list, orderable rows per supplier (by purchase
+  // history or by live supplier stock), the assigned-order view, and the
+  // assign/unassign toggle. Same endpoints as the web Order Workspace.
+  legacySuppliers(storeName, search, session) {
+    return request(`/api/legacy-order/suppliers/${encodeURIComponent(storeName)}${toQuery({ search: search || '' })}`, { session });
+  },
+
+  legacyOrdersBySupplier(storeName, supplierCode, mode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/by-supplier${toQuery({ supplier_code: supplierCode, mode })}`, { session });
+  },
+
+  legacyAssignedOrders(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/assigned${toQuery({ supplier_code: supplierCode })}`, { session });
+  },
+
+  legacyAssignSupplier(storeName, productCode, supplierCode, supplierName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/${productCode}/assign`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ supplier_code: supplierCode, supplier_name: supplierName })
+    });
+  },
+
+  // Bulk-assigns every OrderQty>0 row for this supplier, then returns the
+  // legacy-faithful Order Workspace Excel export (or a .zip of "Part N of M"
+  // files when splitSize splits it) built server-side by order_export.py --
+  // the same port of Form1.ExportSelectedColumnsFromGrid the web Order
+  // Workspace already uses. Filename + assigned count come back in headers,
+  // so this bypasses the JSON request() helper and reads the raw Response.
+  // ----- Label Exporter (letter-wise review + print) -----
+  searchLabelProducts(session, filters = {}) {
+    const settings = loadSettings();
+    return request(`/api/label-exporter/products/search${toQuery({
+      tenant_id: filters.tenantId || settings.tenantId,
+      store_id: filters.storeId || settings.storeId,
+      q: filters.q || '',
+      starts_with: filters.startsWith || '',
+      unit_description: filters.unitDescription || '',
+      unit_description_mode: filters.unitDescriptionMode || 'contains',
+      box_number: filters.boxNumber || '',
+      stock_filter: filters.stockFilter || 'all',
+      only_null_sublocation: filters.onlyNullSublocation ? 1 : 0,
+      only_sale_unit_gt_one: filters.onlySaleUnitGtOne ? 1 : 0,
+      sublocation_filter: filters.sublocationFilter || '',
+      review_status: filters.reviewStatus || ''
+    })}`, { session });
+  },
+
+  // Reviewer corrects a product's unit (auto-saved, dbo.label_review only).
+  correctLabelUnit(productCode, tenantId, storeId, unitDescription, currentUnit, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/unit${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ unit_description: unitDescription, current_unit: currentUnit || '' })
+    });
+  },
+
+  // Super-admin manual box override (auto-saved). Bypasses the standard-box/
+  // SYP assignment engine for one product; old box is captured server-side.
+  correctLabelLocation(productCode, tenantId, storeId, location, currentLocation, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/location${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ location, current_location: currentLocation || '' })
+    });
+  },
+
+  // Preview a box plan (no commit) so the UI can show the assignment before
+  // the operator confirms. `body` = { unit, mode, assignment_type, letter,
+  // product_codes, start_number }.
+  previewLabelAssignment(tenantId, storeId, body, session) {
+    return request(`/api/label-exporter/assignments/preview${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Transactionally commit the box plan (super-admin only, backend re-plans).
+  commitLabelAssignment(tenantId, storeId, body, session) {
+    return request(`/api/label-exporter/assignments/commit${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Reset ONLY the assignment result (assigned box + label state) for the given
+  // products — review Y/N and master data are left intact (spec §10).
+  clearLabelAssignment(tenantId, storeId, productCodes, session) {
+    return request(`/api/label-exporter/assignments/clear${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
+    });
+  },
+
+  // Reset the Y/N review AND assignment/label state for the given products
+  // (spec §11). Preserves unit corrections, old locations and master data.
+  clearLabelReview(tenantId, storeId, productCodes, session) {
+    return request(`/api/label-exporter/review/clear${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
+    });
+  },
+
+  getLabelQueue(tenantId, storeId, session) {
+    return request(`/api/label-exporter/label-queue${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
+  markLabelsPrinted(tenantId, storeId, productCodes, session) {
+    return request(`/api/label-exporter/label-queue/mark-printed${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
+    });
+  },
+
+  clearPrintedLabels(tenantId, storeId, productCodes, session) {
+    return request(`/api/label-exporter/label-queue/clear-printed${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
+    });
+  },
+
+  updateLabelReview(productCode, tenantId, storeId, body, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/review${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  bulkSetLabelInclude(tenantId, storeId, productCodes, includeLabel, session) {
+    return request(`/api/label-exporter/products/bulk-review${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ product_codes: productCodes, include_label: includeLabel })
+    });
+  },
+
+  // Bulk find-and-replace a unit (e.g. set every selected RM product's NEW unit
+  // to TAB). Writes dbo.label_review only; master unit captured server-side.
+  bulkCorrectLabelUnit(tenantId, storeId, productCodes, unitDescription, session) {
+    return request(`/api/label-exporter/products/bulk-unit${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ product_codes: productCodes, unit_description: unitDescription })
+    });
+  },
+
+  assignLabelSublocation(productCode, tenantId, storeId, sublocation, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/sublocation${toQuery({ tenant_id: tenantId, store_id: storeId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ sublocation })
+    });
+  },
+
+  async exportLabelQueuePdf(tenantId, storeId, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/label-exporter/label-queue/pdf${toQuery({ tenant_id: tenantId, store_id: storeId })}`), {
+        headers: { ...authHeaders(session) }
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'PDF export failed';
+      try { const parsed = await response.json(); detail = parsed?.detail || parsed?.message || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    return response.blob();
+  },
+
+  getLabelProductTrend(productCode, tenantId, storeId, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/trend${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
+  getLabelProductPurchases(productCode, tenantId, storeId, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/purchases${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
+  getLabelProductSales(productCode, tenantId, storeId, session) {
+    return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/sales${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
+  async legacyExportOrder(storeName, supplierCode, supplierName, mode, splitSize, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/legacy-order/orders/${encodeURIComponent(storeName)}/export`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(session)
+        },
+        body: JSON.stringify({ supplier_code: supplierCode, supplier_name: supplierName, mode, split_size: splitSize || 0 })
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try { const parsed = await response.json(); detail = parsed?.detail || parsed?.message || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = /filename="?([^"]+)"?/.exec(disposition);
+    return {
+      blob,
+      filename: match?.[1] || `${supplierName} ${storeName}.xlsx`,
+      exportedCount: Number(response.headers.get('X-Exported-Count') || 0)
+    };
+  },
+
+  // ----- Schema Sync (Dev -> Production) - super admin only -----
+  getSchemaSyncLocalSource(session) {
+    return request('/api/schema-sync/local-source-info', { session });
+  },
+
+  testSchemaSyncConnection(connection, session) {
+    return request('/api/schema-sync/test-connection', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ connection })
+    });
+  },
+
+  ensureSchemaSyncDatabase(connection, session) {
+    return request('/api/schema-sync/ensure-database', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ connection })
+    });
+  },
+
+  compareSchemaSync(source, target, session) {
+    return request('/api/schema-sync/compare', {
+      method: 'POST',
+      session,
+      // Legacy DBs like OrderNMC can have far more tables/columns/SPs than
+      // NEXORA_PLATFORM - a full metadata snapshot of both Source and Target
+      // can run past two minutes. 120s clipped that mid-read (nothing gets
+      // created because Apply never fires without a compare result).
+      timeoutMs: 600000,
+      body: JSON.stringify({ source, target })
+    });
+  },
+
+  applySchemaSync(target, statements, session) {
+    return request('/api/schema-sync/apply', {
+      method: 'POST',
+      session,
+      timeoutMs: 300000,
+      body: JSON.stringify({ target, statements })
     });
   }
 };

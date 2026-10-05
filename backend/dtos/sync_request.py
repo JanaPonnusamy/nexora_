@@ -29,9 +29,10 @@ class ColumnMappingRequest(BaseModel):
 
 class ScheduleRequest(BaseModel):
     schedule_name: str
-    schedule_type: str = "DAILY"          # DAILY | ONCE
+    schedule_type: str = "DAILY"          # DAILY | ONCE | INTERVAL
     store_id: str | None = None           # None = all stores in the tenant
-    start_time: str                       # ISO datetime; DAILY uses time-of-day
+    start_time: str | None = None         # ISO datetime; DAILY uses time-of-day; unused for INTERVAL
+    interval_minutes: int | None = None   # required for INTERVAL (e.g. 30 = every 30 minutes)
     sync_mode: str = "FULL"
     is_enabled: bool = True
     tenant_id: str | None = None

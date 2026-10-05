@@ -72,11 +72,12 @@ export default function TimeReportPage() {
   const [reportKey, setReportKey] = useState('daily')
 
   const today = useMemo(() => new Date(), [])
+  const yesterday = useMemo(() => iso(new Date(today.getTime() - 86400000)), [today])
   const [date, setDate] = useState(iso(today))
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
-  const [start, setStart] = useState(iso(new Date(today.getFullYear(), today.getMonth(), 1)))
-  const [end, setEnd] = useState(iso(today))
+  const [start, setStart] = useState(yesterday)
+  const [end, setEnd] = useState(yesterday)
   const [deptId, setDeptId] = useState('')
   const [userId, setUserId] = useState('')
   const [mode, setMode] = useState<'detail' | 'summary'>('detail')
@@ -165,6 +166,22 @@ export default function TimeReportPage() {
     }
   }, [reportKey, params, today])
 
+  const exportImage = useCallback(async () => {
+    setDownloading(true)
+    try {
+      await downloadBlob(timeReportService.imagePath(reportKey, params()), `${reportKey}_${iso(today)}.png`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Image export failed')
+    } finally {
+      setDownloading(false)
+    }
+  }, [reportKey, params, today])
+
+  const buildWhatsAppImageFile = async () => {
+    const blob = await api.blob(timeReportService.imagePath(reportKey, params()))
+    return new File([blob], `${reportKey}_${iso(today)}.png`, { type: 'image/png' })
+  }
+
   const exportImagesZip = useCallback(async () => {
     setDownloading(true)
     try {
@@ -242,7 +259,12 @@ export default function TimeReportPage() {
             className="form-select form-select-sm"
             value={reportKey}
             onChange={(e) => {
-              setReportKey(e.target.value)
+              const next = e.target.value
+              setReportKey(next)
+              if (next === 'misspunch') {
+                setStart(yesterday)
+                setEnd(yesterday)
+              }
               setResult(null)
               setError(null)
             }}
@@ -374,6 +396,20 @@ export default function TimeReportPage() {
           defaultCaption={`Nexora Time Report | ${def?.label ?? reportKey}`}
           buildFile={buildWhatsAppFile}
         />
+        {reportKey !== 'daily' && (
+          <>
+            <button className="btn btn-outline-secondary btn-sm" disabled={!hasExport || downloading} onClick={exportImage}>
+              <i className="bi bi-image" /> {downloading ? 'Exporting…' : 'Image'}
+            </button>
+            <WhatsAppSendCard
+              disabled={!hasExport}
+              title="Send report image to WhatsApp"
+              buttonLabel="WhatsApp (image)"
+              defaultCaption={`Nexora Time Report | ${def?.label ?? reportKey}`}
+              buildFile={buildWhatsAppImageFile}
+            />
+          </>
+        )}
         {reportKey === 'daily' && (
           <button className="btn btn-outline-secondary btn-sm" disabled={!hasExport || downloading} onClick={exportImagesZip}>
             <i className="bi bi-images" /> All Store Images (zip)

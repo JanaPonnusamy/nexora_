@@ -1,0 +1,63 @@
+/* Sale Analysis — group builder + grouped summary/detail specifics.
+   Reuses the shared report table styling in ../reports.css. */
+
+.sa-layout { display: grid; grid-template-columns: 320px 1fr; gap: 1rem; align-items: start; }
+@media (max-width: 900px) { .sa-layout { grid-template-columns: 1fr; } }
+
+.sa-panel {
+  border: 1px solid var(--nx-border, #e2e8f0);
+  border-radius: 8px;
+  background: var(--nx-surface, #fff);
+  padding: 0.75rem;
+}
+.sa-panel h3 { font-size: 0.9rem; font-weight: 600; margin: 0 0 0.5rem; }
+
+.sa-groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.sa-group-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.35rem 0.4rem; border-radius: 6px;
+}
+.sa-group-row:hover { background: var(--nx-surface-sunk, #f1f5f9); }
+.sa-group-row label { flex: 1; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.sa-group-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-group-count { font-size: 0.72rem; color: var(--nx-text-soft, #64748b); flex-shrink: 0; }
+.sa-group-actions { display: flex; gap: 0.15rem; }
+.sa-group-actions button {
+  border: none; background: transparent; color: var(--nx-text-soft, #64748b);
+  cursor: pointer; padding: 0.15rem 0.3rem; border-radius: 4px; font-size: 0.85rem;
+}
+.sa-group-actions button:hover { background: var(--nx-surface-sunk, #e2e8f0); color: var(--nx-text, #0f172a); }
+
+.sa-builder { margin-top: 0.75rem; border-top: 1px dashed var(--nx-border, #e2e8f0); padding-top: 0.6rem; }
+.sa-builder .form-control, .sa-builder .form-select { margin-bottom: 0.4rem; }
+
+.sa-results { list-style: none; margin: 0.25rem 0 0; padding: 0; max-height: 240px; overflow-y: auto;
+  border: 1px solid var(--nx-border, #e2e8f0); border-radius: 6px; }
+.sa-result-row {
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.45rem; cursor: pointer;
+  border-bottom: 1px solid var(--nx-border-soft, #f1f5f9); font-size: 0.82rem;
+}
+.sa-result-row:last-child { border-bottom: none; }
+.sa-result-row:hover { background: var(--nx-surface-sunk, #f1f5f9); }
+.sa-result-row.picked { opacity: 0.5; }
+.sa-result-main { flex: 1; min-width: 0; }
+.sa-result-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-result-sub { font-size: 0.7rem; color: var(--nx-text-soft, #64748b); }
+
+.sa-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+.sa-chip {
+  display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.75rem;
+  background: var(--nx-surface-sunk, #eef2ff); border: 1px solid var(--nx-border, #e2e8f0);
+  border-radius: 999px; padding: 0.15rem 0.5rem;
+}
+.sa-chip button { border: none; background: transparent; cursor: pointer; color: var(--nx-text-soft, #64748b); line-height: 1; }
+
+.sa-builder-bulk { display: flex; gap: 0.4rem; margin: 0.2rem 0 0.1rem; }
+.sa-builder-actions { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
+
+.sa-group-title {
+  display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
+  margin: 1rem 0 0.35rem; font-weight: 600;
+}
+.sa-group-title .bi { color: var(--nx-text-soft, #64748b); }
+.sa-empty-hint { color: var(--nx-text-soft, #64748b); font-size: 0.85rem; padding: 0.5rem 0; }

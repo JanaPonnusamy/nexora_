@@ -50,6 +50,13 @@ class AssignSupplierRequest(BaseModel):
     supplier_name: str
 
 
+class ExportOrderRequest(BaseModel):
+    supplier_code: str
+    supplier_name: str
+    mode: str = "history"  # matches the By-Supplier view's History/Live Stock toggle
+    split_size: int = 0  # 0 = single file; >0 splits into "Part N of M" chunks (zipped)
+
+
 class EmergencyRepairRequest(BaseModel):
     # Guard rail: the destructive REPAIR_ALLOW_DATA_LOSS path only runs when the
     # caller explicitly opts in. The UI sends this from a confirmation dialog.

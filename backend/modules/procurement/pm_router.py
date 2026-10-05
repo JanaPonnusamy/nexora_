@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from dependencies.auth import get_current_user_optional
 from dependencies.store_scope import assert_tenant_access
 from modules.procurement import workspace_service
+from modules.procurement import network_movement_service
 from modules.procurement import supplier_service
 from modules.procurement import supplier_stock_service
 from modules.procurement import assignment_service
@@ -93,6 +94,28 @@ def workspace_summary(
     assert_tenant_access(current_user, tenant_id)
     filters = {"search": search, "movement_class": movement_class}
     return workspace_service.get_summary(tenant_id, refresh_id, filters)
+
+
+@router.get("/refreshes/{refresh_id}/network-opportunities")
+def network_opportunities(
+    refresh_id: str,
+    tenant_id: str = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Products locally NONMOVING but genuinely moving elsewhere in the
+    network and not already on this store's VPL — see network_movement_
+    service.list_network_opportunities. Reads the persisted network movement
+    cache only; never recomputes, never touches procurement eligibility."""
+    from fastapi import HTTPException
+    assert_tenant_access(current_user, tenant_id)
+    refresh = reconciliation_repository.get_refresh(tenant_id, refresh_id)
+    if not refresh:
+        raise HTTPException(status_code=404, detail="Refresh not found")
+    return network_movement_service.list_network_opportunities(
+        tenant_id, refresh.get("store_id"), refresh_id, page, page_size,
+    )
 
 
 @router.get("/order-items/{order_item_id}")
@@ -388,6 +411,13 @@ def distribution_run_item_products(run_item_id: str):
     """Product rows from that item's already-generated Excel file, for the
     WhatsApp image preview/send."""
     return distribution_service.run_item_products(run_item_id)
+
+
+@router.post("/distribution/run-items/{run_item_id}/send-whatsapp")
+def distribution_run_item_send_whatsapp(run_item_id: str):
+    """(Re)send this item's already-generated Excel file to its store's mapped
+    WhatsApp group -- the Excel itself, no image, no caption."""
+    return distribution_service.send_run_item_whatsapp(run_item_id)
 
 
 # --------------------------------------------------------------------------

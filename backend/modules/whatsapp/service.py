@@ -6,10 +6,12 @@ import concurrent.futures
 import json
 import re
 import shutil
+import subprocess
+import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -31,6 +33,8 @@ SETTINGS_FILE = STORAGE_DIR / "settings.json"
 PROFILES_FILE = STORAGE_DIR / "profiles.json"
 TARGETS_FILE = STORAGE_DIR / "targets.json"
 INBOX_FILE = STORAGE_DIR / "inbox.json"
+SEND_LOG_FILE = STORAGE_DIR / "send_log.json"
+SEND_LOG_MAX = 300
 
 DEFAULT_SETTINGS = {
     # Legacy field, unused now that Playwright manages its own bundled Firefox.
@@ -368,7 +372,7 @@ def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
     driver = _ensure_playwright_driver()
     session_dir = _firefox_profile_dir(profile)
     session_dir.mkdir(parents=True, exist_ok=True)
-    context = driver.firefox.launch_persistent_context(
+    launch_kwargs = dict(
         user_data_dir=str(session_dir),
         headless=headless,
         viewport={"width": 1280, "height": 960} if headless else None,
@@ -390,6 +394,27 @@ def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
         # progress.
         timeout=120000,
     )
+    try:
+        context = driver.firefox.launch_persistent_context(**launch_kwargs)
+    except Exception as exc:
+        # A `pip install` that bumps the `playwright` package silently bumps
+        # the bundled-Firefox revision it expects too -- if `playwright
+        # install firefox` isn't rerun in lockstep, every send fails with
+        # "Executable doesn't exist at .../firefox-<rev>/firefox/firefox.exe"
+        # (bit us on 2026-09-28: package updated, browser didn't, every
+        # store's WhatsApp send failed for a full day before anyone noticed).
+        # Self-heal once instead of failing forever: download the browser
+        # revision this exact package expects, then retry the same launch.
+        if "Executable doesn't exist" not in str(exc):
+            raise
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "firefox"],
+                check=True, timeout=300,
+            )
+        except Exception:
+            raise exc
+        context = driver.firefox.launch_persistent_context(**launch_kwargs)
     page = context.pages[0] if context.pages else context.new_page()
     return context, page
 
@@ -429,7 +454,8 @@ def _acquire_context(profile: dict[str, Any], settings: dict[str, Any], want_hea
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     try:
         page.goto("https://web.whatsapp.com/", timeout=wait_seconds * 1000)
-        page.wait_for_timeout(3000)
+        # Short settle only; _ensure_logged_in polls for the chat UI afterwards.
+        page.wait_for_timeout(1000)
     except Exception:
         pass
     return page
@@ -473,11 +499,33 @@ atexit.register(shutdown_all_drivers)
 # selectors and falls back to a JS click. On failure we snapshot the page so
 # the real cause is visible (backend/storage/whatsapp/debug).
 
+# The chat-list search box in current WhatsApp Web is a plain <input> in the
+# left-pane header (aria-label "Search or start a new chat", data-tab="3").
+# CRITICAL: the message composer is ALSO a role="textbox"/contenteditable with
+# an aria-label, so a broad "any textbox" selector grabs the COMPOSER when a
+# chat is already open and types the query as a message instead of searching.
+# Every entry here therefore targets the header search box specifically and
+# EXCLUDES the footer composer (id="conversation-compose-box-input",
+# data-tab="10", inside <footer>).
 _SEARCH_BOX_SELECTORS = [
     "xpath=//input[@aria-label='Search or start a new chat']",
-    "xpath=//div[@aria-label='Chat list']//input[@role='textbox']",
+    "xpath=//input[@type='text'][@data-tab='3']",
+    # Older builds used a contenteditable search box with data-tab='3'.
     "xpath=//div[@contenteditable='true'][@data-tab='3']",
-    "xpath=//div[@role='textbox'][@contenteditable='true'][@aria-label]",
+    # Last resort: a contenteditable textbox that is NOT the composer.
+    "xpath=//div[@contenteditable='true'][@role='textbox'][not(ancestor::footer)][not(@id='conversation-compose-box-input')][not(@data-tab='10')][not(@aria-placeholder='Type a message')]",
+]
+
+# WhatsApp Web pops a "What's new on WhatsApp Web" (and similar) startup modal
+# -- role="dialog" aria-modal="true" -- that overlays the chat list AND blocks
+# the search box's contenteditable from mounting, so every search selector
+# fails until it is dismissed. These target the modal's primary dismiss
+# control across wording drift ("Continue" / "OK" / "Got it") plus the X.
+_STARTUP_DIALOG_DISMISS_SELECTORS = [
+    "xpath=//div[@role='dialog']//div[@role='button'][.//span[normalize-space()='Continue'] or normalize-space()='Continue']",
+    "xpath=//div[@role='dialog']//button[.//span[normalize-space()='Continue'] or normalize-space()='Continue']",
+    "xpath=//div[@role='dialog']//*[self::button or @role='button'][normalize-space()='OK' or normalize-space()='Got it' or normalize-space()='Okay']",
+    "xpath=//div[@role='dialog']//*[@aria-label='Close']",
 ]
 _COMPOSER_SELECTORS = [
     "xpath=//footer//div[@contenteditable='true'][@data-tab='10']",
@@ -589,11 +637,45 @@ def _safe_click(locator: Any) -> None:
             raise
 
 
+def _dismiss_startup_dialogs(page: Any) -> None:
+    """Close any WhatsApp Web startup modal (e.g. "What's new on WhatsApp Web")
+    that overlays the chat list. Left open, it prevents the search box's
+    contenteditable from mounting, so every _open_target_chat search fails with
+    "None of the selectors matched". Best-effort and idempotent: a couple of
+    passes (the app can chain more than one dialog), Escape as a final nudge."""
+    for _ in range(3):
+        try:
+            if page.locator("xpath=//div[@role='dialog']").count() == 0:
+                return
+        except Exception:
+            return
+        clicked = False
+        for sel in _STARTUP_DIALOG_DISMISS_SELECTORS:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    _safe_click(loc.first)
+                    clicked = True
+                    break
+            except Exception:
+                continue
+        if not clicked:
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+
 def _ensure_logged_in(page: Any, settings: dict[str, Any]) -> None:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     end = time.time() + wait_seconds
     while time.time() < end:
         if _is_logged_in(page):
+            _dismiss_startup_dialogs(page)
             return
         time.sleep(1)
     raise RuntimeError(
@@ -602,24 +684,37 @@ def _ensure_logged_in(page: Any, settings: dict[str, Any]) -> None:
     )
 
 
+def _wait_composer_cleared(composer: Any, timeout_seconds: float = 5.0) -> None:
+    """After Enter, WhatsApp empties the composer once the message is queued for
+    delivery. Poll for that instead of sleeping a fixed 2s -- returns as soon as
+    the box is empty (usually <1s), falls back to the timeout if we can't read
+    it (e.g. an attachment preview flow with a different box)."""
+    end = time.time() + timeout_seconds
+    while time.time() < end:
+        try:
+            if not (composer.inner_text() or "").strip():
+                return
+        except Exception:
+            return
+        time.sleep(0.15)
+
+
 def _type_and_send(page: Any, settings: dict[str, Any], message: str) -> None:
     """Focus the message composer, type the message and send with Enter."""
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     composer = _first_locator(page, _COMPOSER_SELECTORS, wait_seconds)
     _safe_click(composer)
-    time.sleep(0.3)
     if message:
         composer.press("Control+a")
         composer.press("Delete")
-        composer.type(message, delay=8)
-        time.sleep(0.3)
+        composer.type(message, delay=5)
     # Enter is the most reliable way to send and avoids send-button churn.
     try:
         composer.press("Enter")
     except Exception:
         send = _first_locator(page, _SEND_BUTTON_SELECTORS, wait_seconds)
         _safe_click(send)
-    time.sleep(2)
+    _wait_composer_cleared(composer)
 
 
 def _caption_and_send_attachment(page: Any, settings: dict[str, Any], message: str) -> None:
@@ -639,6 +734,70 @@ def _caption_and_send_attachment(page: Any, settings: dict[str, Any], message: s
     time.sleep(3)
 
 
+# The open conversation's header title (the chat currently loaded in #main).
+# Read to VERIFY the right chat opened before we attach a file or type -- see
+# _wait_chat_opened.
+# CRITICAL: in the current WhatsApp Web build the group/contact NAME sits in
+# the header as the *text* of span[data-testid='conversation-info-header-chat-title']
+# and carries NO @title attribute. The ONLY span[@title] inside #main's header
+# is the SUBTITLE -- the participant list ("Giri, NMG, NMG, Pradeep, ..., You")
+# for an unnamed-in-header group. Reading span[@title] therefore returned the
+# participant list, which never matches the configured group name ("NMG GROUP")
+# and made _wait_chat_opened abort EVERY group send as a false "wrong chat".
+# So read the chat-title span's TEXT first; only fall back to a @title attribute
+# on OLDER builds, and never read the chat-subtitle container.
+_OPEN_CHAT_TITLE_SELECTORS = [
+    "xpath=//div[@id='main']//header//span[@data-testid='conversation-info-header-chat-title']",
+    "xpath=//div[@id='main']//header//span[@title][not(ancestor::div[@data-testid='chat-subtitle'])]",
+    "xpath=//div[@id='main']//header//div[@role='button']//span[@title][not(ancestor::div[@data-testid='chat-subtitle'])]",
+]
+
+
+def _current_chat_title(page: Any) -> str:
+    """Title of the currently-open conversation (#main header), or '' when no
+    chat is open. Prefers the header chat-title span's visible text (the group
+    name carries no @title attribute in the current build); falls back to a
+    @title attribute for older builds."""
+    for sel in _OPEN_CHAT_TITLE_SELECTORS:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0:
+                first = loc.first
+                title = (first.get_attribute("title") or "").strip()
+                if not title:
+                    title = (first.inner_text() or "").strip()
+                if title:
+                    return title
+        except Exception:
+            continue
+    return ""
+
+
+def _titles_match(opened: str, label: str) -> bool:
+    """Case-insensitive match tolerant of the same case/spacing drift the chat
+    selectors allow ("NMV GROUP" configured vs "NMV Group" in WhatsApp). Never
+    matches a genuinely different group (e.g. 'NMG GROUP' vs 'NMV GROUP')."""
+    a = (opened or "").strip().lower()
+    b = (label or "").strip().lower()
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
+
+
+def _wait_chat_opened(page: Any, label: str, timeout_seconds: float) -> bool:
+    """Poll until the open-conversation header shows ``label`` (the chat we
+    intended to open). WhatsApp switches chats asynchronously, so a search-result
+    click is NOT instantaneous -- attaching/typing before the switch completes
+    delivers into the previously-open chat. Returns False if the intended chat
+    never becomes the active conversation within the timeout."""
+    end = time.time() + timeout_seconds
+    while time.time() < end:
+        if _titles_match(_current_chat_title(page), label):
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any], message: str = "") -> str:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     if target["target_kind"] == "contact":
@@ -648,7 +807,9 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
         url = _whatsapp_url(phone, message)
         page.goto(url, timeout=wait_seconds * 1000)
         _ensure_logged_in(page, settings)
-        time.sleep(4)
+        # send?phone= opens the chat directly; the caller's composer/attach
+        # _first_locator polls until it is ready, so a short settle suffices.
+        time.sleep(1)
         return url
 
     if "web.whatsapp.com" not in (page.url or ""):
@@ -657,37 +818,90 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
     label = target["target_name"] or target["target_ref"]
     query = target["target_ref"] or target["target_name"]
 
-    search = _first_locator(page, _SEARCH_BOX_SELECTORS, wait_seconds)
-    _safe_click(search)
-    search.press("Control+a")
-    search.press("Delete")
-    search.type(query, delay=15)
-    time.sleep(2)
-
     # Case-insensitive fallbacks: WhatsApp group names are configured
     # elsewhere (e.g. dbo.stores.w_group_name) and easily drift in case from
     # the real chat title ("NMV GROUP" vs the actual "NMV Group") -- XPath 1.0
     # has no case-insensitive contains(), so translate() both sides to
     # lowercase before comparing.
+    # Scope the result click to the chat-list pane (#pane-side) ONLY -- never
+    # the whole page. The open conversation's header (#main) ALSO carries a
+    # span[@title=...]; matching page-wide could click/leave the previously-open
+    # chat active and send this store's file into the wrong group.
+    #
+    # CRITICAL: each search-result row carries TWO title-bearing spans --
+    # the row's own name in a div[data-testid='cell-frame-title'], and its
+    # last-message preview in a SIBLING div[data-testid='cell-frame-secondary'].
+    # Once a wrong-group send has ever happened (this exact bug), the mistaken
+    # text (e.g. "NMV GROUP") becomes another chat's last message, so its
+    # preview span's title now ALSO equals/contains the target label -- e.g.
+    # NMG group's preview title became "NMV GROUP" after a prior misfire, and
+    # an unscoped selector clicked that row instead of the real NMV Group row.
+    # Every selector below MUST require the title span to live inside
+    # cell-frame-title -- never match cell-frame-secondary (or the global
+    # "Messages" search section, which isn't a chat row at all).
     _UPPER, _LOWER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
     label_lower = json.dumps(label.lower())
+    _pane = "//div[@id='pane-side']"
+    _title_cell = f"{_pane}//div[@data-testid='cell-frame-title']"
     chat_selectors = [
-        f"xpath=//span[@title={json.dumps(label)}]",
-        f"xpath=//*[@title={json.dumps(label)}]",
-        f"xpath=//span[contains(@title, {json.dumps(label)})]",
-        f"xpath=//span[translate(@title, '{_UPPER}', '{_LOWER}')={label_lower}]",
-        f"xpath=//span[contains(translate(@title, '{_UPPER}', '{_LOWER}'), {label_lower})]",
+        f"xpath={_title_cell}//span[@title={json.dumps(label)}]",
+        f"xpath={_title_cell}//*[@title={json.dumps(label)}]",
+        f"xpath={_title_cell}//span[contains(@title, {json.dumps(label)})]",
+        f"xpath={_title_cell}//span[translate(@title, '{_UPPER}', '{_LOWER}')={label_lower}]",
+        f"xpath={_title_cell}//span[contains(translate(@title, '{_UPPER}', '{_LOWER}'), {label_lower})]",
     ]
-    try:
-        chat = _first_locator(page, chat_selectors, wait_seconds)
-    except Exception:
-        raise ValueError(
-            f"No WhatsApp chat named '{label}' was found for this account. "
-            "Use the exact chat/group name as it appears in WhatsApp."
-        )
-    _safe_click(chat)
-    time.sleep(2)
-    return "https://web.whatsapp.com/"
+
+    # CRITICAL: in a sequential multi-store run, WhatsApp Web's search-results
+    # list is virtualized and can recycle a row's DOM node between the moment
+    # we locate the "next" target's row and the moment the click actually
+    # lands, leaving the PREVIOUSLY-open chat active with no error (observed
+    # live: after opening 'NMG group', every attempt to open 'NMV GROUP' next
+    # silently re-lands on 'NMG group'). A plain Ctrl+A/Delete re-search reuses
+    # the same possibly-poisoned list state, so a retry must fully close the
+    # search panel (Escape) first, not just clear the text, before searching
+    # again. Never relax the match check below -- retry the search, don't
+    # widen what counts as a match.
+    attempts = 3
+    last_opened = ""
+    for attempt in range(attempts):
+        if attempt > 0:
+            page.keyboard.press("Escape")
+            time.sleep(0.5)
+        search = _first_locator(page, _SEARCH_BOX_SELECTORS, wait_seconds)
+        _safe_click(search)
+        search.press("Control+a")
+        search.press("Delete")
+        search.type(query, delay=8)
+        # Brief settle for the search index to return results; the chat-result
+        # _first_locator below then polls, so no fixed multi-second wait is needed.
+        time.sleep(0.6)
+
+        try:
+            chat = _first_locator(page, chat_selectors, wait_seconds)
+        except Exception:
+            if attempt == attempts - 1:
+                raise ValueError(
+                    f"No WhatsApp chat named '{label}' was found for this account. "
+                    "Use the exact chat/group name as it appears in WhatsApp."
+                )
+            continue
+
+        chat.scroll_into_view_if_needed()
+        _safe_click(chat)
+        # WhatsApp switches the open conversation asynchronously. Do NOT
+        # proceed to attach/type on a fixed sleep -- wait until the header
+        # actually shows THIS group, and refuse to send (rather than spam the
+        # wrong group) if the intended chat never becomes active. This is the
+        # guard that stops a store's stock file landing in another store's
+        # group during the sequential multi-store distribution run.
+        if _wait_chat_opened(page, label, wait_seconds):
+            return "https://web.whatsapp.com/"
+        last_opened = _current_chat_title(page)
+
+    raise ValueError(
+        f"Opened chat '{last_opened or 'unknown'}' does not match target '{label}'. "
+        "Aborting the send to avoid delivering to the wrong WhatsApp chat."
+    )
 
 
 def _attach_file(page: Any, settings: dict[str, Any], attachment_path: str) -> None:
@@ -709,8 +923,17 @@ def _attach_file(page: Any, settings: dict[str, Any], attachment_path: str) -> N
     except Exception:
         pass  # fall through: older UI, or no menu/chooser appeared
 
-    file_input = _first_locator(page, ["xpath=//input[@type='file']"], wait_seconds)
-    file_input.set_input_files(resolved_path)
+    # File inputs are display:none, so a visibility-gated locator (_first_locator)
+    # never returns them -- that was the "None of the selectors matched
+    # [input[type=file]]" attach failure. Set files directly on the (hidden)
+    # input instead; Playwright supports this without the element being visible.
+    loc = page.locator("xpath=//input[@type='file']")
+    end = time.time() + wait_seconds
+    while loc.count() == 0 and time.time() < end:
+        page.wait_for_timeout(300)
+    if loc.count() == 0:
+        raise TimeoutError("No file input was found to attach the document.")
+    loc.last.set_input_files(resolved_path)
     time.sleep(3)
 
 
@@ -723,7 +946,7 @@ def _send_via_playwright(profile: dict[str, Any], settings: dict[str, Any], phon
         try:
             page.goto(url, timeout=wait_seconds * 1000)
             _ensure_logged_in(page, settings)
-            time.sleep(4)
+            time.sleep(1)
             if attachment_path:
                 _attach_file(page, settings, attachment_path)
                 _caption_and_send_attachment(page, settings, message)
@@ -797,6 +1020,445 @@ def _scrape_target_messages(profile: dict[str, Any], target: dict[str, Any], set
         return captured
 
 
+# --- Chat-list reading (WhatsApp-like picker) -----------------------------
+# Filter chips at the top of the chat list ("All / Unread / Favourites /
+# Groups"). Clicking "Groups" narrows the list to groups so we can label each
+# scraped chat; "All" restores the full list. Wording/DOM drift is covered by
+# several fallbacks.
+# The filter chips are <button role="tab"> whose text is the label + its count
+# with NO space ("Groups50", "Unread137"), and the group chip's id is dynamic
+# ("label_item_N"), so match on role=tab + text CONTAINING "Group".
+_FILTER_GROUPS_SELECTORS = [
+    "xpath=//button[@role='tab'][starts-with(normalize-space(.),'Groups') or starts-with(normalize-space(.),'Group')]",
+    "xpath=//*[@role='tab'][contains(translate(.,'GROUP','group'),'group')]",
+    "xpath=//div[@aria-label='chat-list-filters']//button[contains(.,'Group')]",
+]
+_FILTER_ALL_SELECTORS = [
+    "xpath=//button[@id='all-filter']",
+    "xpath=//button[@role='tab'][normalize-space()='All']",
+    "xpath=//*[@role='tab'][normalize-space()='All']",
+]
+# Chat rows live under #pane-side; the chat name is the row's titled span. We
+# read one name per row (the first titled span) to avoid picking up message
+# previews. Fallbacks in case the row role differs across builds.
+_CHAT_ROW_SELECTORS = [
+    "xpath=//div[@id='pane-side']//div[@role='listitem']",
+    "xpath=//div[@id='pane-side']//div[@role='row']",
+    "xpath=//div[@id='pane-side']//div[@role='gridcell']",
+]
+
+
+def _click_first(page: Any, selectors: list[str]) -> bool:
+    for sel in selectors:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                _safe_click(loc.first)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+# One JS round-trip returns EVERY visible chat name from the pane -- far faster
+# than per-row Playwright locator calls (which turn a 99+/50-group account into
+# thousands of IPC calls and make the scrape look like a hang).
+_SCRAPE_NAMES_JS = """() => {
+  const pane = document.getElementById('pane-side');
+  if (!pane) return [];
+  const rows = pane.querySelectorAll('[role="listitem"], [role="row"], [role="gridcell"]');
+  const nodes = rows.length ? rows : pane.querySelectorAll('span[title]');
+  const out = [];
+  nodes.forEach((n) => {
+    const s = (n.matches && n.matches('span[title]')) ? n : n.querySelector('span[title]');
+    if (s) { const t = (s.getAttribute('title') || '').trim(); if (t) out.push(t); }
+  });
+  return out;
+}"""
+# The chat-list scroller is #pane-side itself (the inner role="grid" is not the
+# overflow element), so scroll BOTH to be safe -- setting scrollTop on a
+# non-scrollable node is harmless.
+_SCROLL_PANE_JS = """() => {
+  const p = document.getElementById('pane-side');
+  if (!p) return;
+  const g = p.querySelector('[role="grid"]');
+  [p, g].forEach((el) => { if (el) el.scrollTop = el.scrollHeight; });
+}"""
+
+
+def _scrape_chat_names(page: Any, max_rows: int = 1000, time_budget: float = 15.0) -> list[str]:
+    """Collect chat names from the (virtualized) chat list, scrolling to the
+    bottom to load more. Uses a single JS evaluate per pass (fast) and a hard
+    time budget + stagnation cut-off so it can never hang. De-duplicated,
+    list order preserved."""
+    names: list[str] = []
+    seen: set[str] = set()
+    # Start from the top so a previously bottom-scrolled pane (e.g. after a
+    # filter switch) doesn't miss the first rows.
+    try:
+        page.evaluate("() => { const p = document.getElementById('pane-side'); if (p) { p.scrollTop = 0; const g = p.querySelector('[role=\"grid\"]'); if (g) g.scrollTop = 0; } }")
+        page.wait_for_timeout(250)
+    except Exception:
+        pass
+    end = time.time() + time_budget
+    stagnant = 0
+    while time.time() < end and len(names) < max_rows:
+        try:
+            batch = page.evaluate(_SCRAPE_NAMES_JS) or []
+        except Exception:
+            batch = []
+        added = 0
+        for t in batch:
+            t = (t or "").strip()
+            if t and t not in seen:
+                seen.add(t)
+                names.append(t)
+                added += 1
+        try:
+            page.evaluate(_SCROLL_PANE_JS)
+        except Exception:
+            pass
+        page.wait_for_timeout(250)
+        stagnant = stagnant + 1 if added == 0 else 0
+        if stagnant >= 3:  # no new names after several scrolls -> end of list
+            break
+    return names[:max_rows]
+
+
+def list_chats(profile_id: str) -> dict[str, Any]:
+    return _run_on_driver_thread(_list_chats_impl, profile_id)
+
+
+def _list_chats_impl(profile_id: str) -> dict[str, Any]:
+    """Read the profile's WhatsApp chat list (recent contacts + groups) so the
+    UI can offer a WhatsApp-like picker. Groups are labelled by scraping the
+    'Groups' filter; everything else is a contact. Best-effort: on an empty
+    result a debug snapshot is saved so the selectors can be refined."""
+    if not _HAVE_PLAYWRIGHT:
+        raise RuntimeError("Playwright is not installed in the backend runtime.")
+    settings = _load_settings()
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    with _DRIVER_LOCK:
+        page = _acquire_context(profile, settings, bool(settings.get("headless", True)))
+        if "web.whatsapp.com" not in (page.url or ""):
+            try:
+                page.goto("https://web.whatsapp.com/", timeout=30000)
+            except Exception:
+                pass
+        _ensure_logged_in(page, settings)
+
+        group_names: set[str] = set()
+        # 1) Groups filter -> label groups.
+        if _click_first(page, _FILTER_GROUPS_SELECTORS):
+            page.wait_for_timeout(600)
+            group_names = set(_scrape_chat_names(page))
+            _click_first(page, _FILTER_ALL_SELECTORS)
+            page.wait_for_timeout(600)
+        # 2) All chats.
+        all_names = _scrape_chat_names(page)
+        if not all_names and not group_names:
+            _capture_debug(page, "list-chats-empty")
+
+    chats = [
+        {"name": name, "kind": "group" if name in group_names else "contact"}
+        for name in all_names
+    ]
+    # Include any group-only names not present in the "All" pass.
+    for name in group_names:
+        if name not in {c["name"] for c in chats}:
+            chats.append({"name": name, "kind": "group"})
+    chats.sort(key=lambda c: (c["kind"] != "group", c["name"].lower()))
+    return {
+        "profile_id": profile_id,
+        "chats": chats,
+        "count": len(chats),
+        "group_count": sum(1 for c in chats if c["kind"] == "group"),
+        "checked_at": _now_iso(),
+    }
+
+
+# --- Ad-hoc send to any chat by name (no saved target needed) ---------------
+
+def send_to_chat(profile_id: str, chat_name: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
+    return _run_on_driver_thread(_send_to_chat_impl, profile_id, chat_name, message, attachment_name, attachment_content)
+
+
+def _send_to_chat_impl(profile_id: str, chat_name: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
+    settings = _load_settings()
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    chat_name = (chat_name or "").strip()
+    if not chat_name:
+        raise ValueError("A chat name is required.")
+    staged_attachment = None
+    if attachment_name and attachment_content is not None:
+        staged_attachment = _stage_attachment(attachment_name, attachment_content)
+    profile["last_used_at"] = _now_iso()
+    _save_profiles(profiles)
+
+    if not (settings.get("delivery_mode") == "selenium" and _HAVE_PLAYWRIGHT):
+        raise RuntimeError("Automated sending is not enabled (set delivery mode to the automation engine).")
+
+    # A raw phone number (e.g. "+91 95855 50296") won't reliably surface in the
+    # name search unless it's a saved contact, so route it through the direct
+    # send?phone= path instead. Anything else is a chat/group name -> search path.
+    digits = _sanitize_phone(chat_name)
+    looks_like_phone = len(digits) >= 8 and bool(re.fullmatch(r"[\d +\-()]+", chat_name))
+    try:
+        if looks_like_phone:
+            result = _send_via_playwright(profile, settings, digits, message, staged_attachment)
+        else:
+            target = {"target_kind": "group", "target_name": chat_name, "target_ref": chat_name}
+            result = _send_target_via_playwright(profile, target, settings, message, staged_attachment)
+        _record_send(profile, chat_name, "chat", "sent", message, "", None)
+        return result
+    except Exception as exc:
+        snapshot = _latest_debug_snapshot()
+        _record_send(profile, chat_name, "chat", "failed", message, str(exc), snapshot)
+        return _headless_failure(exc, staged_attachment, chat_name)
+
+
+# --- Read a chat's message history (desktop-WhatsApp-like) ------------------
+
+def _parse_msg_date(meta: str) -> "datetime | None":
+    """Best-effort parse of the date inside a message's data-pre-plain-text
+    (e.g. "[10:30 am, 4/9/2026] Sender: "). Date order varies by locale, so we
+    disambiguate D/M vs M/D when one value is > 12; otherwise assume D/M/Y (the
+    store's locale). Returns None when it can't be parsed."""
+    m = re.search(r",\s*(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\]", meta or "")
+    if not m:
+        return None
+    a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if y < 100:
+        y += 2000
+    day, mon = a, b
+    if a <= 12 and b > 12:  # value b can only be a day -> input was M/D/Y
+        day, mon = b, a
+    for d, mo in ((day, mon), (mon, day)):
+        try:
+            return datetime(y, mo, d)
+        except ValueError:
+            continue
+    return None
+
+
+def read_chat_messages(profile_id: str, chat_name: str, days: int = 10, limit: int = 500) -> dict[str, Any]:
+    return _run_on_driver_thread(_read_chat_messages_impl, profile_id, chat_name, days, limit)
+
+
+def _read_chat_messages_impl(profile_id: str, chat_name: str, days: int = 10, limit: int = 500) -> dict[str, Any]:
+    """Open a chat by its visible name and scrape its message history for the
+    last ``days`` days, scrolling up (like scrolling back in desktop WhatsApp)
+    until messages older than the cutoff are loaded or a scroll cap is hit."""
+    if not _HAVE_PLAYWRIGHT:
+        raise RuntimeError("Playwright is not installed in the backend runtime.")
+    settings = _load_settings()
+    profiles = _load_profiles()
+    profile = _resolve_profile(profile_id, profiles)
+    chat_name = (chat_name or "").strip()
+    if not chat_name:
+        raise ValueError("A chat name is required.")
+    days = max(1, min(days, 90))
+    limit = max(1, min(limit, 1000))
+    cutoff = datetime.now() - timedelta(days=days)
+    target = {"target_kind": "group", "target_name": chat_name, "target_ref": chat_name, "target_id": ""}
+
+    def _oldest_loaded_date(page: Any) -> "datetime | None":
+        try:
+            first = page.locator("xpath=(//div[@id='main']//div[contains(@class,'message-')])[1]")
+            if first.count() > 0:
+                return _parse_msg_date(first.get_attribute("data-pre-plain-text") or "")
+        except Exception:
+            pass
+        return None
+
+    with _DRIVER_LOCK:
+        page = _acquire_context(profile, settings, bool(settings.get("headless", True)))
+        _open_target_chat(page, target, settings)
+        # Scroll the message panel up until we've loaded past the cutoff date or
+        # hit the cap (guards against very large / infinite histories).
+        max_passes = min(80, max(8, days * 6))
+        for _ in range(max_passes):
+            try:
+                page.evaluate(
+                    "() => { const rows = document.querySelectorAll('#main [class*=\"message-\"]');"
+                    " if (!rows.length) return;"
+                    " let el = rows[0].parentElement;"
+                    " while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement;"
+                    " if (el) el.scrollTop = 0; }"
+                )
+            except Exception:
+                pass
+            page.wait_for_timeout(450)
+            oldest = _oldest_loaded_date(page)
+            if oldest is not None and oldest < cutoff:
+                break
+
+        nodes = page.locator("xpath=//div[@id='main']//div[contains(@class,'message-')]")
+        count = nodes.count()
+        out: list[dict[str, Any]] = []
+        for i in range(count):
+            node = nodes.nth(i)
+            classes = (node.get_attribute("class") or "").lower()
+            if "message-in" in classes:
+                direction = "incoming"
+            elif "message-out" in classes:
+                direction = "outgoing"
+            else:
+                direction = "system"
+            text_nodes = node.locator("xpath=.//span[contains(@class,'selectable-text')]")
+            parts = [(text_nodes.nth(j).inner_text() or "").strip() for j in range(text_nodes.count())]
+            text = " ".join(p for p in parts if p).strip()
+            meta = (node.get_attribute("data-pre-plain-text") or "").strip()
+            if not text and not meta:
+                continue
+            # Filter to the requested window when we can read the date; keep
+            # undated rows (system/date separators, media-only) so context isn't lost.
+            mdate = _parse_msg_date(meta)
+            if mdate is not None and mdate < cutoff:
+                continue
+            out.append({"direction": direction, "text": text, "meta": meta})
+        out = out[-limit:]
+    return {
+        "profile_id": profile_id,
+        "chat_name": chat_name,
+        "days": days,
+        "messages": out,
+        "count": len(out),
+        "checked_at": _now_iso(),
+    }
+
+
+# --- Send log (inspect slow / failed sends) --------------------------------
+
+def _load_send_log() -> list[dict[str, Any]]:
+    rows = _read_json(SEND_LOG_FILE, [])
+    return rows if isinstance(rows, list) else []
+
+
+def _latest_debug_snapshot() -> str | None:
+    """Path (basename) of the newest debug capture, to link a failure to it."""
+    try:
+        files = sorted(DEBUG_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return files[0].name if files else None
+    except Exception:
+        return None
+
+
+def _record_send(profile: dict[str, Any], target_name: str, kind: str, status: str, message: str, error: str, snapshot: str | None) -> None:
+    try:
+        rows = _load_send_log()
+        rows.append(
+            {
+                "id": str(uuid.uuid4()),
+                "profile_id": profile.get("profile_id", ""),
+                "profile_name": profile.get("profile_name", ""),
+                "target_name": target_name,
+                "kind": kind,
+                "status": status,
+                "message_preview": (message or "")[:140],
+                "error": error or "",
+                "snapshot": snapshot or "",
+                "at": _now_iso(),
+            }
+        )
+        _write_json(SEND_LOG_FILE, rows[-SEND_LOG_MAX:])
+    except Exception:
+        pass
+
+
+def get_send_log(limit: int = 100) -> dict[str, Any]:
+    rows = _load_send_log()
+    rows = sorted(rows, key=lambda r: r.get("at", ""), reverse=True)[: max(1, min(limit, SEND_LOG_MAX))]
+    return {"entries": rows, "count": len(rows)}
+
+
+def _warmup_log(msg: str) -> None:
+    """Append a timestamped line to storage/whatsapp/warmup.log (best-effort)."""
+    try:
+        _ensure_dirs()
+        line = f"{_now_iso()}  {msg}\n"
+        with (STORAGE_DIR / "warmup.log").open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:
+        pass
+
+
+def _warmup_impl() -> None:
+    """Warm the default profile's WhatsApp Web session so the FIRST real send of
+    the day doesn't fail against a cold / half-loaded page.
+
+    The daily failure the user sees is exactly this: on a fresh backend start
+    WhatsApp Web hasn't finished authenticating and still shows the "What's new"
+    startup modal (which stops the search box from mounting), so the first send
+    errors and only the second succeeds. Here we pre-load the session, dismiss
+    that modal (via _ensure_logged_in -> _dismiss_startup_dialogs) and, when
+    automated sending is configured, fire one self-message so the whole send
+    path is primed. Runs on the single driver thread; never raises."""
+    if not _HAVE_PLAYWRIGHT:
+        _warmup_log("skipped: Playwright not installed")
+        return
+    settings = _load_settings()
+    profiles = _load_profiles()
+    if not profiles:
+        _warmup_log("skipped: no profiles configured")
+        return
+    profile = next((row for row in profiles if row.get("is_default")), profiles[0])
+    want_headless = bool(settings.get("headless", True))
+    try:
+        with _DRIVER_LOCK:
+            page = _acquire_context(profile, settings, want_headless)
+            _ensure_logged_in(page, settings)  # also dismisses the startup modal
+    except Exception as exc:
+        _warmup_log(f"context/login not ready for '{profile.get('profile_name')}': {exc}")
+        return
+
+    # Only actively send when the automated (Playwright) path is the delivery
+    # mode -- in manual_browser mode a "send" would pop a visible window, which
+    # is not wanted at unattended startup. Pre-loading the context above is the
+    # useful part in that case.
+    if settings.get("delivery_mode") != "selenium":
+        _warmup_log(f"session pre-loaded for '{profile.get('profile_name')}' (manual mode, no self-message)")
+        return
+    phone = _sanitize_phone(profile.get("default_phone", ""))
+    if not phone:
+        _warmup_log(f"session pre-loaded for '{profile.get('profile_name')}' (no default_phone for self-message)")
+        return
+    try:
+        # Call the impl directly (not the public send_message, which re-submits
+        # to the single-worker driver executor -- doing that from within the
+        # driver thread would deadlock). _send_via_playwright re-enters the
+        # reentrant _DRIVER_LOCK safely.
+        _send_via_playwright(
+            profile,
+            settings,
+            phone,
+            f"Nexora HO backend started — WhatsApp session warmed up ({_now_iso()}).",
+            None,
+        )
+        _warmup_log(f"self-message sent for '{profile.get('profile_name')}' -> {phone}")
+    except Exception as exc:
+        _warmup_log(f"self-message failed for '{profile.get('profile_name')}': {exc}")
+
+
+def warmup_on_startup(delay_seconds: float = 8.0) -> None:
+    """Kick off the WhatsApp warm-up in a background daemon thread so it never
+    blocks or crashes backend startup. Safe to call unconditionally from the
+    FastAPI startup hook."""
+    def _runner() -> None:
+        try:
+            time.sleep(max(0.0, delay_seconds))  # let uvicorn bind the port first
+            _run_on_driver_thread(_warmup_impl)
+        except Exception:
+            pass
+
+    try:
+        threading.Thread(target=_runner, name="wa-warmup", daemon=True).start()
+    except Exception:
+        pass
+
+
 def get_state() -> dict[str, Any]:
     settings = _load_settings()
     profiles = _load_profiles()
@@ -807,6 +1469,7 @@ def get_state() -> dict[str, Any]:
         "profiles": profiles,
         "targets": targets,
         "messages": inbox[:100],
+        "send_log": get_send_log(50)["entries"],
         "capabilities": _capabilities(settings, profiles),
     }
 
@@ -1247,9 +1910,13 @@ def _send_target_message_impl(target_id: str, message: str, attachment_name: str
     _save_profiles(profiles)
 
     if settings.get("delivery_mode") == "selenium" and _HAVE_PLAYWRIGHT:
+        label = target["target_name"] or target["target_ref"]
         try:
-            return _send_target_via_playwright(profile, target, settings, message, staged_attachment)
+            result = _send_target_via_playwright(profile, target, settings, message, staged_attachment)
+            _record_send(profile, label, target["target_kind"], "sent", message, "", None)
+            return result
         except Exception as exc:
+            _record_send(profile, label, target["target_kind"], "failed", message, str(exc), _latest_debug_snapshot())
             if not bool(settings.get("manual_fallback", False)):
                 return _headless_failure(exc, staged_attachment, target["target_name"] or target["target_ref"])
             fallback_url = "https://web.whatsapp.com/" if target["target_kind"] == "group" else _whatsapp_url(_sanitize_phone(target["target_ref"]), message)

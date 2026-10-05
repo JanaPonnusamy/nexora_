@@ -222,9 +222,11 @@ class SyncRuntimeOrchestrator:
         cached = self.cache.get_row_hashes(table_name)
         changed_rows = []
         changed_hashes = []
+        all_hashes = []
         for row in rows:
             pk = self._pk_value(row, pk_cols)
             row_hash = self.hasher.compute_row_hash(row, hash_cols)
+            all_hashes.append((pk, row_hash))
             if cached.get(pk) != row_hash:
                 row["row_hash"] = row_hash
                 changed_rows.append(row)
@@ -251,12 +253,33 @@ class SyncRuntimeOrchestrator:
         )
 
         # Persist hashes / advance watermark only after successful upload.
-        self.cache.upsert_row_hashes(table_name, changed_hashes)
+        # Touch ALL extracted rows here (not just changed_hashes) -- prune_stale_row_hashes
+        # below relies on last_sync_time meaning "last seen in an extract", not "last
+        # changed". An unchanged row inside the window must still get its timestamp
+        # refreshed every cycle, or it would look stale and get pruned incorrectly.
+        self.cache.upsert_row_hashes(table_name, all_hashes)
         if sync_mode in _WATERMARK_MODES:
             if extracted.get("max_watermark") is not None:
                 self.cache.set_last_watermark(table_name, extracted["max_watermark"])
+            window = table.get("window_days")
+            if window:
+                pruned = self.cache.prune_stale_row_hashes(table_name, int(window) + 30)
+                if pruned:
+                    print(
+                        "[SYNC] %-24s | pruned %d cache rows outside %sd window"
+                        % (table_name, pruned, window),
+                        flush=True,
+                    )
         else:
             self.cache.mark_full_sync(table_name)
+            current_pks = {self._pk_value(row, pk_cols) for row in rows}
+            pruned = self.cache.prune_missing_row_hashes(table_name, current_pks)
+            if pruned:
+                print(
+                    "[SYNC] %-24s | pruned %d cache rows for source-deleted PKs"
+                    % (table_name, pruned),
+                    flush=True,
+                )
         self.cache.log_execution(task_id, table_name, examined,
                                  len(changed_rows), uploaded, skipped)
         self._report(task_id, table_name, table.get("sync_mode"), examined,

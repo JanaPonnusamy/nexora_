@@ -56,6 +56,7 @@ export interface LegacyJob {
     supplier_code?: string
   } | null
   error: string | null
+  warning: string | null
   started_at: string
   finished_at: string | null
 }
@@ -229,15 +230,27 @@ export interface SalesDetailRow {
   Bnumber: string | null
 }
 
+/** Monthly stock-movement row for a product (RetrieveDataForChartAsync port).
+ *  `sales` is already NET of sales returns and `adjustment` is signed and
+ *  already includes expiry returns -- ProductTrans is the POS's own rollup
+ *  and its closing-stock identity reconciles without adding returns again.
+ *  The `*_return`/`gross_sales`/`stock_adjustment` fields are breakdown-only,
+ *  for the tooltip; they must never be added into `total_in`/`total_out`. */
 export interface MonthlyStatRow {
-  ProductCode: number
-  MonthOfStatistics: string
-  SaleQuantity: number
-  StockInHand: number
-  PurchaseQuantity: number
-  AdjustmentQuantity: number
-  TransferInQuantity: number
-  TransferOutQuantity: number
+  month: string
+  purchase: number
+  transfer_in: number
+  sales: number
+  transfer_out: number
+  adjustment: number
+  stock: number
+  total_in: number
+  total_out: number
+  gross_sales: number
+  sales_return: number
+  expiry_return: number
+  stock_adjustment: number
+  purchase_return: number | null
 }
 
 export interface OrderHistoryRow {

@@ -7,8 +7,91 @@ import { ErrorState } from '../common/ErrorState'
 import { TableSkeleton } from '../common/TableSkeleton'
 import { ScheduleFormModal } from './ScheduleFormModal'
 import type { Store } from '../../types/store'
-import type { SyncSchedule } from '../../types/sync'
+import type { ScheduleBoardRow, SyncSchedule } from '../../types/sync'
 import { SxCard, SxCardHead, SxCardBody, SxStat, SxChip, SxButton, SxTable } from './ui'
+
+const BOARD_REFRESH_MS = 15_000
+
+function fmtDuration(seconds: number | null): string {
+  if (seconds == null) return '—'
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
+function cadenceLabel(row: ScheduleBoardRow): string {
+  if (!row.schedule_name) return 'No schedule'
+  if (row.schedule_type === 'INTERVAL' && row.interval_minutes) return `Every ${row.interval_minutes} min`
+  if (row.schedule_type === 'DAILY') return 'Daily'
+  if (row.schedule_type === 'ONCE') return 'One-time'
+  return row.schedule_name
+}
+
+function statusChipTone(status: string | null): 'success' | 'danger' | 'warning' | 'muted' {
+  if (status === 'COMPLETED') return 'success'
+  if (status === 'FAILED') return 'danger'
+  if (status === 'SKIPPED' || status === 'QUEUED') return 'warning'
+  return 'muted'
+}
+
+function ScheduleBoardPanel() {
+  const [rows, setRows] = useState<ScheduleBoardRow[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const data = await syncService.scheduleBoard()
+        if (!cancelled) { setRows(data); setError(null) }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load store status')
+      }
+    }
+    void load()
+    const timer = window.setInterval(load, BOARD_REFRESH_MS)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [])
+
+  return (
+    <SxCard className="sx-pane">
+      <SxCardHead title="Store Status" icon="bi-hdd-network"
+        sub={rows ? `${rows.length} store${rows.length === 1 ? '' : 's'} · refreshes every ${BOARD_REFRESH_MS / 1000}s` : undefined} />
+      <SxCardBody flush>
+        {error && <div className="sx-alert sx-alert--danger">{error}</div>}
+        {!rows && !error && <TableSkeleton rows={4} columns={7} />}
+        {rows && rows.length === 0 && (
+          <EmptyState icon="bi-hdd-network" title="No active stores" description="No stores are currently active." />
+        )}
+        {rows && rows.length > 0 && (
+          <SxTable>
+            <thead>
+              <tr>
+                <th>Store</th><th>Schedule</th><th>Next Run</th><th>Last Run</th>
+                <th>Last Status</th><th>Currently Running</th><th className="sx-num">Last Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.store_id}>
+                  <td className="sx-strong">{r.store_code}</td>
+                  <td className="sx-dim">{cadenceLabel(r)}</td>
+                  <td>{r.next_run_at ? new Date(r.next_run_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                  <td>{r.last_run_at ? new Date(r.last_run_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                  <td>{r.last_status ? <SxChip tone={statusChipTone(r.last_status)}>{r.last_status}</SxChip> : '—'}</td>
+                  <td>{r.is_running
+                    ? <SxChip tone="info" dot running>Syncing</SxChip>
+                    : <span className="sx-dim">Idle</span>}</td>
+                  <td className="sx-num">{fmtDuration(r.last_duration_seconds)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </SxTable>
+        )}
+      </SxCardBody>
+    </SxCard>
+  )
+}
 
 type Modal =
   | { kind: 'create' }
@@ -23,6 +106,7 @@ function statusTone(status: string): 'success' | 'warning' | 'muted' {
 }
 
 function runAtLabel(s: SyncSchedule): string {
+  if (s.schedule_type === 'INTERVAL') return `Every ${s.interval_minutes ?? '?'} min`
   if (!s.start_time) return '—'
   if (s.schedule_type === 'DAILY') {
     const hm = s.start_time.slice(11, 16)
@@ -61,7 +145,7 @@ export function SchedulesTab() {
     total: schedules.length,
     active: schedules.filter((s) => s.status === 'Active').length,
     suspended: schedules.filter((s) => s.status === 'Suspended').length,
-    once: schedules.filter((s) => s.schedule_type === 'ONCE').length,
+    interval: schedules.filter((s) => s.schedule_type === 'INTERVAL').length,
   }), [schedules])
 
   const run = async (id: number, fn: () => Promise<unknown>) => {
@@ -114,8 +198,10 @@ export function SchedulesTab() {
         <div className="col"><SxStat icon="bi-calendar-event" tone="indigo" value={stats.total} label="Total Schedules" /></div>
         <div className="col"><SxStat icon="bi-play-circle" tone="success" value={stats.active} label="Active" /></div>
         <div className="col"><SxStat icon="bi-pause-circle" tone="warning" value={stats.suspended} label="Suspended" /></div>
-        <div className="col"><SxStat icon="bi-1-circle" tone="teal" value={stats.once} label="One-time" /></div>
+        <div className="col"><SxStat icon="bi-arrow-repeat" tone="teal" value={stats.interval} label="Every N Minutes" /></div>
       </div>
+
+      <ScheduleBoardPanel />
 
       <SxCard className="sx-pane">
         <SxCardHead title="Schedules" icon="bi-calendar-event" sub={`${schedules.length} configured`}
@@ -150,8 +236,8 @@ export function SchedulesTab() {
                   return (
                     <tr key={s.schedule_id}>
                       <td className="sx-strong">{s.schedule_name}</td>
-                      <td><SxChip tone={s.schedule_type === 'ONCE' ? 'teal' : 'indigo'}>
-                        {s.schedule_type === 'ONCE' ? 'One-time' : 'Daily'}</SxChip></td>
+                      <td><SxChip tone={s.schedule_type === 'ONCE' ? 'teal' : s.schedule_type === 'INTERVAL' ? 'success' : 'indigo'}>
+                        {s.schedule_type === 'ONCE' ? 'One-time' : s.schedule_type === 'INTERVAL' ? 'Interval' : 'Daily'}</SxChip></td>
                       <td>{runAtLabel(s)}</td>
                       <td>{s.store_code ? <span className="sx-strong">{s.store_code}</span> : <span className="sx-dim">All stores</span>}</td>
                       <td className="sx-dim">{s.sync_mode}</td>

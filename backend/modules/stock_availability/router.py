@@ -10,7 +10,12 @@ from fastapi import APIRouter, Depends
 
 from dependencies.auth import get_current_user
 from modules.stock_availability import service
-from modules.stock_availability.schemas import CoreBulkRequest, SalesOrderIgnoreUpdate, SearchResult
+from modules.stock_availability.schemas import (
+    CoreBulkRequest,
+    CrossStoreMatchRequest,
+    SalesOrderIgnoreUpdate,
+    SearchResult,
+)
 
 router = APIRouter(prefix="/api/stock-availability", tags=["Stock Availability"])
 
@@ -21,6 +26,14 @@ router = APIRouter(prefix="/api/stock-availability", tags=["Stock Availability"]
 def search_products(tenant_id: str, q: str = "", only_stock: int = 0, current_user: dict = Depends(get_current_user)):
     """Tab 1 — partial, case-insensitive product-name search across branches."""
     return service.search_products(current_user, tenant_id, q, only_stock)
+
+
+@router.get("/products/index")
+def product_index(tenant_id: str, store_id: Optional[str] = None,
+                  current_user: dict = Depends(get_current_user)):
+    """Compact full-catalogue index (code/name/unit/stock) for the desktop
+    client's permanent local cache. Optionally scoped to one store_id."""
+    return service.product_index(current_user, tenant_id, store_id)
 
 
 @router.get("/batches/search", response_model=SearchResult)
@@ -36,6 +49,21 @@ def search_batches(
 
 
 # ----- Detail panels (active product context) --------------------------------
+
+@router.post("/products/sync-selection")
+def sync_selection(payload: CrossStoreMatchRequest, current_user: dict = Depends(get_current_user)):
+    """Resolve the equivalent product in each of ``target_store_ids`` for a
+    product selected in ``source_store_id`` (SupplierProductMatch -> normalized
+    name -> structured attributes -> relevance-scored fuzzy candidate)."""
+    return service.match_cross_store_selection(
+        current_user,
+        payload.tenant_id,
+        payload.source_store_id,
+        payload.source_product_code,
+        payload.source_product_name,
+        payload.target_store_ids,
+    )
+
 
 @router.get("/products/details")
 def product_details(tenant_id: str, store_id: str, product: str, current_user: dict = Depends(get_current_user)):
@@ -57,6 +85,12 @@ def product_core_bulk(payload: CoreBulkRequest, current_user: dict = Depends(get
 @router.get("/products/batches")
 def batch_details(tenant_id: str, store_id: str, product: str, current_user: dict = Depends(get_current_user)):
     return service.batch_details(current_user, tenant_id, store_id, product)
+
+
+@router.get("/products/batch-detail")
+def batch_detail(tenant_id: str, store_id: str, product: str, batch: str, current_user: dict = Depends(get_current_user)):
+    """Single-batch detail popup (batchdescription, stock, expiry, cost, ptr, mrp, supplier)."""
+    return service.batch_detail(current_user, tenant_id, store_id, product, batch)
 
 
 @router.get("/products/purchases")
