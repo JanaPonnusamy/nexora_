@@ -373,6 +373,23 @@ endlocal
 # ---- orchestration over peer HO nodes -------------------------------------
 
 def _peer_urls() -> list[dict]:
+    """The OTHER HO backend boxes to orchestrate.
+
+    Primary source: the NEXORA_HO_NODES env var — a comma-separated list of each
+    peer box's base URL (e.g. "http://192.168.10.32:8000,http://192.168.10.73:8000").
+    This is deliberately NOT the bootstrap ho_routes registry: ho_routes holds the
+    failover URLs store agents use to reach the ONE public HO (all pointing at the
+    same box), not the list of distinct HO backend machines. List only the OTHER
+    boxes here — the node serving the page is already added as "This node".
+    Falls back to ho_routes only when the env var is unset (legacy behaviour)."""
+    env = os.getenv("NEXORA_HO_NODES", "").strip()
+    if env:
+        out = []
+        for item in env.split(","):
+            u = item.strip().rstrip("/")
+            if u:
+                out.append({"url": u, "label": None})
+        return out
     try:
         from modules.bootstrap import repository as boot_repo
 
