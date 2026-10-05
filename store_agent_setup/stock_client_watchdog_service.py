@@ -43,6 +43,13 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+_BACKEND = Path(__file__).resolve().parent.parent / "backend"
+if _BACKEND.is_dir() and str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))  # resolve modules.device_identity in dev + onefile
+_MEI = getattr(sys, "_MEIPASS", None)
+if _MEI and _MEI not in sys.path:
+    sys.path.insert(0, _MEI)
+
 from . import (
     STOCK_CLIENT_PRODUCT_NAME,
     STOCK_CLIENT_WATCHDOG_DISPLAY_NAME,
@@ -108,11 +115,16 @@ def log(msg):
 # --------------------------------------------------------------------------
 
 def _load_config():
-    """Watchdog config, provisioned by the installer / Stock Client at enrollment:
-        { ho_url, device_id, device_private_key_pem, installation_id }
-    Missing keys are tolerated; the watchdog self-generates installation_id and,
-    if absent, a device keypair (which then needs HO-side store assignment before
-    /state returns anything)."""
+    """Watchdog config, part self-generated, part provisioned at enrollment:
+        { ho_url, device_id, device_private_key_pem, device_public_key_pem,
+          installation_id }
+
+    The watchdog OWNS its Ed25519 keypair: it is generated here on first run and
+    the PRIVATE key never leaves this SYSTEM-only file. Enrollment
+    (provision_stock_watchdog.py, or the Stock Client's Device Setup) only reads
+    the PUBLIC key + registers it with HO and writes back `ho_url` + `device_id`.
+    installation_id is self-generated. Until `ho_url`+`device_id` are present the
+    watchdog simply no-ops each cycle (nothing to poll)."""
     cfg = {}
     try:
         if CONFIG_FILE.is_file():
@@ -123,9 +135,34 @@ def _load_config():
     if not cfg.get("installation_id"):
         cfg["installation_id"] = "sc-" + uuid.uuid4().hex[:16]
         changed = True
+    if not cfg.get("device_private_key_pem") or not cfg.get("device_public_key_pem"):
+        try:
+            from modules.device_identity import crypto
+
+            private_pem, public_pem = crypto.generate_keypair()
+            cfg["device_private_key_pem"] = private_pem
+            cfg["device_public_key_pem"] = public_pem
+            changed = True
+        except Exception as ex:
+            # Without crypto we cannot self-key; enrollment will have to supply it.
+            log(f"[config] could not generate device keypair: {ex}")
     if changed:
         _save_config(cfg)
+        _publish_public_key(cfg.get("device_public_key_pem"))
     return cfg
+
+
+def _publish_public_key(public_pem):
+    """Write the watchdog's device PUBLIC key where an enroller (the Stock Client
+    / provisioning CLI) can read it to register this device with HO. Public key
+    only -- the private half never leaves CONFIG_FILE."""
+    if not public_pem:
+        return
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / "device_public_key.pem").write_text(public_pem, encoding="utf-8")
+    except OSError as ex:
+        log(f"[config] could not publish device public key: {ex}")
 
 
 def _save_config(cfg):
