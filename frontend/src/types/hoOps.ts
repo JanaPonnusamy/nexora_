@@ -8,6 +8,7 @@ export interface HoNodeStatus {
   error?: string
   hostname?: string
   platform?: string
+  kind?: 'git' | 'exe' | 'unknown'
   is_git?: boolean
   branch?: string | null
   head?: string | null
@@ -19,6 +20,11 @@ export interface HoNodeStatus {
   fleet_routes?: number
   can_self_update?: boolean
   deploy_script?: string | null
+  // exe nodes
+  install_dir?: string
+  service_name?: string
+  exe_version?: string | null
+  latest_release?: string | null
 }
 
 export interface SelfUpdateResult {
