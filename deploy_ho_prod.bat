@@ -81,20 +81,24 @@ if errorlevel 1 (
 
 echo(
 echo [6/6] Verifying fleet routes are live...
+REM Probe a specific route's HTTP status (401 = route exists, needs auth). Do
+REM NOT pipe openapi.json through findstr -- it is one huge single line and
+REM findstr aborts with "Line is too long", which falsely fails the check.
+REM Allow up to 90s: this backend cold-boots slowly (heavy ML imports).
 set OK=0
-for /l %%i in (1,1,15) do (
+for /l %%i in (1,1,45) do (
     if "!OK!"=="0" (
-        curl -s --max-time 3 http://127.0.0.1:8000/openapi.json | findstr /C:"stock-client-ops" >nul 2>&1
-        if not errorlevel 1 (set OK=1) else (timeout /t 2 /nobreak >nul)
+        for /f %%c in ('curl -s -o nul -w "%%{http_code}" --max-time 3 http://127.0.0.1:8000/api/ho-ops/status') do set CODE=%%c
+        if "!CODE!"=="401" (set OK=1) else if "!CODE!"=="200" (set OK=1) else if "!CODE!"=="403" (set OK=1) else (timeout /t 2 /nobreak >nul)
     )
 )
 if "!OK!"=="1" (
-    echo     OK: /api/stock-client-ops routes are being served.
+    echo     OK: backend is live and serving the latest routes ^(/api/ho-ops^).
     echo(
     echo ==== DEPLOY SUCCEEDED on %COMPUTERNAME% ^(main @ !HEAD!^) ====
     exit /b 0
 ) else (
-    echo     WARNING: backend did not report stock-client-ops routes within 30s.
+    echo     WARNING: backend did not come up within 90s ^(last code: !CODE!^).
     echo     Check %BACKEND%\logs\prod-8000.log and that :8000 is listening.
     exit /b 2
 )
