@@ -81,7 +81,9 @@ export default function DeviceManagementPage() {
       ) : (
         devices.map((d) => {
           const assigned = new Set(d.stores.map((s) => s.store_id))
-          const assignable = stores.filter((s) => !assigned.has(s.store_id))
+          // Only offer ACTIVE, not-yet-assigned stores — inactive/test stores
+          // are skipped by the agent anyway, so hiding them avoids mis-assigning.
+          const assignable = stores.filter((s) => s.is_active && !assigned.has(s.store_id))
           const revoked = d.status !== 'active'
           return (
             <div className="card mb-3" key={d.device_id}>
