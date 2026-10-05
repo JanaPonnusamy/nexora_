@@ -41,12 +41,31 @@ for /f "delims=" %%v in ('git rev-parse --short HEAD') do set HEAD=%%v
 echo     now at main @ %HEAD%
 
 echo(
-echo [3/5] Installing backend dependencies...
+echo [3/6] Installing backend dependencies...
 "%PY%" -m pip install -r "%BACKEND%\requirements.txt" --disable-pip-version-check
 if errorlevel 1 (echo ERROR: pip install failed & exit /b 1)
 
 echo(
-echo [4/5] Restarting backend on :8000...
+echo [4/6] Rebuilding HO web UI (served from frontend\dist)...
+REM Best-effort: only if node/npm are present on this box. The SPA is served
+REM statically from UNINEX_FRONTEND_DIR, so new pages (e.g. Backend Update)
+REM appear only after this rebuild. Skipped cleanly if npm is unavailable.
+where npm >nul 2>&1
+if errorlevel 1 (
+    echo     npm not found; skipping UI rebuild ^(backend-only deploy^).
+) else (
+    pushd "%REPO%\frontend"
+    if not exist node_modules (
+        echo     installing frontend deps ^(first run^)...
+        call npm install --no-audit --no-fund
+    )
+    call npm run build
+    if errorlevel 1 (echo     WARNING: frontend build failed; UI not updated.) else (echo     UI rebuilt.)
+    popd
+)
+
+echo(
+echo [5/6] Restarting backend on :8000...
 REM Stop the current uvicorn (match the PID LISTENING on :8000), then relaunch
 REM via the same scheduled task logon uses; fall back to the bat if no task.
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000" ^| findstr LISTENING') do (
@@ -61,7 +80,7 @@ if errorlevel 1 (
 )
 
 echo(
-echo [5/5] Verifying fleet routes are live...
+echo [6/6] Verifying fleet routes are live...
 set OK=0
 for /l %%i in (1,1,15) do (
     if "!OK!"=="0" (
