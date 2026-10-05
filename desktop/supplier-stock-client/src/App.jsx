@@ -4778,18 +4778,12 @@ function LabelExporter({ session, settings }) {
   const [remarksDrafts, setRemarksDrafts] = useState({});
   const [unitDrafts, setUnitDrafts] = useState({});
 
-  // Location-assignment drawer — per-letter modes (each letter picks its own
-  // Continue / New-from-1 / Single-box) + label queue. `letterModes` maps a box
-  // letter to { mode, startNumber }; boxes are always numbered under each
-  // product's OWN first letter (legacy rule), so a multi-letter load is never
-  // dumped under one letter.
+  // Location-assignment drawer (Modes 1/2, single box) + label queue.
   const [assignOpen, setAssignOpen] = useState(false);
-  const [assignForm, setAssignForm] = useState({ unit: '', letterModes: {} });
+  const [assignForm, setAssignForm] = useState({ mode: 'continue', assignmentType: 'standard_box', unit: '', letter: '', startNumber: 1 });
   const [assignPreview, setAssignPreview] = useState(null);
   const [assignBusy, setAssignBusy] = useState(false);
   const [assignError, setAssignError] = useState('');
-  // Bulk unit find-and-replace dialog: { from, to } or null.
-  const [unitReplace, setUnitReplace] = useState(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [queueRows, setQueueRows] = useState([]);
   const [queueBusy, setQueueBusy] = useState(false);
@@ -4994,14 +4988,26 @@ function LabelExporter({ session, settings }) {
     showColFilters, colFilters, activeIndex, labelColCfg, trendMonths, activeRow?.product_code
   ]);
 
-  // 5) Search is EXPLICIT (button-driven): changing any top-bar filter — Store,
-  //    Letter, Search box, Unit, Review, Stock or any Advanced option — no longer
-  //    auto-fetches. The operator sets every filter they want, then clicks the
-  //    Search button (or presses Enter in the Search box) to fetch. This replaces
-  //    the old debounced search-as-you-type so a multi-filter query is built up
-  //    once and run once. Session restore still runs the saved search once on
-  //    mount via the restoreSearchToken effect above; column filters stay live
-  //    (client-side) on the already-loaded rows.
+  // 5) Auto-search: re-run the product search — applying EVERY current filter — a
+  //    short beat after the operator edits the Search box, the Letter set, or any
+  //    filter, so no "Search" click (and no Enter) is ever needed: pure
+  //    search-as-you-type. Store keeps its own immediate onChange handler (it
+  //    shouldn't wait for the debounce, and leaving it out of the deps prevents a
+  //    double search when the store changes). Gated so it never fires during the
+  //    initial session-restore pass (readyToSaveRef) and never kicks off a full
+  //    unfiltered store scan (needs a letter, a query, or at least one filter).
+  useEffect(() => {
+    if (!readyToSaveRef.current) return;
+    if (!tenantId || !storeId) return;
+    const hasCriteria = !!(
+      selectedLetters.size || q.trim() || reviewStatus || selectedUnits.size || selectedSublocs.size
+      || boxNumber || onlyNullSublocation || onlySaleUnitGtOne || stockFilter !== 'all'
+    );
+    if (!hasCriteria) return;
+    const timer = setTimeout(() => runSearch(), 320);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, selectedLetters, selectedUnits, reviewStatus, stockFilter, selectedSublocs, boxNumber, onlyNullSublocation, onlySaleUnitGtOne]);
 
   // `overrides` lets a picker (Store / Letter) fire the search immediately
   // with the value it just set, instead of waiting for a state update to
@@ -5223,70 +5229,33 @@ function LabelExporter({ session, settings }) {
     return yRows.filter((row) => selectedCodes.has(row.product_code));
   }, [visibleRows, selectedCodes]);
 
-  // Box letters the run will produce, with a per-letter product count — the box
-  // letter is each product's OWN first letter (A→A###, B→B###…), so a
-  // multi-letter load is boxed per letter, never dumped under one letter.
-  const assignLetterCounts = useMemo(() => {
-    const counts = {};
-    assignTargets.forEach((row) => {
-      const c = String(row.product_name || '').trim().charAt(0).toUpperCase();
-      if (/[A-Z]/.test(c)) counts[c] = (counts[c] || 0) + 1;
-    });
-    return counts;
-  }, [assignTargets]);
-  const assignLetters = useMemo(() => Object.keys(assignLetterCounts).sort(), [assignLetterCounts]);
-  const assignUnitIsSyp = (assignForm.unit || '').trim().toUpperCase() === 'SYP';
-
   function openAssignDrawer() {
     if (!assignTargets.length) {
       setStatus({ state: 'error', message: 'Mark products Y before assigning locations.' });
       return;
     }
+    // Default unit = effective unit of the first target; letter = filter letter
+    // or first letter of the first target product name.
     const first = assignTargets[0];
     const unit = (first.corrected_unit || first.unit_description || '').toUpperCase();
-    // Every detected letter starts on "Continue"; the operator can switch each
-    // letter (or all at once) to New-from-1 / Single in the drawer.
-    const letterModes = {};
-    Object.keys(assignLetterCounts).forEach((L) => { letterModes[L] = { mode: 'continue', startNumber: 1 }; });
-    setAssignForm({ unit, letterModes });
+    // Default the box letter to the single chosen filter-letter if exactly one is
+    // selected, otherwise the first target product's initial.
+    const onlyLetter = selectedLetters.size === 1 ? Array.from(selectedLetters)[0] : '';
+    const letter = (onlyLetter || (first.product_name || '').trim().charAt(0)).toUpperCase();
+    setAssignForm({ mode: 'continue', assignmentType: 'standard_box', unit, letter, startNumber: 1 });
     setAssignPreview(null);
     setAssignError('');
     setAssignOpen(true);
   }
 
-  // Patch one letter's mode/start; previews are invalidated on any change so the
-  // operator always re-previews the exact plan they'll commit.
-  function setLetterMode(letter, patch) {
-    setAssignForm((f) => ({
-      ...f,
-      letterModes: { ...f.letterModes, [letter]: { ...(f.letterModes[letter] || { mode: 'continue', startNumber: 1 }), ...patch } }
-    }));
-    setAssignPreview(null);
-  }
-  function setAllLetterModes(mode) {
-    setAssignForm((f) => {
-      const letterModes = {};
-      assignLetters.forEach((L) => { letterModes[L] = { ...(f.letterModes[L] || { startNumber: 1 }), mode }; });
-      return { ...f, letterModes };
-    });
-    setAssignPreview(null);
-  }
-
   function assignBody() {
-    const unit = (assignForm.unit || '').trim().toUpperCase();
-    // SYP buckets automatically by letter — no per-letter continue/new choice.
-    const letterPlans = unit === 'SYP' ? [] : assignLetters.map((L) => {
-      const m = assignForm.letterModes[L] || { mode: 'continue', startNumber: 1 };
-      return { letter: L, mode: m.mode, start_number: Number(m.startNumber) || 1 };
-    });
     return {
-      unit,
-      assignment_type: 'standard_box',   // single is now a per-letter mode
-      letter: assignLetters[0] || '',    // fallback for odd (non-letter) names
-      mode: 'continue',
-      start_number: 1,
+      unit: assignForm.unit,
+      mode: assignForm.assignmentType === 'single_product_box' ? 'single' : assignForm.mode,
+      assignment_type: assignForm.assignmentType,
+      letter: assignForm.letter,
       product_codes: assignTargets.map((row) => row.product_code),
-      letter_plans: letterPlans
+      start_number: Number(assignForm.startNumber) || 1
     };
   }
 
@@ -5471,9 +5440,6 @@ function LabelExporter({ session, settings }) {
   //  - preventDefault stops the browser default (Enter submitting, Esc, page
   //    scroll on arrows) so nothing double-handles the same keystroke.
   function handleGridKeyDown(event) {
-    // While a New Unit / New Location combo is open, the combo owns the
-    // keyboard — Enter commits the edit and must NOT also mark the row Y/N.
-    if (editingUnitCode || editingLocationCode) return;
     const tag = event.target?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     if (!visibleRows.length) return;
@@ -5519,43 +5485,6 @@ function LabelExporter({ session, settings }) {
         flashToast(`✓ ${codes.length} marked ${value}`);
       })
       .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Bulk update failed', 'err'); })
-      .finally(() => setBulkBusy(false));
-  }
-
-  // ── Bulk unit find-and-replace ────────────────────────────────────────────
-  // Find every loaded (column-filtered) product whose NEW unit equals "from"
-  // and set it to "to" (e.g. RM → TAB), in one backend call. Writes the unit
-  // correction only — never master data; the original unit is kept as OLD UNIT.
-  function openUnitReplace() {
-    if (!visibleRows.length) return;
-    const seed = activeRow ? lblNewUnit(activeRow) : lblNewUnit(visibleRows[0]);
-    setUnitReplace({ from: (seed || '').toUpperCase(), to: 'TAB' });
-  }
-  const unitReplaceMatches = useMemo(() => {
-    const from = (unitReplace?.from || '').trim().toUpperCase();
-    if (!from) return [];
-    return visibleRows.filter((row) => lblNewUnit(row).toUpperCase() === from);
-  }, [unitReplace, visibleRows]);
-  function applyUnitReplace() {
-    const to = (unitReplace?.to || '').trim().toUpperCase();
-    if (!to) { flashToast('Enter a replacement unit', 'err'); return; }
-    const codes = unitReplaceMatches.map((row) => row.product_code);
-    if (!codes.length) { flashToast('No loaded rows match', 'err'); return; }
-    const codeSet = new Set(codes);
-    setBulkBusy(true);
-    api.bulkCorrectLabelUnit(tenantId, storeId, codes, to, session)
-      .then(() => {
-        setRows((current) => current.map((row) => {
-          if (!codeSet.has(row.product_code)) return row;
-          // Keep the captured master unit as OLD UNIT; set NEW UNIT to `to`.
-          const oldMaster = row.old_unit_description || row.unit_description || null;
-          return { ...row, corrected_unit: to, old_unit_description: oldMaster };
-        }));
-        setStatus({ state: 'ok', message: `Unit set to ${to} on ${codes.length} product(s).` });
-        flashToast(`✓ ${codes.length} → ${to}`);
-        setUnitReplace(null);
-      })
-      .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Replace failed', 'err'); })
       .finally(() => setBulkBusy(false));
   }
 
@@ -5659,13 +5588,9 @@ function LabelExporter({ session, settings }) {
             value={storeId}
             disabled={!canChangeStore}
             onChange={(event) => {
-              // Just select the store — fetching waits for the explicit Search
-              // button (search-as-you-type was removed). Clearing the loaded
-              // rows avoids showing the previous store's products as if they
-              // belonged to the newly-picked store until Search is clicked.
-              setStoreId(event.target.value);
-              setRows([]);
-              setStatus({ state: 'idle', message: 'Store changed — click Search to load its products.' });
+              const v = event.target.value;
+              setStoreId(v);
+              runSearch({ storeId: v });
             }}
           >
             {stores.length === 0 && <option value={storeId}>{storeId ? (settings?.storeName || session?.user?.roles?.[0]?.store_name || 'Current store') : 'Loading…'}</option>}
@@ -5694,8 +5619,7 @@ function LabelExporter({ session, settings }) {
               type="search"
               value={q}
               onChange={(event) => setQ(event.target.value)}
-              onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); runSearch(); } }}
-              placeholder="Product name or code — press Enter or Search"
+              placeholder="Product name or code — updates as you type"
               aria-label="Search products"
             />
           </span>
@@ -5740,16 +5664,6 @@ function LabelExporter({ session, settings }) {
           </button>
           <button
             type="button"
-            className="lblx-search-btn"
-            onClick={() => runSearch()}
-            disabled={status.state === 'loading' || !tenantId || !storeId}
-            title="Fetch products matching every filter above"
-          >
-            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14Z" /></svg>
-            Search
-          </button>
-          <button
-            type="button"
             className="lblx-reset"
             onClick={resetFilters}
             disabled={status.state === 'loading'}
@@ -5790,7 +5704,6 @@ function LabelExporter({ session, settings }) {
       <div className="lblx-actionbar">
         <button type="button" className="lblx-mark lblx-mark-y" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
         <button type="button" className="lblx-mark lblx-mark-n" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
-        <button type="button" className="lblx-mark lblx-replace-unit" disabled={!visibleRows.length || bulkBusy} onClick={openUnitReplace} title="Find a unit across the loaded rows and replace it (e.g. RM → TAB)">Replace Unit…</button>
         {admin && (
           <button type="button" className="lblx-mark lblx-assign" disabled={!assignTargets.length} onClick={openAssignDrawer} title="Assign locations to reviewed-Y products (does not print)">
             Assign Locations{assignTargets.length ? ` (${assignTargets.length})` : ''}
@@ -6141,74 +6054,53 @@ function LabelExporter({ session, settings }) {
 
             <div className="lbl-assign-body">
               <div className="lbl-assign-summary">
-                <b>{assignTargets.length}</b>&nbsp;product{assignTargets.length === 1 ? '' : 's'}
-                <span className="lbl-assign-dot">·</span>
-                <b>{assignLetters.length}</b>&nbsp;letter{assignLetters.length === 1 ? '' : 's'}
-                <span className="lbl-assign-summary-sub">{selectedCodes.size ? 'from your selection' : 'all Y in this load'}</span>
+                Assigning <b>{assignTargets.length}</b> reviewed-Y product{assignTargets.length === 1 ? '' : 's'}
+                {selectedCodes.size ? ' (from your selection)' : ' (all Y in this load)'}.
               </div>
 
-              <div className="lbl-assign-unitrow">
-                <label className="lbl-assign-unit">
-                  <span>Unit</span>
-                  <input
-                    value={assignForm.unit}
-                    onChange={(e) => { setAssignForm((f) => ({ ...f, unit: e.target.value.toUpperCase() })); setAssignPreview(null); }}
-                    placeholder="TAB / SYP"
-                    title="TAB & CAP share the 7-per-box rule; SYP buckets by letter"
-                  />
+              <div className="lbl-assign-modes">
+                <label className={`lbl-assign-mode ${assignForm.assignmentType === 'standard_box' && assignForm.mode === 'continue' ? 'is-on' : ''}`}>
+                  <input type="radio" name="lbl-mode" checked={assignForm.assignmentType === 'standard_box' && assignForm.mode === 'continue'}
+                    onChange={() => setAssignForm((f) => ({ ...f, mode: 'continue', assignmentType: 'standard_box' }))} />
+                  <span><b>Continue Existing Locations</b><i>Fill the last partial box first, then open new boxes.</i></span>
                 </label>
-                {!assignUnitIsSyp && assignLetters.length > 1 && (
-                  <div className="lbl-assign-setall">
-                    <span>Set all</span>
-                    <div className="lbl-seg">
-                      <button type="button" onClick={() => setAllLetterModes('continue')}>Continue</button>
-                      <button type="button" onClick={() => setAllLetterModes('new_label')}>New&nbsp;1</button>
-                      <button type="button" onClick={() => setAllLetterModes('single')}>Single</button>
-                    </div>
-                  </div>
+                <label className={`lbl-assign-mode ${assignForm.assignmentType === 'standard_box' && assignForm.mode === 'new_label' ? 'is-on' : ''}`}>
+                  <input type="radio" name="lbl-mode" checked={assignForm.assignmentType === 'standard_box' && assignForm.mode === 'new_label'}
+                    onChange={() => setAssignForm((f) => ({ ...f, mode: 'new_label', assignmentType: 'standard_box' }))} />
+                  <span><b>New Label for Entire Letter</b><i>Ignore existing locations — fresh box sequence.</i></span>
+                </label>
+                <label className={`lbl-assign-mode ${assignForm.assignmentType === 'single_product_box' ? 'is-on' : ''}`}>
+                  <input type="radio" name="lbl-mode" checked={assignForm.assignmentType === 'single_product_box'}
+                    onChange={() => setAssignForm((f) => ({ ...f, assignmentType: 'single_product_box' }))} />
+                  <span><b>Single Product Box</b><i>One product per box (e.g. DOLO 650).</i></span>
+                </label>
+              </div>
+
+              <div className="lbl-assign-fields">
+                <label><span>Unit</span>
+                  <input value={assignForm.unit} onChange={(e) => setAssignForm((f) => ({ ...f, unit: e.target.value.toUpperCase() }))} placeholder="TAB / SYP" title="TAB and CAP share the same 7-per-box rule — a mixed TAB+CAP selection can be assigned in one Continue run with either value here" />
+                </label>
+                <label><span>Letter</span>
+                  <input value={assignForm.letter} maxLength={1} onChange={(e) => setAssignForm((f) => ({ ...f, letter: e.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 1) }))} placeholder="A" />
+                </label>
+                {assignForm.mode === 'new_label' && assignForm.assignmentType === 'standard_box' && (
+                  <label><span>Start box #</span>
+                    <input type="number" min={1} value={assignForm.startNumber} onChange={(e) => setAssignForm((f) => ({ ...f, startNumber: e.target.value }))} />
+                  </label>
                 )}
               </div>
-
-              {assignUnitIsSyp ? (
-                <div className="lbl-assign-note">SYP products bucket automatically by first letter (SYPA, SYPB, …) — no per-letter box numbering.</div>
-              ) : assignLetters.length ? (
-                <div className="lbl-letter-list">
-                  {assignLetters.map((L) => {
-                    const m = assignForm.letterModes[L] || { mode: 'continue', startNumber: 1 };
-                    return (
-                      <div key={L} className="lbl-letter-row">
-                        <span className="lbl-letter-chip">{L}</span>
-                        <span className="lbl-letter-count">{assignLetterCounts[L]}&nbsp;item{assignLetterCounts[L] === 1 ? '' : 's'}</span>
-                        <select className="lbl-letter-mode" value={m.mode} onChange={(e) => setLetterMode(L, { mode: e.target.value })}>
-                          <option value="continue">Continue — fill last box</option>
-                          <option value="new_label">New from 1</option>
-                          <option value="single">Single product box</option>
-                        </select>
-                        {m.mode === 'new_label' ? (
-                          <label className="lbl-letter-start">
-                            <span>#</span>
-                            <input type="number" min={1} value={m.startNumber} onChange={(e) => setLetterMode(L, { startNumber: e.target.value })} />
-                          </label>
-                        ) : <span className="lbl-letter-start-spacer" />}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="lbl-assign-note">No letter-based products to box — names must start with a letter.</div>
-              )}
 
               {assignError && <div className="lbl-assign-error">{assignError}</div>}
 
               {assignPreview && (
                 <div className="lbl-assign-preview">
-                  <div className="lbl-assign-preview-head">Preview&nbsp;·&nbsp;{assignPreview.assigned_count} product(s) → {assignPreview.boxes.length} box(es)</div>
+                  <div className="lbl-assign-preview-head">Preview — {assignPreview.assigned_count} product(s) into {assignPreview.boxes.length} box(es)</div>
                   <div className="lbl-assign-preview-boxes">
                     {assignPreview.boxes.map((b) => (
                       <div key={b.box} className="lbl-assign-box-row">
                         <span className="lbl-assign-box-id">{b.box}</span>
                         <span className="lbl-assign-box-fill">
-                          {b.existing > 0 ? `${b.existing}+${b.added}=${b.total}` : `${b.added} new`}
+                          {b.existing > 0 ? `${b.existing} existing + ${b.added} new = ${b.total}` : `${b.added} new`}
                           {b.capacity ? ` / ${b.capacity}` : ''}
                         </span>
                       </div>
@@ -6224,50 +6116,6 @@ function LabelExporter({ session, settings }) {
               </button>
               <button type="button" className="lbl-assign-btn lbl-assign-btn--primary" disabled={assignBusy || !assignPreview} onClick={runCommit}>
                 {assignBusy && assignPreview ? 'Assigning…' : 'Assign'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {unitReplace && (
-        <div className="modal-overlay" onClick={() => !bulkBusy && setUnitReplace(null)}>
-          <div className="lbl-replace-modal" role="dialog" aria-modal="true" aria-label="Replace unit" onClick={(event) => event.stopPropagation()}>
-            <div className="lbl-assign-head">
-              <strong>Replace Unit</strong>
-              <button type="button" className="lbl-assign-close" onClick={() => setUnitReplace(null)} aria-label="Close">✕</button>
-            </div>
-            <div className="lbl-replace-body">
-              <div className="lbl-replace-fields">
-                <label className="lbl-replace-field">
-                  <span>Find unit</span>
-                  <input
-                    value={unitReplace.from}
-                    autoFocus
-                    onChange={(e) => setUnitReplace((u) => ({ ...u, from: e.target.value.toUpperCase() }))}
-                    placeholder="RM"
-                  />
-                </label>
-                <span className="lbl-replace-arrow">→</span>
-                <label className="lbl-replace-field">
-                  <span>Replace with</span>
-                  <input
-                    value={unitReplace.to}
-                    onChange={(e) => setUnitReplace((u) => ({ ...u, to: e.target.value.toUpperCase() }))}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && unitReplaceMatches.length && !bulkBusy) applyUnitReplace(); }}
-                    placeholder="TAB"
-                  />
-                </label>
-              </div>
-              <div className="lbl-replace-count">
-                <b>{unitReplaceMatches.length}</b> of {visibleRows.length} loaded product(s) will change
-                {unitReplace.to ? <> to <b className="lbl-replace-to">{unitReplace.to.trim().toUpperCase()}</b></> : ''}.
-              </div>
-            </div>
-            <div className="lbl-assign-foot">
-              <button type="button" className="lbl-assign-btn" disabled={bulkBusy} onClick={() => setUnitReplace(null)}>Cancel</button>
-              <button type="button" className="lbl-assign-btn lbl-assign-btn--primary" disabled={bulkBusy || !unitReplaceMatches.length || !(unitReplace.to || '').trim()} onClick={applyUnitReplace}>
-                {bulkBusy ? 'Replacing…' : `Replace${unitReplaceMatches.length ? ` (${unitReplaceMatches.length})` : ''}`}
               </button>
             </div>
           </div>
