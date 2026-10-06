@@ -6707,9 +6707,9 @@ function NmwSalesReport({ session, settings }) {
                             {total > 0 ? <> · Received {pe.data.matched_products} of {total} item(s)</> : null}
                             {pe.data?.entry_no ? <> · GRN No: <strong>{pe.data.entry_no}</strong></> : null}
                             {pe.data?.entry_date ? <> · Entry Date: {formatDate(pe.data.entry_date)}</> : null}
-                            {pe.data?.match_basis === 'bill_number' ? (
+                            {(pe.data?.match_basis === 'bill_number' || pe.data?.match_basis === 'amount') ? (
                               <>
-                                {' · matched by bill number'}
+                                {pe.data.match_basis === 'bill_number' ? ' · matched by bill number' : ' · matched by amount'}
                                 {pe.data.grn_amount != null ? (
                                   <> ({formatMoney(activeBill.bill_amount)} vs {formatMoney(pe.data.grn_amount)})</>
                                 ) : null}

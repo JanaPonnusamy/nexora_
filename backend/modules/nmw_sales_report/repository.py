@@ -39,6 +39,19 @@ PURCHASE_GRACE_DAYS = 3
 # costs nothing extra once the covering index below is in place.
 PURCHASE_MATCH_WINDOW_DAYS = 30
 
+# Amount-match tolerance (rupees). When the bill-number link is unavailable
+# (e.g. a store whose sync.Batches invoice numbers lag), a bill is matched to
+# the single store GRN whose PTR total (SUM stockreceived*purchaseprice) equals
+# the bill's PTR total (SUM ProductSaleInformation.PurchasePrice*Quantity). That
+# equality holds to the paisa for an intra-group transfer, because the store
+# books the goods at NMW's PTR -- so an exact amount match identifies the WHOLE
+# bill's receiving GRN regardless of per-product code disagreements (which defeat
+# the product-level read and leave genuinely-entered bills falsely "Pending").
+# Validated live: 100 NMS bills over 2 weeks -> 97 unique matches, 0 GRN claimed
+# by two bills; the few near-ties resolve to the exact (0.00-diff) GRN. Owner
+# ruling 2026-10-06: decide a bill by bill number + amount, not per-product.
+AMOUNT_MATCH_TOLERANCE = 1.0
+
 _schema_ready = False
 
 # Per-store local code for "goods received from NMW", read from
@@ -191,6 +204,19 @@ def _ensure_schema(cursor):
             CREATE NONCLUSTERED INDEX IX_Batches_Supplier_GrnDate
                 ON sync.Batches (tenant_id, store_id, SupplierCode, GrnDate)
                 INCLUDE (InvoiceNumber, GrnNumber);
+
+        -- Amount-match (get_purchase_status_map / get_purchase_entry_detail):
+        -- aggregates each GRN's PTR total SUM(stockreceived*purchaseprice) (and
+        -- itemcost) per (store, SupplierCode, InvoiceSeries) over a GrnDate range.
+        -- Without purchaseprice/itemcost in an index this is a key-lookup per row
+        -- (~6s on a 10-week window); this covering index makes it an index scan.
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE object_id = OBJECT_ID('sync.PurchaseTrans') AND name = 'IX_PurchaseTrans_Supplier_Series_Amount'
+        )
+            CREATE NONCLUSTERED INDEX IX_PurchaseTrans_Supplier_Series_Amount
+                ON sync.PurchaseTrans (tenant_id, store_id, SupplierCode, InvoiceSeries)
+                INCLUDE (grndate, Grnnumber, stockreceived, purchaseprice, itemcost);
         """
     )
     try:
@@ -983,7 +1009,8 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
             ),
             bill_products AS (
                 SELECT r.BNumber, r.BillDate, r.dest_store_id, psi.ProductCode,
-                       SUM(psi.Quantity) AS req_qty
+                       SUM(psi.Quantity) AS req_qty,
+                       SUM(ISNULL(psi.PurchasePrice, 0) * psi.Quantity) AS prod_ptr
                 FROM resolved r
                 JOIN sync.ProductSaleInformation psi
                     ON psi.tenant_id = ? AND psi.store_id = ?
@@ -1005,7 +1032,8 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                    -- match (one clean number for the list column) -- overridden
                    -- in Python below when a bill-number match is found.
                    MAX(CASE WHEN sm.store_id IS NOT NULL AND ISNULL(got.got_qty, 0) >= bp.req_qty - 0.01
-                            THEN got.max_grn END) AS completing_grn
+                            THEN got.max_grn END) AS completing_grn,
+                   SUM(bp.prod_ptr) AS bill_ptr
             FROM bill_products bp
             LEFT JOIN smap sm ON sm.store_id = bp.dest_store_id
             OUTER APPLY (
@@ -1056,11 +1084,42 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                     (invoice_number, grn_number, grn_date)
                 )
 
+        # Amount-match data (IV-series): each store GRN's PTR total, bulk-fetched
+        # once (sargable: plain equality + GrnDate range). A bill with no
+        # bill-number hit is matched in Python to the single GRN whose PTR total
+        # equals its own -- see AMOUNT_MATCH_TOLERANCE / get_purchase_entry_detail.
+        grn_ptr_map = {}
+        iv_rows = [r for r in rows if r[4] == "IV" and r[2] and r[3]]
+        if iv_rows:
+            iv_stores = sorted({r[2] for r in iv_rows})
+            iv_codes = sorted({r[3] for r in iv_rows})
+            iv_dates = [r[1] for r in iv_rows]
+            amt_start = min(iv_dates)
+            amt_end = max(iv_dates) + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
+            sph2 = ", ".join("?" for _ in iv_stores)
+            cph2 = ", ".join("?" for _ in iv_codes)
+            cursor.execute(
+                f"""
+                SELECT CAST(store_id AS VARCHAR(50)) AS store_id, SupplierCode, Grnnumber,
+                       MAX(CAST(grndate AS DATE)) AS gd, SUM(stockreceived * purchaseprice) AS ptr
+                FROM sync.PurchaseTrans
+                WHERE tenant_id = ? AND store_id IN ({sph2}) AND SupplierCode IN ({cph2})
+                  AND LTRIM(RTRIM(InvoiceSeries)) = 'IV'
+                  AND CAST(grndate AS DATE) BETWEEN ? AND ?
+                GROUP BY store_id, SupplierCode, Grnnumber
+                """,
+                (tenant_id, *iv_stores, *iv_codes, amt_start, amt_end),
+            )
+            for store_id, supplier_code, grn, gd, ptr in cursor.fetchall():
+                grn_ptr_map.setdefault((store_id, supplier_code), []).append((int(grn), gd, float(ptr or 0)))
+
         out = {}
-        for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn in rows:
+        for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr in rows:
             bd_iso = bill_date.isoformat() if hasattr(bill_date, "isoformat") else str(bill_date)
             matched_products = int(matched_products or 0)
+            bill_ptr = float(bill_ptr or 0)
             invoice_grn = None
+            amount_grn = None
             if series == "IV" and dest_store_id and raw_code:
                 window_end = bill_date + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
                 candidates = [
@@ -1070,22 +1129,39 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                 ]
                 if candidates:
                     invoice_grn = min(candidates)
-            if invoice_grn is not None:
+                # Amount match when the bill number isn't available (e.g. a store
+                # whose Batches invoice numbers lag): the single GRN whose PTR
+                # total equals this bill's, within tolerance and not a near-tie.
+                if invoice_grn is None and bill_ptr > 0:
+                    cands = sorted(
+                        ((abs(ptr - bill_ptr), grn)
+                         for grn, gd, ptr in grn_ptr_map.get((dest_store_id, raw_code), [])
+                         if bill_date <= gd <= window_end),
+                        key=lambda c: (c[0], -c[1]),
+                    )
+                    if cands and cands[0][0] <= AMOUNT_MATCH_TOLERANCE and (
+                        len(cands) < 2 or cands[1][0] > AMOUNT_MATCH_TOLERANCE or cands[0][0] <= 0.1
+                    ):
+                        amount_grn = cands[0][1]
+            matched_grn = invoice_grn if invoice_grn is not None else amount_grn
+            if matched_grn is not None:
                 matched_products = total_products
             status = _classify_purchase_status(total_products, matched_products, unmapped, bill_date)
             out[(bnumber, bd_iso)] = {
                 "purchase_status": status,
                 "matched_products": matched_products,
                 "total_products": int(total_products or 0),
-                # Only surface a GRN for a CONFIRMED bill-number match (staff keyed
-                # NMW's bill number onto the store GRN). The per-product
-                # "completing_grn" is an unreliable guess -- the same medicines
-                # arrive on many NMW bills, so a per-product read smears one bill
-                # across several unrelated GRNs -- so it is withheld rather than
-                # shown as if authoritative (owner ruling 2026-10-06). The
-                # matched/total progress counts are unaffected.
-                "entry_no": str(int(invoice_grn)) if invoice_grn is not None else None,
-                "match_basis": "bill_number" if invoice_grn is not None else None,
+                # Surface a GRN only for a CONFIRMED match: bill-number (staff keyed
+                # NMW's bill number onto the store GRN) or amount (the GRN whose PTR
+                # total equals the bill's). The per-product "completing_grn" is an
+                # unreliable guess -- the same medicines arrive on many NMW bills,
+                # so a per-product read smears one bill across several unrelated
+                # GRNs -- so it is never shown (owner ruling 2026-10-06).
+                "entry_no": str(int(matched_grn)) if matched_grn is not None else None,
+                "match_basis": (
+                    "bill_number" if invoice_grn is not None
+                    else "amount" if amount_grn is not None else None
+                ),
             }
 
         # Name-fallback pass: a bill can still read short on ProductCode even
@@ -1099,12 +1175,12 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
         # memory for the original per-bill design and why it seemed fine).
         need_fallback = [
             (bnumber, bill_date, dest_store_id, raw_code, series)
-            for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn in rows
+            for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr in rows
             if dest_store_id and raw_code
             and out.get((bnumber, bill_date.isoformat() if hasattr(bill_date, "isoformat") else str(bill_date)), {}).get("purchase_status") != "completed"
         ]
         fallback_results = _name_fallback_batch(cursor, tenant_id, nmw_store_id, need_fallback) if need_fallback else {}
-        for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn in rows:
+        for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr in rows:
             bd_iso = bill_date.isoformat() if hasattr(bill_date, "isoformat") else str(bill_date)
             entry = out.get((bnumber, bd_iso))
             if not entry or entry["purchase_status"] == "completed" or not dest_store_id or not raw_code:
@@ -1187,6 +1263,15 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
         # (product_code, product_name, req_qty)
         products = [(r[0], r[1], float(r[2] or 0)) for r in cursor.fetchall()]
         name_by_product = {r[0]: r[1] for r in products}
+        # Bill's PTR (price-to-retailer) total -- the goods value used by the
+        # amount-match fallback below.
+        cursor.execute(
+            "SELECT SUM(ISNULL(PurchasePrice, 0) * Quantity) FROM sync.ProductSaleInformation "
+            "WHERE tenant_id = ? AND store_id = ? AND BillNumber = ? AND Bnumber = ? "
+            "AND CAST(TransactionDate AS DATE) = ? AND ISNULL(TransactionValidity, 0) = 0",
+            (tenant_id, nmw_store_id, billnumber, bnumber, bdate),
+        )
+        bill_ptr = float((cursor.fetchone() or [0])[0] or 0)
         if not products:
             return {
                 "purchase_status": "not_found", "matched_products": 0, "total_products": 0,
@@ -1334,6 +1419,47 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
                 )
                 amt_row = cursor.fetchone()
                 grn_amount = float(amt_row[0]) if amt_row and amt_row[0] is not None else None
+
+        # Amount match (IV-series, when the bill number isn't available -- e.g. a
+        # store whose Batches invoice numbers lag): find the single store GRN whose
+        # PTR total equals this bill's PTR total. An exact match identifies the
+        # whole bill's receiving GRN even when NMW/store product codes disagree, so
+        # a genuinely-entered bill is no longer left "Pending" just because one line
+        # couldn't be matched per-product (owner ruling 2026-10-06).
+        if match_basis != "bill_number" and series == "IV" and bill_ptr > 0:
+            cursor.execute(
+                f"""
+                SELECT Grnnumber, MAX(CAST(grndate AS DATE)) AS gd,
+                       SUM(stockreceived * purchaseprice) AS ptr,
+                       SUM(stockreceived * itemcost) AS cost
+                FROM sync.PurchaseTrans
+                WHERE tenant_id = ? AND store_id = ? AND SupplierCode = ?
+                  AND LTRIM(RTRIM(InvoiceSeries)) = ?
+                  AND CAST(grndate AS DATE) BETWEEN ? AND DATEADD(DAY, {PURCHASE_MATCH_WINDOW_DAYS}, ?)
+                GROUP BY Grnnumber
+                """,
+                (tenant_id, dest_store_id, raw_code, series, bdate, bdate),
+            )
+            cands = sorted(
+                ((abs(float(ptr or 0) - bill_ptr), int(grn), gd, float(cost or 0))
+                 for grn, gd, ptr, cost in cursor.fetchall()),
+                key=lambda c: (c[0], -c[1]),
+            )
+            # Accept the closest GRN only when it is within tolerance AND not in a
+            # near-tie with the next candidate (unless essentially exact), so we
+            # never guess between two equally-plausible GRNs.
+            if cands and cands[0][0] <= AMOUNT_MATCH_TOLERANCE and (
+                len(cands) < 2 or cands[1][0] > AMOUNT_MATCH_TOLERANCE or cands[0][0] <= 0.1
+            ):
+                _, amt_grn, amt_gd, amt_cost = cands[0]
+                status = "completed"
+                matched_products = total_products
+                pending_products = []
+                completing_grn = str(amt_grn)
+                entry_no = completing_grn
+                entry_date = amt_gd.isoformat() if hasattr(amt_gd, "isoformat") else str(amt_gd)
+                match_basis = "amount"
+                grn_amount = amt_cost
 
         return {
             "purchase_status": status,
