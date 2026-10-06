@@ -416,6 +416,47 @@ def get_bill_items(tenant_id, nmw_store_id, bill_no, bill_date):
         conn.close()
 
 
+def get_bill_dest_store_id(tenant_id, nmw_store_id, bill_no, bill_date):
+    """Resolve the destination store id a single NMW dispatch bill routed to.
+
+    Series-dependent, exactly like get_purchase_entry_detail / list_bills: a
+    'TO' transfer routes via dbo.stores.ho_transfer_code, every other series via
+    ho_cust_code. Returns the store_id string, or None if the bill isn't routed
+    to any store. Used by the service to scope a non-super-admin (store-bound)
+    login to their own store's bills before returning line-item details."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        _ensure_schema(cursor)
+        cursor.execute(
+            """
+            ;WITH bill_match AS (
+                SELECT TOP (1) si.tenant_id, si.CustomerCode,
+                       CASE WHEN LTRIM(RTRIM(ISNULL(si.SeriesName, ''))) = 'TO'
+                                 OR si.BNumber LIKE 'TO%' THEN 1 ELSE 0 END AS is_transfer
+                FROM sync.SaleInformation si
+                WHERE si.tenant_id = ? AND si.store_id = ? AND si.BNumber = ?
+                  AND (? IS NULL OR CAST(si.BillDate AS DATE) = CAST(? AS DATE))
+                ORDER BY si.BillDate DESC, si.BillNumber DESC
+            )
+            SELECT CAST(dst.store_id AS VARCHAR(50)) AS dest_store_id
+            FROM bill_match bm
+            INNER JOIN dbo.stores dst
+                ON dst.tenant_id = bm.tenant_id
+               AND (
+                   (bm.is_transfer = 1 AND NULLIF(LTRIM(RTRIM(dst.ho_transfer_code)), '') = LTRIM(RTRIM(bm.CustomerCode)))
+                OR (bm.is_transfer = 0 AND NULLIF(LTRIM(RTRIM(dst.ho_cust_code)), '') = LTRIM(RTRIM(bm.CustomerCode)))
+               )
+            """,
+            (tenant_id, nmw_store_id, bill_no, bill_date, bill_date),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def get_bill_summary(tenant_id, nmw_store_id, bill_no, bill_date):
     """Totals footer for a bill: the line sub-total (identical to the sum of the
     items get_bill_items returns) plus the GST and round-off from the header, so

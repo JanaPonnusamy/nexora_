@@ -6358,10 +6358,14 @@ function LabelExporter({ session, settings }) {
 function NmwSalesReport({ session, settings }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
   // All branches may browse the dispatch-bill LIST, but the per-bill PRODUCT
-  // DETAILS (line items, purchase-entry drill-down, export) are super-admin / HO
-  // only (owner ruling 2026-10-03). Mirrors backend _assert_can_view_details; the
-  // server also 403s those endpoints, so this is defence-in-depth + clean UX.
-  const canViewDetails = isSuperAdmin(session);
+  // DETAILS (line items, purchase-entry drill-down, export) are limited to
+  // super-admin / HO and purchase-manager (PM-rights) logins (owner ruling
+  // 2026-10-03 first made this super-admin only; 2026-10-06 extended viewing +
+  // export to PM-rights too). PM is the same tier as Order Workspace / FULL
+  // purchase-history access. Mirrors backend can_view_details(); the server also
+  // 403s those endpoints (and store-scopes PM logins), so this is defence-in-
+  // depth + clean UX.
+  const canViewDetails = isSuperAdmin(session) || canViewPurchaseDetails(session);
 
   const [tenants, setTenants] = useState([]);
   const [stores, setStores] = useState([]);

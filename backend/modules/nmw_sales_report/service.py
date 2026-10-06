@@ -21,11 +21,18 @@ def _assert_can_view(user):
 
 def _assert_can_view_details(user):
     """Who may drill into a bill's product/line-item DETAILS (and purchase-entry
-    drill-down): super-admin / HO only (owner ruling 2026-10-03: branches see the
-    stock list but NOT the product details; super admin sees all details).
-    Guards get_bill_items() and get_purchase_entry()."""
-    if not is_super_admin(user):
-        raise HTTPException(status_code=403, detail="NMW product details are restricted to super-admin / HO logins.")
+    drill-down, and the Excel/CSV export): super-admin / HO plus purchase-manager
+    (PM-rights) logins. Owner ruling 2026-10-03 first restricted details to
+    super-admin only (branches see the stock list, not product details); ruling
+    2026-10-06 extended viewing + export to PM-rights logins too. PM stays
+    store-scoped (super-admin alone is network-wide) -- that scope is enforced in
+    get_bill_items() / get_purchase_entry(), not here. Guards get_bill_items()
+    and get_purchase_entry()."""
+    if not can_view_details(user):
+        raise HTTPException(
+            status_code=403,
+            detail="NMW product details are restricted to super-admin / HO / purchase-manager logins.",
+        )
 
 
 def is_super_admin(user):
@@ -34,6 +41,22 @@ def is_super_admin(user):
     if has_full_access(user):
         return True
     return any("superadmin" in name or "super admin" in name for name in _role_names(user))
+
+
+def is_purchase_manager(user):
+    """A purchase-manager (PM-rights) login: any role name containing
+    'purchase'. Mirrors the desktop client's canViewPurchaseDetails() -- the same
+    tier that already gets Order Workspace and FULL purchase/billing history. PM
+    logins may view + export NMW bill line items (owner ruling 2026-10-06) but
+    stay store-scoped unless they are also a super admin."""
+    return any("purchase" in name for name in _role_names(user))
+
+
+def can_view_details(user):
+    """Who may drill into a bill's product/line-item DETAILS and export them:
+    super-admin / HO (every store) plus purchase-manager logins (their own
+    store's bills). Branch / salesman logins see the dispatch-bill list only."""
+    return is_super_admin(user) or is_purchase_manager(user)
 
 
 def can_view_all(user):
@@ -140,6 +163,19 @@ def get_bill_items(user, tenant_id, bill_no, bill_date):
     if not nmw_store_id:
         return {"items": [], "summary": None}
     bd = (bill_date or "").strip() or None
+
+    # A store-scoped (non-super-admin, e.g. purchase-manager) login may only
+    # drill into bills routed to one of their own stores. Mirror the same check
+    # get_purchase_entry() already makes so a PM can't pull another store's line
+    # items (PTR / discount / cost) by guessing a bill number. A bill not routed
+    # to any store (dest None) carries no store-specific data, so it's allowed
+    # through -- same as the purchase-entry path.
+    if not can_view_all(user):
+        allowed = set(repository.user_store_ids(user.get("sub")))
+        dest_store_id = repository.get_bill_dest_store_id(tenant_id, nmw_store_id, bill_no, bd)
+        if dest_store_id and dest_store_id not in allowed:
+            raise HTTPException(status_code=403, detail="You cannot view line items for another store's bill.")
+
     items = repository.get_bill_items(tenant_id, nmw_store_id, bill_no, bd)
     summary = repository.get_bill_summary(tenant_id, nmw_store_id, bill_no, bd)
     return {"items": items, "summary": summary}
