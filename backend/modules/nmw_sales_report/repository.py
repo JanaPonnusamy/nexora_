@@ -1084,34 +1084,38 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                     (invoice_number, grn_number, grn_date)
                 )
 
-        # Amount-match data (IV-series): each store GRN's PTR total, bulk-fetched
-        # once (sargable: plain equality + GrnDate range). A bill with no
-        # bill-number hit is matched in Python to the single GRN whose PTR total
+        # Amount-match data (IV sales + TI transfers): each store GRN's PTR total,
+        # bulk-fetched once (sargable: plain equality + GrnDate range). A bill with
+        # no bill-number hit is matched in Python to the single GRN whose PTR total
         # equals its own -- see AMOUNT_MATCH_TOLERANCE / get_purchase_entry_detail.
+        # Keyed by (store, SupplierCode, SERIES) so IV supplier '2' (a real
+        # PENTACARE purchase at NMC) is never mixed with TI supplier '2' (an NMW
+        # transfer) -- the bare code collides, the series disambiguates.
         grn_ptr_map = {}
-        iv_rows = [r for r in rows if r[4] == "IV" and r[2] and r[3]]
-        if iv_rows:
-            iv_stores = sorted({r[2] for r in iv_rows})
-            iv_codes = sorted({r[3] for r in iv_rows})
-            iv_dates = [r[1] for r in iv_rows]
-            amt_start = min(iv_dates)
-            amt_end = max(iv_dates) + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
-            sph2 = ", ".join("?" for _ in iv_stores)
-            cph2 = ", ".join("?" for _ in iv_codes)
+        amt_rows = [r for r in rows if r[4] in ("IV", "TI") and r[2] and r[3]]
+        if amt_rows:
+            amt_stores = sorted({r[2] for r in amt_rows})
+            amt_codes = sorted({r[3] for r in amt_rows})
+            amt_dates = [r[1] for r in amt_rows]
+            amt_start = min(amt_dates)
+            amt_end = max(amt_dates) + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
+            sph2 = ", ".join("?" for _ in amt_stores)
+            cph2 = ", ".join("?" for _ in amt_codes)
             cursor.execute(
                 f"""
-                SELECT CAST(store_id AS VARCHAR(50)) AS store_id, SupplierCode, Grnnumber,
+                SELECT CAST(store_id AS VARCHAR(50)) AS store_id, SupplierCode,
+                       LTRIM(RTRIM(InvoiceSeries)) AS series, Grnnumber,
                        MAX(CAST(grndate AS DATE)) AS gd, SUM(stockreceived * purchaseprice) AS ptr
                 FROM sync.PurchaseTrans
                 WHERE tenant_id = ? AND store_id IN ({sph2}) AND SupplierCode IN ({cph2})
-                  AND LTRIM(RTRIM(InvoiceSeries)) = 'IV'
+                  AND LTRIM(RTRIM(InvoiceSeries)) IN ('IV', 'TI')
                   AND CAST(grndate AS DATE) BETWEEN ? AND ?
-                GROUP BY store_id, SupplierCode, Grnnumber
+                GROUP BY store_id, SupplierCode, LTRIM(RTRIM(InvoiceSeries)), Grnnumber
                 """,
-                (tenant_id, *iv_stores, *iv_codes, amt_start, amt_end),
+                (tenant_id, *amt_stores, *amt_codes, amt_start, amt_end),
             )
-            for store_id, supplier_code, grn, gd, ptr in cursor.fetchall():
-                grn_ptr_map.setdefault((store_id, supplier_code), []).append((int(grn), gd, float(ptr or 0)))
+            for store_id, supplier_code, grn_series, grn, gd, ptr in cursor.fetchall():
+                grn_ptr_map.setdefault((store_id, supplier_code, grn_series), []).append((int(grn), gd, float(ptr or 0)))
 
         out = {}
         for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr in rows:
@@ -1120,22 +1124,27 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
             bill_ptr = float(bill_ptr or 0)
             invoice_grn = None
             amount_grn = None
-            if series == "IV" and dest_store_id and raw_code:
+            if series in ("IV", "TI") and dest_store_id and raw_code:
                 window_end = bill_date + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
-                candidates = [
-                    grn_number
-                    for invoice_number, grn_number, grn_date in invoice_lookup.get((dest_store_id, raw_code), [])
-                    if bnumber.endswith(invoice_number) and bill_date <= grn_date <= window_end
-                ]
-                if candidates:
-                    invoice_grn = min(candidates)
-                # Amount match when the bill number isn't available (e.g. a store
-                # whose Batches invoice numbers lag): the single GRN whose PTR
-                # total equals this bill's, within tolerance and not a near-tie.
+                # Bill-number match is IV-only: TI transfer receipts carry the
+                # store's own transfer-doc number in InvoiceNumber, not NMW's bill
+                # number (see module docstring), so only amount matching applies.
+                if series == "IV":
+                    candidates = [
+                        grn_number
+                        for invoice_number, grn_number, grn_date in invoice_lookup.get((dest_store_id, raw_code), [])
+                        if bnumber.endswith(invoice_number) and bill_date <= grn_date <= window_end
+                    ]
+                    if candidates:
+                        invoice_grn = min(candidates)
+                # Amount match when the bill number isn't available (every TI bill,
+                # and any IV bill whose Batches invoice numbers lag): the single GRN
+                # whose PTR total equals this bill's, within tolerance, not a
+                # near-tie.
                 if invoice_grn is None and bill_ptr > 0:
                     cands = sorted(
                         ((abs(ptr - bill_ptr), grn)
-                         for grn, gd, ptr in grn_ptr_map.get((dest_store_id, raw_code), [])
+                         for grn, gd, ptr in grn_ptr_map.get((dest_store_id, raw_code, series), [])
                          if bill_date <= gd <= window_end),
                         key=lambda c: (c[0], -c[1]),
                     )
@@ -1425,8 +1434,12 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
         # PTR total equals this bill's PTR total. An exact match identifies the
         # whole bill's receiving GRN even when NMW/store product codes disagree, so
         # a genuinely-entered bill is no longer left "Pending" just because one line
-        # couldn't be matched per-product (owner ruling 2026-10-06).
-        if match_basis != "bill_number" and series == "IV" and bill_ptr > 0:
+        # couldn't be matched per-product (owner ruling 2026-10-06). Applies to
+        # sales (IV) AND transfers (TI) -- NMC transfer GRNs match on PTR just as
+        # exactly (verified: ptr == cost == bill subtotal to the paisa). The query
+        # is scoped by `series`, so IV supplier '2' (a real PENTACARE purchase) is
+        # never confused with TI supplier '2' (an NMW transfer).
+        if match_basis != "bill_number" and series in ("IV", "TI") and bill_ptr > 0:
             cursor.execute(
                 f"""
                 SELECT Grnnumber, MAX(CAST(grndate AS DATE)) AS gd,
