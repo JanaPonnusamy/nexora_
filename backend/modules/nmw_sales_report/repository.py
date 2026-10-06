@@ -1072,13 +1072,20 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                     invoice_grn = min(candidates)
             if invoice_grn is not None:
                 matched_products = total_products
-                completing_grn = invoice_grn
             status = _classify_purchase_status(total_products, matched_products, unmapped, bill_date)
             out[(bnumber, bd_iso)] = {
                 "purchase_status": status,
                 "matched_products": matched_products,
                 "total_products": int(total_products or 0),
-                "entry_no": str(int(completing_grn)) if completing_grn is not None else None,
+                # Only surface a GRN for a CONFIRMED bill-number match (staff keyed
+                # NMW's bill number onto the store GRN). The per-product
+                # "completing_grn" is an unreliable guess -- the same medicines
+                # arrive on many NMW bills, so a per-product read smears one bill
+                # across several unrelated GRNs -- so it is withheld rather than
+                # shown as if authoritative (owner ruling 2026-10-06). The
+                # matched/total progress counts are unaffected.
+                "entry_no": str(int(invoice_grn)) if invoice_grn is not None else None,
+                "match_basis": "bill_number" if invoice_grn is not None else None,
             }
 
         # Name-fallback pass: a bill can still read short on ProductCode even
@@ -1224,10 +1231,8 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
 
         req_by_product = {code: req for code, _name, req in products}
         got_by_product = {}
-        grns_seen = {}
-        for product_code, grnnumber, grndate, stockreceived in purchase_rows:
+        for product_code, _grnnumber, _grndate, stockreceived in purchase_rows:
             got_by_product[product_code] = got_by_product.get(product_code, 0.0) + float(stockreceived or 0)
-            grns_seen[(grnnumber, grndate)] = True
 
         # Name-fallback pass: for products the code-based read above still
         # shows short, check whether the store received something with the
@@ -1241,11 +1246,10 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
         still_short = [code for code, req_qty in req_by_product.items()
                        if got_by_product.get(code, 0.0) < req_qty - 0.01]
         name_qty = {}
-        grns_by_name = {}
         if still_short:
             cursor.execute(
                 f"""
-                SELECT p.ProductName, pt.stockreceived, pt.Grnnumber, CAST(pt.grndate AS DATE)
+                SELECT p.ProductName, pt.stockreceived
                 FROM sync.PurchaseTrans pt
                 LEFT JOIN sync.Products p
                     ON p.tenant_id = pt.tenant_id AND p.store_id = pt.store_id AND p.ProductCode = pt.ProductCode
@@ -1254,28 +1258,17 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
                 """,
                 (tenant_id, dest_store_id, raw_code, series, bdate, bdate),
             )
-            for pname, stockreceived, grnnumber, grndate in cursor.fetchall():
+            for pname, stockreceived in cursor.fetchall():
                 key = _normalize_name(pname)
                 if not key:
                     continue
                 name_qty[key] = name_qty.get(key, 0.0) + float(stockreceived or 0)
-                grns_by_name.setdefault(key, []).append((grndate, grnnumber, float(stockreceived or 0)))
 
         matched_by_name = set()
         for code in still_short:
             key = _normalize_name(name_by_product.get(code))
             if key and name_qty.get(key, 0.0) >= req_by_product[code] - 0.01:
                 matched_by_name.add(code)
-                # Attribute only the GRN(s) actually needed to cover the
-                # requirement, earliest first -- not every later, unrelated
-                # restock of the same product that happens to also fall
-                # inside the (generous, 30-day) match window.
-                remaining = req_by_product[code]
-                for grndate, grnnumber, qty in sorted(grns_by_name.get(key, [])):
-                    if remaining <= 0.01:
-                        break
-                    grns_seen[(grnnumber, grndate)] = True
-                    remaining -= qty
 
         matched_products = sum(
             1 for code, req_qty in req_by_product.items()
@@ -1283,21 +1276,26 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
         )
         total_products = len(req_by_product)
         # The specific items the store has NOT yet received a purchase-entry for
-        # (so a "Pending" bill with GRN numbers is self-explanatory -- these are
-        # the products still missing from the receipt).
+        # (so a "Pending" bill is self-explanatory -- these are the products still
+        # missing from the receipt).
         pending_products = [
             {"product_code": str(code), "product_name": name_by_product.get(code) or str(code),
              "required_qty": req_qty, "received_qty": got_by_product.get(code, 0.0)}
             for code, req_qty in req_by_product.items()
             if got_by_product.get(code, 0.0) < req_qty - 0.01 and code not in matched_by_name
         ]
-        distinct_grns = sorted(grns_seen.keys(), key=lambda g: (g[1], g[0]))
-        entry_no = ", ".join(str(g[0]) for g in distinct_grns) if distinct_grns else None
-        # The completing GRN (latest) matches the single number shown in the list.
-        completing_grn = str(max(g[0] for g in distinct_grns)) if distinct_grns else None
-        entry_date = distinct_grns[0][1].isoformat() if distinct_grns else None
-
         status = _classify_purchase_status(total_products, matched_products, False, bdate)
+        # Product/name matching can confirm THAT items arrived but not WHICH single
+        # GRN belongs to this bill: the same medicines recur across many NMW bills,
+        # so a per-product read smears one bill across several unrelated GRNs (e.g.
+        # DOLO 650 arrived 90 units across 3 GRNs against one 30-unit bill line).
+        # That guess is therefore withheld -- only a confirmed bill-number match
+        # (below) sets a GRN number (owner ruling 2026-10-06). Progress
+        # (matched/total) and the pending-items list are still returned, and the
+        # exact GRN appears automatically once the store's bill-number syncs.
+        entry_no = None
+        completing_grn = None
+        entry_date = None
         match_basis = "product_qty" if matched_products else "none"
         grn_amount = None
 
