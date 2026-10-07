@@ -307,6 +307,37 @@ def _replace_supplier_stock(conn, tenant_id, target_store_id, supplier_code, row
     return inserted
 
 
+def _whatsapp_login_error():
+    """One-shot WhatsApp send pre-flight: return a clear, actionable message if
+    WhatsApp cannot send right now (no profile configured, or the session is
+    logged out) -- else None.
+
+    Checked ONCE per run instead of letting all five per-store sends each spin
+    up a headless browser only to fail with the same logout: that turned a
+    logged-out session (by far the most common distribution failure) into a
+    multi-minute cascade of identical cryptic failures discovered only after
+    the fact. The logout message deliberately contains the phrase "not logged
+    in" so the distribution UI lights up its existing "Scan QR to log in"
+    affordance (SupplierStockDistributionPage waStatusLine / needsQrLogin).
+    Never raises -- a pre-flight must not itself abort a run."""
+    try:
+        from modules.whatsapp import service as wa
+        profiles = wa._load_profiles()
+        profile = next(
+            (p for p in profiles if p.get("is_default")),
+            profiles[0] if profiles else None,
+        )
+        if not profile:
+            return "No WhatsApp profile configured to send from. Add one in WhatsApp settings first."
+        status = wa.check_status(profile["profile_id"])
+        if not status.get("logged_in"):
+            return ("WhatsApp is not logged in -- open 'Link WhatsApp' and scan the QR code "
+                    "once, then re-run the distribution.")
+    except Exception as exc:
+        return f"Could not verify WhatsApp login before sending: {str(exc)[:300]}"
+    return None
+
+
 def _send_whatsapp(conn, run_item_id, tenant_id, target_store_id, excel_path, message):
     """Send the just-generated Excel file to the target store's configured
     WhatsApp group/number and record the outcome. Runs strictly AFTER the
@@ -478,6 +509,15 @@ def generate(tenant_id, source_store_code, provider_name, only_store_ids=None,
         )
         conn.commit()
 
+        # WhatsApp pre-flight -- verify the session is linked ONCE up front
+        # (only when the full pipeline will actually send). A logged-out profile
+        # is the most common distribution failure; checking here short-circuits
+        # all target stores with one fast, clear, QR-actionable status instead
+        # of each store spinning up a headless browser only to fail identically.
+        wa_preflight_error = None
+        if not supplier_update_only and not excel_only:
+            wa_preflight_error = _whatsapp_login_error()
+
         succeeded, failed, items, errors = 0, 0, [], []
         for store in targets:
             t0 = time.time()
@@ -530,14 +570,19 @@ def generate(tenant_id, source_store_code, provider_name, only_store_ids=None,
             # Selected") -- "Generate Excel Only" must not send, "Update
             # Supplier Stock Only" must not export or send.
             if excel_path and excel_status == "success" and not supplier_update_only and not excel_only:
-                # Send the stock file with NO caption -- the store owners asked
-                # for the file only, not a text line naming the group/store
-                # (the filename already carries store + date). An empty caption
-                # makes the attachment flow just click Send (see
-                # _caption_and_send_attachment's `if message:` guard).
-                wa_status, wa_error = _send_whatsapp(
-                    conn, run_item_id, tenant_id, store["store_id"], excel_path, ""
-                )
+                if wa_preflight_error:
+                    # Session is down -- skip the (futile) send and report the one
+                    # clear pre-flight reason on every store, fast.
+                    wa_status, wa_error = "failed", wa_preflight_error
+                else:
+                    # Send the stock file with NO caption -- the store owners asked
+                    # for the file only, not a text line naming the group/store
+                    # (the filename already carries store + date). An empty caption
+                    # makes the attachment flow just click Send (see
+                    # _caption_and_send_attachment's `if message:` guard).
+                    wa_status, wa_error = _send_whatsapp(
+                        conn, run_item_id, tenant_id, store["store_id"], excel_path, ""
+                    )
 
             duration_ms = int((time.time() - t0) * 1000)
             overall_status = "failed" if item_failed else "success"
@@ -566,10 +611,14 @@ def generate(tenant_id, source_store_code, provider_name, only_store_ids=None,
                 "error": stock_error or excel_error,
             })
 
+        # WhatsApp failures never mark an item failed (by design), so fold the
+        # pre-flight reason into the run summary explicitly or it stays invisible.
+        summary_bits = ([f"WhatsApp not sent: {wa_preflight_error}"] if wa_preflight_error else []) + errors
+        error_summary = ("; ".join(summary_bits))[:2000] if summary_bits else None
         cur.execute(
             "UPDATE procurement.distribution_run SET status = 'completed', finished_at = GETDATE(), "
             "stores_succeeded = ?, stores_failed = ?, error_summary = ? WHERE run_id = ?",
-            (succeeded, failed, ("; ".join(errors))[:2000] if errors else None, run_id),
+            (succeeded, failed, error_summary, run_id),
         )
         conn.commit()
         return {"run_id": run_id, "stores_total": len(targets),
@@ -682,7 +731,11 @@ def send_run_item_whatsapp(run_item_id):
         if not excel_path or not os.path.exists(excel_path):
             raise ValueError("No generated Excel file found for this store. Re-run the export first.")
 
-        status, error = _send_whatsapp(conn, run_item_id, tenant_id, store_id, excel_path, "")
+        preflight = _whatsapp_login_error()
+        if preflight:
+            status, error = "failed", preflight
+        else:
+            status, error = _send_whatsapp(conn, run_item_id, tenant_id, store_id, excel_path, "")
         # Mirror the outcome onto the run-item row so the UI's WhatsApp column
         # reflects a manual resend, not just the original pipeline attempt.
         cur.execute(
