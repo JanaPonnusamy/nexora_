@@ -9,6 +9,7 @@ desktop app gave. Nothing here is a source of truth; OrderNMC is.
 """
 import datetime
 import logging
+import os
 import threading
 import uuid
 
@@ -21,6 +22,26 @@ _lock = threading.Lock()
 
 DEFAULT_MIN_DAYS = 13
 DEFAULT_MAX_DAYS = 18
+
+# Warehouse stores (e.g. NMW) get the warehouse order query: demand counts
+# Transfer-Out to branches, not just retail billing (see sql/order_warehouse.sql).
+# Which stores are warehouses, their recency window, and their default Min/Max
+# days are all env-overridable; defaults match how NMW has historically been
+# ordered (90-day average, ~32/35 day cover).
+WAREHOUSE_STORES = {
+    s.strip().upper()
+    for s in os.getenv("LEGACY_WAREHOUSE_STORES", "NMW").split(",")
+    if s.strip()
+}
+WAREHOUSE_RECENCY_DAYS = int(os.getenv("LEGACY_WAREHOUSE_RECENCY_DAYS", "30"))
+WAREHOUSE_MIN_DAYS = int(os.getenv("LEGACY_WAREHOUSE_MIN_DAYS", "32"))
+WAREHOUSE_MAX_DAYS = int(os.getenv("LEGACY_WAREHOUSE_MAX_DAYS", "35"))
+
+
+def is_warehouse_store(store_name):
+    """True if this store should use the warehouse order query (Transfer-Out
+    demand + configurable recency) instead of the retail query."""
+    return bool(store_name) and store_name.strip().upper() in WAREHOUSE_STORES
 
 
 def _new_job(kind, store_name, total_steps):
@@ -180,15 +201,23 @@ def _run_sync(job_id, store, plan):
 
 def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
     store = _resolve_store(store_name)
+    warehouse = is_warehouse_store(store_name)
 
-    min_days = DEFAULT_MIN_DAYS if min_days is None else min_days
-    max_days = DEFAULT_MAX_DAYS if max_days is None else max_days
+    # Warehouse Min/Max default to the warehouse profile (not the retail 13/18).
+    default_min = WAREHOUSE_MIN_DAYS if warehouse else DEFAULT_MIN_DAYS
+    default_max = WAREHOUSE_MAX_DAYS if warehouse else DEFAULT_MAX_DAYS
+    min_days = default_min if min_days is None else min_days
+    max_days = default_max if max_days is None else max_days
     if min_days <= 0 or max_days <= 0:
         raise ValueError("Min days and max days must be positive.")
     if min_days > max_days:
         raise ValueError("Min days cannot be greater than max days.")
     if mode not in ("local", "remote"):
         raise ValueError("Mode must be 'local' or 'remote'.")
+    # The warehouse query is StoreName-scoped and must read the central copy.
+    if warehouse:
+        mode = "local"
+    recency_days = WAREHOUSE_RECENCY_DAYS if warehouse else 10
 
     running = _running_job_kind(store_name)
     if running:
@@ -205,13 +234,14 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
     job_id = _new_job("order", store_name, len(plan) + 3)
     threading.Thread(
         target=_run_sync_then_order,
-        args=(job_id, store, plan, min_days, max_days, mode),
+        args=(job_id, store, plan, min_days, max_days, mode, warehouse, recency_days),
         daemon=True,
     ).start()
     return job_id
 
 
-def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode):
+def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
+                         is_warehouse=False, recency_days=10):
     """One durable job: full sync must succeed before order generation."""
     source_cs = order_process.database.branch_connection_string(
         store["server_name"], store["database"], store["username"], store["password"]
@@ -270,7 +300,10 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode):
 
     try:
         _update(job_id, step=base_step, message="Sync completed. Starting order process...")
-        result = order_process.run_order_process(store, min_days, max_days, mode, report)
+        result = order_process.run_order_process(
+            store, min_days, max_days, mode, report,
+            is_warehouse=is_warehouse, recency_days=recency_days,
+        )
         result["tables"] = tables
         _update(
             job_id, status="completed", step=base_step + 3, result=result,

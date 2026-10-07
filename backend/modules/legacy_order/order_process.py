@@ -128,9 +128,19 @@ def _load_sql(name):
         return fh.read()
 
 
-def fetch_source_data(conn_str, odata, store_name, store_code, min_days, max_days, mode):
-    """Port of FetchSourceData. Returns (columns, rows)."""
-    sql = _load_sql("order_remote" if mode == "remote" else "order_local")
+def fetch_source_data(conn_str, odata, store_name, store_code, min_days, max_days,
+                      mode, recency_days=10, sql_name=None):
+    """Port of FetchSourceData. Returns (columns, rows).
+
+    ``sql_name`` overrides the file (used for ``order_warehouse`` -- see
+    run_order_process); otherwise it's the retail local/remote query, unchanged.
+    ``recencydays`` is only referenced by order_warehouse.sql; binding it for the
+    retail queries is harmless because _bind only substitutes params that appear
+    in the SQL text.
+    """
+    if sql_name is None:
+        sql_name = "order_remote" if mode == "remote" else "order_local"
+    sql = _load_sql(sql_name)
     sql, values = _bind(sql, {
         "minday": min_days,
         "maxday": max_days,
@@ -138,6 +148,7 @@ def fetch_source_data(conn_str, odata, store_name, store_code, min_days, max_day
         "storecode": store_code,
         "ODATA": odata,
         "status": 0,
+        "recencydays": recency_days,
     })
 
     with _connect(conn_str, timeout=30) as conn:
@@ -273,8 +284,15 @@ def update_order_header_details(source_cs, store_name, min_days, max_days):
             "last_sale_bill_no": last_sale_bill_no}
 
 
-def run_order_process(store, min_days, max_days, mode, on_progress=None):
-    """Port of ProcessOrder + the FetchOrderData worker branch."""
+def run_order_process(store, min_days, max_days, mode, on_progress=None,
+                      is_warehouse=False, recency_days=10):
+    """Port of ProcessOrder + the FetchOrderData worker branch.
+
+    A warehouse store (``is_warehouse``) runs the order_warehouse.sql query
+    against the central OrderNMC copy. That query is StoreName-scoped (like
+    order_local), counts Transfer-Out demand, and takes a configurable recency
+    window -- see sql/order_warehouse.sql. Retail stores are untouched.
+    """
     def report(msg):
         if on_progress:
             on_progress(msg)
@@ -283,12 +301,21 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None):
     source_cs = database.branch_connection_string(
         store["server_name"], store["database"], store["username"], store["password"]
     )
-    query_cs = source_cs if mode == "remote" else database.central_connection_string()
+    if is_warehouse:
+        sql_name = "order_warehouse"
+        # order_warehouse.sql filters by StoreName, which only the central copy
+        # has -- the branch DB has no StoreName column.
+        query_cs = database.central_connection_string()
+        mode_label = "warehouse"
+    else:
+        sql_name = None
+        query_cs = source_cs if mode == "remote" else database.central_connection_string()
+        mode_label = mode
 
-    report(f"Fetching order data ({mode} mode, since {odata})...")
+    report(f"Fetching order data ({mode_label} mode, since {odata})...")
     columns, rows = fetch_source_data(
         query_cs, odata, store["store_name"], store["store_code"],
-        min_days, max_days, mode,
+        min_days, max_days, mode, recency_days=recency_days, sql_name=sql_name,
     )
     report(f"Order query returned {len(rows)} rows.")
 
