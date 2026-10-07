@@ -797,11 +797,11 @@ export const api = {
     });
   },
 
-  async exportLabelQueuePdf(tenantId, storeId, session) {
+  async exportLabelQueuePdf(tenantId, storeId, session, letter = '') {
     const settings = loadSettings();
     let response;
     try {
-      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/label-exporter/label-queue/pdf${toQuery({ tenant_id: tenantId, store_id: storeId })}`), {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/label-exporter/label-queue/pdf${toQuery({ tenant_id: tenantId, store_id: storeId, letter: letter || undefined })}`), {
         headers: { ...authHeaders(session) }
       });
     } catch {

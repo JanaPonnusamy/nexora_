@@ -4301,6 +4301,20 @@ function lblNewLoc(row) { return String(row.assigned_sublocation || '').trim(); 
 const LBL_AUTO_BOX_RE = /^[A-Za-z]0/;
 function lblIsAutoBoxLoc(row) { return LBL_AUTO_BOX_RE.test(lblNewLoc(row)); }
 
+// The single shelf letter a box code belongs to, for per-letter queue
+// printing — mirrors backend pdf_export.location_letter. Only real box codes
+// (letters then digits) resolve to a letter; a SYP bucket ("SYPC003") strips
+// its "SYP" prefix first ("SYPC003" -> C) and a free-typed named location
+// ("Counter") returns '' so it is never swept into a letter's sheet.
+const LBL_LOC_SPLIT_RE = /^([A-Za-z]+)0*(\d+)$/;
+function queueLocationLetter(location) {
+  const match = LBL_LOC_SPLIT_RE.exec(String(location || '').trim());
+  if (!match) return '';
+  let letters = match[1].toUpperCase();
+  if (letters.startsWith('SYP')) letters = letters.slice(3);
+  return letters ? letters[0] : '';
+}
+
 // Excel-style per-column filtering. lblColValue returns the comparable value for
 // a column key; lblColMatch supports numeric operators (>,<,>=,<=,=) and falls
 // back to case-insensitive substring; lblRowMatchesFilters ANDs every active
@@ -4794,6 +4808,7 @@ function LabelExporter({ session, settings }) {
   const [queueRows, setQueueRows] = useState([]);
   const [queueBusy, setQueueBusy] = useState(false);
   const [queuePrintFilter, setQueuePrintFilter] = useState('all'); // 'all' | 'ready' | 'printed'
+  const [queueLetter, setQueueLetter] = useState(''); // '' = all letters; else a single shelf letter
 
   const [trendRows, setTrendRows] = useState([]);
   const [trendMonths, setTrendMonths] = useState(LBL_TREND_MONTHS_DEFAULT); // 4-12, default 6 (spec §5A/5B)
@@ -5321,21 +5336,35 @@ function LabelExporter({ session, settings }) {
     setQueueOpen(true);
     setQueueBusy(true);
     setQueuePrintFilter('all');
+    setQueueLetter('');
     api.getLabelQueue(tenantId, storeId, session)
       .then((result) => setQueueRows(asArray(result?.rows)))
       .catch((error) => setStatus({ state: 'error', message: error.message }))
       .finally(() => setQueueBusy(false));
   }
 
+  // Letters present in the queue (A, B, C…), so the operator can print one
+  // shelf letter at a time. Mirrors the backend's pdf_export.location_letter:
+  // only real box codes (letters then digits, optionally "SYP"-prefixed) count,
+  // and a SYP bucket resolves to the letter under its prefix ("SYPC003" -> C).
+  const queueLetters = useMemo(() => {
+    const set = new Set();
+    queueRows.forEach((r) => { const L = queueLocationLetter(r.location); if (L) set.add(L); });
+    return Array.from(set).sort();
+  }, [queueRows]);
+
   // Ready to print = never printed (label_created_at null); Already printed =
   // stamped by a prior Print/Export or Export PDF run. Print/Export + the
   // printed-mark call below act on this filtered set, so switching to "Ready
   // to print" and printing only stamps the ones actually printed just now.
+  // The Letter picker narrows the same set so both the browser Print/Export and
+  // the A3 PDF print just that letter.
   const filteredQueueRows = useMemo(() => queueRows.filter((r) => (
-    queuePrintFilter === 'ready' ? !r.label_created_at
+    (queuePrintFilter === 'ready' ? !r.label_created_at
       : queuePrintFilter === 'printed' ? !!r.label_created_at
-        : true
-  )), [queueRows, queuePrintFilter]);
+        : true)
+    && (!queueLetter || queueLocationLetter(r.location) === queueLetter)
+  )), [queueRows, queuePrintFilter, queueLetter]);
 
   function printQueue() {
     if (!filteredQueueRows.length) return;
@@ -5367,9 +5396,10 @@ function LabelExporter({ session, settings }) {
   function exportQueuePdf() {
     if (!filteredQueueRows.length || pdfBusy) return;
     setPdfBusy(true);
-    api.exportLabelQueuePdf(tenantId, storeId, session)
+    const letterTag = queueLetter ? queueLetter : 'all';
+    api.exportLabelQueuePdf(tenantId, storeId, session, queueLetter)
       .then((blob) => {
-        owDownloadBlob(blob, `label-queue-a3-${new Date().toISOString().slice(0, 10)}.pdf`);
+        owDownloadBlob(blob, `label-queue-${letterTag}-a3-${new Date().toISOString().slice(0, 10)}.pdf`);
         return api.markLabelsPrinted(tenantId, storeId, filteredQueueRows.map((r) => r.product_code), session);
       })
       .then(() => setQueueRows((current) => current.map((r) => ({ ...r, label_created_at: r.label_created_at || 'printed' }))))
@@ -6286,6 +6316,13 @@ function LabelExporter({ session, settings }) {
                     <option value="all">All</option>
                     <option value="ready">Ready to print</option>
                     <option value="printed">Already printed</option>
+                  </select>
+                </label>
+                <label className="lblx-field lbl-queue-filter">
+                  <span>Letter</span>
+                  <select value={queueLetter} onChange={(event) => setQueueLetter(event.target.value)} title="Print/export one shelf letter at a time">
+                    <option value="">All letters</option>
+                    {queueLetters.map((L) => <option key={L} value={L}>{L}</option>)}
                   </select>
                 </label>
                 {admin && (

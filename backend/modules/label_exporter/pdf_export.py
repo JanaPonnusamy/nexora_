@@ -98,6 +98,25 @@ def _short_location(location: str) -> str:
         return location
     letters, digits = match.groups()
     return f"{letters}{int(digits)}"
+
+
+def location_letter(location: str) -> str:
+    """The single shelf letter a lettered box belongs to, for per-letter
+    export. "A001" -> "A", "C86" -> "C". SYP buckets are stored as
+    "SYP<letter><n>" ("SYPA012"), so strip the SYP prefix first and take the
+    letter underneath — a letter-C export then picks up both "C###" and
+    "SYPC###" boxes, matching how the operator thinks of "the C labels".
+
+    Only real box codes (letters followed by digits) get a letter; a free-typed
+    named location like "Counter" returns "" so it is never swept into a
+    letter's sheet just because it happens to start with that letter."""
+    match = _LOC_SPLIT_RE.match((location or "").strip())
+    if not match:
+        return ""
+    letters = match.group(1).upper()
+    if letters.startswith("SYP"):
+        letters = letters[3:]
+    return letters[0] if letters else ""
 _CELL_PAD_X = 4.0
 _OUTER_BORDER_W = 1.5   # doubled from the original 0.75
 _INNER_BORDER_W = 0.4
@@ -189,17 +208,45 @@ def _fit_fontsize(text, max_size, min_size, avail_width):
     return min_size
 
 
+def _ink_extents(text, fontsize):
+    """Real vertical ink extents of `text` at `fontsize`, returned as
+    (above, below) baseline in points, measured from the font's own per-glyph
+    bounding boxes.
+
+    This deliberately does NOT use `_FONT.ascender` / `_FONT.descender`: for
+    "hebo" those report 1.07 / -0.307 (a 1.377em line box), far taller than any
+    glyph we actually draw — the labels are uppercase letters + digits whose
+    real cap height is only ~0.73em with no descender. Centering the 48pt
+    location code on that inflated box pushed its baseline *below* the merged
+    cell, so the big code overhung the card's bottom border (the reported bug).
+    Measuring the glyphs themselves centers the visible ink exactly, whatever
+    the string or font size. `glyph_bbox` gives y1 = extent above the baseline
+    (+ is up) and y0 = extent below it (negative when the glyph dips under)."""
+    above = below = 0.0
+    for ch in text:
+        if ch == " ":
+            continue
+        try:
+            bb = _FONT.glyph_bbox(ord(ch))
+        except Exception:
+            above = max(above, 0.72)  # unknown glyph: plain cap-height estimate
+            continue
+        above = max(above, bb.y1)
+        below = max(below, -bb.y0)
+    return above * fontsize, below * fontsize
+
+
 def _draw_text(page, cell, text, max_size, min_size, color, align):
-    """align: 'left' (product names) or 'center' (location code). Vertical
-    centering always uses the font's real ascender/descender so the glyph
-    box — not an arbitrary line-height guess — is centered in the cell."""
+    """align: 'left' (product names) or 'center' (location code). The visible
+    ink block is centered vertically on its real glyph extents (see
+    _ink_extents), so both the big location code and the product names sit
+    true-centered in their cells and never spill over the card border."""
     if not text:
         return
     avail_w = cell.width - 2 * _CELL_PAD_X
     fontsize = _fit_fontsize(text, max_size, min_size, avail_w)
-    glyph_h = (_FONT.ascender - _FONT.descender) * fontsize
-    top_pad = max(0.0, (cell.height - glyph_h) / 2)
-    baseline_y = cell.y0 + top_pad + _FONT.ascender * fontsize
+    above, below = _ink_extents(text, fontsize)
+    baseline_y = cell.y0 + (cell.height - (above + below)) / 2 + above
     if align == "center":
         text_w = fitz.get_text_length(text, fontname=_FONT_NAME, fontsize=fontsize)
         x = cell.x0 + (cell.width - text_w) / 2
@@ -231,10 +278,17 @@ def _draw_card(page, x0, y0, card_w, group):
     _draw_text(page, label_rect, _short_location(group["location"]) or "-", _LOC_FONT_MAX, _LOC_FONT_MIN, _LOC_COLOR, "center")
 
 
-def build_label_queue_pdf(rows: list[dict]) -> bytes:
+def build_label_queue_pdf(rows: list[dict], letter: str | None = None) -> bytes:
     """One box-card per assigned location, tiled top-to-bottom within a
     group of box-columns, then left-to-right across groups (centered on the
-    sheet), across as many landscape A3 pages as needed."""
+    sheet), across as many landscape A3 pages as needed.
+
+    `letter` restricts the sheet to a single shelf letter (e.g. "C" -> only
+    the C### / SYPC### boxes) so each letter can be printed on its own; falsy
+    means the whole queue, as before."""
+    letter = (letter or "").strip().upper()[:1]
+    if letter:
+        rows = [r for r in rows if location_letter(r.get("location")) == letter]
     groups = _group_by_location(rows)
     portrait_w, portrait_h = fitz.paper_size("a3")
     page_w, page_h = portrait_h, portrait_w  # landscape

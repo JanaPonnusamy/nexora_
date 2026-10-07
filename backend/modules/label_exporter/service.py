@@ -347,10 +347,10 @@ def clear_printed_state(tenant_id: str, store_id: str, product_codes: list[str])
     return {"ok": True, "count": len(codes), "affected": affected}
 
 
-def build_label_queue_pdf(tenant_id: str, store_id: str) -> bytes:
+def build_label_queue_pdf(tenant_id: str, store_id: str, letter: str | None = None) -> bytes:
     repository.ensure_schema()
     rows = repository.get_label_queue(tenant_id, store_id)
-    return pdf_export.build_label_queue_pdf(rows)
+    return pdf_export.build_label_queue_pdf(rows, letter)
 
 
 # --------------------------------------------------------------------------

@@ -293,13 +293,23 @@ def get_label_queue(tenant_id: str, store_id: str, current_user: dict = Depends(
 
 
 @router.get("/label-queue/pdf")
-def export_label_queue_pdf(tenant_id: str, store_id: str, current_user: dict = Depends(get_current_user)):
+def export_label_queue_pdf(
+    tenant_id: str,
+    store_id: str,
+    letter: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    """Box-wise A3 label sheet. An optional `letter` restricts it to a single
+    shelf letter (e.g. ?letter=C -> only the C###/SYPC### boxes) so each letter
+    can be printed on its own; omit it for the whole queue."""
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
-    pdf_bytes = service.build_label_queue_pdf(tenant_id, store_id)
+    pdf_bytes = service.build_label_queue_pdf(tenant_id, store_id, letter)
+    letter = (letter or "").strip().upper()[:1]
+    filename = f"label-queue-{letter}.pdf" if letter else "label-queue.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="label-queue.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
