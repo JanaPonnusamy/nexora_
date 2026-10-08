@@ -41,3 +41,17 @@ class MalformedPayload(NmvIntegrationError):
     """The request body failed validation beyond what pydantic can express."""
 
     status_code = 422
+
+
+class EnrollmentFailed(NmvIntegrationError):
+    """An enrollment code was missing, expired, already used, or bound to a
+    different store. Carries a deliberately generic message so it is not an
+    oracle for which check failed."""
+
+    status_code = 403
+
+
+class EnrollmentRateLimited(NmvIntegrationError):
+    """Too many redemption attempts against a known code -- it has been locked."""
+
+    status_code = 429

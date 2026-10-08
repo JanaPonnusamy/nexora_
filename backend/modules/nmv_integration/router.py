@@ -16,13 +16,26 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from config.security import decode_access_token
+from dependencies.store_scope import require_super_admin
 from modules.device_identity import repository as device_repo
-from modules.nmv_integration import repository, schemas, service
+from modules.nmv_integration import enrollment, repository, schemas, service
 from modules.nmv_integration.exceptions import NmvIntegrationError
 
 router = APIRouter(prefix="/api/nmv-integration/v1/stores", tags=["NMV Integration"])
+admin_router = APIRouter(prefix="/api/nmv-integration/v1/admin", tags=["NMV Integration"])
 
 _bearer = HTTPBearer(auto_error=False)
+
+
+def _resolve_active_store(store_code: str) -> dict:
+    """Resolve store_code to a provisioned, active platform store (shared by the
+    admin-generate and device-enroll paths, which have no device token yet)."""
+    store = repository.resolve_platform_store(store_code)
+    if not store:
+        raise HTTPException(status_code=404, detail="Unknown store")
+    if not store.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Store is inactive")
+    return store
 
 
 def get_nmv_context(store_code: str, credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
@@ -123,3 +136,33 @@ def post_order_results(
 @router.post("/{store_code}/ack", response_model=schemas.AckResponse)
 def post_ack(store_code: str, body: schemas.AckRequest, ctx: dict = Depends(get_nmv_context)):
     return _guard(service.ack, ctx["store"], body.entity, body.watermark)
+
+
+# ---- enrollment -----------------------------------------------------------
+#
+# The device-facing enroll endpoint has NO bearer dependency: the device has no
+# token yet -- that is the whole point. It authenticates with the one-time code
+# in the body, which the repository verifies against the store-bound hash. The
+# path is allow-listed in app.py's require_auth middleware (like the signature
+# /api/auth/device/token endpoint it complements).
+
+@router.post("/{store_code}/enroll", response_model=schemas.EnrollResponse)
+def enroll(store_code: str, body: schemas.EnrollRequest):
+    store = _resolve_active_store(store_code)
+    return _guard(enrollment.enroll_device, store, body)
+
+
+# Admin code generation lives under /admin (super-admin bearer required); it is
+# NOT allow-listed, so the require_auth middleware + require_super_admin gate it.
+
+@admin_router.post(
+    "/stores/{store_code}/enrollment", response_model=schemas.GenerateEnrollmentResponse
+)
+def generate_enrollment(
+    store_code: str,
+    body: schemas.GenerateEnrollmentRequest | None = None,
+    user: dict = Depends(require_super_admin),
+):
+    store = _resolve_active_store(store_code)
+    ttl = body.ttl_seconds if body else None
+    return _guard(enrollment.generate_enrollment_code, store, user, ttl)

@@ -15,6 +15,7 @@ can substitute a fake.
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from threading import Lock
 
@@ -24,6 +25,10 @@ from modules.legacy_order import database as legacy_db
 _SCHEMA_FILE = Path(__file__).with_name("sql") / "0001_nmv_integration.sql"
 _schema_lock = Lock()
 _schema_ready = False
+
+_ENROLL_SCHEMA_FILE = Path(__file__).with_name("sql") / "0002_nmv_enrollment_code.sql"
+_enroll_schema_lock = Lock()
+_enroll_schema_ready = False
 
 
 def _central():
@@ -90,6 +95,189 @@ def resolve_platform_store(store_code):
             "is_active": bool(row[4]) if row[4] is not None else True,
             "order_store_name": row[2],  # OrderNMC StoreName == short code
         }
+    finally:
+        conn.close()
+
+
+# ---- enrollment codes (platform) -----------------------------------------
+#
+# A one-time code that lets an NMV device self-register (reusing the existing
+# device-identity module) without a store-user login. The plaintext code is
+# never stored; only its SHA-256 hash is. Lives in the platform DB next to
+# device_registrations so claim + register touch one database.
+
+def ensure_enrollment_schema():
+    """Apply the idempotent enrollment-code DDL once per backend process."""
+    global _enroll_schema_ready
+    if _enroll_schema_ready:
+        return
+    with _enroll_schema_lock:
+        if _enroll_schema_ready:
+            return
+        conn = _platform()
+        try:
+            cur = conn.cursor()
+            script = _ENROLL_SCHEMA_FILE.read_text(encoding="utf-8")
+            for batch in (part.strip() for part in script.split("\nGO")):
+                if batch:
+                    cur.execute(batch)
+            conn.commit()
+            _enroll_schema_ready = True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def _uid(value):
+    """Treat empty / non-GUID placeholders as NULL so a uniqueidentifier cast
+    can't blow up on a blank or malformed value."""
+    if value in (None, "", "None"):
+        return None
+    try:
+        uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return str(value)
+
+
+def create_enrollment_code(store_id, store_code, code_hash, ttl_seconds,
+                           created_by=None, created_by_username=None):
+    """Supersede any still-active code for the store, then insert a new one.
+
+    Returns (code_id, expires_at_iso). Only the hash is persisted; the caller
+    holds the single plaintext copy to hand back to the admin once.
+    """
+    conn = _platform()
+    try:
+        cur = conn.cursor()
+        # At most one active code per store: a freshly generated code
+        # immediately invalidates any earlier unused one.
+        cur.execute(
+            "UPDATE dbo.nmv_enrollment_code SET status = 'superseded' "
+            "WHERE store_id = ? AND status = 'active'",
+            store_id,
+        )
+        cur.execute(
+            """
+            INSERT INTO dbo.nmv_enrollment_code
+                (id, store_id, store_code, code_hash, expires_at, created_by, created_by_username)
+            OUTPUT INSERTED.id, INSERTED.expires_at
+            VALUES (NEWID(), ?, ?, ?, DATEADD(SECOND, ?, SYSUTCDATETIME()), ?, ?)
+            """,
+            store_id, store_code, code_hash, int(ttl_seconds),
+            _uid(created_by), created_by_username,
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return str(row[0]), (row[1].isoformat() if row[1] else None)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def redeem_enrollment_code(code_hash, store_id, max_attempts):
+    """Look a code up by hash and atomically consume it if it is usable.
+
+    All state transitions happen in one connection so single-use is race-safe:
+    the claim is a conditional UPDATE guarded by both status='active' and a
+    live expiry, and only the one caller whose UPDATE affects a row wins.
+
+    Returns a dict {"status": <outcome>, "code": {...} | None} where outcome is
+    one of: not_found, wrong_store, locked, used, superseded, expired,
+    consumed, ok. Never returns or logs the plaintext code.
+    """
+    conn = _platform()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, store_id, store_code, status, expires_at, used_at, "
+            "attempt_count, created_by, created_by_username "
+            "FROM dbo.nmv_enrollment_code WHERE code_hash = ?",
+            code_hash,
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.commit()
+            return {"status": "not_found", "code": None}
+
+        code = {
+            "id": str(row[0]),
+            "store_id": str(row[1]),
+            "store_code": row[2],
+            "status": row[3],
+            "attempt_count": int(row[6] or 0),
+            "created_by": str(row[7]) if row[7] else None,
+            "created_by_username": row[8],
+        }
+
+        # Record the presentation (brute-force signal + audit), always.
+        cur.execute(
+            "UPDATE dbo.nmv_enrollment_code SET attempt_count = attempt_count + 1 WHERE id = ?",
+            code["id"],
+        )
+        new_attempts = code["attempt_count"] + 1
+
+        # The code is bound to one store: a code issued for NMV can never enroll
+        # any other store, regardless of the store_code the client sends.
+        if code["store_id"] != str(store_id):
+            conn.commit()
+            return {"status": "wrong_store", "code": code}
+
+        if code["status"] == "active" and new_attempts > max_attempts:
+            cur.execute(
+                "UPDATE dbo.nmv_enrollment_code SET status = 'locked' WHERE id = ? AND status = 'active'",
+                code["id"],
+            )
+            conn.commit()
+            return {"status": "locked", "code": code}
+
+        if code["status"] != "active":
+            conn.commit()
+            return {"status": code["status"], "code": code}  # used | superseded | locked
+
+        # Atomic single-use + expiry claim.
+        cur.execute(
+            "UPDATE dbo.nmv_enrollment_code SET status = 'used', used_at = SYSUTCDATETIME() "
+            "WHERE id = ? AND status = 'active' AND expires_at > SYSUTCDATETIME()",
+            code["id"],
+        )
+        if cur.rowcount and cur.rowcount == 1:
+            conn.commit()
+            return {"status": "ok", "code": code}
+
+        # Claim missed: either expired (still 'active' but past expiry) or a
+        # concurrent enroll consumed it first.
+        cur.execute("SELECT status FROM dbo.nmv_enrollment_code WHERE id = ?", code["id"])
+        after = cur.fetchone()
+        conn.commit()
+        if after and after[0] == "active":
+            return {"status": "expired", "code": code}
+        return {"status": "consumed", "code": code}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def attach_device_to_code(code_id, device_id):
+    """Record which device consumed a code (audit linkage; the code is already
+    marked 'used' by redeem_enrollment_code)."""
+    conn = _platform()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE dbo.nmv_enrollment_code SET device_id = ? WHERE id = ?",
+            _uid(device_id), code_id,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

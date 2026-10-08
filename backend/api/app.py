@@ -126,7 +126,8 @@ from modules.legacy_order.router import (
     router as legacy_order_router
 )
 from modules.nmv_integration.router import (
-    router as nmv_integration_router
+    router as nmv_integration_router,
+    admin_router as nmv_integration_admin_router,
 )
 from modules.grid_settings.router import (
     router as grid_settings_router
@@ -253,6 +254,12 @@ _PUBLIC_AGENT_PATTERNS = (
     re.compile(r'^/api/desktop-client/config$'),
     re.compile(r'^/api/desktop-client/heartbeat$'),
     re.compile(r'^/api/stores/[^/]+/agent-config$'),
+    # NMV device enrollment: a not-yet-registered device has no bearer token and
+    # authenticates with its one-time enrollment code in the body (verified
+    # against a store-bound hash). Same rationale as /api/auth/device/token.
+    # The admin code-GENERATION route (/api/nmv-integration/v1/admin/...) is
+    # deliberately NOT here -- it stays behind the bearer + super-admin gate.
+    re.compile(r'^/api/nmv-integration/v1/stores/[^/]+/enroll$'),
 )
 
 def _is_public_agent_call(request: Request) -> bool:
@@ -358,6 +365,7 @@ if document_extraction_router is not None:
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
 app.include_router(nmv_integration_router)
+app.include_router(nmv_integration_admin_router)
 app.include_router(desktop_client_router)
 app.include_router(automation_settings_router)
 app.include_router(grid_settings_router)

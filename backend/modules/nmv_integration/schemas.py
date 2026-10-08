@@ -127,3 +127,47 @@ class AckRequest(BaseModel):
 class AckResponse(BaseModel):
     entity: str
     watermark: int | str | None = None
+
+
+# ---- enrollment -----------------------------------------------------------
+
+class GenerateEnrollmentRequest(BaseModel):
+    """Optional knobs for an admin-issued enrollment code. Body may be omitted
+    entirely (defaults apply)."""
+
+    ttl_seconds: int | None = Field(
+        None, ge=300, le=86_400,
+        description="Code lifetime in seconds (default from NMV_ENROLLMENT_TTL_SECONDS).",
+    )
+
+
+class GenerateEnrollmentResponse(BaseModel):
+    store_code: str
+    store_id: str
+    code_id: str
+    enrollment_code: str  # returned exactly once; never retrievable again
+    expires_at: str | None = None
+    expires_in_seconds: int
+
+
+class EnrollRequest(BaseModel):
+    """What the NMV device POSTs to enroll. Mirrors device_identity's
+    RegisterRequest plus the one-time code that authorises it (replacing the
+    store-user bearer the normal register endpoint requires)."""
+
+    enrollment_code: str = Field(..., min_length=1, max_length=200)
+    device_fingerprint: str = Field(..., min_length=1, max_length=200)
+    public_key: str = Field(..., min_length=1)
+    key_algo: str = Field("ED25519", max_length=30)
+    machine_name: str | None = Field(None, max_length=200)
+    app_type: str | None = Field(None, max_length=30)
+    app_version: str | None = Field(None, max_length=50)
+
+
+class EnrollResponse(BaseModel):
+    device_id: str
+    store_code: str
+    assigned_store_ids: list[str] = Field(default_factory=list)
+    token: str
+    token_type: str = "bearer"
+    expires_in_seconds: int
