@@ -125,6 +125,9 @@ from modules.pass_gen.router import (
 from modules.legacy_order.router import (
     router as legacy_order_router
 )
+from modules.nmv_integration.router import (
+    router as nmv_integration_router
+)
 from modules.grid_settings.router import (
     router as grid_settings_router
 )
@@ -354,6 +357,7 @@ if document_extraction_router is not None:
     app.include_router(document_extraction_router)
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
+app.include_router(nmv_integration_router)
 app.include_router(desktop_client_router)
 app.include_router(automation_settings_router)
 app.include_router(grid_settings_router)
