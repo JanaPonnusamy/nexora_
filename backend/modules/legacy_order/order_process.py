@@ -216,33 +216,66 @@ def insert_data_into_destination(columns, rows, store_name):
                     raise
 
 
-def update_order_header_details(source_cs, store_name, min_days, max_days):
+def update_order_header_details(source_cs, store_name, min_days, max_days,
+                                from_central=False):
     """Port of UpdateOrderHeaderDetails.
 
-    Last sale bill and last GRN always come from the BRANCH database, even when
-    the order query itself ran in local mode -- they are the watermarks that
-    later tell the GRN reconciliation where this order stopped.
+    Last sale bill and last GRN are the watermarks that later tell the GRN
+    reconciliation where this order stopped.
+
+    For LAN stores they come from the BRANCH database (``from_central`` False),
+    even when the order query itself ran in local mode -- unchanged behaviour.
+
+    For an agent-synced store (e.g. NMV, ``from_central`` True) HO has no direct
+    branch SQL connection: the store's ProductSaleInformation / PurchaseTrans
+    rows are already in the central OrderNMC copy, stamped with StoreName by the
+    NMV Integration uplink. The two watermark reads therefore run against that
+    central copy instead, scoped by ``StoreName`` so no other store's rows can
+    leak in. The selected columns, ``'C%'`` / ``'IV'`` filters and ordering are
+    otherwise identical to the branch reads.
     """
     last_sale_bill_no = ""
     last_bill_datetime = None
     last_grn = ""
 
-    with _connect(source_cs, timeout=30) as src:
-        cur = src.cursor()
-        row = cur.execute(
-            "SELECT TOP 1 Transactiondate, BNumber FROM ProductSaleInformation "
-            "WHERE BNumber LIKE 'C%' ORDER BY Transactiondate DESC, BNumber DESC"
-        ).fetchone()
-        if row:
-            last_sale_bill_no = str(row.BNumber or "")
-            last_bill_datetime = row.Transactiondate
+    if from_central:
+        # Already-synced NMV copy -- same columns/filters, StoreName-scoped.
+        with _connect(database.central_connection_string(), timeout=30) as src:
+            cur = src.cursor()
+            row = cur.execute(
+                "SELECT TOP 1 Transactiondate, BNumber FROM ProductSaleInformation "
+                "WHERE StoreName = ? AND BNumber LIKE 'C%' "
+                "ORDER BY Transactiondate DESC, BNumber DESC",
+                store_name,
+            ).fetchone()
+            if row:
+                last_sale_bill_no = str(row.BNumber or "")
+                last_bill_datetime = row.Transactiondate
 
-        row = cur.execute(
-            "SELECT TOP 1 Grnnumber FROM Purchasetrans WHERE InvoiceSeries = 'IV' "
-            "ORDER BY Grndate DESC"
-        ).fetchone()
-        if row:
-            last_grn = str(row.Grnnumber or "")
+            row = cur.execute(
+                "SELECT TOP 1 Grnnumber FROM Purchasetrans "
+                "WHERE StoreName = ? AND InvoiceSeries = 'IV' ORDER BY Grndate DESC",
+                store_name,
+            ).fetchone()
+            if row:
+                last_grn = str(row.Grnnumber or "")
+    else:
+        with _connect(source_cs, timeout=30) as src:
+            cur = src.cursor()
+            row = cur.execute(
+                "SELECT TOP 1 Transactiondate, BNumber FROM ProductSaleInformation "
+                "WHERE BNumber LIKE 'C%' ORDER BY Transactiondate DESC, BNumber DESC"
+            ).fetchone()
+            if row:
+                last_sale_bill_no = str(row.BNumber or "")
+                last_bill_datetime = row.Transactiondate
+
+            row = cur.execute(
+                "SELECT TOP 1 Grnnumber FROM Purchasetrans WHERE InvoiceSeries = 'IV' "
+                "ORDER BY Grndate DESC"
+            ).fetchone()
+            if row:
+                last_grn = str(row.Grnnumber or "")
 
     with _connect(database.central_connection_string(), timeout=30) as conn:
         cur = conn.cursor()
@@ -285,13 +318,22 @@ def update_order_header_details(source_cs, store_name, min_days, max_days):
 
 
 def run_order_process(store, min_days, max_days, mode, on_progress=None,
-                      is_warehouse=False, recency_days=10):
+                      is_warehouse=False, recency_days=10, is_agent_synced=False):
     """Port of ProcessOrder + the FetchOrderData worker branch.
 
     A warehouse store (``is_warehouse``) runs the order_warehouse.sql query
     against the central OrderNMC copy. That query is StoreName-scoped (like
     order_local), counts Transfer-Out demand, and takes a configurable recency
     window -- see sql/order_warehouse.sql. Retail stores are untouched.
+
+    An agent-synced store (``is_agent_synced``, e.g. NMV) has no direct branch
+    SQL connection from HO -- its data arrives via the NMV Integration agent and
+    is already in the central OrderNMC copy. The order query is therefore forced
+    to local mode (reads the central copy, StoreName-scoped exactly like every
+    other local run) and the header watermark reads come from central too
+    (``from_central``). The 90-day CTE, min/max, quantity and status logic are
+    byte-for-byte the same as every other local run -- only the data *source*
+    differs. LAN stores are unaffected.
     """
     def report(msg):
         if on_progress:
@@ -307,6 +349,15 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
         # has -- the branch DB has no StoreName column.
         query_cs = database.central_connection_string()
         mode_label = "warehouse"
+    elif is_agent_synced:
+        # No branch to query -- the retail order query runs against the central
+        # copy the NMV Integration agent already populated. Forced local;
+        # source_cs is built but never used (update_order_header_details reads
+        # central instead).
+        sql_name = None
+        mode = "local"
+        query_cs = database.central_connection_string()
+        mode_label = "agent-synced"
     else:
         sql_name = None
         query_cs = source_cs if mode == "remote" else database.central_connection_string()
@@ -324,7 +375,8 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
 
     report("Stamping OrderHeaderDetails...")
     header = update_order_header_details(
-        source_cs, store["store_name"], min_days, max_days
+        source_cs, store["store_name"], min_days, max_days,
+        from_central=is_agent_synced,
     )
 
     report(f"Order processing completed ({inserted} rows).")

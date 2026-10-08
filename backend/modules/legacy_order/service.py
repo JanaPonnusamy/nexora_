@@ -44,6 +44,27 @@ def is_warehouse_store(store_name):
     return bool(store_name) and store_name.strip().upper() in WAREHOUSE_STORES
 
 
+# Agent-synced stores (e.g. NMV) have NO direct branch SQL connection from HO:
+# their POS data arrives via the NMV Integration agent (outbound HTTPS) and is
+# already in the central OrderNMC copy. For these stores the Order Process runs
+# entirely against that central copy -- no branch connection test, no pre-order
+# branch pull, and the header watermark reads come from central (StoreName-
+# scoped). Env-overridable, same shape as WAREHOUSE_STORES. The five LAN stores
+# (NMA/NMW/NMC/NMG/NMS) are NOT in this set, so their path is unchanged.
+AGENT_SYNCED_STORES = {
+    s.strip().upper()
+    for s in os.getenv("LEGACY_AGENT_SYNCED_STORES", "NMV").split(",")
+    if s.strip()
+}
+
+
+def is_agent_synced_store(store_name):
+    """True if this store's data arrives via the NMV Integration agent rather
+    than a direct HO->branch SQL pull (so the Order Process must read the
+    already-synced central copy, never the branch)."""
+    return bool(store_name) and store_name.strip().upper() in AGENT_SYNCED_STORES
+
+
 def _new_job(kind, store_name, total_steps):
     job_id = uuid.uuid4().hex
     with _lock:
@@ -104,7 +125,12 @@ def _resolve_store(store_name):
     store = repository.get_store(store_name)
     if not store:
         raise ValueError(f"Store '{store_name}' is not configured in OrderNMC.Stores.")
-    if not store["server_name"] or not store["database"]:
+    # Agent-synced stores (NMV) legitimately have no branch server/database -- HO
+    # never connects to them directly; their data arrives via the NMV Integration
+    # agent. LAN stores still require a configured source DB (unchanged).
+    if not is_agent_synced_store(store_name) and (
+        not store["server_name"] or not store["database"]
+    ):
         raise ValueError(
             f"Store '{store_name}' has no source server/database configured."
         )
@@ -202,6 +228,7 @@ def _run_sync(job_id, store, plan):
 def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
     store = _resolve_store(store_name)
     warehouse = is_warehouse_store(store_name)
+    agent_synced = is_agent_synced_store(store_name)
 
     # Warehouse Min/Max default to the warehouse profile (not the retail 13/18).
     default_min = WAREHOUSE_MIN_DAYS if warehouse else DEFAULT_MIN_DAYS
@@ -224,6 +251,22 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
         raise ValueError(
             f"A {running} job is already running for '{store_name}'. Wait for it to finish."
         )
+
+    # Agent-synced stores (NMV): the data is already central (the NMV
+    # Integration agent delivered it). There is no branch to test or pull, so
+    # skip the connection test + pre-order branch sync entirely and run the
+    # order directly against the central copy. LAN stores keep the full
+    # sync-then-order path below, unchanged.
+    if agent_synced:
+        job_id = _new_job("order", store_name, 3)
+        threading.Thread(
+            target=_run_order,
+            args=(job_id, store, min_days, max_days, mode),
+            kwargs={"is_warehouse": warehouse, "is_agent_synced": True,
+                    "recency_days": recency_days},
+            daemon=True,
+        ).start()
+        return job_id
 
     # Order Process always begins with a fresh full branch sync.
     ok, error = repository.test_branch_connection(store)
@@ -378,7 +421,8 @@ def _run_stock_update(job_id, store, source_store):
         )
 
 
-def _run_order(job_id, store, min_days, max_days, mode):
+def _run_order(job_id, store, min_days, max_days, mode, is_warehouse=False,
+               is_agent_synced=False, recency_days=10):
     step = {"n": 0}
 
     def report(message):
@@ -386,7 +430,11 @@ def _run_order(job_id, store, min_days, max_days, mode):
         _update(job_id, step=min(step["n"], 3), message=message)
 
     try:
-        result = order_process.run_order_process(store, min_days, max_days, mode, report)
+        result = order_process.run_order_process(
+            store, min_days, max_days, mode, report,
+            is_warehouse=is_warehouse, is_agent_synced=is_agent_synced,
+            recency_days=recency_days,
+        )
         _update(
             job_id,
             status="completed",
