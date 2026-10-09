@@ -33,12 +33,27 @@ import secrets
 from config.security import EXPIRE_MINUTES, create_access_token
 from modules.device_identity import repository as device_repo
 from modules.nmv_integration import audit_service, repository
-from modules.nmv_integration.exceptions import EnrollmentFailed, EnrollmentRateLimited
+from modules.nmv_integration.exceptions import (
+    EnrollmentFailed,
+    EnrollmentRateLimited,
+    StoreAccessDenied,
+)
 
 # Lifetime of a freshly issued code. 15 minutes is long enough to walk a code
 # over to the store PC and type it, short enough to bound exposure.
 ENROLLMENT_TTL_SECONDS = int(os.getenv("NMV_ENROLLMENT_TTL_SECONDS", "900"))
 _TTL_MIN, _TTL_MAX = 300, 86_400
+
+# Only these stores may be issued an enrollment code at all (Phase-1: NMV only).
+# This is the generation-side half of store scoping; the code is *additionally*
+# bound to its store's id, so even a wrongly issued code can enroll only the
+# store it was bound to (see redeem_enrollment_code). Configurable, not a magic
+# literal, so onboarding a second remote store later is a one-env change.
+_ALLOWED_STORES = {
+    s.strip().upper()
+    for s in os.getenv("NMV_ENROLLMENT_ALLOWED_STORES", "NMV").split(",")
+    if s.strip()
+}
 
 # A known code locks after this many presentations (defence in depth; the code's
 # 160-bit entropy already makes blind guessing infeasible).
@@ -85,6 +100,10 @@ def generate_enrollment_code(store, admin_user, ttl_seconds=None):
     The caller (router) has already validated the store exists and is active and
     that the caller is an HO super admin.
     """
+    if store["store_code"].upper() not in _ALLOWED_STORES:
+        raise StoreAccessDenied(
+            f"Enrollment codes are not enabled for store '{store['store_code']}'."
+        )
     repository.ensure_enrollment_schema()
     ttl = _bounded_ttl(ttl_seconds)
     code_plain = _new_code()
