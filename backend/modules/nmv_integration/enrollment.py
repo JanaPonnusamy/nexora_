@@ -44,14 +44,16 @@ from modules.nmv_integration.exceptions import (
 ENROLLMENT_TTL_SECONDS = int(os.getenv("NMV_ENROLLMENT_TTL_SECONDS", "900"))
 _TTL_MIN, _TTL_MAX = 300, 86_400
 
-# Only these stores may be issued an enrollment code at all (Phase-1: NMV only).
-# This is the generation-side half of store scoping; the code is *additionally*
-# bound to its store's id, so even a wrongly issued code can enroll only the
-# store it was bound to (see redeem_enrollment_code). Configurable, not a magic
-# literal, so onboarding a second remote store later is a one-env change.
+# Optional generation-side store lockdown. When NMV_ENROLLMENT_ALLOWED_STORES is
+# set (comma-separated codes), a code may only be MINTED for one of those stores;
+# when it is unset/empty (the default), a super admin may generate a code for any
+# provisioned store -- which is what lets new remote stores be onboarded straight
+# from the HO UI without a config change. Cross-store safety never depends on this
+# list: every code is additionally BOUND to its store's id, so a code can only
+# ever enroll the store it was issued for (see redeem_enrollment_code).
 _ALLOWED_STORES = {
     s.strip().upper()
-    for s in os.getenv("NMV_ENROLLMENT_ALLOWED_STORES", "NMV").split(",")
+    for s in os.getenv("NMV_ENROLLMENT_ALLOWED_STORES", "").split(",")
     if s.strip()
 }
 
@@ -100,7 +102,7 @@ def generate_enrollment_code(store, admin_user, ttl_seconds=None):
     The caller (router) has already validated the store exists and is active and
     that the caller is an HO super admin.
     """
-    if store["store_code"].upper() not in _ALLOWED_STORES:
+    if _ALLOWED_STORES and store["store_code"].upper() not in _ALLOWED_STORES:
         raise StoreAccessDenied(
             f"Enrollment codes are not enabled for store '{store['store_code']}'."
         )

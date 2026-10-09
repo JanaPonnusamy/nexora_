@@ -28,8 +28,27 @@ interface DevicesResponse {
   devices: Device[]
 }
 
+/** A one-time NMV-style device enrollment code, returned exactly once by the
+ *  super-admin generate endpoint. Only its hash is ever stored server-side. */
+export interface EnrollmentCode {
+  store_code: string
+  store_id: string
+  code_id: string
+  enrollment_code: string
+  expires_at: string | null
+  expires_in_seconds: number
+}
+
 export const deviceService = {
   list: () => api.get<DevicesResponse>('/api/devices').then((r) => r.devices),
+  /** Mint a one-time enrollment code bound to `storeCode`. The plaintext code is
+   *  returned once here and never retrievable again. `ttlSeconds` is optional
+   *  (server default ~15 min). Super-admin only. */
+  generateEnrollmentCode: (storeCode: string, ttlSeconds?: number) =>
+    api.post<EnrollmentCode>(
+      `/api/nmv-integration/v1/admin/stores/${encodeURIComponent(storeCode)}/enrollment`,
+      ttlSeconds ? { ttl_seconds: ttlSeconds } : {},
+    ),
   assignStore: (deviceId: string, storeId: string) =>
     api.post<{ device_id: string; stores: string[] }>(
       `/api/devices/${deviceId}/stores`,
