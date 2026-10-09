@@ -207,6 +207,41 @@ class DeviceIdentity:
         self.set_device_id(data["device_id"])
         return data
 
+    def enroll_with_code(self, ho_url: str, store_code: str, enrollment_code: str,
+                         fingerprint: str, machine_name: str | None = None,
+                         app_type: str = "nmv_agent", app_version: str | None = None,
+                         timeout: int = 15) -> dict:
+        """Bootstrap this machine with a one-time HO enrollment code.
+
+        Same effect as register() -- generates/seals the keypair, registers the
+        public key, persists the returned device_id -- but it authenticates with
+        the one-time code in the body instead of a signed-in store-user bearer.
+        That is the whole point for NMV: a remote store PC has no store-user
+        login, so an HO super admin pre-authorises this one machine with a code.
+
+        The code is bound server-side to exactly one store; store_code here is
+        the path the device claims and must match the store the code was issued
+        for, or HO rejects it.
+        """
+        public_pem = self.ensure_keypair()
+        resp = requests.post(
+            f"{ho_url.rstrip('/')}/api/nmv-integration/v1/stores/{store_code}/enroll",
+            json={
+                "enrollment_code": enrollment_code,
+                "device_fingerprint": fingerprint,
+                "public_key": public_pem,
+                "key_algo": "ED25519",
+                "machine_name": machine_name,
+                "app_type": app_type,
+                "app_version": app_version,
+            },
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self.set_device_id(data["device_id"])
+        return data
+
     def get_token(self, ho_url: str, timeout: int = 15, refresh_skew: int = 120) -> str:
         """Return a cached access token, minting a fresh one (signed challenge)
         when missing/near-expiry."""

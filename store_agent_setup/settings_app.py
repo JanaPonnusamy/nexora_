@@ -28,6 +28,21 @@ from .service_manager import ServiceManager
 PRIMARY = "#0B6E4F"
 
 
+def _enroll_error(ex):
+    """Human-readable enrollment error. Surfaces HO's JSON 'detail' (e.g.
+    'Invalid or expired enrollment code.') from a failed HTTP response instead
+    of a bare 'HTTP 400' or a raw stack type."""
+    resp = getattr(ex, "response", None)
+    if resp is not None:
+        try:
+            detail = resp.json().get("detail")
+        except ValueError:
+            detail = (resp.text or "").strip()[:200] or None
+        if detail:
+            return f"HTTP {resp.status_code}: {detail}"
+    return str(ex)
+
+
 def _detect_install_path():
     if getattr(sys, "frozen", False):
         return str(Path(sys.executable).resolve().parent)
@@ -41,8 +56,8 @@ class SettingsApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Nexora Store Agent - Settings")
-        self.geometry("620x760")
-        self.resizable(False, False)
+        self.geometry("620x900")
+        self.resizable(False, True)
 
         self.install_path = tk.StringVar(value=_detect_install_path())
         # Three HO routes (tried in this order) + the reachable one for HO calls.
@@ -51,6 +66,13 @@ class SettingsApp(tk.Tk):
         self.domain_url = tk.StringVar()
         self.ho_url = tk.StringVar()
         self.log_level = tk.StringVar(value="INFO")
+
+        # Device enrollment (NMV / remote stores). The device has no store-user
+        # login, so it self-registers with a one-time code an HO super admin
+        # issues (Sync -> Device Management -> Generate a device enrollment code).
+        self.enroll_store_code = tk.StringVar()
+        self.enroll_code = tk.StringVar()
+
         self.tenants = []
         self.stores = []
         self.selected_tenant = None
@@ -88,6 +110,8 @@ class SettingsApp(tk.Tk):
         ttk.Combobox(frm, textvariable=self.log_level, width=14,
                      values=["DEBUG", "INFO", "WARNING", "ERROR"],
                      state="readonly").grid(row=4, column=1, sticky="w")
+
+        self._build_enroll_section()
 
         tk.Label(self, text="Store assignment (optional - reselect to reassign):",
                  font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(12, 2))
@@ -149,6 +173,86 @@ class SettingsApp(tk.Tk):
         ttk.Button(btns, text="Stop Mail Service",
                    command=self._stop_mail_service).pack(side="left", padx=6)
 
+    def _build_enroll_section(self):
+        tk.Label(self, text="Device Enrollment (NMV / remote stores)",
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
+        tk.Label(
+            self,
+            text="For a remote store PC with no store-user login (e.g. NMV). Ask "
+                 "HO for a one-time code (Sync -> Device Management -> \"Generate a "
+                 "device enrollment code\"), enter the store code and the code "
+                 "below, then press \"Enroll device\". The code is single-use, "
+                 "time-limited, and bound to the one store HO issued it for.",
+            fg="#555", wraplength=580, justify="left",
+        ).pack(anchor="w", padx=16)
+
+        frm = tk.Frame(self)
+        frm.pack(fill="x", padx=16, pady=(6, 0))
+        self._row(frm, "Store code:", self.enroll_store_code, 0, width=16)
+        self._row(frm, "Enrollment code:", self.enroll_code, 1, width=40)
+
+        btns = tk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=8)
+        ttk.Button(btns, text="Enroll device",
+                   command=self._enroll_device).pack(side="left")
+
+    def _enroll_device(self):
+        store_code = self.enroll_store_code.get().strip()
+        code = self.enroll_code.get().strip()
+        if not store_code:
+            messagebox.showerror("Enroll", "Enter the store code the code was issued for (e.g. NMV).")
+            return
+        if not code:
+            messagebox.showerror("Enroll", "Paste the one-time enrollment code from HO.")
+            return
+        routes = self._route_urls()
+        if not routes:
+            messagebox.showerror("Enroll", "Enter at least one HO URL first.")
+            return
+        threading.Thread(
+            target=self._enroll_worker, args=(store_code, code), daemon=True
+        ).start()
+
+    def _enroll_worker(self, store_code, code):
+        import socket as _socket
+
+        # Imported lazily (like deployment.register_device) so the setup package
+        # doesn't hard-depend on the agent runtime unless enrollment is run.
+        try:
+            from store_agent.device_client import DeviceIdentity, machine_fingerprint
+            from . import AGENT_VERSION
+        except Exception as ex:  # pragma: no cover - import/env guard
+            self.after(0, lambda: messagebox.showerror(
+                "Enroll", f"Agent runtime not available for enrollment: {ex}"))
+            return
+
+        # Identity is written where the device-mode runtime reads it:
+        # <install>/config (store_agent.config.DEVICE_STATE_DIR).
+        state_dir = Path(self.install_path.get()) / "config"
+        ho_url = self._active()
+        try:
+            self.set_status(f"Enrolling with HO at {ho_url}...")
+            device = DeviceIdentity(state_dir)
+            data = device.enroll_with_code(
+                ho_url, store_code, code, machine_fingerprint(),
+                machine_name=_socket.gethostname(), app_version=AGENT_VERSION,
+            )
+            stores = ", ".join(data.get("assigned_store_ids") or []) or "(none)"
+            self.after(0, lambda: messagebox.showinfo(
+                "Enroll",
+                "Device enrolled successfully.\n\n"
+                f"Device ID: {data.get('device_id')}\n"
+                f"Store: {data.get('store_code')}\n"
+                f"Assigned store IDs: {stores}\n\n"
+                "The device identity is now stored on this machine. Restart the "
+                "Store Agent service for it to take effect."))
+            self.set_status("Enrolled.")
+            # Clear the code: it is single-use and now spent.
+            self.after(0, lambda: self.enroll_code.set(""))
+        except Exception as ex:
+            self.after(0, lambda: messagebox.showerror("Enroll failed", _enroll_error(ex)))
+            self.set_status("Enrollment failed.")
+
     def _row(self, parent, label, var, r, width=40, button=None):
         tk.Label(parent, text=label).grid(row=r, column=0, sticky="w", pady=6)
         ttk.Entry(parent, textvariable=var, width=width).grid(
@@ -192,6 +296,9 @@ class SettingsApp(tk.Tk):
                 "store_name": self.config.get("store_name"),
                 "store_code": self.config.get("store_code"),
             }
+            # Prefill the enrollment store code from config if present; NMV is the
+            # primary remote store, so default to it when nothing is configured.
+            self.enroll_store_code.set(self.config.get("store_code") or "NMV")
             self._load_mail_section()
         except (FileNotFoundError, ValueError) as ex:
             messagebox.showwarning("No config", str(ex))
