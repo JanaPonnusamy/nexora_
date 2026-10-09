@@ -7,7 +7,9 @@ is a platform-ops console (DB recovery, sync jobs) with no per-tenant model
 of its own, so it's gated to super admin / platform users only rather than
 tenant-scoped like the rest of the API.
 """
-from fastapi import APIRouter, Depends, HTTPException, Response
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
@@ -21,7 +23,43 @@ def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     return current_user
 
 
-router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"], dependencies=[Depends(require_admin)])
+# Read-only, store-scoped order-VIEW paths a non-admin store user may GET. These
+# are the "order details" views the remote-store (NMV) purchase manager needs to
+# see their own order after it is processed in HO's OrderNMC. Everything else
+# (DB recovery, sync/order-process/stock-update triggers, supplier assignment,
+# export, workflow finalize/reopen, qty edits) stays admin-only: those are POSTs
+# (blocked below for non-admins) and additionally carry their own Depends(
+# require_admin), so this relaxation can never expose a mutating path.
+_VIEWER_READ_PATHS = (
+    re.compile(r"^/api/legacy-order/orders/[^/]+(/.*)?$"),
+    re.compile(r"^/api/legacy-order/qty-check/[^/]+(/.*)?$"),
+    re.compile(r"^/api/legacy-order/suppliers/[^/]+$"),
+    re.compile(r"^/api/legacy-order/previous-orders/[^/]+(/.*)?$"),
+)
+
+
+def _user_owns_store(user: dict, store_name: str) -> bool:
+    """A non-admin store user is locked to their own store (the JWT's primary-
+    role store_code, same source Label Exporter uses for its per-store lock).
+    store_name here is the OrderNMC StoreName, which equals the platform
+    store_code (globally unique)."""
+    return str(user.get("store_code") or "").strip().upper() == str(store_name or "").strip().upper()
+
+
+def require_order_console_access(request: Request, current_user: dict = Depends(get_current_user)) -> dict:
+    """Platform admins get the whole console. A non-admin user assigned to a
+    store may ALSO GET that one store's read-only order views (so the NMV
+    purchase manager can open their own order details) and nothing else."""
+    if has_unrestricted_scope(current_user):
+        return current_user
+    if request.method == "GET" and any(p.match(request.url.path) for p in _VIEWER_READ_PATHS):
+        store_name = request.path_params.get("store_name")
+        if store_name and _user_owns_store(current_user, store_name):
+            return current_user
+    raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
+
+
+router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"], dependencies=[Depends(require_order_console_access)])
 
 
 # ---- Legacy DB health & recovery (RECOVERY_PENDING / single-user / repair) ----

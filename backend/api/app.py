@@ -129,6 +129,7 @@ from modules.nmv_integration.router import (
     router as nmv_integration_router,
     admin_router as nmv_integration_admin_router,
 )
+from modules.remote_order_agent.router import router as remote_order_agent_router
 from modules.grid_settings.router import (
     router as grid_settings_router
 )
@@ -260,6 +261,12 @@ _PUBLIC_AGENT_PATTERNS = (
     # The admin code-GENERATION route (/api/nmv-integration/v1/admin/...) is
     # deliberately NOT here -- it stays behind the bearer + super-admin gate.
     re.compile(r'^/api/nmv-integration/v1/stores/[^/]+/enroll$'),
+    # Remote Order Agent contract (/api/nmv/v1, docs 02): the device presents an
+    # OPAQUE device token (not a JWT), so the JWT require_auth middleware can't
+    # gate it. The whole surface is allow-listed here and authenticated instead
+    # by the module's own HMAC dependency (authenticate_device); agent/register
+    # is intentionally unauthenticated (the one-time code authorises it).
+    re.compile(r'^/api/nmv/v1/.+$'),
 )
 
 def _is_public_agent_call(request: Request) -> bool:
@@ -366,6 +373,7 @@ app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
 app.include_router(nmv_integration_router)
 app.include_router(nmv_integration_admin_router)
+app.include_router(remote_order_agent_router)
 app.include_router(desktop_client_router)
 app.include_router(automation_settings_router)
 app.include_router(grid_settings_router)

@@ -1,0 +1,45 @@
+{
+  "store_code": "NMV",
+  "store_id": "4A2CEFF0-13C5-484C-B263-DE297E1E23E3",
+  "store_name": "NMV",
+  "store_code_numeric": 10,
+
+  "local_server": "DESKTOP-2\\SQLEXPRESSORDER",
+  "local_database": "OrderNMC",
+  "local_auth": "windows",
+
+  "pos_enabled": true,
+  "pos_credential_source": "stores_table",
+  "pos_server": "DESKTOP-CLG2ECP",
+  "pos_database": "Shopaid",
+  "pos_username": "",
+  "pos_batch_rows": 5000,
+  "pos_sync_ordersuppliers": false,
+
+  "ho_enabled": false,
+  "ho_base_url": "http://122.252.246.181:8443",
+  "ho_api_prefix": "api/nmv/v1",
+  "allow_insecure_http": true,
+  "ho_connect_timeout_sec": 15,
+  "ho_read_timeout_sec": 60,
+
+  "push_batch_size": 200,
+  "max_backoff_sec": 900,
+  "order_pull_limit": 5,
+  "order_replace_quiet_minutes": 20,
+  "unknown_product_policy": "warn",
+
+  "acked_retention_days": 30,
+  "audit_retention_days": 90,
+  "log_retention_days": 30,
+  "log_level": "INFO",
+
+  "jobs": {
+    "results_push":    { "enabled": true, "interval_sec": 30 },
+    "orders_pull":     { "enabled": true, "interval_sec": 60 },
+    "heartbeat":       { "enabled": true, "interval_sec": 300 },
+    "pos_incremental": { "enabled": true, "interval_sec": 900 },
+    "pos_master":      { "enabled": true, "interval_sec": 3600 },
+    "housekeeping":    { "enabled": true, "interval_sec": 21600 }
+  }
+}
