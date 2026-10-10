@@ -333,6 +333,29 @@ def _ensure_ho_supplier_code_column(dest_cur, dest_conn):
         dest_conn.commit()
 
 
+def _stamp_unified_supplier_code(dest_cur, dest_conn, store_name):
+    """Backfill OrderSuppliers.UnifiedSupplierCode = suppliercode for an
+    AGENT-SYNCED store (e.g. NMV) wherever it is still NULL/blank.
+
+    The Suppliers->OrderSuppliers projection only carries
+    (suppliercode, suppliername, mobilenumber, email), so the MERGE never sets
+    UnifiedSupplierCode -- a freshly synced supplier lands with it NULL. The
+    legacy app populated this column itself; a remote agent store never ran
+    that, leaving its supplier search (which keys on UnifiedSupplierCODE) empty.
+    The identity default (code == unified code) is exactly how the LAN stores
+    look. Scoped to one store and only touches NULL/blank rows, so it never
+    overrides a deliberate unification and never touches the LAN stores (this
+    runs only on the agent-synced path, store_id is not None).
+    """
+    dest_cur.execute(
+        "UPDATE OrderSuppliers SET UnifiedSupplierCode = suppliercode "
+        "WHERE StoreName = ? "
+        "AND (UnifiedSupplierCode IS NULL OR LTRIM(RTRIM(UnifiedSupplierCode)) = '')",
+        store_name,
+    )
+    dest_conn.commit()
+
+
 def _stamp_ho_supplier_code(dest_cur, dest_conn, store_name):
     """Resolve each match row's branch-local SupplierCode to the canonical
     HO-side code via OrderSuppliers.CommonSupplierCode, falling back to the
@@ -472,6 +495,19 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name,
             except Exception as exc:
                 dest_conn.rollback()
                 errors.append(f"ho_supplier_code stamping: {exc}")
+
+        # Agent-synced stores (store_id is not None, e.g. NMV) never ran the
+        # legacy app's UnifiedSupplierCode population, so freshly synced
+        # OrderSuppliers rows land with it NULL and the supplier search is
+        # empty. Backfill it to the identity default here, scoped to this one
+        # store -- the LAN stores take the branch path (store_id is None) and
+        # are left byte-for-byte unchanged.
+        if dest_table.lower() == "ordersuppliers" and store_id is not None and not errors:
+            try:
+                _stamp_unified_supplier_code(dest_cur, dest_conn, store_name)
+            except Exception as exc:
+                dest_conn.rollback()
+                errors.append(f"unified_supplier_code stamping: {exc}")
 
         return total_rows, errors
 
