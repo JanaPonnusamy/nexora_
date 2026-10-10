@@ -93,6 +93,44 @@ def branch_connection_string(server, database, username, password):
     )
 
 
+def platform_connection_string():
+    """Connection string for NEXORA_PLATFORM -- the ``sync.*`` source for
+    agent-synced stores (e.g. NMV), whose live data arrives via the platform
+    sync pipeline rather than a branch pull. It is the SAME SQL Server instance
+    as central OrderNMC; only the database differs (DB_DATABASE, default
+    NEXORA_PLATFORM). Server/user/password inherit the same LEGACY_DB_*/DB_*
+    chain as central_connection_string."""
+    server = _env("LEGACY_DB_SERVER", "DB_SERVER")
+    username = _env("LEGACY_DB_USERNAME", "DB_USERNAME")
+    password = _env("LEGACY_DB_PASSWORD", "DB_PASSWORD")
+    database = os.getenv("DB_DATABASE", "NEXORA_PLATFORM")
+    if not (server and username and password):
+        raise RuntimeError(
+            "Platform sync source is not configured: set DB_SERVER / DB_USERNAME / "
+            "DB_PASSWORD (or the LEGACY_DB_* overrides) in backend/.env."
+        )
+    return (
+        f"DRIVER={{{_driver()}}};"
+        f"SERVER={server};"
+        f"DATABASE={database};"
+        f"UID={username};"
+        f"PWD={password};"
+        "TrustServerCertificate=yes;"
+    )
+
+
+def platform_store_id(store_code):
+    """Resolve an agent-synced store's platform store_id (GUID) from
+    NEXORA_PLATFORM.dbo.stores -- the ``sync.*`` tables are scoped by it.
+    Returns the GUID string, or None if the store is not provisioned there."""
+    with pyodbc.connect(platform_connection_string(), timeout=15) as conn:
+        row = conn.cursor().execute(
+            "SELECT CONVERT(varchar(40), store_id) FROM dbo.stores WHERE store_code = ?",
+            store_code,
+        ).fetchone()
+    return row[0] if row else None
+
+
 # Access modes we can safely flip back to MULTI_USER without a DBA.
 _RECOVERABLE_ACCESS = {"SINGLE_USER", "RESTRICTED_USER"}
 # A genuine restore/recovery is in progress -- interrupting it can destroy the

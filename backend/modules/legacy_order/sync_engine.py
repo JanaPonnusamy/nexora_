@@ -132,6 +132,104 @@ def get_query_for_table(table_name):
     raise ValueError(f"Unknown table: {table_name}")
 
 
+def platform_query_for_table(table_name):
+    """Source query for an AGENT-SYNCED store (e.g. NMV).
+
+    Same column projection as ``get_query_for_table`` so the downstream staging +
+    MERGE is identical, but the source is ``NEXORA_PLATFORM.sync.*`` (the data the
+    platform sync pipeline already pulls live from the remote store) filtered by
+    ``store_id`` -- a remote store has no branch OrderNMC to read from. The ``?``
+    placeholders are ALWAYS ordered ``store_id`` first, then the incremental
+    watermark (for the three ID-watermarked tables), which ``sync_table`` relies
+    on when binding parameters.
+
+    Two columns are not carried on sync.*: PurchaseTrans.ProductType (taken from
+    the joined sync.Products, exactly as the branch query takes it from products)
+    and SalesRep.CreationDate/ModifiedDate (projected as NULL to keep the dest
+    column set identical). Everything else is column-for-column present.
+    """
+    if table_name == "Products":
+        return (
+            "SELECT ProductCode, ProductName, DivisionCode, ManufacturerCode, SupplierCode, "
+            "UnitDescription, AllowFractions, MinimumStockLevel, MaximumStockLevel, ScheduleCode, "
+            "MRP, PurchasePrice, PurchaseUnit, PurchaseTaxCode, SalePrice, SaleUnit, SalesTaxCode, "
+            "TotalStock, Remarks, ProductType, TaxId, ItemCost, SubLocation, CreationDate, "
+            "ModifiedDate, isActive, OrderDate, OrderTime, FreeQuantity "
+            "FROM sync.Products WHERE store_id = ? AND isActive = 1"
+        )
+    if table_name == "ProductSaleInformation":
+        return (
+            "SELECT PS.ProductCode, PS.Quantity, PS.ID, PS.TransactionDate, PS.SeriesTransID, "
+            "PS.TransactionValidity, PS.DontConsiderInOrder, PS.Bnumber, PS.SeriesName, PS.MRP, "
+            "PS.PurchasePrice, PS.DiscountPercentage, PS.LastAdjustmentDate, PS.BillNumber, "
+            "ps.Batchdescription, PS.ExpiryDate, ps.rate1 "
+            "FROM sync.ProductSaleInformation PS "
+            "WHERE PS.store_id = ? AND PS.ID > ? AND PS.TransactionValidity = 0"
+        )
+    if table_name == "Suppliers":
+        return (
+            "SELECT DISTINCT suppliercode, suppliername, mobilenumber, email "
+            "FROM sync.Suppliers WHERE store_id = ? AND IsActive = 1"
+        )
+    if table_name == "Batches":
+        return (
+            "SELECT ProductCode, Stock, MRP, ExpiryDate, ItemCost, PurchasePrice, SaleUnit, "
+            "GrnDate, LastReceivedDate, LastSaleDate, BatchCode, SalesTaxCode, SupplierCode, Rate1 "
+            "FROM sync.Batches WHERE store_id = ? AND Stock > 0"
+        )
+    if table_name == "ProductTrans":
+        return (
+            "WITH LastThreeMonths AS ("
+            "  SELECT * FROM sync.ProductTrans "
+            "  WHERE store_id = ? AND MonthOfStatistics >= DATEADD(MONTH, -4, GETDATE())"
+            ") "
+            "SELECT MonthOfStatistics, SaleQuantity, StockInHand, PurchaseQuantity, "
+            "AdjustmentQuantity, LastBillDate, LastGrnDate, ProductCode, TransferInQuantity, "
+            "TransferOutQuantity, PurchaseReturnQuantity "
+            "FROM LastThreeMonths "
+            "WHERE StockInHand IS NOT NULL AND PurchaseQuantity IS NOT NULL "
+            "AND SaleQuantity IS NOT NULL AND AdjustmentQuantity IS NOT NULL "
+            "ORDER BY ProductCode, MonthOfStatistics"
+        )
+    if table_name == "PurchaseTrans":
+        return (
+            "SELECT PT.ID, p.productcode, P.ProductType, pt.stockreceived, pt.FreeQty, "
+            "pt.ProductDiscPercent, pt.itemcost, pt.purchaseprice, pt.mrp, pt.grndate, "
+            "pt.InvoiceSeries, pt.Grnnumber, s.suppliername, pt.suppliercode "
+            "FROM sync.PurchaseTrans pt "
+            "INNER JOIN sync.Suppliers s ON pt.suppliercode = s.suppliercode AND s.store_id = pt.store_id "
+            "INNER JOIN sync.Products p ON p.productcode = pt.productcode AND p.store_id = pt.store_id "
+            "WHERE pt.store_id = ? AND pt.id > ? ORDER BY pt.id DESC"
+        )
+    if table_name == "SaleInformation":
+        return (
+            "SELECT SI.BillDate, SI.BillNumber, SI.BNumber, SI.BillAmount, SI.CustomerName, "
+            "SI.DeliverySalesRep, SI.Billtime, SI.CustomerCode "
+            "FROM sync.SaleInformation SI "
+            "WHERE SI.store_id = ? AND EXISTS ("
+            "    SELECT 1 FROM sync.ProductSaleInformation PS "
+            "    WHERE PS.store_id = SI.store_id "
+            "      AND PS.ID > ? "
+            "      AND PS.TransactionValidity = 0 "
+            "      AND PS.BNumber = SI.BNumber "
+            "      AND PS.TransactionDate = SI.BillDate"
+            ") "
+            "ORDER BY SI.BillDate, SI.BillNumber"
+        )
+    if table_name == "SalesRep":
+        return (
+            "SELECT DISTINCT Salesmancode, Salesmanname, "
+            "CAST(NULL AS DATETIME) AS CreationDate, CAST(NULL AS DATETIME) AS ModifiedDate "
+            "FROM sync.SalesRep WHERE store_id = ? AND isactive = 1"
+        )
+    if table_name == "SupplierProductMatch":
+        return (
+            "SELECT suppliercode, supplierproductcode, supplierproductname, productcode, "
+            "username, lastmodifieddate, isactive FROM sync.SupplierProductMatch WHERE store_id = ?"
+        )
+    raise ValueError(f"Unknown table: {table_name}")
+
+
 def merge_keys(dest_table, columns):
     """Verbatim port of the Select Case in CentralSyncHelper.GetMergeQuery."""
     have = {c.lower() for c in columns}
@@ -255,8 +353,14 @@ def _stamp_ho_supplier_code(dest_cur, dest_conn, store_name):
     dest_conn.commit()
 
 
-def sync_table(source_cs, dest_cs, table_name, dest_table, store_name, on_progress=None):
+def sync_table(source_cs, dest_cs, table_name, dest_table, store_name,
+               on_progress=None, store_id=None):
     """Port of CentralSyncHelper.SyncTable.
+
+    When ``store_id`` is given the source is an AGENT-SYNCED store: read from
+    ``NEXORA_PLATFORM.sync.*`` (``platform_query_for_table``, filtered by
+    store_id) instead of a branch OrderNMC. The watermark, StoreName stamp and
+    MERGE into central are identical either way.
 
     Returns (rows_fetched, batch_errors). batch_errors is empty on a clean run.
     """
@@ -270,15 +374,22 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name, on_progre
         # STEP 1 -- watermark
         param = _watermark(dest_cur, table_name, dest_table, store_name)
 
-        # STEP 2 -- fetch new records from the branch
-        select_sql = get_query_for_table(table_name)
+        # STEP 2 -- fetch new records from the source (branch OrderNMC, or the
+        # platform sync.* copy for an agent-synced store). Platform queries bind
+        # store_id first, then the incremental watermark (if any).
+        if store_id is not None:
+            select_sql = platform_query_for_table(table_name)
+            exec_params = (store_id,) if param is None else (store_id, param)
+        else:
+            select_sql = get_query_for_table(table_name)
+            exec_params = () if param is None else (param,)
         with pyodbc.connect(source_cs, timeout=30) as src_conn:
             src_conn.timeout = 0
             src_cur = src_conn.cursor()
-            if param is None:
-                src_cur.execute(select_sql)
+            if exec_params:
+                src_cur.execute(select_sql, exec_params)
             else:
-                src_cur.execute(select_sql, param)
+                src_cur.execute(select_sql)
 
             src_columns = [d[0] for d in src_cur.description]
             src_types = [d[1] for d in src_cur.description]

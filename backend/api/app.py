@@ -432,6 +432,19 @@ def _warmup_whatsapp_on_startup():
     except Exception:
         pass
 
+@app.on_event('startup')
+def _start_ho_clock_guardian_on_startup():
+    # Base rule of every HO node: keep the system clock honest from internet
+    # time. A node whose clock has drifted hours off (as the NAT box did) breaks
+    # the NMV agent's HMAC signature window, JWT expiry, and every DB timestamp
+    # it hosts. The guardian corrects on startup + periodically. Best-effort.
+    try:
+        from modules.ho_ops.clock import start_clock_guardian
+        start_clock_guardian()
+    except Exception:
+        import traceback
+        print("[HO_CLOCK] failed to start:\n" + traceback.format_exc())
+
 @app.get('/health')
 async def health():
     # This endpoint does no blocking work. Keeping it on the event loop avoids

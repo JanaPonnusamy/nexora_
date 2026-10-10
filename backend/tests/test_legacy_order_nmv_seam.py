@@ -284,9 +284,12 @@ def thread_spy(monkeypatch):
     return created
 
 
-def test_start_order_process_nmv_skips_branch(monkeypatch, thread_spy):
+def test_start_order_process_nmv_syncs_from_platform(monkeypatch, thread_spy):
     monkeypatch.setattr(service, "_resolve_store", lambda sn: dict(_NMV_STORE))
     monkeypatch.setattr(service, "_running_job_kind", lambda sn: None)
+    # NMV now resolves its platform store_id and syncs sync.* -> central first.
+    monkeypatch.setattr(service.database, "platform_store_id",
+                        lambda sc: "STORE-ID-GUID")
 
     branch_tested = {"called": False}
 
@@ -300,8 +303,10 @@ def test_start_order_process_nmv_skips_branch(monkeypatch, thread_spy):
 
     assert branch_tested["called"] is False  # no branch connection test for NMV
     t = thread_spy[-1]
-    assert t.target is service._run_order
-    assert t.kwargs.get("is_agent_synced") is True
+    # NMV runs a platform->central sync and THEN generates the order
+    assert t.target is service._run_agent_sync_then_order
+    # the resolved platform store_id is threaded through to the worker
+    assert "STORE-ID-GUID" in t.args
 
 
 def test_start_order_process_lan_keeps_sync_then_order(monkeypatch, thread_spy):

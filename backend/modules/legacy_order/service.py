@@ -13,7 +13,7 @@ import os
 import threading
 import uuid
 
-from modules.legacy_order import order_process, repository, sync_engine
+from modules.legacy_order import database, order_process, repository, sync_engine
 
 logger = logging.getLogger(__name__)
 
@@ -148,13 +148,28 @@ def start_sync(store_name, tables=None):
             f"A {running} job is already running for '{store_name}'. Wait for it to finish."
         )
 
-    ok, error = repository.test_branch_connection(store)
-    if not ok:
-        raise ConnectionError(f"Failed to connect to {store['server_name']}: {error}")
-
     plan = [(s, d) for s, d in sync_engine.TABLE_PLAN if not tables or s in tables]
     if not plan:
         raise ValueError("No known tables selected to sync.")
+
+    # Agent-synced stores (NMV) have no branch to pull: their live data is in
+    # NEXORA_PLATFORM.sync.* (delivered by the platform sync pipeline). Copy that
+    # into central OrderNMC, filtered by the store's platform store_id.
+    if is_agent_synced_store(store_name):
+        store_id = database.platform_store_id(store["store_name"])
+        if not store_id:
+            raise ValueError(
+                f"'{store_name}' has no platform store_id in NEXORA_PLATFORM.dbo.stores."
+            )
+        job_id = _new_job("sync", store_name, len(plan))
+        threading.Thread(
+            target=_run_agent_sync, args=(job_id, store, store_id, plan), daemon=True
+        ).start()
+        return job_id
+
+    ok, error = repository.test_branch_connection(store)
+    if not ok:
+        raise ConnectionError(f"Failed to connect to {store['server_name']}: {error}")
 
     job_id = _new_job("sync", store_name, len(plan))
     threading.Thread(
@@ -252,18 +267,23 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
             f"A {running} job is already running for '{store_name}'. Wait for it to finish."
         )
 
-    # Agent-synced stores (NMV): the data is already central (the NMV
-    # Integration agent delivered it). There is no branch to test or pull, so
-    # skip the connection test + pre-order branch sync entirely and run the
-    # order directly against the central copy. LAN stores keep the full
-    # sync-then-order path below, unchanged.
+    # Agent-synced stores (NMV) have no branch to pull. Their live data lands in
+    # NEXORA_PLATFORM.sync.* via the platform sync pipeline, so the Order Process
+    # begins with a fresh platform->central copy (filtered by store_id) and then
+    # generates the order against the central copy -- mirroring the LAN path,
+    # just with a different sync source. LAN stores keep the branch path below.
     if agent_synced:
-        job_id = _new_job("order", store_name, 3)
+        store_id = database.platform_store_id(store["store_name"])
+        if not store_id:
+            raise ValueError(
+                f"'{store_name}' has no platform store_id in NEXORA_PLATFORM.dbo.stores."
+            )
+        plan = list(sync_engine.TABLE_PLAN)
+        job_id = _new_job("order", store_name, len(plan) + 3)
         threading.Thread(
-            target=_run_order,
-            args=(job_id, store, min_days, max_days, mode),
-            kwargs={"is_warehouse": warehouse, "is_agent_synced": True,
-                    "recency_days": recency_days},
+            target=_run_agent_sync_then_order,
+            args=(job_id, store, store_id, plan, min_days, max_days, mode,
+                  warehouse, recency_days),
             daemon=True,
         ).start()
         return job_id
@@ -356,6 +376,124 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
         )
     except Exception as exc:
         logger.exception("legacy order process failed after sync")
+        _update(
+            job_id, status="failed", result={"tables": tables}, error=str(exc),
+            warning=warning,
+            message=f"Sync completed, but order processing failed: {exc}",
+            finished_at=datetime.datetime.now(),
+        )
+
+
+# ----- Agent-synced sync (platform sync.* -> central OrderNMC) ----------------
+
+def _run_platform_sync(job_id, store, store_id, plan):
+    """Copy an agent-synced store's data from NEXORA_PLATFORM.sync.* (filtered by
+    store_id) into central OrderNMC, reusing the legacy sync engine's watermark +
+    StoreName stamp + MERGE. Returns (tables, failed)."""
+    # HO base rule: correct this node's clock from internet time before syncing
+    # (the agent's signed pulls and every SYSUTCDATETIME stamp depend on it).
+    try:
+        from modules.ho_ops.clock import ensure_ho_clock
+        ensure_ho_clock(reason="before-sync")
+    except Exception:
+        logger.exception("pre-sync clock check failed (continuing)")
+
+    dest_cs = database.central_connection_string()
+    platform_cs = database.platform_connection_string()
+    tables, failed = [], []
+    for index, (src, dest) in enumerate(plan):
+        _update(job_id, step=index, message=f"Syncing {src} from platform sync.* ...")
+        try:
+            rows, batch_errors = sync_engine.sync_table(
+                platform_cs, dest_cs, src, dest, store["store_name"], store_id=store_id
+            )
+            if batch_errors:
+                failed.append(src)
+                tables.append({"table": src, "destination": dest, "rows": rows,
+                               "status": "partial", "error": "; ".join(batch_errors)})
+            else:
+                tables.append({"table": src, "destination": dest, "rows": rows,
+                               "status": "ok", "error": None})
+            _update(job_id, step=index + 1, message=f"Synced {src} ({rows} rows).")
+        except Exception as exc:
+            logger.exception("platform sync failed for %s", src)
+            failed.append(src)
+            tables.append({"table": src, "destination": dest, "rows": 0,
+                           "status": "error", "error": str(exc)})
+            _update(job_id, step=index + 1, message=f"Error syncing {src}: {exc}")
+
+    try:
+        repository.mark_sync_result(store["store_name"], "FAILED" if failed else "SUCCESS")
+    except Exception:
+        logger.exception("could not update Stores.LastSyncStatus")
+    return tables, failed
+
+
+def _run_agent_sync(job_id, store, store_id, plan):
+    """Sync-only job for an agent-synced store (the /sync trigger)."""
+    tables, failed = _run_platform_sync(job_id, store, store_id, plan)
+    total = sum(t["rows"] for t in tables)
+    warning = None
+    try:
+        warning = repository.stale_sale_bill_warning(store["store_name"])
+    except Exception:
+        logger.exception("could not check last sale bill freshness")
+    _update(
+        job_id,
+        status=("failed" if failed else "completed"),
+        result={"tables": tables},
+        error=(f"{len(failed)} table(s) failed: {', '.join(failed)}" if failed else None),
+        warning=warning,
+        message=("Sync completed." if not failed
+                 else f"Sync finished with {len(failed)} failed table(s)."),
+        finished_at=datetime.datetime.now(),
+    )
+
+
+def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days,
+                               mode, is_warehouse=False, recency_days=10):
+    """One durable job for an agent-synced store: platform sync must succeed
+    before order generation (same guarantee as the LAN sync-then-order path)."""
+    tables, failed = _run_platform_sync(job_id, store, store_id, plan)
+
+    warning = None
+    try:
+        warning = repository.stale_sale_bill_warning(store["store_name"])
+    except Exception:
+        logger.exception("could not check last sale bill freshness")
+
+    if failed:
+        _update(
+            job_id, status="failed", result={"tables": tables},
+            error=f"Order process stopped because sync failed: {', '.join(failed)}",
+            warning=warning,
+            message="Platform sync failed. Order generation was not started.",
+            finished_at=datetime.datetime.now(),
+        )
+        return
+
+    base_step = len(plan)
+    step = {"n": 0}
+
+    def report(message):
+        step["n"] += 1
+        _update(job_id, step=min(base_step + step["n"], base_step + 3), message=message)
+
+    try:
+        _update(job_id, step=base_step, message="Sync completed. Starting order process...")
+        result = order_process.run_order_process(
+            store, min_days, max_days, mode, report,
+            is_warehouse=is_warehouse, is_agent_synced=True, recency_days=recency_days,
+        )
+        result["tables"] = tables
+        _update(
+            job_id, status="completed", step=base_step + 3, result=result,
+            warning=warning,
+            message=f"Sync and order processing completed ({result['rows']} rows).",
+            finished_at=datetime.datetime.now(),
+        )
+    except Exception as exc:
+        logger.exception("agent order process failed after sync")
         _update(
             job_id, status="failed", result={"tables": tables}, error=str(exc),
             warning=warning,
