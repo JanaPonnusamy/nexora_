@@ -3,6 +3,22 @@
 Permanent, concise reference. For depth see `PROJECT_DETAIL.md`; for a
 navigable map of screens/APIs/tables see `PROJECT_INDEX.md`.
 
+## Operational conventions
+
+- **Always use PowerShell in ADMIN (elevated) mode for HO ops.** The default
+  session is non-elevated; restarting the backend (SYSTEM `NexoraBackend` task /
+  killing `:8000`), creating scheduled tasks, or setting the system clock all
+  require elevation (non-elevated gets `Access is denied`). Self-elevate with
+  `Start-Process powershell -Verb RunAs -ArgumentList '-File','<script>'` (approve
+  the UAC prompt), or run the command in an Administrator PowerShell window.
+- Restart the `.80` backend after a backend code change:
+  `scratchpad\restart_80.ps1` (elevated) — kills `:8000`, re-runs the SYSTEM
+  `NexoraBackend` task (loads `start-prod-8000.bat`), health-checks, logs to
+  `backend\logs\ho_restart.log`. Backend-only Python changes need no frontend
+  rebuild / pip install unless deps or `frontend/` changed.
+- Exe nodes `.73`/`.32` update via a published release (Backend Update UI) or
+  `ho_setup/node_ops/update_ho_node.ps1`, not a git restart.
+
 ## What is Nexora?
 
 A multi-tenant retail/pharmacy platform: a Head Office (HO) admin system
