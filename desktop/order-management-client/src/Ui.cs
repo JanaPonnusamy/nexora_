@@ -58,8 +58,10 @@ namespace NexoraOrderManagement
             return g;
         }
 
-        // Build an all-string DataTable from API rows; column order follows the
-        // first row, with any later-appearing keys appended.
+        // Build a DataTable from API rows. A column whose every non-empty value
+        // is numeric becomes a real numeric (double) column -- so whole numbers
+        // render without a trailing ".0" (qty columns) and the grid can apply
+        // N0/N2 cell formats. Everything else stays string.
         public static DataTable ToTable(List<Dictionary<string, object>> rows)
         {
             var table = new DataTable();
@@ -67,18 +69,60 @@ namespace NexoraOrderManagement
             foreach (var row in rows)
                 foreach (var key in row.Keys)
                     if (!cols.Contains(key)) cols.Add(key);
-            foreach (var c in cols) table.Columns.Add(c, typeof(string));
+
+            var numeric = new Dictionary<string, bool>();
+            foreach (var c in cols)
+            {
+                bool anyVal = false, allNum = true;
+                foreach (var row in rows)
+                {
+                    object v;
+                    if (!row.TryGetValue(c, out v) || v == null) continue;
+                    var sv = Convert.ToString(v, CultureInfo.InvariantCulture);
+                    if (sv.Length == 0) continue;
+                    anyVal = true;
+                    if (!IsNumeric(v)) { allNum = false; break; }
+                }
+                numeric[c] = anyVal && allNum;
+            }
+
+            foreach (var c in cols)
+                table.Columns.Add(c, numeric[c] ? typeof(double) : typeof(string));
+
             foreach (var row in rows)
             {
                 var dr = table.NewRow();
                 foreach (var c in cols)
                 {
                     object v;
-                    dr[c] = (row.TryGetValue(c, out v) && v != null) ? FormatValue(v) : "";
+                    bool has = row.TryGetValue(c, out v) && v != null;
+                    if (numeric[c])
+                    {
+                        double d;
+                        if (has && double.TryParse(Convert.ToString(v, CultureInfo.InvariantCulture),
+                                NumberStyles.Any, CultureInfo.InvariantCulture, out d))
+                            dr[c] = d;
+                        else dr[c] = DBNull.Value;
+                    }
+                    else dr[c] = has ? FormatValue(v) : "";
                 }
                 table.Rows.Add(dr);
             }
             return table;
+        }
+
+        private static bool IsNumeric(object v)
+        {
+            if (v is bool || v is DateTime) return false;
+            if (v is int || v is long || v is short || v is byte ||
+                v is double || v is float || v is decimal) return true;
+            var s = v as string;
+            if (s != null)
+            {
+                double d;
+                return double.TryParse(s.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out d);
+            }
+            return false;
         }
 
         public static string FormatValue(object v)

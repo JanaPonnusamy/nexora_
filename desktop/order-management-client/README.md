@@ -17,21 +17,26 @@ Flow (same as the VB app):
 1. **Select Store** (`txtStoreSearch` + `dgvStoreList`) — admin picks any store; a
    store user is locked to their own.
 2. **Select Process** (`cboProcess`):
-   - **Pending Order Qty Check** — `dgvMain` = the pending lines; edit *OrderQty*
-     inline (reviewed lines drop off).
+   - **Pending Order Qty Check** — `dgvMain` = the pending lines; the **Or Qty**
+     column is highlighted green and is the only editable cell. **Enter** saves
+     the typed quantity; **Esc** = "Don't Want to Order" (sets 0). Reviewed lines
+     drop off the grid, and the first row opens in edit mode for fast entry.
    - **Auto Pur UpDate** — supplier history: search a supplier (`dgvSupplierList`),
      then `dgvMain` = its orderable lines by purchase history.
    - **Order Based on Supplier Stock** — the same but matched to live SupplierStock.
+   - **Supplier Order Details** — the order already placed with a supplier
+     (assigned lines), ready to export.
 3. Selecting a product row fills the right side — `dgvPurchaseDetails`,
    `dgvSalesDetails`, and **`Chart1`** (monthly Purchase=blue / Sales=green /
-   Stock=red), with the `Local DB` / `Remote DB` source toggle.
-4. **Export** builds the supplier order to Excel.
+   Stock=red).
+4. **Export** writes the current grid to an Excel-openable CSV (works for any
+   view, including an already-placed Supplier Order Details order).
 
-Interactive actions available: edit OrderQty / qty-check review and export. The
-head-office-only controls (Sync, Pull, Mapping, Web Export, Import Stock, Split
-Excel) are present for visual fidelity but explain that they run in the HO
-console; the batch triggers (Sync / Order-Process / Stock-Update) are not in
-this client.
+Columns use the same headers/formats as the VB form: friendly headers, hidden
+ProductCode, a `#` serial column, **quantities as whole numbers (N0)** and prices
+to two decimals (N2). The only button is **Export** — every head-office-only
+control (Sync / Pull / Mapping / Web Export / Import Stock / Split Excel) is
+removed; this is a read-and-export client.
 
 ## Why it's tiny
 
