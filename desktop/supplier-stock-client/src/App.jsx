@@ -3020,6 +3020,7 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
 function OwSupplierPicker({ suppliers, value, onChange }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -3029,12 +3030,37 @@ function OwSupplierPicker({ suppliers, value, onChange }) {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
+  // Name OR code, substring, case-insensitive on BOTH sides -- supplier codes
+  // are alphanumeric (e.g. NMV's backfilled UnifiedSupplierCode), so matching a
+  // lowercased search term against an un-lowercased code never hit, which is
+  // why "search by code" turned up nothing. Cap the rendered rows (hundreds of
+  // suppliers per store) and keep the code visible so a code search is useful.
   const term = query.trim().toLowerCase();
-  const filtered = term
-    ? suppliers.filter((s) => String(s.supplier_name || '').toLowerCase().includes(term) || String(s.supplier_code).includes(term))
-    : suppliers;
+  const filtered = useMemo(() => {
+    const list = !term
+      ? suppliers
+      : suppliers.filter((s) =>
+        String(s.supplier_name || '').toLowerCase().includes(term)
+        || String(s.supplier_code || '').toLowerCase().includes(term));
+    return list.slice(0, 50);
+  }, [suppliers, term]);
+
+  // Reset the keyboard-active row whenever the result set or open-state changes.
+  useEffect(() => { setActive(0); }, [term, open]);
 
   const pick = (s) => { onChange(s); setQuery(''); setOpen(false); };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      if (open) { e.preventDefault(); e.stopPropagation(); setOpen(false); inputRef.current?.blur(); }
+      return;
+    }
+    if (e.key === 'ArrowDown' && !open) { e.preventDefault(); setOpen(true); return; }
+    if (!open || !filtered.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); const chosen = filtered[active] || filtered[0]; if (chosen) pick(chosen); }
+  };
 
   return (
     <div className="ow-supplier-pick" ref={wrapRef}>
@@ -3042,21 +3068,25 @@ function OwSupplierPicker({ suppliers, value, onChange }) {
         ref={inputRef}
         className="ow-supplier-input"
         type="text"
-        placeholder="Search supplier…"
+        placeholder="Search supplier or code…"
         value={open ? query : (value?.supplier_name || '')}
         onFocus={() => { setOpen(true); setQuery(''); }}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); inputRef.current?.blur(); } else if (e.key === 'Enter' && filtered.length) { pick(filtered[0]); } }}
+        onKeyDown={onKeyDown}
         aria-label="Search and select supplier"
         role="combobox" aria-expanded={open} autoComplete="off"
       />
       {value && !open && <button type="button" className="ow-supplier-clear" title="Clear supplier" aria-label="Clear supplier" onClick={() => onChange(null)}>×</button>}
       {open && (
         <ul className="ow-supplier-list" role="listbox">
-          {filtered.map((s) => (
-            <li key={s.supplier_code}>
-              <button type="button" className={value?.supplier_code === s.supplier_code ? 'is-active' : undefined} onClick={() => pick(s)}>
-                {s.supplier_name}
+          {/* UnifiedSupplierCode can repeat / be blank, so the index keeps keys
+              unique for this display-only list. */}
+          {filtered.map((s, i) => (
+            <li key={`${s.supplier_code}-${i}`} role="option" aria-selected={i === active}>
+              <button type="button" className={i === active ? 'is-active' : (value?.supplier_code === s.supplier_code ? 'is-selected' : undefined)}
+                onMouseEnter={() => setActive(i)} onClick={() => pick(s)}>
+                <span className="ow-supplier-name">{s.supplier_name}</span>
+                <span className="ow-supplier-code">{s.supplier_code}</span>
               </button>
             </li>
           ))}

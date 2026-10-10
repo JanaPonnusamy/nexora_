@@ -8143,12 +8143,17 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   font-size: 12px;
 }
 .ow-supplier-list button {
-  display: block; width: 100%; padding: 5px 8px; border: 0; border-radius: 4px;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 5px 8px; border: 0; border-radius: 4px;
   background: none; color: var(--nx-text-soft); font-size: 12px; font-weight: 500; line-height: 1.4;
   text-align: left; cursor: pointer;
 }
 .ow-supplier-list button:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
 .ow-supplier-list button.is-active { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); font-weight: 600; }
+.ow-supplier-list button.is-selected { color: var(--nx-text); font-weight: 600; }
+.ow-supplier-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-supplier-code { flex-shrink: 0; color: var(--nx-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ow-supplier-list button.is-active .ow-supplier-code { color: var(--nx-accent-ink); }
 .ow-supplier-empty { padding: 8px; color: var(--nx-text-muted); font-size: 12px; }
 
 /* Export options card. */

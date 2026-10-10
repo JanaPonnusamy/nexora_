@@ -1,6 +1,6 @@
 {
   "name": "nexora-supplier-stock-client",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "private": true,
   "description": "Axythic supplier stock desktop client scaffold",
   "main": "electron/main.cjs",
