@@ -1,2 +1,4 @@
 bin/
 *.user
+# evidence screenshots contain live store/order data -- keep local, never commit
+docs/evidence/
