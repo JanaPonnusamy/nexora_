@@ -13,14 +13,24 @@ if (-not (Test-Path $csc)) { throw "csc not found at $csc" }
 
 # System.Web.Extensions (JavaScriptSerializer, our JSON engine) and the common
 # BCL assemblies are already in csc's default response file (csc.rsp), so they
-# are auto-referenced -- we only add the extra assemblies the default set omits.
-$fwRefs = 'System.Net.Http.dll','System.Windows.Forms.dll','System.Drawing.dll' |
+# are auto-referenced -- we only add the extra assemblies the default set omits
+# (System.Net.Http, WinForms, Drawing, and the DataVisualization chart control
+# that the VB form uses).
+$fwRefs = 'System.Net.Http.dll','System.Windows.Forms.dll','System.Drawing.dll',
+          'System.Windows.Forms.DataVisualization.dll' |
           ForEach-Object { "/r:$(Join-Path $fw $_)" }
+
+# Embed the blue background image (same wallpaper the VB form uses) so the exe
+# stays a single self-contained file. Loaded at runtime via the manifest name
+# "NexoraOrderManagement.vb_bg.png".
+$bg = Join-Path $root 'assets\vb_bg.png'
+$res = @()
+if (Test-Path $bg) { $res = @("/resource:$bg,NexoraOrderManagement.vb_bg.png") }
 
 $exe = Join-Path $out 'NexoraOrderManagement.exe'
 $src = Get-ChildItem (Join-Path $root 'src') -Filter *.cs | ForEach-Object { $_.FullName }
 
 & $csc /nologo /target:winexe /platform:anycpu /optimize+ /warn:2 `
-    "/out:$exe" $fwRefs $src
+    "/out:$exe" $fwRefs $res $src
 if ($LASTEXITCODE -ne 0) { throw "compile failed ($LASTEXITCODE)" }
 Write-Host "Built $exe"

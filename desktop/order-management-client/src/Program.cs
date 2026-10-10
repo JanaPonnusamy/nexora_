@@ -16,7 +16,7 @@ namespace NexoraOrderManagement
             {
                 if (login.ShowDialog() != DialogResult.OK || login.Api == null)
                     return;
-                Application.Run(new MainForm(cfg, login.Api));
+                Application.Run(new OrderForm(cfg, login.Api));
             }
         }
     }

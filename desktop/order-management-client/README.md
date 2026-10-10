@@ -6,19 +6,32 @@ internet. It reads and writes order data **only** through Nexora's
 `/api/legacy-order/*` HTTP API — it never opens a direct connection to the
 OrderNMC database, and it changes nothing in the existing LAN/legacy app.
 
-It mirrors the two VB `Form1` processes a purchase manager actually uses, with
-the product **detail panel** docked on the right as in the original:
+The UI is a **faithful replica of the VB `Form1`**: the same single maximized
+window, the same controls at the same positions (copied from
+`Form1.Designer.vb`), the same blue background, and the same monthly
+Purchase/Sales/Stock column chart. `src/OrderForm.cs` lays everything out with
+the exact VB coordinates.
 
-| Screen | VB equivalent | What it does |
-|---|---|---|
-| **Qty Check** | Pending Order Qty Check | Review the pending lines; edit *OrderQty* inline or mark a line "Don't Want" (0). Reviewed lines drop off the grid. |
-| **Supplier Ordering** → *Auto Pur UpDate* tab | `LoadDataForSupplier` (history) | A supplier's orderable lines by purchase history. |
-| **Supplier Ordering** → *Order Based on Supplier Stock* tab | `LoadDataForSupplierStock` (stock) | A supplier's orderable lines matched to its live SupplierStock. |
-| **Product Detail Panel** (right) | Form1 detail tabs | Purchase / Sales / Monthly stats / Order history for the selected product. |
+Flow (same as the VB app):
 
-Interactive actions available: edit OrderQty, qty-check review, assign a line to a
-supplier, and export the order to Excel. The batch triggers (Sync / Order-Process
-/ Stock-Update) stay HO-admin-only and are intentionally **not** in this client.
+1. **Select Store** (`txtStoreSearch` + `dgvStoreList`) — admin picks any store; a
+   store user is locked to their own.
+2. **Select Process** (`cboProcess`):
+   - **Pending Order Qty Check** — `dgvMain` = the pending lines; edit *OrderQty*
+     inline (reviewed lines drop off).
+   - **Auto Pur UpDate** — supplier history: search a supplier (`dgvSupplierList`),
+     then `dgvMain` = its orderable lines by purchase history.
+   - **Order Based on Supplier Stock** — the same but matched to live SupplierStock.
+3. Selecting a product row fills the right side — `dgvPurchaseDetails`,
+   `dgvSalesDetails`, and **`Chart1`** (monthly Purchase=blue / Sales=green /
+   Stock=red), with the `Local DB` / `Remote DB` source toggle.
+4. **Export** builds the supplier order to Excel.
+
+Interactive actions available: edit OrderQty / qty-check review and export. The
+head-office-only controls (Sync, Pull, Mapping, Web Export, Import Stock, Split
+Excel) are present for visual fidelity but explain that they run in the HO
+console; the batch triggers (Sync / Order-Process / Stock-Update) are not in
+this client.
 
 ## Why it's tiny
 
