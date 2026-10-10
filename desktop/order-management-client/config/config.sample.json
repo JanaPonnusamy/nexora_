@@ -1,0 +1,8 @@
+{
+  "ho_urls": [
+    "https://122.252.246.181:8443",
+    "http://192.168.10.80:8000"
+  ],
+  "allow_insecure_tls": true,
+  "last_username": ""
+}

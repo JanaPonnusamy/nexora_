@@ -38,6 +38,22 @@ _VIEWER_READ_PATHS = (
 )
 
 
+# Interactive order mutations a non-admin STORE user may perform on THEIR OWN
+# store -- the remote-store purchase manager working their own order from
+# outside the LAN via the Order Management desktop client. Each carries a
+# {store_name} path param that _user_owns_store checks, so a store user can
+# only ever touch their own store. Everything NOT in this set stays admin-only:
+# sync, order-process, stock-update, DB recovery/repair, workflow finalize/
+# reopen, and the previous-order compares (their store_name is in the body, not
+# the path, so request.path_params has none -> ownership check can't pass).
+_STORE_WRITE_PATHS = (
+    re.compile(r"^/api/legacy-order/orders/[^/]+/\d+$"),         # PATCH OrderQty
+    re.compile(r"^/api/legacy-order/orders/[^/]+/\d+/assign$"),  # POST assign/unassign
+    re.compile(r"^/api/legacy-order/orders/[^/]+/export$"),      # POST export
+    re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+$"),      # PATCH qty-check review
+)
+
+
 def _user_owns_store(user: dict, store_name: str) -> bool:
     """A non-admin store user is locked to their own store (the JWT's primary-
     role store_code, same source Label Exporter uses for its per-store lock).
@@ -48,13 +64,20 @@ def _user_owns_store(user: dict, store_name: str) -> bool:
 
 def require_order_console_access(request: Request, current_user: dict = Depends(get_current_user)) -> dict:
     """Platform admins get the whole console. A non-admin user assigned to a
-    store may ALSO GET that one store's read-only order views (so the NMV
-    purchase manager can open their own order details) and nothing else."""
+    store may ALSO work that one store's order from outside the LAN: GET its
+    read-only order views, and perform the interactive order actions on it
+    (edit OrderQty / qty-check review, assign/unassign a supplier, export).
+    Both the read and the write sets are store-owned paths, so the user can
+    never reach another store or any admin-only trigger (sync/order-process/
+    stock-update/DB recovery/finalize)."""
     if has_unrestricted_scope(current_user):
         return current_user
-    if request.method == "GET" and any(p.match(request.url.path) for p in _VIEWER_READ_PATHS):
-        store_name = request.path_params.get("store_name")
-        if store_name and _user_owns_store(current_user, store_name):
+    store_name = request.path_params.get("store_name")
+    if store_name and _user_owns_store(current_user, store_name):
+        path = request.url.path
+        if request.method == "GET" and any(p.match(path) for p in _VIEWER_READ_PATHS):
+            return current_user
+        if request.method in ("PATCH", "POST") and any(p.match(path) for p in _STORE_WRITE_PATHS):
             return current_user
     raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
 
@@ -241,7 +264,7 @@ def reopen_order(
 @router.patch("/orders/{store_name}/{product_code}")
 def update_order_qty(
     store_name: str, product_code: int, payload: UpdateOrderQtyRequest,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(get_current_user),
 ):
     """Manual review edit -- the VB grid's editable OrderQty cell. Setting 0
     marks a product 'no need' without requiring a supplier order."""
@@ -302,7 +325,7 @@ def assigned_orders(store_name: str, supplier_code: str):
 @router.post("/orders/{store_name}/{product_code}/assign")
 def assign_supplier(
     store_name: str, product_code: int, payload: AssignSupplierRequest,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(get_current_user),
 ):
     """Assign/unassign a supplier to an order line (VB status 0<->1 toggle)."""
     try:
@@ -320,7 +343,7 @@ def assign_supplier(
 @router.post("/orders/{store_name}/export")
 def export_order(
     store_name: str, payload: ExportOrderRequest,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(get_current_user),
 ):
     """Bulk-assign every OrderQty>0 row for this supplier, then build and
     return the Order Workspace Excel export (or a .zip of parts when
@@ -416,7 +439,7 @@ def qty_check_rows(store_name: str):
 @router.patch("/qty-check/{store_name}/{product_code}")
 def update_qty_check(
     store_name: str, product_code: int, payload: UpdateQtyCheckRequest,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(get_current_user),
 ):
     try:
         result = repository.update_qty_check(
