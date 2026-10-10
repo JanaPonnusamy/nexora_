@@ -65,8 +65,14 @@ _SLOT_POSITIONS = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (3, 0), (4, 0)]
 
 _FONT_NAME = "hebo"
 _FONT = fitz.Font(_FONT_NAME)
-_NAME_COLOR = (0.0, 0.2, 0.0)       # dark green, sampled from the reference printout
-_LOC_COLOR = (0.0, 0.2, 0.0)        # same dark green — matches the reference printout exactly
+# Product names: pure black + a faux-bold stroke. Owner feedback (2026-10-07) was
+# that the dark-green names printed too thin/light to read; black is the darkest
+# ink and the stroke thickens every glyph past hebo's own weight, so the names
+# are the boldest, most legible thing on the sheet. _NAME_STROKE is a fraction of
+# fontsize (not points) — 0.03 is a clean faux-bold; ~0.05+ starts to blob at 11pt.
+_NAME_COLOR = (0.0, 0.0, 0.0)       # black — darkest, highest-contrast product name
+_NAME_STROKE = 0.03                 # faux-bold stroke width (fraction of fontsize)
+_LOC_COLOR = (0.0, 0.2, 0.0)        # location code stays dark green (unchanged, per owner)
 # Owner request: EVERY product name renders at one fixed size, bold, dark, so
 # the whole sheet is uniform and easy to read from a distance (e.g. a box shelved
 # above eye level). Max == min locks the size — no per-name or per-box shrinking.
@@ -236,11 +242,15 @@ def _ink_extents(text, fontsize):
     return above * fontsize, below * fontsize
 
 
-def _draw_text(page, cell, text, max_size, min_size, color, align):
+def _draw_text(page, cell, text, max_size, min_size, color, align, stroke_width=0.0):
     """align: 'left' (product names) or 'center' (location code). The visible
     ink block is centered vertically on its real glyph extents (see
     _ink_extents), so both the big location code and the product names sit
-    true-centered in their cells and never spill over the card border."""
+    true-centered in their cells and never spill over the card border.
+
+    stroke_width > 0 renders the glyphs filled AND stroked (render_mode 2) to
+    faux-bold them — used for product names so they read heavier/darker than
+    hebo's own weight; 0 (the default, e.g. the location code) is plain fill."""
     if not text:
         return
     avail_w = cell.width - 2 * _CELL_PAD_X
@@ -252,7 +262,12 @@ def _draw_text(page, cell, text, max_size, min_size, color, align):
         x = cell.x0 + (cell.width - text_w) / 2
     else:
         x = cell.x0 + _CELL_PAD_X
-    page.insert_text(fitz.Point(x, baseline_y), text, fontsize=fontsize, fontname=_FONT_NAME, color=color)
+    point = fitz.Point(x, baseline_y)
+    if stroke_width > 0:
+        page.insert_text(point, text, fontsize=fontsize, fontname=_FONT_NAME,
+                         color=color, fill=color, render_mode=2, border_width=stroke_width)
+    else:
+        page.insert_text(point, text, fontsize=fontsize, fontname=_FONT_NAME, color=color)
 
 
 def _draw_card(page, x0, y0, card_w, group):
@@ -270,8 +285,9 @@ def _draw_card(page, x0, y0, card_w, group):
         cell = fitz.Rect(col_x[col], row_y[row], col_x[col + 1], row_y[row + 1])
         page.draw_rect(cell, color=(0, 0, 0), width=_INNER_BORDER_W)
         if idx < len(items):
-            # Fixed size for every name (see _NAME_FONT_MAX == _NAME_FONT_MIN).
-            _draw_text(page, cell, _display_name(items[idx]), _NAME_FONT_MAX, _NAME_FONT_MIN, _NAME_COLOR, "left")
+            # Fixed size for every name (see _NAME_FONT_MAX == _NAME_FONT_MIN);
+            # _NAME_STROKE faux-bolds it so the name reads dark and heavy.
+            _draw_text(page, cell, _display_name(items[idx]), _NAME_FONT_MAX, _NAME_FONT_MIN, _NAME_COLOR, "left", _NAME_STROKE)
 
     label_rect = fitz.Rect(col_x[1], row_y[2], col_x[2], row_y[_NUM_ROWS])
     page.draw_rect(label_rect, color=(0, 0, 0), width=_INNER_BORDER_W)
