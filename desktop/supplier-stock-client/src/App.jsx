@@ -509,7 +509,7 @@ function AppShell() {
           <img src={axythicLogo} alt="Axythic" className="brand-logo" />
           <div>
             <h1>Axythic</h1>
-            <p>Supplier Stock Client</p>
+            <p>Supplier Stock Client <span className="app-version">v{__APP_VERSION__}</span></p>
           </div>
         </div>
 

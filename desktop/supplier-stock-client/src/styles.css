@@ -263,6 +263,13 @@ button:disabled {
   color: #aab4c5;
 }
 
+.app-version {
+  margin-left: 6px;
+  font-size: 10px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
 .user-panel {
   display: flex;
   min-height: 32px;
