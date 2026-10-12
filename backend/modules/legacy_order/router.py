@@ -37,6 +37,15 @@ _VIEWER_READ_PATHS = (
     re.compile(r"^/api/legacy-order/previous-orders/[^/]+(/.*)?$"),
 )
 
+# /stores has no {store_name} path param to check ownership against -- both the
+# web and Electron Order Workspace call it unconditionally to populate the
+# store picker before a store_name is even known. Let a non-admin store user
+# through here too; list_stores() itself filters the response down to just
+# their own store (see there), so this can't leak other stores' existence.
+_NO_PARAM_READ_PATHS = (
+    re.compile(r"^/api/legacy-order/stores$"),
+)
+
 
 # Interactive order mutations a non-admin STORE user may perform on THEIR OWN
 # store -- the remote-store purchase manager working their own order from
@@ -72,9 +81,11 @@ def require_order_console_access(request: Request, current_user: dict = Depends(
     stock-update/DB recovery/finalize)."""
     if has_unrestricted_scope(current_user):
         return current_user
+    path = request.url.path
+    if request.method == "GET" and any(p.match(path) for p in _NO_PARAM_READ_PATHS):
+        return current_user
     store_name = request.path_params.get("store_name")
     if store_name and _user_owns_store(current_user, store_name):
-        path = request.url.path
         if request.method == "GET" and any(p.match(path) for p in _VIEWER_READ_PATHS):
             return current_user
         if request.method in ("PATCH", "POST") and any(p.match(path) for p in _STORE_WRITE_PATHS):
@@ -115,12 +126,17 @@ def db_emergency_repair(payload: EmergencyRepairRequest):
 
 
 @router.get("/stores")
-def list_stores(active_only: bool = True):
-    """Branches from OrderNMC.Stores. Credentials are never returned."""
+def list_stores(active_only: bool = True, current_user: dict = Depends(get_current_user)):
+    """Branches from OrderNMC.Stores. Credentials are never returned. A
+    non-admin store user gets back only their own store (see
+    require_order_console_access), so they can still populate the store
+    picker without seeing -- or reaching -- any other branch."""
     try:
         stores = repository.list_stores(active_only)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not has_unrestricted_scope(current_user):
+        stores = [s for s in stores if _user_owns_store(current_user, s["store_name"])]
     return [
         {
             "store_code": s["store_code"],
