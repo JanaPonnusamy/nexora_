@@ -468,7 +468,9 @@ def list_suppliers(store_name, search=""):
     branch's real SupplierCodes, which is why the by-supplier filters split it."""
     sql = (
         "SELECT UnifiedSupplierCODE, SupplierNAME FROM OrderSuppliers "
-        "WHERE SupplierNAME LIKE ? AND storename = ? ORDER BY SupplierNAME"
+        "WHERE SupplierNAME LIKE ? AND storename = ? "
+        "AND UnifiedSupplierCODE IS NOT NULL AND LTRIM(RTRIM(UnifiedSupplierCODE)) <> '' "
+        "ORDER BY SupplierNAME"
     )
     like = f"{(search or '').strip()}%"
     with database.get_central_connection() as conn:
@@ -481,10 +483,13 @@ def list_suppliers(store_name, search=""):
 
 # Common OrderManagement projection for the workspace grid, PascalCase so the
 # rows are structurally compatible with the Review-All order_summary rows.
+# Qtycheck is included so the By Supplier (history) grid can badge lines that
+# haven't been reviewed yet in Qty Check.
 _WORKSPACE_COLS = (
     "om.ProductCode, om.ProductName, om.OrderQty, om.TotalStock, om.SLSQty, "
     "om.UnitDescription, om.SaleUnit, om.MRP, om.WantedType, om.Remarks, "
-    "om.PurchasePrice, om.SubLocation, om.ProductTypeName, om.MaxQty, om.Status"
+    "om.PurchasePrice, om.SubLocation, om.ProductTypeName, om.MaxQty, om.Status, "
+    "om.Qtycheck"
 )
 
 
@@ -494,6 +499,17 @@ def orders_by_supplier(store_name, supplier_code, mode):
     ports LoadDataForSupplierStock (products matched to the supplier's live
     SupplierStock, with per-supplier stock/rack columns). Both only show
     still-open rows (status=0, orderqty>0).
+
+    An owner trial on 2026-10-13 briefly dropped this history restriction (to
+    work around NMV having several "Purani" OrderSuppliers entries with
+    different SupplierCodes/different history) and showed EVERY open product
+    in the store regardless of supplier -- confirmed live as wrong (e.g.
+    Colgate/Garnier general FMCG lines showing up under Purani), so the
+    restriction is back. The multiple-codes-per-real-supplier gap is a
+    separate, still-open problem -- picking the WRONG one of several
+    same-named entries can legitimately show 0 history for a product the
+    supplier does carry; that needs its own fix (e.g. merging duplicate
+    OrderSuppliers rows), not removing this filter.
 
     mode='history' deliberately does NOT use OrderPurchaseTrans, unlike the
     legacy VB.NET query it ports (Form1.vb LoadDataForSupplier). That table is
@@ -600,7 +616,7 @@ def assigned_orders(store_name, supplier_code):
     supplier (status=1)."""
     sql = (
         "SELECT ProductCode, ProductName, OrderQty, SaleUnit, MRP, OrSupplier, "
-        "Remarks, PurchasePrice, TotalStock, WantedType, Status "
+        "Remarks, PurchasePrice, TotalStock, WantedType, ProductTypeName, Status "
         "FROM OrderManagement "
         "WHERE status = 1 AND orderqty > 0 AND storename = ? "
         "AND orsuppliercode IN (SELECT Value FROM dbo.SplitString(?, ',')) "
@@ -706,6 +722,60 @@ def qty_check_rows(store_name):
         cur = conn.cursor().execute(sql, store_name)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def pending_order_rows(store_name):
+    """Port of Form1.HandlePendingOrder -- the "Pending Order" screen's grid:
+    every row already reviewed (qtycheck = 1) but not yet assigned to a
+    supplier (status = 0) -- owner ruling (2026-10-13): no orderqty filter,
+    a "no need" (orderqty = 0) line that's still open still belongs on this
+    screen. Restricted to Pharma/Non Pharma like the VB combo's "All" option
+    (the only two values that ever appear). Always includes producttypename
+    so callers can apply the All/Pharma/Non Pharma filter client-side -- same
+    pattern as qty_check_rows -- instead of a network round-trip per filter
+    change."""
+    sql = (
+        "SELECT productcode, productname, orderqty, totalstock, slsqty, unitdescription, "
+        "saleunit, mrp, lastreceiveddate, lastsaledate, maxsaleqty, Transactiondate, wantedtype, "
+        "producttypename "
+        "FROM ordermanagement WHERE qtycheck = 1 AND status = 0 AND storename = ? "
+        "AND producttypename IN ('Pharma', 'Non Pharma') ORDER BY productname"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, store_name)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def reset_pending_qty_check(store_name, actor=None):
+    """Bulk "Reset Pending" action for the Qty Check screen's latest order:
+    rows already assigned to a supplier (Status = 1) are stamped qtycheck = 1
+    so they can never reappear as pending; every other row (Status = 0, not
+    yet assigned) has OrderQty reset back to its original generated value
+    (OrgOrderQty), undoing any unsaved manual edits so Qty Check starts clean
+    from the order-generation baseline."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        order_id = _latest_order_id(cur, store_name)
+        if order_id is None:
+            return {"assigned_marked": 0, "remaining_reset": 0}
+        assigned_marked = cur.execute(
+            "UPDATE ordermanagement SET qtycheck = 1 "
+            "WHERE storename = ? AND orderid = ? AND status = 1 AND qtycheck = 0",
+            store_name, order_id,
+        ).rowcount
+        remaining_reset = cur.execute(
+            "UPDATE ordermanagement SET orderqty = orgorderqty "
+            "WHERE storename = ? AND orderid = ? AND status = 0",
+            store_name, order_id,
+        ).rowcount
+        _record_line_audit(
+            cur, store_name, order_id, None, "RESET_PENDING",
+            None, f"assigned_marked={assigned_marked}, remaining_reset={remaining_reset}", actor,
+        )
+        conn.commit()
+        return {"assigned_marked": assigned_marked, "remaining_reset": remaining_reset}
 
 
 def update_qty_check(store_name, product_code, order_qty, actor=None):

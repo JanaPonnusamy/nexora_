@@ -1155,6 +1155,21 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
             matched_grn = invoice_grn if invoice_grn is not None else amount_grn
             if matched_grn is not None:
                 matched_products = total_products
+            elif series == "TI":
+                # TI has no bill-number signal, so without an amount match the
+                # per-product got_qty check (OUTER APPLY above) is the only
+                # evidence -- and it is an unattributed aggregate: it sums ALL
+                # stockreceived for (store, SupplierCode, series, ProductCode)
+                # in the 30-day window, not the receipt for THIS bill. A fast-
+                # moving product that recurs across many TI bills satisfies
+                # "got_qty >= req_qty" for every one of them off a single GRN
+                # meant for a different bill (verified live: TO002001327's 3
+                # lines each read fully received against GRNs 1328/1329/1330,
+                # none of which is its own receipt). So this signal alone may
+                # only support 'pending' (something arrived), never 'completed'
+                # -- that requires a confirmed bill-level match (amount, since
+                # TI has no bill-number).
+                matched_products = min(matched_products, total_products - 1) if total_products > 0 else matched_products
             status = _classify_purchase_status(total_products, matched_products, unmapped, bill_date)
             out[(bnumber, bd_iso)] = {
                 "purchase_status": status,
@@ -1199,6 +1214,13 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                 # A partial name-match keeps the bill out of 'not_found' (it
                 # can still land on 'pending') even when it doesn't clear
                 # every product -- only a full match promotes it further.
+                # TI bills have no bill-number signal, and this per-product/name
+                # read is the same unattributed aggregate flagged above (sums
+                # ALL receipts for the product in-window, not this bill's), so
+                # it is capped just short of 'completed' here too -- only a
+                # confirmed amount match (set earlier) may complete a TI bill.
+                if series == "TI" and name_total > 0:
+                    name_matched = min(name_matched, name_total - 1)
                 entry["matched_products"] = name_matched
                 entry["purchase_status"] = _classify_purchase_status(
                     entry["total_products"], name_matched, False, bill_date
@@ -1378,7 +1400,6 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
             for code, req_qty in req_by_product.items()
             if got_by_product.get(code, 0.0) < req_qty - 0.01 and code not in matched_by_name
         ]
-        status = _classify_purchase_status(total_products, matched_products, False, bdate)
         # Product/name matching can confirm THAT items arrived but not WHICH single
         # GRN belongs to this bill: the same medicines recur across many NMW bills,
         # so a per-product read smears one bill across several unrelated GRNs (e.g.
@@ -1387,6 +1408,17 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
         # (below) sets a GRN number (owner ruling 2026-10-06). Progress
         # (matched/total) and the pending-items list are still returned, and the
         # exact GRN appears automatically once the store's bill-number syncs.
+        #
+        # TI has no bill-number signal at all, so without that guard this
+        # per-product read could stand as "completed" on its own -- but it is an
+        # unattributed aggregate (sums ALL receipts for the product in-window,
+        # not this bill's), so it may only ever reach 'pending' here; only a
+        # confirmed amount match below can complete a TI bill (verified live:
+        # TO002001327's 3 lines each read fully received against GRNs
+        # 1328/1329/1330, none of which is its own receipt).
+        if series == "TI" and total_products > 0:
+            matched_products = min(matched_products, total_products - 1)
+        status = _classify_purchase_status(total_products, matched_products, False, bdate)
         entry_no = None
         completing_grn = None
         entry_date = None

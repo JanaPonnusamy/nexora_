@@ -22,11 +22,19 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Dev-only override: when set, always wins over both the default and
+// whatever's saved in localStorage, so `npm run dev` can point at a specific
+// backend (e.g. the one actively being tested) without touching Settings or
+// leaving a stray override in the built/installed app, which never reads
+// import.meta.env.DEV as true.
+const DEV_API_BASE_URL = import.meta.env.DEV ? (import.meta.env.VITE_DEV_API_BASE_URL || '') : '';
+
 export function loadSettings() {
   try {
-    return { ...defaultSettings, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    const stored = { ...defaultSettings, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    return DEV_API_BASE_URL ? { ...stored, apiBaseUrl: DEV_API_BASE_URL } : stored;
   } catch {
-    return defaultSettings;
+    return DEV_API_BASE_URL ? { ...defaultSettings, apiBaseUrl: DEV_API_BASE_URL } : defaultSettings;
   }
 }
 

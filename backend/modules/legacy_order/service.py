@@ -13,7 +13,7 @@ import os
 import threading
 import uuid
 
-from modules.legacy_order import database, order_process, repository, sync_engine
+from modules.legacy_order import database, device_sync, order_process, repository, sync_engine
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ def start_sync(store_name, tables=None):
             raise ValueError(
                 f"'{store_name}' has no platform store_id in NEXORA_PLATFORM.dbo.stores."
             )
-        job_id = _new_job("sync", store_name, len(plan))
+        job_id = _new_job("sync", store_name, len(plan) + 1)
         threading.Thread(
             target=_run_agent_sync, args=(job_id, store, store_id, plan), daemon=True
         ).start()
@@ -279,7 +279,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
                 f"'{store_name}' has no platform store_id in NEXORA_PLATFORM.dbo.stores."
             )
         plan = list(sync_engine.TABLE_PLAN)
-        job_id = _new_job("order", store_name, len(plan) + 3)
+        job_id = _new_job("order", store_name, len(plan) + 4)
         threading.Thread(
             target=_run_agent_sync_then_order,
             args=(job_id, store, store_id, plan, min_days, max_days, mode,
@@ -387,9 +387,15 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
 # ----- Agent-synced sync (platform sync.* -> central OrderNMC) ----------------
 
 def _run_platform_sync(job_id, store, store_id, plan):
-    """Copy an agent-synced store's data from NEXORA_PLATFORM.sync.* (filtered by
-    store_id) into central OrderNMC, reusing the legacy sync engine's watermark +
-    StoreName stamp + MERGE. Returns (tables, failed)."""
+    """Trigger a live device sync, wait for it to land in NEXORA_PLATFORM.sync.*,
+    then copy it (filtered by store_id) into central OrderNMC, reusing the
+    legacy sync engine's watermark + StoreName stamp + MERGE.
+
+    Returns (tables, failed). Raises DeviceSyncTimeout/DeviceSyncFailed if the
+    device never completes the live sync -- the caller must treat that as a
+    hard job failure, not fall back to whatever stale data is already in
+    sync.*.
+    """
     # HO base rule: correct this node's clock from internet time before syncing
     # (the agent's signed pulls and every SYSUTCDATETIME stamp depend on it).
     try:
@@ -398,11 +404,16 @@ def _run_platform_sync(job_id, store, store_id, plan):
     except Exception:
         logger.exception("pre-sync clock check failed (continuing)")
 
+    device_sync.trigger_and_wait(
+        store_id, store["store_name"],
+        on_progress=lambda message: _update(job_id, step=0, message=message),
+    )
+
     dest_cs = database.central_connection_string()
     platform_cs = database.platform_connection_string()
     tables, failed = [], []
     for index, (src, dest) in enumerate(plan):
-        _update(job_id, step=index, message=f"Syncing {src} from platform sync.* ...")
+        _update(job_id, step=index + 1, message=f"Syncing {src} from platform sync.* ...")
         try:
             rows, batch_errors = sync_engine.sync_table(
                 platform_cs, dest_cs, src, dest, store["store_name"], store_id=store_id
@@ -414,13 +425,13 @@ def _run_platform_sync(job_id, store, store_id, plan):
             else:
                 tables.append({"table": src, "destination": dest, "rows": rows,
                                "status": "ok", "error": None})
-            _update(job_id, step=index + 1, message=f"Synced {src} ({rows} rows).")
+            _update(job_id, step=index + 2, message=f"Synced {src} ({rows} rows).")
         except Exception as exc:
             logger.exception("platform sync failed for %s", src)
             failed.append(src)
             tables.append({"table": src, "destination": dest, "rows": 0,
                            "status": "error", "error": str(exc)})
-            _update(job_id, step=index + 1, message=f"Error syncing {src}: {exc}")
+            _update(job_id, step=index + 2, message=f"Error syncing {src}: {exc}")
 
     try:
         repository.mark_sync_result(store["store_name"], "FAILED" if failed else "SUCCESS")
@@ -431,7 +442,15 @@ def _run_platform_sync(job_id, store, store_id, plan):
 
 def _run_agent_sync(job_id, store, store_id, plan):
     """Sync-only job for an agent-synced store (the /sync trigger)."""
-    tables, failed = _run_platform_sync(job_id, store, store_id, plan)
+    try:
+        tables, failed = _run_platform_sync(job_id, store, store_id, plan)
+    except (device_sync.DeviceSyncTimeout, device_sync.DeviceSyncFailed) as exc:
+        _update(
+            job_id, status="failed", result=None, error=str(exc),
+            message=f"Live device sync did not complete: {exc}",
+            finished_at=datetime.datetime.now(),
+        )
+        return
     total = sum(t["rows"] for t in tables)
     warning = None
     try:
@@ -454,7 +473,15 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
                                mode, is_warehouse=False, recency_days=10):
     """One durable job for an agent-synced store: platform sync must succeed
     before order generation (same guarantee as the LAN sync-then-order path)."""
-    tables, failed = _run_platform_sync(job_id, store, store_id, plan)
+    try:
+        tables, failed = _run_platform_sync(job_id, store, store_id, plan)
+    except (device_sync.DeviceSyncTimeout, device_sync.DeviceSyncFailed) as exc:
+        _update(
+            job_id, status="failed", result=None, error=str(exc),
+            message=f"Live device sync did not complete. Order generation was not started: {exc}",
+            finished_at=datetime.datetime.now(),
+        )
+        return
 
     warning = None
     try:
@@ -472,7 +499,7 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
         )
         return
 
-    base_step = len(plan)
+    base_step = len(plan) + 1
     step = {"n": 0}
 
     def report(message):

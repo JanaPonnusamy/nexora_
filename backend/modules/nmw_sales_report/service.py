@@ -233,6 +233,22 @@ def reconcile(user, tenant_id, store_id, apply_changes):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+def backfill_amounts(user, tenant_id, store_id):
+    """Re-pull BillAmount/GrossAmount/CGSTAmount/TaxAmount from the branch's live
+    SaleInformation for every bill of this store, correcting mirror rows the
+    incremental sync's si_window watermark left stale after a POS-side edit.
+    Super admin only. store_id defaults to the NMW warehouse."""
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Only a super admin can backfill NMW bill amounts.")
+    target_store = (store_id or "").strip() or repository.get_nmw_store_id(tenant_id)
+    if not target_store:
+        raise HTTPException(status_code=404, detail="No store to backfill (NMW warehouse not found).")
+    try:
+        return _reconcile.backfill_header_amounts(tenant_id, target_store)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 def approve_before(user, tenant_id, cutoff_date):
     if not is_super_admin(user):
         raise HTTPException(status_code=403, detail="Only a super admin can bulk-approve NMW bills.")

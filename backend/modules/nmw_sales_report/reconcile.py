@@ -252,21 +252,27 @@ def reconcile_store(tenant_id, store_id, apply_changes=False):
 
 
 def backfill_header_amounts(tenant_id, store_id):
-    """One-time catch-up: pull GrossAmount / CGSTAmount / TaxAmount from the source
-    ``dbo.SaleInformation`` into the mirror for every bill of this store.
+    """Catch-up: pull BillAmount / GrossAmount / CGSTAmount / TaxAmount from the
+    source ``dbo.SaleInformation`` into the mirror for every bill of this store.
 
-    These header columns were only just added to the sync selection, so existing
-    mirror rows have them NULL until the store agent re-syncs. This writes the
-    correct values immediately (the agent keeps them fresh afterwards). Keyed on
-    BNumber + BillNumber + BillDate so financial-year-reused BNumbers (e.g. two
-    ``TO002000068`` bills on different dates) each get their own values."""
+    The incremental sync for SaleInformation only re-pulls a header row while
+    ``ProductSaleInformation.ID`` for that bill's lines is still within the
+    "si_window" watermark (MAX(synced PSI ID) - 1000, see PosSync.cs / sync_engine.py).
+    A bill edited at the POS after that window has moved on (e.g. the edit lands
+    on existing line IDs rather than fresh ones, or enough other transactions have
+    since pushed the watermark past it) never gets its header re-synced, so
+    BillAmount (and the GST/gross columns) can go stale in the mirror indefinitely.
+    This does a direct, unconditional re-pull from the branch to correct that.
+
+    Keyed on BNumber + BillNumber + BillDate so financial-year-reused BNumbers
+    (e.g. two ``TO002000068`` bills on different dates) each get their own values."""
     server, database, username, password, store_code = resolve_source(tenant_id, store_id)
     src = legacy_db.get_branch_connection(server, database, username, password, timeout=120)
     cur = src.cursor()
     try:
         cur.execute(
             "SELECT BNumber, BillNumber, CAST(BillDate AS DATE), "
-            "ISNULL(GrossAmount, 0), ISNULL(CGSTAmount, 0), ISNULL(TaxAmount, 0) "
+            "ISNULL(BillAmount, 0), ISNULL(GrossAmount, 0), ISNULL(CGSTAmount, 0), ISNULL(TaxAmount, 0) "
             "FROM dbo.SaleInformation"
         )
         rows = cur.fetchall()
@@ -278,13 +284,13 @@ def backfill_header_amounts(tenant_id, store_id):
     pcur = conn.cursor()
     updated = 0
     try:
-        for bn, billno, bdate, gross, cgst, tax in rows:
+        for bn, billno, bdate, bill_amount, gross, cgst, tax in rows:
             pcur.execute(
                 "UPDATE sync.SaleInformation "
-                "SET GrossAmount = ?, CGSTAmount = ?, TaxAmount = ? "
+                "SET BillAmount = ?, GrossAmount = ?, CGSTAmount = ?, TaxAmount = ? "
                 "WHERE tenant_id = ? AND store_id = ? AND BNumber = ? "
                 "AND BillNumber = ? AND CAST(BillDate AS DATE) = ?",
-                (float(gross), float(cgst), float(tax),
+                (float(bill_amount), float(gross), float(cgst), float(tax),
                  tenant_id, store_id, bn, billno, bdate),
             )
             updated += pcur.rowcount

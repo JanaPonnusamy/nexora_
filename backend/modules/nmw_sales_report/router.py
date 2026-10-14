@@ -85,6 +85,19 @@ def reconcile(
     return service.reconcile(current_user, tenant_id, store_id.strip() or None, apply)
 
 
+@router.post("/bills/backfill-amounts")
+def backfill_amounts(
+    tenant_id: str,
+    store_id: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    """Re-pull BillAmount/GrossAmount/CGSTAmount/TaxAmount for every bill of this
+    store straight from the branch's live SaleInformation. Corrects header values
+    the incremental sync's si_window watermark left stale after a bill was edited
+    at the POS post-sync. store_id defaults to the NMW warehouse. Super admin only."""
+    return service.backfill_amounts(current_user, tenant_id, store_id.strip() or None)
+
+
 # --- Store customer-code administration (super admin) ----------------------
 # Maps each store to its NMW customer code (dbo.stores.ho_cust_code), which the
 # report joins against SaleInformation.CustomerCode to route bills store-wise.

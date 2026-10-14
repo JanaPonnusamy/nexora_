@@ -355,7 +355,7 @@ GO
    (which needs "today", stock>0 filtering, and the near-expiry threshold) is
    business logic and lives in one place - the frontend - rather than being
    duplicated here and risking SQL/UI drift.
-   OUTPUT: batch_no, stock, expiry_date, ptr, mrp, last_purchase_date,
+   OUTPUT: batch_no, stock, expiry_date, ptr, mrp, sale_unit, last_purchase_date,
    last_sale_date, purchase_age_days, sales_age_days
    =========================================================================== */
 IF OBJECT_ID(N'stock.usp_BatchDetails', N'P') IS NOT NULL DROP PROCEDURE stock.usp_BatchDetails;
@@ -374,6 +374,7 @@ BEGIN
         CAST(b.ExpiryDate AS DATE)                AS expiry_date,
         ISNULL(b.PurchasePrice, 0)               AS ptr,
         ISNULL(b.MRP, 0)                         AS mrp,
+        b.SaleUnit                               AS sale_unit,
         CAST(b.GrnDate AS DATE)                   AS last_purchase_date,
         CAST(b.LastSaleDate AS DATE)              AS last_sale_date,
         DATEDIFF(DAY, b.GrnDate, GETDATE())      AS purchase_age_days,
@@ -613,6 +614,7 @@ BEGIN
         CAST(b.ExpiryDate AS DATE)                AS expiry_date,
         ISNULL(b.PurchasePrice, 0)               AS ptr,
         ISNULL(b.MRP, 0)                         AS mrp,
+        b.SaleUnit                               AS sale_unit,
         CAST(b.GrnDate AS DATE)                   AS last_purchase_date,
         CAST(b.LastSaleDate AS DATE)              AS last_sale_date,
         DATEDIFF(DAY, b.GrnDate, GETDATE())      AS purchase_age_days,

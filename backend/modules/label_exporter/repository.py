@@ -9,6 +9,7 @@ _DDL_FILES = (
     os.path.join(_SQL_DIR, "0003_label_assignment.sql"),
     os.path.join(_SQL_DIR, "0004_products_grid_covering_index.sql"),
     os.path.join(_SQL_DIR, "0005_batches_covering_index.sql"),
+    os.path.join(_SQL_DIR, "0006_letter_lock.sql"),
 )
 _schema_ready = False
 
@@ -76,6 +77,7 @@ def search_products(
     only_sale_unit_gt_one,
     sublocation_filter="",
     review_status="",
+    unit_source="new",
 ):
     """Main label-exporter grid: every active product matching the filters,
     with any Y/N + remarks review decision joined in. unit_description_mode
@@ -83,11 +85,22 @@ def search_products(
     comma-separated list for a multi-select filter), or 'null'
     (UnitDescription is blank/NULL) - 'null' ignores the unit_description
     text value. sublocation_filter is an optional comma-separated list of
-    exact existing SubLocation values (multi-select 'old location' filter)."""
+    exact existing SubLocation values (multi-select 'old location' filter).
+    unit_source picks which unit the filter/option-list matches against:
+    'new' (default) = EFFECTIVE unit, a reviewer's correction (spec §18)
+    wins over the master; 'old' = the raw master p.UnitDescription only,
+    ignoring any correction — lets the operator filter by what the shelf
+    label USED to say rather than hunting through the (often much longer)
+    corrected-unit list for a value that was already renamed away."""
     # Unit filtering uses the EFFECTIVE (current) unit — a reviewer's correction
     # (dbo.label_review.unit_description) wins over the master p.UnitDescription
-    # (spec §18: filter CALPOL by its corrected TAB, not its old SYP).
-    eff_unit = "ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), ISNULL(p.UnitDescription, ''))"
+    # (spec §18: filter CALPOL by its corrected TAB, not its old SYP) — unless
+    # unit_source='old' asks for the master unit specifically.
+    eff_unit = (
+        "ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), ISNULL(p.UnitDescription, ''))"
+        if unit_source != "old"
+        else "ISNULL(p.UnitDescription, '')"
+    )
 
     exact_values = [v.strip() for v in (unit_description or "").split(",") if v.strip()]
     if unit_description_mode == "exact" and exact_values:
@@ -303,27 +316,43 @@ def search_products(
     }
 
 
-def get_unit_descriptions(tenant_id, store_id, starts_with):
+def get_unit_descriptions(tenant_id, store_id, starts_with, unit_source="new"):
     # starts_with may be a comma-separated list of first-letters (multi-letter
     # filter) - scope the unit options to products under ANY selected letter.
     letter_values = [v.strip()[:1].upper() for v in (starts_with or "").split(",") if v.strip()]
     if letter_values:
-        letter_clause = "(" + " OR ".join("ProductName LIKE ? + '%'" for _ in letter_values) + ")"
+        letter_clause = "(" + " OR ".join("p.ProductName LIKE ? + '%'" for _ in letter_values) + ")"
         letter_params = list(letter_values)
     else:
         letter_clause = "1 = 1"
         letter_params = []
+    # Must list whichever unit search_products' filter actually matches on
+    # for the same unit_source, so the dropdown never offers a value that
+    # then filters by something else. 'new' = EFFECTIVE unit (reviewer
+    # correction wins over master, spec §18); 'old' = raw master unit only.
+    # Listing the master unit while filtering by effective (or vice versa)
+    # let the two disagree: picking "TAB'" from an old-unit list silently
+    # filtered by NEW unit and returned unrelated products.
+    eff_unit = (
+        "ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), ISNULL(p.UnitDescription, ''))"
+        if unit_source != "old"
+        else "ISNULL(p.UnitDescription, '')"
+    )
     rows = _fetch_all(
         f"""
         SELECT DISTINCT TOP 100
-            CAST(LTRIM(RTRIM(UnitDescription)) AS NVARCHAR(100)) AS unit_description
-        FROM sync.Products
-        WHERE tenant_id = ?
-          AND store_id = ?
-          AND ISNULL(isactive, 1) = 1
-          AND LTRIM(RTRIM(ISNULL(UnitDescription, ''))) <> ''
+            CAST(LTRIM(RTRIM({eff_unit})) AS NVARCHAR(100)) AS unit_description
+        FROM sync.Products p
+        LEFT JOIN dbo.label_review r
+            ON r.tenant_id = p.tenant_id
+           AND r.store_id = p.store_id
+           AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+        WHERE p.tenant_id = ?
+          AND p.store_id = ?
+          AND ISNULL(p.isactive, 1) = 1
+          AND LTRIM(RTRIM({eff_unit})) <> ''
           AND ({letter_clause})
-        ORDER BY CAST(LTRIM(RTRIM(UnitDescription)) AS NVARCHAR(100))
+        ORDER BY CAST(LTRIM(RTRIM({eff_unit})) AS NVARCHAR(100))
         """,
         (tenant_id, store_id, *letter_params),
     )
@@ -1137,3 +1166,106 @@ def get_product_batches(tenant_id, store_id, product_code):
         """,
         (tenant_id, store_id, product_code),
     )
+
+
+# ── Per-letter lock ──────────────────────────────────────────────────────
+
+
+def get_letter_locks(tenant_id, store_id):
+    """All locked letters for a store, as {letter: {locked_by, locked_at}}."""
+    rows = _fetch_all(
+        """
+        SELECT letter, locked_by, locked_at
+        FROM dbo.label_letter_lock
+        WHERE tenant_id = ? AND store_id = ? AND locked_at IS NOT NULL
+        """,
+        (tenant_id, store_id),
+    )
+    return {row["letter"]: {"locked_by": row["locked_by"], "locked_at": row["locked_at"]} for row in rows}
+
+
+def get_letter_lock(tenant_id, store_id, letter):
+    return _fetch_one(
+        """
+        SELECT letter, locked_by, locked_at
+        FROM dbo.label_letter_lock
+        WHERE tenant_id = ? AND store_id = ? AND letter = ? AND locked_at IS NOT NULL
+        """,
+        (tenant_id, store_id, letter),
+    )
+
+
+def count_unreviewed(tenant_id, store_id, letter):
+    """How many active products under `letter` still have a blank (NULL)
+    Y/N review — used to block a lock until every product is decided."""
+    row = _fetch_one(
+        """
+        SELECT COUNT(*) AS n
+        FROM sync.Products p
+        LEFT JOIN dbo.label_review r
+            ON r.tenant_id = p.tenant_id
+           AND r.store_id = p.store_id
+           AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+        WHERE p.tenant_id = ?
+          AND p.store_id = ?
+          AND ISNULL(p.isactive, 1) = 1
+          AND p.ProductName LIKE ? + '%'
+          AND r.include_label IS NULL
+        """,
+        (tenant_id, store_id, letter),
+    )
+    return (row or {}).get("n", 0)
+
+
+def set_letter_lock(tenant_id, store_id, letter, locked, user_id):
+    existing = _fetch_one(
+        "SELECT id FROM dbo.label_letter_lock WHERE tenant_id = ? AND store_id = ? AND letter = ?",
+        (tenant_id, store_id, letter),
+    )
+    if existing is None:
+        if not locked:
+            return
+        _execute(
+            """
+            INSERT INTO dbo.label_letter_lock (tenant_id, store_id, letter, locked_by, locked_at)
+            VALUES (?, ?, ?, ?, SYSUTCDATETIME())
+            """,
+            (tenant_id, store_id, letter, user_id),
+        )
+        return
+    if locked:
+        _execute(
+            """
+            UPDATE dbo.label_letter_lock
+            SET locked_by = ?, locked_at = SYSUTCDATETIME()
+            WHERE tenant_id = ? AND store_id = ? AND letter = ?
+            """,
+            (user_id, tenant_id, store_id, letter),
+        )
+    else:
+        _execute(
+            """
+            UPDATE dbo.label_letter_lock
+            SET locked_by = NULL, locked_at = NULL
+            WHERE tenant_id = ? AND store_id = ? AND letter = ?
+            """,
+            (tenant_id, store_id, letter),
+        )
+
+
+def get_last_edit(tenant_id, store_id, letter):
+    """Most recent updated_at across reviewed rows under `letter` — the
+    'last edit time' shown in the toolbar for the currently loaded letter."""
+    row = _fetch_one(
+        """
+        SELECT MAX(r.updated_at) AS last_edit
+        FROM dbo.label_review r
+        INNER JOIN sync.Products p
+            ON p.tenant_id = r.tenant_id
+           AND p.store_id = r.store_id
+           AND CAST(p.ProductCode AS NVARCHAR(50)) = r.product_code
+        WHERE r.tenant_id = ? AND r.store_id = ? AND p.ProductName LIKE ? + '%'
+        """,
+        (tenant_id, store_id, letter),
+    )
+    return (row or {}).get("last_edit")

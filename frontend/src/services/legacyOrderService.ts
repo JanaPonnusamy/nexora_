@@ -25,6 +25,8 @@ import type {
   LegacyDbRecovery,
   OrderWorkflowAuditEntry,
   OrderWorkflowSummary,
+  PendingOrderRow,
+  ResetPendingResult,
 } from '../types/legacyOrder'
 
 const BASE = '/api/legacy-order'
@@ -185,10 +187,18 @@ export const legacyOrderService = {
   qtyCheckRows: (storeName: string) =>
     api.get<QtyCheckRow[]>(`${BASE}/qty-check/${encodeURIComponent(storeName)}`),
 
+  resetPendingQtyCheck: (storeName: string) =>
+    api.post<ResetPendingResult>(`${BASE}/qty-check/${encodeURIComponent(storeName)}/reset-pending`, {}),
+
   updateQtyCheck: (storeName: string, productCode: number, orderQty: number) =>
     api.patch<QtyCheckUpdateResult>(
       `${BASE}/qty-check/${encodeURIComponent(storeName)}/${productCode}`,
       { order_qty: orderQty },
+    ),
+
+  pendingOrderRows: (storeName: string, productType = 'All') =>
+    api.get<PendingOrderRow[]>(
+      `${BASE}/pending-order/${encodeURIComponent(storeName)}?product_type=${encodeURIComponent(productType)}`,
     ),
 
   qtyCheckPurchaseDetails: (storeName: string, productCode: number, mode: OrderMode) =>

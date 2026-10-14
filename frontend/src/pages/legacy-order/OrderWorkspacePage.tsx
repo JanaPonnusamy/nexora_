@@ -7,6 +7,7 @@ import type {
   OrderHistoryRow,
   OrderMode,
   OrderWorkflowSummary,
+  PendingOrderRow,
   QtyCheckRow,
   SupplierListItem,
   SupplierOrderMode,
@@ -23,7 +24,7 @@ import { fmtDate, fmtMoney, fmtQty } from './format'
 // (Enter accepts, Esc = no need); the supplier views pick a supplier and
 // assign lines. The shared right-hand panel shows product intelligence and the
 // slim strip below shows previous-order history for the selected product.
-type View = 'qty' | 'review' | 'supplier' | 'assigned'
+type View = 'qty' | 'pending' | 'review' | 'supplier' | 'assigned'
 
 const num = (value: unknown): number => {
   const n = Number(value)
@@ -46,12 +47,14 @@ export default function OrderWorkspacePage() {
   // Review/By-Supplier views share the workspace order rows; Assigned is
   // separate.
   const [qtyRows, setQtyRows] = useState<QtyCheckRow[]>([])
+  const [pendingRows, setPendingRows] = useState<PendingOrderRow[]>([])
   const [rows, setRows] = useState<WorkspaceOrderRow[]>([])
   const [assigned, setAssigned] = useState<AssignedOrderRow[]>([])
   const [edits, setEdits] = useState<Record<number, number>>({})
   // Session status overrides so a row turns green/normal on assign toggle
   // without a full reload (orders_by_supplier only returns status=0 rows).
   const [savingQty, setSavingQty] = useState<number | null>(null)
+  const [resettingPending, setResettingPending] = useState(false)
   const [selectedCode, setSelectedCode] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -141,6 +144,11 @@ export default function OrderWorkspacePage() {
         .then(setQtyRows)
         .catch((e: Error) => setError(e.message))
         .finally(done)
+    } else if (view === 'pending') {
+      legacyOrderService.pendingOrderRows(store, productType)
+        .then(setPendingRows)
+        .catch((e: Error) => setError(e.message))
+        .finally(done)
     } else if (view === 'review') {
       legacyOrderService.orders(store)
         .then((data) => setRows(data))
@@ -159,7 +167,7 @@ export default function OrderWorkspacePage() {
         .catch((e: Error) => setError(e.message))
         .finally(done)
     }
-  }, [store, view, supplier, supplierMode, resetGrid])
+  }, [store, view, supplier, supplierMode, productType, resetGrid])
 
   useEffect(() => {
     const handle = window.setTimeout(loadGrid, 0)
@@ -184,16 +192,24 @@ export default function OrderWorkspacePage() {
   const wantedTypes = useMemo(() => {
     const set = new Set<string>()
     qtyRows.forEach((r) => { if (r.wantedtype) set.add(r.wantedtype) })
+    pendingRows.forEach((r) => { if (r.wantedtype) set.add(r.wantedtype) })
     rows.forEach((r) => { if (r.WantedType) set.add(r.WantedType) })
     assigned.forEach((r) => { if (r.WantedType) set.add(r.WantedType) })
     return Array.from(set).sort()
-  }, [qtyRows, rows, assigned])
+  }, [qtyRows, pendingRows, rows, assigned])
 
   const filteredQty = useMemo(() => qtyRows.filter((r) => (
     matchText(r.productname, r.productcode)
     && (productType === 'All' || r.producttypename === productType)
     && (wantedType === 'All' || r.wantedtype === wantedType)
   )), [qtyRows, matchText, productType, wantedType])
+
+  // Pending Order rows are already product-type filtered server-side (VB.NET
+  // combo semantics -- see pendingOrderRows); only text/wanted-reason apply here.
+  const filteredPending = useMemo(() => pendingRows.filter((r) => (
+    matchText(r.productname, r.productcode)
+    && (wantedType === 'All' || r.wantedtype === wantedType)
+  )), [pendingRows, matchText, wantedType])
 
   const filteredRows = useMemo(() => rows.filter((r) => (
     matchText(r.ProductName, r.ProductCode)
@@ -203,8 +219,9 @@ export default function OrderWorkspacePage() {
 
   const filteredAssigned = useMemo(() => assigned.filter((r) => (
     matchText(r.ProductName, r.ProductCode)
+    && (productType === 'All' || r.ProductTypeName === productType)
     && (wantedType === 'All' || r.WantedType === wantedType)
-  )), [assigned, matchText, wantedType])
+  )), [assigned, matchText, productType, wantedType])
 
   // ----- Qty Review commit (accept / no-need), removes the pending line -----
   const commitQty = useCallback((productCode: number, value: number, nextCode: number | null, focusIndex: number) => {
@@ -385,16 +402,18 @@ export default function OrderWorkspacePage() {
   }, [filteredRows, edits])
 
   const activeCount = view === 'qty' ? filteredQty.length
-    : view === 'assigned' ? filteredAssigned.length
-      : filteredRows.length
+    : view === 'pending' ? filteredPending.length
+      : view === 'assigned' ? filteredAssigned.length
+        : filteredRows.length
 
   // Product name for the detail panel + which list the selection belongs to.
   const selectedName = useMemo(() => {
     if (selectedCode == null) return undefined
     return qtyRows.find((r) => r.productcode === selectedCode)?.productname
+      ?? pendingRows.find((r) => r.productcode === selectedCode)?.productname
       ?? rows.find((r) => r.ProductCode === selectedCode)?.ProductName
       ?? assigned.find((r) => r.ProductCode === selectedCode)?.ProductName
-  }, [selectedCode, qtyRows, rows, assigned])
+  }, [selectedCode, qtyRows, pendingRows, rows, assigned])
 
   // Previous-order history for the selected product (bottom strip).
   useEffect(() => {
@@ -414,9 +433,22 @@ export default function OrderWorkspacePage() {
     setSelectedCode(list[next < 0 ? 0 : next].ProductCode)
   }
 
+  const resetPending = () => {
+    if (!store) return
+    setResettingPending(true)
+    legacyOrderService.resetPendingQtyCheck(store)
+      .then(({ assigned_marked, remaining_reset }) => {
+        setBanner(`Reset pending: ${assigned_marked} assigned line(s) marked reviewed, ${remaining_reset} remaining line(s) reset to original qty.`)
+        if (view === 'qty') loadGrid()
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setResettingPending(false))
+  }
+
   const gridTitle = view === 'qty' ? 'Quantity check'
-    : view === 'assigned' ? 'Assigned order'
-      : view === 'supplier' ? (supplier ? `${supplier.supplier_name} · orderable` : 'Select a supplier')
+    : view === 'pending' ? 'Pending order'
+      : view === 'assigned' ? 'Assigned order'
+        : view === 'supplier' ? (supplier ? `${supplier.supplier_name} · orderable` : 'Select a supplier')
         : 'Order grid'
 
   return (
@@ -475,6 +507,7 @@ export default function OrderWorkspacePage() {
               ariaLabel="Workspace view"
               options={[
                 { value: 'qty', label: 'Qty Review' },
+                { value: 'pending', label: 'Pending Order' },
                 { value: 'review', label: 'Review All' },
                 { value: 'supplier', label: 'By Supplier' },
                 { value: 'assigned', label: 'Assigned' },
@@ -520,9 +553,23 @@ export default function OrderWorkspacePage() {
         <section className="lo-card qc-queue-card">
           <div className="qc-card-heading">
             <div><span className="lo-eyebrow">{view === 'qty' ? 'Review queue' : 'Order grid'}</span><h2>{gridTitle}</h2></div>
-            {view === 'qty'
-              ? <div className="qc-keyboard-help"><kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate</div>
-              : <span className="lo-count">{activeCount} products</span>}
+            {view === 'qty' ? (
+              <div className="qc-keyboard-help">
+                <kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate
+                <button
+                  type="button"
+                  className="lo-btn lo-btn-sm"
+                  disabled={resettingPending || finalized}
+                  title="Mark all supplier-assigned lines reviewed and reset every still-unassigned line back to its original order quantity"
+                  onClick={resetPending}
+                  style={{ marginLeft: '0.75rem' }}
+                >
+                  <i className={`bi ${resettingPending ? 'bi-hourglass-split' : 'bi-arrow-counterclockwise'}`} /> Reset Pending
+                </button>
+              </div>
+            ) : (
+              <span className="lo-count">{activeCount} products</span>
+            )}
           </div>
 
           {view === 'qty' ? (
@@ -570,6 +617,35 @@ export default function OrderWorkspacePage() {
                     )
                   })}
                   {!filteredQty.length && <tr><td colSpan={13} className="lo-empty">{loading ? 'Loading…' : qtyRows.length ? 'No products match these filters.' : `Every pending product for ${store || 'this store'} has been reviewed.`}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          ) : view === 'pending' ? (
+            <div className="lo-scroll qc-grid-scroll" tabIndex={0} onKeyDown={onGridKey}>
+              <table className="lo-table lo-dense">
+                <colgroup>
+                  <col style={{ width: '3%' }} /><col style={{ width: '31%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '8%' }} /><col style={{ width: '7%' }} /><col style={{ width: '9%' }} /><col style={{ width: '9%' }} /><col style={{ width: '7%' }} /><col style={{ width: '5%' }} />
+                </colgroup>
+                <thead>
+                  <tr><th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">Sls Qty</th><th>Desc</th><th className="lo-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="lo-num">Max Qty</th><th>Wanted</th></tr>
+                </thead>
+                <tbody>
+                  {filteredPending.map((row, i) => (
+                    <tr key={row.productcode} className={selectedCode === row.productcode ? 'is-row-selected' : undefined} onClick={() => setSelectedCode(row.productcode)}>
+                      <td className="lo-col-idx">{i + 1}</td>
+                      <td className="lo-col-grow"><span className="qc-product-name" title={row.productname}>{row.productname}</span></td>
+                      <td className="lo-num">{fmtQty(row.orderqty)}</td>
+                      <td className="lo-num">{fmtQty(row.totalstock)}</td>
+                      <td className="lo-num">{fmtQty(row.slsqty)}</td>
+                      <td>{row.unitdescription}</td>
+                      <td className="lo-num">{fmtMoney(row.mrp)}</td>
+                      <td>{fmtDate(row.lastreceiveddate)}</td>
+                      <td>{fmtDate(row.lastsaledate)}</td>
+                      <td className="lo-num">{fmtQty(row.maxsaleqty)}</td>
+                      <td>{row.wantedtype ?? '—'}</td>
+                    </tr>
+                  ))}
+                  {!filteredPending.length && <tr><td colSpan={11} className="lo-empty">{loading ? 'Loading…' : 'No reviewed products are waiting on a supplier assignment.'}</td></tr>}
                 </tbody>
               </table>
             </div>

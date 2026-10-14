@@ -577,6 +577,18 @@ export const api = {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}`, { session });
   },
 
+  legacyResetPendingQtyCheck(storeName, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/reset-pending`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
+  },
+
+  legacyPendingOrderRows(storeName, session) {
+    return request(`/api/legacy-order/pending-order/${encodeURIComponent(storeName)}`, { session });
+  },
+
   legacyUpdateQtyCheck(storeName, productCode, orderQty, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}`, {
       method: 'PATCH',
@@ -680,8 +692,9 @@ export const api = {
       only_null_sublocation: filters.onlyNullSublocation ? 1 : 0,
       only_sale_unit_gt_one: filters.onlySaleUnitGtOne ? 1 : 0,
       sublocation_filter: filters.sublocationFilter || '',
-      review_status: filters.reviewStatus || ''
-    })}`, { session });
+      review_status: filters.reviewStatus || '',
+      unit_source: filters.unitSource || 'new'
+    })}`, { session, signal: filters.signal });
   },
 
   // Reviewer corrects a product's unit (auto-saved, dbo.label_review only).
@@ -813,6 +826,36 @@ export const api = {
       throw new Error(detail);
     }
     return response.blob();
+  },
+
+  async exportLabelProductsExcel(tenantId, storeId, letter, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/label-exporter/products/export.xlsx${toQuery({ tenant_id: tenantId, store_id: storeId, letter })}`), {
+        headers: { ...authHeaders(session) }
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Excel export failed';
+      try { const parsed = await response.json(); detail = parsed?.detail || parsed?.message || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    return response.blob();
+  },
+
+  getLabelLetterLock(tenantId, storeId, letter, session) {
+    return request(`/api/label-exporter/letter-lock${toQuery({ tenant_id: tenantId, store_id: storeId, letter })}`, { session });
+  },
+
+  lockLabelLetter(tenantId, storeId, letter, session) {
+    return request(`/api/label-exporter/letter-lock${toQuery({ tenant_id: tenantId, store_id: storeId, letter })}`, { method: 'POST', session });
+  },
+
+  unlockLabelLetter(tenantId, storeId, letter, session) {
+    return request(`/api/label-exporter/letter-lock/unlock${toQuery({ tenant_id: tenantId, store_id: storeId, letter })}`, { method: 'POST', session });
   },
 
   getLabelProductTrend(productCode, tenantId, storeId, session) {

@@ -265,3 +265,15 @@ class LabelClearRequest(BaseModel):
     sync.Products / master location data."""
 
     product_codes: List[str] = []
+
+
+# ---------- Per-letter lock ----------
+
+
+class LabelLetterLockStatus(BaseModel):
+    letter: str
+    locked: bool = False
+    locked_by: Optional[str] = None
+    locked_at: Optional[str] = None
+    unreviewed_count: int = 0
+    last_edit: Optional[str] = None

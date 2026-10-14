@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import axythicLogo from './assets/axythic-logo-mark.png';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -601,12 +601,7 @@ function AppShell() {
         ) : activeScreen === 'nmw_sales' ? (
           <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : activeScreen === 'order_workspace' ? (
-          <OrderWorkspace
-            session={session}
-            settings={runtimeSettings}
-            onOpenSupplierStockAnalysis={() => setActiveScreen('analysis')}
-            supplierStockAnalysisAllowed={navItems.some((item) => item.id === 'analysis')}
-          />
+          <OrderWorkspace session={session} settings={runtimeSettings} />
         ) : activeScreen === 'schema_sync' ? (
           <SchemaSyncPage session={session} />
         ) : (
@@ -3014,15 +3009,25 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
   );
 }
 
-// Searchable supplier combo (type-to-filter dropdown) -- replaces a plain
-// <select> so picking a supplier out of a long alphabetical list doesn't
-// require scrolling through it by hand.
+// Supplier picker, following VB.NET's txtSupplierSearch + dgvSupplierList
+// pair exactly (Form1.vb txtSupplierSearch_TextChanged / _KeyDown,
+// dgvSupplierList_KeyDown / _KeyPress): typing re-queries and opens the list;
+// Down moves focus into the list (or selects the next row once inside it);
+// Enter on a highlighted row commits it -- fills the box with the supplier
+// name, hides the list, clears the search text -- exactly like VB.NET's
+// dgvSupplierList_KeyPress committing and then setting Visible = False;
+// Escape hides the list and clears the box, same as VB.NET. There is no
+// mouse-click selection: the real VB.NET form's dgvSupplierList click
+// handlers (_CellClick, _CellContentClick) never set the supplier, so this
+// matches a keyboard-only picker instead of inventing click-to-pick behavior
+// that can race with the hide-on-select sequence below.
 function OwSupplierPicker({ suppliers, value, onChange }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
+  const listRef = useRef(null);
 
   useEffect(() => {
     function onDoc(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
@@ -3048,18 +3053,39 @@ function OwSupplierPicker({ suppliers, value, onChange }) {
   // Reset the keyboard-active row whenever the result set or open-state changes.
   useEffect(() => { setActive(0); }, [term, open]);
 
-  const pick = (s) => { onChange(s); setQuery(''); setOpen(false); };
+  // Commits the row -- fills the box, hides the list, clears the search term.
+  // Deliberately does NOT refocus the input (matches dgvSupplierList_KeyPress,
+  // which leaves focus wherever the committing keypress happened) and
+  // deliberately does not touch `open` via any other effect afterward, so
+  // nothing can re-open the list once this runs.
+  const commit = (s) => { onChange(s); setQuery(''); setOpen(false); };
 
-  const onKeyDown = (e) => {
+  const onInputKeyDown = (e) => {
     if (e.key === 'Escape') {
-      if (open) { e.preventDefault(); e.stopPropagation(); setOpen(false); inputRef.current?.blur(); }
+      e.preventDefault(); setOpen(false); setQuery('');
       return;
     }
-    if (e.key === 'ArrowDown' && !open) { e.preventDefault(); setOpen(true); return; }
-    if (!open || !filtered.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!filtered.length) return;
+      setOpen(true);
+      // Hand focus to the list, same as VB's txtSupplierSearch_KeyDown Down
+      // case (dgvSupplierList.Focus()) -- from here the list's own KeyDown
+      // handler drives further Up/Down/Enter.
+      requestAnimationFrame(() => listRef.current?.focus());
+    }
+  };
+
+  const onListKeyDown = (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, filtered.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
-    else if (e.key === 'Enter') { e.preventDefault(); const chosen = filtered[active] || filtered[0]; if (chosen) pick(chosen); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const chosen = filtered[active];
+      if (chosen) commit(chosen);
+    } else if (e.key === 'Escape') {
+      e.preventDefault(); setOpen(false); setQuery(''); inputRef.current?.focus();
+    }
   };
 
   return (
@@ -3072,22 +3098,29 @@ function OwSupplierPicker({ suppliers, value, onChange }) {
         value={open ? query : (value?.supplier_name || '')}
         onFocus={() => { setOpen(true); setQuery(''); }}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onKeyDown={onKeyDown}
+        onKeyDown={onInputKeyDown}
         aria-label="Search and select supplier"
         role="combobox" aria-expanded={open} autoComplete="off"
       />
       {value && !open && <button type="button" className="ow-supplier-clear" title="Clear supplier" aria-label="Clear supplier" onClick={() => onChange(null)}>×</button>}
       {open && (
-        <ul className="ow-supplier-list" role="listbox">
+        // tabIndex so Down from the input can Focus() this list, matching
+        // dgvSupplierList.Focus() in VB.NET; onBlur hides it, matching the
+        // list's visibility being tied to active use, not a separate toggle.
+        <ul ref={listRef} className="ow-supplier-list" role="listbox" tabIndex={-1}
+          onKeyDown={onListKeyDown} onBlur={(e) => { if (!wrapRef.current?.contains(e.relatedTarget)) setOpen(false); }}>
           {/* UnifiedSupplierCode can repeat / be blank, so the index keeps keys
-              unique for this display-only list. */}
+              unique for this display-only list. Click commits the row (mouse
+              users expect this even though VB.NET's grid was keyboard-only);
+              use onMouseDown so it fires before the input's blur/onBlur-driven
+              close logic hides the list. */}
           {filtered.map((s, i) => (
-            <li key={`${s.supplier_code}-${i}`} role="option" aria-selected={i === active}>
-              <button type="button" className={i === active ? 'is-active' : (value?.supplier_code === s.supplier_code ? 'is-selected' : undefined)}
-                onMouseEnter={() => setActive(i)} onClick={() => pick(s)}>
-                <span className="ow-supplier-name">{s.supplier_name}</span>
-                <span className="ow-supplier-code">{s.supplier_code}</span>
-              </button>
+            <li key={`${s.supplier_code}-${i}`} role="option" aria-selected={i === active}
+              className={i === active ? 'is-active' : (value?.supplier_code === s.supplier_code ? 'is-selected' : undefined)}
+              onMouseEnter={() => setActive(i)}
+              onMouseDown={(e) => { e.preventDefault(); commit(s); }}>
+              <span className="ow-supplier-name">{s.supplier_name}</span>
+              <span className="ow-supplier-code">{s.supplier_code}</span>
             </li>
           ))}
           {!filtered.length && <li className="ow-supplier-empty">No suppliers match.</li>}
@@ -3144,52 +3177,60 @@ function OwExportCard({ anchorRef, splitCount, setSplitCount, exporting, scopeLa
 // and the Previous-decisions strip. Supplier assignment + product intelligence are
 // intentionally deferred (see web OrderWorkspacePage for the full feature set).
 
-// Mirrors the legacy VB.NET "Select Process" combobox (same items, same order).
-// Entries with a `view` are wired to an implemented Electron mode; `supplierMode`
-// picks which of the By Supplier screen's History/Live Stock tabs a process
-// lands on (Auto Pur UpDate = purchase-history-driven; Order Based Supplier
-// Stock = live-supplier-stock-driven -- same grid, same Enter-to-assign, only
-// the underlying query differs, exactly like the tab toggle already does).
-// Entries with `action: 'open_supplier_stock_analysis'` already have a real,
-// working implementation elsewhere in this app (the Supplier Stock Analysis
-// module's Excel import -- legacy's "Supplier Excel Mapping" + "Supplier
-// Stock" processes, but with auto-suggested mapping and import-time product-
-// code resolution that legacy never had) -- selecting them switches screens
-// instead of duplicating that feature here. Everything else is listed for
-// workflow fidelity but disabled until ported.
+// Mirrors the legacy VB.NET "Select Process" combobox, trimmed to the five
+// functions this client supports (owner-scoped: everything else -- Access DB,
+// Compare Supplier/Previous Order, Supplier Invoice, Integrate Order and
+// Purchase, Supplier Excel Mapping, UnifiedSupplierCode -- is out of scope
+// here, not merely disabled). `supplierMode` picks which of the By Supplier
+// screen's History/Live Stock queries a process lands on (Auto Pur UpDate =
+// LoadDataForSupplier/purchase-history; Order Based Supplier Stock =
+// LoadDataForSupplierStock/live-supplier-stock). "Supplier Order Details"
+// is FetchSupplierOrderDetails in the VB.NET source -- status=1 rows already
+// assigned to the picked supplier -- which is our `assigned` view, not
+// `supplier`/history (those are different queries in the real source).
 const OW_PROCESS_OPTIONS = [
-  { key: 'access_db', label: 'Access DB', view: null },
-  { key: 'auto_pur_update', label: 'Auto Pur UpDate', view: 'supplier', supplierMode: 'history' },
-  { key: 'compare_previous_order', label: 'Compare Previous Order', view: null },
-  { key: 'compare_supplier', label: 'Compare Supplier', view: null },
-  { key: 'integrate_order_purchase', label: 'Integrate Order and Purchase', view: null },
-  { key: 'order_based_supplier_stock', label: 'Order Based Supplier Stock', view: 'supplier', supplierMode: 'stock' },
-  { key: 'pending_order', label: 'Pending Order', view: 'assigned' },
-  { key: 'process_order', label: 'Process Order', view: 'review' },
   { key: 'qty_check', label: 'Qty Check', view: 'qty' },
-  { key: 'supplier_excel_mapping', label: 'Supplier Excel Mapping', view: null, action: 'open_supplier_stock_analysis' },
-  { key: 'supplier_invoice', label: 'Supplier Invoice', view: null },
-  { key: 'supplier_order_details', label: 'Supplier Order Details', view: 'supplier', supplierMode: 'history' },
-  { key: 'supplier_stock', label: 'Supplier Stock', view: null, action: 'open_supplier_stock_analysis' },
-  { key: 'unified_supplier_code', label: 'UnifiedSupplierCode', view: null },
+  { key: 'pending_order', label: 'Pending Order', view: 'pending' },
+  { key: 'auto_pur_update', label: 'Auto Pur UpDate', view: 'supplier', supplierMode: 'history' },
+  { key: 'order_based_supplier_stock', label: 'Order Based Supplier Stock', view: 'supplier', supplierMode: 'stock' },
+  { key: 'supplier_order_details', label: 'Supplier Order Details', view: 'assigned' },
 ];
 
-function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, supplierStockAnalysisAllowed }) {
+function OrderWorkspace({ session, settings }) {
   void settings;
   const [stores, setStores] = useState([]);
   const [store, setStore] = useState(() => {
     if (DEV_STORE) return DEV_STORE;
     try { return localStorage.getItem('nexora.desktop.owStore') || ''; } catch { return ''; }
   });
-  const [view, setView] = useState('qty'); // 'qty' | 'review' | 'supplier' | 'assigned'
+  const [view, setView] = useState('qty'); // 'qty' | 'pending' | 'review' | 'supplier' | 'assigned'
   const [qtyRows, setQtyRows] = useState([]);
+  // Rows committed (Enter/Escape/blur) THIS session, kept visible but marked
+  // reviewed instead of vanishing -- they drop off for real only on the next
+  // actual reload (switching view/store/process), matching the grid staying
+  // stable while you work down it instead of rows jumping out from under you.
+  const [reviewedCodes, setReviewedCodes] = useState(() => new Set());
+  // Original orderqty as first loaded, captured before any commit overwrites
+  // row.orderqty -- lets the diff badge keep showing what actually changed
+  // (e.g. ▼ -3) on a reviewed row instead of resetting to 0 once the commit
+  // makes the row's live value equal its own new baseline.
+  const [originalQty, setOriginalQty] = useState({});
+  const [pendingRows, setPendingRows] = useState([]);
   const [rows, setRows] = useState([]);
+  // Same baseline-capture idea as originalQty above, but for the Review All /
+  // By Supplier grids (PascalCase ProductCode/OrderQty rows) so their OrderQty
+  // edits can show the same +/- diff badge once committed.
+  const [originalOrderQty, setOriginalOrderQty] = useState({});
   const [edits, setEdits] = useState({});
   const [savingCode, setSavingCode] = useState(null);
+  const [resettingPending, setResettingPending] = useState(false);
   const [selectedCode, setSelectedCode] = useState(null);
   const [history, setHistory] = useState([]);
   const [workflow, setWorkflow] = useState(null);
   const [search, setSearch] = useState('');
+  // Mirrors VB.NET's cboProductType combo (All / Pharma / Non Pharma),
+  // shown on Qty Check / Pending Order / Review All -- see GetQtyCheckQuery.
+  const [productType, setProductType] = useState('All');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const qtyRefs = useRef([]);
@@ -3202,6 +3243,17 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
   const [supplier, setSupplier] = useState(null);
   const [assigned, setAssigned] = useState([]);
   const [statusOverride, setStatusOverride] = useState({});
+  // Local-only "remove from view" (VB.NET's Delete key -> dgvMain.Rows.Remove):
+  // hides a row from THIS working session without touching the database, so
+  // it's simply skipped for the current supplier and stays available (still
+  // status=0) to assign to a different supplier later. Keyed by ProductCode;
+  // cleared whenever the supplier/store/view changes (new working set).
+  const [removedCodes, setRemovedCodes] = useState(() => new Set());
+  // "Not reviewed yet" badge for the By Supplier (history) grid: a row whose
+  // Qtycheck came back 0 from the server shows a badge until the operator
+  // edits its OrderQty right here, at which point it's treated as reviewed
+  // for the rest of this working set -- same reset points as removedCodes.
+  const [qtyCheckedHere, setQtyCheckedHere] = useState(() => new Set());
   const [assigningCode, setAssigningCode] = useState(null);
   const [banner, setBanner] = useState('');
   // Export + split.
@@ -3251,39 +3303,89 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
   }, [store, session]);
   useEffect(() => { loadWorkflow(); }, [loadWorkflow]);
 
-  // Supplier combo list (loaded once per store for the By Supplier / Assigned views).
+  // Supplier combo list: fetched once per store, not re-fetched on every
+  // switch into/out of By Supplier or Assigned -- the list doesn't change
+  // mid-session, and over a slow/high-latency link (remote stores on the
+  // internet) a redundant few-hundred-row re-fetch on every tab switch was
+  // real, visible lag. Loads lazily the first time either view needs it.
+  const suppliersLoadedForStore = useRef(null);
+  useEffect(() => { suppliersLoadedForStore.current = null; setSuppliers([]); }, [store]);
   useEffect(() => {
     if (!store || (view !== 'supplier' && view !== 'assigned')) return;
+    if (suppliersLoadedForStore.current === store) return;
+    suppliersLoadedForStore.current = store;
     api.legacySuppliers(store, '', session)
       .then((r) => setSuppliers(asArray(r)))
-      .catch((e) => setError(e.message));
+      .catch((e) => { suppliersLoadedForStore.current = null; setError(e.message); });
   }, [store, view, session]);
 
   useEffect(() => {
     if (!store) return undefined;
     let cancelled = false;
-    setLoading(true); setError(''); setEdits({}); setSelectedCode(null); setStatusOverride({});
+    setLoading(true); setError(''); setEdits({}); setSelectedCode(null); setStatusOverride({}); setRemovedCodes(new Set()); setQtyCheckedHere(new Set());
     const done = () => { if (!cancelled) setLoading(false); };
+    // Selects row 0 once the grid's data lands, same as VB.NET's
+    // FocusOrderQtyCell -- the grid opens with a row already current instead
+    // of nothing selected until the user clicks in.
     if (view === 'qty') {
+      setReviewedCodes(new Set());
       api.legacyQtyCheckRows(store, session)
-        .then((r) => { if (!cancelled) setQtyRows(asArray(r)); })
+        .then((r) => {
+          if (cancelled) return;
+          const list = asArray(r);
+          setQtyRows(list);
+          setOriginalQty(Object.fromEntries(list.map((row) => [row.productcode, row.orderqty])));
+          // Highlight row 0 as current (matches VB.NET's grid opening on a
+          // current row) WITHOUT stealing keyboard focus into its qty input --
+          // forcing focus there let an unrelated click elsewhere on the page
+          // blur it mid-click and auto-commit that row as "reviewed" before
+          // the user had touched anything.
+          if (list.length) setSelectedCode(list[0].productcode);
+        })
+        .catch((e) => { if (!cancelled) setError(e.message); })
+        .finally(done);
+    } else if (view === 'pending') {
+      api.legacyPendingOrderRows(store, session)
+        .then((r) => {
+          if (cancelled) return;
+          const list = asArray(r);
+          setPendingRows(list);
+          if (list.length) setSelectedCode(list[0].productcode);
+        })
         .catch((e) => { if (!cancelled) setError(e.message); })
         .finally(done);
     } else if (view === 'review') {
       api.legacyOrders(store, session)
-        .then((r) => { if (!cancelled) setRows(asArray(r)); })
+        .then((r) => {
+          if (cancelled) return;
+          const list = asArray(r);
+          setRows(list);
+          setOriginalOrderQty(Object.fromEntries(list.map((row) => [row.ProductCode, row.OrderQty])));
+          if (list.length) setSelectedCode(list[0].ProductCode);
+        })
         .catch((e) => { if (!cancelled) setError(e.message); })
         .finally(done);
     } else if (view === 'supplier') {
       if (!supplier) { setRows([]); done(); return () => { cancelled = true; }; }
       api.legacyOrdersBySupplier(store, supplier.supplier_code, supplierMode, session)
-        .then((r) => { if (!cancelled) setRows(asArray(r)); })
+        .then((r) => {
+          if (cancelled) return;
+          const list = asArray(r);
+          setRows(list);
+          setOriginalOrderQty(Object.fromEntries(list.map((row) => [row.ProductCode, row.OrderQty])));
+          if (list.length) setSelectedCode(list[0].ProductCode);
+        })
         .catch((e) => { if (!cancelled) setError(e.message); })
         .finally(done);
     } else { // assigned
       if (!supplier) { setAssigned([]); done(); return () => { cancelled = true; }; }
       api.legacyAssignedOrders(store, supplier.supplier_code, session)
-        .then((r) => { if (!cancelled) setAssigned(asArray(r)); })
+        .then((r) => {
+          if (cancelled) return;
+          const list = asArray(r);
+          setAssigned(list);
+          if (list.length) setSelectedCode(list[0].ProductCode);
+        })
         .catch((e) => { if (!cancelled) setError(e.message); })
         .finally(done);
     }
@@ -3300,40 +3402,85 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
   const finalized = workflow?.status === 'FINALIZED';
   const term = search.trim().toLowerCase();
   const match = (name, code) => !term || String(name || '').toLowerCase().includes(term) || String(code).includes(term);
-  const filteredQty = useMemo(() => qtyRows.filter((r) => match(r.productname, r.productcode)), [qtyRows, term]);
-  const filteredRows = useMemo(() => rows.filter((r) => match(r.ProductName, r.ProductCode)), [rows, term]);
+  const filteredQty = useMemo(() => qtyRows.filter((r) => (
+    match(r.productname, r.productcode) && (productType === 'All' || r.producttypename === productType)
+  )), [qtyRows, term, productType]);
+  const filteredRows = useMemo(() => rows.filter((r) => (
+    !removedCodes.has(r.ProductCode)
+    && match(r.ProductName, r.ProductCode) && (productType === 'All' || r.ProductTypeName === productType)
+  )), [rows, term, productType, removedCodes]);
+  // Filtered client-side like every other grid -- pendingRows is fetched
+  // once per store/view (Pharma + Non Pharma, matching VB.NET's "All") and
+  // never re-fetched just because the product-type filter changed.
+  const filteredPending = useMemo(() => pendingRows.filter((r) => (
+    match(r.productname, r.productcode) && (productType === 'All' || r.producttypename === productType)
+  )), [pendingRows, term, productType]);
 
-  // Persist the reviewed quantity. Neither Enter (Accept) nor Escape (Set 0 /
-  // not needed) removes the row -- Qty Check is a review screen, not a
-  // one-shot triage list, so a product stays visible after you act on it
-  // (matches Review All, which never drops rows either); only leaving the
-  // screen and coming back re-fetches, at which point already-reviewed rows
-  // (qtycheck=1) naturally fall out of this qtycheck=0 query.
+  const removeRow = (productCode) => setRemovedCodes((cur) => new Set(cur).add(productCode));
+
+  const resetPending = () => {
+    if (!store) return;
+    setResettingPending(true);
+    api.legacyResetPendingQtyCheck(store, session)
+      .then(({ assigned_marked, remaining_reset }) => {
+        setBanner(`Reset pending: ${assigned_marked} assigned line(s) marked reviewed, ${remaining_reset} remaining line(s) reset to original qty.`);
+        if (view === 'qty') setReloadTick((t) => t + 1);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setResettingPending(false));
+  };
+
+  // Persist the quantity and mark the row reviewed (qtycheck=1) -- only
+  // called from ArrowUp/ArrowDown navigation (see onQtyKey below). The row
+  // stays visible (marked reviewed) rather than vanishing mid-session; it
+  // drops off for real only on the next actual reload (switching
+  // view/store/process), so the grid doesn't jump around under you while
+  // you're still working down it.
   const commitQty = (productCode, value, focusIndex) => {
     if (!store) return;
     setSavingCode(productCode);
     api.legacyUpdateQtyCheck(store, productCode, value, session)
       .then(() => {
+        setReviewedCodes((cur) => new Set(cur).add(productCode));
+        // Patch the committed value into qtyRows itself -- the displayed
+        // value falls back to row.orderqty once the edit is cleared below,
+        // so without this the field snaps back to the pre-edit quantity even
+        // though the database write succeeded.
         setQtyRows((cur) => cur.map((r) => (r.productcode === productCode ? { ...r, orderqty: value } : r)));
-        setEdits((cur) => ({ ...cur, [productCode]: value }));
+        setEdits((cur) => { const n = { ...cur }; delete n[productCode]; return n; });
         requestAnimationFrame(() => qtyRefs.current[focusIndex]?.focus());
       })
       .catch((e) => setError(e.message))
       .finally(() => { setSavingCode(null); loadWorkflow(); });
   };
 
+  // Only Up/Down arrow navigation marks a row reviewed -- clicking into the
+  // cell, Tab, Escape, or clicking away must NOT commit/mark qtycheck. Enter
+  // still saves an edit in place (so a typed value isn't lost) but does not
+  // by itself mark the row reviewed or move focus; only leaving the row via
+  // ArrowUp/ArrowDown does that, matching the explicit rule.
   const onQtyKey = (e, row, index) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
-      // Accept the quantity; row stays put (see commitQty).
       const value = Number(edits[row.productcode] ?? row.orderqty);
       commitQty(row.productcode, value, Math.min(index + 1, filteredQty.length - 1));
-    } else if (e.key === 'Escape') {
+    } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      // Set 0 (not needed); row stays put too.
-      commitQty(row.productcode, 0, Math.min(index + 1, filteredQty.length - 1));
-    } else {
-      owHandleRowArrowKeys(e, qtyRefs, index);
+      const value = Number(edits[row.productcode] ?? row.orderqty);
+      commitQty(row.productcode, value, Math.max(index - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      // Save the value without marking reviewed or moving focus.
+      const value = Number(edits[row.productcode] ?? row.orderqty);
+      if (!store) return;
+      setSavingCode(row.productcode);
+      api.legacyUpdateQtyCheck(store, row.productcode, value, session)
+        .then(() => {
+          setQtyRows((cur) => cur.map((r) => (r.productcode === row.productcode ? { ...r, orderqty: value } : r)));
+          setEdits((cur) => { const n = { ...cur }; delete n[row.productcode]; return n; });
+        })
+        .catch((err) => setError(err.message))
+        .finally(() => setSavingCode(null));
     }
   };
 
@@ -3341,7 +3488,10 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
     if (!store || value === row.OrderQty) return;
     setSavingCode(row.ProductCode);
     api.legacyUpdateOrderQty(store, row.ProductCode, value, session)
-      .then(() => setRows((cur) => cur.map((r) => (r.ProductCode === row.ProductCode ? { ...r, OrderQty: value } : r))))
+      .then(() => {
+        setRows((cur) => cur.map((r) => (r.ProductCode === row.ProductCode ? { ...r, OrderQty: value } : r)));
+        setQtyCheckedHere((cur) => new Set(cur).add(row.ProductCode));
+      })
       .catch((e) => setError(e.message))
       .finally(() => { setSavingCode(null); loadWorkflow(); });
   };
@@ -3357,7 +3507,9 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
   // Supplier assignment (By Supplier view). Assign/unassign the selected supplier
   // to a row; the toggle returns the new status so the row flips green in place.
   const statusOf = (row) => statusOverride[row.ProductCode] ?? row.Status;
-  const filteredAssigned = useMemo(() => assigned.filter((r) => match(r.ProductName, r.ProductCode)), [assigned, term]);
+  const filteredAssigned = useMemo(() => assigned.filter((r) => (
+    match(r.ProductName, r.ProductCode) && (productType === 'All' || r.ProductTypeName === productType)
+  )), [assigned, term, productType]);
   const canAssign = view === 'supplier' && Boolean(supplier);
   const isStockMode = view === 'supplier' && supplierMode === 'stock';
 
@@ -3394,6 +3546,14 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
   // All to export from).
   const runExport = async () => {
     if (!supplier) { setError('Pick a supplier first.'); return; }
+    // Export assigns EVERY row currently shown for this supplier -- and since
+    // By Supplier/history now lists every open product in the store (no more
+    // per-supplier purchase-history filter, see orders_by_supplier), that can
+    // mean the WHOLE store's remaining order, not just what the operator
+    // meant for this one supplier. Confirm the count first so a supplier pick
+    // can't silently close out products that were meant for someone else.
+    const count = filteredRows.length;
+    if (!window.confirm(`Export will assign all ${count} product(s) currently shown to ${supplier.supplier_name}. Continue?`)) return;
     setExporting(true); setError('');
     try {
       const mode = view === 'supplier' ? supplierMode : 'history';
@@ -3412,8 +3572,9 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
   };
 
   const activeCount = view === 'qty' ? filteredQty.length
-    : view === 'assigned' ? filteredAssigned.length
-      : filteredRows.length;
+    : view === 'pending' ? filteredPending.length
+      : view === 'assigned' ? filteredAssigned.length
+        : filteredRows.length;
 
   // Selected-product identity for the intelligence sidebar (from whichever grid
   // the selection currently lives in).
@@ -3421,12 +3582,14 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
     if (selectedCode == null) return null;
     const q = qtyRows.find((r) => r.productcode === selectedCode);
     if (q) return { name: q.productname, stock: q.totalstock, pack: q.saleunit, mrp: q.mrp };
+    const p = pendingRows.find((r) => r.productcode === selectedCode);
+    if (p) return { name: p.productname, stock: p.totalstock, pack: p.saleunit, mrp: p.mrp };
     const o = rows.find((r) => r.ProductCode === selectedCode);
     if (o) return { name: o.ProductName, stock: o.TotalStock, pack: o.SaleUnit, mrp: o.MRP };
     const a = assigned.find((r) => r.ProductCode === selectedCode);
     if (a) return { name: a.ProductName, stock: a.TotalStock, pack: a.SaleUnit, mrp: a.MRP };
     return { name: `#${selectedCode}` };
-  }, [selectedCode, qtyRows, rows, assigned]);
+  }, [selectedCode, qtyRows, pendingRows, rows, assigned]);
 
   // Close the settings card when switching grids (each grid has its own config).
   useEffect(() => { setSettingsFor(null); }, [view]);
@@ -3435,16 +3598,24 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
   const qtyCols = resolveOwColumns(OW_QTY_COLUMNS, owColCfg.qty);
   const reviewCols = resolveOwColumns(OW_REVIEW_COLUMNS, owColCfg.review);
 
-  function renderQtyCell(col, row, index) {
+  function renderQtyCell(col, row, index, reviewed) {
     switch (col.key) {
       case 'name': return <span className="ow-cellname" title={row.productname}>{row.productname}</span>;
-      case 'orqty': return (
-        <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.productname} order quantity`}
-          value={edits[row.productcode] ?? row.orderqty} disabled={savingCode === row.productcode || finalized}
-          onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.productcode); e.target.select(); }}
-          onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: owWholeQty(e.target.value) }))}
-          onKeyDown={(e) => onQtyKey(e, row, index)} />
-      );
+      case 'orqty': {
+        const value = edits[row.productcode] ?? row.orderqty;
+        return (
+          <span className="ow-qty-cell">
+            <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.productname} order quantity`}
+              value={value} disabled={savingCode === row.productcode || finalized}
+              onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.productcode); e.target.select(); }}
+              onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: owWholeQty(e.target.value) }))}
+              onKeyDown={(e) => onQtyKey(e, row, index)} />
+            <span className="ow-qty-diff-slot">
+              {reviewed && <OwQtyDiffBadge from={originalQty[row.productcode] ?? row.orderqty} to={value} />}
+            </span>
+          </span>
+        );
+      }
       case 'stock': return <span className={Number(row.totalstock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.totalstock)}</span>;
       case 'pack': return fmtOwQty(row.saleunit);
       case 'desc': return row.unitdescription;
@@ -3460,14 +3631,23 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
   function renderReviewCell(col, row, index) {
     switch (col.key) {
       case 'name': return <span className="ow-cellname" title={row.ProductName}>{row.ProductName}</span>;
-      case 'orqty': return (
-        <input ref={(el) => { reviewQtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
-          value={edits[row.ProductCode] ?? row.OrderQty} disabled={savingCode === row.ProductCode || finalized}
-          onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
-          onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
-          onBlur={(e) => saveOrderQty(row, owWholeQty(e.target.value))}
-          onKeyDown={(e) => owHandleRowArrowKeys(e, reviewQtyRefs, index)} />
-      );
+      case 'orqty': {
+        const value = edits[row.ProductCode] ?? row.OrderQty;
+        const base = originalOrderQty[row.ProductCode] ?? row.OrderQty;
+        return (
+          <span className="ow-qty-cell">
+            <input ref={(el) => { reviewQtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
+              value={value} disabled={savingCode === row.ProductCode || finalized}
+              onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
+              onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
+              onBlur={(e) => saveOrderQty(row, owWholeQty(e.target.value))}
+              onKeyDown={(e) => owHandleRowArrowKeys(e, reviewQtyRefs, index)} />
+            <span className="ow-qty-diff-slot">
+              {Number(value) !== Number(base) && <OwQtyDiffBadge from={base} to={value} />}
+            </span>
+          </span>
+        );
+      }
       case 'stock': return <span className={Number(row.TotalStock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.TotalStock)}</span>;
       case 'pack': return fmtOwQty(row.SaleUnit);
       case 'desc': return row.UnitDescription;
@@ -3503,22 +3683,12 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
             }
             onChange={(e) => {
               const opt = OW_PROCESS_OPTIONS.find((p) => p.key === e.target.value);
-              if (opt?.view) {
-                setView(opt.view);
-                if (opt.supplierMode) setSupplierMode(opt.supplierMode);
-                return;
-              }
-              if (opt?.action === 'open_supplier_stock_analysis') {
-                if (supplierStockAnalysisAllowed) onOpenSupplierStockAnalysis?.();
-                else setError('Supplier Stock Analysis is not available for this login.');
-              }
+              if (!opt) return;
+              setView(opt.view);
+              if (opt.supplierMode) setSupplierMode(opt.supplierMode);
             }}
           >
-            {OW_PROCESS_OPTIONS.map((p) => (
-              <option key={p.key} value={p.key} disabled={!p.view && !p.action}>
-                {p.label}{p.view ? '' : p.action ? ' (Supplier Stock Analysis)' : ' (coming soon)'}
-              </option>
-            ))}
+            {OW_PROCESS_OPTIONS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
           </select>
         </label>
         {(view === 'supplier' || view === 'assigned') && (
@@ -3533,10 +3703,25 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
             <button type="button" role="tab" aria-selected={supplierMode === 'stock'} className={supplierMode === 'stock' ? 'active' : ''} onClick={() => setSupplierMode('stock')}>Live Stock</button>
           </div>
         )}
+        <label className="ow-field">
+          <span>Product type</span>
+          <select value={productType} onChange={(e) => setProductType(e.target.value)} aria-label="Product type">
+            <option value="All">All</option>
+            <option value="Pharma">Pharma</option>
+            <option value="Non Pharma">Non Pharma</option>
+          </select>
+        </label>
         <input className="ow-search" type="search" value={search} placeholder="Search product or code…" aria-label="Search products" onChange={(e) => setSearch(e.target.value)} />
         {(view === 'qty' || view === 'review') && (
           <button type="button" ref={settingsBtnRef} className="ow-icon-btn" title="Grid column settings" aria-label="Grid column settings" aria-expanded={Boolean(settingsFor)} onClick={() => setSettingsFor((v) => (v ? null : gridId))}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d={OW_GEAR_PATH} /></svg>
+          </button>
+        )}
+        {view === 'qty' && (
+          <button type="button" className="ow-btn" disabled={resettingPending || finalized}
+            title="Mark all supplier-assigned lines reviewed and reset every still-unassigned line back to its original order quantity"
+            onClick={resetPending}>
+            {resettingPending ? 'Resetting…' : 'Reset Pending'}
           </button>
         )}
         {finalized
@@ -3579,9 +3764,10 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
         <div className="ow-main">
           <div className="ow-help">
             <span className="ow-status-hint">
-              {view === 'qty' && <><kbd>Enter</kbd> Accept <kbd>Esc</kbd> Set 0 (both stay listed) <kbd>↕</kbd> Navigate</>}
+              {view === 'qty' && <><kbd>Enter</kbd> Accept <kbd>Esc</kbd> Set 0 <kbd>↕</kbd> Navigate</>}
+              {view === 'pending' && <><kbd>↕</kbd> Navigate</>}
               {view === 'supplier' && (supplier
-                ? <><kbd>Enter</kbd> Assign {supplier.supplier_name} <kbd>↕</kbd> Navigate</>
+                ? <><kbd>Enter</kbd> Assign {supplier.supplier_name} <kbd>Delete</kbd> Remove from list <kbd>↕</kbd> Navigate</>
                 : <>Pick a supplier to assign · <kbd>↕</kbd> Navigate</>)}
               {view === 'assigned' && <><kbd>↕</kbd> Navigate</>}
               {view === 'review' && <><kbd>↕</kbd> Navigate</>}
@@ -3605,12 +3791,41 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
               <tr>{qtyCols.map((c) => <th key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{c.label}</th>)}</tr>
             </thead>
             <tbody>
-              {filteredQty.map((row, index) => (
+              {filteredQty.map((row, index) => {
+                const reviewed = reviewedCodes.has(row.productcode);
+                return (
+                  <tr key={row.productcode}
+                    className={`${selectedCode === row.productcode ? 'ow-row-sel' : ''}${reviewed ? ' ow-row-assigned' : ''}`.trim() || undefined}
+                    onClick={() => setSelectedCode(row.productcode)}>
+                    {qtyCols.map((c) => <td key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{renderQtyCell(c, row, index, reviewed)}</td>)}
+                  </tr>
+                );
+              })}
+              {!filteredQty.length && <tr><td colSpan={qtyCols.length} className="ow-empty">{loading ? 'Loading…' : qtyRows.length ? 'No products match.' : `Every pending product for ${store || 'this store'} has been reviewed.`}</td></tr>}
+            </tbody>
+          </table>
+        ) : view === 'pending' ? (
+          <table className="ow-fixed">
+            <colgroup>
+              <col style={{ width: '30%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '12%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '18%' }} />
+            </colgroup>
+            <thead>
+              <tr><th className="ow-grow">Product Name</th><th className="ow-num">Or Qty</th><th className="ow-num">Stock</th><th className="ow-num">Sls Qty</th><th>Desc</th><th className="ow-num">MRP</th><th className="ow-num">Max Qty</th><th>Wanted</th></tr>
+            </thead>
+            <tbody>
+              {filteredPending.map((row) => (
                 <tr key={row.productcode} className={selectedCode === row.productcode ? 'ow-row-sel' : undefined} onClick={() => setSelectedCode(row.productcode)}>
-                  {qtyCols.map((c) => <td key={c.key} className={c.align === 'right' ? 'ow-num' : undefined}>{renderQtyCell(c, row, index)}</td>)}
+                  <td className="ow-grow" title={row.productname}>{row.productname}</td>
+                  <td className="ow-num">{fmtOwQty(row.orderqty)}</td>
+                  <td className="ow-num">{fmtOwQty(row.totalstock)}</td>
+                  <td className="ow-num">{fmtOwQty(row.slsqty)}</td>
+                  <td>{row.unitdescription}</td>
+                  <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
+                  <td className="ow-num">{fmtOwQty(row.maxsaleqty)}</td>
+                  <td>{row.wantedtype ?? '—'}</td>
                 </tr>
               ))}
-              {!filteredQty.length && <tr><td colSpan={qtyCols.length} className="ow-empty">{loading ? 'Loading…' : qtyRows.length ? 'No products match.' : `Every pending product for ${store || 'this store'} has been reviewed.`}</td></tr>}
+              {!filteredPending.length && <tr><td colSpan={8} className="ow-empty">{loading ? 'Loading…' : 'No reviewed products are waiting on a supplier assignment.'}</td></tr>}
             </tbody>
           </table>
         ) : view === 'review' ? (
@@ -3655,22 +3870,40 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
               {filteredRows.map((row, index) => {
                 const isAssigned = statusOf(row) === 1;
                 const value = edits[row.ProductCode] ?? row.OrderQty;
+                const notReviewed = !isStockMode && Number(row.Qtycheck) !== 1 && !qtyCheckedHere.has(row.ProductCode);
                 return (
                   <tr key={row.ProductCode} className={`${selectedCode === row.ProductCode ? 'ow-row-sel' : ''}${isAssigned ? ' ow-row-assigned' : ''}`.trim() || undefined} onClick={() => setSelectedCode(row.ProductCode)}>
-                    <td className="ow-grow" title={row.ProductName}>{row.ProductName}</td>
+                    <td className="ow-grow" title={row.ProductName}>
+                      {notReviewed && <span className="ow-chip ow-chip-run ow-not-reviewed-badge" title="Not yet qty-checked">NR</span>}
+                      {row.ProductName}
+                    </td>
                     <td className="ow-num">
+                      <span className="ow-qty-cell">
                       <input ref={(el) => { supplierQtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
                         value={value} disabled={savingCode === row.ProductCode || isAssigned || finalized}
                         onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
                         onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
+                        onBlur={(e) => saveOrderQty(row, owWholeQty(e.target.value))}
                         onKeyDown={(e) => {
-                          // Enter only assigns when a supplier is actually
-                          // selected -- with none picked, it's a dead key
-                          // press (falls through to row navigation) rather
-                          // than a silent no-op assign attempt.
-                          if (e.key === 'Enter' && !isAssigned && supplier) { e.preventDefault(); toggleAssign(row); }
+                          // Enter with a supplier selected assigns (toggleAssign
+                          // itself saves a pending qty edit first, so the two
+                          // never race). With no supplier picked, Enter still
+                          // commits the qty edit on its own -- same as VB.NET's
+                          // CellEndEdit, independent of assignment.
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (!isAssigned && supplier) { toggleAssign(row); return; }
+                            const v = owWholeQty(e.target.value);
+                            if (v !== row.OrderQty) saveOrderQty(row, v);
+                          } else if (e.key === 'Delete') { e.preventDefault(); removeRow(row.ProductCode); }
                           else owHandleRowArrowKeys(e, supplierQtyRefs, index);
                         }} />
+                      <span className="ow-qty-diff-slot">
+                        {Number(value) !== Number(originalOrderQty[row.ProductCode] ?? row.OrderQty) && (
+                          <OwQtyDiffBadge from={originalOrderQty[row.ProductCode] ?? row.OrderQty} to={value} />
+                        )}
+                      </span>
+                      </span>
                     </td>
                     <td className="ow-num"><span className={Number(row.TotalStock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.TotalStock)}</span></td>
                     {isStockMode && <>
@@ -3688,6 +3921,12 @@ function OrderWorkspace({ session, settings, onOpenSupplierStockAnalysis, suppli
                         onClick={(e) => { e.stopPropagation(); toggleAssign(row); }}>
                         {assigningCode === row.ProductCode ? '…' : isAssigned ? 'Unassign' : 'Assign'}
                       </button>
+                      {!isAssigned && (
+                        <button type="button" className="ow-btn ow-btn-sm" title="Remove from this list (Delete) -- stays available to assign to another supplier" aria-label={`Remove ${row.ProductName} from this list`}
+                          onClick={(e) => { e.stopPropagation(); removeRow(row.ProductCode); }}>
+                          ✕
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -3805,6 +4044,20 @@ function owFocusRow(refs, index) {
 function owHandleRowArrowKeys(e, refs, index) {
   if (e.key === 'ArrowDown') { e.preventDefault(); owFocusRow(refs, index + 1); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); owFocusRow(refs, index - 1); }
+}
+
+// Qty Check edit indicator: just the signed delta (+9 / -9 / 0), no arrow
+// glyph and no original value -- green for an increase, red for a decrease,
+// blue for no change. `from` is the row's originally-loaded orderqty, `to`
+// is whatever's currently showing (edited or not).
+function OwQtyDiffBadge({ from, to }) {
+  const diff = Number(to) - Number(from);
+  const cls = diff > 0 ? 'ow-qty-diff ow-qty-diff-up' : diff < 0 ? 'ow-qty-diff ow-qty-diff-down' : 'ow-qty-diff ow-qty-diff-flat';
+  return (
+    <span className={cls} aria-label={`${diff > 0 ? 'increased' : diff < 0 ? 'decreased' : 'unchanged'} by ${Math.abs(diff)}`}>
+      {fmtOwSigned(diff)}
+    </span>
+  );
 }
 function fmtOwPct(value) {
   if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '—';
@@ -4278,6 +4531,43 @@ function fmtLblDateFull(iso) {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso);
 }
 
+// Zero stock AND no purchase/sale in the last 90 days (or never) — flagged
+// at the moment a reviewer marks Y, since including a dead product on the
+// label sheet is almost always a mistake worth a second look.
+function lblIsStaleNoStock(row) {
+  if (Number(row.total_stock) !== 0) return false;
+  const purchaseStale = !row.last_purchase_date || Number(row.purchase_days) > 90;
+  const saleStale = !row.last_sale_date || Number(row.sale_days) > 90;
+  return purchaseStale && saleStale;
+}
+
+// Sale unit of 1 almost always means a single-piece unit like TAB/CAP — a
+// SaleUnit=1 product whose (effective, corrected) unit ISN'T TAB is worth a
+// second look before marking Y, since it may be a mis-set unit (e.g. a
+// bottle/strip wrongly left at SaleUnit 1).
+function lblIsSaleUnitOneNotTab(row) {
+  if (Number(row.sale_unit) !== 1) return false;
+  const unit = lblNewUnit(row).trim().toUpperCase();
+  return !!unit && unit !== 'TAB';
+}
+
+// Sale unit > 1 AND live (non-expired) stock on hand — marking N removes a
+// product that still has sellable stock from the label list, so flag it for
+// a second look. The grid's total_stock already reflects live batches (expiry
+// filtering happens upstream in sync.Batches), so no extra fetch is needed.
+function lblHasSellableStockMultiUnit(row) {
+  return Number(row.sale_unit) > 1 && Number(row.total_stock) > 0;
+}
+
+// Full date + local time for a DATETIME2 ISO string (e.g. lock/last-edit
+// timestamps) — distinct from fmtLblDateFull, which is date-only.
+function fmtLblDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 // Common corrected-unit choices offered in the editable Unit cell datalist,
 // merged with whatever units the current load actually contains.
 const LABEL_UNIT_PRESETS = ['TAB', 'CAP', 'SYP', 'INJ', 'CREAM', 'LOT', 'PACK', 'SUG', 'DROPS', 'POWDER'];
@@ -4409,6 +4699,16 @@ function LabelMultiPicker({ options, selected, onChange, placeholder = 'Any', no
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapRef = useRef(null);
+  // Local mirror of `selected`, updated synchronously on every click so the
+  // checkbox/summary never wait on the parent's commit. The parent (e.g. the
+  // Label Exporter grid's filter bar) can be mid-way through re-rendering
+  // thousands of unrelated grid rows off a single state change anywhere in
+  // that component — without this mirror, ticking a checkbox here would
+  // visually freeze for however long that unrelated re-render takes, even
+  // though toggling a FILTER (not yet applied — Search is explicit) has
+  // nothing to do with the grid at all.
+  const [localSelected, setLocalSelected] = useState(selected);
+  useEffect(() => { setLocalSelected(selected); }, [selected]);
 
   useEffect(() => {
     function onDoc(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
@@ -4420,12 +4720,13 @@ function LabelMultiPicker({ options, selected, onChange, placeholder = 'Any', no
   const filtered = term ? options.filter((o) => o.toLowerCase().includes(term)) : options;
 
   function toggle(value) {
-    const next = new Set(selected);
+    const next = new Set(localSelected);
     if (next.has(value)) next.delete(value); else next.add(value);
+    setLocalSelected(next);
     onChange(next);
   }
 
-  const summary = selected.size === 0 ? placeholder : selected.size === 1 ? Array.from(selected)[0] : `${selected.size} ${noun}s`;
+  const summary = localSelected.size === 0 ? placeholder : localSelected.size === 1 ? Array.from(localSelected)[0] : `${localSelected.size} ${noun}s`;
 
   return (
     <div className="ow-supplier-pick lbl-unit-pick" ref={wrapRef}>
@@ -4610,6 +4911,10 @@ function LabelExporter({ session, settings }) {
   const [selectedLetters, setSelectedLetters] = useState(() => new Set());
   const [unitOptions, setUnitOptions] = useState([]);
   const [selectedUnits, setSelectedUnits] = useState(() => new Set());
+  // Which unit the Unit filter/options match against: 'new' (effective,
+  // reviewer-corrected) or 'old' (raw master unit). Switching clears the
+  // current selection since the two lists don't share the same values.
+  const [unitSource, setUnitSource] = useState('new');
   const [sublocOptions, setSublocOptions] = useState([]);
   const [selectedSublocs, setSelectedSublocs] = useState(() => new Set());
   const [boxNumber, setBoxNumber] = useState('');
@@ -4723,8 +5028,8 @@ function LabelExporter({ session, settings }) {
               <button
                 type="button"
                 className={`lbl-newunit-chip ${unitChanged ? 'is-changed' : ''}`}
-                disabled={savingCode === code}
-                title={unitChanged ? `Corrected from ${oldUnit} — click to change` : 'Click to correct unit'}
+                disabled={savingCode === code || isLocked}
+                title={isLocked ? `Letter ${activeLetter} is locked` : unitChanged ? `Corrected from ${oldUnit} — click to change` : 'Click to correct unit'}
                 onClick={() => { setActiveIndex(index); setEditingUnitCode(code); }}
               >
                 <span className="lbl-newunit-val">{newUnit || '—'}</span>
@@ -4756,8 +5061,8 @@ function LabelExporter({ session, settings }) {
                 <button
                   type="button"
                   className="lbl-newunit-chip"
-                  disabled={savingCode === code}
-                  title={newLoc ? `Manually move from ${newLoc}` : 'Click to assign a location'}
+                  disabled={savingCode === code || isLocked}
+                  title={isLocked ? `Letter ${activeLetter} is locked` : newLoc ? `Manually move from ${newLoc}` : 'Click to assign a location'}
                   onClick={() => { setActiveIndex(index); setEditingLocationCode(code); }}
                 >
                   <span className="lbl-newunit-val">{newLoc ? <span className="lbl-assigned-box">{newLoc}</span> : <span className="lbl-null">—</span>}</span>
@@ -4766,8 +5071,8 @@ function LabelExporter({ session, settings }) {
                   <button
                     type="button"
                     className="lbl-newloc-clear"
-                    disabled={savingCode === code}
-                    title="Unassign — clear this product's location back to blank"
+                    disabled={savingCode === code || isLocked}
+                    title={isLocked ? `Letter ${activeLetter} is locked` : "Unassign — clear this product's location back to blank"}
                     onClick={() => { setActiveIndex(index); clearLocationForRow(row); }}
                   >
                     ×
@@ -4788,15 +5093,19 @@ function LabelExporter({ session, settings }) {
         const review = row.include_label || null;
         const reviewBadge = review === 'Y' ? 'Y' : review === 'N' ? 'N' : '—';
         const reviewCls = review === 'Y' ? 'is-yes' : review === 'N' ? 'is-no' : 'is-none';
+        const staleY = review === 'Y' && lblIsStaleNoStock(row);
+        const oddUnitY = review === 'Y' && lblIsSaleUnitOneNotTab(row);
         return (
           <td key="review" className="lbl-review-cell">
             <button
               type="button"
-              className={`lbl-review-badge ${reviewCls}`}
-              disabled={savingCode === code}
-              title="Click to cycle —/Y/N · or use Enter/Y, Esc/N"
+              className={`lbl-review-badge ${reviewCls} ${!review ? 'is-unreviewed' : ''}`}
+              disabled={savingCode === code || isLocked}
+              title={isLocked ? `Letter ${activeLetter} is locked` : 'Click to cycle —/Y/N · or use Enter/Y, Esc/N'}
               onClick={(event) => { event.stopPropagation(); cycleReview(row); }}
             >{reviewBadge}</button>
+            {staleY && <span className="lbl-review-stale-warn" title="Zero stock, no purchase/sale in the last 90 days">⚠</span>}
+            {oddUnitY && <span className="lbl-review-stale-warn" title={`Sale unit 1 but unit is "${lblNewUnit(row)}", not TAB`}>?</span>}
           </td>
         );
       }
@@ -4847,9 +5156,54 @@ function LabelExporter({ session, settings }) {
   const [intelLoading, setIntelLoading] = useState(false);
   const intelRequestRef = useRef(0);
   const searchRequestRef = useRef(0);
+  const searchAbortRef = useRef(null);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const rowRefs = useRef({});
   const gridRef = useRef(null);
+
+  // Single active shelf letter — Lock / Export-to-Excel / last-edit only make
+  // sense once exactly one letter is selected (the workflow is "walk the
+  // shelf one letter at a time"); with 0 or 2+ letters loaded they're disabled.
+  const activeLetter = selectedLetters.size === 1 ? Array.from(selectedLetters)[0] : '';
+  const [letterLock, setLetterLock] = useState(null); // { letter, locked, locked_by, locked_at, unreviewed_count, last_edit }
+  const [lockBusy, setLockBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const isLocked = !!(letterLock && letterLock.locked && letterLock.letter === activeLetter);
+
+  const refreshLetterLock = useCallback((letter) => {
+    if (!letter) { setLetterLock(null); return; }
+    api.getLabelLetterLock(tenantId, storeId, letter, session)
+      .then((result) => setLetterLock(result))
+      .catch(() => setLetterLock(null));
+  }, [tenantId, storeId, session]);
+
+  useEffect(() => { refreshLetterLock(activeLetter); }, [activeLetter, refreshLetterLock]);
+
+  function toggleLetterLock() {
+    if (!activeLetter || lockBusy) return;
+    setLockBusy(true);
+    const call = isLocked
+      ? api.unlockLabelLetter(tenantId, storeId, activeLetter, session)
+      : api.lockLabelLetter(tenantId, storeId, activeLetter, session);
+    call
+      .then((result) => {
+        setLetterLock(result);
+        flashToast(isLocked ? `✓ Letter ${activeLetter} unlocked` : `✓ Letter ${activeLetter} locked`);
+      })
+      .catch((error) => flashToast(error.message || 'Lock update failed', 'err'))
+      .finally(() => setLockBusy(false));
+  }
+
+  function exportCurrentLetterExcel() {
+    if (!activeLetter || exportBusy) return;
+    setExportBusy(true);
+    api.exportLabelProductsExcel(tenantId, storeId, activeLetter, session)
+      .then((blob) => {
+        owDownloadBlob(blob, `label-exporter-${activeLetter}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+        flashToast(`✓ Exported letter ${activeLetter}`);
+      })
+      .catch((error) => flashToast(error.message || 'Export failed', 'err'))
+      .finally(() => setExportBusy(false));
+  }
 
   // Load the store list, retrying a few times if it comes back empty/errors.
   // The list is only needed for the (super-admin/NMW) store switcher, so a
@@ -4878,6 +5232,25 @@ function LabelExporter({ session, settings }) {
     [rows, colFilters, hasColFilters]
   );
   useEffect(() => { setActiveIndex(0); }, [colFilters]);
+
+  // Only mount the rows actually on screen — a loaded letter can be 3000+
+  // products, and an unvirtualized <table> of that size turned EVERY state
+  // change anywhere in this screen (even an unrelated filter checkbox,
+  // which doesn't even touch `rows`) into a multi-second React reconcile of
+  // every row, freezing the UI. Fixed 28px row height matches
+  // `.lbl-grid tbody td { height: 28px }` exactly (table-layout: fixed,
+  // border-collapse), so no per-row measurement is needed.
+  const rowVirtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement: () => gridRef.current,
+    estimateSize: () => 28,
+    overscan: 12
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const virtualTopPad = virtualRows.length ? virtualRows[0].start : 0;
+  const virtualBottomPad = virtualRows.length
+    ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+    : 0;
 
   // Boxes already assigned in the loaded rows, so the reviewer can reuse one
   // instead of retyping it; typing a value not here still commits as new.
@@ -5024,7 +5397,7 @@ function LabelExporter({ session, settings }) {
         setActiveIndex(idx);
         requestAnimationFrame(() => {
           if (t.scrollTop && gridRef.current) gridRef.current.scrollTop = t.scrollTop;
-          else rowRefs.current[idx]?.scrollIntoView({ block: 'center' });
+          else rowVirtualizer.scrollToIndex(idx, { align: 'center' });
         });
       }
     }
@@ -5064,6 +5437,13 @@ function LabelExporter({ session, settings }) {
     // If the store list never loaded (e.g. backend was down on mount), try again
     // now that we're clearly talking to the backend.
     if (stores.length === 0) loadStores();
+    // Cancel any search still in flight before starting a new one — both so a
+    // slow stale request can never clobber fresher rows, and so Escape (see
+    // cancelSearch) has a real request to abort instead of just hiding the
+    // spinner while the grid secretly keeps waiting on dead filters.
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
     setStatus({ state: 'loading', message: 'Loading products...' });
     const clientStart = performance.now();
     // Guard against an older, slower in-flight search resolving AFTER a newer
@@ -5078,18 +5458,27 @@ function LabelExporter({ session, settings }) {
       startsWith: startsWithParam,
       unitDescription: selectedUnits.size ? Array.from(selectedUnits).join(',') : '',
       unitDescriptionMode: selectedUnits.size ? 'exact' : 'contains',
+      unitSource,
       boxNumber,
       stockFilter,
       reviewStatus,
       onlyNullSublocation: boxNumber ? false : onlyNullSublocation,
       onlySaleUnitGtOne,
-      sublocationFilter: selectedSublocs.size ? Array.from(selectedSublocs).join(',') : ''
+      sublocationFilter: selectedSublocs.size ? Array.from(selectedSublocs).join(',') : '',
+      signal: controller.signal
     }).then((result) => {
       if (searchRequestRef.current !== requestId) return;
       const nextRows = asArray(result?.rows);
       setRows(nextRows);
       setActiveIndex(0);
       setSelectedCodes(new Set());
+      // Auto-mark N on every unreviewed dead-stock row in THIS search result —
+      // runs on every search, silently (toast only), same rule as the manual
+      // "Mark Dead Stock N" button. Skipped while the letter is locked (no
+      // edits allowed) or when nothing was selected (letters.size !== 1 means
+      // activeLetter is '', so the lock check inside autoMarkStaleN still
+      // applies correctly via the isLocked closure).
+      if (!isLocked) autoMarkStaleN(nextRows, tenantId, effStoreId);
       setUnitOptions(asArray(result?.unit_descriptions));
       setSublocOptions(asArray(result?.sublocations));
       const nextSubLoc = {};
@@ -5117,10 +5506,37 @@ function LabelExporter({ session, settings }) {
       });
     }).catch((error) => {
       if (searchRequestRef.current !== requestId) return;
+      if (error?.name === 'AbortError') {
+        setStatus({ state: 'idle', message: 'Search cancelled.' });
+        return;
+      }
       setRows([]);
       setStatus({ state: 'error', message: error.message });
     });
   }
+
+  // Escape, while a search is in flight, aborts it instead of leaving the
+  // operator stuck watching a slow/hung query with no way out — bumping
+  // searchRequestRef also blocks a late response from landing after cancel.
+  function cancelSearch() {
+    if (status.state !== 'loading') return;
+    searchRequestRef.current += 1;
+    searchAbortRef.current?.abort();
+    setStatus({ state: 'idle', message: 'Search cancelled.' });
+  }
+
+  // Global Escape-to-cancel: while a search is in flight the grid is empty
+  // (handleGridKeyDown bails out with no rows to act on), so without this a
+  // slow/stuck filter combo left the operator stuck watching a spinner with
+  // no way out. Document-level so it fires regardless of what has focus.
+  useEffect(() => {
+    if (status.state !== 'loading') return undefined;
+    function onEsc(event) {
+      if (event.key === 'Escape') { event.preventDefault(); cancelSearch(); }
+    }
+    document.addEventListener('keydown', onEsc);
+    return () => document.removeEventListener('keydown', onEsc);
+  }, [status.state]);
 
   function patchRow(productCode, patch) {
     setRows((current) => current.map((row) => (row.product_code === productCode ? { ...row, ...patch } : row)));
@@ -5148,11 +5564,39 @@ function LabelExporter({ session, settings }) {
   // ('Y'/'N'/null). One code path for every entry point (keyboard, badge
   // click, bulk) so the UI's single REVIEW column always maps to the exact
   // same data model the backend already expects — no new/duplicate field.
-  function persistReview(row, nextValue) {
+  function persistReview(row, nextValue, skipUnitCheck = false) {
+    if (isLocked) { flashToast(`⚠ Letter ${activeLetter} is locked`, 'err'); return Promise.resolve(); }
     if (row.include_label === nextValue) return Promise.resolve();
+    if (nextValue === 'Y' && !skipUnitCheck && lblIsSaleUnitOneNotTab(row)) {
+      setConfirm({
+        title: `Include ${row.product_code} on the label?`,
+        body: [
+          `Sale unit is 1 but the unit is "${lblNewUnit(row) || '—'}", not TAB.`,
+          'Double-check this is really meant to be a single-piece label before including it.'
+        ],
+        confirmLabel: 'Include anyway',
+        onConfirm: () => { setConfirm(null); persistReview(row, nextValue, true); }
+      });
+      return Promise.resolve();
+    }
+    if (nextValue === 'N' && !skipUnitCheck && lblHasSellableStockMultiUnit(row)) {
+      setConfirm({
+        title: `Remove ${row.product_code} from the label list?`,
+        body: [
+          `Stock is available (${fmtOwQty(row.total_stock)} @ sale unit ${fmtOwQty(row.sale_unit)}).`,
+          'Do you want to remove this product from the label list?'
+        ],
+        confirmLabel: 'Remove (mark N)',
+        onConfirm: () => { setConfirm(null); persistReview(row, nextValue, true); }
+      });
+      return Promise.resolve();
+    }
+    if (nextValue === 'Y' && lblIsStaleNoStock(row)) {
+      flashToast(`⚠ ${row.product_code} — no transaction in the last 90 days`, 'err');
+    }
     setSavingCode(row.product_code);
     return api.updateLabelReview(row.product_code, tenantId, storeId, { include_label: nextValue }, session)
-      .then(() => patchRow(row.product_code, { include_label: nextValue }))
+      .then(() => { patchRow(row.product_code, { include_label: nextValue }); refreshLetterLock(activeLetter); })
       .catch((error) => setStatus({ state: 'error', message: error.message }))
       .finally(() => setSavingCode(''));
   }
@@ -5172,6 +5616,7 @@ function LabelExporter({ session, settings }) {
   }
 
   function saveRemarks(row) {
+    if (isLocked) { flashToast(`⚠ Letter ${activeLetter} is locked`, 'err'); return; }
     const draft = (remarksDrafts[row.product_code] || '').trim();
     if (draft === (row.remarks || '')) return;
     setSavingCode(row.product_code);
@@ -5182,6 +5627,7 @@ function LabelExporter({ session, settings }) {
   }
 
   function saveSubLocation(row) {
+    if (isLocked) { flashToast(`⚠ Letter ${activeLetter} is locked`, 'err'); return; }
     const draft = (subLocDrafts[row.product_code] || '').trim();
     if (draft === (row.current_sublocation || '')) return;
     setSavingCode(row.product_code);
@@ -5196,6 +5642,7 @@ function LabelExporter({ session, settings }) {
   // never overwritten (spec §9). Called by the edit-on-demand combobox.
   function commitUnit(row, value) {
     setEditingUnitCode(null);
+    if (isLocked) { flashToast(`⚠ Letter ${activeLetter} is locked`, 'err'); return; }
     const next = String(value || '').trim().toUpperCase();
     const current = lblNewUnit(row).toUpperCase();
     if (!next || next === current) return;
@@ -5218,6 +5665,7 @@ function LabelExporter({ session, settings }) {
   // overwritten (same rule as unit).
   function commitLocation(row, value) {
     setEditingLocationCode(null);
+    if (isLocked) { flashToast(`⚠ Letter ${activeLetter} is locked`, 'err'); return; }
     const next = String(value || '').trim().toUpperCase();
     const current = lblNewLoc(row).toUpperCase();
     if (!next || next === current) return;
@@ -5240,6 +5688,7 @@ function LabelExporter({ session, settings }) {
   // resetting the whole filtered scope via the toolbar's Clear Assignment).
   // Reuses the same bulk clear-assignment endpoint with a single-code list.
   function clearLocationForRow(row) {
+    if (isLocked) { flashToast(`⚠ Letter ${activeLetter} is locked`, 'err'); return; }
     setSavingCode(row.product_code);
     api.clearLabelAssignment(tenantId, storeId, [row.product_code], session)
       .then(() => {
@@ -5520,7 +5969,7 @@ function LabelExporter({ session, settings }) {
     if (!visibleRows.length) return;
     const clamped = Math.max(0, Math.min(visibleRows.length - 1, index));
     setActiveIndex(clamped);
-    rowRefs.current[clamped]?.scrollIntoView({ block: 'nearest' });
+    rowVirtualizer.scrollToIndex(clamped, { align: 'auto' });
   }
 
   // Single grid-level key handler. Enter/Y = mark Y + advance, Esc/N = mark N
@@ -5567,16 +6016,74 @@ function LabelExporter({ session, settings }) {
   // Bulk-assign: mark every currently visible product Y (or N) in one call,
   // then individual rows can still be flipped back one at a time (click, or
   // Esc while that row is active) without re-running the bulk action.
-  function bulkMark(value) {
+  function bulkMark(value, skipStockCheck = false) {
     if (!visibleRows.length || bulkBusy) return;
+    if (isLocked) { flashToast(`⚠ Letter ${activeLetter} is locked`, 'err'); return; }
+    if (value === 'N' && !skipStockCheck) {
+      const withStock = visibleRows.filter(lblHasSellableStockMultiUnit);
+      if (withStock.length > 0) {
+        setConfirm({
+          title: `Remove ${withStock.length} product(s) with stock available from the label list?`,
+          body: [
+            `${withStock.length} of ${visibleRows.length} loaded product(s) have sale unit > 1 and stock on hand.`,
+            'Do you want to remove these from the label list by marking all N?'
+          ],
+          confirmLabel: 'Mark all N',
+          onConfirm: () => { setConfirm(null); bulkMark(value, true); }
+        });
+        return;
+      }
+    }
     const codes = visibleRows.map((row) => row.product_code);
     const codeSet = new Set(codes);
+    const staleCount = value === 'Y' ? visibleRows.filter(lblIsStaleNoStock).length : 0;
+    const oddUnitCount = value === 'Y' ? visibleRows.filter(lblIsSaleUnitOneNotTab).length : 0;
     setBulkBusy(true);
     api.bulkSetLabelInclude(tenantId, storeId, codes, value, session)
       .then(() => {
         setRows((current) => current.map((row) => (codeSet.has(row.product_code) ? { ...row, include_label: value } : row)));
         setStatus({ state: 'ok', message: `Marked ${codes.length} product(s) ${value}.` });
         flashToast(`✓ ${codes.length} marked ${value}`);
+        if (staleCount > 0) {
+          flashToast(`⚠ ${staleCount} marked Y had no transaction in the last 90 days`, 'err');
+        }
+        if (oddUnitCount > 0) {
+          flashToast(`⚠ ${oddUnitCount} marked Y have sale unit 1 but unit isn't TAB — please review`, 'err');
+        }
+        refreshLetterLock(activeLetter);
+      })
+      .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Bulk update failed', 'err'); })
+      .finally(() => setBulkBusy(false));
+  }
+
+  // Auto-mark N every currently UNREVIEWED row that is zero stock + no
+  // purchase/sale in the last 90 days (lblIsStaleNoStock). Already-reviewed
+  // rows (Y or N) are left exactly as they are — this only fills in the
+  // blanks for dead stock, it never overwrites a human decision.
+  //
+  // `sourceRows` lets the post-search auto-run (see runSearch) pass the
+  // just-fetched rows directly, since at that point they're not yet
+  // reflected in `visibleRows`/column-filter state; the manual toolbar
+  // button omits it and falls back to whatever's currently on screen.
+  // `targetStoreId`/`targetTenantId` are likewise passed explicitly for the
+  // post-search call so this never races a Store switch that happens to land
+  // between the fetch resolving and this function running.
+  function autoMarkStaleN(sourceRows, targetTenantId, targetStoreId) {
+    const rowsIn = sourceRows ?? visibleRows;
+    const effTenantId = targetTenantId ?? tenantId;
+    const effStoreId = targetStoreId ?? storeId;
+    if (!rowsIn.length || bulkBusy) return;
+    if (isLocked) { if (sourceRows === undefined) flashToast(`⚠ Letter ${activeLetter} is locked`, 'err'); return; }
+    const targets = rowsIn.filter((row) => !row.include_label && lblIsStaleNoStock(row));
+    if (!targets.length) { if (sourceRows === undefined) flashToast('No unreviewed dead-stock products to mark'); return; }
+    const codes = targets.map((row) => row.product_code);
+    const codeSet = new Set(codes);
+    setBulkBusy(true);
+    api.bulkSetLabelInclude(effTenantId, effStoreId, codes, 'N', session)
+      .then(() => {
+        setRows((current) => current.map((row) => (codeSet.has(row.product_code) ? { ...row, include_label: 'N' } : row)));
+        flashToast(`✓ ${codes.length} unreviewed dead-stock product(s) auto-marked N`);
+        refreshLetterLock(activeLetter);
       })
       .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Bulk update failed', 'err'); })
       .finally(() => setBulkBusy(false));
@@ -5740,7 +6247,7 @@ function LabelExporter({ session, settings }) {
           <LabelMultiPicker
             options={LABEL_LETTER_OPTIONS}
             selected={selectedLetters}
-            onChange={setSelectedLetters}
+            onChange={(next) => startTransition(() => setSelectedLetters(next))}
             placeholder="Any letter"
             noun="letter"
           />
@@ -5761,9 +6268,31 @@ function LabelExporter({ session, settings }) {
           </span>
         </label>
 
-        <label className="lblx-field lblx-unit">
-          <span>Unit</span>
-          <LabelMultiPicker options={unitOptions} selected={selectedUnits} onChange={setSelectedUnits} placeholder="Any unit" noun="unit" />
+        <label className="lblx-field lblx-unit" title={unitSource === 'old' ? 'Filters by the original (master) unit, ignoring any reviewer correction' : "Filters by the effective unit — a reviewer's corrected New Unit if set, otherwise the original unit"}>
+          <span className="lblx-unit-label-row">
+            Unit
+            <span className="lblx-unit-source-toggle" role="group" aria-label="Filter by old or new unit">
+              <button
+                type="button"
+                className={unitSource === 'new' ? 'is-active' : ''}
+                onClick={() => { if (unitSource !== 'new') { setUnitSource('new'); setSelectedUnits(new Set()); } }}
+                title="Filter by the corrected (new) unit"
+              >New</button>
+              <button
+                type="button"
+                className={unitSource === 'old' ? 'is-active' : ''}
+                onClick={() => { if (unitSource !== 'old') { setUnitSource('old'); setSelectedUnits(new Set()); } }}
+                title="Filter by the original (old/master) unit"
+              >Old</button>
+            </span>
+          </span>
+          <LabelMultiPicker
+            options={unitOptions}
+            selected={selectedUnits}
+            onChange={(next) => startTransition(() => setSelectedUnits(next))}
+            placeholder="Any unit"
+            noun="unit"
+          />
         </label>
 
         <label className="lblx-field lblx-review">
@@ -5788,7 +6317,14 @@ function LabelExporter({ session, settings }) {
         <span className="lblx-filterspace" />
 
         <div className="lblx-filteractions">
-          {status.state === 'loading' && <span className="lblx-searching" aria-live="polite">Searching…</span>}
+          {status.state === 'loading' && (
+            <span className="lblx-searching" aria-live="polite">
+              Searching…
+              <button type="button" className="lblx-search-cancel" onClick={cancelSearch} title="Cancel this search (Esc)">
+                Cancel (Esc)
+              </button>
+            </span>
+          )}
           <button
             type="button"
             className={`lblx-adv-toggle ${showAdvanced ? 'is-open' : ''}`}
@@ -5824,7 +6360,13 @@ function LabelExporter({ session, settings }) {
         <div className="lblx-filterbar lblx-filterbar--advanced">
           <label className="lblx-field lblx-oldloc">
             <span>Old Loc</span>
-            <LabelMultiPicker options={sublocOptions} selected={selectedSublocs} onChange={setSelectedSublocs} placeholder="Any location" noun="location" />
+            <LabelMultiPicker
+              options={sublocOptions}
+              selected={selectedSublocs}
+              onChange={(next) => startTransition(() => setSelectedSublocs(next))}
+              placeholder="Any location"
+              noun="location"
+            />
           </label>
 
           <label className="lblx-field lblx-box">
@@ -5848,15 +6390,62 @@ function LabelExporter({ session, settings }) {
           the right. A dedicated row (not the status strip) so nothing ever clips,
           even once a third Clear button was added. Wraps instead of overflowing. */}
       <div className="lblx-actionbar">
-        <button type="button" className="lblx-mark lblx-mark-y" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('Y')}>Mark all Y</button>
-        <button type="button" className="lblx-mark lblx-mark-n" disabled={!visibleRows.length || bulkBusy} onClick={() => bulkMark('N')}>Mark all N</button>
-        <button type="button" className="lblx-mark lblx-replace-unit" disabled={!visibleRows.length || bulkBusy} onClick={openUnitReplace} title="Find a unit across the loaded rows and replace it (e.g. RM → TAB)">Replace Unit…</button>
+        <button type="button" className="lblx-mark lblx-mark-y" disabled={!visibleRows.length || bulkBusy || isLocked} onClick={() => bulkMark('Y')}>Mark all Y</button>
+        <button type="button" className="lblx-mark lblx-mark-n" disabled={!visibleRows.length || bulkBusy || isLocked} onClick={() => bulkMark('N')}>Mark all N</button>
+        <button
+          type="button"
+          className="lblx-mark lblx-auto-stale-n"
+          disabled={!visibleRows.length || bulkBusy || isLocked}
+          onClick={() => autoMarkStaleN()}
+          title="Mark N only the still-unreviewed products with zero stock and no purchase/sale in the last 90 days — already-reviewed (Y or N) rows are left untouched"
+        >
+          Mark Dead Stock N
+        </button>
+        <button type="button" className="lblx-mark lblx-replace-unit" disabled={!visibleRows.length || bulkBusy || isLocked} onClick={openUnitReplace} title="Find a unit across the loaded rows and replace it (e.g. RM → TAB)">Replace Unit…</button>
         {admin && (
-          <button type="button" className="lblx-mark lblx-assign" disabled={!assignTargets.length} onClick={openAssignDrawer} title="Assign locations to reviewed-Y products (does not print)">
+          <button type="button" className="lblx-mark lblx-assign" disabled={!assignTargets.length || isLocked} onClick={openAssignDrawer} title="Assign locations to reviewed-Y products (does not print)">
             Assign Locations{assignTargets.length ? ` (${assignTargets.length})` : ''}
           </button>
         )}
         <button type="button" className="lblx-mark lblx-queue" onClick={openQueue} title="Open the label print queue">Label Queue</button>
+        <button
+          type="button"
+          className="lblx-mark lblx-export-excel"
+          disabled={!activeLetter || exportBusy}
+          onClick={exportCurrentLetterExcel}
+          title={activeLetter ? `Export letter ${activeLetter} to Excel` : 'Pick exactly one letter to export'}
+        >
+          {exportBusy ? 'Exporting…' : 'Export to Excel'}
+        </button>
+        {admin && (
+          <button
+            type="button"
+            className={`lblx-mark lblx-lock ${isLocked ? 'is-locked' : ''}`}
+            disabled={!activeLetter || lockBusy || (!isLocked && (letterLock?.unreviewed_count || 0) > 0 && letterLock?.letter === activeLetter)}
+            onClick={toggleLetterLock}
+            title={
+              !activeLetter
+                ? 'Pick exactly one letter to lock'
+                : isLocked
+                  ? `Letter ${activeLetter} is locked — click to unlock`
+                  : (letterLock?.unreviewed_count || 0) > 0
+                    ? `${letterLock.unreviewed_count} product(s) still need a Y/N review`
+                    : `Lock letter ${activeLetter} (no further edits until unlocked)`
+            }
+          >
+            {lockBusy ? '…' : isLocked ? '🔒 Locked' : '🔓 Lock'}
+          </button>
+        )}
+        {activeLetter && letterLock?.letter === activeLetter && !isLocked && (letterLock?.unreviewed_count || 0) > 0 && (
+          <span className="lblx-unreviewed-warn" title="Every product must be reviewed Y or N before this letter can be locked">
+            {letterLock.unreviewed_count} unreviewed
+          </span>
+        )}
+        {activeLetter && letterLock?.letter === activeLetter && letterLock?.last_edit && (
+          <span className="lblx-last-edit" title="Most recent review/assignment edit under this letter">
+            Last edit: {fmtLblDateTime(letterLock.last_edit)}
+          </span>
+        )}
         {admin && (
           <span className="lblx-clear-group">
             <button
@@ -6035,21 +6624,35 @@ function LabelExporter({ session, settings }) {
                       </td>
                     </tr>
                   ) : (
-                    visibleRows.map((row, index) => {
-                      const code = row.product_code;
-                      const selected = selectedCodes.has(code);
-                      return (
-                        <tr
-                          key={code}
-                          ref={(node) => { rowRefs.current[index] = node; }}
-                          className={`${index === activeIndex ? 'ow-row-sel' : ''} ${selected ? 'lbl-row-picked' : ''} ${row.include_label === 'Y' ? 'lbl-row-y' : row.include_label === 'N' ? 'lbl-row-n' : ''}`}
-                          onClick={(event) => selectRow(index, event)}
-                        >
-                          {labelCols.map((col) => renderLabelCell(col, row, index))}
-                          <td className="lbl-filler" aria-hidden="true" />
+                    <>
+                      {virtualTopPad > 0 && (
+                        <tr aria-hidden="true" className="lbl-virtual-spacer">
+                          <td colSpan={labelCols.length + 1} style={{ height: virtualTopPad, padding: 0, border: 0 }} />
                         </tr>
-                      );
-                    })
+                      )}
+                      {virtualRows.map((virtualRow) => {
+                        const index = virtualRow.index;
+                        const row = visibleRows[index];
+                        const code = row.product_code;
+                        const selected = selectedCodes.has(code);
+                        return (
+                          <tr
+                            key={code}
+                            data-index={index}
+                            className={`${index === activeIndex ? 'ow-row-sel' : ''} ${selected ? 'lbl-row-picked' : ''} ${row.include_label === 'Y' ? 'lbl-row-y' : row.include_label === 'N' ? 'lbl-row-n' : ''}`}
+                            onClick={(event) => selectRow(index, event)}
+                          >
+                            {labelCols.map((col) => renderLabelCell(col, row, index))}
+                            <td className="lbl-filler" aria-hidden="true" />
+                          </tr>
+                        );
+                      })}
+                      {virtualBottomPad > 0 && (
+                        <tr aria-hidden="true" className="lbl-virtual-spacer">
+                          <td colSpan={labelCols.length + 1} style={{ height: virtualBottomPad, padding: 0, border: 0 }} />
+                        </tr>
+                      )}
+                    </>
                   )}
                 </tbody>
               </table>
@@ -11194,9 +11797,9 @@ function svbBatchCell(core) {
     : [...all].sort((a, b) => new Date(b.last_purchase_date || 0) - new Date(a.last_purchase_date || 0)).slice(0, 5);
   return (
     <SvbMiniTable
-      head={[{ label: 'Exp' }, { label: 'Stk', num: true }, { label: 'MRP', num: true }, { label: 'P.Age', num: true }, { label: 'S.Age', num: true }]}
+      head={[{ label: 'Exp' }, { label: 'Stk', num: true }, { label: 'MRP', num: true }, { label: 'S.Unt', num: true }, { label: 'P.Age', num: true }, { label: 'S.Age', num: true }]}
       rows={list.slice(0, 50).map((row) => [
-        formatMonthYear(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp),
+        formatMonthYear(row.expiry_date), formatQty(row.stock), formatMoney(row.mrp), row.sale_unit ?? '-',
         row.purchase_age_days ?? '-', row.sales_age_days ?? '-',
       ])}
       emptyMessage="No batch data."
@@ -11207,9 +11810,9 @@ function svbPurchaseCell(core, onRowClick) {
   const rows = asArray(core?.purchases).slice(0, 40);
   return (
     <SvbMiniTable
-      head={[{ label: 'Qty', num: true }, { label: 'Free', num: true }, { label: 'Dis%', num: true }, { label: 'GRN Date' }, { label: 'Supplier' }]}
+      head={[{ label: 'Qty', num: true }, { label: 'Free', num: true }, { label: 'Dis%', num: true }, { label: 'PTR', num: true }, { label: 'Cost', num: true }, { label: 'GRN Date' }, { label: 'Supplier' }]}
       rows={rows.map((row) => [
-        formatQty(row.qty), formatQty(row.free ?? 0), formatMoney(row.dis), formatDate(row.date), row.supplier || '-',
+        formatQty(row.qty), formatQty(row.free ?? 0), formatMoney(row.dis), formatMoney(row.ptr), formatMoney(row.cost), formatDate(row.date), row.supplier || '-',
       ])}
       raw={rows}
       onRowClick={onRowClick}

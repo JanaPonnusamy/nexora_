@@ -129,6 +129,7 @@ export interface AssignedOrderRow {
   PurchasePrice: number
   TotalStock: number
   WantedType: string | null
+  ProductTypeName?: string
   Status: number
 }
 
@@ -162,6 +163,29 @@ export interface QtyCheckRow {
   Transactiondate: string | null
   wantedtype: string | null
   producttypename: string | null
+}
+
+/** VB.NET's "Pending Order" screen: lines already reviewed (qtycheck = 1)
+ *  but not yet assigned to a supplier (status = 0). */
+export interface PendingOrderRow {
+  productcode: number
+  productname: string
+  orderqty: number
+  totalstock: number
+  slsqty: number
+  unitdescription: string
+  saleunit: number
+  mrp: number
+  lastreceiveddate: string | null
+  lastsaledate: string | null
+  maxsaleqty: number
+  Transactiondate: string | null
+  wantedtype: string | null
+}
+
+export interface ResetPendingResult {
+  assigned_marked: number
+  remaining_reset: number
 }
 
 export type OrderWorkflowStatus =

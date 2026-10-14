@@ -182,6 +182,22 @@ def insert_data_into_destination(columns, rows, store_name):
                 conn.timeout = 0
                 cur = conn.cursor()
                 try:
+                    # A re-run that lands on the same per-second OrderID as a
+                    # run that already completed (retry after a client-side
+                    # timeout, a double-submitted job, ...) would otherwise
+                    # violate PK_OrderManagementBackup here: the prior run's
+                    # backup copy for that (StoreName, OrderId) is already
+                    # committed. It is a byte-for-byte duplicate of what we are
+                    # about to insert, so clearing it first makes the backup
+                    # step idempotent instead of aborting the whole order run.
+                    cur.execute(
+                        "DELETE b FROM OrderManagementBackup b "
+                        "INNER JOIN OrderManagement om "
+                        "ON om.StoreName = b.StoreName AND om.OrderId = b.OrderId "
+                        "AND om.ProductCode = b.ProductCode "
+                        "WHERE om.StoreName = ?",
+                        store_name,
+                    )
                     cur.execute(
                         "INSERT INTO OrderManagementBackup "
                         "SELECT * FROM OrderManagement WHERE StoreName = ?",

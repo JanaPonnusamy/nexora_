@@ -10,6 +10,7 @@ import time
 from fastapi import HTTPException
 
 from modules.label_exporter import assignment_engine as engine
+from modules.label_exporter import excel_export
 from modules.label_exporter import pdf_export
 from modules.label_exporter import repository
 
@@ -18,6 +19,7 @@ logger = logging.getLogger("label_exporter.service")
 _VALID_INCLUDE_LABEL = {"Y", "N"}
 _VALID_UNIT_DESCRIPTION_MODE = {"contains", "exact", "null"}
 _VALID_REVIEW_STATUS = {"", "unreviewed", "Y", "N"}
+_VALID_UNIT_SOURCE = {"new", "old"}
 _VALID_MODE = {"continue", "new_label", "single"}
 _VALID_ASSIGNMENT_TYPE = {"standard_box", "single_product_box"}
 
@@ -35,11 +37,14 @@ def search_products(
     only_sale_unit_gt_one: int = 0,
     sublocation_filter: str = "",
     review_status: str = "",
+    unit_source: str = "new",
 ):
     if unit_description_mode not in _VALID_UNIT_DESCRIPTION_MODE:
         raise HTTPException(status_code=400, detail="Invalid unit_description_mode")
     if review_status not in _VALID_REVIEW_STATUS:
         raise HTTPException(status_code=400, detail="Invalid review_status")
+    if unit_source not in _VALID_UNIT_SOURCE:
+        raise HTTPException(status_code=400, detail="Invalid unit_source")
     repository.ensure_schema()
 
     # Each stage opens its own DB connection (no pooling - see
@@ -61,9 +66,10 @@ def search_products(
         only_sale_unit_gt_one,
         sublocation_filter,
         review_status,
+        unit_source,
     )
     t1 = time.perf_counter()
-    result["unit_descriptions"] = repository.get_unit_descriptions(tenant_id, store_id, starts_with)
+    result["unit_descriptions"] = repository.get_unit_descriptions(tenant_id, store_id, starts_with, unit_source)
     t2 = time.perf_counter()
     result["sublocations"] = repository.get_sublocations(tenant_id, store_id)
     t3 = time.perf_counter()
@@ -373,3 +379,81 @@ def clear_review_state(tenant_id: str, store_id: str, product_codes: list[str]):
     repository.ensure_schema()
     affected = repository.clear_review_state(tenant_id, store_id, codes)
     return {"ok": True, "count": len(codes), "affected": affected}
+
+
+# --------------------------------------------------------------------------
+# Per-letter lock — once Y/N review is complete for a shelf letter, a
+# super-admin can seal it so the grid's edit controls go read-only.
+# --------------------------------------------------------------------------
+
+def _norm_letter(letter: str) -> str:
+    letter = (letter or "").strip().upper()[:1]
+    if not letter:
+        raise HTTPException(status_code=400, detail="letter is required")
+    return letter
+
+
+def get_letter_lock_status(tenant_id: str, store_id: str, letter: str):
+    repository.ensure_schema()
+    letter = _norm_letter(letter)
+    lock = repository.get_letter_lock(tenant_id, store_id, letter)
+    unreviewed = repository.count_unreviewed(tenant_id, store_id, letter)
+    last_edit = repository.get_last_edit(tenant_id, store_id, letter)
+    return {
+        "letter": letter,
+        "locked": lock is not None,
+        "locked_by": (lock or {}).get("locked_by"),
+        "locked_at": (lock or {}).get("locked_at"),
+        "unreviewed_count": unreviewed,
+        "last_edit": last_edit,
+    }
+
+
+def lock_letter(tenant_id: str, store_id: str, letter: str, user_id: str | None):
+    repository.ensure_schema()
+    letter = _norm_letter(letter)
+    unreviewed = repository.count_unreviewed(tenant_id, store_id, letter)
+    if unreviewed > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{unreviewed} product(s) under '{letter}' still need a Y/N review before locking",
+        )
+    repository.set_letter_lock(tenant_id, store_id, letter, True, user_id)
+    return get_letter_lock_status(tenant_id, store_id, letter)
+
+
+def unlock_letter(tenant_id: str, store_id: str, letter: str):
+    repository.ensure_schema()
+    letter = _norm_letter(letter)
+    repository.set_letter_lock(tenant_id, store_id, letter, False, None)
+    return get_letter_lock_status(tenant_id, store_id, letter)
+
+
+# --------------------------------------------------------------------------
+# Excel export — current letter's grid, as loaded (same filters as the
+# on-screen search), so the download always matches what the reviewer sees.
+# --------------------------------------------------------------------------
+
+def export_letter_excel(
+    tenant_id: str,
+    store_id: str,
+    letter: str,
+    unit_description: str = "",
+    unit_description_mode: str = "contains",
+    stock_filter: str = "all",
+):
+    repository.ensure_schema()
+    letter = _norm_letter(letter)
+    result = repository.search_products(
+        tenant_id,
+        store_id,
+        "",
+        letter,
+        unit_description,
+        unit_description_mode,
+        "",
+        stock_filter,
+        0,
+        0,
+    )
+    return excel_export.build_letter_xlsx(result["rows"], letter)

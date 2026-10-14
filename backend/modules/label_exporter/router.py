@@ -21,6 +21,7 @@ from modules.label_exporter.schemas import (
     LabelBulkReviewRequest,
     LabelBulkUnitRequest,
     LabelClearRequest,
+    LabelLetterLockStatus,
     LabelLocationCorrectionRequest,
     LabelMarkPrintedRequest,
     LabelPurchaseResult,
@@ -51,6 +52,7 @@ def search_products(
     only_sale_unit_gt_one: int = 0,
     sublocation_filter: str = "",
     review_status: str = "",
+    unit_source: str = "new",
     current_user: dict = Depends(get_current_user),
 ):
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
@@ -67,6 +69,7 @@ def search_products(
         only_sale_unit_gt_one,
         sublocation_filter,
         review_status,
+        unit_source,
     )
 
 
@@ -322,3 +325,72 @@ def mark_labels_printed(
 ):
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
     return service.mark_labels_printed(tenant_id, store_id, body.product_codes)
+
+
+# ---------- Per-letter lock ----------
+
+
+@router.get("/letter-lock", response_model=LabelLetterLockStatus)
+def get_letter_lock(
+    tenant_id: str,
+    store_id: str,
+    letter: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Lock status + unreviewed count + last-edit time for one shelf letter —
+    polled by the grid to show the lock badge and gate editing."""
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    return service.get_letter_lock_status(tenant_id, store_id, letter)
+
+
+@router.post("/letter-lock", response_model=LabelLetterLockStatus)
+def lock_letter(
+    tenant_id: str,
+    store_id: str,
+    letter: str,
+    current_user: dict = Depends(require_super_admin),
+):
+    """Seal a shelf letter so its review/unit/location controls go read-only.
+    Super-admin only; rejected with a count if any product is still
+    unreviewed (blank Y/N)."""
+    return service.lock_letter(tenant_id, store_id, letter, current_user.get("sub"))
+
+
+@router.post("/letter-lock/unlock", response_model=LabelLetterLockStatus)
+def unlock_letter(
+    tenant_id: str,
+    store_id: str,
+    letter: str,
+    current_user: dict = Depends(require_super_admin),
+):
+    """Reopen a previously locked shelf letter for editing. Super-admin only."""
+    return service.unlock_letter(tenant_id, store_id, letter)
+
+
+# ---------- Excel export ----------
+
+
+@router.get("/products/export.xlsx")
+def export_products_excel(
+    tenant_id: str,
+    store_id: str,
+    letter: str,
+    unit_description: str = "",
+    unit_description_mode: str = "contains",
+    stock_filter: str = "all",
+    current_user: dict = Depends(get_current_user),
+):
+    """Download the currently loaded letter's grid as a styled .xlsx —
+    same filters as the on-screen search, so the file always matches what
+    the reviewer sees."""
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    buf = service.export_letter_excel(
+        tenant_id, store_id, letter, unit_description, unit_description_mode, stock_filter
+    )
+    letter_clean = (letter or "").strip().upper()[:1]
+    filename = f"label-exporter-{letter_clean or 'all'}.xlsx"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

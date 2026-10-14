@@ -33,6 +33,7 @@ def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
 _VIEWER_READ_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+(/.*)?$"),
     re.compile(r"^/api/legacy-order/qty-check/[^/]+(/.*)?$"),
+    re.compile(r"^/api/legacy-order/pending-order/[^/]+$"),
     re.compile(r"^/api/legacy-order/suppliers/[^/]+$"),
     re.compile(r"^/api/legacy-order/previous-orders/[^/]+(/.*)?$"),
 )
@@ -448,6 +449,27 @@ def compare_previous_order_supplier(payload: CompareSupplierRequest):
 def qty_check_rows(store_name: str):
     try:
         return repository.qty_check_rows(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/qty-check/{store_name}/reset-pending")
+def reset_pending_qty_check(store_name: str, current_user: dict = Depends(require_admin)):
+    try:
+        return repository.reset_pending_qty_check(
+            store_name, current_user.get("username") or current_user.get("sub"),
+        )
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# ---- Pending Order screen (port of Form1's "Pending Order" process:
+# reviewed lines, qtycheck = 1, not yet assigned to a supplier, status = 0) ----
+
+@router.get("/pending-order/{store_name}")
+def pending_order_rows(store_name: str):
+    try:
+        return repository.pending_order_rows(store_name)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

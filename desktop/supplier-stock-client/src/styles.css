@@ -5151,6 +5151,14 @@ th {
   flex: 0 0 auto; font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
   text-transform: uppercase; color: var(--nx-text-muted); white-space: nowrap;
 }
+.lblx-unit-label-row { display: inline-flex; align-items: center; gap: 6px; }
+.lblx-unit-source-toggle { display: inline-flex; border: 1px solid var(--nx-rule-strong); border-radius: 5px; overflow: hidden; }
+.lblx-unit-source-toggle button {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
+  padding: 2px 6px; border: 0; background: var(--nx-surface); color: var(--nx-text-muted); cursor: pointer;
+}
+.lblx-unit-source-toggle button + button { border-left: 1px solid var(--nx-rule-strong); }
+.lblx-unit-source-toggle button.is-active { background: var(--nx-accent); color: var(--nx-text-on); }
 .lblx-field select,
 .lblx-field > input,
 .lblx-search-box > input,
@@ -5175,7 +5183,11 @@ th {
 .lblx-search-box > input { width: 100%; padding-left: 27px; }
 .lblx-filterspace { flex: 1 1 auto; min-width: 8px; }
 .lblx-filteractions { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; padding-left: 10px; border-left: 1px solid var(--nx-rule); }
-.lblx-searching { font-size: 11px; font-weight: 600; color: var(--nx-accent); white-space: nowrap; }
+.lblx-searching { font-size: 11px; font-weight: 600; color: var(--nx-accent); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.lblx-search-cancel {
+  font-size: 11px; font-weight: 600; color: var(--nx-danger); background: none;
+  border: 1px solid var(--nx-danger); border-radius: 5px; padding: 1px 6px; cursor: pointer;
+}
 .lblx-box > input { width: 58px; text-transform: uppercase; }
 .lblx-stock select { max-width: 168px; }
 .lblx-filterbar .lbl-unit-pick { min-width: 104px; max-width: 118px; }
@@ -8066,7 +8078,17 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   padding: 6px 8px; min-height: 44px;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
+  /* NOT overflow-x:auto here -- setting either overflow axis to a scrolling
+     value forces the OTHER axis to auto too (CSS overflow is a pair), which
+     clipped the Supplier search popover (position:absolute, taller than the
+     toolbar) along with it. The narrow-window clipping this used to paper
+     over is handled by .ow-search's low min-width instead (it shrinks first,
+     so trailing controls keep their room without needing toolbar scroll). */
 }
+/* Trailing action controls must never be the ones sacrificed to make room --
+   .ow-search is the one flexible field and shrinks first. */
+.ow-toolbar > .ow-icon-btn,
+.ow-toolbar > .ow-btn { flex: 0 0 auto; }
 /* Vertical divider between logical control groups. */
 .ow-sep { flex: 0 0 auto; align-self: stretch; width: 1px; margin: 3px 2px; background: var(--nx-rule-strong); }
 .ow-field { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 0 0 auto; }
@@ -8087,13 +8109,14 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-tabs button + button { border-left: 1px solid var(--nx-rule); }
 .ow-tabs button.active { background: var(--nx-accent); color: var(--nx-text-on); }
 .ow-search {
-  flex: 1 1 140px; min-width: 60px; min-height: 32px; padding: 2px 10px;
+  flex: 1 1 140px; min-width: 40px; min-height: 32px; padding: 2px 10px;
   border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
 }
 .ow-chip { flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
 .ow-chip-ok { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
 .ow-chip-run { background: var(--nx-warning-sunk); color: var(--nx-warning); }
+.ow-not-reviewed-badge { margin-right: 6px; padding: 1px 6px; font-size: 9px; }
 .ow-metrics { flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); white-space: nowrap; }
 .ow-metrics strong { color: var(--nx-text); font-variant-numeric: tabular-nums; }
 .ow-count { flex: 0 0 auto; font-size: 11px; font-weight: 600; color: var(--nx-text-muted); white-space: nowrap; }
@@ -8149,18 +8172,18 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   background: var(--nx-surface-raised); box-shadow: 0 8px 24px rgba(0,0,0,0.18);
   font-size: 12px;
 }
-.ow-supplier-list button {
+.ow-supplier-list:focus { outline: none; box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 0 0 2px var(--nx-accent-sunk); }
+.ow-supplier-list > li {
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
   width: 100%; padding: 5px 8px; border: 0; border-radius: 4px;
   background: none; color: var(--nx-text-soft); font-size: 12px; font-weight: 500; line-height: 1.4;
   text-align: left; cursor: pointer;
 }
-.ow-supplier-list button:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
-.ow-supplier-list button.is-active { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); font-weight: 600; }
-.ow-supplier-list button.is-selected { color: var(--nx-text); font-weight: 600; }
+.ow-supplier-list > li.is-active { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); font-weight: 600; }
+.ow-supplier-list > li.is-selected { color: var(--nx-text); font-weight: 600; }
 .ow-supplier-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ow-supplier-code { flex-shrink: 0; color: var(--nx-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.ow-supplier-list button.is-active .ow-supplier-code { color: var(--nx-accent-ink); }
+.ow-supplier-list > li.is-active .ow-supplier-code { color: var(--nx-accent-ink); }
 .ow-supplier-empty { padding: 8px; color: var(--nx-text-muted); font-size: 12px; }
 
 /* Export options card. */
@@ -8234,6 +8257,19 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 }
 .ow-qty::-webkit-outer-spin-button, .ow-qty::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ow-qty:disabled { opacity: 0.6; }
+/* Fixed-width badge slot (even when empty) so the OR QTY input never shifts
+   position as a row's diff badge appears/disappears on review. */
+.ow-qty-cell { display: inline-flex; align-items: center; gap: 5px; width: 100%; justify-content: flex-end; }
+.ow-qty-diff-slot { display: inline-flex; width: 2.6rem; justify-content: center; }
+.ow-qty-diff {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 6px; border-radius: 10px;
+  font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ow-qty-diff-up { color: var(--nx-success-ink); background: var(--nx-success-sunk); }
+.ow-qty-diff-down { color: var(--nx-danger-ink); background: var(--nx-danger-sunk); }
+.ow-qty-diff-flat { color: var(--nx-info-ink); background: var(--nx-info-sunk); }
 /* Active row: one clean, unambiguous highlight across the FULL row (every td,
    not just a left accent bar) so it always reads distinctly from hover/zebra/
    assigned rows. Plain theme token (not color-mix()) so it renders reliably. */
@@ -8520,6 +8556,14 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .lblx-mark.lblx-assign { background: var(--nx-accent); color: var(--nx-text-on); border-color: var(--nx-accent); }
 .lblx-mark.lblx-assign:disabled { opacity: 0.5; }
 .lblx-mark.lblx-queue { background: var(--nx-surface); color: var(--nx-text-soft); }
+.lblx-mark.lblx-export-excel { background: var(--nx-surface); color: var(--nx-success-ink); border-color: var(--nx-success-ink); }
+.lblx-mark.lblx-lock { background: var(--nx-surface); color: var(--nx-text-soft); }
+.lblx-mark.lblx-lock.is-locked { background: var(--nx-danger); color: var(--nx-text-on); border-color: var(--nx-danger); }
+.lblx-unreviewed-warn {
+  font-size: 12px; font-weight: 700; color: var(--nx-danger);
+  padding: 4px 8px; border: 1px solid var(--nx-danger); border-radius: 6px; white-space: nowrap;
+}
+.lblx-last-edit { font-size: 12px; color: var(--nx-text-muted); white-space: nowrap; }
 
 /* selection + assigned/unit cells */
 .lbl-row-picked td { background: var(--nx-accent-sunk) !important; }
@@ -9082,11 +9126,21 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .scm-cell--grid .ns-mini-table td:nth-child(3), .scm-cell--grid .ns-mini-table th:nth-child(3) { width: 46px; }
 .scm-cell--purchase .ns-mini-table td:nth-child(1), .scm-cell--purchase .ns-mini-table th:nth-child(1) { width: 30px; }
 .scm-cell--purchase .ns-mini-table td:nth-child(2), .scm-cell--purchase .ns-mini-table th:nth-child(2) { width: 28px; }
-.scm-cell--purchase .ns-mini-table td:nth-child(3), .scm-cell--purchase .ns-mini-table th:nth-child(3) { width: 38px; }
-.scm-cell--purchase .ns-mini-table td:nth-child(4), .scm-cell--purchase .ns-mini-table th:nth-child(4) { width: 58px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(3), .scm-cell--purchase .ns-mini-table th:nth-child(3) { width: 44px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(4), .scm-cell--purchase .ns-mini-table th:nth-child(4) { width: 44px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(5), .scm-cell--purchase .ns-mini-table th:nth-child(5) { width: 48px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(6), .scm-cell--purchase .ns-mini-table th:nth-child(6) { width: 58px; }
 .scm-cell--sales .ns-mini-table td:nth-child(1), .scm-cell--sales .ns-mini-table th:nth-child(1) { width: 56px; }
 .scm-cell--sales .ns-mini-table td:nth-child(3), .scm-cell--sales .ns-mini-table th:nth-child(3) { width: 32px; }
-.scm-cell--sales .ns-mini-table td:nth-child(4), .scm-cell--sales .ns-mini-table th:nth-child(4) { width: 38px; }
+.scm-cell--sales .ns-mini-table td:nth-child(4), .scm-cell--sales .ns-mini-table th:nth-child(4) { width: 42px; }
+/* Batch table: Exp | Stk | MRP | S.Unt | P.Age | S.Age — MRP needs real room
+   (4-5 digit rupee values truncated to "170…" otherwise); others stay tight. */
+.scm-cell--batch .ns-mini-table td:nth-child(1), .scm-cell--batch .ns-mini-table th:nth-child(1) { width: 44px; }
+.scm-cell--batch .ns-mini-table td:nth-child(2), .scm-cell--batch .ns-mini-table th:nth-child(2) { width: 32px; }
+.scm-cell--batch .ns-mini-table td:nth-child(3), .scm-cell--batch .ns-mini-table th:nth-child(3) { width: 56px; }
+.scm-cell--batch .ns-mini-table td:nth-child(4), .scm-cell--batch .ns-mini-table th:nth-child(4) { width: 36px; }
+.scm-cell--batch .ns-mini-table td:nth-child(5), .scm-cell--batch .ns-mini-table th:nth-child(5) { width: 36px; }
+.scm-cell--batch .ns-mini-table td:nth-child(6), .scm-cell--batch .ns-mini-table th:nth-child(6) { width: 36px; }
 
 .scm-chart--click { cursor: zoom-in; }
 .scm-empty--muted { font-size: 10px; opacity: 0.85; }
@@ -9127,4 +9181,8 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   .scm-cell .ns-mini-table thead th { padding: 3px 5px; }
   .scm-cell .ns-mini-table tbody td { padding: 2px 5px; }
   .scm-cell .ns-mini-table .num-col { width: 38px; }
+  .scm-cell--batch .ns-mini-table td:nth-child(3), .scm-cell--batch .ns-mini-table th:nth-child(3) { width: 52px; }
+  .scm-cell--purchase .ns-mini-table td:nth-child(3), .scm-cell--purchase .ns-mini-table th:nth-child(3) { width: 40px; }
+  .scm-cell--purchase .ns-mini-table td:nth-child(4), .scm-cell--purchase .ns-mini-table th:nth-child(4) { width: 40px; }
+  .scm-cell--purchase .ns-mini-table td:nth-child(5), .scm-cell--purchase .ns-mini-table th:nth-child(5) { width: 44px; }
 }
