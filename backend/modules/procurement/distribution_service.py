@@ -648,6 +648,42 @@ def list_runs(tenant_id, limit=20):
         conn.close()
 
 
+def run_tenant_id(run_id):
+    """Trusted server-side lookup of the tenant that actually owns a
+    distribution run -- run_id is an opaque identifier with no tenant_id
+    parameter on its routes, so callers must resolve ownership from this
+    row (never from a client-supplied tenant_id) before authorizing access."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT tenant_id FROM procurement.distribution_run WHERE run_id = ?",
+            (run_id,),
+        )
+        row = cur.fetchone()
+        return str(row[0]) if row else None
+    finally:
+        conn.close()
+
+
+def run_item_tenant_id(run_item_id):
+    """Same trusted lookup as run_tenant_id, for a run_item_id (joins up to
+    its parent run, which is where tenant_id actually lives)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT r.tenant_id FROM procurement.distribution_run_item i "
+            "JOIN procurement.distribution_run r ON r.run_id = i.run_id "
+            "WHERE i.run_item_id = ?",
+            (run_item_id,),
+        )
+        row = cur.fetchone()
+        return str(row[0]) if row else None
+    finally:
+        conn.close()
+
+
 def run_detail(run_id):
     conn = get_connection()
     try:

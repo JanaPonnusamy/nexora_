@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from config.database import get_connection
 from modules.procurement import export_repository as repo
+from modules.procurement import rare_mover_guard
 
 import logging
 
@@ -32,6 +33,8 @@ def export_refresh(tenant_id, refresh_id, exported_by, assignment_ids=None, supp
             raise HTTPException(
                 status_code=400, detail="No exportable assignments for this Refresh"
             )
+        for row in rows:
+            rare_mover_guard.require_confirmed(row)
 
         batch_no = "EXP-" + uuid.uuid4().hex[:12].upper()
         # One split number per distinct supplier within the batch.

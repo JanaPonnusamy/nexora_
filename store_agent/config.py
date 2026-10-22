@@ -32,9 +32,12 @@ from pathlib import Path
 VERSION_MARKER_NAME = "agent_version_installed.txt"
 DEFAULT_AGENT_VERSION = "1.0.0"
 
-# Development fallbacks (used only when no agent_config.json is deployed).
+# Development fallback HO URL (used only when no agent_config.json is
+# deployed). There is deliberately NO store_id default: a missing store_id
+# on a legacy single-store deploy must fail loudly, never silently borrow
+# another store's identity (this previously defaulted to a real production
+# store's id, which caused a misconfigured machine to run as that store).
 _DEFAULTS = {
-    "store_id": "FCBE8B35-B1A1-463E-80C6-73161CDC8F32",
     "ho_url": "http://127.0.0.1:8000",
 }
 
@@ -187,14 +190,28 @@ SQL_DATABASE = ""
 SQL_USERNAME = ""
 SQL_PASSWORD = ""
 
-STORE_ID = _CFG.get("store_id") or _DEFAULTS["store_id"]
-
 # Device mode (zero-config, multi-store): the installer writes {"mode":"device"}
 # and the machine's identity (device_id + DPAPI-sealed key) lives under
 # DEVICE_STATE_DIR. Absent this, the agent runs the legacy single-store path
 # keyed on STORE_ID exactly as before, so existing deployments are unaffected.
-AGENT_MODE = (_CFG.get("mode") or ("device" if _CFG.get("device_id") else "store")).lower()
+AGENT_MODE = (
+    _CFG.get("mode")
+    or ("device" if _CFG.get("device_id") else None)
+    or ("device" if os.environ.get("NEXORA_SELFTEST_FORCE_DEVICE") else "store")
+).lower()
 DEVICE_MODE = AGENT_MODE == "device"
+
+# STORE_ID only has meaning in the legacy single-store path; device mode
+# resolves per-store identity from HO via the device registration instead
+# (see multi_store_runtime.py). No fallback default on purpose - a
+# single-store deploy with a missing store_id must surface that loudly,
+# never silently run as whichever store happened to be hardcoded here.
+STORE_ID = _CFG.get("store_id")
+if not DEVICE_MODE and not STORE_ID:
+    raise RuntimeError(
+        "agent_config.json is missing \"store_id\" and mode is not \"device\" - "
+        "refusing to start with no store identity."
+    )
 
 
 def _device_state_dir():

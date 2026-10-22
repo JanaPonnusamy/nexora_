@@ -4110,9 +4110,46 @@ Public Class Form1
         ' ✅ Wrap in try-catch for better diagnostics
         Try
             LoadDataGridView2(query, parameters)
+            HighlightWarehouseStockRows(supplierCode)
         Catch ex As Exception
             MessageBox.Show("Failed to load data: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
         End Try
+    End Sub
+
+    ''' <summary>
+    ''' Resolves this store's own code for the NMW/HO supplier (dbo.Stores.Ho_code --
+    ''' the same column the web backend uses, e.g. NMC files it under 'ST_2').
+    ''' Returns "" if unset so callers can compare safely without null checks.
+    ''' </summary>
+    Private Function GetHoCode() As String
+        If String.IsNullOrEmpty(storeName) Then Return ""
+        Try
+            Using conn As New SqlConnection(destinationConnectionString)
+                conn.Open()
+                Using cmd As New SqlCommand("SELECT Ho_code FROM Stores WHERE StoreName = @storename", conn)
+                    cmd.Parameters.AddWithValue("@storename", storeName)
+                    Dim result = cmd.ExecuteScalar()
+                    Return If(result Is Nothing OrElse IsDBNull(result), "", result.ToString())
+                End Using
+            End Using
+        Catch
+            Return ""
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' When the currently loaded supplier IS this store's NMW/HO pseudo-supplier
+    ''' (see GetHoCode), colors dgvMain's rows distinctly (light blue) so the user
+    ''' can tell this is warehouse-backed stock, not a real supplier's.
+    ''' </summary>
+    Private Sub HighlightWarehouseStockRows(supplierCode As String)
+        Dim hoCode As String = GetHoCode()
+        If String.IsNullOrEmpty(hoCode) OrElse Not String.Equals(hoCode.Trim(), supplierCode.Trim(), StringComparison.OrdinalIgnoreCase) Then
+            Return
+        End If
+        For Each row As DataGridViewRow In dgvMain.Rows
+            row.DefaultCellStyle.BackColor = Color.LightBlue
+        Next
     End Sub
 
 
@@ -4340,14 +4377,14 @@ Public Class Form1
             If Not Directory.Exists(folderPath3) Then Directory.CreateDirectory(folderPath3)
 
             Dim baseName As String = filename & " " & storeName & "   " & formattedDate
-            Dim exportPath As String = Path.Combine(folderPath3, baseName & ".xlsx")
+            Dim exportPath As String = Path.Combine(folderPath3, baseName & ".xls")
             Dim counter As Integer = 1
             While File.Exists(exportPath)
-                exportPath = Path.Combine(folderPath3, baseName & "_" & counter.ToString() & ".xlsx")
+                exportPath = Path.Combine(folderPath3, baseName & "_" & counter.ToString() & ".xls")
                 counter += 1
             End While
 
-            workbook.SaveAs(exportPath)
+            workbook.SaveAs(exportPath, Microsoft.Office.Interop.Excel.XlFileFormat.xlExcel8)
             excelApp.Quit()
 
             MessageBox.Show("Selected grid columns exported to: " & exportPath)

@@ -131,6 +131,17 @@ def platform_store_id(store_code):
     return row[0] if row else None
 
 
+def platform_tenant_id(store_id):
+    """Resolve a platform store_id's tenant_id from NEXORA_PLATFORM.dbo.stores.
+    Returns the GUID string, or None if the store has none on file."""
+    with pyodbc.connect(platform_connection_string(), timeout=15) as conn:
+        row = conn.cursor().execute(
+            "SELECT CONVERT(varchar(40), tenant_id) FROM dbo.stores WHERE store_id = ?",
+            store_id,
+        ).fetchone()
+    return row[0] if row else None
+
+
 # Access modes we can safely flip back to MULTI_USER without a DBA.
 _RECOVERABLE_ACCESS = {"SINGLE_USER", "RESTRICTED_USER"}
 # A genuine restore/recovery is in progress -- interrupting it can destroy the

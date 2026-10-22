@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from modules.procurement import workspace_repository as repo
 from modules.procurement import network_movement_repository as network_repo
+from modules.procurement import rare_mover_guard
 
 logger = logging.getLogger("procurement.workspace")
 
@@ -138,6 +139,21 @@ def skip_item(tenant_id, order_item_id, skip_reason, reviewed_by):
         )
     repo.skip_item(tenant_id, order_item_id, skip_reason, reviewed_by)
     logger.info("Review skip tenant=%s item=%s by=%s", tenant_id, order_item_id, reviewed_by)
+    return _require_item(tenant_id, order_item_id)
+
+
+def confirm_rare_mover(tenant_id, order_item_id, confirmed_by):
+    """D3c — explicit PM confirmation of a rare-mover line. Any PM may confirm
+    any rare-mover line (not restricted to a different reviewer/non-skipped
+    state) — confirmation is orthogonal to the review/skip/defer status;
+    assignment/export still independently reject a skipped item on their own
+    existing checks regardless of confirmation."""
+    item = _require_item(tenant_id, order_item_id)
+    if item.get("reason_code") not in rare_mover_guard.RARE_MOVER_REASON_CODES:
+        raise HTTPException(status_code=400, detail="Item is not a rare-mover line")
+    repo.confirm_rare_mover(tenant_id, order_item_id, confirmed_by)
+    logger.info("Rare-mover confirmed tenant=%s item=%s by=%s",
+                tenant_id, order_item_id, confirmed_by)
     return _require_item(tenant_id, order_item_id)
 
 

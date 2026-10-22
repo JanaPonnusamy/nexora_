@@ -146,6 +146,30 @@ hold the procurement business rules (VPL, suggested quantity, final
 quantity). **This task did not modify either file.** Procurement is a
 separate concern from sync transport and was left untouched.
 
+## Procurement workspace unification
+
+Coordination file: `docs/procurement-workspace-unification/AUTONOMOUS_WORK_CONTROL.md`.
+Contracts (copies of the Downloads specs): `docs/procurement-workspace-unification/contracts/`.
+
+Phase 0 is **COMPLETE** (14 passed, 2026-10-19).
+P1-A and P1-B are accepted. Phase 1 is **COMPLETE**. Profile T is still not called by `decision_rules.evaluate`.
+Pending-source column, `transactionvalidity`, Role 1/2, and whether `Transactiondate` has a time remain blocked.
+The rules-registry page and unapplied migration 0026 stay a separate workstream.
+Phase 2 is **READY_FOR_REVIEW**, not complete. The owner accepted the history contract in principle. A 2026-10-20 temporary-implementer pass (Claude, Cursor unavailable) resolved the identity-key contradiction (`product_id`-first, `product_code` fallback) and the skip/removal collision (`_is_skip_only`) in `vpl_history.py`. An independent review of that pass found a HIGH-severity crash (`_public()`'s sort broke on a null `product_code`); a follow-up fix pass corrected it and added regression tests, but that fix is itself self-tested only — a genuinely separate reviewer still needs to reproduce the original crash and confirm the fix before persistence can move. Persistence stays **BLOCKED**. Rare-mover confirmation is **NOT APPROVED**. No migration was written or applied. `0027` is not the parent. Database verification is **NOT_VERIFIED**.
+Detail: `docs/procurement-workspace-unification/PHASE_0_STATUS.md` and `AUTONOMOUS_WORK_CONTROL.md`.
+
+## Known temporary files to clean up
+
+`backend/modules/legacy_order/_TEMP_sample_order_data.py` — Claude-authored,
+2026-10-19, during a planned `.73` (192.168.10.73) outage window starting
+~22:20 IST. Pure synthetic DEVELOPMENT/SAMPLE DATA exercising the three
+legacy-order read loaders (Qty Check, Auto Purchase Update, Supplier
+Stock) via the existing `_FakeConnection`/`monkeypatch` pattern from
+`tests/test_legacy_order_workflow.py` — no new DB, no real data, read-only,
+cannot submit a real order. **Delete this file** once `.73` is confirmed
+back online and re-authorized for live-DB work. Not referenced by any
+production code path or test suite; safe to remove any time.
+
 ## Critical rules
 
 - Never modify `decision_rules.py` / `decision_service.py` without proven

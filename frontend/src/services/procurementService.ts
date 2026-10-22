@@ -35,6 +35,10 @@ import type {
   DistributionRunDetail,
   DistributionRunItemProducts,
   DistributionSupplierMapImportResult,
+  VplHistoryListResult,
+  VplHistoryDetail,
+  VplWorkingView,
+  VplEditedLine,
 } from '../types/procurement'
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -814,5 +818,35 @@ export const procurementService = {
     api.post<{ run_item_id: string; status: string; error: string | null }>(
       `/api/procurement/distribution/run-items/${runItemId}/send-whatsapp`,
       {},
+    ),
+
+  // VPL history (Phase 2, unification workstream). Process-memory only —
+  // migration 0027 is not applied, and nothing in the live Purchase Manager
+  // ever opens a working cycle or calls refresh here, so this list is
+  // ordinarily empty. Server requires PROCUREMENT_ADMIN (stricter than the
+  // PROCUREMENT_WORKSPACE capability gating the rest of this page) — callers
+  // should expect and handle a 403 for non-admin users.
+  vplHistoryList: (tenantId: string, storeId: string, limit = 10) =>
+    api.get<VplHistoryListResult>(
+      `/api/procurement/vpl-history/history${qs({ tenant_id: tenantId, store_id: storeId, limit })}`,
+    ),
+
+  vplHistoryDetail: (historyId: string) =>
+    api.get<VplHistoryDetail>(`/api/procurement/vpl-history/history/${historyId}`),
+
+  vplWorking: (tenantId: string, storeId: string, cycleId: string) =>
+    api.get<VplWorkingView>(
+      `/api/procurement/vpl-history/working${qs({ tenant_id: tenantId, store_id: storeId, cycle_id: cycleId })}`,
+    ),
+
+  vplEditLine: (
+    tenantId: string,
+    storeId: string,
+    cycleId: string,
+    body: { product_code: string; expected_version: number; editor_id: string; changes: { final_qty: number } },
+  ) =>
+    api.put<VplEditedLine>(
+      `/api/procurement/vpl-history/working/lines${qs({ tenant_id: tenantId, store_id: storeId, cycle_id: cycleId })}`,
+      body,
     ),
 }

@@ -20,6 +20,7 @@ Note the legacy app does NOT use sp_GenerateBranchOrder; that SP is a simpler,
 stale variant. The inline query is the real rule engine and is the one ported.
 """
 import datetime
+import logging
 import os
 import re
 import threading
@@ -28,8 +29,16 @@ import time
 import pyodbc
 
 from modules.legacy_order import database
+from modules.legacy_order import repository
+
+logger = logging.getLogger(__name__)
 
 _SQL_DIR = os.path.join(os.path.dirname(__file__), "sql")
+
+# NMW is the only source legacy_order refreshes warehouse-stock from today
+# (see repository.replace_supplier_stock / sync_supplier_product_match_from_mapping).
+# Env-overridable to match service.WAREHOUSE_STORES if that set ever grows.
+_WAREHOUSE_STOCK_SOURCE = os.getenv("LEGACY_WAREHOUSE_STOCK_SOURCE", "NMW")
 
 _DEADLOCK_SQLSTATE = "40001"
 _DEADLOCK_RETRIES = 3
@@ -169,6 +178,8 @@ def insert_data_into_destination(columns, rows, store_name):
     dest_cols = [dest for _, dest in COLUMN_MAP]
     picks = [index[src.lower()] for src, _ in COLUMN_MAP]
     payload = [tuple(r[i] for i in picks) for r in rows]
+    order_id_pos = dest_cols.index("OrderId")
+    new_order_ids = {row[order_id_pos] for row in payload}
 
     # Multiple stores' one-click runs can land in this transaction at the same
     # time; all writes are scoped to StoreName so a deadlocked attempt is safe
@@ -182,6 +193,32 @@ def insert_data_into_destination(columns, rows, store_name):
                 conn.timeout = 0
                 cur = conn.cursor()
                 try:
+                    # Short-lived concurrency guard, INSIDE this same
+                    # transaction, immediately before the destructive writes
+                    # below: takes the per-store sp_getapplock (@LockOwner =
+                    # 'Transaction') so a second, concurrent Process run (or
+                    # a concurrent restore_backup_order call) for this exact
+                    # store blocks until this transaction commits or rolls
+                    # back. This is ONLY the requirement-9 concurrency lock
+                    # that prevents two simultaneous processing runs -- there
+                    # is no durable "pending-export business lock" anymore
+                    # (that table/unlock-admin-action mechanism was removed;
+                    # pending Status = 0 lines are now a request-time WARNING
+                    # the caller already confirmed past in service.
+                    # start_order_process, not something re-checked again
+                    # here at write time).
+                    repository._with_store_applock(cur, store_name)
+
+                    # Audit signal (not a separate backup mechanism -- the
+                    # unconditional INSERT INTO OrderManagementBackup below
+                    # already covers every row/status unconditionally): if
+                    # more than one row on the order about to be overwritten
+                    # is both reviewed and already assigned to a supplier,
+                    # record that explicitly before it's gone.
+                    repository.record_protected_backup_snapshot(
+                        cur, store_name, repository._latest_order_id(cur, store_name),
+                    )
+
                     # A re-run that lands on the same per-second OrderID as a
                     # run that already completed (retry after a client-side
                     # timeout, a double-submitted job, ...) would otherwise
@@ -190,6 +227,14 @@ def insert_data_into_destination(columns, rows, store_name):
                     # committed. It is a byte-for-byte duplicate of what we are
                     # about to insert, so clearing it first makes the backup
                     # step idempotent instead of aborting the whole order run.
+                    #
+                    # Two separate collisions are possible, so both are
+                    # cleared: (1) the backup slot for OrderManagement's
+                    # *current* OrderId (a prior run that got this far before),
+                    # and (2) the backup slot for the *new* OrderId this run is
+                    # about to produce (a prior attempt whose backup insert
+                    # committed but then died before clearing OrderManagement,
+                    # leaving a stale row under the id we're about to reuse).
                     cur.execute(
                         "DELETE b FROM OrderManagementBackup b "
                         "INNER JOIN OrderManagement om "
@@ -198,6 +243,13 @@ def insert_data_into_destination(columns, rows, store_name):
                         "WHERE om.StoreName = ?",
                         store_name,
                     )
+                    for new_order_id in new_order_ids:
+                        cur.execute(
+                            "DELETE FROM OrderManagementBackup "
+                            "WHERE StoreName = ? AND OrderId = ?",
+                            store_name,
+                            new_order_id,
+                        )
                     cur.execute(
                         "INSERT INTO OrderManagementBackup "
                         "SELECT * FROM OrderManagement WHERE StoreName = ?",
@@ -221,6 +273,28 @@ def insert_data_into_destination(columns, rows, store_name):
                         "WHERE StoreName = ? AND WantedType = 'Additional Row'",
                         store_name,
                     )
+
+                    # IsOffer: set once per product here, in a single
+                    # set-based UPDATE, instead of recomputed live per grid
+                    # row on every screen load (see migration 0007 for the
+                    # full story -- that per-row EXISTS against PurchaseTrans
+                    # measured at 77s for a 1385-row/278K-PurchaseTrans-row
+                    # store, well over the desktop client's 45s timeout).
+                    # This UPDATE still scans PurchaseTrans, but once per
+                    # order-generation run for the store, not once per grid
+                    # load -- the cost moves from "every time someone opens
+                    # the screen" to "once when the order is generated".
+                    if payload:
+                        cur.execute(
+                            "UPDATE om SET om.IsOffer = 1 "
+                            "FROM OrderManagement om "
+                            "WHERE om.StoreName = ? "
+                            "AND EXISTS (SELECT 1 FROM PurchaseTrans pt WITH (NOLOCK) "
+                            "  WHERE pt.ProductCode = CAST(om.ProductCode AS INT) "
+                            "  AND pt.StoreName = om.StoreName "
+                            "  AND pt.InvoiceSeries <> 'TI' AND pt.FreeQty > 0)",
+                            store_name,
+                        )
                     conn.commit()
                     return len(payload)
                 except pyodbc.Error as exc:
@@ -333,6 +407,51 @@ def update_order_header_details(source_cs, store_name, min_days, max_days,
             "last_sale_bill_no": last_sale_bill_no}
 
 
+def refresh_warehouse_stock(store, source_store_name, on_progress=None):
+    """Pull ``source_store_name``'s (e.g. NMW) live branch stock into this
+    store's SupplierStock rows (central OrderNMC.SupplierStock, filed under
+    this store's own Ho_code), then bridge SupplierProductMatch via
+    dbo.product_mapping so the existing "Order Based Supplier Stock" join
+    (repository.orders_by_supplier mode='stock') can actually surface it.
+
+    Shared by service._run_stock_update's background job and by
+    run_order_process, which calls this automatically before every retail
+    order generation so NMW's stock is never stale by the time a store's
+    supplier-stock screen is checked.
+
+    Returns (inserted, matched) row counts. Raises on failure -- the caller
+    (run_order_process) wraps this in its own try/except so a stale/
+    unreachable warehouse never blocks normal order generation; service's
+    standalone stock-update job surfaces the raised error to its own job
+    status instead.
+    """
+    def report(msg):
+        if on_progress:
+            on_progress(msg)
+
+    source_store = repository.get_store(source_store_name)
+    if not source_store:
+        report(f"{source_store_name} is not configured in OrderNMC.Stores; skipping stock refresh.")
+        return 0, 0
+    report(f"Reading stock from {source_store_name}...")
+    rows = repository.branch_stock(source_store)
+    report(f"Read {len(rows)} products. Updating {store['store_name']}'s supplier stock...")
+    # suppliercode is THIS store's own code for the source ("HO") supplier
+    # (dbo.Stores.Ho_code), not the source store's name -- NMS/NMA file it
+    # under '94', NMC under 'ST_2', NMG under '99', etc.
+    inserted = repository.replace_supplier_stock(store["store_name"], store["ho_code"], rows)
+    # Bridge SupplierProductMatch via product_mapping too -- without this,
+    # the SupplierStock rows just inserted are unreachable from
+    # orders_by_supplier(mode='stock') because that join requires a matching
+    # SupplierProductMatch row, and NMW never gets one from the manual
+    # Supplier Excel Mapping flow real suppliers use.
+    matched = repository.sync_supplier_product_match_from_mapping(
+        store["store_name"], store["ho_code"], source_store_name, rows,
+    )
+    report(f"{source_store_name} stock refreshed ({inserted} rows, {matched} product_mapping matches).")
+    return inserted, matched
+
+
 def run_order_process(store, min_days, max_days, mode, on_progress=None,
                       is_warehouse=False, recency_days=10, is_agent_synced=False):
     """Port of ProcessOrder + the FetchOrderData worker branch.
@@ -379,6 +498,13 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
         query_cs = source_cs if mode == "remote" else database.central_connection_string()
         mode_label = mode
 
+    if not is_warehouse and store["store_name"] != _WAREHOUSE_STOCK_SOURCE and store["ho_code"]:
+        try:
+            refresh_warehouse_stock(store, _WAREHOUSE_STOCK_SOURCE, report)
+        except Exception as exc:
+            logger.exception("warehouse stock refresh failed for %s", store["store_name"])
+            report(f"{_WAREHOUSE_STOCK_SOURCE} stock refresh failed (continuing order generation): {exc}")
+
     report(f"Fetching order data ({mode_label} mode, since {odata})...")
     columns, rows = fetch_source_data(
         query_cs, odata, store["store_name"], store["store_code"],
@@ -386,6 +512,13 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
     )
     report(f"Order query returned {len(rows)} rows.")
 
+    # The pending-supplier-assignment warning was already confirmed (or
+    # admin-overridden) at request time in service.start_order_process --
+    # there is nothing left to re-check here. insert_data_into_destination
+    # still takes the short-lived per-store applock inside its own
+    # transaction purely to prevent a second concurrent Process run (or a
+    # concurrent restore) for this store, not to re-validate any business
+    # rule.
     report("Backing up and rewriting OrderManagement...")
     inserted = insert_data_into_destination(columns, rows, store["store_name"])
 

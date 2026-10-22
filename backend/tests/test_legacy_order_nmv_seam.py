@@ -198,13 +198,15 @@ def process_env(monkeypatch):
                         lambda: CENTRAL_CS)
     monkeypatch.setattr(order_process.database, "branch_connection_string",
                         lambda *a, **k: BRANCH_CS)
+    # The durable processing-lock mechanism was removed; insert_data_into_
+    # destination's short-lived applock has no repository call to stub here.
     return captured
 
 
 _NMV_STORE = {"store_name": "NMV", "store_code": "9", "server_name": None,
-              "database": None, "username": None, "password": None}
+              "database": None, "username": None, "password": None, "ho_code": None}
 _NMA_STORE = {"store_name": "NMA", "store_code": "1", "server_name": "SRV",
-              "database": "NMA_DB", "username": "u", "password": "p"}
+              "database": "NMA_DB", "username": "u", "password": "p", "ho_code": None}
 
 
 def test_agent_synced_forces_local_and_central(process_env):
@@ -287,6 +289,10 @@ def thread_spy(monkeypatch):
 def test_start_order_process_nmv_syncs_from_platform(monkeypatch, thread_spy):
     monkeypatch.setattr(service, "_resolve_store", lambda sn: dict(_NMV_STORE))
     monkeypatch.setattr(service, "_running_job_kind", lambda sn: None)
+    # Qty Check confirmation gate must not block this routing test (no pending
+    # assignment rows; the durable processing-lock mechanism was removed).
+    monkeypatch.setattr(service.repository, "require_current_date_order_if_any", lambda sn: None)
+    monkeypatch.setattr(service.repository, "qty_check_confirmation_count", lambda sn: (None, 0, []))
     # NMV now resolves its platform store_id and syncs sync.* -> central first.
     monkeypatch.setattr(service.database, "platform_store_id",
                         lambda sc: "STORE-ID-GUID")
@@ -312,6 +318,8 @@ def test_start_order_process_nmv_syncs_from_platform(monkeypatch, thread_spy):
 def test_start_order_process_lan_keeps_sync_then_order(monkeypatch, thread_spy):
     monkeypatch.setattr(service, "_resolve_store", lambda sn: dict(_NMA_STORE))
     monkeypatch.setattr(service, "_running_job_kind", lambda sn: None)
+    monkeypatch.setattr(service.repository, "require_current_date_order_if_any", lambda sn: None)
+    monkeypatch.setattr(service.repository, "qty_check_confirmation_count", lambda sn: (None, 0, []))
 
     branch_tested = {"called": False}
 

@@ -6,7 +6,7 @@
 const path = require('node:path');
 const http = require('node:http');
 const fs = require('node:fs');
-const { app, BrowserWindow, shell, ipcMain, nativeTheme, Menu } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, nativeTheme, Menu, dialog } = require('electron');
 // electron-updater's `autoUpdater` export is a lazy getter that constructs an
 // NsisUpdater the first time it's touched -- requiring it (and destructuring
 // autoUpdater out of it) at module load time can hang/throw before app is
@@ -86,6 +86,38 @@ ipcMain.handle('session:write', (_event, name, data) => {
   } catch {
     return false;
   }
+});
+
+// --------------------------------------------------------------------------
+// Order Workspace export-to-disk (Excel/CSV written straight to a chosen
+// folder, not a browser-style "Downloads" prompt — the operator wants the
+// same file landing in a predictable D:\Export Order\ddmmyy\<order no>\
+// structure every time, like the legacy VB.NET app did).
+// --------------------------------------------------------------------------
+
+// Writes base64 `content` to `absolutePath`, creating any missing parent
+// folders (date/order-no subfolders) along the way. Returns the final path
+// actually written, or throws so the renderer can show a real error instead
+// of silently losing the export.
+ipcMain.handle('export:writeFile', (_event, { absolutePath, contentBase64 }) => {
+  if (!absolutePath) throw new Error('No destination path given.');
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, Buffer.from(contentBase64, 'base64'));
+  return absolutePath;
+});
+
+// Native "choose a folder" dialog, seeded at the operator's current default
+// (or the D:\Export Order fallback) so changing it is a couple of clicks,
+// not a typed path.
+ipcMain.handle('export:chooseFolder', async (event, { defaultPath }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Choose export folder',
+    defaultPath: defaultPath || undefined,
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
 });
 
 ipcMain.handle('dev:setViewport', (event, { width, height }) => {

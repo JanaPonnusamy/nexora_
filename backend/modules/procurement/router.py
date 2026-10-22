@@ -24,6 +24,8 @@ from modules.procurement.pipeline_router import router as pipeline_router
 from modules.procurement.intelligence_router import router as intelligence_router
 from modules.procurement.optimization_router import router as optimization_router
 from modules.procurement.reports.reports_router import router as reports_router
+from modules.procurement.rules_router import router as rules_router
+from modules.procurement.vpl_history_router import router as vpl_history_router
 
 router = APIRouter(prefix="/api/procurement", tags=["Procurement"])
 
@@ -39,6 +41,10 @@ router.include_router(optimization_router)
 router.include_router(intelligence_router)
 # Legacy Pharmacy Reports — read-only store business dashboard + monthly analysis.
 router.include_router(reports_router)
+# Rules registry — catalog and store overrides. Not used by decision_rules.evaluate.
+router.include_router(rules_router)
+# VPL history — opt-in working-line refresh. Not used by clear_products or evaluate.
+router.include_router(vpl_history_router)
 # Comparison (runtime) — mounted FIRST so /vpl/compare resolves before the
 # /vpl/{vpl_id} catch-all in the VPL router.
 router.include_router(compare_router)

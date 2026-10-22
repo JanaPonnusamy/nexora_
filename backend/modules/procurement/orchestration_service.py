@@ -12,6 +12,7 @@ order_items_repository (working items). Business logic stays in the Decision
 Engine; this layer only sequences and validates.
 """
 
+import os
 import threading
 from datetime import date
 
@@ -28,6 +29,8 @@ from modules.procurement import reconciliation_service
 from modules.procurement import supplier_exclusion_repository as exclusion_repo
 from modules.procurement import platform_source_repository as platform_repo
 from modules.procurement import network_movement_service
+from modules.procurement import vpl_history_repository
+from modules.procurement import assignment_repository
 from repositories.store_repository import StoreRepository
 
 import logging
@@ -118,6 +121,16 @@ def create_business_cycle(payload: dict):
 # Refresh (full orchestration)
 # --------------------------------------------------------------------------
 
+def _is_unique_violation(exc):
+    """pyodbc raises IntegrityError (SQLSTATE 23000) for a unique-index
+    violation — matches the filtered unique index added by
+    0029_refresh_idempotency_key.sql. Checked by class name/message content,
+    not isinstance, so this has no hard import dependency on pyodbc here."""
+    name = type(exc).__name__
+    text = str(exc)
+    return name == "IntegrityError" or "23000" in text or "duplicate key" in text.lower()
+
+
 def _validate_parameters(rolling_days, min_days, max_days):
     params = rules.DecisionParameters(
         rolling_days=rolling_days or 90, min_days=min_days, max_days=max_days
@@ -149,6 +162,24 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
         payload.get("rolling_days"), payload.get("min_days"), payload.get("max_days")
     )
 
+    # D5 — refresh retry returns/reuses the existing result for the same
+    # logical request (owner-approved 2026-10-21: client-supplied
+    # idempotency_key, not a parameter-dedup window). Feature-gated behind
+    # PROCUREMENT_REFRESH_IDEMPOTENCY (default off): migration
+    # 0029_refresh_idempotency_key.sql, which adds the column this check
+    # reads, is NOT APPLIED — querying it unconditionally would break
+    # create_refresh against the live, unmigrated schema.
+    idempotency_enabled = os.environ.get("PROCUREMENT_REFRESH_IDEMPOTENCY") == "1"
+    idempotency_key = payload.get("idempotency_key") if idempotency_enabled else None
+    if idempotency_key:
+        existing = refresh_repo.find_by_idempotency_key(tenant_id, cycle_id, idempotency_key)
+        if existing:
+            logger.info(
+                "Refresh idempotency hit tenant=%s cycle=%s key=%s refresh=%s",
+                tenant_id, cycle_id, idempotency_key, existing["refresh_id"],
+            )
+            return existing
+
     previous_refresh_id = (
         payload.get("previous_refresh_id")
         or cycle_repo.get_active_refresh_id(tenant_id, cycle_id)
@@ -159,21 +190,36 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
     #    increments within the cycle and restarts at 1 for each new cycle.
     store_id = cycle.get("store_id")
     refresh_no = refresh_repo.next_refresh_no(tenant_id, cycle_id)
-    refresh = refresh_repo.create_vpl({
-        "tenant_id": tenant_id,
-        "cycle_id": cycle_id,
-        "store_id": store_id,
-        "snapshot_name": refresh_name(store_id, refresh_no),
-        "refresh_no": refresh_no,
-        "rolling_days": payload.get("rolling_days"),
-        "min_days": payload.get("min_days"),
-        "max_days": payload.get("max_days"),
-        "previous_refresh_id": previous_refresh_id,
-        "snapshot_grn_number": payload.get("snapshot_grn_number"),
-        "snapshot_sale_bill_number": payload.get("snapshot_sale_bill_number"),
-        "sync_execution_id": payload.get("sync_execution_id"),
-        "created_by": payload.get("created_by"),
-    })
+    try:
+        refresh = refresh_repo.create_vpl({
+            "tenant_id": tenant_id,
+            "cycle_id": cycle_id,
+            "store_id": store_id,
+            "snapshot_name": refresh_name(store_id, refresh_no),
+            "refresh_no": refresh_no,
+            "rolling_days": payload.get("rolling_days"),
+            "min_days": payload.get("min_days"),
+            "max_days": payload.get("max_days"),
+            "previous_refresh_id": previous_refresh_id,
+            "snapshot_grn_number": payload.get("snapshot_grn_number"),
+            "snapshot_sale_bill_number": payload.get("snapshot_sale_bill_number"),
+            "sync_execution_id": payload.get("sync_execution_id"),
+            "created_by": payload.get("created_by"),
+            "idempotency_key": idempotency_key,
+        })
+    except Exception as exc:
+        # D5 concurrent-retry race: two callers both miss the
+        # find_by_idempotency_key check above (neither has committed yet),
+        # both attempt to insert the same (tenant_id, cycle_id,
+        # idempotency_key) — the filtered unique index
+        # (0029_refresh_idempotency_key.sql) rejects the second as a
+        # constraint violation. Treat that specific case as "someone else
+        # already created it" and return their row, not a 500.
+        if idempotency_key and _is_unique_violation(exc):
+            existing = refresh_repo.find_by_idempotency_key(tenant_id, cycle_id, idempotency_key)
+            if existing:
+                return existing
+        raise
     refresh_id = refresh["refresh_id"]
 
     # 2) Run the completed Decision Engine (persists VPL, publishes Refresh,
@@ -182,8 +228,48 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
 
     # 3) Generate Working Order Items from the VPL (suggested_qty > 0), bulk,
     #    then carry forward the previous Refresh's pending (Module 4).
+    # Step 4 (VPL History) — feature-gated behind PROCUREMENT_VPL_HISTORY
+    # (default off, same pattern as D3c/D5): migration
+    # 0030_vpl_history_persistence.sql, which adds the tables this reads/writes,
+    # is NOT APPLIED — running this unconditionally would 500 every refresh
+    # against the live, unmigrated schema. When on, the PREVIOUS refresh's
+    # working items + assignments are snapshotted into history in the SAME
+    # transaction that deletes them via clear_working_items below, so a
+    # rollback here leaves neither a partial history batch nor a deleted
+    # working set — both-or-neither. Only writes a batch when there is a
+    # previous refresh with items to snapshot (first refresh in a cycle has
+    # nothing to archive).
+    history_enabled = os.environ.get("PROCUREMENT_VPL_HISTORY") == "1"
+
     conn = get_connection()
     try:
+        if history_enabled and previous_refresh_id and previous_refresh_id != refresh_id:
+            previous_lines = vpl_history_repository.list_items_for_history(
+                conn, tenant_id, previous_refresh_id
+            )
+            if previous_lines:
+                previous_assignments = assignment_repository.list_by_refresh(
+                    tenant_id, previous_refresh_id
+                )
+                assignments_by_item = {}
+                for a in previous_assignments:
+                    assignments_by_item.setdefault(a["order_item_id"], []).append(a)
+                try:
+                    vpl_history_repository.write_history_batch(
+                        conn, tenant_id, store_id, cycle_id, previous_refresh_id,
+                        refresh_id, previous_lines, assignments_by_item,
+                        payload.get("created_by"),
+                    )
+                except Exception as exc:
+                    # Retry-safe per vpl_history_repository's own contract: a
+                    # second create_refresh call for the same (prev, new) pair
+                    # hits the batch's unique index — that only happens if this
+                    # exact successor was already archived (not a fresh retry
+                    # path today, since refresh_id is freshly generated above),
+                    # so treat it as "already archived" and continue rather
+                    # than failing the whole refresh over a history write.
+                    if not _is_unique_violation(exc):
+                        raise
         items_repo.clear_working_items(conn, tenant_id, refresh_id)
         working_items = items_repo.generate_working_items(
             conn, tenant_id, refresh_id,

@@ -1054,6 +1054,12 @@
 .lo-table tbody tr.lo-row-assigned > td:nth-child(3) { color: var(--bs-success, #198754); font-weight: 700; }
 #root .lo-table tbody tr.lo-row-assigned.is-row-selected > td { background: rgba(var(--bs-success-rgb, 25, 135, 84), 0.4) !important; }
 
+/* Row backed by warehouse (NMW) stock via product_mapping, not a real
+   supplier -- distinct from the assigned-row green above. */
+.lo-table tbody tr.lo-row-warehouse-stock > td { background: rgba(var(--bs-info-rgb, 13, 202, 240), 0.14); }
+.lo-table tbody tr.lo-row-warehouse-stock > td:first-child { box-shadow: inset 3px 0 0 var(--bs-info, #0dcaf0); }
+#root .lo-table tbody tr.lo-row-warehouse-stock.is-row-selected > td { background: rgba(var(--bs-info-rgb, 13, 202, 240), 0.4) !important; }
+
 /* ----- Guided order workflow ----- */
 .lo-workflow {
   overflow: hidden;
@@ -1217,6 +1223,13 @@
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* .ds-filter-bar--compact still carries its own padding (ds-space-2) for
+     use as a standalone bar elsewhere; here the row is nested inside the
+     already-padded .lo-merged-filter section, so that padding would stack
+     and roughly double the row's height. Strip it — the outer section's
+     padding-block is the only inset this toolbar needs. */
+  padding: 0;
+  margin-bottom: 0;
 }
 .lo-merged-filter .ds-filter-tabs { flex: 0 0 auto; }
 .lo-merged-filter .lo-suppick-field,
@@ -1428,8 +1441,36 @@
    input still fits. */
 .lo-table.lo-dense { font-size: 12px; }
 .lo-table.lo-dense thead th { height: 28px; padding: 0 0.45rem; font-size: 11px; }
-.lo-table.lo-dense td { height: 29px; padding: 0 0.45rem; font-size: 12px; vertical-align: middle; }
+.lo-table.lo-dense td { height: 25px; padding: 0 0.45rem; font-size: 12px; vertical-align: middle; }
 .lo-table.lo-dense .qc-product-name { font-size: 12px; }
+
+/* Per-column filter row (Qty Check grid): deliberately its own ~26px tier --
+   shorter than the 28px header, taller than the filter *inputs* (23px) need,
+   never equal to the 25px product row (that would make it look like a data
+   row). The matching #root .lo-merged override below carries the same
+   height with !important so it wins over the global #root table system
+   (data-tables.css) instead of silently losing to it. */
+.lo-table.lo-dense thead tr.qc-filter-row th {
+  height: 26px;
+  padding: 1px 0.3rem;
+  background: var(--nx-surface-sunk, var(--bs-tertiary-bg));
+  vertical-align: middle;
+}
+.qc-col-filter {
+  display: block;
+  width: 100%;
+  height: 23px;
+  padding: 0 0.35rem;
+  border: 1px solid var(--nx-rule-strong, var(--bs-border-color));
+  border-radius: 0.25rem;
+  background: var(--nx-surface, var(--bs-body-bg));
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  line-height: 21px;
+}
+.qc-col-filter--num { text-align: right; }
+select.qc-col-filter--select { padding: 0 0.25rem; }
 
 /* ----- Product intelligence panel: fill the card height, no fixed caps -----
    Purchase and Sales share the leftover height and scroll internally; the
@@ -1674,9 +1715,18 @@
   font-size: 11px !important;
   text-transform: uppercase !important;
 }
+/* Filter row is a distinct thead row (tr.qc-filter-row) -- it must win over
+   the generic "> thead > tr > th" rule above despite equal specificity
+   (0,2,0,3 each) by appearing after it in source order, but pin it with
+   !important too since source order is fragile against future edits. */
+#root .lo-merged .lo-table.lo-dense > thead > tr.qc-filter-row > th {
+  height: 26px !important;
+  padding: 1px 0.3rem !important;
+  text-transform: none !important;
+}
 #root .lo-merged .lo-table.lo-dense > tbody > tr > td {
-  height: 29px;
-  padding: 0.08rem 0.45rem !important;
+  height: 25px;
+  padding: 0.04rem 0.45rem !important;
   line-height: 1.2;
 }
 #root .lo-merged .lo-table--pi { font-size: 13px; }
@@ -1686,16 +1736,19 @@
 #root .lo-merged .lo-table--pi > tbody > tr.qc-pi-freerow > td { background: rgba(245, 158, 11, 0.14) !important; }
 #root .lo-merged .lo-table--pi > tbody > tr > td.qc-pi-free { background: rgba(245, 158, 11, 0.34) !important; font-weight: 700; }
 
-/* Order-qty cell: plain right-aligned box, no browser spinner arrows. */
+/* Order-qty cell: plain right-aligned box, no browser spinner arrows. Capped
+   to fit inside the 25px dense product row without growing it. */
 .qc-qty-input {
   width: 3.6rem;
-  padding: 0.12rem 0.35rem;
+  height: 21px;
+  padding: 0 0.35rem;
   border: 1px solid var(--bs-border-color);
   border-radius: 0.3rem;
   background: var(--bs-body-bg);
   color: inherit;
   text-align: right;
   font: inherit;
+  line-height: 19px;
   -moz-appearance: textfield;
   appearance: textfield;
 }
@@ -1724,6 +1777,7 @@
   text-align: right;
   color: var(--bs-secondary-color);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .qc-grid-scroll .lo-num,
 .qc-history-scroll .lo-num { white-space: nowrap; }

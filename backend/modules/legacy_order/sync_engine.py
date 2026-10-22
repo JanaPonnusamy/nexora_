@@ -70,8 +70,10 @@ def get_query_for_table(table_name):
         )
     if table_name == "Suppliers":
         return (
-            "SELECT DISTINCT suppliercode, suppliername, mobilenumber, email "
-            "FROM Suppliers WHERE IsActive = 1"
+            "SELECT suppliercode, MAX(suppliername) AS suppliername, "
+            "MAX(mobilenumber) AS mobilenumber, MAX(email) AS email, "
+            "MAX(CAST(IsActive AS INT)) AS IsActive "
+            "FROM Suppliers GROUP BY suppliercode"
         )
     if table_name == "Batches":
         return (
@@ -168,8 +170,10 @@ def platform_query_for_table(table_name):
         )
     if table_name == "Suppliers":
         return (
-            "SELECT DISTINCT suppliercode, suppliername, mobilenumber, email "
-            "FROM sync.Suppliers WHERE store_id = ? AND IsActive = 1"
+            "SELECT suppliercode, MAX(suppliername) AS suppliername, "
+            "MAX(mobilenumber) AS mobilenumber, MAX(email) AS email, "
+            "MAX(CAST(IsActive AS INT)) AS IsActive "
+            "FROM sync.Suppliers WHERE store_id = ? GROUP BY suppliercode"
         )
     if table_name == "Batches":
         return (
@@ -333,6 +337,24 @@ def _ensure_ho_supplier_code_column(dest_cur, dest_conn):
         dest_conn.commit()
 
 
+def _ensure_supplier_isactive_column(dest_cur, dest_conn):
+    """OrderSuppliers predates the IsActive column; add it once.
+
+    Lets list_suppliers (the Order Workspace supplier picker) filter
+    confirmed-inactive suppliers directly off the synced row instead of a
+    live join back to Suppliers/sync.Suppliers.
+    """
+    exists = dest_cur.execute(
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_NAME = 'OrderSuppliers' AND COLUMN_NAME = 'IsActive'"
+    ).fetchone()[0]
+    if not exists:
+        dest_cur.execute(
+            "ALTER TABLE OrderSuppliers ADD IsActive BIT NULL"
+        )
+        dest_conn.commit()
+
+
 def _stamp_unified_supplier_code(dest_cur, dest_conn, store_name):
     """Backfill OrderSuppliers.UnifiedSupplierCode = suppliercode for an
     AGENT-SYNCED store (e.g. NMV) wherever it is still NULL/blank.
@@ -393,6 +415,8 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name,
 
         if dest_table.lower() == "supplierproductmatch":
             _ensure_ho_supplier_code_column(dest_cur, dest_conn)
+        if dest_table.lower() == "ordersuppliers":
+            _ensure_supplier_isactive_column(dest_cur, dest_conn)
 
         # STEP 1 -- watermark
         param = _watermark(dest_cur, table_name, dest_table, store_name)

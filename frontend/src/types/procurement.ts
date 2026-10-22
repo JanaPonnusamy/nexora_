@@ -602,3 +602,85 @@ export interface DistributionRunItemProducts {
   excel_path: string | null
   rows: DistributionRunItemProduct[]
 }
+
+/* ------------------------------------------------------------------ *
+ * VPL working-line history (Phase 2, unification workstream).
+ *
+ * Backed by `backend/modules/procurement/vpl_history.py` — process-memory
+ * only (migration 0027 is written but NOT applied; this restarts empty on
+ * every backend restart). Mounted live at `/api/procurement/vpl-history`
+ * (`vpl_history_router.py`, gated by `require_procurement_admin` server-side
+ * — stricter than the `PROCUREMENT_WORKSPACE` capability that gates the rest
+ * of this page). NOT called by `decision_rules.evaluate` or `clear_products`;
+ * the live Purchase Manager never calls `POST /vpl-history/working` or
+ * `POST /vpl-history/refresh`, so in practice this list is empty for every
+ * store until some other caller opts a cycle into it.
+ *
+ * Shapes below mirror `VplWorkspace._public` / `history_headers` /
+ * `history_detail` in `vpl_history.py` exactly — keep in sync if that file
+ * changes its returned keys.
+ * ------------------------------------------------------------------ */
+
+/** One archived VPL working line, as preserved verbatim in a history batch. */
+export interface VplHistoryLine {
+  refresh_id: string
+  product_code: string
+  product_id: string | null
+  suggested_qty: number | null
+  final_qty: number | null
+  manual_override: boolean
+  supplier_code: string | null
+  assigned_qty: number | null
+  rare_confirmed: boolean
+  reviewed_at: string | null
+  reason_code: string | null
+  row_version: number
+  carried_forward: boolean
+  updated_by: string | null
+  updated_at: string | null
+}
+
+/** One archived batch header (history list row) — `vpl_history.py` omits `lines` here. */
+export interface VplHistoryBatch {
+  history_id: string
+  tenant_id: string
+  store_id: string
+  cycle_id: string
+  source_refresh_id: string
+  rule_snapshot_id: string | null
+  created_at: string
+  created_by: string
+  line_count: number
+}
+
+/** Response shape for `GET /api/procurement/vpl-history/history?limit=10`. */
+export interface VplHistoryListResult {
+  total: number
+  returned: number
+  headers: VplHistoryBatch[]
+}
+
+/** Response shape for `GET /api/procurement/vpl-history/history/{history_id}`. */
+export interface VplHistoryDetail extends VplHistoryBatch {
+  lines: VplHistoryLine[]
+}
+
+export interface VplWorkingView {
+  tenant_id: string
+  store_id: string
+  cycle_id: string
+  refresh_id: string
+  rule_snapshot_id: string | null
+  lines: VplScreenApiLine[]
+  removed_manual_review: {
+    section: string
+    orderable: false
+    lines: VplScreenApiLine[]
+  }
+}
+
+export interface VplScreenApiLine extends VplHistoryLine {
+  orderable: boolean
+}
+
+export interface VplEditedLine extends VplScreenApiLine {}

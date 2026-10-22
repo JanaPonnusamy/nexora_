@@ -99,6 +99,10 @@ def test_restore_requires_skipped(monkeypatch):
 def _patch_assign(monkeypatch, item, dup=False, already=0):
     monkeypatch.setattr(workspace_repository, "get_item", lambda t, o: item)
     monkeypatch.setattr(assignment_service, "get_connection", lambda: _FakeConn())
+    # D4 TOCTOU fix (PHASE_2_CLAUDE_REVIEW.md Audit D item 2): assign_single
+    # now locks the order_item row before the duplicate/active checks.
+    monkeypatch.setattr(assignment_repository, "lock_order_item_for_assignment",
+                        lambda *a, **k: None)
     monkeypatch.setattr(assignment_repository, "duplicate_active_exists",
                         lambda *a, **k: dup)
     monkeypatch.setattr(assignment_repository, "active_assigned_total",
@@ -153,6 +157,8 @@ def test_bulk_assign_reports_mixed(monkeypatch):
     }
     monkeypatch.setattr(workspace_repository, "get_item", lambda t, o: items.get(o))
     monkeypatch.setattr(assignment_service, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(assignment_repository, "lock_order_item_for_assignment",
+                        lambda *a, **k: None)
     monkeypatch.setattr(assignment_repository, "duplicate_active_exists",
                         lambda *a, **k: False)
     monkeypatch.setattr(assignment_repository, "active_assigned_total",

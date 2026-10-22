@@ -2890,7 +2890,8 @@
    default 4% would be unreadable with content showing through it. */
 .pm .pm-settings,
 .pm .pm-drawer,
-.pm .pm-srpcard {
+.pm .pm-srpcard,
+.pm-modal {
   border-color: var(--nx-glass-border);
   background: var(--nx-glass-bg-raised);
   -webkit-backdrop-filter: blur(var(--nx-glass-blur)) saturate(135%);
@@ -2907,7 +2908,8 @@
   .pm .pm-stockmode,
   .pm .pm-srp,
   .pm .pm-selbar,
-  .pm .pm-grn {
+  .pm .pm-grn,
+  .pm-modal {
     background: var(--nx-surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;

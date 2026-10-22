@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { legacyOrderService } from '../../services/legacyOrderService'
-import type { LegacyDbHealth, LegacyDbRecovery, LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, SupplierComparisonProduct } from '../../types/legacyOrder'
+import type { LegacyDbHealth, LegacyDbRecovery, LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, QtyCheckConfirmation, RestorableOrderPreview, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
 import { FilterBar, FilterSearch, FilterSelect } from '../../design-system/components/FilterBar'
+import { useAuth } from '../../hooks/useAuth'
+import { isSuperAdmin } from '../label-export/labelExportAccess'
 
 const POLL_MS = 1500
 // The internal "HO" branch whose own stock feeds every other store's
@@ -19,10 +21,21 @@ function fmtDateTime(value: string | null): string {
 }
 
 export default function LegacyOrderPage() {
+  const { user } = useAuth()
+  // Restore remains an admin-only action (server-enforced in router.py via
+  // require_admin on the restore endpoints); isAdmin below gates only the
+  // restore UI, not the ordinary Qty Check warning confirmation.
+  const isAdmin = isSuperAdmin(user)
   const [stores, setStores] = useState<LegacyStore[]>([])
   const [settings, setSettings] = useState<Record<string, StoreSettings>>({})
   const [jobs, setJobs] = useState<Record<string, LegacyJob>>({})
   const [error, setError] = useState<string | null>(null)
+  // Pending-supplier-assignment WARNING dialog state (count > 1 of
+  // qty_check=1/status=0 products on the current-date order). This is NOT a
+  // lock -- Process is never permanently blocked; an admin can confirm
+  // Admin Override & Process to continue despite the warning.
+  const [confirmFor, setConfirmFor] = useState<{ storeName: string; preview: QtyCheckConfirmation } | null>(null)
+  const [confirmBusy, setConfirmBusy] = useState(false)
   const [compareStore, setCompareStore] = useState('')
   const [previousOrders, setPreviousOrders] = useState<PreviousOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState('')
@@ -32,6 +45,8 @@ export default function LegacyOrderPage() {
   const [reviewLoading, setReviewLoading] = useState(false)
   const [compareBusy, setCompareBusy] = useState(false)
   const [compareMessage, setCompareMessage] = useState('')
+  const [restorePreview, setRestorePreview] = useState<RestorableOrderPreview | null>(null)
+  const [restoreBusy, setRestoreBusy] = useState(false)
   const [orderSearch, setOrderSearch] = useState('')
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null)
   const [infoOpenFor, setInfoOpenFor] = useState<string | null>(null)
@@ -125,6 +140,72 @@ export default function LegacyOrderPage() {
     run().then(({ job_id }) => watch(job_id)).catch((e: Error) => setError(e.message))
   }
 
+  // Process is gated server-side (service.start_order_process) by a
+  // pending-supplier-assignment WARNING (409) when more than one qty_check=
+  // 1/status=0 product exists on the current-date order -- re-validated on
+  // every attempt, never a locally-cached guess. This is NOT a lock: a
+  // cancelled dialog simply doesn't process yet; nothing blocks a later
+  // attempt once the count drops, or the user confirms via Order & Process.
+  const startProcess = (storeName: string) => {
+    const config = settings[storeName] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+    setError(null)
+    legacyOrderService.qtyCheckConfirmation(storeName)
+      .then((preview) => {
+        if (preview.count > 1) {
+          setConfirmFor({ storeName, preview })
+          setCompareStore(storeName)
+          return
+        }
+        runProcess(storeName, config)
+      })
+      .catch((e: Error) => setError(e.message))
+  }
+
+  const runProcess = (
+    storeName: string,
+    config: StoreSettings,
+    confirm?: { orderId: number; count: number },
+  ) => {
+    setError(null)
+    legacyOrderService.startOrderProcess(storeName, config.minDays, config.maxDays, config.mode, confirm)
+      .then(({ job_id }) => watch(job_id))
+      .catch((e: Error) => setError(e.message))
+  }
+
+  // Order & Process: re-fetches the preview immediately before submitting
+  // (requirement: "revalidate the store, current OrderId, count and
+  // processing state immediately before starting") so a dialog left open
+  // while the order changed underneath it cannot push through a stale
+  // count -- if the live count no longer matches what was shown, the
+  // dialog is replaced with the fresh preview instead of processing,
+  // requiring the user to look again and reconfirm.
+  const confirmAndProcess = () => {
+    if (!confirmFor) return
+    const { storeName, preview } = confirmFor
+    const config = settings[storeName] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+    setConfirmBusy(true)
+    setError(null)
+    legacyOrderService.qtyCheckConfirmation(storeName)
+      .then((fresh) => {
+        if (fresh.order_id == null || fresh.count <= 1) {
+          // No longer pending -- just process normally, nothing to confirm.
+          setConfirmFor(null)
+          runProcess(storeName, config)
+          return
+        }
+        if (fresh.order_id !== preview.order_id || fresh.count !== preview.count) {
+          // State changed since the dialog opened -- show the fresh
+          // numbers and require the user to look again before confirming.
+          setConfirmFor({ storeName, preview: fresh })
+          return
+        }
+        setConfirmFor(null)
+        runProcess(storeName, config, { orderId: fresh.order_id, count: fresh.count })
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setConfirmBusy(false))
+  }
+
   const runningFor = useCallback((storeName: string) =>
     Object.values(jobs).find((job) => job.store_name === storeName && job.status === 'running'), [jobs])
 
@@ -188,6 +269,29 @@ export default function LegacyOrderPage() {
       ))
       .catch((e: Error) => setError(e.message))
       .finally(() => setCompareBusy(false))
+  }
+
+  const openRestorePreview = () => {
+    if (!compareStore || !selectedOrderId) return
+    setError(null)
+    setRestorePreview(null)
+    legacyOrderService.restorableOrderPreview(compareStore, Number(selectedOrderId))
+      .then(setRestorePreview)
+      .catch((e: Error) => setError(e.message))
+  }
+
+  const confirmRestore = () => {
+    if (!restorePreview) return
+    setRestoreBusy(true)
+    legacyOrderService.restoreBackupOrder(restorePreview.store_name, restorePreview.order_id)
+      .then((result) => {
+        setCompareMessage(
+          `Restored order #${result.source_order_id}. ${result.restored_count} row(s) restored.`,
+        )
+        setRestorePreview(null)
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setRestoreBusy(false))
   }
 
   const reviewSupplier = (supplierCode: string) => {
@@ -343,7 +447,12 @@ export default function LegacyOrderPage() {
                     <button type="button" className="lo-btn lo-op-process" disabled><i className="bi bi-hourglass-split" /> Processing…</button>
                   </div>
                 ) : (
-                  <button type="button" className={`lo-btn lo-btn-primary lo-op-process${failed ? ' lo-op-retry' : ''}`} disabled={invalid} onClick={() => start(() => legacyOrderService.startOrderProcess(store.store_name, config.minDays, config.maxDays, config.mode))}>
+                  <button
+                    type="button"
+                    className={`lo-btn lo-btn-primary lo-op-process${failed ? ' lo-op-retry' : ''}`}
+                    disabled={invalid}
+                    onClick={() => startProcess(store.store_name)}
+                  >
                     <i className={`bi ${failed ? 'bi-arrow-clockwise' : 'bi-play-fill'}`} /> {failed ? 'Retry' : 'Process'}
                   </button>
                 )}
@@ -433,7 +542,17 @@ export default function LegacyOrderPage() {
             </div>
             {selectedOrderId && (
               <div className="lo-supplier-area">
-                <div className="lo-compare-toolbar"><div><strong>Order #{selectedOrderId}</strong><small>{suppliers.length} suppliers available</small></div><button type="button" className="lo-btn" disabled={compareBusy || Boolean(runningFor(compareStore))} onClick={compare}>{compareBusy ? 'Comparing…' : 'Compare Entire Order'}</button></div>
+                <div className="lo-compare-toolbar">
+                  <div><strong>Order #{selectedOrderId}</strong><small>{suppliers.length} suppliers available</small></div>
+                  <div className="lo-op-settings-actions">
+                    {isAdmin && (
+                      <button type="button" className="lo-btn" title="Restore this backup order's rows back onto the current order" disabled={compareBusy || Boolean(runningFor(compareStore))} onClick={openRestorePreview}>
+                        <i className="bi bi-arrow-counterclockwise" /> Restore this order
+                      </button>
+                    )}
+                    <button type="button" className="lo-btn" disabled={compareBusy || Boolean(runningFor(compareStore))} onClick={compare}>{compareBusy ? 'Comparing…' : 'Compare Entire Order'}</button>
+                  </div>
+                </div>
                 <div className="lo-supplier-grid">
                   <div className="lo-supplier-head"><span>Supplier</span><span>Products</span><span>Action</span></div>
                   {suppliers.map((supplier) => <button type="button" className={`lo-supplier-row${selectedSupplier === supplier.supplier_code ? ' is-selected' : ''}`} key={supplier.supplier_code} onClick={() => reviewSupplier(supplier.supplier_code)}><span><strong>{supplier.supplier_name}</strong><small>{supplier.supplier_code}</small></span><span className="lo-product-count">{supplier.product_count}</span><span className="lo-review-link">Review <i className="bi bi-arrow-right" /></span></button>)}
@@ -477,6 +596,89 @@ export default function LegacyOrderPage() {
           )}
         </section>
       </div>
+
+      {confirmFor && (
+        <div className="lo-drawer-backdrop" role="presentation" onClick={() => setConfirmFor(null)}>
+          <aside className="lo-drawer lo-drawer-compact" role="dialog" aria-label="Pending supplier assignment warning" onClick={(e) => e.stopPropagation()}>
+            <div className="lo-drawer-head">
+              <h3>Pending supplier assignment — {confirmFor.storeName}</h3>
+              <button type="button" className="lo-icon-btn" aria-label="Close" onClick={() => setConfirmFor(null)}>×</button>
+            </div>
+            <div className="lo-drawer-body">
+              <p>
+                <strong>{confirmFor.preview.count}</strong> products have been reviewed (quantity confirmed) but are not
+                yet assigned to a supplier. Processing will regenerate this order and these reviewed quantities will be
+                recalculated.
+              </p>
+              {confirmFor.preview.sample.length > 0 && (
+                <table className="lo-table">
+                  <thead><tr><th>Code</th><th>Product</th></tr></thead>
+                  <tbody>
+                    {confirmFor.preview.sample.map((row) => (
+                      <tr key={row.product_code}><td>{row.product_code}</td><td>{row.product_name}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {confirmFor.preview.count > confirmFor.preview.sample.length && (
+                <p className="lo-note">…and {confirmFor.preview.count - confirmFor.preview.sample.length} more.</p>
+              )}
+              <p className="lo-note">
+                You can review this store's prior order below in <strong>Compare previous order</strong>, or open the{' '}
+                <Link to="/legacy-order/workspace">Order Workspace</Link> to assign suppliers first instead.
+                Proceeding will regenerate the current live order; the existing order is retained in backup and can
+                be restored below if needed. Saved quantity edits and supplier assignments on the CURRENT order are
+                not discarded by Cancel — only Order & Process regenerates the order.
+              </p>
+              <div className="lo-op-settings-actions">
+                <button type="button" className="lo-btn" onClick={() => setConfirmFor(null)}>Cancel</button>
+                <button type="button" className="lo-btn lo-btn-danger" disabled={confirmBusy} onClick={confirmAndProcess}>
+                  {confirmBusy ? 'Checking…' : 'Order & Process'}
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {restorePreview && (
+        <div className="lo-drawer-backdrop" role="presentation" onClick={() => setRestorePreview(null)}>
+          <aside className="lo-drawer" role="dialog" aria-label="Confirm restore" onClick={(e) => e.stopPropagation()}>
+            <div className="lo-drawer-head">
+              <h3>Restore order #{restorePreview.order_id} — {restorePreview.store_name}</h3>
+              <button type="button" className="lo-icon-btn" aria-label="Close" onClick={() => setRestorePreview(null)}>×</button>
+            </div>
+            <div className="lo-drawer-body">
+              <p>
+                This backup was taken <strong>{fmtDateTime(restorePreview.backed_up_at)}</strong> and contains{' '}
+                <strong>{restorePreview.product_count}</strong> product(s) across{' '}
+                <strong>{restorePreview.suppliers.length}</strong> supplier(s).
+              </p>
+              <p className="lo-note">
+                Restoring will overwrite the CURRENT order's matching rows (quantity, supplier assignment, status,
+                remarks) with this backup's values. Products in the backup with no matching row on the current order
+                will block the entire restore — nothing is partially applied. This cannot be undone from here.
+              </p>
+              {restorePreview.suppliers.length > 0 && (
+                <table className="lo-table">
+                  <thead><tr><th>Supplier</th><th className="lo-num">Products</th></tr></thead>
+                  <tbody>
+                    {restorePreview.suppliers.map((supplier) => (
+                      <tr key={supplier.supplier_code}><td>{supplier.supplier_name}</td><td className="lo-num">{supplier.product_count}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <div className="lo-op-settings-actions">
+                <button type="button" className="lo-btn" onClick={() => setRestorePreview(null)}>Cancel</button>
+                <button type="button" className="lo-btn lo-btn-danger" disabled={restoreBusy} onClick={confirmRestore}>
+                  {restoreBusy ? 'Restoring…' : `Restore ${restorePreview.product_count} Product(s)`}
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   )
 }

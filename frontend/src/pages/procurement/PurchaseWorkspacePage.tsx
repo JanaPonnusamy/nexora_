@@ -7,6 +7,7 @@ import { storeService } from '../../services/storeService'
 import { procurementService } from '../../services/procurementService'
 import { ApiError } from '../../services/apiClient'
 import { useActingUser } from '../../hooks/useActingUser'
+import { useAccess } from '../../hooks/useAccess'
 import type { Tenant } from '../../types/tenant'
 import type { Store } from '../../types/store'
 import type {
@@ -27,6 +28,8 @@ import type { AssignedSupplierInfo, DrawerTab, OfferInfo, ViewAllKind } from '..
 import { BillDrawer } from '../../components/procurement/BillDrawer'
 import type { BillTarget } from '../../components/procurement/BillDrawer'
 import { HistoryAllDialog } from '../../components/procurement/HistoryAllDialog'
+import { VplHistoryPanel } from '../../components/procurement/VplHistoryPanel'
+import { isVplHistoryScreenEnabled } from './vplHistoryFlag'
 import { SupplierRecPanel } from '../../components/procurement/SupplierRecPanel'
 import { PmWorkspaceSplit } from '../../components/procurement/PmWorkspaceSplit'
 import { WorkspaceSettings } from '../../components/procurement/WorkspaceSettings'
@@ -132,7 +135,9 @@ export default function PurchaseWorkspacePage() {
   const [contextOpen, setContextOpen] = useState(true)
   const [contextConfirmed, setContextConfirmed] = useState(false)
   const actingUser = useActingUser()
+  const { can } = useAccess()
   const [banner, setBanner] = useState<Banner>(null)
+  const [vplHistoryOpen, setVplHistoryOpen] = useState(false)
 
   // Supplier recommendations (batched) + the row's locally-selected supplier.
   const [recommendations, setRecommendations] = useState<Record<string, SupplierRow[]>>({})
@@ -1965,6 +1970,17 @@ export default function PurchaseWorkspacePage() {
             {cycleClosed ? 'Closed cycle' : 'Closed refresh'}
           </span>
         )}
+        {can('PROCUREMENT_ADMIN') && isVplHistoryScreenEnabled() && (
+          <button
+            className="pm-header__context"
+            type="button"
+            title="VPL History (archived working-line batches, read-only)"
+            aria-label="Open VPL History"
+            onClick={() => setVplHistoryOpen(true)}
+          >
+            <i className="bi bi-clock-history" aria-hidden="true" />
+          </button>
+        )}
         <button
           className="pm-header__context"
           type="button"
@@ -2729,6 +2745,9 @@ export default function PurchaseWorkspacePage() {
           onOpenBill={(t) => { setViewAll(null); setBill(t) }}
           onClose={() => setViewAll(null)}
         />
+      )}
+      {vplHistoryOpen && isVplHistoryScreenEnabled() && (
+        <VplHistoryPanel tenantId={tenantId} storeId={storeId} onClose={() => setVplHistoryOpen(false)} />
       )}
       {manualOpen && (
         <ManualProductModal tenantId={tenantId} storeId={storeId} busy={manualBusy} onAdd={addManual} onClose={() => setManualOpen(false)} />

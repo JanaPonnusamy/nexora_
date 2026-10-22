@@ -5,25 +5,31 @@ hiddenimports = ['win32timezone', 'pyodbc', 'store_agent.run_agent', 'store_agen
 hiddenimports += collect_submodules('store_agent')
 
 
+block_cipher = None
+
+
 a = Analysis(
-    ['E:/Nexora/store_agent_setup/launch_agent_service.py'],
-    pathex=['E:/Nexora'],
+    ['E:\\Nexora\\store_agent_setup\\launch_agent_service.py'],
+    pathex=['E:\\Nexora'],
     binaries=[],
-    datas=[('E:/Nexora/store_agent/config/fernet.key', 'store_agent/config')],
+    datas=[('E:\\Nexora\\store_agent\\config\\fernet.key', 'store_agent/config')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
     noarchive=False,
-    optimize=0,
 )
-pyz = PYZ(a.pure)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
+    a.zipfiles,
     a.datas,
     [],
     name='NexoraStoreAgent',

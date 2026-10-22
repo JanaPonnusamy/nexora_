@@ -6,6 +6,7 @@ login (created in HO, assigned to a tenant+store). The machine registers its
 own device key and learns its assigned stores from HO at runtime; there is no
 tenant/store picker and no SQL details. Packaged as NexoraStoreAgentSetup.exe.
 """
+import os
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -318,7 +319,26 @@ class SetupWizard(tk.Tk):
 
 
 def main():
-    SetupWizard().mainloop()
+    import datetime
+    import sys as _sys
+    import traceback
+
+    try:
+        SetupWizard().mainloop()
+    except Exception:
+        log_dir = os.path.dirname(_sys.executable if getattr(_sys, "frozen", False) else os.path.abspath(__file__))
+        log_path = os.path.join(log_dir, "NexoraStoreAgentSetup_crash.log")
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n--- {datetime.datetime.now().isoformat()} ---\n")
+            traceback.print_exc(file=fh)
+        try:
+            messagebox.showerror(
+                "Nexora Store Agent Setup",
+                f"Failed to start. Details written to:\n{log_path}",
+            )
+        except Exception:
+            pass
+        raise
 
 
 if __name__ == "__main__":

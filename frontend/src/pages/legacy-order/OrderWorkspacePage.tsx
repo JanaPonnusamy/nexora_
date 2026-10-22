@@ -71,6 +71,16 @@ export default function OrderWorkspacePage() {
   const [productType, setProductType] = useState('All')
   const [wantedType, setWantedType] = useState('All')
 
+  // Per-column filter row on the Qty Check grid (VB dgvMain column filters).
+  // Text columns match substring, 'wanted' is an exact-match dropdown sharing
+  // the wantedTypes list already computed for the toolbar filter.
+  const [showColumnFilters, setShowColumnFilters] = useState(false)
+  const [qtyColFilters, setQtyColFilters] = useState({
+    productname: '', orqty: '', stock: '', pack: '', desc: '', slsqty: '', mrp: '', lrd: '', lsd: '', maxqty: '', wanted: 'All',
+  })
+  const setQtyColFilter = (key: keyof typeof qtyColFilters, value: string) =>
+    setQtyColFilters((cur) => ({ ...cur, [key]: value }))
+
   // Workflow summary drives the compact Finalize control + the FINALIZED lock;
   // the bulky step-header panel is gone by design.
   const [workflow, setWorkflow] = useState<OrderWorkflowSummary | null>(null)
@@ -133,35 +143,43 @@ export default function OrderWorkspacePage() {
       .catch((e: Error) => setError(e.message))
   }, [store, view])
 
-  // Load the grid for the active context.
+  // Load the grid for the active context. Clears whichever row array the
+  // active view renders *before* firing the fetch, so a store/view switch
+  // shows the loading state instead of the previous store's rows until the
+  // new response lands (grid must never show stale data mid-fetch).
   const loadGrid = useCallback(() => {
     if (!store) return
     resetGrid()
     setLoading(true)
     const done = () => setLoading(false)
     if (view === 'qty') {
+      setQtyRows([])
       legacyOrderService.qtyCheckRows(store)
         .then(setQtyRows)
         .catch((e: Error) => setError(e.message))
         .finally(done)
     } else if (view === 'pending') {
+      setPendingRows([])
       legacyOrderService.pendingOrderRows(store, productType)
         .then(setPendingRows)
         .catch((e: Error) => setError(e.message))
         .finally(done)
     } else if (view === 'review') {
+      setRows([])
       legacyOrderService.orders(store)
         .then((data) => setRows(data))
         .catch((e: Error) => setError(e.message))
         .finally(done)
     } else if (view === 'supplier') {
-      if (!supplier) { setRows([]); done(); return }
+      setRows([])
+      if (!supplier) { done(); return }
       legacyOrderService.ordersBySupplier(store, supplier.supplier_code, supplierMode)
         .then(setRows)
         .catch((e: Error) => setError(e.message))
         .finally(done)
     } else {
-      if (!supplier) { setAssigned([]); done(); return }
+      setAssigned([])
+      if (!supplier) { done(); return }
       legacyOrderService.assignedOrders(store, supplier.supplier_code)
         .then(setAssigned)
         .catch((e: Error) => setError(e.message))
@@ -174,10 +192,27 @@ export default function OrderWorkspacePage() {
     return () => window.clearTimeout(handle)
   }, [loadGrid])
 
-  // Switching store clears supplier context and reloads the grid.
+  // Switching store must never leave any panel showing the previous store's
+  // data while the new one loads -- clear every store-scoped piece of state
+  // synchronously here instead of waiting for each dependent effect
+  // (workflow, grid rows, export count, history) to notice `store` changed
+  // and race its own fetch in.
   const changeStore = (nextStore: string) => {
     setSupplier(null)
     setSuppliers([])
+    setWorkflow(null)
+    setExportCount(null)
+    setOrderHistory([])
+    setEdits({})
+    setSelectedCode(null)
+    setQtyRows([])
+    setPendingRows([])
+    setRows([])
+    setAssigned([])
+    setSearch('')
+    setProductType('All')
+    setWantedType('All')
+    setQtyColFilters({ productname: '', orqty: '', stock: '', pack: '', desc: '', slsqty: '', mrp: '', lrd: '', lsd: '', maxqty: '', wanted: 'All' })
     setStore(nextStore)
   }
 
@@ -198,11 +233,29 @@ export default function OrderWorkspacePage() {
     return Array.from(set).sort()
   }, [qtyRows, pendingRows, rows, assigned])
 
-  const filteredQty = useMemo(() => qtyRows.filter((r) => (
-    matchText(r.productname, r.productcode)
-    && (productType === 'All' || r.producttypename === productType)
-    && (wantedType === 'All' || r.wantedtype === wantedType)
-  )), [qtyRows, matchText, productType, wantedType])
+  const filteredQty = useMemo(() => {
+    const c = qtyColFilters
+    const numHas = (value: number, term: string) => !term.trim() || String(value).includes(term.trim())
+    const textHas = (value: string | null | undefined, term: string) =>
+      !term.trim() || (value ?? '').toLowerCase().includes(term.trim().toLowerCase())
+    const dateHas = (value: string | null, term: string) => !term.trim() || fmtDate(value).toLowerCase().includes(term.trim().toLowerCase())
+    return qtyRows.filter((r) => (
+      matchText(r.productname, r.productcode)
+      && (productType === 'All' || r.producttypename === productType)
+      && (wantedType === 'All' || r.wantedtype === wantedType)
+      && textHas(r.productname, c.productname)
+      && numHas(r.orderqty, c.orqty)
+      && numHas(r.totalstock, c.stock)
+      && numHas(r.saleunit, c.pack)
+      && textHas(r.unitdescription, c.desc)
+      && numHas(r.slsqty, c.slsqty)
+      && numHas(r.mrp, c.mrp)
+      && dateHas(r.lastreceiveddate, c.lrd)
+      && dateHas(r.lastsaledate, c.lsd)
+      && numHas(r.maxsaleqty, c.maxqty)
+      && (c.wanted === 'All' || r.wantedtype === c.wanted)
+    ))
+  }, [qtyRows, matchText, productType, wantedType, qtyColFilters])
 
   // Pending Order rows are already product-type filtered server-side (VB.NET
   // combo semantics -- see pendingOrderRows); only text/wanted-reason apply here.
@@ -558,6 +611,16 @@ export default function OrderWorkspacePage() {
                 <kbd>Enter</kbd> Accept <kbd>Esc</kbd> No need <kbd>↑↓</kbd> Navigate
                 <button
                   type="button"
+                  className={`lo-btn lo-btn-sm${showColumnFilters ? ' lo-btn-primary' : ''}`}
+                  title="Show or hide the per-column filter row"
+                  aria-pressed={showColumnFilters}
+                  onClick={() => setShowColumnFilters((v) => !v)}
+                  style={{ marginLeft: '0.75rem' }}
+                >
+                  <i className={`bi ${showColumnFilters ? 'bi-check-square' : 'bi-funnel'}`} /> Filters
+                </button>
+                <button
+                  type="button"
                   className="lo-btn lo-btn-sm"
                   disabled={resettingPending || finalized}
                   title="Mark all supplier-assigned lines reviewed and reset every still-unassigned line back to its original order quantity"
@@ -576,10 +639,32 @@ export default function OrderWorkspacePage() {
             <div className="lo-scroll qc-grid-scroll">
               <table className="lo-table lo-dense">
                 <colgroup>
-                  <col style={{ width: '3%' }} /><col style={{ width: '27%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} /><col style={{ width: '5%' }} /><col style={{ width: '8%' }} />
+                  <col style={{ width: '5%' }} /><col style={{ width: '25%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} /><col style={{ width: '5%' }} /><col style={{ width: '8%' }} />
                 </colgroup>
                 <thead>
                   <tr><th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">Pack</th><th>Desc</th><th className="lo-num">Sls Qty</th><th className="lo-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="lo-num">Max Qty</th><th>Txn Date</th><th>Wanted</th></tr>
+                  {showColumnFilters && (
+                    <tr className="qc-filter-row">
+                      <th className="lo-col-idx" />
+                      <th><input className="qc-col-filter" type="text" placeholder="Filter…" aria-label="Filter product name" value={qtyColFilters.productname} onChange={(e) => setQtyColFilter('productname', e.target.value)} /></th>
+                      <th><input className="qc-col-filter qc-col-filter--num" type="text" placeholder="Filter…" aria-label="Filter order qty" value={qtyColFilters.orqty} onChange={(e) => setQtyColFilter('orqty', e.target.value)} /></th>
+                      <th><input className="qc-col-filter qc-col-filter--num" type="text" placeholder="Filter…" aria-label="Filter stock" value={qtyColFilters.stock} onChange={(e) => setQtyColFilter('stock', e.target.value)} /></th>
+                      <th><input className="qc-col-filter qc-col-filter--num" type="text" placeholder="Filter…" aria-label="Filter pack" value={qtyColFilters.pack} onChange={(e) => setQtyColFilter('pack', e.target.value)} /></th>
+                      <th><input className="qc-col-filter" type="text" placeholder="Filter…" aria-label="Filter description" value={qtyColFilters.desc} onChange={(e) => setQtyColFilter('desc', e.target.value)} /></th>
+                      <th><input className="qc-col-filter qc-col-filter--num" type="text" placeholder="Filter…" aria-label="Filter sales qty" value={qtyColFilters.slsqty} onChange={(e) => setQtyColFilter('slsqty', e.target.value)} /></th>
+                      <th><input className="qc-col-filter qc-col-filter--num" type="text" placeholder="Filter…" aria-label="Filter MRP" value={qtyColFilters.mrp} onChange={(e) => setQtyColFilter('mrp', e.target.value)} /></th>
+                      <th><input className="qc-col-filter" type="text" placeholder="Filter…" aria-label="Filter last received date" value={qtyColFilters.lrd} onChange={(e) => setQtyColFilter('lrd', e.target.value)} /></th>
+                      <th><input className="qc-col-filter" type="text" placeholder="Filter…" aria-label="Filter last sale date" value={qtyColFilters.lsd} onChange={(e) => setQtyColFilter('lsd', e.target.value)} /></th>
+                      <th><input className="qc-col-filter qc-col-filter--num" type="text" placeholder="Filter…" aria-label="Filter max qty" value={qtyColFilters.maxqty} onChange={(e) => setQtyColFilter('maxqty', e.target.value)} /></th>
+                      <th />
+                      <th>
+                        <select className="qc-col-filter qc-col-filter--select" aria-label="Filter wanted reason" value={qtyColFilters.wanted} onChange={(e) => setQtyColFilter('wanted', e.target.value)}>
+                          <option value="All">All</option>
+                          {wantedTypes.map((value) => <option key={value} value={value}>{value}</option>)}
+                        </select>
+                      </th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody>
                   {filteredQty.map((row, index) => {
@@ -624,7 +709,7 @@ export default function OrderWorkspacePage() {
             <div className="lo-scroll qc-grid-scroll" tabIndex={0} onKeyDown={onGridKey}>
               <table className="lo-table lo-dense">
                 <colgroup>
-                  <col style={{ width: '3%' }} /><col style={{ width: '31%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '8%' }} /><col style={{ width: '7%' }} /><col style={{ width: '9%' }} /><col style={{ width: '9%' }} /><col style={{ width: '7%' }} /><col style={{ width: '5%' }} />
+                  <col style={{ width: '5%' }} /><col style={{ width: '29%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '8%' }} /><col style={{ width: '7%' }} /><col style={{ width: '9%' }} /><col style={{ width: '9%' }} /><col style={{ width: '7%' }} /><col style={{ width: '5%' }} />
                 </colgroup>
                 <thead>
                   <tr><th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">Sls Qty</th><th>Desc</th><th className="lo-num">MRP</th><th>LR Date</th><th>LS Date</th><th className="lo-num">Max Qty</th><th>Wanted</th></tr>
@@ -653,7 +738,7 @@ export default function OrderWorkspacePage() {
             <div className="lo-scroll qc-grid-scroll" tabIndex={0} onKeyDown={onGridKey}>
               <table className="lo-table lo-dense">
                 <colgroup>
-                  <col style={{ width: '4%' }} /><col style={{ width: '34%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '20%' }} /><col style={{ width: '18%' }} />
+                  <col style={{ width: '5%' }} /><col style={{ width: '33%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '20%' }} /><col style={{ width: '18%' }} />
                 </colgroup>
                 <thead><tr><th className="lo-col-idx">#</th><th className="lo-col-grow">Product Name</th><th className="lo-num">Or Qty</th><th className="lo-num">Stock</th><th className="lo-num">MRP</th><th>Supplier</th><th>Remarks</th></tr></thead>
                 <tbody>
@@ -678,13 +763,13 @@ export default function OrderWorkspacePage() {
                 <colgroup>
                   {isStock ? (
                     <>
-                      <col style={{ width: '2%' }} /><col style={{ width: '26%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} />
+                      <col style={{ width: '5%' }} /><col style={{ width: '23%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} />
                       <col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '7%' }} />
                       <col style={{ width: '6%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} /><col style={{ width: '6%' }} /><col style={{ width: '10%' }} />
                     </>
                   ) : (
                     <>
-                      <col style={{ width: '3%' }} /><col style={{ width: '32%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
+                      <col style={{ width: '5%' }} /><col style={{ width: '30%' }} /><col style={{ width: '8%' }} /><col style={{ width: '8%' }} />
                       <col style={{ width: '8%' }} /><col style={{ width: '9%' }} /><col style={{ width: '8%' }} /><col style={{ width: '9%' }} /><col style={{ width: '15%' }} />
                     </>
                   )}
@@ -703,9 +788,13 @@ export default function OrderWorkspacePage() {
                     return (
                       <tr
                         key={row.ProductCode}
-                        className={selectedCode === row.ProductCode ? 'is-row-selected' : undefined}
+                        className={[
+                          selectedCode === row.ProductCode ? 'is-row-selected' : '',
+                          row.is_warehouse_stock ? 'lo-row-warehouse-stock' : '',
+                        ].filter(Boolean).join(' ') || undefined}
                         onClick={() => setSelectedCode(row.ProductCode)}
                         data-col-count={colCount}
+                        title={row.is_warehouse_stock ? 'Stock available at warehouse (NMW)' : undefined}
                       >
                         <td className="lo-col-idx">{i + 1}</td>
                         <td className="lo-col-grow"><span className="qc-product-name" title={row.ProductName}>{row.ProductName}</span></td>

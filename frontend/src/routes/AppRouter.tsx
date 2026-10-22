@@ -41,6 +41,8 @@ const ShelfSortingPage = lazy(() => import('../pages/procurement/ShelfSortingPag
 const ShelfCategoryTrainingPage = lazy(() => import('../pages/procurement/ShelfCategoryTrainingPage'))
 const PharmacyReportsPage = lazy(() => import('../pages/procurement/PharmacyReportsPage'))
 const SupplierStockDistributionPage = lazy(() => import('../pages/procurement/SupplierStockDistributionPage'))
+const ProcurementRulesPage = lazy(() => import('../pages/procurement/ProcurementRulesPage'))
+const VplHistoryScreenPage = lazy(() => import('../pages/procurement/VplHistoryScreenPage'))
 const PermissionsPage = lazy(() => import('../pages/administration/PermissionsPage'))
 const AuditLogsPage = lazy(() => import('../pages/administration/AuditLogsPage'))
 const ReportsPage = lazy(() => import('../pages/ReportsPage'))
@@ -142,6 +144,8 @@ export const appRouter = createBrowserRouter(
         <Route path="/procurement/shelf-categories" element={<RequireCapability cap="PROCUREMENT_WORKSPACE"><ShelfCategoryTrainingPage /></RequireCapability>} />
         <Route path="/procurement/reports" element={<RequireCapability cap="REPORTS"><PharmacyReportsPage /></RequireCapability>} />
         <Route path="/procurement/distribution" element={<RequireCapability cap="PROCUREMENT_ADMIN"><SupplierStockDistributionPage /></RequireCapability>} />
+        <Route path="/procurement/rules" element={<RequireCapability cap="PROCUREMENT_ADMIN"><ProcurementRulesPage /></RequireCapability>} />
+        <Route path="/procurement/vpl-history" element={<RequireCapability cap="PROCUREMENT_ADMIN"><VplHistoryScreenPage /></RequireCapability>} />
         <Route path="/document-extraction/review" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionReviewPage /></RequireCapability>} />
         <Route path="/document-extraction/review/:importId" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionReviewPage /></RequireCapability>} />
         <Route path="/document-extraction/history" element={<RequireCapability cap="DOCUMENT_EXTRACTION"><DocumentExtractionHistoryPage /></RequireCapability>} />

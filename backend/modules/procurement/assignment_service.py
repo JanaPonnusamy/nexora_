@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from config.database import get_connection
 from modules.procurement import assignment_repository as repo
 from modules.procurement import workspace_repository as items_repo
+from modules.procurement import rare_mover_guard
 
 import logging
 
@@ -64,9 +65,14 @@ def assign_single(tenant_id, order_item_id, supplier_code, qty, remarks, created
     item = _require_item(tenant_id, order_item_id)
     if item.get("item_status") == "skipped":
         raise HTTPException(status_code=409, detail="Item is skipped")
+    rare_mover_guard.require_confirmed(item)
 
     conn = get_connection()
     try:
+        # D4 — lock the row before the check-then-insert so a concurrent
+        # assign_single/assign_bulk on the same item can't both pass the
+        # "no existing assignment" check before either commits (TOCTOU fix).
+        repo.lock_order_item_for_assignment(conn, tenant_id, order_item_id)
         if repo.duplicate_active_exists(conn, tenant_id, order_item_id, supplier_code):
             raise HTTPException(
                 status_code=409,
@@ -138,11 +144,18 @@ def assign_bulk(tenant_id, supplier_code, specs, created_by):
                 # assign_single is still allowed and clears the flag.
                 if item.get("item_status") == "deferred":
                     raise ValueError("item is deferred")
+                if (
+                    rare_mover_guard.enforcement_enabled()
+                    and rare_mover_guard.is_rare_mover(item)
+                    and not item.get("rare_confirmed")
+                ):
+                    raise ValueError("rare-mover item requires PM confirmation")
                 qty = spec.get("qty")
                 if qty is None:
                     qty = item.get("remaining_qty") or 0
                 if qty <= 0:
                     raise ValueError("no remaining quantity to assign")
+                repo.lock_order_item_for_assignment(conn, tenant_id, oid)
                 if repo.duplicate_active_exists(conn, tenant_id, oid, supplier_code):
                     raise ValueError("duplicate active assignment")
                 existing = repo.any_active_assignment(conn, tenant_id, oid)

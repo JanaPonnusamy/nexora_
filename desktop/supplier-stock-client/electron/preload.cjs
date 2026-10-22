@@ -24,5 +24,8 @@ contextBridge.exposeInMainWorld('nexoraDesktop', {
   // UI session persistence (one JSON file per name, in userData). UI state only.
   readSession: (name) => ipcRenderer.invoke('session:read', name),
   writeSession: (name, data) => ipcRenderer.invoke('session:write', name, data),
-  sessionPath: (name) => ipcRenderer.invoke('session:path', name)
+  sessionPath: (name) => ipcRenderer.invoke('session:path', name),
+  // Order Workspace export-to-disk.
+  writeExportFile: (absolutePath, contentBase64) => ipcRenderer.invoke('export:writeFile', { absolutePath, contentBase64 }),
+  chooseExportFolder: (defaultPath) => ipcRenderer.invoke('export:chooseFolder', { defaultPath })
 });

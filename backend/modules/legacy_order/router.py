@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, order_export, repository, service, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, JobStarted, OrderProcessRequest, StockUpdateRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, WorkflowActionRequest
+from modules.legacy_order.schemas import AssignSupplierRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -58,8 +58,10 @@ _NO_PARAM_READ_PATHS = (
 # the path, so request.path_params has none -> ownership check can't pass).
 _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+$"),         # PATCH OrderQty
+    re.compile(r"^/api/legacy-order/orders/[^/]+/\d+/remarks$"), # PATCH Remarks
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+/assign$"),  # POST assign/unassign
     re.compile(r"^/api/legacy-order/orders/[^/]+/export$"),      # POST export
+    re.compile(r"^/api/legacy-order/orders/[^/]+/unavailable/remove$"),  # POST stock-out bulk remove
     re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+$"),      # PATCH qty-check review
 )
 
@@ -176,17 +178,41 @@ def start_sync(payload: SyncRequest):
 
 
 @router.post("/order-process", response_model=JobStarted)
-def start_order_process(payload: OrderProcessRequest):
+def start_order_process(
+    payload: OrderProcessRequest, current_user: dict = Depends(get_current_user),
+):
     try:
         job_id = service.start_order_process(
-            payload.store_name, payload.min_days, payload.max_days, payload.mode
+            payload.store_name, payload.min_days, payload.max_days, payload.mode,
+            confirmed=payload.confirmed,
+            confirmed_order_id=payload.confirmed_order_id,
+            confirmed_count=payload.confirmed_count,
         )
         return JobStarted(job_id=job_id)
+    except service.QtyCheckConfirmationRequired as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ConnectionError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     except ValueError as exc:
         status = 409 if "already running" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc))
+
+
+@router.get("/orders/{store_name}/qty-check-confirmation")
+def qty_check_confirmation(store_name: str):
+    """Preview for the processing confirmation dialog: how many qtycheck=1/
+    status=0 products are pending supplier assignment on the current-date
+    order. When count > 1, the client must confirm Order & Process (see
+    schemas.OrderProcessRequest.confirmed and service.start_order_process)
+    -- this is a warning, not a lock, so there is no token/unlock step here;
+    the server simply recomputes the live order_id/count again at
+    /order-process time and rejects (409) if either has changed since this
+    preview."""
+    try:
+        order_id, count, sample = repository.qty_check_confirmation_count(store_name)
+        return {"order_id": order_id, "count": count, "sample": sample}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/stock-update", response_model=JobStarted)
@@ -233,6 +259,19 @@ def order_workflow(store_name: str):
         if not repository.get_store(store_name):
             raise HTTPException(status_code=404, detail="Store not found")
         return repository.order_workflow_summary(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/header")
+def order_header(store_name: str):
+    """Order number/date + last GRN number/date for the Order Workspace footer,
+    plus the (order_id, updated_at) fingerprint the client uses to detect a
+    regenerated order or a line-level change since it last loaded."""
+    try:
+        if not repository.get_store(store_name):
+            raise HTTPException(status_code=404, detail="Store not found")
+        return repository.order_header_summary(store_name)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -318,6 +357,17 @@ def orders_by_supplier(store_name: str, supplier_code: str, mode: str = "history
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/orders/{store_name}/all-open")
+def all_open_orderables(store_name: str):
+    """Every still-open orderable product for the store, independent of any
+    supplier match -- the By Supplier grid's "Load all products" toggle. The
+    operator assigns/exports these to whichever supplier is picked."""
+    try:
+        return repository.all_open_orderables(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.get("/orders/{store_name}/by-supplier/export-count")
 def orders_by_supplier_export_count(store_name: str, supplier_code: str):
     """Stock-mode exportable row count for this store/supplier -- exactly the
@@ -335,6 +385,35 @@ def assigned_orders(store_name: str, supplier_code: str):
     """Rows already assigned to a supplier (status=1)."""
     try:
         return repository.assigned_orders(store_name, supplier_code)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/assigned/all")
+def all_assigned_orders(store_name: str):
+    """Every assigned row for the store across ALL suppliers at once --
+    Supplier Order Details' "All Suppliers" view."""
+    try:
+        return repository.all_assigned_orders(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/unavailable/remove")
+def remove_unavailable_from_supplier(
+    store_name: str, payload: SupplierCodeRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Bulk-drop every currently-Assigned line for this supplier where the
+    supplier's own live stock (SupplierStock.Stock) is <= 0 or unmatched --
+    back to status=0, qtycheck=1, no supplier -- so another supplier can
+    pick them up. See repository.remove_unavailable_from_supplier."""
+    try:
+        removed = repository.remove_unavailable_from_supplier(
+            store_name, payload.supplier_code,
+            current_user.get("username") or current_user.get("sub"),
+        )
+        return {"removed_product_codes": removed, "removed_count": len(removed)}
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -362,12 +441,15 @@ def export_order(
     store_name: str, payload: ExportOrderRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """Bulk-assign every OrderQty>0 row for this supplier, then build and
-    return the Order Workspace Excel export (or a .zip of parts when
-    split_size splits the file). Review-only grid, one click -- no
-    per-product Assign/Unassign. See order_export.export_order for the
-    resolve -> assign -> build sequence and why it's two steps, not one
-    transaction."""
+    """Build and return the Order Workspace Excel export (or a .zip of parts
+    when split_size splits the file).
+
+    From the By Supplier grid the request carries product_codes -- the exact
+    rows left in the grid after the operator's deletions. Export assigns only
+    those to the supplier (status=1) and includes only those, so a deleted row
+    is neither assigned nor exported. From the Assigned view product_codes is
+    omitted and export simply reflects whatever is already assigned. See
+    order_export.export_order."""
     try:
         if not repository.get_store(store_name):
             raise HTTPException(status_code=404, detail="Store not found")
@@ -375,6 +457,9 @@ def export_order(
             store_name, payload.supplier_code, payload.supplier_name,
             payload.mode, payload.split_size,
             current_user.get("username") or current_user.get("sub"),
+            columns=payload.columns, file_format=payload.file_format, order_no=payload.order_no,
+            product_codes=payload.product_codes, all_products=payload.all_products,
+            removed_product_codes=payload.removed_product_codes,
         )
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -391,6 +476,39 @@ def export_order(
             "X-Exported-Count": str(result.count),
             "X-Supplier-Name": result.supplier_name,
             "Access-Control-Expose-Headers": "Content-Disposition, X-Exported-Count, X-Supplier-Name",
+        },
+    )
+
+
+@router.post("/orders/{store_name}/export-pending")
+def export_pending_order(
+    store_name: str, payload: ExportPendingOrderRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Export the Pending grid (qtycheck=1, status=0 -- reviewed, no supplier
+    yet) to Excel/CSV. Read-only: unlike export_order, nothing is assigned
+    here -- Pending rows stay status=0. See order_export.export_pending_order."""
+    try:
+        if not repository.get_store(store_name):
+            raise HTTPException(status_code=404, detail="Store not found")
+        result = order_export.export_pending_order(
+            store_name, payload.split_size,
+            columns=payload.columns, file_format=payload.file_format, order_no=payload.order_no,
+        )
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except order_export.NoExportableRows as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except order_export.ExportGenerationFailed as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return Response(
+        content=result.content,
+        media_type=result.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "X-Exported-Count": str(result.count),
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Exported-Count",
         },
     )
 
@@ -443,6 +561,51 @@ def compare_previous_order_supplier(payload: CompareSupplierRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+# ---- Restore by OrderId -- admin-only recovery workflow (see repository.
+# restore_backup_order for the full safety contract: same store-applock as
+# the processing lock, all-or-nothing, per-row audit trail). ----
+
+@router.get("/orders/{store_name}/restorable/{order_id}")
+def restorable_order_preview(
+    store_name: str, order_id: int, current_user: dict = Depends(require_admin),
+):
+    """Preview for the restore confirmation screen: backup timestamp,
+    product count, suppliers represented. 404 if that (store, order_id)
+    combination has no backup at all."""
+    try:
+        preview = repository.restorable_order_preview(store_name, order_id)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if preview is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No backup exists for '{store_name}' order #{order_id}.",
+        )
+    return preview
+
+
+@router.post("/orders/{store_name}/restore")
+def restore_backup_order(
+    store_name: str, payload: RestoreBackupOrderRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """Restore a specific, explicitly-selected backup order's rows back onto
+    the current order -- admin-only, all-or-nothing (see repository.
+    restore_backup_order). 409 on any validation failure (missing backup,
+    products with no matching live row) -- nothing is partially restored."""
+    try:
+        return repository.restore_backup_order(
+            store_name, payload.order_id,
+            current_user.get("username") or current_user.get("sub"),
+        )
+    except repository.PendingExportBlocked as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except repository.RestoreValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 # ---- Qty Check screen (port of Form1's "Qty Check" process) ----
 
 @router.get("/qty-check/{store_name}")
@@ -482,6 +645,23 @@ def update_qty_check(
     try:
         result = repository.update_qty_check(
             store_name, product_code, payload.order_qty,
+            current_user.get("username") or current_user.get("sub"),
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Order row not found")
+        return result
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.patch("/orders/{store_name}/{product_code}/remarks")
+def update_remarks(
+    store_name: str, product_code: int, payload: UpdateRemarksRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        result = repository.update_remarks(
+            store_name, product_code, payload.remarks,
             current_user.get("username") or current_user.get("sub"),
         )
         if result is None:

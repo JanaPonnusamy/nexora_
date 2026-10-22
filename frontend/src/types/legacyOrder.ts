@@ -115,6 +115,9 @@ export interface WorkspaceOrderRow {
   SupplierProductName?: string | null
   SupplierProductCode?: string | null
   Rack?: string | null
+  // true when this row's stock came from the NMW/Ho_code pseudo-supplier
+  // (warehouse stock bridged via product_mapping), not a real supplier.
+  is_warehouse_stock?: boolean
 }
 
 /** Rows already assigned to a supplier (VB FetchSupplierOrderDetails). */
@@ -343,6 +346,31 @@ export interface LegacyDbRecoveryStep {
   action: string
   ok: boolean
   detail: string
+}
+
+/** Preview for the pending-supplier-assignment WARNING dialog (not a lock --
+ *  see service.start_order_process). When count > 1, Process requires an
+ *  admin to confirm Admin Override & Process; order_id/count are echoed
+ *  back on startOrderProcess so the server can detect stale state. */
+export interface QtyCheckConfirmation {
+  order_id: number | null
+  count: number
+  sample: { product_code: number; product_name: string }[]
+}
+
+export interface RestorableOrderPreview {
+  store_name: string
+  order_id: number
+  product_count: number
+  backed_up_at: string | null
+  suppliers: PreviousOrderSupplier[]
+}
+
+export interface RestoreResult {
+  store_name: string
+  source_order_id: number
+  restored_count: number
+  actor: string | null
 }
 
 export interface LegacyDbRecovery {

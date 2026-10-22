@@ -30,6 +30,8 @@ backup/
 # Python virtual env
 venv/
 .venv/
+.venv38/
+.builddeps/
 
 # SQL Server
 *.mdf

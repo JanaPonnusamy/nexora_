@@ -26,7 +26,10 @@ import type {
   OrderWorkflowAuditEntry,
   OrderWorkflowSummary,
   PendingOrderRow,
+  QtyCheckConfirmation,
   ResetPendingResult,
+  RestorableOrderPreview,
+  RestoreResult,
 } from '../types/legacyOrder'
 
 const BASE = '/api/legacy-order'
@@ -45,18 +48,37 @@ export const legacyOrderService = {
       tables: tables ?? null,
     }),
 
+  // confirmed acknowledges the pending-supplier-assignment warning -- an
+  // ordinary confirmation, not a privileged override. The server always
+  // recomputes order_id/count fresh and rejects (409) if they no longer
+  // match confirmedOrderId/confirmedCount.
   startOrderProcess: (
     storeName: string,
     minDays: number,
     maxDays: number,
     mode: OrderMode,
+    confirm?: { orderId: number; count: number },
   ) =>
     api.post<{ job_id: string }>(`${BASE}/order-process`, {
       store_name: storeName,
       min_days: minDays,
       max_days: maxDays,
       mode,
+      confirmed: Boolean(confirm),
+      confirmed_order_id: confirm?.orderId ?? null,
+      confirmed_count: confirm?.count ?? null,
     }),
+
+  restorableOrderPreview: (storeName: string, orderId: number) =>
+    api.get<RestorableOrderPreview>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/restorable/${orderId}`,
+    ),
+
+  restoreBackupOrder: (storeName: string, orderId: number) =>
+    api.post<RestoreResult>(`${BASE}/orders/${encodeURIComponent(storeName)}/restore`, { order_id: orderId }),
+
+  qtyCheckConfirmation: (storeName: string) =>
+    api.get<QtyCheckConfirmation>(`${BASE}/orders/${encodeURIComponent(storeName)}/qty-check-confirmation`),
 
   startStockUpdate: (storeName: string, sourceStoreName = 'NMW') =>
     api.post<{ job_id: string }>(`${BASE}/stock-update`, {

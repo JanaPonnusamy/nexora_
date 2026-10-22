@@ -37,9 +37,19 @@ def submit_grn(tenant_id, refresh_id, last_grn_number, submitted_by):
     if not refresh:
         raise HTTPException(status_code=404, detail="Refresh not found")
 
+    # Single transaction for the whole GRN-submit workflow: storing the Last
+    # GRN Number and reconciling against it must commit or roll back
+    # together. Previously these were two separate connections/commits
+    # (Transaction A: store_last_grn; Transaction B: reconcile's own
+    # get_connection()), so a reconcile failure left last_grn_number durably
+    # committed with zero reconciliation applied — the exact gap this fixes.
+    # reconcile() still defaults to opening its own connection when called
+    # without one (see its docstring) — that path is unchanged and is what
+    # close_cycle continues to use, one isolated transaction per refresh.
     conn = get_connection()
     try:
         repo.store_last_grn(conn, tenant_id, refresh_id, str(last_grn_number).strip())
+        summary = reconcile(tenant_id, refresh_id, refresh.get("store_id"), last_grn_number, conn=conn)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -49,7 +59,6 @@ def submit_grn(tenant_id, refresh_id, last_grn_number, submitted_by):
 
     _trigger_store_sync(tenant_id, refresh.get("store_id"), last_grn_number)
 
-    summary = reconcile(tenant_id, refresh_id, refresh.get("store_id"), last_grn_number)
     logger.info("GRN submitted tenant=%s refresh=%s grn=%s matched=%s by=%s",
                 tenant_id, refresh_id, last_grn_number,
                 summary.get("assignments_matched"), submitted_by)
@@ -60,9 +69,20 @@ def submit_grn(tenant_id, refresh_id, last_grn_number, submitted_by):
     }
 
 
-def reconcile(tenant_id, refresh_id, store_id=None, last_grn=None):
-    """Match synced receipts to assignments and roll up to order items."""
-    conn = get_connection()
+def reconcile(tenant_id, refresh_id, store_id=None, last_grn=None, conn=None):
+    """Match synced receipts to assignments and roll up to order items.
+
+    When `conn` is given, runs on the caller's own transaction — the caller
+    owns commit/rollback/close (this is how submit_grn shares its GRN-update
+    transaction with reconciliation). When `conn` is None (the default —
+    close_cycle's own usage, one call per refresh, each independently
+    isolated so one refresh's reconciliation failure doesn't block the
+    others), opens, commits/rolls back, and closes its own connection exactly
+    as before — no change to that call path's transaction scope.
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
     try:
         if store_id is None:
             refresh = repo.get_refresh(tenant_id, refresh_id)
@@ -98,12 +118,15 @@ def reconcile(tenant_id, refresh_id, store_id=None, last_grn=None):
             else:
                 pending += 1
 
-        conn.commit()
+        if owns_conn:
+            conn.commit()
     except Exception:
-        conn.rollback()
+        if owns_conn:
+            conn.rollback()
         raise
     finally:
-        conn.close()
+        if owns_conn:
+            conn.close()
 
     return {
         "assignments_matched": matched,

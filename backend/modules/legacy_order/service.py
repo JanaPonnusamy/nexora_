@@ -22,6 +22,7 @@ _lock = threading.Lock()
 
 DEFAULT_MIN_DAYS = 13
 DEFAULT_MAX_DAYS = 18
+DEFAULT_RECENCY_DAYS = int(os.getenv("LEGACY_RECENCY_DAYS", "15"))
 
 # Warehouse stores (e.g. NMW) get the warehouse order query: demand counts
 # Transfer-Out to branches, not just retail billing (see sql/order_warehouse.sql).
@@ -240,7 +241,43 @@ def _run_sync(job_id, store, plan):
 
 # ----- Order Process ----------------------------------------------------------
 
-def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
+class QtyCheckConfirmationRequired(ValueError):
+    """More than one qty_check=1/status=0 product exists on the current-date
+    order (pending supplier assignment) -- this is a WARNING, not a lock:
+    processing is never permanently blocked by it. The caller must either
+    not have more than one such product, or explicitly pass confirmed=True
+    (with a matching confirmed_order_id/confirmed_count) to acknowledge the
+    warning and proceed -- this is an ordinary confirmation, not a
+    privileged action; it requires no special authorization."""
+    def __init__(self, order_id, count, sample):
+        self.order_id = order_id
+        self.count = count
+        self.sample = sample
+        super().__init__(
+            f"{count} products are pending supplier assignment for order '{order_id}'. "
+            "Confirm Order & Process to continue."
+        )
+
+
+class StaleCurrentOrder(ValueError):
+    """The store's latest order exists but was not generated today (see
+    repository.current_date_order) -- there is no current-date order to
+    validate pending rows against, so start_order_process refuses to
+    silently treat a stale prior-day order as "current". The operator must
+    investigate (e.g. via Compare Previous Order) before processing."""
+
+
+def start_order_process(store_name, min_days=None, max_days=None, mode="local",
+                         confirmed=False,
+                         confirmed_order_id=None, confirmed_count=None):
+    """confirmed_order_id/confirmed_count are the caller's claim about WHICH
+    order/count it is acknowledging, purely to satisfy requirement 8
+    ("revalidate ... require renewed confirmation if the relevant state has
+    changed") -- they are an assertion that gets compared against a fresh
+    server-side recompute below, never trusted as the count itself.
+    confirmed is the caller's acknowledgement of the pending-supplier-
+    assignment warning; this is an ordinary confirmation (any authenticated
+    caller may set it), not a privileged override."""
     store = _resolve_store(store_name)
     warehouse = is_warehouse_store(store_name)
     agent_synced = is_agent_synced_store(store_name)
@@ -259,13 +296,40 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local"):
     # The warehouse query is StoreName-scoped and must read the central copy.
     if warehouse:
         mode = "local"
-    recency_days = WAREHOUSE_RECENCY_DAYS if warehouse else 10
+    recency_days = WAREHOUSE_RECENCY_DAYS if warehouse else DEFAULT_RECENCY_DAYS
 
     running = _running_job_kind(store_name)
     if running:
         raise ValueError(
             f"A {running} job is already running for '{store_name}'. Wait for it to finish."
         )
+
+    # Current-date order check: if this store already has an order, it must
+    # be provably today's (see repository.current_date_order) before the Qty
+    # Check gate below is allowed to treat its pending rows as live. A store
+    # with no order yet is fine (nothing to validate); a store whose latest
+    # order is from a previous day and was simply never regenerated is NOT --
+    # silently falling back to that stale order's pending count would let a
+    # leftover/forgotten order be reprocessed as if it were today's.
+    try:
+        repository.require_current_date_order_if_any(store_name)
+    except repository.NoCurrentDateOrder as exc:
+        raise StaleCurrentOrder(str(exc)) from exc
+
+    # Pending-supplier-assignment WARNING (not a lock): more than one
+    # qty_check=1/status=0 product on the current-date order requires
+    # confirmation to proceed. Recomputed here fresh every call (never
+    # trusted from the request alone) so a stale preview, a direct API call
+    # that skipped the preview endpoint, or state that changed between the
+    # dialog opening and Order & Process being clicked all get caught:
+    # confirmed_order_id/confirmed_count (the dialog's own snapshot) must
+    # still match the live order_id/count, or the caller must re-fetch and
+    # reconfirm (requirement: "require renewed confirmation if the relevant
+    # state has changed").
+    order_id, count, sample = repository.qty_check_confirmation_count(store_name)
+    if order_id is not None and count > 1:
+        if not confirmed or confirmed_order_id != order_id or confirmed_count != count:
+            raise QtyCheckConfirmationRequired(order_id, count, sample)
 
     # Agent-synced stores (NMV) have no branch to pull. Their live data lands in
     # NEXORA_PLATFORM.sync.* via the platform sync pipeline, so the Order Process
@@ -565,16 +629,14 @@ def start_stock_update(store_name, source_store_name="NMW"):
 def _run_stock_update(job_id, store, source_store):
     try:
         _update(job_id, step=0, message=f"Reading stock from {source_store['store_name']}...")
-        rows = repository.branch_stock(source_store)
-        _update(job_id, step=1, message=f"Read {len(rows)} products. Updating {store['store_name']}'s supplier stock...")
-        # suppliercode is THIS store's own code for the source ("HO") supplier
-        # (dbo.Stores.Ho_code), not the source store's name -- NMS/NMA file it
-        # under '94', NMC under 'ST_2', NMG under '99', etc.
-        inserted = repository.replace_supplier_stock(store["store_name"], store["ho_code"], rows)
+        inserted, matched = order_process.refresh_warehouse_stock(
+            store, source_store["store_name"],
+            on_progress=lambda msg: _update(job_id, step=1, message=msg),
+        )
         _update(
             job_id, status="completed", step=2,
-            result={"rows": inserted, "source_store": source_store["store_name"], "supplier_code": store["ho_code"]},
-            message=f"Supplier stock updated ({inserted} rows from {source_store['store_name']}, filed as supplier '{store['ho_code']}').",
+            result={"rows": inserted, "matched": matched, "source_store": source_store["store_name"], "supplier_code": store["ho_code"]},
+            message=f"Supplier stock updated ({inserted} rows from {source_store['store_name']}, {matched} product_mapping matches, filed as supplier '{store['ho_code']}').",
             finished_at=datetime.datetime.now(),
         )
     except Exception as exc:

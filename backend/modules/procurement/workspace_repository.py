@@ -365,6 +365,24 @@ def defer_item(tenant_id, order_item_id, reviewed_by):
     )
 
 
+def confirm_rare_mover(tenant_id, order_item_id, confirmed_by):
+    """D3c: discrete rare-mover confirmation, scoped to this order_item's own
+    cycle by construction (each cycle/refresh mints new rows — see
+    0028_rare_mover_confirmation.sql). Requires 0028 to be applied; the
+    columns do not exist on procurement_order_items until then."""
+    confirmed_by = _as_uid(confirmed_by)  # NULL for a non-GUID display name
+    return _run(
+        """
+        UPDATE procurement.procurement_order_items
+        SET rare_confirmed = 1,
+            rare_confirmed_by = ?, rare_confirmed_at = GETDATE(),
+            updated_by = ?, updated_at = GETDATE()
+        WHERE tenant_id = ? AND order_item_id = ? AND is_deleted = 0
+        """,
+        (confirmed_by, confirmed_by, tenant_id, order_item_id),
+    )
+
+
 def restore_item(tenant_id, order_item_id, reviewed_by):
     """Un-skip / un-defer back to Reviewed, keeping quantities.
 

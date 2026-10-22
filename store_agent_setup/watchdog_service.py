@@ -147,7 +147,22 @@ class WatchdogCycle:
         from store_agent import config as agent_config
         import requests
 
-        store_id = agent_config.STORE_ID
+        # Device mode (zero-config, multi-store) has no single STORE_ID -
+        # the watchdog's run-state/version target is keyed on the device
+        # itself, the same identity multi_store_runtime.py registers with
+        # HO. Without this branch the watchdog falls back to STORE_ID's
+        # hardcoded dev-default and silently manages a store that was never
+        # actually deployed here.
+        if agent_config.DEVICE_MODE:
+            from store_agent.device_client import DeviceIdentity
+            device = DeviceIdentity(agent_config.DEVICE_STATE_DIR)
+            if not device.is_registered():
+                self.log("[WATCHDOG] device not registered yet, idling")
+                return
+            store_id = device.device_id()
+        else:
+            store_id = agent_config.STORE_ID
+
         ho_url = agent_config.active_ho_url()
         try:
             resp = requests.get(
@@ -177,7 +192,7 @@ class WatchdogCycle:
             self.log("[WATCHDOG] state reconcile failed:\n" + traceback.format_exc())
             last_action = f"{last_action}; state-reconcile-failed"
 
-        self._report(agent_config, last_action)
+        self._report(agent_config, store_id, last_action)
 
     def _reconcile_version(self, version_info):
         if not version_info:
@@ -255,13 +270,13 @@ class WatchdogCycle:
             return "started-agent"
         return None
 
-    def _report(self, agent_config, last_action):
+    def _report(self, agent_config, store_id, last_action):
         import requests
         try:
             requests.post(
                 agent_config.active_ho_url() + "/agent/watchdog/heartbeat",
                 json={
-                    "store_id": agent_config.STORE_ID,
+                    "store_id": store_id,
                     "watchdog_version": WATCHDOG_VERSION,
                     "installed_agent_version": _read_installed_version(self.root),
                     "service_state": (

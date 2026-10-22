@@ -59,37 +59,96 @@ _REFRESH_COLUMNS = """
 """
 
 
-def create_vpl(data):
+def find_by_idempotency_key(tenant_id, cycle_id, idempotency_key):
+    """D5 — the existing Refresh for a retried create-refresh call, or None.
+
+    Requires 0029_refresh_idempotency_key.sql (adds the idempotency_key
+    column + its filtered unique index). NOT APPLIED yet — callers must not
+    invoke this with a real idempotency_key until that migration lands,
+    since the column does not exist on the live table.
+    """
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """
-            INSERT INTO procurement.procurement_refreshes
-                (tenant_id, cycle_id, store_id,
-                 snapshot_name, snapshot_status, refresh_no,
-                 rolling_days, min_days, max_days, previous_refresh_id,
-                 snapshot_grn_number, snapshot_sale_bill_number,
-                 sync_execution_id, created_by)
-            OUTPUT INSERTED.refresh_id
-            VALUES (?, ?, ?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            f"""
+            SELECT {_REFRESH_COLUMNS} FROM procurement.procurement_refreshes
+            WHERE tenant_id = ? AND cycle_id = ? AND idempotency_key = ? AND is_deleted = 0
             """,
-            (
-                data["tenant_id"],
-                data["cycle_id"],
-                data.get("store_id"),
-                data["snapshot_name"],
-                data.get("refresh_no"),
-                data.get("rolling_days"),
-                data.get("min_days"),
-                data.get("max_days"),
-                data.get("previous_refresh_id"),
-                data.get("snapshot_grn_number"),
-                data.get("snapshot_sale_bill_number"),
-                data.get("sync_execution_id"),
-                _as_uid(data.get("created_by")),
-            ),
+            (tenant_id, cycle_id, idempotency_key),
         )
+        rows = _rows_to_dicts(cursor)
+        return _stringify(rows[0]) if rows else None
+    finally:
+        conn.close()
+
+
+def create_vpl(data):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        # D5 — idempotency_key is only written when actually supplied: the
+        # column is added by 0029_refresh_idempotency_key.sql (NOT APPLIED),
+        # so an unconditional extra column in this INSERT would break
+        # create_vpl against the live, unmigrated schema for every caller,
+        # not just idempotent ones.
+        if data.get("idempotency_key"):
+            cursor.execute(
+                """
+                INSERT INTO procurement.procurement_refreshes
+                    (tenant_id, cycle_id, store_id,
+                     snapshot_name, snapshot_status, refresh_no,
+                     rolling_days, min_days, max_days, previous_refresh_id,
+                     snapshot_grn_number, snapshot_sale_bill_number,
+                     sync_execution_id, created_by, idempotency_key)
+                OUTPUT INSERTED.refresh_id
+                VALUES (?, ?, ?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data["tenant_id"],
+                    data["cycle_id"],
+                    data.get("store_id"),
+                    data["snapshot_name"],
+                    data.get("refresh_no"),
+                    data.get("rolling_days"),
+                    data.get("min_days"),
+                    data.get("max_days"),
+                    data.get("previous_refresh_id"),
+                    data.get("snapshot_grn_number"),
+                    data.get("snapshot_sale_bill_number"),
+                    data.get("sync_execution_id"),
+                    _as_uid(data.get("created_by")),
+                    data["idempotency_key"],
+                ),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO procurement.procurement_refreshes
+                    (tenant_id, cycle_id, store_id,
+                     snapshot_name, snapshot_status, refresh_no,
+                     rolling_days, min_days, max_days, previous_refresh_id,
+                     snapshot_grn_number, snapshot_sale_bill_number,
+                     sync_execution_id, created_by)
+                OUTPUT INSERTED.refresh_id
+                VALUES (?, ?, ?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data["tenant_id"],
+                    data["cycle_id"],
+                    data.get("store_id"),
+                    data["snapshot_name"],
+                    data.get("refresh_no"),
+                    data.get("rolling_days"),
+                    data.get("min_days"),
+                    data.get("max_days"),
+                    data.get("previous_refresh_id"),
+                    data.get("snapshot_grn_number"),
+                    data.get("snapshot_sale_bill_number"),
+                    data.get("sync_execution_id"),
+                    _as_uid(data.get("created_by")),
+                ),
+            )
         refresh_id = str(cursor.fetchone()[0])
         conn.commit()
         return get_vpl(data["tenant_id"], refresh_id)

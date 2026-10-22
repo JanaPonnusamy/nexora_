@@ -118,6 +118,371 @@ def test_reconcile_matches_and_rolls_up(monkeypatch):
     assert out["items_partial"] == 1
 
 
+# --------------------------------------------------------------------------
+# submit_grn / reconcile — shared-transaction fix (GRN audit follow-up)
+# --------------------------------------------------------------------------
+
+class _TrackingConn(_FakeConn):
+    """Same no-op _FakeConn contract, but records commit/rollback/close calls
+    so a test can assert exactly what the connection owner did, not just that
+    no exception propagated."""
+    def __init__(self):
+        self.committed = False
+        self.rolled_back = False
+        self.closed = False
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        self.closed = True
+
+
+def _stub_reconcile_repo(monkeypatch, receipts=None, assignments=None,
+                         items=None, received_total=0):
+    monkeypatch.setattr(reconciliation_repository, "read_purchase_receipts",
+                        lambda *a: receipts or [])
+    monkeypatch.setattr(reconciliation_repository, "exported_assignments",
+                        lambda *a: assignments or [])
+    monkeypatch.setattr(reconciliation_repository, "apply_receipt", lambda *a: 1)
+    monkeypatch.setattr(reconciliation_repository, "order_items_for_refresh",
+                        lambda *a: items or [])
+    monkeypatch.setattr(reconciliation_repository, "item_received_total",
+                        lambda *a: received_total)
+    monkeypatch.setattr(reconciliation_repository, "set_item_receipts", lambda *a: 1)
+
+
+def test_submit_grn_success_commits_grn_and_reconcile_on_one_connection(monkeypatch):
+    """Successful submission: store_last_grn and the full reconcile walk run
+    on the SAME connection, with exactly one commit — proves the fix, not
+    just that both steps ran."""
+    monkeypatch.setattr(reconciliation_repository, "get_refresh",
+                        lambda t, r: {"refresh_id": r, "cycle_id": "C1", "store_id": "S1"})
+    conn_holder = {}
+
+    def _get_conn():
+        conn_holder["conn"] = _TrackingConn()
+        return conn_holder["conn"]
+
+    monkeypatch.setattr(reconciliation_service, "get_connection", _get_conn)
+
+    grn_calls = []
+    monkeypatch.setattr(
+        reconciliation_repository, "store_last_grn",
+        lambda c, t, r, g: grn_calls.append((c, t, r, g)) or 1,
+    )
+    reconcile_conns = []
+    real_reconcile = reconciliation_service.reconcile
+
+    def _tracking_reconcile(*a, **k):
+        reconcile_conns.append(k.get("conn"))
+        return real_reconcile(*a, **k)
+
+    monkeypatch.setattr(reconciliation_service, "reconcile", _tracking_reconcile)
+    _stub_reconcile_repo(monkeypatch)
+
+    out = reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
+
+    assert out["last_grn_number"] == "4567"
+    conn = conn_holder["conn"]
+    # store_last_grn ran on the same connection reconcile was given.
+    assert grn_calls[0][0] is conn
+    assert reconcile_conns[0] is conn
+    # Exactly one commit, no rollback, closed exactly once — a single shared
+    # transaction, not two separate ones.
+    assert conn.committed is True
+    assert conn.rolled_back is False
+    assert conn.closed is True
+
+
+def _conn_factory(monkeypatch, target=reconciliation_service):
+    """Records every connection get_connection() creates, in creation order —
+    unlike a single mutable holder (overwritten on each call), this lets a
+    test assert against the FIRST connection created (the one submit_grn
+    itself owns) even when something else under test also calls
+    get_connection() and would otherwise clobber a single-slot holder.
+    Returns the list; appended to in order, never overwritten."""
+    conns = []
+
+    def _get_conn():
+        c = _TrackingConn()
+        conns.append(c)
+        return c
+
+    monkeypatch.setattr(target, "get_connection", _get_conn)
+    return conns
+
+
+def test_submit_grn_reconcile_failure_rolls_back_grn_update_too(monkeypatch):
+    """The confirmed defect from the audit: a reconcile-stage failure must now
+    roll back store_last_grn's write as well, not leave last_grn_number
+    durably committed with zero reconciliation applied."""
+    monkeypatch.setattr(reconciliation_repository, "get_refresh",
+                        lambda t, r: {"refresh_id": r, "cycle_id": "C1", "store_id": "S1"})
+    conns = _conn_factory(monkeypatch)
+    monkeypatch.setattr(reconciliation_repository, "store_last_grn", lambda *a: 1)
+
+    class _Boom(Exception):
+        pass
+
+    def _boom_receipts(*a):
+        raise _Boom("forced reconciliation failure")
+
+    monkeypatch.setattr(reconciliation_repository, "read_purchase_receipts", _boom_receipts)
+
+    with pytest.raises(_Boom):
+        reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
+
+    # Exactly one connection for the whole submit_grn call (the fix's own
+    # claim) — if reconcile ever opened a second, separate connection again
+    # (the pre-fix shape), this would be 2, not 1.
+    assert len(conns) == 1
+    grn_conn = conns[0]
+    assert grn_conn.rolled_back is True
+    assert grn_conn.committed is False
+    assert grn_conn.closed is True
+
+
+def test_submit_grn_failure_in_assignment_loop_rolls_back_grn_and_prior_assignments(monkeypatch):
+    """A failure partway through the assignment-matching loop must roll back
+    BOTH the GRN update and any apply_receipt calls already made earlier in
+    the same loop — proves the shared transaction covers the whole walk, not
+    just the first repository call."""
+    monkeypatch.setattr(reconciliation_repository, "get_refresh",
+                        lambda t, r: {"refresh_id": r, "cycle_id": "C1", "store_id": "S1"})
+    conns = _conn_factory(monkeypatch)
+    grn_conn_seen = []
+    monkeypatch.setattr(
+        reconciliation_repository, "store_last_grn",
+        lambda c, t, r, g: grn_conn_seen.append(c) or 1,
+    )
+    monkeypatch.setattr(
+        reconciliation_repository, "read_purchase_receipts",
+        lambda *a: [{"product_code": "P1", "supplier_code": "S1",
+                     "received_qty": 10, "grn_no": "G1", "supplier_bill_no": "B1"}],
+    )
+    monkeypatch.setattr(
+        reconciliation_repository, "exported_assignments",
+        lambda *a: [
+            {"assignment_id": "A1", "order_item_id": "OI1",
+             "product_code": "P1", "supplier_code": "S1", "assigned_qty": 10},
+            {"assignment_id": "A2", "order_item_id": "OI2",
+             "product_code": "P1", "supplier_code": "S1", "assigned_qty": 10},
+        ],
+    )
+    apply_calls = []
+    apply_conn_seen = []
+
+    class _Boom(Exception):
+        pass
+
+    def _apply_receipt(c, t, aid, rec, rem, st, g, b):
+        apply_calls.append(aid)
+        apply_conn_seen.append(c)
+        if aid == "A2":
+            raise _Boom("forced failure on the second assignment")
+        return 1
+
+    monkeypatch.setattr(reconciliation_repository, "apply_receipt", _apply_receipt)
+    monkeypatch.setattr(reconciliation_repository, "order_items_for_refresh",
+                        lambda *a: (_ for _ in ()).throw(
+                            AssertionError("rollup loop must not be reached")))
+
+    with pytest.raises(_Boom):
+        reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
+
+    # Both assignments were attempted (A1 succeeded, A2 raised) but the
+    # transaction as a whole rolls back — A1's apply_receipt is not left
+    # committed on its own.
+    assert apply_calls == ["A1", "A2"]
+    # Exactly one connection created for the whole call, and it is the SAME
+    # connection store_last_grn and both apply_receipt calls used — proves
+    # the shared transaction, not just "some connection rolled back".
+    assert len(conns) == 1
+    grn_conn = conns[0]
+    assert grn_conn_seen == [grn_conn]
+    assert apply_conn_seen == [grn_conn, grn_conn]
+    assert grn_conn.rolled_back is True
+    assert grn_conn.committed is False
+
+
+def test_submit_grn_failure_in_item_rollup_rolls_back_grn_and_assignment_writes(monkeypatch):
+    """A failure during the order-item rollup loop (after the assignment loop
+    has already succeeded) must still roll back the GRN update and every
+    apply_receipt already applied — the second half of the walk failing
+    cannot leave the first half's writes committed."""
+    monkeypatch.setattr(reconciliation_repository, "get_refresh",
+                        lambda t, r: {"refresh_id": r, "cycle_id": "C1", "store_id": "S1"})
+    conns = _conn_factory(monkeypatch)
+    grn_conn_seen = []
+    monkeypatch.setattr(
+        reconciliation_repository, "store_last_grn",
+        lambda c, t, r, g: grn_conn_seen.append(c) or 1,
+    )
+    monkeypatch.setattr(
+        reconciliation_repository, "read_purchase_receipts",
+        lambda *a: [{"product_code": "P1", "supplier_code": "S1",
+                     "received_qty": 60, "grn_no": "G1", "supplier_bill_no": "B1"}],
+    )
+    monkeypatch.setattr(
+        reconciliation_repository, "exported_assignments",
+        lambda *a: [{"assignment_id": "A1", "order_item_id": "OI1",
+                     "product_code": "P1", "supplier_code": "S1", "assigned_qty": 100}],
+    )
+    apply_calls = []
+    apply_conn_seen = []
+    monkeypatch.setattr(
+        reconciliation_repository, "apply_receipt",
+        lambda c, t, aid, rec, rem, st, g, b: (
+            apply_calls.append(aid), apply_conn_seen.append(c), 1
+        )[-1],
+    )
+    monkeypatch.setattr(reconciliation_repository, "order_items_for_refresh",
+                        lambda *a: [{"order_item_id": "OI1", "final_qty": 100}])
+
+    class _Boom(Exception):
+        pass
+
+    def _boom_total(*a):
+        raise _Boom("forced failure during rollup")
+
+    monkeypatch.setattr(reconciliation_repository, "item_received_total", _boom_total)
+    monkeypatch.setattr(reconciliation_repository, "set_item_receipts",
+                        lambda *a: (_ for _ in ()).throw(
+                            AssertionError("set_item_receipts must not be reached")))
+
+    with pytest.raises(_Boom):
+        reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
+
+    assert apply_calls == ["A1"]
+    assert len(conns) == 1
+    grn_conn = conns[0]
+    # store_last_grn and apply_receipt both ran on the one connection that
+    # also ends up rolled back — the earlier assignment write is not left
+    # committed on a different, already-closed connection.
+    assert grn_conn_seen == [grn_conn]
+    assert apply_conn_seen == [grn_conn]
+    assert grn_conn.rolled_back is True
+    assert grn_conn.committed is False
+
+
+def test_submit_grn_retry_after_failure_succeeds_on_shared_connection(monkeypatch):
+    """Retrying submit_grn after a failed attempt (e.g. the receipts read was
+    transiently broken) succeeds cleanly on a fresh connection/transaction —
+    apply_receipt/set_item_receipts are UPDATEs keyed by assignment_id/
+    order_item_id, so re-running is naturally idempotent at the row level, as
+    the audit noted. Each attempt gets its own connection via get_connection()
+    (no connection reuse across calls), so a failed first attempt cannot
+    poison a later retry's transaction."""
+    monkeypatch.setattr(reconciliation_repository, "get_refresh",
+                        lambda t, r: {"refresh_id": r, "cycle_id": "C1", "store_id": "S1"})
+    conns = []
+
+    def _get_conn():
+        c = _TrackingConn()
+        conns.append(c)
+        return c
+
+    monkeypatch.setattr(reconciliation_service, "get_connection", _get_conn)
+    monkeypatch.setattr(reconciliation_repository, "store_last_grn", lambda *a: 1)
+
+    attempt = {"n": 0}
+
+    class _Boom(Exception):
+        pass
+
+    def _flaky_receipts(*a):
+        attempt["n"] += 1
+        if attempt["n"] == 1:
+            raise _Boom("first attempt fails")
+        return [{"product_code": "P1", "supplier_code": "S1",
+                 "received_qty": 100, "grn_no": "G1", "supplier_bill_no": "B1"}]
+
+    monkeypatch.setattr(reconciliation_repository, "read_purchase_receipts", _flaky_receipts)
+    monkeypatch.setattr(
+        reconciliation_repository, "exported_assignments",
+        lambda *a: [{"assignment_id": "A1", "order_item_id": "OI1",
+                     "product_code": "P1", "supplier_code": "S1", "assigned_qty": 100}],
+    )
+    monkeypatch.setattr(reconciliation_repository, "apply_receipt", lambda *a: 1)
+    monkeypatch.setattr(reconciliation_repository, "order_items_for_refresh",
+                        lambda *a: [{"order_item_id": "OI1", "final_qty": 100}])
+    monkeypatch.setattr(reconciliation_repository, "item_received_total", lambda *a: 100)
+    monkeypatch.setattr(reconciliation_repository, "set_item_receipts", lambda *a: 1)
+
+    with pytest.raises(_Boom):
+        reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
+    assert conns[0].rolled_back is True
+    assert conns[0].committed is False
+
+    out = reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
+    assert out["assignments_matched"] == 1
+    assert out["items_completed"] == 1
+    assert conns[1].committed is True
+    assert conns[1].rolled_back is False
+    # Each attempt used its own connection — the retry did not reuse or
+    # depend on the failed attempt's connection object.
+    assert conns[0] is not conns[1]
+
+
+def test_close_cycle_reconcile_still_opens_its_own_connection_per_refresh(monkeypatch):
+    """Compatibility guard for close_cycle's EXISTING, unchanged call path —
+    reconciliation_service.reconcile(tenant_id, refresh_id, store_id), no
+    conn= argument — not evidence for the submit_grn shared-transaction fix
+    itself. close_cycle's call site was not touched by that fix in either
+    the pre-fix or the fixed implementation, so this test is expected to
+    (and, per the mutation-verification step below, does) pass identically
+    against both: it exists to catch a FUTURE change that accidentally
+    breaks close_cycle's per-refresh isolation (one refresh's reconcile
+    failure must not affect another's transaction), not to prove the GRN
+    fix is present."""
+    monkeypatch.setattr(cycle_repo, "get_cycle",
+                        lambda t, c: {"cycle_id": c, "status": "ACTIVE", "store_id": "S1"})
+    monkeypatch.setattr(cycle_repo, "cycle_close_blockers",
+                        lambda t, c: {"active_refreshes": False})
+    monkeypatch.setattr(cycle_repo, "refresh_ids_for_cycle", lambda t, c: ["R1", "R2"])
+
+    conns_opened = _conn_factory(monkeypatch)
+    monkeypatch.setattr(reconciliation_repository, "read_purchase_receipts", lambda *a: [])
+    monkeypatch.setattr(reconciliation_repository, "exported_assignments", lambda *a: [])
+    monkeypatch.setattr(reconciliation_repository, "order_items_for_refresh", lambda *a: [])
+    monkeypatch.setattr(cycle_repo, "pending_item_count", lambda t, c: 0)
+    monkeypatch.setattr(
+        orchestration_service, "exclusion_repo",
+        type("E", (), {"record_exclusions_from_replies": staticmethod(lambda *a: 0)}),
+    )
+    monkeypatch.setattr(orchestration_service, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(cycle_repo, "clear_all_pending", lambda *a: 0)
+    monkeypatch.setattr(
+        orchestration_service, "platform_repo",
+        type("P", (), {
+            "read_last_grn": staticmethod(lambda *a: "G1"),
+            "read_last_sale_bill": staticmethod(lambda *a: "B1"),
+        }),
+    )
+    monkeypatch.setattr(cycle_repo, "close_cycle", lambda *a: True)
+    monkeypatch.setattr(cycle_repo, "create_cycle", lambda data: {"cycle_id": "C2", **data})
+    monkeypatch.setattr(cycle_repo, "get_cycle",
+                        lambda t, c: {"cycle_id": c, "status": "ACTIVE", "store_id": "S1"})
+
+    class _StoreOK:
+        def get_by_id(self, sid):
+            return ("row",)
+
+    monkeypatch.setattr(orchestration_service, "StoreRepository", lambda: _StoreOK())
+
+    orchestration_service.close_cycle("T1", "C1", "U1", force=True)
+
+    # One connection per refresh in the cycle (two refreshes -> two
+    # connections), each independently committed — unchanged isolation.
+    assert len(conns_opened) == 2
+    assert all(c.committed for c in conns_opened)
+    assert all(not c.rolled_back for c in conns_opened)
+
+
 # ==========================================================================
 # Pending management
 # ==========================================================================

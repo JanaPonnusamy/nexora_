@@ -1,4 +1,5 @@
 import type { NavEntry } from '../../types/navigation'
+import { isVplHistoryScreenEnabled } from '../../pages/procurement/vplHistoryFlag'
 
 /** Grouped navigation sections (UI-02 — stronger operational hierarchy). */
 export const NAV_ENTRIES: NavEntry[] = [
@@ -42,6 +43,10 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Shelf Category Training', to: '/procurement/shelf-categories', icon: 'bi-mortarboard', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Pharmacy Reports', to: '/procurement/reports', icon: 'bi-bar-chart', cap: 'REPORTS' },
       { label: 'Supplier Stock Distribution', to: '/procurement/distribution', icon: 'bi-broadcast', cap: 'PROCUREMENT_ADMIN' },
+      { label: 'Procurement Rules', to: '/procurement/rules', icon: 'bi-sliders', cap: 'PROCUREMENT_ADMIN' },
+      ...(isVplHistoryScreenEnabled()
+        ? [{ label: 'VPL History', to: '/procurement/vpl-history', icon: 'bi-clock-history', cap: 'PROCUREMENT_ADMIN' as const }]
+        : []),
       { label: 'NMW Bill Export', to: '/nmw-sales-report', icon: 'bi-receipt', cap: 'INVENTORY' },
     ],
   },

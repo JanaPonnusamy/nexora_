@@ -152,13 +152,26 @@ def _selftest():
         "store_agent.fernet_key_service",
         "pyodbc", "cryptography.fernet", "requests", "sqlite3",
     ]
+    # store_agent.config now refuses to import without a real store_id (legacy
+    # mode) or device mode - correct for a production install, but this
+    # selftest has no agent_config.json on disk. Force device mode for the
+    # duration of the check so it proves importability, not deployment state.
+    os.environ.setdefault("NEXORA_AGENT_CONFIG", "")
+    prior_mode = os.environ.get("NEXORA_SELFTEST_FORCE_DEVICE")
+    os.environ["NEXORA_SELFTEST_FORCE_DEVICE"] = "1"
     import importlib
     failed = []
-    for name in modules:
-        try:
-            importlib.import_module(name)
-        except Exception as ex:  # noqa: BLE001
-            failed.append(f"{name}: {ex}")
+    try:
+        for name in modules:
+            try:
+                importlib.import_module(name)
+            except Exception as ex:  # noqa: BLE001
+                failed.append(f"{name}: {ex}")
+    finally:
+        if prior_mode is None:
+            os.environ.pop("NEXORA_SELFTEST_FORCE_DEVICE", None)
+        else:
+            os.environ["NEXORA_SELFTEST_FORCE_DEVICE"] = prior_mode
     frozen = getattr(sys, "frozen", False)
     print(f"frozen={frozen} executable={sys.executable}")
     print(f"checked {len(modules)} modules, {len(failed)} failed")

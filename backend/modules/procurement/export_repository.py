@@ -9,6 +9,7 @@ back from these records. Writes run on a caller-owned transaction.
 
 from config.database import get_connection
 from modules.procurement._dbutil import as_uid as _as_uid, rows_to_dicts as _rows_to_dicts
+from modules.procurement import rare_mover_guard
 
 
 def exportable_assignments(conn, tenant_id, refresh_id, assignment_ids=None, supplier_code=None):
@@ -18,21 +19,37 @@ def exportable_assignments(conn, tenant_id, refresh_id, assignment_ids=None, sup
     layer anywhere in this path) — a call with neither filter, or with only
     supplier_code, resolves the CURRENT full set at request time, so it can
     never return a stale or empty result while real assignments exist (§14).
+
+    D3c rare-mover enforcement: reason_code (from procurement_virtual_products)
+    is always joined — it existed before this change. rare_confirmed (on
+    procurement_order_items) is only selected when enforcement is actually on
+    (PROCUREMENT_RARE_MOVER_ENFORCEMENT=1), since the column is added by
+    0028_rare_mover_confirmation.sql, which is NOT yet applied — selecting it
+    unconditionally would break this query against the live, unmigrated schema.
     """
+    rare_confirmed_col = (
+        "oi.rare_confirmed" if rare_mover_guard.enforcement_enabled() else "CAST(0 AS BIT)"
+    )
     sql = (
-        "SELECT assignment_id, order_item_id, supplier_code, assigned_qty "
-        "FROM procurement.procurement_order_item_assignments "
-        "WHERE tenant_id = ? AND refresh_id = ? AND is_deleted = 0 "
-        "AND assignment_status = 'draft' "
-        "AND supplier_code IS NOT NULL AND assigned_qty > 0"
+        f"SELECT a.assignment_id, a.order_item_id, a.supplier_code, a.assigned_qty, "
+        f"vp.reason_code, {rare_confirmed_col} AS rare_confirmed "
+        "FROM procurement.procurement_order_item_assignments a "
+        "LEFT JOIN procurement.procurement_order_items oi "
+        "    ON oi.order_item_id = a.order_item_id AND oi.tenant_id = a.tenant_id "
+        "LEFT JOIN procurement.procurement_virtual_products vp "
+        "    ON vp.tenant_id = oi.tenant_id AND vp.refresh_id = oi.refresh_id "
+        "   AND vp.product_id = oi.product_id "
+        "WHERE a.tenant_id = ? AND a.refresh_id = ? AND a.is_deleted = 0 "
+        "AND a.assignment_status = 'draft' "
+        "AND a.supplier_code IS NOT NULL AND a.assigned_qty > 0"
     )
     params = [tenant_id, refresh_id]
     if assignment_ids:
         placeholders = ", ".join(["?"] * len(assignment_ids))
-        sql += f" AND assignment_id IN ({placeholders})"
+        sql += f" AND a.assignment_id IN ({placeholders})"
         params.extend(assignment_ids)
     elif supplier_code:
-        sql += " AND supplier_code = ?"
+        sql += " AND a.supplier_code = ?"
         params.append(supplier_code)
     cursor = conn.cursor()
     cursor.execute(sql, params)

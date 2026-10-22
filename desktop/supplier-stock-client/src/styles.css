@@ -516,6 +516,31 @@ button:disabled {
   background: var(--nx-surface);
 }
 
+.settings-section {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 8px;
+  background: var(--nx-surface);
+}
+
+.settings-section h3 {
+  color: var(--nx-text);
+  font-size: 18px;
+}
+
+.settings-section .hint {
+  color: var(--nx-text-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.settings-section table td,
+.settings-section table th {
+  padding: 8px 10px;
+}
+
 input::placeholder {
   color: var(--nx-text-muted);
 }
@@ -8057,7 +8082,12 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    scroll (only inner panels scroll), reclaim the roomy 32px frame, and drop the
    .screen-panel 1120px cap so the grid + sidebar use the FULL window width
    (that was the empty gap on the right). */
-.workspace:has(> .ow-screen) { padding: var(--ui-workspace-padding); overflow: hidden; }
+.workspace:has(> .ow-screen:not(.ow-screen-hidden)) { padding: var(--ui-workspace-padding); overflow: hidden; }
+/* Order Workspace is kept mounted (not unmounted) when another screen is
+   active, so operator state survives switching screens and back — see
+   AppShell's orderWorkspaceVisited. Must stay a direct child of .workspace
+   (no wrapper div) for the :has() selector above to see it correctly. */
+.ow-screen-hidden { display: none; }
 .ow-screen {
   display: flex; flex-direction: column; gap: 6px;
   /* Explicit viewport-based height so the screen is bounded regardless of how
@@ -8135,6 +8165,26 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 /* Assigned rows in the By-Supplier grid turn green. */
 .ow-screen tbody tr.ow-row-assigned > td { background: var(--nx-success-sunk); }
 .ow-screen tbody tr.ow-row-assigned.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-success-ink); }
+/* Already qty-checked in ANY grid (same OrderManagement.Qtycheck column) --
+   a quiet dim, not a loud badge, so reviewed rows visually recede without
+   the noise the old NR badge had (that one flagged NOT-reviewed on nearly
+   every row here; this flags the opposite state, so it's the minority). */
+.ow-screen tbody tr.ow-row-reviewed:not(.ow-row-assigned) > td { opacity: 0.72; }
+.ow-reviewed-check { color: var(--nx-success-ink); font-weight: 700; margin-left: 2px; }
+/* QTY CHECK status badge (Checked/Pending/Unknown) -- strictly server-
+   persisted (see owQtyCheckStatus), a deliberately separate signal from the
+   ✓ icon above which also reflects a same-session, not-yet-saved edit. */
+.ow-qtycheck-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1.4; white-space: nowrap; }
+.ow-qtycheck-checked { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.ow-qtycheck-pending { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.ow-qtycheck-unknown { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+/* S.Stock (the SUPPLIER's own live stock, Live Stock mode only) -- moved
+   next to the main Stock column (owner request) and given its own color so
+   the two numbers read as visually distinct at a glance, not as a repeat of
+   the same figure. Uses the existing accent token (not success/warning/
+   danger, which already mean something else in this grid) so it reads as
+   "a different kind of number" without implying good/bad. */
+.ow-sstock-val { color: var(--nx-accent-ink, var(--nx-info-ink, #2563eb)); font-weight: 600; }
 
 /* Zero-stock hint: red text on the Stock number only (not a full-row/panel
    shade, so it doesn't clash with the selection highlight or dominate the
@@ -8156,7 +8206,7 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    jumping out at a bold, oversized default. */
 .ow-supplier-pick { position: relative; display: inline-flex; align-items: center; font-size: 12px; }
 .ow-supplier-input {
-  width: 220px; min-height: 30px; padding: 2px 26px 2px 10px;
+  width: 220px; min-height: 30px; padding: 2px 46px 2px 10px;
   border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface); color: var(--nx-text); font-size: 12px; font-weight: 500;
 }
@@ -8165,6 +8215,14 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   border: 0; background: none; color: var(--nx-text-muted); font-size: 15px; line-height: 1; cursor: pointer; border-radius: 4px;
 }
 .ow-supplier-clear:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+/* Dedicated "switch supplier" affordance, separate from Clear -- makes
+   re-opening the full supplier list a one-click action instead of requiring
+   the operator to notice the text box itself is clickable. */
+.ow-supplier-switch {
+  position: absolute; right: 24px; width: 18px; height: 20px; display: grid; place-items: center;
+  border: 0; background: none; color: var(--nx-text-muted); font-size: 9px; line-height: 1; cursor: pointer; border-radius: 4px;
+}
+.ow-supplier-switch:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
 .ow-supplier-list {
   position: absolute; top: calc(100% + 3px); left: 0; z-index: 30;
   width: 320px; max-height: 320px; overflow: auto; margin: 0; padding: 4px;
@@ -8194,6 +8252,23 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-export-field input { width: 64px; min-height: 28px; padding: 2px 8px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; text-align: right; }
 .ow-export-hint { margin: 0; font-size: 11px; color: var(--nx-text-muted); }
 .ow-export-go { align-self: flex-start; }
+.ow-export-field select { min-height: 28px; padding: 2px 8px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; }
+.ow-export-path { flex-wrap: wrap; }
+.ow-export-path-val {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--nx-surface-sunk); color: var(--nx-text);
+}
+/* Checkboxes here had no explicit size at all -- this app's global reset
+   doesn't touch input[type=checkbox] (other screens that look right set their
+   own size), so these fell back to the raw native control, which renders
+   oversized relative to the 11-12px label text next to it. */
+.ow-export-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text); cursor: pointer; }
+.ow-export-check input[type="checkbox"] { width: 14px; height: 14px; min-width: 14px; margin: 0; accent-color: var(--nx-accent); cursor: pointer; }
+.ow-export-columns { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; border-top: 1px solid var(--nx-rule); }
+.ow-export-columns-label { font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--nx-text-muted); }
+.ow-export-columns-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.ow-export-col-check { font-size: 11px; }
+.ow-export-col-check input[type="checkbox"] { width: 13px; height: 13px; min-width: 13px; }
 /* Compact status/assignment strip: keyboard hint + workflow chip + dynamic
    pending/assigned/open counts + product count, all on one line beneath the
    toolbar -- this is where that content lives instead of inside .ow-toolbar,
@@ -8207,6 +8282,16 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-help kbd { padding: 0 5px; border: 1px solid var(--nx-rule-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--nx-surface-raised); color: var(--nx-text-soft); font: inherit; font-size: 10px; font-weight: 700; }
 .ow-status-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
 .ow-status-sep { flex: 0 0 auto; color: var(--nx-text-muted); opacity: 0.6; }
+/* Compact footer: current store + current order + last GRN, same visual
+   language as .ow-help above but anchored to the bottom of the screen. */
+.ow-footer {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto; flex-wrap: wrap;
+  padding: 4px 10px; font-size: 11px; color: var(--nx-text-muted);
+  border-top: 1px solid var(--nx-rule); background: var(--nx-surface-sunk);
+}
+.ow-footer-item { white-space: nowrap; }
+.ow-footer-item b { color: var(--nx-text-soft); font-weight: 700; }
+.ow-footer-error { color: var(--nx-danger-ink); }
 .ow-error {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto;
   padding: 6px 10px; border: 1px solid var(--nx-danger); border-radius: var(--nx-radius-sm);
@@ -8218,15 +8303,39 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 
 /* Dense, aligned grids — full-width flexible product-name column, compact numerics. */
 .ow-screen table { width: 100%; border-collapse: collapse; font-size: 12px; }
-/* Product grid + Previous Decisions tables carry an explicit <colgroup> of
-   percentage widths (see owColgroupPct / the per-view colgroups in App.jsx)
-   so Product Name gets a fixed, viewport-proportional share of the table
-   instead of soaking up all space the other columns leave behind. Purchase/
-   GRN and Bill/Sales intelligence tables deliberately stay outside this (they
-   still use .ow-intel-table's width: max-content + horizontal scroll for long
-   supplier names) so only the tables below opt in. */
+/* Product grid tables (Qty Check/Pending/Review/By Supplier/Assigned) carry
+   an explicit <colgroup> of FIXED px widths now (see owColgroupPct / the
+   per-view colgroups in App.jsx) sized to match the legacy VB.NET grid's
+   compact columns. width:max-content (not 100%) is the actual fix: under
+   table-layout:fixed, width:100% always stretches every <col>'s share to
+   fill the container, which is what inflated the gap between e.g. OR QTY
+   and STOCK on a wide window even though the px widths above were already
+   tight -- the % conversion this used to do just scaled those px widths
+   back up to fill whatever the container happened to be. max-content sizes
+   the table to the sum of its columns; any leftover container width is
+   left blank after the last column, matching the VB.NET grid instead of
+   redistributing it into every column. Previous Decisions / Purchase-Sales
+   intelligence tables (.ow-intel-table) deliberately stay outside this —
+   see their own width:100% override below — so only the grids below opt in. */
 .ow-screen table.ow-fixed,
-.ow-screen table.ow-cfg { table-layout: fixed; width: 100%; }
+.ow-screen table.ow-cfg { table-layout: fixed; width: max-content; }
+/* table-layout:fixed locks each column to its <colgroup> share, but a cell's
+   CONTENT can still force the column wider than that share unless the cell
+   itself has min-width:0 -- browsers give table cells an implicit "shrink to
+   fit unbreakable content" floor otherwise, which is exactly what pushed the
+   Pending/By Supplier grids into a horizontal scrollbar despite Product Name
+   already being capped via .ow-grow's max-width:0. */
+.ow-screen table.ow-fixed > :is(thead, tbody) > tr > :is(th, td) { min-width: 0; }
+/* min-width:0 alone stops a cell from forcing the COLUMN wider, but its TEXT
+   still defaults to overflow:visible -- long Wanted/Supplier/Remarks text in
+   a column narrowed by today's extra columns (offer/check/action) visually
+   bled sideways over the next cell's content instead of being contained
+   (only .ow-name-cell had its own truncation; every other text column in a
+   .ow-fixed table never did). Same :has(.ow-qty) exemption .ow-cfg already
+   uses -- the editable qty cell's own diff-arrow/offer-badge children need
+   overflow:visible, not ellipsis-clipped. */
+.ow-screen table.ow-fixed > tbody > tr > td { overflow: hidden; text-overflow: ellipsis; }
+.ow-screen table.ow-fixed > tbody > tr > td:has(.ow-qty-cell) { overflow: visible; text-overflow: clip; }
 .ow-panel--history .ow-intel-table.ow-fixed { width: 100%; min-width: 0; }
 /* Override the global `th,td { padding: 12px 10px }` (24px of vertical padding)
    that was inflating these rows — force compact heights. */
@@ -8235,32 +8344,189 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   border-bottom: 1px solid var(--nx-rule-strong); background: var(--nx-surface-raised);
   color: var(--nx-text-soft); text-align: left; font-size: 11px; font-weight: 700;
   letter-spacing: 0.02em; text-transform: uppercase; white-space: nowrap;
+  line-height: 1; vertical-align: middle;
 }
+/* Icon-only header cells (🎁 / ✓) -- NOT a blanket rule on every th: that
+   earlier clipped real text headers too (e.g. "S.No" -> "S..."). Scoped to
+   just the glyph cells, which is what actually needed clamping against the
+   emoji's own taller font metrics growing the sticky row. */
+.ow-screen thead th.ow-icon-th { overflow: hidden; text-align: center; }
+/* The th-level clamp alone still wasn't enough -- the raw glyph's own font
+   metrics could still push the row's rendered line height taller than its
+   siblings even inside an overflow:hidden cell (vertical-align/line-height
+   on a th is a weaker guarantee than an explicit box). Same fix that already
+   works correctly for the body-row offer badge: a fixed-size inline-flex box
+   the glyph sits centered inside, so its real rendered footprint can never
+   exceed this span regardless of the emoji font's own metrics. */
+.ow-header-icon { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; font-size: 11px; line-height: 1; overflow: hidden; vertical-align: middle; }
+/* Per-column filter row (OwFilterRow) -- hidden by default (toggled via the
+   toolbar's Filters button); a second sticky header row, offset by the first
+   row's own height (28px) so both stay pinned together while scrolling. One
+   shared rule (.ow-screen, not a per-grid class), so every grid -- Qty
+   Check, Pending, By Supplier, Assigned, Review All -- gets the identical
+   height, not just Qty Check. box-sizing:border-box on the <th> itself
+   (table cells default to content-box, so height+padding would otherwise
+   render TALLER than the declared height). Deliberately noticeably SHORTER
+   than a real body row (.ow-screen tbody td is 30px content height) -- this
+   is just an input box, not a data row, and reading taller/equal to a real
+   row was the actual complaint. */
+.ow-screen thead tr.ow-filter-row th {
+  position: sticky; top: 28px; z-index: 1; height: 26px; box-sizing: border-box; padding: 1px 4px !important;
+  background: var(--nx-surface-raised); border-bottom: 1px solid var(--nx-rule-strong);
+  text-transform: none; font-weight: 400; line-height: 0;
+}
+.ow-filter-input, .ow-filter-select {
+  width: 100%; min-width: 0; box-sizing: border-box; height: 22px; padding: 0 4px;
+  border: 1px solid var(--nx-rule-strong); border-radius: 3px; background: var(--nx-surface);
+  color: var(--nx-text); font-size: 10px; font-weight: 400; text-transform: none;
+  /* ROOT CAUSE of every previous "still too tall" report: a generic global
+     reset further up this file -- `input, select { min-height: 42px; ... }`
+     (meant for roomier standalone forms like Settings) -- was never
+     overridden here. min-height is a FLOOR: it always wins over a plain
+     `height` declaration regardless of selector specificity or source
+     order, because they aren't the same property and don't compete on
+     specificity -- the box is simply never allowed to compute shorter than
+     min-height. Confirmed via live computed-style inspection (Electron
+     --remote-debugging-port + CDP): height was "22px" in this rule, but
+     getComputedStyle reported height:42px / min-height:42px, i.e. the
+     42px global floor, not this file's height, was what actually rendered.
+     Every prior fix attempt changed `height` here and never touched
+     `min-height`, so nothing could have worked. See the identical bug/fix
+     already documented on .global-search-row .stock-search-field input
+     further down this file. min-height MUST be set here, every time this
+     block is touched, or the row silently reverts to 42+px again. */
+  min-height: 22px;
+  /* The actual fix for the "extra gap below the row" complaint: <input>/
+     <select> are inline REPLACED elements, which sit on their containing
+     line's text baseline and reserve descender space below themselves --
+     invisible on the control itself, but it pads out the <th>'s rendered
+     height regardless of the th's own explicit height. vertical-align only
+     has an effect on an inline/table-cell element, so it has to be set HERE
+     (on the control), not on the parent th. */
+  display: inline-block; vertical-align: middle;
+}
+/* A native <select> (Wanted/Offer filter dropdowns) carries Chromium's own
+   minimum intrinsic height/padding that plain `height` CSS can't fully
+   override -- a row's rendered height is set by its TALLEST cell, so the
+   select (not the plain text inputs next to it) was what was actually
+   keeping the whole filter row tall even after the input/row height cuts
+   above. -webkit-appearance:none strips the native control chrome entirely,
+   replaced with a small drawn-on arrow, so height:16px applies for real.
+   line-height:1 stops the select's own default line box from adding height
+   on top of that. */
+.ow-filter-select {
+  -webkit-appearance: none; appearance: none; line-height: 1;
+  background-image: linear-gradient(45deg, transparent 50%, var(--nx-text-muted) 50%), linear-gradient(135deg, var(--nx-text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 9px) 7px, calc(100% - 5px) 7px;
+  background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
+  padding-right: 14px;
+}
+.ow-filter-input:focus-visible, .ow-filter-select:focus-visible { outline: none; border-color: var(--nx-accent); box-shadow: inset 0 0 0 1px var(--nx-accent); }
+.ow-filter-input::placeholder { color: var(--nx-text-muted); }
+/* Toolbar toggle for the filter row -- same active-state treatment as the
+   Load-all-products toggle, so "filters are on" reads clearly at a glance. */
+.ow-filters-toggle.active { background: var(--nx-accent); color: #fff; border-color: var(--nx-accent); }
 .ow-screen tbody td {
   height: 30px; padding: 1px 8px !important; border-bottom: 1px solid var(--nx-rule);
   line-height: 1.15; white-space: nowrap; vertical-align: middle;
 }
-.ow-screen tbody tr:hover > td { background: var(--nx-surface-hover); }
+/* Deliberately NO hover highlight -- only click or keyboard nav should
+   change which row looks selected (.ow-row-sel above). A hover tint made it
+   look like moving the mouse over a row was selecting it. */
 /* Flexible name column: width:100% grabs the leftover space, max-width:0 lets it
    shrink BELOW its (nowrap) content so a long product name truncates with an
    ellipsis instead of widening the table into a horizontal scrollbar. */
 .ow-screen .ow-grow { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Product Name that follows its <colgroup> share instead of grabbing all
+   leftover space. ow-grow's width:100% overrides the colgroup even under
+   table-layout:fixed (Chromium quirk), so a grid with fewer columns than Qty
+   Check (e.g. By Supplier) gave Name a much wider column. This truncates with
+   an ellipsis at the colgroup width (cells already carry min-width:0), so Name
+   stays the SAME proportional width across every grid -- matching Qty Check. */
+.ow-screen .ow-name-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ow-screen .ow-idx { width: 1%; text-align: right; color: var(--nx-text-muted); font-variant-numeric: tabular-nums; }
-.ow-screen .ow-num { width: 1%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* width:1% here is a Chromium-specific override of the <colgroup>'s own <col>
+   width, same quirk as .ow-grow below (a cell-level width can still perturb
+   table-layout:fixed's column sizing). Harmless -- even desirable -- for a
+   short numeric column like Stock/MRP where header and body content are
+   both narrow. For Or Qty specifically it was the actual cause of the header
+   label ("Or Qty") visually landing in a different column position than the
+   input/diff-arrow box beneath it: the th and td disagree on how wide "1%"
+   resolves to because their content widths differ (a few characters of text
+   vs. the input+diff-slot flex box), so each row's instance of this column
+   got sized independently instead of both honoring the single 116px <col>
+   set specifically to fit that flex box (see OW_QTY_COLUMNS). Carving this
+   column out of the 1% rule is what actually fixes it -- not another
+   one-off margin/padding nudge. */
+.ow-screen .ow-num:not(.ow-orqty-col) { width: 1%; }
+.ow-screen .ow-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* WANTED: flexible but bounded — truncate instead of widening the table into a
    horizontal scrollbar (§13). */
 .ow-screen .ow-wanted { max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ow-qty {
-  width: 3.4rem; height: 24px; min-height: 0; padding: 0 6px; border: 1px solid var(--nx-rule-strong); border-radius: 4px;
-  background: var(--nx-surface); color: var(--nx-text); text-align: right; font: inherit;
+  flex: 1 1 auto; max-width: 3.4rem; min-width: 1.9rem; height: 24px; min-height: 0; padding: 0 6px; border: 1px solid var(--nx-rule-strong); border-radius: 4px;
+  background: var(--nx-surface); color: var(--nx-text); text-align: right; font: inherit; box-sizing: border-box;
   -moz-appearance: textfield; appearance: textfield;
 }
 .ow-qty::-webkit-outer-spin-button, .ow-qty::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ow-qty:disabled { opacity: 0.6; }
-/* Fixed-width badge slot (even when empty) so the OR QTY input never shifts
-   position as a row's diff badge appears/disappears on review. */
-.ow-qty-cell { display: inline-flex; align-items: center; gap: 5px; width: 100%; justify-content: flex-end; }
-.ow-qty-diff-slot { display: inline-flex; width: 2.6rem; justify-content: center; }
+/* The global input:focus-visible rule (3px outline, 1px offset) reads as a
+   heavy "thick border" on a box this small and visually overlaps the
+   neighbouring stepper/diff-badge cells. Border-color + inset shadow instead
+   -- same box-sizing: border-box width/height as unfocused, so the cell
+   never shifts position on focus. */
+.ow-qty:focus-visible { outline: none; border-color: var(--nx-accent); box-shadow: inset 0 0 0 1px var(--nx-accent); }
+/* Flexbox, not grid: a CSS Grid track list (1.05rem offer / auto input /
+   3.6rem diff) looked correct on paper but two confirmed-real offer products
+   (verified directly against the database -- IsOffer=True, genuine FreeQty>0
+   purchase history) still rendered with no visible icon in this app's older
+   Chromium (22.3.27 / ~108), suggesting a grid-track-sizing edge case rather
+   than a data or component bug. flex-shrink:0 is a simpler, less ambiguous
+   guarantee than a grid track's base-size resolution -- an item with
+   flex-shrink:0 physically cannot be compressed below its content, full stop.
+   min-width:0 + flex:1 on the input is what still lets IT shrink/ellipsize
+   first if the cell is ever genuinely too narrow for everything. */
+.ow-qty-cell { display: flex; align-items: center; justify-content: flex-end; gap: 4px; width: 100%; min-width: 0; }
+.ow-qty-diff-slot { flex: 0 0 auto; width: 3.6rem; display: inline-flex; justify-content: flex-start; overflow: hidden; }
+/* OR QTY header: mirrors .ow-qty-cell's exact flex structure (a same-width
+   ow-qty-diff-slot placeholder standing in for the diff-arrow slot every
+   body row reserves) so the header's own flexbox centers "Or Qty" over the
+   SAME visual position as the input below it, not over the input+diff-slot
+   pair as one block. Without this, a right-aligned/centered header label
+   sits ~30px right of where the input actually renders (the diff-slot is
+   reserved space, almost always empty, flex-end-packed after the input) --
+   see OwOrQtyHeaderLabel's comment in App.jsx for the full measurement. */
+.ow-qty-header-cell { display: flex; align-items: center; justify-content: flex-end; gap: 4px; width: 100%; }
+.ow-qty-header-label { flex: 1 1 auto; text-align: center; min-width: 1.9rem; max-width: 3.4rem; }
+/* Offer gift icon: flex-shrink:0 so it can never be compressed away. Also a
+   visible colored chip (not just the 🎁 glyph) via :not(:empty) -- this app's
+   font stack (styles.css top) lists no explicit emoji font, so if Chromium's
+   emoji-glyph fallback ever silently renders a blank/tofu glyph instead of
+   🎁, the amber chip is still there and still reads as "this row has an
+   offer" on its own. */
+/* Square gift-box chip, not a circle -- and critically NO box-shadow ring:
+   a shadow doesn't participate in flex layout/sizing, so the earlier ring
+   (0 0 0 2px #fff, 0 0 0 3px #b45309) visually bled ~6px past this element's
+   own reserved space and overlapped the Or Qty input next to it. Everything
+   here (including the border) stays inside the element's own box-sizing, so
+   it can never spill into a neighbour no matter how tight the column is. */
+.ow-offer-badge {
+  flex: 0 0 auto; width: 15px; height: 15px; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; line-height: 1; border-radius: 3px;
+  position: relative; overflow: hidden; /* clip the ribbon stripes to this box -- nothing here can ever spill past it */
+}
+.ow-offer-badge:not(:empty) { background: #f59e0b; border: 1px solid #b45309; z-index: 1; }
+/* Ribbon cross -- a thin lighter stripe each way through the chip, like a
+   gift box's ribbon -- so the mark reads as "gift" even if the 🎁 glyph
+   itself renders blank (no explicit emoji font in this app's stack). Both
+   stripes are sized/positioned in px relative to THIS box (position:relative
+   above) and clipped by its own overflow:hidden, so -- unlike the box-shadow
+   ring this replaced -- there is no way for either stripe to render outside
+   the badge's own 15x15 footprint. */
+.ow-offer-badge:not(:empty)::before { content: ''; position: absolute; left: 6px; top: 0; width: 3px; height: 15px; background: #fde68a; }
+.ow-offer-badge:not(:empty)::after { content: ''; position: absolute; top: 6px; left: 0; width: 15px; height: 3px; background: #fde68a; }
+.ow-offer-badge > span { position: relative; z-index: 2; }
 .ow-qty-diff {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 1px 6px; border-radius: 10px;
@@ -8270,12 +8536,31 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-qty-diff-up { color: var(--nx-success-ink); background: var(--nx-success-sunk); }
 .ow-qty-diff-down { color: var(--nx-danger-ink); background: var(--nx-danger-sunk); }
 .ow-qty-diff-flat { color: var(--nx-info-ink); background: var(--nx-info-sunk); }
-/* Active row: one clean, unambiguous highlight across the FULL row (every td,
+/* Active row: a clean, unambiguous highlight across the FULL row (every td,
    not just a left accent bar) so it always reads distinctly from hover/zebra/
-   assigned rows. Plain theme token (not color-mix()) so it renders reliably. */
-.ow-screen tbody tr.ow-row-sel > td { background: var(--nx-accent-sunk) !important; }
-.ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-accent); }
+   assigned rows, without going full solid-fill (that read as too flat/harsh
+   -- spreadsheet apps like Excel/Sheets use a translucent tint over normal
+   text, not an inverted block, so cell content stays legible at a glance).
+   Plain rgba, NOT color-mix() -- this app's Electron (22.3.27) ships
+   Chromium ~108, which predates color-mix() support (Chromium 111); that
+   rule silently failed to apply at all, leaving selected rows unstyled. */
+.ow-screen tbody tr.ow-row-sel > td { background: rgba(37, 99, 235, 0.22) !important; }
+.ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 4px 0 0 var(--nx-accent); }
+.ow-screen tbody tr.ow-row-sel .ow-chip,
+.ow-screen tbody tr.ow-row-sel .ow-qty-diff { filter: brightness(1.3) saturate(1.2); }
+/* The row's first cell (S.No) is the keyboard target when its qty box is
+   disabled (assigned rows) or absent (read-only Assigned grid) -- see
+   owFocusSupplierRow/the Assigned grid's first-<td> ref (a <tr> itself is an
+   unreliable keydown target in this app's older Chromium). The selection tint
+   already shows which row it is, so suppress the default focus outline that
+   would otherwise ring just that one cell oddly. */
+.ow-screen tbody td:focus { outline: none; }
 .ow-empty { padding: 1.2rem; text-align: center; color: var(--nx-text-muted); }
+
+/* "Load all products" toggle: a normal small button that reads clearly as ON
+   when active (accent fill), so the operator always knows the grid is showing
+   the full open list rather than a supplier's matched set. */
+.ow-loadall-toggle.active { background: var(--nx-accent); color: #fff; border-color: var(--nx-accent); }
 
 /* ===== Order Workspace layout: main grid on top, intelligence dock below ===== */
 .ow-title { margin: 0 2px 0 0; padding-left: 2px; font-size: 13px; font-weight: 800; letter-spacing: 0.01em; color: var(--nx-text); white-space: nowrap; }
@@ -8354,7 +8639,7 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-panel--purchase .ow-col-ptr { font-weight: 700; color: var(--nx-text); }
 .ow-panel--purchase .ow-col-mrp { color: var(--nx-accent-ink); }
 .ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
-.ow-freerow > td { background: rgba(245, 158, 11, 0.16); }
+.ow-freerow > td { background: rgba(236, 20, 130, 0.42); }
 
 /* Compact monthly trend chart. Semantic colors are fixed and must never swap:
    In = blue, Out = green, Stock = red, Adjustment = purple -- everywhere
@@ -8523,6 +8808,12 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    grow (Product Name) column has no width and takes the remaining space. */
 .ow-cfg { table-layout: fixed; width: 100%; }
 .ow-cfg th, .ow-cfg td { overflow: hidden; text-overflow: ellipsis; }
+/* Header LABELS (not body cell content) never need ellipsis-truncation --
+   they're short, fixed words ("S.No", "MRP"...), and the generic rule above
+   was clipping "S.No" down to "S..." in a column sized for a 1-3 digit
+   number, not its own label. Body cells keep the ellipsis behavior (that's
+   for genuinely-long cell CONTENT, e.g. a long product name). */
+.ow-cfg thead th { overflow: visible; text-overflow: clip; }
 /* The Or Qty cell holds a form control, not text -- never ellipsis-clip it (that
    was rendering a stray "." at the cell edge for narrow columns). */
 .ow-cfg td:has(.ow-qty) { overflow: visible; text-overflow: clip; }
@@ -9082,14 +9373,22 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 
 /* The matrix reuses the compact mini-table. Fixed layout + no-wrap/ellipsis so
    long names (supplier/customer/product) never word-wrap and never force a
-   horizontal scrollbar — they truncate with a hover tooltip. */
+   horizontal scrollbar — they truncate with a hover tooltip. The Purchase
+   panel is the exception (see .scm-cell--purchase below): too many numeric
+   columns (Qty/Free/Dis%/PTR/Cost) were squeezing Supplier unreadable, so
+   that one scrolls horizontally instead of truncating the supplier name. */
 .scm-cell .ns-mini-table { flex: none; overflow: visible; table-layout: fixed; width: 100%; }
 .scm-cell .ns-mini-table th,
 .scm-cell .ns-mini-table td {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* Numeric columns stay narrow so text columns get the remaining width. */
+.scm-cell--purchase .ns-mini-table { table-layout: auto; width: auto; min-width: 100%; }
+.scm-cell--purchase .ns-mini-table th,
+.scm-cell--purchase .ns-mini-table td { white-space: nowrap; overflow: visible; text-overflow: clip; }
+/* Numeric columns stay narrow so text columns get the remaining width.
+   (Purchase panel is excluded — it uses auto layout, see below.) */
 .scm-cell .ns-mini-table .num-col { width: 42px; }
+.scm-cell--purchase .ns-mini-table .num-col { width: auto; }
 /* Light-tinted sub-grid header carrying the section's semantic colour (same
    family as the left band), with dark readable text; pinned to the top of the
    cell. Table BODY stays neutral. Scoped to the matrix only. */
@@ -9124,12 +9423,18 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    GRN Date) get room while numerics stay tight. */
 .scm-cell--grid .ns-mini-table td:nth-child(2), .scm-cell--grid .ns-mini-table th:nth-child(2) { width: 38px; }
 .scm-cell--grid .ns-mini-table td:nth-child(3), .scm-cell--grid .ns-mini-table th:nth-child(3) { width: 46px; }
-.scm-cell--purchase .ns-mini-table td:nth-child(1), .scm-cell--purchase .ns-mini-table th:nth-child(1) { width: 30px; }
-.scm-cell--purchase .ns-mini-table td:nth-child(2), .scm-cell--purchase .ns-mini-table th:nth-child(2) { width: 28px; }
-.scm-cell--purchase .ns-mini-table td:nth-child(3), .scm-cell--purchase .ns-mini-table th:nth-child(3) { width: 44px; }
-.scm-cell--purchase .ns-mini-table td:nth-child(4), .scm-cell--purchase .ns-mini-table th:nth-child(4) { width: 44px; }
-.scm-cell--purchase .ns-mini-table td:nth-child(5), .scm-cell--purchase .ns-mini-table th:nth-child(5) { width: 48px; }
-.scm-cell--purchase .ns-mini-table td:nth-child(6), .scm-cell--purchase .ns-mini-table th:nth-child(6) { width: 58px; }
+/* auto layout now (see .scm-cell--purchase above): Qty/Free/Dis%/PTR/Cost
+   are padding-sized to their content (tight — 2-3 digit numbers), GRN Date
+   gets a sane minimum, and Supplier (last column, unconstrained) gets
+   whatever is left — with the panel scrolling horizontally if that's still
+   not enough for a long name instead of truncating it. */
+.scm-cell--purchase .ns-mini-table td:nth-child(1), .scm-cell--purchase .ns-mini-table th:nth-child(1) { padding-left: 4px; padding-right: 4px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(2), .scm-cell--purchase .ns-mini-table th:nth-child(2) { padding-left: 4px; padding-right: 4px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(3), .scm-cell--purchase .ns-mini-table th:nth-child(3) { padding-left: 4px; padding-right: 4px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(4), .scm-cell--purchase .ns-mini-table th:nth-child(4) { padding-left: 4px; padding-right: 4px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(5), .scm-cell--purchase .ns-mini-table th:nth-child(5) { padding-left: 4px; padding-right: 4px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(6), .scm-cell--purchase .ns-mini-table th:nth-child(6) { min-width: 56px; }
+.scm-cell--purchase .ns-mini-table td:nth-child(7), .scm-cell--purchase .ns-mini-table th:nth-child(7) { min-width: 64px; }
 .scm-cell--sales .ns-mini-table td:nth-child(1), .scm-cell--sales .ns-mini-table th:nth-child(1) { width: 56px; }
 .scm-cell--sales .ns-mini-table td:nth-child(3), .scm-cell--sales .ns-mini-table th:nth-child(3) { width: 32px; }
 .scm-cell--sales .ns-mini-table td:nth-child(4), .scm-cell--sales .ns-mini-table th:nth-child(4) { width: 42px; }
@@ -9181,8 +9486,6 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   .scm-cell .ns-mini-table thead th { padding: 3px 5px; }
   .scm-cell .ns-mini-table tbody td { padding: 2px 5px; }
   .scm-cell .ns-mini-table .num-col { width: 38px; }
+  .scm-cell--purchase .ns-mini-table .num-col { width: auto; }
   .scm-cell--batch .ns-mini-table td:nth-child(3), .scm-cell--batch .ns-mini-table th:nth-child(3) { width: 52px; }
-  .scm-cell--purchase .ns-mini-table td:nth-child(3), .scm-cell--purchase .ns-mini-table th:nth-child(3) { width: 40px; }
-  .scm-cell--purchase .ns-mini-table td:nth-child(4), .scm-cell--purchase .ns-mini-table th:nth-child(4) { width: 40px; }
-  .scm-cell--purchase .ns-mini-table td:nth-child(5), .scm-cell--purchase .ns-mini-table th:nth-child(5) { width: 44px; }
 }

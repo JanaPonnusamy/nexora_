@@ -1,5 +1,6 @@
 """Reads from the legacy OrderNMC database."""
 from modules.legacy_order import database
+from modules.product_mapping import repository as product_mapping_repository
 
 
 _WORKFLOW_SCHEMA_SQL = """
@@ -52,6 +53,101 @@ def _latest_order_id(cur, store_name):
     return int(row[0]) if row and row[0] is not None else None
 
 
+class NoCurrentDateOrder(RuntimeError):
+    """Raised by current_date_order when the store's latest order either does
+    not exist, or exists but was not generated today -- i.e. there is no
+    unambiguous "today's order" to validate pending rows against. Callers
+    must stop and report rather than guess (e.g. falling back to whatever
+    MAX(OrderId) happens to be, which could be a stale, already-reviewed
+    order from a previous day that was simply never regenerated)."""
+    def __init__(self, store_name, reason):
+        self.store_name = store_name
+        self.reason = reason
+        super().__init__(f"'{store_name}': {reason}")
+
+
+def current_date_order(cur, store_name):
+    """Resolve "the current-date order" for a store, proven rather than
+    assumed.
+
+    OrderId is NOT a sequence -- it is a per-second timestamp string stamped
+    onto every row a single order_process run produces (see sql/order_local.
+    sql: CONVERT(VARCHAR(8), GETDATE(), 112) + HH + MM + SS). MAX(OrderId) is
+    therefore "the most recently generated order", which is only the SAME
+    thing as "today's order" if that run actually happened today -- an
+    untouched store whose last run was yesterday (or longer ago) would
+    otherwise have its stale order silently treated as current.
+
+    This is checked two independent ways against the SAME row, both must
+    agree:
+      1. the OrderId's own leading 8 characters (YYYYMMDD, the date portion
+         VB/this port stamps it with) equal today's date, and
+      2. WantedDate (the business date column, set to GETDATE() at the same
+         generation moment -- see order_process.COLUMN_MAP) falls on the
+         same calendar day.
+    "Today" is read from the DATABASE server's clock (GETDATE()), not the
+    application host's, so this can't drift from whatever server actually
+    time-stamped the rows.
+
+    Returns the int OrderId if both checks agree it is today's. Raises
+    NoCurrentDateOrder if there is no order at all, or the latest one is not
+    from today, or the two date signals disagree with each other (a torn/
+    unexpected row the caller should not silently act on).
+    """
+    row = cur.execute(
+        """
+        SELECT MAX(OrderId) AS LatestOrderId,
+               CONVERT(VARCHAR(8), GETDATE(), 112) AS TodayStamp
+        FROM OrderManagement WHERE StoreName = ?
+        """,
+        store_name,
+    ).fetchone()
+    latest_order_id = row.LatestOrderId if row else None
+    if latest_order_id is None:
+        raise NoCurrentDateOrder(store_name, "no order has been generated for this store yet.")
+    today_stamp = row.TodayStamp
+    order_id_str = str(int(latest_order_id))
+    order_id_date = order_id_str[:8] if len(order_id_str) >= 8 else None
+
+    wanted_row = cur.execute(
+        "SELECT TOP 1 CONVERT(VARCHAR(8), WantedDate, 112) AS WantedStamp "
+        "FROM OrderManagement WHERE StoreName = ? AND OrderId = ?",
+        store_name, latest_order_id,
+    ).fetchone()
+    wanted_stamp = wanted_row.WantedStamp if wanted_row and wanted_row.WantedStamp else None
+
+    if order_id_date != today_stamp:
+        raise NoCurrentDateOrder(
+            store_name,
+            f"the latest order (#{latest_order_id}) was generated on "
+            f"{order_id_date}, not today ({today_stamp}). Refusing to treat "
+            "it as the current-date order.",
+        )
+    if wanted_stamp is not None and wanted_stamp != today_stamp:
+        raise NoCurrentDateOrder(
+            store_name,
+            f"the latest order (#{latest_order_id})'s OrderId date "
+            f"({order_id_date}) and WantedDate ({wanted_stamp}) disagree -- "
+            "cannot unambiguously identify today's order.",
+        )
+    return int(latest_order_id)
+
+
+def require_current_date_order_if_any(store_name):
+    """Own-connection wrapper around current_date_order for callers (service.
+    start_order_process) that just need the pre-flight validation, same
+    pattern as qty_check_confirmation_count -- a single mockable repository
+    call rather than the caller opening its own connection inline.
+
+    A store with no order yet is fine (nothing to validate) -- only raises
+    NoCurrentDateOrder when an order EXISTS but is not provably today's."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        if _latest_order_id(cur, store_name) is None:
+            return None
+        return current_date_order(cur, store_name)
+
+
 def _workflow_counts(cur, store_name, order_id):
     row = cur.execute(
         """
@@ -91,6 +187,151 @@ def _record_line_audit(cur, store_name, order_id, product_code, action, old_valu
         None if old_value is None else str(old_value),
         None if new_value is None else str(new_value), actor,
     )
+
+
+def record_protected_backup_snapshot(cur, store_name, order_id):
+    """Pre-flight audit signal for the backup that insert_data_into_
+    destination is about to take (see that function -- it unconditionally
+    backs up EVERY row, every status, before every destructive rewrite, in
+    the same transaction; this does not change what gets backed up).
+
+    Counts rows for the CURRENT order that are both reviewed (QtyCheck = 1)
+    and already assigned to a supplier (Status = 1) -- i.e. rows a user has
+    both confirmed the quantity on AND handed to a supplier, the most
+    "finished" state a line reaches before export. When more than one such
+    row exists, this writes an explicit LegacyOrderWorkflowAudit entry
+    naming the count, so there is a durable, queryable record that THIS
+    run's backup snapshot is what protects that reviewed+assigned work --
+    distinct from the generic "order regenerated" signal a new OrderId
+    already implies. Returns the count (0 if order_id is None or no rows
+    qualify)."""
+    if order_id is None:
+        return 0
+    row = cur.execute(
+        "SELECT COUNT(*) FROM OrderManagement "
+        "WHERE StoreName = ? AND OrderId = ? AND QtyCheck = 1 AND Status = 1",
+        store_name, order_id,
+    ).fetchone()
+    count = int(row[0]) if row and row[0] is not None else 0
+    if count > 1:
+        _record_line_audit(
+            cur, store_name, order_id, None, "PROTECTED_BACKUP_SNAPSHOT",
+            None, f"{count} reviewed+assigned line(s) protected by this run's backup.", None,
+        )
+    return count
+
+
+_LOCK_APPLOCK_PREFIX = "LegacyOrderProcessingLock:"
+
+
+def _with_store_applock(cur, store_name):
+    """Serialize the whole check-then-write critical section for this store
+    across concurrent connections/transactions.
+
+    Plain READ COMMITTED locking does NOT make the existing SELECT-then-MERGE
+    sequence atomic: a SELECT finding no row takes no lock on that absence
+    (there is no range/gap lock outside SERIALIZABLE), so two concurrent
+    callers can both read 'no active lock' before either commits, then both
+    reach the MERGE. MERGE's own MATCHED/NOT MATCHED decision is evaluated
+    against that same unprotected read, so the second writer can either block
+    and still attempt the INSERT branch (raising a PK violation on
+    StoreName), or -- depending on the query plan -- succeed silently with a
+    stale decision. sp_getapplock, scoped to one transaction (@LockOwner =
+    'Transaction', auto-released on commit/rollback), closes that gap by
+    making the second caller block until the first transaction ends, so it
+    always re-observes the first caller's committed state rather than racing
+    its read. HOLDLOCK/UPDLOCK on the SELECT would also work for this
+    single-row target, but the app lock composes more simply with the extra
+    OrderManagement read already inside this same critical section."""
+    cur.execute(
+        "DECLARE @r INT; EXEC @r = sp_getapplock @Resource = ?, @LockMode = 'Exclusive', "
+        "@LockOwner = 'Transaction', @LockTimeout = 10000; IF @r < 0 "
+        "RAISERROR('Could not acquire the processing lock for %s (timeout or deadlock).', 16, 1, ?);",
+        f"{_LOCK_APPLOCK_PREFIX}{store_name}", store_name,
+    )
+    while cur.nextset():
+        pass
+
+
+def pending_export_count_on_connection(cur, store_name):
+    """Count of Status = 0 (not yet assigned to a supplier, so never
+    exported -- see order_export.export_order, which assigns Status 0->1
+    and exports in the same call) rows on the CURRENT order, on a cursor the
+    caller already owns.
+
+    This is a WARNING signal, not a lock: it is never persisted anywhere, so
+    there is nothing here for an administrator to "unlock" -- the business
+    rule this replaces (a permanent dbo.LegacyOrderProcessingLock row
+    blocking every future Process attempt until explicitly unlocked) was
+    removed because pending Status = 0 lines are routine mid-review state,
+    not evidence of a problem. Returns (order_id, count); (None, 0) if no
+    order exists yet."""
+    order_id = _latest_order_id(cur, store_name)
+    if order_id is None:
+        return None, 0
+    row = cur.execute(
+        "SELECT COUNT(*) FROM OrderManagement WHERE StoreName = ? AND OrderId = ? AND Status = 0",
+        store_name, order_id,
+    ).fetchone()
+    return order_id, int(row[0]) if row and row[0] is not None else 0
+
+
+class PendingExportBlocked(RuntimeError):
+    """Raised by require_no_pending_export_on_connection -- used ONLY by the
+    restore-by-OrderId workflow (restore_backup_order), which keeps a hard,
+    non-overridable block on pending Status = 0 lines: restoring backup data
+    overwrites the CURRENT live rows by ProductCode match, which is exactly
+    the data an in-flight qty-check edit on a pending line risks losing.
+    Order Process itself no longer uses this -- it regenerates the whole
+    order from scratch regardless of what was pending, so pending lines
+    there are expected noise (see service.start_order_process's warn+admin-
+    override gate), not a restore-style clobber risk."""
+    def __init__(self, store_name, order_id, count):
+        self.store_name = store_name
+        self.order_id = order_id
+        self.count = count
+        super().__init__(
+            f"'{store_name}' order #{order_id} has {count} line(s) pending export "
+            "(Status = 0) -- restoring over them could discard in-progress review. "
+            "Export or clear them first."
+        )
+
+
+def require_no_pending_export_on_connection(cur, store_name):
+    """Hard block for restore_backup_order: raises PendingExportBlocked if
+    the CURRENT order has any Status = 0 lines. Takes the same per-store
+    applock as the short-lived Order Process concurrency guard (requirement:
+    keep a short-lived lock preventing two simultaneous runs for the same
+    store), so this also serializes against a concurrent Process run on this
+    connection's transaction -- but, unlike the removed business lock, never
+    persists anything, so there is no separate "unlock" action; the caller
+    simply retries once the pending lines are actually gone."""
+    _with_store_applock(cur, store_name)
+    order_id, count = pending_export_count_on_connection(cur, store_name)
+    if order_id is not None and count > 0:
+        raise PendingExportBlocked(store_name, order_id, count)
+
+
+def qty_check_confirmation_count(store_name):
+    """Count of qty_check=1 AND status=0 rows for the store's latest order --
+    the same scope as pending_order_rows, minus the Pharma/Non-Pharma filter
+    (this count must reflect every row that screen can show, not a subset).
+    Returns (order_id, count, sample) where sample is up to 10 product
+    code/name pairs for the confirmation dialog. (None, 0, []) if no order
+    has been generated yet."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        order_id = _latest_order_id(cur, store_name)
+        if order_id is None:
+            return None, 0, []
+        rows = cur.execute(
+            "SELECT productcode, productname FROM ordermanagement "
+            "WHERE storename = ? AND orderid = ? AND qtycheck = 1 AND status = 0 "
+            "ORDER BY productname",
+            store_name, order_id,
+        ).fetchall()
+        sample = [{"product_code": int(r[0]), "product_name": r[1]} for r in rows[:10]]
+        return order_id, len(rows), sample
 
 
 def order_workflow_summary(store_name):
@@ -175,6 +416,73 @@ def set_order_workflow_finalized(store_name, actor, note=None, reopen=False):
         )
         conn.commit()
     return order_workflow_summary(store_name)
+
+
+def order_header_summary(store_name):
+    """Latest OrderHeaderDetails row plus the current readiness fingerprint.
+
+    Backs the Order Workspace footer (order number/date, last GRN, last C
+    bill number/date) and the
+    change-detection check on return-to-workspace: (order_id, updated_at)
+    together are the cheapest trustworthy "has anything relevant changed"
+    signal this schema has -- there is no revision/generation column, so an
+    order regeneration is only visible as a new OrderId, and a line-level
+    edit (qty/assignment) is only visible as a moved workflow UpdatedAt.
+
+    LastGRN on OrderHeaderDetails is only the GRN NUMBER captured as a
+    watermark at generation time (see update_order_header_details) -- it has
+    no paired date column, so the GRN's own date/time is read fresh from
+    PurchaseTrans here, same table/column (Grndate) that watermark read
+    itself used, rather than reusing LastBillDateTime (that is the last SALE
+    bill's timestamp, an unrelated watermark, and would mislabel the footer).
+    """
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        conn.commit()
+        order_id = _latest_order_id(cur, store_name)
+        if order_id is None:
+            return {
+                "store_name": store_name, "order_id": None, "order_no": None,
+                "order_datetime": None, "last_grn": None, "last_grn_datetime": None,
+                "last_sale_bill_no": None, "last_bill_datetime": None,
+                "updated_at": None,
+            }
+        header = cur.execute(
+            "SELECT TOP 1 OrderNo, OrderDateTime, LastGRN, LastSaleBillNo, LastBillDateTime "
+            "FROM OrderHeaderDetails WHERE StoreName = ? AND OrderId = ? "
+            "ORDER BY OrderDateTime DESC",
+            store_name, order_id,
+        ).fetchone()
+        last_grn = (header.LastGRN or None) if header else None
+        last_grn_datetime = None
+        if last_grn:
+            grn_row = cur.execute(
+                "SELECT TOP 1 Grndate FROM Purchasetrans "
+                "WHERE StoreName = ? AND Grnnumber = ? ORDER BY Grndate DESC",
+                store_name, last_grn,
+            ).fetchone()
+            if grn_row:
+                last_grn_datetime = grn_row.Grndate
+        state = cur.execute(
+            "SELECT UpdatedAt FROM dbo.LegacyOrderWorkflow WHERE StoreName = ? AND OrderId = ?",
+            store_name, order_id,
+        ).fetchone()
+        return {
+            "store_name": store_name,
+            "order_id": order_id,
+            "order_no": header.OrderNo if header else None,
+            "order_datetime": header.OrderDateTime if header else None,
+            "last_grn": last_grn,
+            "last_grn_datetime": last_grn_datetime,
+            # Last "C" sale bill -- the other watermark UpdateOrderHeaderDetails
+            # stamps alongside LastGRN (see order_process.py), captured here as-is
+            # with no re-derivation (LastBillDateTime is already that bill's own
+            # timestamp, unlike LastGRN which needed a join to get a date at all).
+            "last_sale_bill_no": (header.LastSaleBillNo or None) if header else None,
+            "last_bill_datetime": header.LastBillDateTime if header else None,
+            "updated_at": state.UpdatedAt if state else None,
+        }
 
 
 def order_workflow_audit(store_name, limit=50):
@@ -407,20 +715,100 @@ def replace_supplier_stock(target_store_name, supplier_code, rows):
         return len(rows)
 
 
+def sync_supplier_product_match_from_mapping(store_name, supplier_code, source_store_code, rows):
+    """Bridge this store's ProductCode to the source store's SupplierProductCode
+    via dbo.product_mapping (NEVER raw ProductCode equality -- the two stores'
+    catalogues are not guaranteed to share codes for the same drug) instead of
+    the manual Supplier Excel Mapping flow real suppliers use (NMW isn't a
+    real Excel-uploading supplier, so that table would otherwise stay empty
+    for it forever, see start_stock_update).
+
+    ``rows`` is the same list ``replace_supplier_stock`` was just given
+    (source store's own branch_stock() rows) -- reused here so this doesn't
+    re-fetch anything; only product_mapping lookups are new I/O.
+    """
+    store_id = database.platform_store_id(store_name)
+    source_store_id = database.platform_store_id(source_store_code)
+    if not store_id or not source_store_id:
+        return 0
+    tenant_id = database.platform_tenant_id(store_id)
+    if not tenant_id:
+        return 0
+
+    # product_mapping rows are keyed by (source_store_id, source_product_code)
+    # -> target_store_id/target_product_code. ``rows`` carries NMW's own
+    # ProductCode (r["code"]), so NMW is the mapping's "source" here and this
+    # store is the "target" -- the lookup direction is the reverse of how this
+    # store's own ProductCode would normally be looked up.
+    matches = []
+    for r in rows:
+        mapped = product_mapping_repository.search_mapped(
+            tenant_id, source_store_id, r["code"], target_store_id=store_id,
+        )
+        if mapped:
+            matches.append((mapped[0]["target_product_code"], mapped[0]["source_product_code"]))
+
+    if not matches:
+        return 0
+
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM SupplierProductMatch WHERE StoreName = ? AND SupplierCode = ?",
+            (store_name, supplier_code),
+        )
+        cur.fast_executemany = True
+        cur.executemany(
+            "INSERT INTO SupplierProductMatch (StoreName, SupplierCode, ProductCode, SupplierProductCode) "
+            "VALUES (?, ?, ?, ?)",
+            [(store_name, supplier_code, product_code, supplier_product_code)
+             for product_code, supplier_product_code in matches],
+        )
+        conn.commit()
+    return len(matches)
+
+
 def order_summary(store_name):
     """Current OrderManagement rows for a store -- what the VB grid showed."""
     sql = (
-        "SELECT OrderId, ProductCode, ProductName, TotalStock, SaleUnit, SLSQty, "
-        "MinQty, MaxQty, OrderQty, OrgOrderQty, WantedType, ProductTypeName, "
-        "Frequence, MRP, PurchasePrice, UnitDescription, SubLocation, "
-        "LastSaleDate, LastReceivedDate, WantedDate, Status, Remarks, "
-        "OrSupplier, OrSupplierCode "
-        "FROM OrderManagement WHERE StoreName = ? ORDER BY ProductName"
+        "SELECT om.OrderId, om.ProductCode, om.ProductName, om.TotalStock, om.SaleUnit, om.SLSQty, "
+        "om.MinQty, om.MaxQty, om.OrderQty, om.OrgOrderQty, om.WantedType, om.ProductTypeName, "
+        "om.Frequence, om.MRP, om.PurchasePrice, om.UnitDescription, om.SubLocation, "
+        "om.LastSaleDate, om.LastReceivedDate, om.WantedDate, om.Status, om.Remarks, "
+        "om.OrSupplier, om.OrSupplierCode, om.IsOffer "
+        "FROM OrderManagement om WHERE om.StoreName = ? ORDER BY om.ProductName"
     )
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, store_name)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def update_remarks(store_name, product_code, remarks, actor=None):
+    """Free-text remark the operator writes directly (e.g. the auto-filled
+    "9+1" offer-pattern note) -- separate from the several OTHER places that
+    incidentally stamp Remarks for their own specific marker text (no-need,
+    compare-order, after-order-sold), none of which fit an arbitrary note."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        row = cur.execute(
+            "SELECT OrderId, Remarks FROM OrderManagement WHERE StoreName = ? AND ProductCode = ?",
+            store_name, product_code,
+        ).fetchone()
+        if not row:
+            return None
+        cur.execute(
+            "UPDATE OrderManagement SET Remarks = ? WHERE StoreName = ? AND ProductCode = ?",
+            remarks, store_name, product_code,
+        )
+        if row.OrderId is not None:
+            _record_line_audit(
+                cur, store_name, int(row.OrderId), product_code, "REMARKS_CHANGED",
+                row.Remarks, remarks, actor,
+            )
+        conn.commit()
+        return {"product_code": product_code, "remarks": remarks}
 
 
 def update_order_qty(store_name, product_code, order_qty, actor=None):
@@ -465,12 +853,27 @@ def update_order_qty(store_name, product_code, order_qty, actor=None):
 def list_suppliers(store_name, search=""):
     """Port of Form1.txtSupplierSearch_TextChanged -- the supplier search list
     (dgvSupplierList). UnifiedSupplierCODE may be a comma-joined set of the
-    branch's real SupplierCodes, which is why the by-supplier filters split it."""
+    branch's real SupplierCodes, which is why the by-supplier filters split it.
+
+    Excludes only EXPLICITLY inactive suppliers. OrderSuppliers.IsActive is
+    synced in from Suppliers/sync.Suppliers (sync_engine's Suppliers->
+    OrderSuppliers projection -- see _ensure_supplier_isactive_column); it is
+    NULL for any row not yet re-synced since that column was added, so
+    treating NULL as "exclude" would wipe the picker for stores pending a
+    resync; only a confirmed IsActive=0 counts as inactive. Since
+    UnifiedSupplierCODE can be several real codes joined by commas,
+    "excluded" means ALL of them are confirmed inactive (NOT EXISTS an
+    active-or-unknown one), not just any single code among them."""
     sql = (
-        "SELECT UnifiedSupplierCODE, SupplierNAME FROM OrderSuppliers "
-        "WHERE SupplierNAME LIKE ? AND storename = ? "
-        "AND UnifiedSupplierCODE IS NOT NULL AND LTRIM(RTRIM(UnifiedSupplierCODE)) <> '' "
-        "ORDER BY SupplierNAME"
+        "SELECT UnifiedSupplierCODE, SupplierNAME FROM OrderSuppliers os "
+        "WHERE os.SupplierNAME LIKE ? AND os.storename = ? "
+        "AND os.UnifiedSupplierCODE IS NOT NULL AND LTRIM(RTRIM(os.UnifiedSupplierCODE)) <> '' "
+        "AND NOT EXISTS ("
+        "  SELECT 1 FROM dbo.SplitString(os.UnifiedSupplierCODE, ',') ss "
+        "  JOIN OrderSuppliers os2 ON os2.suppliercode = ss.Value AND os2.storename = os.storename "
+        "  WHERE os2.IsActive = 0"
+        ") "
+        "ORDER BY os.SupplierNAME"
     )
     like = f"{(search or '').strip()}%"
     with database.get_central_connection() as conn:
@@ -486,10 +889,44 @@ def list_suppliers(store_name, search=""):
 # Qtycheck is included so the By Supplier (history) grid can badge lines that
 # haven't been reviewed yet in Qty Check.
 _WORKSPACE_COLS = (
-    "om.ProductCode, om.ProductName, om.OrderQty, om.TotalStock, om.SLSQty, "
+    "om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.TotalStock, om.SLSQty, "
     "om.UnitDescription, om.SaleUnit, om.MRP, om.WantedType, om.Remarks, "
     "om.PurchasePrice, om.SubLocation, om.ProductTypeName, om.MaxQty, om.Status, "
     "om.Qtycheck"
+)
+
+# Main-grid offer indicator: has this product EVER (any supplier) had a
+# free-qty offer in its real purchase history? Same non-'TI'-transfer,
+# INT-cast-for-sargability pattern as orders_by_supplier's history EXISTS --
+# deliberately not scoped to the currently selected supplier, so the mark is
+# a general "this product sometimes comes with an offer" signal.
+_OFFER_HISTORY_EXISTS = (
+    "EXISTS (SELECT 1 FROM PurchaseTrans pt WITH (NOLOCK) "
+    "WHERE pt.ProductCode = CAST(om.ProductCode AS INT) AND pt.StoreName = om.StoreName "
+    "AND pt.InvoiceSeries <> 'TI' AND pt.FreeQty > 0)"
+)
+
+# Most recent GRN's received+free quantity, e.g. "9+1" -- used to auto-fill a
+# Remarks note when the operator's entered Or Qty is a multiple of the base.
+# A single supplier invoice's free-qty line is often SPLIT across multiple
+# PurchaseTrans rows for the same product/GRN (confirmed live on NMS,
+# 2026-10-17: 345 real cases, e.g. GRN 11783 product 9664 = row(5,0) +
+# row(5,1), a genuine "10+1" deal that reading either row alone would
+# misread as "5+1" or miss the free qty on) -- so this groups by Grnnumber
+# and SUMs both columns per bill before picking the most recent one, rather
+# than reading any single row's StockReceived/FreeQty directly.
+_LAST_OFFER_PATTERN_APPLY = (
+    "OUTER APPLY ("
+    "  SELECT TOP 1 g.base_qty AS LastOfferBaseQty, g.free_qty AS LastOfferFreeQty"
+    "  FROM ("
+    "    SELECT pt.Grnnumber, SUM(pt.StockReceived) AS base_qty, SUM(pt.FreeQty) AS free_qty, MAX(pt.GRNDate) AS grn_date"
+    "    FROM PurchaseTrans pt WITH (NOLOCK)"
+    "    WHERE pt.ProductCode = CAST(om.ProductCode AS INT) AND pt.StoreName = om.StoreName AND pt.InvoiceSeries <> 'TI'"
+    "    GROUP BY pt.Grnnumber"
+    "    HAVING SUM(pt.FreeQty) > 0"
+    "  ) g"
+    "  ORDER BY g.grn_date DESC"
+    ") lastoffer"
 )
 
 
@@ -520,16 +957,19 @@ def orders_by_supplier(store_name, supplier_code, mode):
     'TI transfer vs supplier collision' -- InvoiceSeries='TI' rows are internal
     warehouse transfers, not real supplier purchases, and must be excluded or
     a transfer's SupplierCode-shaped warehouse code can collide with a real
-    supplier's code)."""
+    supplier's code).
+
+    See qty_check_rows for why backfill_is_offer runs first."""
+    backfill_is_offer(store_name)
     if mode == "stock":
         sql = (
-            "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.TotalStock, "
+            "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.TotalStock, "
             "om.SLSQty, om.UnitDescription, om.SaleUnit, om.MRP, om.WantedType, "
             "om.Remarks, om.PurchasePrice, om.SubLocation, om.ProductTypeName, "
-            "om.MaxQty, om.Status, "
+            "om.MaxQty, om.Status, om.Qtycheck, "
             "SS.Stock AS S_Stock, SS.discound AS Discount, SS.MINQTY AS MinQty, "
             "SS.sch AS Sch, SS.free AS Free, SS.SupplierProductName, "
-            "SS.SupplierProductCode, ISNULL(SS.Rack, '') AS Rack "
+            "SS.SupplierProductCode, ISNULL(SS.Rack, '') AS Rack, om.IsOffer "
             "FROM OrderManagement om "
             "INNER JOIN SupplierProductMatch SPM "
             "  ON om.ProductCode = SPM.ProductCode AND SPM.StoreName = om.StoreName "
@@ -571,7 +1011,8 @@ def orders_by_supplier(store_name, supplier_code, mode):
             return []
         placeholders = ", ".join("?" for _ in codes)
         sql = (
-            f"SELECT {_WORKSPACE_COLS} FROM OrderManagement om "
+            f"SELECT {_WORKSPACE_COLS}, om.IsOffer "
+            "FROM OrderManagement om "
             "WHERE om.Status = 0 AND om.OrderQty > 0 "
             "AND om.ProductTypeName IN ('Pharma', 'Non Pharma') AND om.StoreName = ? "
             "AND EXISTS (SELECT 1 FROM PurchaseTrans pt WITH (NOLOCK) "
@@ -584,6 +1025,44 @@ def orders_by_supplier(store_name, supplier_code, mode):
 
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        result = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    if mode == "stock":
+        # Flag rows sourced from the NMW/Ho_code pseudo-supplier (see
+        # sync_supplier_product_match_from_mapping) so the UI can highlight
+        # "this is warehouse-backed stock, not a real supplier" distinctly.
+        store = get_store(store_name)
+        is_warehouse_stock = bool(store and store.get("ho_code") == supplier_code)
+        for row in result:
+            row["is_warehouse_stock"] = is_warehouse_stock
+    return result
+
+
+def all_open_orderables(store_name):
+    """Every still-open, orderable product (status=0, orderqty>0, Pharma/Non
+    Pharma) regardless of any supplier's purchase history or live stock.
+
+    Backs the By Supplier grid's "Load all products" toggle: the per-supplier
+    history/stock match has a known false-negative (picking the wrong one of
+    several same-named OrderSuppliers entries shows 0 history for a product the
+    supplier genuinely carries), so the operator needs a way to see the full
+    open list and still assign a missed product to the picked supplier. Same
+    PascalCase projection + offer flag as orders_by_supplier's history branch,
+    so the grid renders it identically (minus the per-supplier stock columns,
+    which don't exist for an unmatched product).
+
+    See qty_check_rows for why backfill_is_offer runs first."""
+    backfill_is_offer(store_name)
+    sql = (
+        f"SELECT {_WORKSPACE_COLS}, om.IsOffer "
+        "FROM OrderManagement om "
+        "WHERE om.Status = 0 AND om.OrderQty > 0 "
+        "AND om.ProductTypeName IN ('Pharma', 'Non Pharma') AND om.StoreName = ? "
+        "ORDER BY om.ProductTypeName, om.ProductName"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, store_name)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -613,19 +1092,116 @@ def orders_by_supplier_export_count(store_name, supplier_code):
 
 def assigned_orders(store_name, supplier_code):
     """Port of Form1.FetchSupplierOrderDetails -- rows already assigned to this
-    supplier (status=1)."""
+    supplier (status=1). See qty_check_rows for why backfill_is_offer runs
+    first."""
+    backfill_is_offer(store_name)
     sql = (
-        "SELECT ProductCode, ProductName, OrderQty, SaleUnit, MRP, OrSupplier, "
-        "Remarks, PurchasePrice, TotalStock, WantedType, ProductTypeName, Status "
-        "FROM OrderManagement "
-        "WHERE status = 1 AND orderqty > 0 AND storename = ? "
-        "AND orsuppliercode IN (SELECT Value FROM dbo.SplitString(?, ',')) "
-        "ORDER BY ProductName"
+        "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.SaleUnit, om.MRP, om.OrSupplier, "
+        "om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck "
+        "FROM OrderManagement om "
+        "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
+        "AND om.orsuppliercode IN (SELECT Value FROM dbo.SplitString(?, ',')) "
+        "ORDER BY om.ProductName"
     )
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, store_name, supplier_code)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def all_assigned_orders(store_name):
+    """Every assigned row (status=1, orderqty>0) for the store across ALL
+    suppliers at once -- the "All Suppliers" view of Supplier Order Details,
+    for reviewing the whole day's orders in one grid instead of switching
+    supplier by supplier. Same shape as assigned_orders(), just without the
+    supplier_code filter (OrSupplier is included so the grid can show which
+    supplier each row went to, since that's no longer implied by a single
+    picked supplier).
+
+    See qty_check_rows for why backfill_is_offer runs first."""
+    backfill_is_offer(store_name)
+    sql = (
+        "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.SaleUnit, om.MRP, om.OrSupplier, "
+        "om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck "
+        "FROM OrderManagement om "
+        "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
+        "ORDER BY om.OrSupplier, om.ProductName"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, store_name)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def assigned_orders_with_supplier_stock(store_name, supplier_code):
+    """assigned_orders() plus the supplier's own live stock for each line
+    (SupplierStock.Stock, via SupplierProductMatch -- same join
+    orders_by_supplier's mode='stock' and orders_by_supplier_export_count
+    already use). A LEFT JOIN, not INNER: a product with no
+    SupplierProductMatch row at all is just as "not available from this
+    supplier" as one matched with Stock=0, so both must come back (NULL
+    supplier_stock), not be silently dropped."""
+    sql = (
+        "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.SaleUnit, om.MRP, "
+        "om.OrSupplier, om.Remarks, om.PurchasePrice, om.TotalStock, om.WantedType, "
+        "om.ProductTypeName, om.Status, SS.Stock AS SupplierStock "
+        "FROM OrderManagement om "
+        "LEFT JOIN SupplierProductMatch SPM "
+        "  ON om.ProductCode = SPM.ProductCode AND SPM.StoreName = om.StoreName "
+        "  AND SPM.SupplierCode = ? "
+        "LEFT JOIN SupplierStock SS "
+        "  ON SS.SupplierProductCode = SPM.SupplierProductCode "
+        "  AND SS.SupplierCode = ? AND SS.storename = om.StoreName "
+        "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
+        "AND om.orsuppliercode IN (SELECT Value FROM dbo.SplitString(?, ',')) "
+        "ORDER BY om.ProductName"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, supplier_code, supplier_code, store_name, supplier_code)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def remove_unavailable_from_supplier(store_name, supplier_code, actor=None):
+    """The operator exports an order to a supplier, then the supplier comes
+    back saying some lines are out of stock. Rather than unassigning one
+    product at a time, find every currently-assigned line for this supplier
+    where the supplier's OWN live stock (SupplierStock.Stock) is <= 0 or
+    unmatched, and drop them back to open (status=0, OrSupplier/
+    OrSupplierCode=NULL) with qtycheck=1 so another supplier can pick them up
+    without re-triggering the Qty Check review step. Returns the list of
+    product codes actually removed."""
+    rows = assigned_orders_with_supplier_stock(store_name, supplier_code)
+    unavailable = [r for r in rows if not r.get("SupplierStock") or float(r["SupplierStock"]) <= 0]
+    if not unavailable:
+        return []
+    product_codes = [r["ProductCode"] for r in unavailable]
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        placeholders = ",".join("?" for _ in product_codes)
+        order_ids = cur.execute(
+            f"SELECT ProductCode, OrderId FROM ordermanagement "
+            f"WHERE storename = ? AND productcode IN ({placeholders})",
+            store_name, *product_codes,
+        ).fetchall()
+        order_id_by_code = {row.ProductCode: row.OrderId for row in order_ids}
+        cur.execute(
+            f"UPDATE ordermanagement SET orqty = NULL, orsupplier = NULL, "
+            f"orsuppliercode = NULL, status = 0, qtycheck = 1 "
+            f"WHERE storename = ? AND status = 1 AND orsuppliercode = ? "
+            f"AND productcode IN ({placeholders})",
+            store_name, supplier_code, *product_codes,
+        )
+        for code in product_codes:
+            order_id = order_id_by_code.get(code)
+            if order_id is not None:
+                _record_line_audit(
+                    cur, store_name, int(order_id), code, "SUPPLIER_UNASSIGNED_STOCKOUT",
+                    supplier_code, None, actor,
+                )
+        conn.commit()
+    return product_codes
 
 
 def assign_supplier(store_name, product_code, supplier_code, supplier_name, actor=None):
@@ -710,13 +1286,32 @@ def bulk_assign_rows(store_name, supplier_code, supplier_name, product_codes, ac
 
 def qty_check_rows(store_name):
     """Port of Form1.GetQtyCheckQuery('All', 'All') -- the Qty Check screen's
-    main grid: only rows not yet reviewed (qtycheck = 0, status = 0)."""
+    main grid: only rows not yet reviewed (qtycheck = 0, status = 0).
+
+    IsOffer is read directly off OrderManagement (set once per product at
+    order-generation time -- see order_process.insert_data_into_destination /
+    migration 0007) instead of recomputed here via a correlated EXISTS
+    against PurchaseTrans. That subquery, run once per row on every grid
+    load, measured at 77s for a store with 1385 open rows against a 278K-row
+    PurchaseTrans table -- comfortably over the desktop client's 45s request
+    timeout. LastOfferBaseQty/LastOfferFreeQty are left as a live OUTER APPLY
+    for now (out of scope for this fix -- see repository.py history).
+
+    backfill_is_offer(store_name) is called first (set-based UPDATE, ~1-2s
+    even on NMW/NMA, 0.1s when nothing changed -- see timing note in that
+    function's docstring) so a free-qty GRN posted after the order was last
+    generated shows its 🎁 on this grid immediately, not just after the next
+    order-generation run."""
+    backfill_is_offer(store_name)
     sql = (
-        "SELECT productcode, productname, orderqty, totalstock, saleunit, unitdescription, "
-        "slsqty, mrp, lastreceiveddate, lastsaledate, maxsaleqty, Transactiondate, wantedtype, "
-        "producttypename "
-        "FROM ordermanagement WHERE qtycheck = 0 AND status = 0 AND storename = ? "
-        "ORDER BY productname"
+        "SELECT om.productcode, om.productname, om.orderqty, om.orgorderqty, om.totalstock, om.saleunit, om.unitdescription, "
+        "om.slsqty, om.mrp, om.lastreceiveddate, om.lastsaledate, om.maxsaleqty, om.Transactiondate, om.wantedtype, "
+        "om.producttypename, om.remarks, om.IsOffer, "
+        "lastoffer.LastOfferBaseQty, lastoffer.LastOfferFreeQty "
+        "FROM ordermanagement om "
+        f"{_LAST_OFFER_PATTERN_APPLY} "
+        "WHERE om.qtycheck = 0 AND om.status = 0 AND om.storename = ? "
+        "ORDER BY om.productname"
     )
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, store_name)
@@ -733,18 +1328,57 @@ def pending_order_rows(store_name):
     (the only two values that ever appear). Always includes producttypename
     so callers can apply the All/Pharma/Non Pharma filter client-side -- same
     pattern as qty_check_rows -- instead of a network round-trip per filter
-    change."""
+    change. See qty_check_rows for why backfill_is_offer runs first."""
+    backfill_is_offer(store_name)
     sql = (
-        "SELECT productcode, productname, orderqty, totalstock, slsqty, unitdescription, "
-        "saleunit, mrp, lastreceiveddate, lastsaledate, maxsaleqty, Transactiondate, wantedtype, "
-        "producttypename "
-        "FROM ordermanagement WHERE qtycheck = 1 AND status = 0 AND storename = ? "
-        "AND producttypename IN ('Pharma', 'Non Pharma') ORDER BY productname"
+        "SELECT om.productcode, om.productname, om.orderqty, om.orgorderqty, om.totalstock, om.slsqty, om.unitdescription, "
+        "om.saleunit, om.mrp, om.lastreceiveddate, om.lastsaledate, om.maxsaleqty, om.Transactiondate, om.wantedtype, "
+        "om.producttypename, om.remarks, om.IsOffer, "
+        "lastoffer.LastOfferBaseQty, lastoffer.LastOfferFreeQty "
+        "FROM ordermanagement om "
+        f"{_LAST_OFFER_PATTERN_APPLY} "
+        "WHERE om.qtycheck = 1 AND om.status = 0 AND om.storename = ? "
+        "AND om.producttypename IN ('Pharma', 'Non Pharma') ORDER BY om.productname"
     )
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, store_name)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def backfill_is_offer(store_name):
+    """Per-store refresh for OrderManagement.IsOffer. Originally a one-time
+    backfill (migration 0007 adds the column defaulted to 0; existing rows
+    from before this change needed this run once), it is now ALSO called by
+    every Order Workspace grid read (qty_check_rows, pending_order_rows,
+    orders_by_supplier, all_open_orderables, assigned_orders,
+    all_assigned_orders) so a free-qty GRN posted to PurchaseTrans after the
+    order was last generated shows up immediately instead of waiting for the
+    next order-generation run.
+
+    This is a set-based UPDATE (not the per-row correlated EXISTS that
+    measured 77s and was rejected -- see qty_check_rows), so it's cheap even
+    on the live DB: measured ~2s for NMW/NMA (whole-store scan touching
+    every still-open row) and ~0.1s when nothing needs updating (idempotent,
+    re-run after the first catch-up each cycle is nearly free).
+
+    Safe to re-run -- idempotent, only ever sets IsOffer=1 where the live
+    PurchaseTrans history says so, never clears an existing 1."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE om SET om.IsOffer = 1 "
+            "FROM OrderManagement om "
+            "WHERE om.StoreName = ? AND om.IsOffer = 0 "
+            "AND EXISTS (SELECT 1 FROM PurchaseTrans pt WITH (NOLOCK) "
+            "  WHERE pt.ProductCode = CAST(om.ProductCode AS INT) "
+            "  AND pt.StoreName = om.StoreName "
+            "  AND pt.InvoiceSeries <> 'TI' AND pt.FreeQty > 0)",
+            store_name,
+        )
+        updated = cur.rowcount
+        conn.commit()
+        return updated
 
 
 def reset_pending_qty_check(store_name, actor=None):
@@ -860,31 +1494,48 @@ def qty_check_purchase_details(store, product_code, mode):
 
 def qty_check_sales_details(store, product_code, mode):
     """Port of RetrieveDataForSalesDetailsAsync -- last 10 sale lines for a
-    product, from ProductSaleInformation/SaleInformation/SalesRep."""
+    product, from ProductSaleInformation/SaleInformation/SalesRep.
+
+    Pre-limits ProductSaleInformation to its 40 most recent rows for this
+    product (via IX_ProductSaleInformation_Main -- an index seek on
+    ProductCode/TransactionValidity/StoreName with TransactionDate as the 4th
+    key column, already ordered) BEFORE joining out to SaleInformation/
+    SalesRep and sorting. The original query joined+grouped+sorted ALL of a
+    product's historical sale lines (by s.BillTime, not covered by any index
+    that also covers the WHERE filter) before applying TOP 10 -- fine for a
+    slow mover, but a measured 1.9s for a genuine fast-mover (KIT KAT RS.10/-,
+    3.3M total rows in the table) during a 2026-10-17 10-product timing check.
+    40 (not 10) leaves slack for the GROUP BY to ever collapse multiple PS
+    rows into fewer billed lines without starving the final TOP 10."""
     is_local = mode != "remote"
     store_filter = " AND {alias}.StoreName = ?"
 
     sql = (
-        "SELECT TOP 10 SUM(PS.quantity) AS TotalQuantity, s.Billtime AS Bill_Time, "
-        "sr.Salesmanname, s.CUSTOMERNAME, PS.DiscountPercentage AS dis, "
-        "PS.Seriesname AS type, PS.mrp, PS.purchaseprice AS ptr, PS.Bnumber "
-        "FROM ProductSaleInformation PS "
-        "INNER JOIN saleinformation s ON PS.BillNumber = s.BillNumber AND PS.TransactionDate = s.BillDate"
+        ";WITH recent AS (\n"
+        "  SELECT TOP 40 PS.Bnumber, PS.BillNumber, PS.TransactionDate, PS.quantity, "
+        "PS.DiscountPercentage, PS.Seriesname, PS.mrp, PS.purchaseprice, PS.Lastadjustmentdate\n"
+        "  FROM ProductSaleInformation PS WITH (NOLOCK)\n"
+        "  WHERE PS.ProductCode = ? AND PS.TransactionValidity = 0"
+        + (store_filter.format(alias="PS") if is_local else "") + "\n"
+        "  ORDER BY PS.TransactionDate DESC\n"
+        ")\n"
+        "SELECT TOP 10 SUM(r.quantity) AS TotalQuantity, s.Billtime AS Bill_Time, "
+        "sr.Salesmanname, s.CUSTOMERNAME, r.DiscountPercentage AS dis, "
+        "r.Seriesname AS type, r.mrp, r.purchaseprice AS ptr, r.Bnumber "
+        "FROM recent r "
+        "INNER JOIN saleinformation s ON r.BillNumber = s.BillNumber AND r.TransactionDate = s.BillDate"
         + (store_filter.format(alias="s") if is_local else "") + " "
         "INNER JOIN SalesRep sr ON s.DeliverySalesRep = sr.Salesmancode"
         + (store_filter.format(alias="sr") if is_local else "") + " "
-        "WHERE PS.ProductCode = ? AND PS.TransactionValidity = 0"
-        + (store_filter.format(alias="PS") if is_local else "") + " "
-        "GROUP BY PS.Bnumber, s.BillTime, s.CUSTOMERNAME, PS.Seriesname, PS.mrp, "
-        "PS.purchaseprice, PS.Lastadjustmentdate, PS.DiscountPercentage, sr.Salesmanname "
+        "GROUP BY r.Bnumber, s.BillTime, s.CUSTOMERNAME, r.Seriesname, r.mrp, "
+        "r.purchaseprice, r.Lastadjustmentdate, r.DiscountPercentage, sr.Salesmanname "
         "ORDER BY s.BillTime DESC"
     )
-    params = []
+    params = [product_code]
     if is_local:
         params.append(store["store_name"])
     if is_local:
         params.append(store["store_name"])
-    params.append(product_code)
     if is_local:
         params.append(store["store_name"])
 
@@ -1132,6 +1783,202 @@ def compare_previous_order(store_name, order_id):
                     break
             conn.commit()
             return {"store_name": store_name, "order_id": order_id, "affected_rows": affected}
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --------------------------------------------------------------------------
+# Restore by OrderId -- an explicit, admin-initiated recovery workflow, new
+# in this module (the existing compare_previous_order* functions apply the
+# VB.NET comparison HEURISTICS on top of a backup; this is an unconditional
+# restore of a specific, operator-selected backup order back onto the
+# matching current rows). See restore_backup_order below for the full
+# safety contract.
+# --------------------------------------------------------------------------
+
+class RestoreValidationError(ValueError):
+    """The selected backup cannot be safely restored as requested -- missing
+    rows, wrong store, or some other precondition failed. Carries a plain
+    message; never partially restores."""
+
+
+def restorable_order_preview(store_name, order_id):
+    """Everything restore_backup_order's confirmation screen needs to show
+    before an operator commits: backup timestamp, product count, and the
+    suppliers represented, scoped to (store_name, order_id) in
+    OrderManagementBackup. Returns None if that (store, order) combination
+    has no backup rows at all (nothing to restore)."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        header = cur.execute(
+            "SELECT COUNT(*) AS ProductCount, MAX(WantedDate) AS BackedUpAt "
+            "FROM OrderManagementBackup WHERE StoreName = ? AND OrderId = ?",
+            store_name, order_id,
+        ).fetchone()
+        if not header or not header.ProductCount:
+            return None
+        suppliers = previous_order_suppliers(store_name, order_id)
+        return {
+            "store_name": store_name,
+            "order_id": order_id,
+            "product_count": int(header.ProductCount),
+            "backed_up_at": header.BackedUpAt,
+            "suppliers": suppliers,
+        }
+
+
+def restore_backup_order(store_name, order_id, actor):
+    """Restore a specific, operator-selected backup order's rows back onto
+    the current OrderManagement rows for the same products, for this store.
+
+    This is unconditional (unlike compare_previous_order's VB heuristics):
+    every matching product's OrQty/OrderQty/OrgOrderQty/OrSupplier/
+    OrSupplierCode/Status/QtyCheck/Remarks/WantedType is overwritten from the
+    backup row -- "restore" means restore, not re-apply a comparison rule.
+
+    Never infers the source snapshot from MAX(OrderId); order_id is always
+    the caller's explicit selection (see schemas.RestoreBackupOrderRequest /
+    router.restore_backup_order), matching the requirement that a restore
+    must never silently pick "the latest" on the caller's behalf.
+
+    Safety sequence, all inside one transaction:
+      1. Takes the SAME per-store applock as the processing lock / unlock /
+         destructive write (_with_store_applock) -- a concurrent Order
+         Process run or unlock for this store blocks until this restore's
+         transaction ends, and vice versa; they can never interleave.
+      2. Re-validates the backup exists for this exact (StoreName, OrderId)
+         -- never trusts a preview the caller may have fetched a while ago.
+      3. Requires every backup row to have a matching current OrderManagement
+         row by ProductCode (same store) -- if the backup contains ANY
+         product with no corresponding live row, this is reported as
+         insufficient information and the whole restore is refused (no
+         partial writes), per "If existing backup rows do not contain
+         sufficient information for accurate restoration, block the
+         operation."
+      4. Applies the restore as one set-based UPDATE...FROM...JOIN (so the
+         whole operation is atomic -- not a product-by-product loop that
+         could partially apply).
+      5. Writes one audit row per restored product (old Status/OrQty ->
+         new) plus one summary row, and commits.
+      6. Returns the restored row count, verified against the SAME COUNT
+         the UPDATE's own rowcount reported.
+
+    Raises RestoreValidationError (never partially restores) if the backup
+    is missing, empty, or any product in it has no corresponding live row.
+    Raises PendingExportBlocked if the CURRENT order has any Status = 0
+    lines -- restoring backup data onto those rows (by ProductCode match)
+    could silently discard an in-progress qty-check edit. This is a hard,
+    non-overridable block specific to restore (see PendingExportBlocked's
+    docstring for why it is NOT the same warn+admin-override gate Order
+    Process uses) -- the caller simply retries once those lines are
+    resolved; there is no separate "unlock" action.
+    """
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        try:
+            # require_no_pending_export_on_connection takes the same
+            # per-store applock as Order Process's short-lived concurrency
+            # guard (@LockOwner = 'Transaction', so it also serializes this
+            # restore against a concurrent Process run for this store), AND
+            # refuses to proceed if the current order has pending Status = 0
+            # lines -- restoring over them could silently discard in-
+            # progress review.
+            require_no_pending_export_on_connection(cur, store_name)
+
+            backup_rows = cur.execute(
+                "SELECT ProductCode, ProductName, OrQty, OrderQty, OrgOrderQty, "
+                "OrSupplier, OrSupplierCode, Status, QtyCheck, Remarks, WantedType "
+                "FROM OrderManagementBackup WHERE StoreName = ? AND OrderId = ?",
+                store_name, order_id,
+            ).fetchall()
+            if not backup_rows:
+                raise RestoreValidationError(
+                    f"No backup exists for '{store_name}' order #{order_id}."
+                )
+
+            backup_codes = [r.ProductCode for r in backup_rows]
+            placeholders = ", ".join("?" for _ in backup_codes)
+            live_codes = {
+                r[0] for r in cur.execute(
+                    f"SELECT ProductCode FROM OrderManagement "
+                    f"WHERE StoreName = ? AND ProductCode IN ({placeholders})",
+                    store_name, *backup_codes,
+                ).fetchall()
+            }
+            missing = [code for code in backup_codes if code not in live_codes]
+            if missing:
+                sample = ", ".join(str(c) for c in missing[:10])
+                raise RestoreValidationError(
+                    f"{len(missing)} product(s) in backup order #{order_id} have no "
+                    f"matching current order row for '{store_name}' (e.g. {sample}) -- "
+                    "cannot restore without overwriting an unrelated/nonexistent row. "
+                    "Refusing to partially restore."
+                )
+
+            # Snapshot old values for the per-row audit trail before they're
+            # overwritten -- read as part of this same transaction so it
+            # reflects exactly the rows about to change, not a stale read.
+            current_order_id_row = cur.execute(
+                "SELECT DISTINCT OrderId FROM OrderManagement "
+                f"WHERE StoreName = ? AND ProductCode IN ({placeholders})",
+                store_name, *backup_codes,
+            ).fetchall()
+            current_order_ids = {int(r.OrderId) for r in current_order_id_row if r.OrderId is not None}
+
+            old_values = {
+                r.ProductCode: {"Status": r.Status, "OrQty": r.OrQty}
+                for r in cur.execute(
+                    f"SELECT ProductCode, Status, OrQty FROM OrderManagement "
+                    f"WHERE StoreName = ? AND ProductCode IN ({placeholders})",
+                    store_name, *backup_codes,
+                ).fetchall()
+            }
+
+            cur.execute(
+                """
+                UPDATE om SET
+                    om.OrQty = omb.OrQty,
+                    om.OrderQty = omb.OrderQty,
+                    om.OrgOrderQty = omb.OrgOrderQty,
+                    om.OrSupplier = omb.OrSupplier,
+                    om.OrSupplierCode = omb.OrSupplierCode,
+                    om.Status = omb.Status,
+                    om.QtyCheck = omb.QtyCheck,
+                    om.Remarks = omb.Remarks,
+                    om.WantedType = omb.WantedType
+                FROM OrderManagement om
+                INNER JOIN OrderManagementBackup omb
+                    ON om.ProductCode = omb.ProductCode AND om.StoreName = omb.StoreName
+                WHERE omb.StoreName = ? AND omb.OrderId = ?
+                """,
+                store_name, order_id,
+            )
+            restored_count = cur.rowcount
+
+            for current_order_id in current_order_ids:
+                _record_line_audit(
+                    cur, store_name, current_order_id, None, "ORDER_RESTORED",
+                    f"source_order_id={order_id}",
+                    f"restored_products={restored_count}", actor,
+                )
+            for row in backup_rows:
+                old = old_values.get(row.ProductCode, {})
+                target_order_id = next(iter(current_order_ids), order_id)
+                _record_line_audit(
+                    cur, store_name, target_order_id, row.ProductCode, "ORDER_LINE_RESTORED",
+                    f"status={old.get('Status')},orqty={old.get('OrQty')}",
+                    f"status={row.Status},orqty={row.OrQty}", actor,
+                )
+
+            conn.commit()
+            return {
+                "store_name": store_name,
+                "source_order_id": order_id,
+                "restored_count": restored_count,
+                "actor": actor,
+            }
         except Exception:
             conn.rollback()
             raise

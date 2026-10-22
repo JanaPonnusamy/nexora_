@@ -149,6 +149,36 @@ export const api = {
     return { ok: true, status: response.status };
   },
 
+  // Public discovery (no session, hits a caller-specified host rather than the
+  // saved apiBaseUrl - this is how Settings can probe a candidate HO before
+  // the user commits to it).
+  async getBootstrapRoutes(baseUrl) {
+    const response = await fetch(joinUrl(baseUrl, '/api/bootstrap/routes'), {
+      method: 'GET',
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) throw new Error(`Discovery failed with ${response.status}`);
+    return response.json();
+  },
+
+  // Super-admin maintenance of the HO route list itself (add/edit/delete),
+  // against whichever HO the device is currently pointed at.
+  listHoRoutes(session) {
+    return request('/api/ho-routes', { session });
+  },
+
+  createHoRoute(payload, session) {
+    return request('/api/ho-routes', { method: 'POST', session, body: JSON.stringify(payload) });
+  },
+
+  updateHoRoute(routeId, payload, session) {
+    return request(`/api/ho-routes/${routeId}`, { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+
+  deleteHoRoute(routeId, session) {
+    return request(`/api/ho-routes/${routeId}`, { method: 'DELETE', session });
+  },
+
   listTenants(session) {
     return request('/api/tenants', { session });
   },
@@ -597,6 +627,14 @@ export const api = {
     });
   },
 
+  legacyUpdateRemarks(storeName, productCode, remarks, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/${productCode}/remarks`, {
+      method: 'PATCH',
+      session,
+      body: JSON.stringify({ remarks })
+    });
+  },
+
   legacyOrders(storeName, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}`, { session });
   },
@@ -611,6 +649,10 @@ export const api = {
 
   legacyOrderWorkflow(storeName, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/workflow`, { session });
+  },
+
+  legacyOrderHeader(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/header`, { session });
   },
 
   legacyFinalizeOrder(storeName, note, session) {
@@ -659,8 +701,22 @@ export const api = {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/by-supplier${toQuery({ supplier_code: supplierCode, mode })}`, { session });
   },
 
+  // Every open orderable product for the store, independent of any supplier
+  // match -- the By Supplier grid's "Load all products" toggle.
+  legacyAllOpenOrders(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/all-open`, { session });
+  },
+
   legacyAssignedOrders(storeName, supplierCode, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/assigned${toQuery({ supplier_code: supplierCode })}`, { session });
+  },
+
+  legacyRemoveUnavailable(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/unavailable/remove`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ supplier_code: supplierCode })
+    });
   },
 
   legacyAssignSupplier(storeName, productCode, supplierCode, supplierName, session) {
@@ -822,7 +878,7 @@ export const api = {
     }
     if (!response.ok) {
       let detail = response.statusText || 'PDF export failed';
-      try { const parsed = await response.json(); detail = parsed?.detail || parsed?.message || detail; } catch { /* no JSON body */ }
+      try { const parsed = await response.json(); detail = detailToMessage(parsed) || detail; } catch { /* no JSON body */ }
       throw new Error(detail);
     }
     return response.blob();
@@ -840,7 +896,7 @@ export const api = {
     }
     if (!response.ok) {
       let detail = response.statusText || 'Excel export failed';
-      try { const parsed = await response.json(); detail = parsed?.detail || parsed?.message || detail; } catch { /* no JSON body */ }
+      try { const parsed = await response.json(); detail = detailToMessage(parsed) || detail; } catch { /* no JSON body */ }
       throw new Error(detail);
     }
     return response.blob();
@@ -870,7 +926,7 @@ export const api = {
     return request(`/api/label-exporter/products/${encodeURIComponent(productCode)}/sales${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
   },
 
-  async legacyExportOrder(storeName, supplierCode, supplierName, mode, splitSize, session) {
+  async legacyExportOrder(storeName, supplierCode, supplierName, mode, splitSize, session, options = {}) {
     const settings = loadSettings();
     let response;
     try {
@@ -880,14 +936,28 @@ export const api = {
           'Content-Type': 'application/json',
           ...authHeaders(session)
         },
-        body: JSON.stringify({ supplier_code: supplierCode, supplier_name: supplierName, mode, split_size: splitSize || 0 })
+        body: JSON.stringify({
+          supplier_code: supplierCode,
+          supplier_name: supplierName,
+          mode,
+          split_size: splitSize || 0,
+          ...(options.columns ? { columns: options.columns } : {}),
+          ...(options.fileFormat ? { file_format: options.fileFormat } : {}),
+          ...(options.orderNo ? { order_no: options.orderNo } : {}),
+          ...(options.productCodes ? { product_codes: options.productCodes } : {}),
+          ...(options.allProducts ? { all_products: true } : {}),
+          ...(options.removedProductCodes?.length ? { removed_product_codes: options.removedProductCodes } : {})
+        })
       });
     } catch {
       throw new Error('Unable to reach the server. Check that the API is running.');
     }
     if (!response.ok) {
       let detail = response.statusText || 'Export failed';
-      try { const parsed = await response.json(); detail = parsed?.detail || parsed?.message || detail; } catch { /* no JSON body */ }
+      try {
+        const parsed = await response.json();
+        detail = detailToMessage(parsed) || detail;
+      } catch { /* no JSON body */ }
       throw new Error(detail);
     }
     const blob = await response.blob();
@@ -896,6 +966,48 @@ export const api = {
     return {
       blob,
       filename: match?.[1] || `${supplierName} ${storeName}.xlsx`,
+      exportedCount: Number(response.headers.get('X-Exported-Count') || 0)
+    };
+  },
+
+  // Export the Pending grid (reviewed, qtycheck=1, not yet assigned to any
+  // supplier, status=0) -- same workbook look as legacyExportOrder, but
+  // read-only: no assignment step, nothing changes server-side besides
+  // building the file. See order_export.export_pending_order.
+  async legacyExportPendingOrder(storeName, splitSize, session, options = {}) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/legacy-order/orders/${encodeURIComponent(storeName)}/export-pending`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(session)
+        },
+        body: JSON.stringify({
+          split_size: splitSize || 0,
+          ...(options.columns ? { columns: options.columns } : {}),
+          ...(options.fileFormat ? { file_format: options.fileFormat } : {}),
+          ...(options.orderNo ? { order_no: options.orderNo } : {})
+        })
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try {
+        const parsed = await response.json();
+        detail = detailToMessage(parsed) || detail;
+      } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = /filename="?([^"]+)"?/.exec(disposition);
+    return {
+      blob,
+      filename: match?.[1] || `Pending ${storeName}.xlsx`,
       exportedCount: Number(response.headers.get('X-Exported-Count') || 0)
     };
   },

@@ -287,6 +287,31 @@ def active_assigned_total(conn, tenant_id, order_item_id, exclude_assignment_id=
     return cursor.fetchone()[0] or 0
 
 
+def lock_order_item_for_assignment(conn, tenant_id, order_item_id):
+    """D4 — serializes concurrent assign_single/assign_bulk calls for the same
+    order_item_id. Two separate connections/transactions both calling
+    any_active_assignment() before either commits could otherwise both see
+    "no existing assignment" and both insert, violating the one-active-
+    supplier-per-product-line rule (D1) — a TOCTOU gap, since each HTTP
+    request opens its own connection/transaction (get_connection()).
+
+    WITH (UPDLOCK, HOLDLOCK) takes an update lock on the row and holds it for
+    the rest of this transaction (serializable-equivalent for this one row),
+    so a second concurrent caller's own lock attempt blocks here until the
+    first caller commits or rolls back — at which point it re-reads a
+    now-consistent any_active_assignment() result. No-op (returns None) if
+    the row doesn't exist; the caller's existing _require_item/get_item 404
+    check still applies independently.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT order_item_id FROM procurement.procurement_order_items WITH (UPDLOCK, HOLDLOCK) "
+        "WHERE tenant_id = ? AND order_item_id = ? AND is_deleted = 0",
+        (tenant_id, order_item_id),
+    )
+    return cursor.fetchone()
+
+
 def duplicate_active_exists(conn, tenant_id, order_item_id, supplier_code,
                             exclude_assignment_id=None):
     sql = (
