@@ -86,7 +86,7 @@ export default function NmwSalesReportPage() {
     if (!tenantId) return
     storeService
       .getByTenant(tenantId)
-      .then((list) => setStores(list))
+      .then((list) => setStores(list.filter((s) => s.is_active !== false)))
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load stores'))
   }, [tenantId])
 

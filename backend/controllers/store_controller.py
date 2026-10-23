@@ -71,7 +71,8 @@ def get_by_tenant(tenant_id: str, current_user: dict | None = Depends(get_curren
         {
             "store_id": str(r[0]),
             "store_code": r[2],
-            "store_name": r[3]
+            "store_name": r[3],
+            "is_active": bool(r[6]),
         }
         for r in rows
     ]

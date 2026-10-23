@@ -21,6 +21,7 @@ export interface TenantStore {
   store_id: string
   store_code: string
   store_name: string
+  is_active?: boolean
 }
 
 /** DB connection details for a store (GET /api/stores/{id}/credentials). The
