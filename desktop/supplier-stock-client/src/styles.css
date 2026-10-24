@@ -8104,7 +8104,10 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    Enter/Esc/Navigate hint) lives in the separate .ow-status-strip row below
    instead of competing with Export/Finalize for toolbar width. */
 .ow-toolbar {
-  display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; flex: 0 0 auto;
+  /* wrap is the last-resort net only: the width caps below keep it on one
+     row at normal widths, but a hidden Export/Finalize is worse than a
+     second toolbar row on a narrow window (owner report 2026-10-24). */
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 0 0 auto;
   padding: 6px 8px; min-height: 44px;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
@@ -8134,6 +8137,10 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    forces the toolbar to overflow/wrap at 1366px. */
 .ow-store-select { max-width: 88px; }
 .ow-process-select { max-width: 168px; }
+/* Wanted's options are full sentences ("Regular Order Based Min & Max...")
+   -- uncapped, it alone pushed Finalize/Export off the right edge. */
+.ow-type-select { max-width: 110px; }
+.ow-wanted-select { max-width: 150px; }
 .ow-tabs { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); overflow: hidden; }
 .ow-tabs button { padding: 4px 10px; border: 0; background: var(--nx-surface); color: var(--nx-text-soft); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .ow-tabs button + button { border-left: 1px solid var(--nx-rule); }

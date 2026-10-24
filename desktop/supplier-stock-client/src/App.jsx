@@ -4935,7 +4935,7 @@ function OrderWorkspace({ session, settings, hidden }) {
         </button>
         <label className="ow-field">
           <span>Product type</span>
-          <select value={productType} onChange={(e) => setProductType(e.target.value)} aria-label="Product type">
+          <select className="ow-type-select" value={productType} onChange={(e) => setProductType(e.target.value)} aria-label="Product type">
             <option value="All">All</option>
             <option value="Pharma">Pharma</option>
             <option value="Non Pharma">Non Pharma</option>
@@ -4944,7 +4944,7 @@ function OrderWorkspace({ session, settings, hidden }) {
         {(view === 'qty' || view === 'pending' || view === 'review' || view === 'supplier' || view === 'assigned') && (
           <label className="ow-field">
             <span>Wanted</span>
-            <select value={wantedFilter} onChange={(e) => setWantedFilter(e.target.value)} aria-label="Wanted type filter">
+            <select className="ow-wanted-select" value={wantedFilter} onChange={(e) => setWantedFilter(e.target.value)} aria-label="Wanted type filter" title={wantedFilter}>
               <option value="All">All</option>
               {wantedOptions.map((w) => <option key={w} value={w}>{w}</option>)}
             </select>
