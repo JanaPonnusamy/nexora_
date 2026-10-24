@@ -930,6 +930,46 @@ _LAST_OFFER_PATTERN_APPLY = (
 )
 
 
+def _supplier_codes(supplier_code):
+    """A picked supplier's code may be a UNIFIED set -- OrderSuppliers.
+    UnifiedSupplierCODE comma-joins several real SupplierCodes (e.g. NMG's
+    "107,109,108"). Returns the individual member codes."""
+    return [c.strip() for c in str(supplier_code or "").split(",") if c.strip()]
+
+
+def _assigned_code_values(supplier_code):
+    """OrSupplierCode values that count as "assigned to this supplier". An
+    assign stamps the code exactly as picked, so a unified supplier's lines
+    carry the WHOLE "107,109,108" string -- matching only the split member
+    codes (the old SplitString filter) never found them, which left Export
+    with "no assigned products" and the Assigned view empty. Lines stamped
+    with a single member code still match too."""
+    full = str(supplier_code or "").strip()
+    return [full] + [c for c in _supplier_codes(full) if c != full]
+
+
+def _in_list(values):
+    return ", ".join("?" for _ in values)
+
+
+def _supplier_stock_apply(codes, apply_kind, in_stock_only):
+    """Live-stock match for a (possibly unified) supplier: the best-stocked
+    SupplierStock line across ALL member codes, one row per product -- a
+    plain JOIN on several codes would duplicate a product every member
+    carries. Params: the member codes, in order."""
+    return (
+        f"{apply_kind} (SELECT TOP 1 SS.Stock, SS.discound, SS.MINQTY, SS.sch, SS.free, "
+        "  SS.SupplierProductName, SS.SupplierProductCode, SS.Rack "
+        "  FROM SupplierProductMatch SPM "
+        "  JOIN SupplierStock SS ON SS.SupplierProductCode = SPM.SupplierProductCode "
+        "    AND SS.SupplierCode = SPM.SupplierCode AND SS.storename = om.StoreName "
+        "  WHERE SPM.ProductCode = om.ProductCode AND SPM.StoreName = om.StoreName "
+        f"    AND SPM.SupplierCode IN ({_in_list(codes)})"
+        + (" AND SS.Stock > 0" if in_stock_only else "")
+        + "  ORDER BY SS.Stock DESC) SS "
+    )
+
+
 def orders_by_supplier(store_name, supplier_code, mode):
     """mode='history' ports LoadDataForSupplier -- legacy's "Auto Pur UpDate"
     process (products this supplier has historically supplied); mode='stock'
@@ -961,6 +1001,9 @@ def orders_by_supplier(store_name, supplier_code, mode):
 
     See qty_check_rows for why backfill_is_offer runs first."""
     backfill_is_offer(store_name)
+    codes = _supplier_codes(supplier_code)
+    if not codes:
+        return []
     if mode == "stock":
         sql = (
             "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.TotalStock, "
@@ -971,16 +1014,11 @@ def orders_by_supplier(store_name, supplier_code, mode):
             "SS.sch AS Sch, SS.free AS Free, SS.SupplierProductName, "
             "SS.SupplierProductCode, ISNULL(SS.Rack, '') AS Rack, om.IsOffer "
             "FROM OrderManagement om "
-            "INNER JOIN SupplierProductMatch SPM "
-            "  ON om.ProductCode = SPM.ProductCode AND SPM.StoreName = om.StoreName "
-            "  AND SPM.SupplierCode = ? "
-            "INNER JOIN SupplierStock SS "
-            "  ON SS.SupplierProductCode = SPM.SupplierProductCode "
-            "  AND SS.SupplierCode = ? AND SS.storename = ? "
-            "WHERE om.storename = ? AND om.status = 0 AND om.orderqty > 0 AND SS.Stock > 0 "
+            + _supplier_stock_apply(codes, "CROSS APPLY", in_stock_only=True)
+            + "WHERE om.storename = ? AND om.status = 0 AND om.orderqty > 0 "
             "ORDER BY om.ProductName"
         )
-        params = (supplier_code, supplier_code, store_name, store_name)
+        params = (*codes, store_name)
     else:
         # EXISTS (not a JOIN) so a product with several historical purchase
         # lines from this supplier still shows exactly once. InvoiceSeries<>
@@ -1006,10 +1044,7 @@ def orders_by_supplier(store_name, supplier_code, mode):
         # removing SplitString alone, until this cast was added). Casting
         # om.ProductCode to INT instead keeps pt.ProductCode untouched and
         # seekable.
-        codes = [c.strip() for c in str(supplier_code or "").split(",") if c.strip()]
-        if not codes:
-            return []
-        placeholders = ", ".join("?" for _ in codes)
+        placeholders = _in_list(codes)
         sql = (
             f"SELECT {_WORKSPACE_COLS}, om.IsOffer "
             "FROM OrderManagement om "
@@ -1074,17 +1109,15 @@ def orders_by_supplier_export_count(store_name, supplier_code):
     match with Stock>0. Exists so the UI can show/enable Export accurately
     without fetching the full stock grid just to count it, and independent of
     whichever History/Live Stock tab happens to be on screen."""
+    codes = _supplier_codes(supplier_code)
+    if not codes:
+        return 0
     sql = (
         "SELECT COUNT(*) FROM OrderManagement om "
-        "INNER JOIN SupplierProductMatch SPM "
-        "  ON om.ProductCode = SPM.ProductCode AND SPM.StoreName = om.StoreName "
-        "  AND SPM.SupplierCode = ? "
-        "INNER JOIN SupplierStock SS "
-        "  ON SS.SupplierProductCode = SPM.SupplierProductCode "
-        "  AND SS.SupplierCode = ? AND SS.storename = ? "
-        "WHERE om.storename = ? AND om.status = 0 AND om.orderqty > 0 AND SS.Stock > 0"
+        + _supplier_stock_apply(codes, "CROSS APPLY", in_stock_only=True)
+        + "WHERE om.storename = ? AND om.status = 0 AND om.orderqty > 0"
     )
-    params = (supplier_code, supplier_code, store_name, store_name)
+    params = (*codes, store_name)
     with database.get_central_connection() as conn:
         row = conn.cursor().execute(sql, params).fetchone()
         return int(row[0]) if row and row[0] is not None else 0
@@ -1095,16 +1128,17 @@ def assigned_orders(store_name, supplier_code):
     supplier (status=1). See qty_check_rows for why backfill_is_offer runs
     first."""
     backfill_is_offer(store_name)
+    assigned = _assigned_code_values(supplier_code)
     sql = (
         "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.SaleUnit, om.MRP, om.OrSupplier, "
         "om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck "
         "FROM OrderManagement om "
         "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
-        "AND om.orsuppliercode IN (SELECT Value FROM dbo.SplitString(?, ',')) "
+        f"AND om.orsuppliercode IN ({_in_list(assigned)}) "
         "ORDER BY om.ProductName"
     )
     with database.get_central_connection() as conn:
-        cur = conn.cursor().execute(sql, store_name, supplier_code)
+        cur = conn.cursor().execute(sql, store_name, *assigned)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -1141,23 +1175,20 @@ def assigned_orders_with_supplier_stock(store_name, supplier_code):
     SupplierProductMatch row at all is just as "not available from this
     supplier" as one matched with Stock=0, so both must come back (NULL
     supplier_stock), not be silently dropped."""
+    codes = _supplier_codes(supplier_code) or [str(supplier_code or "")]
+    assigned = _assigned_code_values(supplier_code)
     sql = (
         "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.SaleUnit, om.MRP, "
         "om.OrSupplier, om.Remarks, om.PurchasePrice, om.TotalStock, om.WantedType, "
         "om.ProductTypeName, om.Status, SS.Stock AS SupplierStock "
         "FROM OrderManagement om "
-        "LEFT JOIN SupplierProductMatch SPM "
-        "  ON om.ProductCode = SPM.ProductCode AND SPM.StoreName = om.StoreName "
-        "  AND SPM.SupplierCode = ? "
-        "LEFT JOIN SupplierStock SS "
-        "  ON SS.SupplierProductCode = SPM.SupplierProductCode "
-        "  AND SS.SupplierCode = ? AND SS.storename = om.StoreName "
-        "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
-        "AND om.orsuppliercode IN (SELECT Value FROM dbo.SplitString(?, ',')) "
+        + _supplier_stock_apply(codes, "OUTER APPLY", in_stock_only=False)
+        + "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
+        f"AND om.orsuppliercode IN ({_in_list(assigned)}) "
         "ORDER BY om.ProductName"
     )
     with database.get_central_connection() as conn:
-        cur = conn.cursor().execute(sql, supplier_code, supplier_code, store_name, supplier_code)
+        cur = conn.cursor().execute(sql, *codes, store_name, *assigned)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -1180,6 +1211,7 @@ def remove_unavailable_from_supplier(store_name, supplier_code, actor=None):
         cur = conn.cursor()
         _ensure_workflow_schema(cur)
         placeholders = ",".join("?" for _ in product_codes)
+        assigned = _assigned_code_values(supplier_code)
         order_ids = cur.execute(
             f"SELECT ProductCode, OrderId FROM ordermanagement "
             f"WHERE storename = ? AND productcode IN ({placeholders})",
@@ -1189,9 +1221,9 @@ def remove_unavailable_from_supplier(store_name, supplier_code, actor=None):
         cur.execute(
             f"UPDATE ordermanagement SET orqty = NULL, orsupplier = NULL, "
             f"orsuppliercode = NULL, status = 0, qtycheck = 1 "
-            f"WHERE storename = ? AND status = 1 AND orsuppliercode = ? "
+            f"WHERE storename = ? AND status = 1 AND orsuppliercode IN ({_in_list(assigned)}) "
             f"AND productcode IN ({placeholders})",
-            store_name, supplier_code, *product_codes,
+            store_name, *assigned, *product_codes,
         )
         for code in product_codes:
             order_id = order_id_by_code.get(code)
