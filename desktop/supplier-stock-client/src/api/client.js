@@ -184,7 +184,10 @@ export const api = {
   },
 
   listStores(session) {
-    return request('/api/stores', { session });
+    // Inactive stores are hidden from every selector in the client.
+    return request('/api/stores', { session }).then((rows) => (
+      Array.isArray(rows) ? rows.filter((s) => s.is_active !== false) : rows
+    ));
   },
 
   requestActivation(payload, session) {

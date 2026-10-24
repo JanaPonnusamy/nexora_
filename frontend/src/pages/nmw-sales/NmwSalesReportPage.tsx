@@ -85,8 +85,8 @@ export default function NmwSalesReportPage() {
   useEffect(() => {
     if (!tenantId) return
     storeService
-      .getByTenant(tenantId)
-      .then((list) => setStores(list.filter((s) => s.is_active !== false)))
+      .getActiveByTenant(tenantId)
+      .then((list) => setStores(list))
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load stores'))
   }, [tenantId])
 

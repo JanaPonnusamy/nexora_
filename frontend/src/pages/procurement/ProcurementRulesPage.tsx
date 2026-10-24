@@ -121,7 +121,7 @@ export default function ProcurementRulesPage() {
       return
     }
     let cancelled = false
-    storeService.getByTenant(tenantId).then((rows) => {
+    storeService.getActiveByTenant(tenantId).then((rows) => {
       if (!cancelled) {
         setStores(rows)
         setStoreId(rows[0]?.store_id ?? '')

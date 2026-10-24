@@ -9,9 +9,17 @@ import type {
 
 export const storeService = {
   list: () => api.get<Store[]>('/api/stores'),
+  // Selector lists (dropdowns/filters) show active stores only; admin screens
+  // that manage stores use list()/getByTenant() to see inactive ones too.
+  listActive: () =>
+    api.get<Store[]>('/api/stores').then((all) => all.filter((s) => s.is_active)),
   getById: (storeId: string) => api.get<Store>(`/api/stores/${storeId}`),
   getByTenant: (tenantId: string) =>
     api.get<TenantStore[]>(`/api/stores/tenant/${tenantId}`),
+  getActiveByTenant: (tenantId: string) =>
+    api.get<TenantStore[]>(`/api/stores/tenant/${tenantId}`).then((all) =>
+      all.filter((s) => s.is_active !== false),
+    ),
   create: (input: StoreInput) => api.post<Store>('/api/stores', input),
   update: (storeId: string, input: StoreInput) =>
     api.put<Store>(`/api/stores/${storeId}`, input),

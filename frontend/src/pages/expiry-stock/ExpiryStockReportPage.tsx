@@ -143,7 +143,7 @@ export default function ExpiryStockReportPage() {
       setTenants(active)
       if (active.length) setTenantId((cur) => cur || active[0].tenant_id)
     }).catch(() => setTenants([]))
-    storeService.list().then(setStores).catch(() => setStores([]))
+    storeService.listActive().then(setStores).catch(() => setStores([]))
   }, [])
 
   const tenantStores = useMemo(

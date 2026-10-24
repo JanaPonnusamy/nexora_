@@ -52,7 +52,7 @@ export default function CycleManagementPage() {
       setTenants(active)
       if (active.length) setTenantId((c) => c || active[0].tenant_id)
     }).catch(fail)
-    storeService.list().then(setStores).catch(() => setStores([]))
+    storeService.listActive().then(setStores).catch(() => setStores([]))
   }, [fail])
 
   const load = useCallback(() => {

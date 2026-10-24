@@ -61,7 +61,7 @@ export default function ReportsPage() {
       setTenants(active)
       if (active.length) setTenantId((current) => current || active[0].tenant_id)
     }).catch(() => setTenants([]))
-    storeService.list().then(setStores).catch(() => setStores([]))
+    storeService.listActive().then(setStores).catch(() => setStores([]))
     reportsService.catalog().then((rows) => {
       setDefs(rows)
       if (rows.length) setReportKey((current) => current || rows[0].key)

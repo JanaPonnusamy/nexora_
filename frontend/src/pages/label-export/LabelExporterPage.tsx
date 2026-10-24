@@ -139,7 +139,7 @@ export default function LabelExporterPage() {
     if (!tenantId) return
     setStoreId('')
     storeService
-      .getByTenant(tenantId)
+      .getActiveByTenant(tenantId)
       .then((rows) => {
         setStores(rows)
         const ownStore = rows.find((row) => row.store_id === user?.storeId)

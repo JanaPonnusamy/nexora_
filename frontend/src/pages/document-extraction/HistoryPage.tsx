@@ -23,7 +23,7 @@ export default function DocumentExtractionHistoryPage() {
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
-    storeService.list().then((all) => setStores(all.filter((store) => store.is_active))).catch(() => setStores([]))
+    storeService.listActive().then(setStores).catch(() => setStores([]))
   }, [])
 
   useEffect(() => {

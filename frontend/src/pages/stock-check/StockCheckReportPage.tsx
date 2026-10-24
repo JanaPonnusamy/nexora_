@@ -53,7 +53,7 @@ export default function StockCheckReportPage() {
     if (!tenantId) return
     setStoreId('')
     storeService
-      .getByTenant(tenantId)
+      .getActiveByTenant(tenantId)
       .then((list) => {
         setStores(list)
         if (list.length) setStoreId((cur) => cur || list[0].store_id)

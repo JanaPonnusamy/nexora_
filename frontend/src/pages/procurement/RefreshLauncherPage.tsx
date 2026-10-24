@@ -28,7 +28,7 @@ export default function RefreshLauncherPage() {
       setTenants(active)
       if (active.length) setTenantId((c) => c || active[0].tenant_id)
     })
-    storeService.list().then(setStores).catch(() => setStores([]))
+    storeService.listActive().then(setStores).catch(() => setStores([]))
   }, [])
 
   const tenantStores = useMemo(

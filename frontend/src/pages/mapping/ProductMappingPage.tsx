@@ -41,7 +41,7 @@ export default function ProductMappingPage() {
   const [targetStoreId, setTargetStoreId] = useState('')
 
   useEffect(() => {
-    storeService.list().then((all) => setStores(all.filter((s) => s.is_active))).catch(() => setStores([]))
+    storeService.listActive().then(setStores).catch(() => setStores([]))
   }, [])
 
   // tenant follows the chosen source store (falls back to the first store).

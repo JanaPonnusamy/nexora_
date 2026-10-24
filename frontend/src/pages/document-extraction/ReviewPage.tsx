@@ -44,7 +44,7 @@ export default function DocumentExtractionReviewPage() {
   const openUploadPickerRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
-    storeService.list().then((all) => setStores(all.filter((store) => store.is_active))).catch(() => setStores([]))
+    storeService.listActive().then(setStores).catch(() => setStores([]))
   }, [])
 
   useEffect(() => {

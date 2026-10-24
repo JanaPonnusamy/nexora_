@@ -36,7 +36,7 @@ export default function StockIntegrityReportPage() {
     if (!tenantId) return
     setStoreId('')
     storeService
-      .getByTenant(tenantId)
+      .getActiveByTenant(tenantId)
       .then((list) => {
         setStores(list)
         if (list.length) setStoreId((cur) => cur || list[0].store_id)
