@@ -135,9 +135,9 @@ def _product_code_value(value):
 # Cell styling -- the legacy VB.NET colour rules (Form1.vb ~lines 4332-4366:
 # S.No. bold/centred/LightYellow, OrderQty bold/centred/LightGreen, SaleUnit
 # grey centred, MRP grey "0.00") on a cleaner sheet (owner request
-# 2026-10-24): Calibri 12 everywhere, header row on a soft blue fill, thin
-# inner borders with a THICK border around the used range, rows >= 15pt,
-# ProductCode numeric + right-aligned, roomier column widths. Styling is
+# 2026-10-24): Calibri 12 everywhere, legacy bold centred header with NO
+# fill, thin inner borders with a THICK border around the used range, 17pt
+# rows, ProductCode numeric + right-aligned, roomier column widths. Styling is
 # keyed off the header label so every builder (fixed, custom, pending; xlsx,
 # xls and png) renders identically.
 # --------------------------------------------------------------------------
@@ -145,10 +145,9 @@ def _product_code_value(value):
 _VB_LIGHT_YELLOW = "FFFFE0"
 _VB_LIGHT_GREEN = "90EE90"
 _VB_GRAY = "808080"
-_HEADER_FILL = "D9E1F2"  # soft blue -- black bold text stays fully readable
 _FONT_NAME = "Calibri"
 _FONT_SIZE = 12
-_ROW_HEIGHT_PT = 18  # owner floor is 15pt; 18 gives Calibri 12 breathing room
+_ROW_HEIGHT_PT = 17  # owner ruling 2026-10-24: exactly 17pt
 _PRODUCTS_PER_IMAGE = 20
 
 
@@ -158,7 +157,7 @@ def _cell_spec(label, header=False):
     spec = {"bold": False, "fill": None, "color": "000000", "align": None, "num_format": None}
     label = str(label)
     if header:
-        spec.update(bold=True, fill=_HEADER_FILL, align="center")
+        spec.update(bold=True, align="center")
     elif label == "S.No.":
         spec.update(bold=True, fill=_VB_LIGHT_YELLOW, align="center")
     elif label == "OrderQty":
@@ -237,10 +236,10 @@ def _write_xlsx(headers, table):
 # for that limit in practice.
 # --------------------------------------------------------------------------
 
-# BIFF fills come from a 56-colour palette; the header blue isn't in it, so
-# it's registered under its own name and the slot is re-pointed per workbook.
-_XLS_HEADER_COLOUR_INDEX = 0x21
-_XLS_FILL_NAMES = {_HEADER_FILL: "nexora_header", _VB_LIGHT_YELLOW: "light_yellow", _VB_LIGHT_GREEN: "light_green"}
+# BIFF fills come from a fixed 56-colour palette whose light_yellow/
+# light_green are only near the VB.NET colours (FFFF99/CCFFCC) -- each
+# workbook re-points those two slots to the exact legacy RGB.
+_XLS_FILL_NAMES = {_VB_LIGHT_YELLOW: "light_yellow", _VB_LIGHT_GREEN: "light_green"}
 _XLS_COLOUR_NAMES = {"000000": "black", _VB_GRAY: "gray50"}
 _XLS_ALIGN = {"center": "center", "right": "right", "left": "left"}
 
@@ -267,9 +266,9 @@ def _xls_style(spec, left, right, top, bottom):
 def _write_xls(headers, table):
     """headers: labels; table: list of value lists (already in header order)."""
     import xlwt
-    xlwt.add_palette_colour("nexora_header", _XLS_HEADER_COLOUR_INDEX)
     wb = xlwt.Workbook()
-    wb.set_colour_RGB(_XLS_HEADER_COLOUR_INDEX, *(int(_HEADER_FILL[i:i + 2], 16) for i in (0, 2, 4)))
+    for rgb, name in _XLS_FILL_NAMES.items():
+        wb.set_colour_RGB(xlwt.Style.colour_map[name], *(int(rgb[i:i + 2], 16) for i in (0, 2, 4)))
     ws = wb.add_sheet("Sheet1")
 
     last_row, last_col = len(table), len(headers) - 1
