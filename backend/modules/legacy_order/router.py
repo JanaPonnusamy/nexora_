@@ -676,6 +676,32 @@ def update_remarks(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/qty-check/{store_name}/purchase-invoice")
+def purchase_invoice_lines(store_name: str, grn_no: int, series: str = "", grn_date: str = "", supplier_code: str | None = None):
+    """All lines of one purchase invoice / GRN (see repository.purchase_invoice_lines)."""
+    try:
+        if not repository.get_store(store_name):
+            raise HTTPException(status_code=404, detail="Store not found")
+        if not grn_date:
+            raise HTTPException(status_code=400, detail="grn_date is required (GRN numbers repeat across years).")
+        return repository.purchase_invoice_lines(store_name, grn_no, series, grn_date[:10], supplier_code)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/qty-check/{store_name}/sale-bill")
+def sale_bill_lines(store_name: str, bnumber: str, bill_date: str = ""):
+    """All lines + header of one sales bill (see repository.sale_bill_lines)."""
+    try:
+        if not repository.get_store(store_name):
+            raise HTTPException(status_code=404, detail="Store not found")
+        if not bill_date:
+            raise HTTPException(status_code=400, detail="bill_date is required (bill numbers repeat across years).")
+        return repository.sale_bill_lines(store_name, bnumber, bill_date[:10])
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.get("/qty-check/{store_name}/{product_code}/purchase-details")
 def qty_check_purchase_details(store_name: str, product_code: int, mode: str = "local"):
     try:

@@ -8614,6 +8614,15 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-body.ow-bottom-large .ow-left > .ow-bottom-dock { height: clamp(220px, 34vh, 340px); }
 .ow-details-toggle { margin-left: auto; }
 .ow-intel-clickable { cursor: pointer; }
+/* Whole purchase invoice / sales bill card (click a detail-panel row). */
+.purchase-detail-card.ow-doc-card { width: min(1100px, calc(100vw - 32px)); max-width: none; max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.ow-doc-card .purchase-detail-body { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
+.ow-doc-card .purchase-metric-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.ow-doc-lines { min-height: 0; overflow: auto; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); }
+.ow-doc-lines .ow-intel-table { width: 100%; }
+.ow-doc-lines thead th { position: sticky; top: 0; z-index: 1; background: var(--nx-surface-raised); }
+.ow-doc-lines .ow-doc-name { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-doc-lines tr.ow-doc-current > td { background: var(--nx-accent-sunk, rgba(91, 141, 239, 0.22)); font-weight: 700; }
 .ow-intel-clickable:hover > td { background: var(--nx-surface-raised); }
 .ow-panel-cfg .grid-settings-panel__col { grid-template-columns: 16px minmax(0, 1fr) auto auto; }
 .ow-dock-chips { gap: 4px; }

@@ -685,6 +685,15 @@ export const api = {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/purchase-details${toQuery({ mode })}`, { session });
   },
 
+  // Whole purchase invoice / sales bill for the Order Workspace row-click card.
+  legacyPurchaseInvoice(storeName, params, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/purchase-invoice${toQuery(params)}`, { session });
+  },
+
+  legacySaleBill(storeName, params, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/sale-bill${toQuery(params)}`, { session });
+  },
+
   legacySalesDetails(storeName, productCode, mode, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/sales-details${toQuery({ mode })}`, { session });
   },

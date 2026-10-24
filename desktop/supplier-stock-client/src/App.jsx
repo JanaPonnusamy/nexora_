@@ -4000,7 +4000,7 @@ function OrderWorkspace({ session, settings, hidden }) {
     try { return owNormalizeLayout(JSON.parse(localStorage.getItem('nexora.desktop.owLayout') || '{}')); }
     catch { return owNormalizeLayout(null); }
   });
-  // Purchase / sales row clicked in a detail panel -> record card.
+  // Purchase / sales row clicked in a detail panel -> whole invoice / bill card.
   const [owRecord, setOwRecord] = useState(null);
   useEffect(() => {
     try { localStorage.setItem('nexora.desktop.owLayout', JSON.stringify(owLayout)); } catch { /* best effort */ }
@@ -5020,8 +5020,8 @@ function OrderWorkspace({ session, settings, hidden }) {
         mode="local"
         session={session}
         onError={setError}
-        onPurchaseSelect={(row) => setOwRecord({ kind: 'purchase', row: owPurchaseRecord(row) })}
-        onSalesSelect={(row) => setOwRecord({ kind: 'sales', row: owSaleRecord(row) })}
+        onPurchaseSelect={(row) => setOwRecord({ kind: 'purchase', row, productCode: selectedCode })}
+        onSalesSelect={(row) => setOwRecord({ kind: 'sales', row, productCode: selectedCode })}
       />
     ));
 
@@ -5515,11 +5515,13 @@ function OrderWorkspace({ session, settings, hidden }) {
         )}
       </div>
       {owRecord && (
-        <PurchaseDetailCard
-          detail={{ store: { store_name: store }, row: owRecord.row }}
+        <OwDocumentCard
+          kind={owRecord.kind}
+          store={store}
+          row={owRecord.row}
+          productCode={owRecord.productCode}
+          session={session}
           onClose={() => setOwRecord(null)}
-          visibility="FULL"
-          {...(owRecord.kind === 'sales' ? OW_SALE_CARD : { fields: [...PURCHASE_METRIC_FIELDS, ...OW_PURCHASE_EXTRA_FIELDS] })}
         />
       )}
 
@@ -5854,44 +5856,135 @@ function owIntelCacheSet(key, promise) {
   if (owIntelCache.size > 400) owIntelCache.delete(owIntelCache.keys().next().value);
 }
 
-// Detail-panel row -> PurchaseDetailCard record (the same card Stock
-// Availability opens on a purchase row click).
-function owPurchaseRecord(row) {
-  const series = String(row.InvoiceSeries || '').trim();
-  return {
-    grn_no: row.GRNNo != null ? `${row.GRNNo}${series ? ` (${series})` : ''}` : '',
-    date: row.GRNDate, qty: row.RStock, free: row.FreeQty, mrp: row.MRP, ptr: row.PTR, cost: row.ItemCost,
-    dis_pct: fmtOwPct(row.DIS), land_pct: fmtOwPct(owLandingPct(row.PTR, row.ItemCost)),
-    batch: row.BatchCode, tax: row.TaxAmount, disc_amt: row.DiscountAmount, margin: row.Margin,
-    supplier: row.SupplierName, party_type: series === 'TI' ? 'transfer' : 'supplier',
-  };
-}
-function owSaleRecord(row) {
-  const t = row.Bill_Time ? new Date(row.Bill_Time) : null;
-  return {
-    bill_no: row.Bnumber, bill_time: t && !Number.isNaN(t.getTime())
-      ? t.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
-      : '',
-    qty: row.TotalQuantity, series: String(row.type || '').trim(), salesman: row.Salesmanname,
-    mrp: row.mrp, ptr: row.ptr, dis_pct: fmtOwPct(row.dis), supplier: row.CUSTOMERNAME,
-  };
-}
-// Appended to PURCHASE_METRIC_FIELDS at render time (that const is declared
-// further down the module, so it can't be spread here at load time).
-const OW_PURCHASE_EXTRA_FIELDS = [
-  ['land_pct', 'Land%', 'text'], ['batch', 'Batch', 'text'],
-  ['tax', 'Tax Amount', 'money'], ['disc_amt', 'Discount Amount', 'money'], ['margin', 'Margin', 'money'],
-];
-const OW_SALE_CARD = {
-  eyebrow: 'Sale Record',
-  heading: (store, row) => `${store.store_name}${row.bill_no ? ` • Bill ${row.bill_no}` : ''}`,
-  partyLabel: 'Customer',
-  fields: [
-    ['bill_no', 'Bill No', 'text'], ['bill_time', 'Bill Time', 'text'], ['qty', 'Qty', 'qty'],
-    ['series', 'Series', 'text'], ['salesman', 'Salesman', 'text'],
-    ['mrp', 'MRP', 'money'], ['ptr', 'PTR', 'money'], ['dis_pct', 'Dis%', 'text'],
+// Click a purchase / sales row in a detail panel -> the WHOLE invoice / bill:
+// every product line with packing, unit description, MRP / PTR / cost,
+// discount and offer (free qty). Columns no line has a value for are hidden
+// (several are not synced for every store). The clicked product is
+// highlighted and scrolled into view.
+const OW_DOC_COLUMNS = {
+  purchase: [
+    ['ProductName', 'Product', 'name'], ['UnitDescription', 'Unit', 'text'], ['SaleUnit', 'Pack', 'qty'],
+    ['Qty', 'Qty', 'qty'], ['FreeQty', 'Offer', 'qty'], ['MRP', 'MRP', 'money'], ['PTR', 'PTR', 'money'],
+    ['ItemCost', 'Cost', 'money'], ['DIS', 'Dis%', 'pct'], ['_land', 'Land%', 'pct'], ['BatchCode', 'Batch', 'text'],
+  ],
+  sales: [
+    ['ProductName', 'Product', 'name'], ['UnitDescription', 'Unit', 'text'], ['SaleUnit', 'Pack', 'qty'],
+    ['Qty', 'Qty', 'qty'], ['FreeQty', 'Offer', 'qty'], ['MRP', 'MRP', 'money'], ['PTR', 'PTR', 'money'],
+    ['ItemCost', 'Cost', 'money'], ['DIS', 'Dis%', 'pct'], ['Rate', 'Rate', 'money'], ['Amount', 'Amount', 'money'],
+    ['Batch', 'Batch', 'text'], ['Expiry', 'Expiry', 'date'],
   ],
 };
+const owBlank = (v) => v === null || v === undefined || String(v).trim() === '';
+function owFmtDocCell(type, value) {
+  if (owBlank(value)) return '—';
+  if (type === 'money') return fmtOwMoney(value);
+  if (type === 'qty') return fmtOwQty(value);
+  if (type === 'pct') return fmtOwPct(value);
+  if (type === 'date') return fmtOwDate(value);
+  return String(value).trim();
+}
+function owFmtDateTime(value) {
+  const t = value ? new Date(value) : null;
+  return t && !Number.isNaN(t.getTime())
+    ? t.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '';
+}
+const owSum = (lines, f) => lines.reduce((t, l) => t + (Number(f(l)) || 0), 0);
+
+function OwDocumentCard({ kind, store, row, productCode, session, onClose }) {
+  const [state, setState] = useState({ loading: true, error: '', header: null, lines: [] });
+  const currentRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    const day = (v) => (v ? String(v).slice(0, 10) : '');
+    let req;
+    if (kind === 'purchase') {
+      req = row.GRNNo == null
+        ? Promise.reject(new Error('This purchase line has no GRN number.'))
+        : api.legacyPurchaseInvoice(store, { grn_no: row.GRNNo, series: row.InvoiceSeries, grn_date: day(row.GRNDate), supplier_code: row.SupplierCode }, session)
+          .then((lines) => ({ header: null, lines: asArray(lines) }));
+    } else {
+      req = api.legacySaleBill(store, { bnumber: row.Bnumber, bill_date: day(row.Bill_Time) }, session)
+        .then((r) => ({ header: r?.header || null, lines: asArray(r?.lines) }));
+    }
+    req.then((d) => { if (!cancelled) setState({ loading: false, error: '', ...d }); })
+      .catch((e) => { if (!cancelled) setState({ loading: false, error: e.message || 'Could not load.', header: null, lines: [] }); });
+    return () => { cancelled = true; };
+  }, [kind, store, row, session]);
+  useEffect(() => {
+    function closeOnEscape(event) { if (event.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+  useEffect(() => { currentRef.current?.scrollIntoView({ block: 'nearest' }); }, [state.lines]);
+
+  const lines = state.lines.map((l) => ({ ...l, _land: owLandingPct(l.PTR, l.ItemCost) }));
+  const columns = OW_DOC_COLUMNS[kind].filter(([key], i) => i === 0 || lines.some((l) => !owBlank(l[key])));
+  const isPurchase = kind === 'purchase';
+  const series = String(row.InvoiceSeries || '').trim();
+  const title = isPurchase
+    ? `${store} • GRN #${row.GRNNo ?? '—'}${series ? ` (${series})` : ''} • ${fmtOwDate(row.GRNDate)}`
+    : `${store} • Bill ${row.Bnumber ?? '—'} • ${owFmtDateTime(state.header?.Billtime || row.Bill_Time)}`;
+  const party = isPurchase ? row.SupplierName : (state.header?.CustomerName || row.CUSTOMERNAME);
+  const metrics = isPurchase
+    ? [['Products', lines.length, 'qty'], ['Total Qty', owSum(lines, (l) => l.Qty), 'qty'], ['Total Offer', owSum(lines, (l) => l.FreeQty), 'qty'],
+      ['Value @ PTR', owSum(lines, (l) => l.Qty * l.PTR), 'money'], ['Value @ Cost', owSum(lines, (l) => l.Qty * l.ItemCost), 'money']]
+    : [['Products', lines.length, 'qty'], ['Total Qty', owSum(lines, (l) => l.Qty), 'qty'],
+      ['Salesman', state.header?.Salesmanname || row.Salesmanname, 'text'], ['Bill Amount', state.header?.BillAmount, 'money']];
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="purchase-detail-card ow-doc-card" role="dialog" aria-modal="true" aria-labelledby="ow-doc-title" onClick={(e) => e.stopPropagation()}>
+        <div className="purchase-detail-header">
+          <div className="purchase-detail-heading">
+            <span className="purchase-detail-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M7 3h10v2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2V3Zm2 2h6V4H9v1ZM5 8v11h14V8H5Zm3 3h8v2H8v-2Zm0 4h5v2H8v-2Z" /></svg>
+            </span>
+            <div>
+              <span className="purchase-detail-eyebrow">{isPurchase ? 'Purchase Invoice' : 'Sales Bill'}</span>
+              <strong id="ow-doc-title">{title}</strong>
+            </div>
+          </div>
+          <button type="button" className="purchase-detail-close" onClick={onClose} aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.4 6 4.6 4.6L16.6 6 18 7.4 13.4 12l4.6 4.6-1.4 1.4-4.6-4.6L7.4 18 6 16.6l4.6-4.6L6 7.4 7.4 6Z" /></svg>
+          </button>
+        </div>
+        <div className="purchase-detail-body">
+          <div className={`purchase-party ${isPurchase && series === 'TI' ? 'purchase-party--transfer' : 'purchase-party--supplier'}`}>
+            <span className="purchase-party-label">{isPurchase ? (series === 'TI' ? 'Source Store' : 'Supplier') : 'Customer'}</span>
+            <strong className="purchase-party-name" title={party || ''}>{party || '—'}</strong>
+          </div>
+          <div className="purchase-metric-grid">
+            {metrics.map(([label, value, type]) => (
+              <div className="purchase-metric" key={label}><span>{label}</span><strong className={type === 'money' ? 'num-value' : ''}>{owFmtDocCell(type, value)}</strong></div>
+            ))}
+          </div>
+          <div className="ow-doc-lines">
+            <table className="ow-intel-table">
+              <thead><tr><th className="ow-num">#</th>{columns.map(([key, label, type]) => <th key={key} className={type === 'name' || type === 'text' || type === 'date' ? undefined : 'ow-num'}>{label}</th>)}</tr></thead>
+              <tbody>
+                {lines.map((l, i) => {
+                  const current = productCode != null && Number(l.ProductCode) === Number(productCode);
+                  return (
+                    <tr key={i} ref={current ? currentRef : undefined} className={`${current ? 'ow-doc-current' : ''}${Number(l.FreeQty) > 0 ? ' ow-freerow' : ''}`}>
+                      <td className="ow-num">{i + 1}</td>
+                      {columns.map(([key, , type]) => (
+                        <td key={key} className={type === 'name' ? 'ow-doc-name' : type === 'text' || type === 'date' ? undefined : 'ow-num'} title={type === 'name' ? l[key] || '' : undefined}>
+                          {type === 'name' ? (l[key] || `#${l.ProductCode}`) : owFmtDocCell(type, l[key])}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+                {!lines.length && <tr><td colSpan={columns.length + 1} className="ow-empty">{state.loading ? 'Loading…' : state.error || 'No lines found.'}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function OrderIntelligence({ store, productCode, visibleCodes, product, mode, session, onError, sections = ['trend', 'purchase', 'sales'], onPurchaseSelect, onSalesSelect }) {
   const [purchase, setPurchase] = useState([]);
@@ -5986,7 +6079,7 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
             <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num ow-grp">Dis%</th><th className="ow-num">Land%</th><th className="ow-num ow-grp ow-col-cost">Cost</th><th className="ow-num ow-col-ptr">PTR</th><th className="ow-num ow-col-mrp">MRP</th><th className="ow-grp">GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
             <tbody>
               {purchase.map((row, i) => (
-                <tr key={i} className={`ow-intel-clickable${Number(row.FreeQty) > 0 ? ' ow-freerow' : ''}`} title="Click for the full purchase record" onClick={() => onPurchaseSelect?.(row)}>
+                <tr key={i} className={`ow-intel-clickable${Number(row.FreeQty) > 0 ? ' ow-freerow' : ''}`} title="Click to see the whole purchase invoice" onClick={() => onPurchaseSelect?.(row)}>
                   <td className="ow-num">{fmtOwQty(row.RStock)}</td>
                   <td className="ow-num">{fmtOwQty(row.FreeQty)}</td>
                   <td className="ow-num ow-grp">{fmtOwPct(row.DIS)}</td>
@@ -6012,7 +6105,7 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
             <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-intel-cust">Salesman</th><th className="ow-intel-cust">Customer</th><th className="ow-num">Dis%</th><th className="ow-num">MRP</th></tr></thead>
             <tbody>
               {sales.map((row, i) => (
-                <tr key={i} className="ow-intel-clickable" title="Click for the full sale record" onClick={() => onSalesSelect?.(row)}>
+                <tr key={i} className="ow-intel-clickable" title="Click to see the whole sales bill" onClick={() => onSalesSelect?.(row)}>
                   <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
                   <td>{fmtOwDate(row.Bill_Time)}</td>
                   <td className="ow-intel-cust" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
@@ -9840,12 +9933,7 @@ const PURCHASE_METRIC_FIELDS = [
 // The party block (supplier / source store) is also FULL-only.
 const PURCHASE_FULL_ONLY_FIELDS = new Set(['dis_pct']);
 
-function PurchaseDetailCard({
-  detail, onClose, visibility = 'SUMMARY',
-  // Overrides let the Order Workspace reuse this exact card for its purchase
-  // rows (extra fields) and sale rows (Sale Record / Customer).
-  eyebrow = 'Purchase Record', fields = PURCHASE_METRIC_FIELDS, heading, partyLabel: partyLabelOverride,
-}) {
+function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
   const { store, row } = detail;
   // The backend resolves the party TYPE (internal store transfer vs external
   // supplier); the UI never guesses from the displayed name. Internal 'TI'
@@ -9857,14 +9945,14 @@ function PurchaseDetailCard({
   // store as a subtitle ("via NMW") rather than hiding it as a plain transfer.
   const isViaWarehouse = partyType === 'via_warehouse';
   const showParty = visibility === 'FULL';
-  const partyLabel = partyLabelOverride || (isTransfer ? 'Source Store' : 'Supplier');
+  const partyLabel = isTransfer ? 'Source Store' : 'Supplier';
   const partyName = String(row.supplier || '').trim() || '-';
   const sourceStore = String(row.source_store_name || '').trim();
   const partySub = isTransfer ? (sourceStore || null)
     : isViaWarehouse ? (sourceStore ? `via ${sourceStore}` : null)
     : null;
 
-  const metrics = fields.filter(([key]) =>
+  const metrics = PURCHASE_METRIC_FIELDS.filter(([key]) =>
     (visibility === 'FULL' || !PURCHASE_FULL_ONLY_FIELDS.has(key))
     && row[key] !== undefined && row[key] !== null && row[key] !== '');
 
@@ -9891,9 +9979,9 @@ function PurchaseDetailCard({
               <svg viewBox="0 0 24 24"><path d="M7 3h10v2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2V3Zm2 2h6V4H9v1ZM5 8v11h14V8H5Zm3 3h8v2H8v-2Zm0 4h5v2H8v-2Z" /></svg>
             </span>
             <div>
-              <span className="purchase-detail-eyebrow">{eyebrow}</span>
+              <span className="purchase-detail-eyebrow">Purchase Record</span>
               <strong id="purchase-detail-title">
-                {heading ? heading(store, row) : `${store.store_name || store.store_code}${row.grn_no ? ` • GRN #${row.grn_no}` : ''}`}
+                {store.store_name || store.store_code}{row.grn_no ? ` • GRN #${row.grn_no}` : ''}
               </strong>
             </div>
           </div>

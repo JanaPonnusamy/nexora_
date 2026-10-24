@@ -1495,7 +1495,7 @@ def qty_check_purchase_details(store, product_code, mode):
     # Extra fields for the Order Workspace's click-a-row purchase record card.
     # Central (local) PurchaseTrans only -- branch DBs have their own schema.
     detail_cols = (
-        "pt.Grnnumber AS GRNNo, pt.InvoiceSeries, pt.BatchCode, pt.SaleUnit, "
+        "pt.Grnnumber AS GRNNo, pt.InvoiceSeries, pt.SupplierCode, pt.BatchCode, pt.SaleUnit, "
         "pt.TaxAmount, pt.DiscountAmount, pt.Margin, " if is_local else ""
     )
 
@@ -1528,6 +1528,68 @@ def qty_check_purchase_details(store, product_code, mode):
         cur = conn.cursor().execute(sql, params)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def purchase_invoice_lines(store_name, grn_no, series, grn_date, supplier_code=None):
+    """Every line of ONE purchase invoice / GRN (all its products), for the
+    Order Workspace's click-a-purchase-row card. GRN numbers repeat across
+    years (NMG GRN 4595 exists in 2024 and 2026), so the invoice is
+    identified by store + GRN no + series + GRN date (+ supplier when known),
+    never by the number alone. Product name / unit description / packing
+    come from the store's Products master."""
+    sql = (
+        "SELECT pt.ProductCode, p.ProductName, p.UnitDescription, "
+        "ISNULL(pt.SaleUnit, p.SaleUnit) AS SaleUnit, pt.StockReceived AS Qty, pt.FreeQty, "
+        "pt.ProductDiscPercent AS DIS, pt.ItemCost, pt.PurchasePrice AS PTR, pt.MRP, pt.BatchCode "
+        "FROM PurchaseTrans pt WITH (NOLOCK) "
+        "LEFT JOIN Products p WITH (NOLOCK) ON p.StoreName = pt.StoreName AND p.ProductCode = pt.ProductCode "
+        "WHERE pt.StoreName = ? AND pt.Grnnumber = ? AND RTRIM(pt.InvoiceSeries) = RTRIM(?) "
+        "AND CAST(pt.GRNDate AS date) = CAST(? AS date)"
+    )
+    params = [store_name, grn_no, series or "", grn_date]
+    if supplier_code:
+        sql += " AND pt.SupplierCode = ?"
+        params.append(str(supplier_code))
+    sql += " ORDER BY p.ProductName"
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def sale_bill_lines(store_name, bnumber, bill_date):
+    """Every line of ONE sales bill (all its products) plus the bill header,
+    for the Order Workspace's click-a-sales-row card. Bill numbers repeat
+    too (NMG C01071089 exists in 2025 and 2026), so the bill date is part of
+    the key."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        header = cur.execute(
+            "SELECT TOP 1 s.BillNumber, s.BNumber, s.BillDate, s.Billtime, s.CustomerName, s.BillAmount, sr.Salesmanname "
+            "FROM SaleInformation s WITH (NOLOCK) "
+            "LEFT JOIN SalesRep sr WITH (NOLOCK) ON sr.Salesmancode = s.DeliverySalesRep AND sr.StoreName = s.StoreName "
+            "WHERE s.StoreName = ? AND s.BNumber = ? AND CAST(s.BillDate AS date) = CAST(? AS date)",
+            store_name, bnumber, bill_date,
+        )
+        hcols = [d[0] for d in header.description]
+        hrow = header.fetchone()
+        lines = cur.execute(
+            "SELECT ps.ProductCode, p.ProductName, p.UnitDescription, p.SaleUnit, ps.Quantity AS Qty, "
+            "ps.Freequantity AS FreeQty, ps.DiscountPercentage AS DIS, ps.Itemcost AS ItemCost, "
+            "ps.PurchasePrice AS PTR, ps.MRP, ps.Rate, ps.Transactionamount AS Amount, "
+            "ps.Batchdescription AS Batch, ps.Expirydate AS Expiry "
+            "FROM ProductSaleInformation ps WITH (NOLOCK) "
+            "LEFT JOIN Products p WITH (NOLOCK) ON p.StoreName = ps.StoreName AND p.ProductCode = ps.ProductCode "
+            "WHERE ps.StoreName = ? AND ps.Bnumber = ? AND ps.TransactionValidity = 0 "
+            "AND CAST(ps.TransactionDate AS date) = CAST(? AS date) "
+            "ORDER BY p.ProductName",
+            store_name, bnumber, bill_date,
+        )
+        lcols = [d[0] for d in lines.description]
+        return {
+            "header": dict(zip(hcols, hrow)) if hrow else None,
+            "lines": [dict(zip(lcols, r)) for r in lines.fetchall()],
+        }
 
 
 def qty_check_sales_details(store, product_code, mode):
