@@ -1492,11 +1492,17 @@ def qty_check_purchase_details(store, product_code, mode):
     supplier_table = "OrderSuppliers" if is_local else "Suppliers"
     supplier_store_filter = " AND sup.StoreName = ?" if is_local else ""
     store_filter = " AND pt.StoreName = ?" if is_local else ""
+    # Extra fields for the Order Workspace's click-a-row purchase record card.
+    # Central (local) PurchaseTrans only -- branch DBs have their own schema.
+    detail_cols = (
+        "pt.Grnnumber AS GRNNo, pt.InvoiceSeries, pt.BatchCode, pt.SaleUnit, "
+        "pt.TaxAmount, pt.DiscountAmount, pt.Margin, " if is_local else ""
+    )
 
     sql = (
         "SELECT TOP 10 pt.StockReceived AS RStock, pt.FreeQty, "
         "pt.ProductDiscPercent AS DIS, pt.ItemCost, pt.PurchasePrice AS PTR, "
-        "pt.MRP, pt.GRNDate, "
+        f"pt.MRP, pt.GRNDate, {detail_cols}"
         "CASE WHEN pt.InvoiceSeries = 'TI' THEN src.StoreName ELSE sup.SupplierName END AS SupplierName "
         f"FROM PurchaseTrans pt WITH (NOLOCK) "
         f"LEFT JOIN {supplier_table} sup WITH (NOLOCK) "

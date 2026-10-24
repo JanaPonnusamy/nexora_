@@ -8596,7 +8596,10 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-left { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .ow-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .ow-main .ow-grid { flex: 1 1 auto; min-height: 0; }
-.ow-left > .ow-panel--history { flex: 0 0 auto; height: clamp(120px, 22vh, 190px); }
+/* Bottom dock: panels docked under the grid sit side by side. */
+.ow-left > .ow-bottom-dock { flex: 0 0 auto; height: clamp(120px, 22vh, 190px); min-height: 0; display: flex; gap: 8px; }
+.ow-bottom-dock > .ow-panel { flex: 1 1 0; height: auto; min-width: 0; }
+.ow-side-panels > .ow-panel--history { flex: 1 1 0; min-height: 90px; }
 
 /* Layout settings (grid settings panel -> Layout; every role incl. PM). */
 .ow-body { --ow-side-w: minmax(320px, 1fr); }
@@ -8607,9 +8610,14 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-body.ow-side-left > .ow-side { order: -1; }
 .ow-body.ow-side-hidden { grid-template-columns: minmax(0, 1fr); }
 .ow-body.ow-side-hidden > .ow-side { display: none; }
-.ow-body.ow-history-hidden .ow-left > .ow-panel--history { display: none; }
-.ow-body.ow-history-small .ow-left > .ow-panel--history { height: 110px; }
-.ow-body.ow-history-large .ow-left > .ow-panel--history { height: clamp(220px, 34vh, 340px); }
+.ow-body.ow-bottom-small .ow-left > .ow-bottom-dock { height: 110px; }
+.ow-body.ow-bottom-large .ow-left > .ow-bottom-dock { height: clamp(220px, 34vh, 340px); }
+.ow-details-toggle { margin-left: auto; }
+.ow-intel-clickable { cursor: pointer; }
+.ow-intel-clickable:hover > td { background: var(--nx-surface-raised); }
+.ow-panel-cfg .grid-settings-panel__col { grid-template-columns: 16px minmax(0, 1fr) auto auto; }
+.ow-dock-chips { gap: 4px; }
+.ow-dock-chips .grid-settings-panel__chip { padding: 2px 8px; font-size: 10px; }
 /* Row height: #root + !important to win over the global table density
    system (data-tables.css), same as the base .ow-screen tbody td rule. */
 #root .ow-screen.ow-rows-compact tbody td { height: 24px !important; }

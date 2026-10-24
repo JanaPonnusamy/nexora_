@@ -3397,15 +3397,50 @@ function resolveOwColumns(base, cfg) {
 // Order Workspace layout (owner request 2026-10-24): every role -- PM
 // included -- can size the grid rows and move/size the detail panels. Saved
 // per PC (localStorage), same as the column settings.
-const OW_LAYOUT_DEFAULT = { rowSize: 'normal', sidePosition: 'right', sideWidth: 'normal', historyHeight: 'normal' };
+// The four detail panels can each be shown/hidden, docked in the side column
+// or the strip under the grid, and reordered.
+const OW_PANEL_DEFS = [
+  { key: 'trend', label: 'Monthly Trend' },
+  { key: 'purchase', label: 'Purchase / GRN' },
+  { key: 'sales', label: 'Bill / Sales' },
+  { key: 'history', label: 'Previous Decisions' },
+];
+const OW_PANELS_DEFAULT = [
+  { key: 'trend', dock: 'side', hidden: false },
+  { key: 'purchase', dock: 'side', hidden: false },
+  { key: 'sales', dock: 'side', hidden: false },
+  { key: 'history', dock: 'bottom', hidden: false },
+];
+const OW_LAYOUT_DEFAULT = {
+  rowSize: 'normal', sidePosition: 'right', sideHidden: false, sideWidth: 'normal', bottomHeight: 'normal',
+  panels: OW_PANELS_DEFAULT,
+};
 const OW_LAYOUT_OPTIONS = [
   { key: 'rowSize', label: 'Row height', options: [['compact', 'Compact'], ['normal', 'Normal'], ['large', 'Large']] },
-  { key: 'sidePosition', label: 'Detail panel', options: [['right', 'Right'], ['left', 'Left'], ['hidden', 'Hidden']] },
-  { key: 'sideWidth', label: 'Detail panel width', options: [['narrow', 'Narrow'], ['normal', 'Normal'], ['wide', 'Wide']] },
-  { key: 'historyHeight', label: 'Previous decisions', options: [['hidden', 'Hidden'], ['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']] },
+  { key: 'sideWidth', label: 'Side panel width', options: [['narrow', 'Narrow'], ['normal', 'Normal'], ['wide', 'Wide']] },
+  { key: 'bottomHeight', label: 'Bottom panel height', options: [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']] },
 ];
+// Saved settings -> a complete layout: unknown keys dropped, any panel the
+// saved list lacks (older build) appended with its default dock.
+function owNormalizeLayout(saved) {
+  const merged = { ...OW_LAYOUT_DEFAULT, ...(saved || {}) };
+  const known = new Set(OW_PANEL_DEFS.map((p) => p.key));
+  const panels = (Array.isArray(merged.panels) ? merged.panels : [])
+    .filter((p) => p && known.has(p.key))
+    .map((p) => ({ key: p.key, dock: p.dock === 'bottom' ? 'bottom' : 'side', hidden: Boolean(p.hidden) }));
+  OW_PANELS_DEFAULT.forEach((d) => { if (!panels.some((p) => p.key === d.key)) panels.push({ ...d }); });
+  if (merged.sidePosition !== 'left') merged.sidePosition = 'right';
+  return { ...merged, panels };
+}
 
 function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth, onReset, onClose, layout, onLayout }) {
+  const setPanel = (key, patch) => onLayout({ panels: layout.panels.map((p) => (p.key === key ? { ...p, ...patch } : p)) });
+  const movePanel = (idx, dir) => {
+    const n = [...layout.panels]; const j = idx + dir;
+    if (j < 0 || j >= n.length) return;
+    [n[idx], n[j]] = [n[j], n[idx]];
+    onLayout({ panels: n });
+  };
   const ref = useRef(null);
   const [pos, setPos] = useState(null);
   useLayoutEffect(() => {
@@ -3428,8 +3463,8 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
     <div className="grid-settings-panel" ref={ref} role="dialog" aria-label={`${title} column settings`} style={{ position: 'fixed', top: pos.top, right: pos.right }}>
       <div className="grid-settings-panel__head">
         <strong>{title} · Columns</strong>
-        <span>Show / hide, reorder &amp; resize</span>
-        <button type="button" className="grid-settings-panel__reset-all" onClick={onReset}>Reset to Default</button>
+        <span>Show / hide, reorder &amp; resize{onLayout ? ' · Layout below' : ''}</span>
+        <button type="button" className="grid-settings-panel__reset-all" onClick={onReset} title={onLayout ? 'Reset this grid\'s columns and the whole layout' : 'Reset columns'}>Reset to Default</button>
       </div>
       <div className="grid-settings-panel__body">
         <ul className="grid-settings-panel__cols">
@@ -3453,6 +3488,20 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
           })}
         </ul>
       </div>
+      {onLayout && (
+        <div className="grid-settings-panel__section">
+          <div className="grid-settings-panel__title">Side panel</div>
+          <div className="grid-settings-panel__chips">
+            {[['right', 'Right'], ['left', 'Left']].map(([value, label]) => (
+              <button key={value} type="button"
+                className={`grid-settings-panel__chip${!layout.sideHidden && layout.sidePosition === value ? ' is-on' : ''}`}
+                onClick={() => onLayout({ sidePosition: value, sideHidden: false })}>{label}</button>
+            ))}
+            <button type="button" className={`grid-settings-panel__chip${layout.sideHidden ? ' is-on' : ''}`}
+              onClick={() => onLayout({ sideHidden: true })}>Hidden</button>
+          </div>
+        </div>
+      )}
       {onLayout && OW_LAYOUT_OPTIONS.map((group) => (
         <div className="grid-settings-panel__section" key={group.key}>
           <div className="grid-settings-panel__title">{group.label}</div>
@@ -3462,13 +3511,39 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
                 key={value}
                 type="button"
                 className={`grid-settings-panel__chip${layout[group.key] === value ? ' is-on' : ''}`}
-                disabled={group.key === 'sideWidth' && layout.sidePosition === 'hidden'}
+                disabled={group.key === 'sideWidth' && layout.sideHidden}
                 onClick={() => onLayout({ [group.key]: value })}
               >{label}</button>
             ))}
           </div>
         </div>
       ))}
+      {onLayout && (
+        <div className="grid-settings-panel__section">
+          <div className="grid-settings-panel__title">Detail panels — show, dock &amp; order</div>
+          <ul className="grid-settings-panel__cols ow-panel-cfg">
+            {layout.panels.map((p, idx, arr) => {
+              const def = OW_PANEL_DEFS.find((d) => d.key === p.key);
+              return (
+                <li className={`grid-settings-panel__col ${p.hidden ? 'is-off' : ''}`} key={p.key}>
+                  <input type="checkbox" checked={!p.hidden} onChange={() => setPanel(p.key, { hidden: !p.hidden })} title="Show this panel" />
+                  <span className="grid-settings-panel__colname" title={def?.label}>{def?.label}</span>
+                  <span className="grid-settings-panel__chips ow-dock-chips">
+                    {[['side', 'Side'], ['bottom', 'Bottom']].map(([dock, label]) => (
+                      <button key={dock} type="button" className={`grid-settings-panel__chip${p.dock === dock ? ' is-on' : ''}`}
+                        onClick={() => setPanel(p.key, { dock })}>{label}</button>
+                    ))}
+                  </span>
+                  <span className="grid-settings-panel__movebtns">
+                    <button type="button" className="grid-settings-panel__movebtn" disabled={idx === 0} title="Move up" onClick={() => movePanel(idx, -1)}>▲</button>
+                    <button type="button" className="grid-settings-panel__movebtn" disabled={idx === arr.length - 1} title="Move down" onClick={() => movePanel(idx, 1)}>▼</button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </div>,
     document.body
   );
@@ -3922,9 +3997,11 @@ function OrderWorkspace({ session, settings, hidden }) {
   const cfgWidth = (id, key, w) => setOwColCfg((c) => { const g = { ...(c[id] || {}) }; const widths = { ...(g.widths || {}) }; if (w === '' || w == null) delete widths[key]; else widths[key] = Number(w); return { ...c, [id]: { ...g, widths } }; });
   const cfgReset = (id) => setOwColCfg((c) => { const n = { ...c }; delete n[id]; return n; });
   const [owLayout, setOwLayout] = useState(() => {
-    try { return { ...OW_LAYOUT_DEFAULT, ...JSON.parse(localStorage.getItem('nexora.desktop.owLayout') || '{}') }; }
-    catch { return OW_LAYOUT_DEFAULT; }
+    try { return owNormalizeLayout(JSON.parse(localStorage.getItem('nexora.desktop.owLayout') || '{}')); }
+    catch { return owNormalizeLayout(null); }
   });
+  // Purchase / sales row clicked in a detail panel -> record card.
+  const [owRecord, setOwRecord] = useState(null);
   useEffect(() => {
     try { localStorage.setItem('nexora.desktop.owLayout', JSON.stringify(owLayout)); } catch { /* best effort */ }
   }, [owLayout]);
@@ -4901,6 +4978,53 @@ function OrderWorkspace({ session, settings, hidden }) {
     }
   }
 
+  const owHistorySection = (
+    <section className="ow-panel ow-panel--history">
+      <div className="ow-panel-title">Previous Decisions{selectedCode != null && history.length > 0 && <span className="ow-panel-count">Last {Math.min(history.length, 25)}</span>}</div>
+      <div className="ow-panel-scroll">
+        {/* Product Name dropped -- every row here is the SAME currently-selected
+            product (the sidebar title above already names it), so repeating it
+            on every line was pure wasted width. Remaining 8 columns take the
+            freed share instead of leaving dead space. */}
+        <table className="ow-intel-table ow-fixed">
+          <colgroup>
+            <col style={{ width: '11%' }} /><col style={{ width: '11%' }} /><col style={{ width: '11%' }} /><col style={{ width: '13%' }} /><col style={{ width: '24%' }} /><col style={{ width: '14%' }} /><col style={{ width: '9%' }} /><col style={{ width: '7%' }} />
+          </colgroup>
+          <thead><tr><th className="ow-num">Or Qty</th><th className="ow-num">Org Order</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
+          <tbody>
+            {history.map((row, i) => (
+              <tr key={i}><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwQty(row.saleunit)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td>{row.remarks ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
+            ))}
+            {!history.length && <tr><td colSpan={8} className="ow-empty">{selectedCode == null ? 'Select a product to see its previous-order history.' : 'No previous-order history for this product.'}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+  const owVisiblePanels = owLayout.panels.filter((p) => !p.hidden);
+  const owSidePanels = owVisiblePanels.filter((p) => p.dock === 'side');
+  const owBottomPanels = owVisiblePanels.filter((p) => p.dock === 'bottom');
+  const owSideShown = !owLayout.sideHidden && owSidePanels.length > 0;
+  // One OrderIntelligence per panel: each fetches through the shared
+  // owIntelCache, so splitting panels across docks costs no extra requests
+  // and a detail fetch never re-renders the big grid.
+  const renderOwPanel = (p) => (p.key === 'history'
+    ? <Fragment key="history">{owHistorySection}</Fragment>
+    : (
+      <OrderIntelligence
+        key={p.key}
+        sections={[p.key]}
+        store={store}
+        productCode={selectedCode}
+        visibleCodes={owVisibleCodes}
+        mode="local"
+        session={session}
+        onError={setError}
+        onPurchaseSelect={(row) => setOwRecord({ kind: 'purchase', row: owPurchaseRecord(row) })}
+        onSalesSelect={(row) => setOwRecord({ kind: 'sales', row: owSaleRecord(row) })}
+      />
+    ));
+
   return (
     <section className={`screen-panel ow-screen ow-rows-${owLayout.rowSize}${hidden ? ' ow-screen-hidden' : ''}`}>
       <div className="ow-toolbar">
@@ -5068,7 +5192,7 @@ function OrderWorkspace({ session, settings, hidden }) {
             onToggle={(key) => cfgToggle(settingsFor, key)}
             onMove={(key, dir) => cfgMove(settingsFor, meta.base, key, dir)}
             onWidth={(key, w) => cfgWidth(settingsFor, key, w)}
-            onReset={() => cfgReset(settingsFor)}
+            onReset={() => { cfgReset(settingsFor); setOwLayout(owNormalizeLayout(null)); }}
             onClose={() => setSettingsFor(null)}
             layout={owLayout}
             onLayout={(patch) => setOwLayout((l) => ({ ...l, ...patch }))}
@@ -5084,7 +5208,7 @@ function OrderWorkspace({ session, settings, hidden }) {
         </div>
       )}
 
-      <div className={`ow-body ow-side-${owLayout.sidePosition} ow-side-w-${owLayout.sideWidth} ow-history-${owLayout.historyHeight}`}>
+      <div className={`ow-body ow-side-${owSideShown ? owLayout.sidePosition : 'hidden'} ow-side-w-${owLayout.sideWidth} ow-bottom-${owLayout.bottomHeight}`}>
         <div className="ow-left">
         <div className="ow-main">
           <div className="ow-help">
@@ -5107,6 +5231,12 @@ function OrderWorkspace({ session, settings, hidden }) {
             )}
             <span className="ow-status-sep" aria-hidden="true">•</span>
             <span className="ow-count">{activeCount} products</span>
+            <button type="button" className="ow-btn ow-btn-sm ow-details-toggle"
+              aria-pressed={!owLayout.sideHidden}
+              title={owLayout.sideHidden ? 'Show the side detail panel' : 'Hide the side detail panel to widen the grid'}
+              onClick={() => setOwLayout((l) => ({ ...l, sideHidden: !l.sideHidden }))}>
+              {owLayout.sideHidden ? 'Show details' : 'Hide details'}
+            </button>
           </div>
           <div className="ow-grid" ref={owGridScrollRef}>
         {view === 'qty' ? (
@@ -5363,29 +5493,12 @@ function OrderWorkspace({ session, settings, hidden }) {
           </div>
         </div>
 
-        <section className="ow-panel ow-panel--history">
-          <div className="ow-panel-title">Previous Decisions{selectedCode != null && history.length > 0 && <span className="ow-panel-count">Last {Math.min(history.length, 25)}</span>}</div>
-          <div className="ow-panel-scroll">
-            {/* Product Name dropped -- every row here is the SAME currently-selected
-                product (the sidebar title above already names it), so repeating it
-                on every line was pure wasted width. Remaining 8 columns take the
-                freed share instead of leaving dead space. */}
-            <table className="ow-intel-table ow-fixed">
-              <colgroup>
-                <col style={{ width: '11%' }} /><col style={{ width: '11%' }} /><col style={{ width: '11%' }} /><col style={{ width: '13%' }} /><col style={{ width: '24%' }} /><col style={{ width: '14%' }} /><col style={{ width: '9%' }} /><col style={{ width: '7%' }} />
-              </colgroup>
-              <thead><tr><th className="ow-num">Or Qty</th><th className="ow-num">Org Order</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
-              <tbody>
-                {history.map((row, i) => (
-                  <tr key={i}><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwQty(row.saleunit)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td>{row.remarks ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
-                ))}
-                {!history.length && <tr><td colSpan={8} className="ow-empty">{selectedCode == null ? 'Select a product to see its previous-order history.' : 'No previous-order history for this product.'}</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        {owBottomPanels.length > 0 && (
+          <div className="ow-bottom-dock">{owBottomPanels.map(renderOwPanel)}</div>
+        )}
         </div>
 
+        {owSideShown && (
         <aside className="ow-side">
           <div className="ow-side-head">
             {selected ? (
@@ -5397,11 +5510,18 @@ function OrderWorkspace({ session, settings, hidden }) {
               </>
             ) : <span className="ow-side-hint">Select a product to see its trend, purchase &amp; sales.</span>}
           </div>
-          <div className="ow-side-panels">
-            <OrderIntelligence store={store} productCode={selectedCode} visibleCodes={owVisibleCodes} mode="local" session={session} onError={setError} />
-          </div>
+          <div className="ow-side-panels">{owSidePanels.map(renderOwPanel)}</div>
         </aside>
+        )}
       </div>
+      {owRecord && (
+        <PurchaseDetailCard
+          detail={{ store: { store_name: store }, row: owRecord.row }}
+          onClose={() => setOwRecord(null)}
+          visibility="FULL"
+          {...(owRecord.kind === 'sales' ? OW_SALE_CARD : { fields: [...PURCHASE_METRIC_FIELDS, ...OW_PURCHASE_EXTRA_FIELDS] })}
+        />
+      )}
 
       <div className="ow-footer" role="status">
         <span className="ow-footer-item"><b>Store</b> {store || '—'}</span>
@@ -5717,7 +5837,63 @@ function blobToBase64(blob) {
 // Contextual intelligence for the selected order row: Purchase/GRN, Sales/Bill
 // and monthly Trend, in a compact tabbed inspector (only one view expanded at a
 // time — never three tall tables at once). Real data via the legacy-order API.
-function OrderIntelligence({ store, productCode, visibleCodes, product, mode, session, onError }) {
+// Shared Purchase/Sales/Trend fetch cache across every OrderIntelligence
+// instance (one per detail panel), keyed by store+mode+product. Values are
+// the in-flight Promise, so concurrent panels and prefetches dedupe to one
+// request. Entries expire after a few minutes; size is capped.
+const owIntelCache = new Map();
+const OW_INTEL_TTL_MS = 5 * 60 * 1000;
+function owIntelCacheGet(key) {
+  const hit = owIntelCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > OW_INTEL_TTL_MS) { owIntelCache.delete(key); return null; }
+  return hit.promise;
+}
+function owIntelCacheSet(key, promise) {
+  owIntelCache.set(key, { promise, at: Date.now() });
+  if (owIntelCache.size > 400) owIntelCache.delete(owIntelCache.keys().next().value);
+}
+
+// Detail-panel row -> PurchaseDetailCard record (the same card Stock
+// Availability opens on a purchase row click).
+function owPurchaseRecord(row) {
+  const series = String(row.InvoiceSeries || '').trim();
+  return {
+    grn_no: row.GRNNo != null ? `${row.GRNNo}${series ? ` (${series})` : ''}` : '',
+    date: row.GRNDate, qty: row.RStock, free: row.FreeQty, mrp: row.MRP, ptr: row.PTR, cost: row.ItemCost,
+    dis_pct: fmtOwPct(row.DIS), land_pct: fmtOwPct(owLandingPct(row.PTR, row.ItemCost)),
+    batch: row.BatchCode, tax: row.TaxAmount, disc_amt: row.DiscountAmount, margin: row.Margin,
+    supplier: row.SupplierName, party_type: series === 'TI' ? 'transfer' : 'supplier',
+  };
+}
+function owSaleRecord(row) {
+  const t = row.Bill_Time ? new Date(row.Bill_Time) : null;
+  return {
+    bill_no: row.Bnumber, bill_time: t && !Number.isNaN(t.getTime())
+      ? t.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : '',
+    qty: row.TotalQuantity, series: String(row.type || '').trim(), salesman: row.Salesmanname,
+    mrp: row.mrp, ptr: row.ptr, dis_pct: fmtOwPct(row.dis), supplier: row.CUSTOMERNAME,
+  };
+}
+// Appended to PURCHASE_METRIC_FIELDS at render time (that const is declared
+// further down the module, so it can't be spread here at load time).
+const OW_PURCHASE_EXTRA_FIELDS = [
+  ['land_pct', 'Land%', 'text'], ['batch', 'Batch', 'text'],
+  ['tax', 'Tax Amount', 'money'], ['disc_amt', 'Discount Amount', 'money'], ['margin', 'Margin', 'money'],
+];
+const OW_SALE_CARD = {
+  eyebrow: 'Sale Record',
+  heading: (store, row) => `${store.store_name}${row.bill_no ? ` • Bill ${row.bill_no}` : ''}`,
+  partyLabel: 'Customer',
+  fields: [
+    ['bill_no', 'Bill No', 'text'], ['bill_time', 'Bill Time', 'text'], ['qty', 'Qty', 'qty'],
+    ['series', 'Series', 'text'], ['salesman', 'Salesman', 'text'],
+    ['mrp', 'MRP', 'money'], ['ptr', 'PTR', 'money'], ['dis_pct', 'Dis%', 'text'],
+  ],
+};
+
+function OrderIntelligence({ store, productCode, visibleCodes, product, mode, session, onError, sections = ['trend', 'purchase', 'sales'], onPurchaseSelect, onSalesSelect }) {
   const [purchase, setPurchase] = useState([]);
   const [sales, setSales] = useState([]);
   const [monthly, setMonthly] = useState([]);
@@ -5743,20 +5919,18 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
   // the in-flight Promise itself, so a prefetch and a real selection of the
   // same code dedupe to one request. Cleared when the store/mode changes so it
   // never grows unbounded or serves another store's data.
-  const cacheRef = useRef(new Map());
-  useEffect(() => { cacheRef.current.clear(); }, [store, mode]);
   const fetchDetails = useCallback((code) => {
     if (!store || code == null) return Promise.resolve({ purchase: [], sales: [], monthly: [] });
-    const key = String(code);
-    const hit = cacheRef.current.get(key);
+    const key = `${store}|${mode}|${code}`;
+    const hit = owIntelCacheGet(key);
     if (hit) return hit;
     const p = Promise.all([
       api.legacyPurchaseDetails(store, code, mode, session).catch(() => []),
       api.legacySalesDetails(store, code, mode, session).catch(() => []),
       api.legacyMonthlyStats(store, code, mode, session).catch(() => [])
     ]).then(([pp, ss, mm]) => ({ purchase: asArray(pp), sales: asArray(ss), monthly: asArray(mm) }))
-      .catch(() => { cacheRef.current.delete(key); return { purchase: [], sales: [], monthly: [] }; });
-    cacheRef.current.set(key, p);
+      .catch(() => { owIntelCache.delete(key); return { purchase: [], sales: [], monthly: [] }; });
+    owIntelCacheSet(key, p);
     return p;
   }, [store, mode, session]);
 
@@ -5765,7 +5939,7 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
     let cancelled = false;
     // Only show the spinner for a genuine fetch; a cached/prefetched row
     // resolves on the same tick and shouldn't flash "loading".
-    const cached = cacheRef.current.has(String(settledCode));
+    const cached = Boolean(owIntelCacheGet(`${store}|${mode}|${settledCode}`));
     if (!cached) setLoading(true);
     fetchDetails(settledCode)
       .then((data) => {
@@ -5792,9 +5966,9 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
 
   const empty = productCode == null;
 
-  return (
-    <>
-      <section className="ow-panel ow-panel--chart">
+  const sectionMap = {
+    trend: (
+      <section className="ow-panel ow-panel--chart" key="trend">
         <div className="ow-panel-title">
           Monthly Trend<span className="ow-panel-subtitle">Stock movement — last {monthly.length || 4} months</span>
           {loading && <span className="ow-intel-loading">…</span>}
@@ -5803,14 +5977,16 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
           {empty ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={monthly} loading={loading} />}
         </div>
       </section>
-      <section className="ow-panel ow-panel--purchase">
+    ),
+    purchase: (
+      <section className="ow-panel ow-panel--purchase" key="purchase">
         <div className="ow-panel-title">Purchase / GRN</div>
         <div className="ow-panel-scroll">
           <table className="ow-intel-table">
             <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num ow-grp">Dis%</th><th className="ow-num">Land%</th><th className="ow-num ow-grp ow-col-cost">Cost</th><th className="ow-num ow-col-ptr">PTR</th><th className="ow-num ow-col-mrp">MRP</th><th className="ow-grp">GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
             <tbody>
               {purchase.map((row, i) => (
-                <tr key={i} className={Number(row.FreeQty) > 0 ? 'ow-freerow' : undefined}>
+                <tr key={i} className={`ow-intel-clickable${Number(row.FreeQty) > 0 ? ' ow-freerow' : ''}`} title="Click for the full purchase record" onClick={() => onPurchaseSelect?.(row)}>
                   <td className="ow-num">{fmtOwQty(row.RStock)}</td>
                   <td className="ow-num">{fmtOwQty(row.FreeQty)}</td>
                   <td className="ow-num ow-grp">{fmtOwPct(row.DIS)}</td>
@@ -5827,14 +6003,16 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
           </table>
         </div>
       </section>
-      <section className="ow-panel ow-panel--sales">
+    ),
+    sales: (
+      <section className="ow-panel ow-panel--sales" key="sales">
         <div className="ow-panel-title">Bill / Sales</div>
         <div className="ow-panel-scroll">
           <table className="ow-intel-table">
             <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-intel-cust">Salesman</th><th className="ow-intel-cust">Customer</th><th className="ow-num">Dis%</th><th className="ow-num">MRP</th></tr></thead>
             <tbody>
               {sales.map((row, i) => (
-                <tr key={i}>
+                <tr key={i} className="ow-intel-clickable" title="Click for the full sale record" onClick={() => onSalesSelect?.(row)}>
                   <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
                   <td>{fmtOwDate(row.Bill_Time)}</td>
                   <td className="ow-intel-cust" title={row.Salesmanname}>{row.Salesmanname ?? '—'}</td>
@@ -5848,8 +6026,9 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
           </table>
         </div>
       </section>
-    </>
-  );
+    ),
+  };
+  return <>{sections.map((key) => sectionMap[key])}</>;
 }
 
 // Stock-movement trend: IN (blue) / OUT (green) / STOCK (red) bars share one
@@ -9661,7 +9840,12 @@ const PURCHASE_METRIC_FIELDS = [
 // The party block (supplier / source store) is also FULL-only.
 const PURCHASE_FULL_ONLY_FIELDS = new Set(['dis_pct']);
 
-function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
+function PurchaseDetailCard({
+  detail, onClose, visibility = 'SUMMARY',
+  // Overrides let the Order Workspace reuse this exact card for its purchase
+  // rows (extra fields) and sale rows (Sale Record / Customer).
+  eyebrow = 'Purchase Record', fields = PURCHASE_METRIC_FIELDS, heading, partyLabel: partyLabelOverride,
+}) {
   const { store, row } = detail;
   // The backend resolves the party TYPE (internal store transfer vs external
   // supplier); the UI never guesses from the displayed name. Internal 'TI'
@@ -9673,14 +9857,14 @@ function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
   // store as a subtitle ("via NMW") rather than hiding it as a plain transfer.
   const isViaWarehouse = partyType === 'via_warehouse';
   const showParty = visibility === 'FULL';
-  const partyLabel = isTransfer ? 'Source Store' : 'Supplier';
+  const partyLabel = partyLabelOverride || (isTransfer ? 'Source Store' : 'Supplier');
   const partyName = String(row.supplier || '').trim() || '-';
   const sourceStore = String(row.source_store_name || '').trim();
   const partySub = isTransfer ? (sourceStore || null)
     : isViaWarehouse ? (sourceStore ? `via ${sourceStore}` : null)
     : null;
 
-  const metrics = PURCHASE_METRIC_FIELDS.filter(([key]) =>
+  const metrics = fields.filter(([key]) =>
     (visibility === 'FULL' || !PURCHASE_FULL_ONLY_FIELDS.has(key))
     && row[key] !== undefined && row[key] !== null && row[key] !== '');
 
@@ -9707,9 +9891,9 @@ function PurchaseDetailCard({ detail, onClose, visibility = 'SUMMARY' }) {
               <svg viewBox="0 0 24 24"><path d="M7 3h10v2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2V3Zm2 2h6V4H9v1ZM5 8v11h14V8H5Zm3 3h8v2H8v-2Zm0 4h5v2H8v-2Z" /></svg>
             </span>
             <div>
-              <span className="purchase-detail-eyebrow">Purchase Record</span>
+              <span className="purchase-detail-eyebrow">{eyebrow}</span>
               <strong id="purchase-detail-title">
-                {store.store_name || store.store_code}{row.grn_no ? ` • GRN #${row.grn_no}` : ''}
+                {heading ? heading(store, row) : `${store.store_name || store.store_code}${row.grn_no ? ` • GRN #${row.grn_no}` : ''}`}
               </strong>
             </div>
           </div>
