@@ -318,9 +318,45 @@ _WRITERS = {"xlsx": _write_xlsx, "xls": _write_xls, "csv": _write_csv}
 # measured over the WHOLE table so every part lines up identically.
 # --------------------------------------------------------------------------
 
+# Dark theme matching the Stock Client's dark palette (styles.css
+# :root[data-theme="dark"]) and its UI font (Segoe UI), so a shared image reads
+# like the Order Workspace grid. The .xlsx/.xls/.csv sheet keeps its light
+# legacy colours (_cell_spec) -- only the PNGs are dark.
+_IMG_CANVAS = "0a0f17"       # --nx-canvas (padding outside the table)
+_IMG_ROW = "111823"          # --nx-surface
+_IMG_ROW_ALT = "151e2b"      # zebra stripe between surface and surface-raised
+_IMG_HEADER = "17202d"       # --nx-surface-raised
+_IMG_RULE = "32404f"         # --nx-rule-strong
+_IMG_OUTER = "4f8df7"        # --nx-accent
+_IMG_TEXT = "e7edf5"         # --nx-text
+_IMG_TEXT_SOFT = "b6c2d2"    # --nx-text-soft
+_IMG_TEXT_MUTED = "8494a8"   # --nx-text-muted
+
+
+def _image_cell_spec(label, header=False):
+    """_cell_spec's per-column emphasis, recoloured for the dark image."""
+    spec = {"bold": False, "fill": None, "color": _IMG_TEXT, "align": None}
+    label = str(label)
+    if header:
+        spec.update(bold=True, fill=_IMG_HEADER, color=_IMG_TEXT_SOFT, align="center")
+    elif label == "S.No.":
+        spec.update(color=_IMG_TEXT_MUTED, align="center")
+    elif label == "OrderQty":
+        spec.update(bold=True, fill="0c2a22", color="4ade94", align="center")  # success-sunk / -ink
+    elif label in ("SaleUnit", "MRP"):
+        spec.update(color=_IMG_TEXT_SOFT, align="center" if label == "SaleUnit" else "right")
+    elif label.lower() == "productcode":
+        spec.update(color=_IMG_TEXT_SOFT, align="right")
+    elif label == "ProductName":
+        spec.update(bold=True)
+    return spec
+
+
 def _image_font(px, bold=False):
     from PIL import ImageFont
-    for name in (["calibrib.ttf", "arialbd.ttf"] if bold else ["calibri.ttf", "arial.ttf"]):
+    names = (["segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"] if bold
+             else ["segoeui.ttf", "arial.ttf", "DejaVuSans.ttf"])
+    for name in names:
         try:
             return ImageFont.truetype(name, px)
         except OSError:
@@ -343,10 +379,10 @@ def _render_images(headers, table, base_name, per_image=_PRODUCTS_PER_IMAGE):
     from PIL import Image, ImageDraw
 
     rgb = lambda h: tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
-    font, font_bold = _image_font(16), _image_font(16, bold=True)  # 12pt @ 96 dpi
-    pad, cell_pad, row_h, thick = 28, 10, 30, 3
-    specs = [_cell_spec(h) for h in headers]
-    header_spec = _cell_spec(None, header=True)
+    font, font_bold = _image_font(17), _image_font(17, bold=True)
+    pad, cell_pad, row_h, thick = 28, 12, 34, 2
+    specs = [_image_cell_spec(h) for h in headers]
+    header_spec = _image_cell_spec(None, header=True)
     texts = [[_image_text(v, headers[c]) for c, v in enumerate(row)] for row in table]
 
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
@@ -357,14 +393,12 @@ def _render_images(headers, table, base_name, per_image=_PRODUCTS_PER_IMAGE):
         col_w.append(int(widest) + cell_pad * 2)
     table_w = sum(col_w)
 
-    def draw_row(draw, y, values, row_specs, raw_values):
+    def draw_row(draw, y, values, row_specs, raw_values, row_fill):
         x = pad
         for c, text in enumerate(values):
             spec = row_specs[c]
             box = [x, y, x + col_w[c], y + row_h]
-            if spec["fill"]:
-                draw.rectangle(box, fill=rgb(spec["fill"]))
-            draw.rectangle(box, outline=(0, 0, 0), width=1)
+            draw.rectangle(box, fill=rgb(spec["fill"] or row_fill), outline=rgb(_IMG_RULE), width=1)
             f = font_bold if spec["bold"] else font
             tw = draw.textlength(text, font=f)
             align = spec["align"] or ("right" if isinstance(raw_values[c], (int, float)) else "left")
@@ -377,12 +411,12 @@ def _render_images(headers, table, base_name, per_image=_PRODUCTS_PER_IMAGE):
     for part, start in enumerate(range(0, len(table), per_image), start=1):
         chunk = range(start, min(start + per_image, len(table)))
         table_h = row_h * (len(chunk) + 1)
-        img = Image.new("RGB", (table_w + pad * 2, table_h + pad * 2), "white")
+        img = Image.new("RGB", (table_w + pad * 2, table_h + pad * 2), rgb(_IMG_CANVAS))
         draw = ImageDraw.Draw(img)
-        draw_row(draw, pad, [str(h) for h in headers], [header_spec] * len(headers), headers)
+        draw_row(draw, pad, [str(h) for h in headers], [header_spec] * len(headers), headers, _IMG_HEADER)
         for n, i in enumerate(chunk, start=1):
-            draw_row(draw, pad + n * row_h, texts[i], specs, table[i])
-        draw.rectangle([pad - 1, pad - 1, pad + table_w + 1, pad + table_h + 1], outline=(0, 0, 0), width=thick)
+            draw_row(draw, pad + n * row_h, texts[i], specs, table[i], _IMG_ROW if n % 2 else _IMG_ROW_ALT)
+        draw.rectangle([pad - 1, pad - 1, pad + table_w + 1, pad + table_h + 1], outline=rgb(_IMG_OUTER), width=thick)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         images.append((f"{base_name} Part {part}.png", buf.getvalue()))

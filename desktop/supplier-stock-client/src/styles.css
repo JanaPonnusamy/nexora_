@@ -8631,6 +8631,16 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    system (data-tables.css), same as the base .ow-screen tbody td rule. */
 #root .ow-screen.ow-rows-compact tbody td { height: 24px !important; }
 #root .ow-screen.ow-rows-large tbody td { height: 36px !important; }
+/* ...and the order grid's text scales with it (normal = the base 12px). */
+#root .ow-screen.ow-rows-compact .ow-grid tbody td { font-size: 11px !important; }
+#root .ow-screen.ow-rows-compact .ow-grid .ow-qty { height: 20px; }
+#root .ow-screen.ow-rows-compact .ow-grid .ow-qtycheck-badge { font-size: 9px; }
+#root .ow-screen.ow-rows-compact .ow-grid .ow-qty-diff { font-size: 10px; padding: 0 5px; }
+#root .ow-screen.ow-rows-large .ow-grid tbody td { font-size: 14px !important; }
+#root .ow-screen.ow-rows-large .ow-grid thead tr:not(.ow-filter-row) th { font-size: 12.5px !important; }
+#root .ow-screen.ow-rows-large .ow-grid .ow-qty { height: 30px; max-width: 4rem; }
+#root .ow-screen.ow-rows-large .ow-grid .ow-qtycheck-badge { font-size: 12px; }
+#root .ow-screen.ow-rows-large .ow-grid .ow-qty-diff { font-size: 13px; }
 
 /* Right intelligence column. */
 .ow-side {
