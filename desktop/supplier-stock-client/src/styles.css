@@ -8259,6 +8259,13 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 
 /* Export options card. */
 .ow-export-body { display: flex; flex-direction: column; gap: 8px; padding: 10px; min-width: 260px; }
+/* Export card opens centred in the window (not under the Export button,
+   which can wrap to the toolbar's left edge and push the card off-screen). */
+.ow-export-card--centered {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  z-index: 200;
+}
 .ow-export-scope { font-size: 12px; color: var(--nx-text-muted); }
 .ow-export-scope b { color: var(--nx-text); }
 .ow-export-field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text-muted); }

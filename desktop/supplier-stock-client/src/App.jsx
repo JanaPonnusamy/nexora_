@@ -3608,13 +3608,6 @@ function OwExportCard({
   showColumns = true, showSupplierWise = true,
 }) {
   const ref = useRef(null);
-  const [pos, setPos] = useState(null);
-  useLayoutEffect(() => {
-    const a = anchorRef.current;
-    if (!a) return;
-    const r = a.getBoundingClientRect();
-    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
-  }, [anchorRef]);
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target) && !anchorRef.current?.contains(e.target)) onClose(); }
     function onEsc(e) { if (e.key === 'Escape') onClose(); }
@@ -3622,9 +3615,11 @@ function OwExportCard({
     document.addEventListener('keydown', onEsc);
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onEsc); };
   }, [onClose, anchorRef]);
-  if (!pos) return null;
+  // Centred in the window rather than anchored under the Export button: the
+  // button can wrap to the toolbar's left edge on narrower windows, and a
+  // right-anchored card then ran off-screen to the left.
   return createPortal(
-    <div className="grid-settings-panel ow-export-card" ref={ref} role="dialog" aria-label="Export options" style={{ position: 'fixed', top: pos.top, right: pos.right }}>
+    <div className="grid-settings-panel ow-export-card ow-export-card--centered" ref={ref} role="dialog" aria-label="Export options">
       <div className="grid-settings-panel__head">
         <strong>Export to Excel</strong>
         <span>{headline}</span>
