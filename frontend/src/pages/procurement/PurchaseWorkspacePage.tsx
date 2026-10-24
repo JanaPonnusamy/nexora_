@@ -391,7 +391,7 @@ export default function PurchaseWorkspacePage() {
         if (active.length) setTenantId((c) => c || active[0].tenant_id)
       })
       .catch(fail)
-    storeService.list().then(setStores).catch(() => setStores([]))
+    storeService.listActive().then(setStores).catch(() => setStores([]))
   }, [fail])
 
   const tenantStores = useMemo(
@@ -405,31 +405,43 @@ export default function PurchaseWorkspacePage() {
     setSelectedStoreId((cur) => (tenantStores.some((s) => s.store_id === cur) ? cur : (tenantStores[0]?.store_id ?? '')))
   }, [tenantStores])
 
-  // Load the store's cycles + refreshes together, then default-select the
-  // CURRENT OPEN cycle (else the latest CLOSED one, read-only) so the buyer
-  // never has to hunt for "which cycle is active".
+  // Single-screen entry (VB.NET-style): picking a store silently ensures an
+  // active cycle + current refresh exist for it (server get-or-create, one
+  // call) instead of making the buyer pick/open a Cycle and Refresh
+  // themselves. A URL-provided refresh (deep link, e.g. from Refresh Compare)
+  // still wins over the auto-ensured one, so existing links keep working.
   useEffect(() => {
     if (!tenantId || !selectedStoreId) { setCycles([]); setRefreshes([]); setCycleId(''); setRefreshId(''); return }
+    if (urlRefresh) {
+      // Deep link: resolve the refresh's own cycle the old way (list +
+      // filter) rather than ensuring/creating anything.
+      let live = true
+      Promise.all([
+        procurementService.cycles(tenantId, selectedStoreId),
+        procurementService.refreshes(tenantId, selectedStoreId),
+      ])
+        .then(([cyc, refs]) => {
+          if (!live) return
+          setCycles(cyc)
+          setRefreshes(refs)
+          const urlCycle = refs.find((r) => r.refresh_id === urlRefresh)?.cycle_id
+          setCycleId(urlCycle ?? '')
+        })
+        .catch(fail)
+      return () => { live = false }
+    }
     let live = true
-    Promise.all([
-      procurementService.cycles(tenantId, selectedStoreId),
-      procurementService.refreshes(tenantId, selectedStoreId),
-    ])
-      .then(([cyc, refs]) => {
+    procurementService
+      .ensureContext(tenantId, selectedStoreId, actingUser || null)
+      .then(({ cycle, refresh }) => {
         if (!live) return
-        setCycles(cyc)
-        setRefreshes(refs)
-        const open = cyc.find((c) => (c.status ?? '').toUpperCase() === 'ACTIVE')
-        const latest = [...cyc].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))[0]
-        // A URL-provided refresh pins its own cycle; otherwise open-first.
-        const urlCycle = urlRefresh ? refs.find((r) => r.refresh_id === urlRefresh)?.cycle_id : undefined
-        setCycleId((cur) =>
-          cur && cyc.some((c) => c.cycle_id === cur) ? cur : (urlCycle ?? open?.cycle_id ?? latest?.cycle_id ?? ''),
-        )
+        setCycles((cur) => (cur.some((c) => c.cycle_id === cycle.cycle_id) ? cur : [...cur, cycle]))
+        setRefreshes((cur) => (cur.some((r) => r.refresh_id === refresh.refresh_id) ? cur : [...cur, refresh]))
+        setCycleId(cycle.cycle_id)
       })
       .catch(fail)
     return () => { live = false }
-  }, [tenantId, selectedStoreId, fail, urlRefresh])
+  }, [tenantId, selectedStoreId, fail, urlRefresh, actingUser])
 
   // Refreshes belonging to the selected cycle, latest first.
   const refreshesInCycle = useMemo(
@@ -673,6 +685,17 @@ export default function PurchaseWorkspacePage() {
   const canWork = Boolean(tenantId && refreshId)
   const activeStatusFilterCount = [showPending, showFinalized, showAssigned, showDeferred, showSkipped, showManual]
     .filter(Boolean).length
+
+  // Auto-dismiss the context dialog the moment a working refresh is ready —
+  // no explicit "Open workspace" click (VB.NET-style: pick a store, land in
+  // the product list). The dialog can still be reopened from the header
+  // icon (setContextOpen(true)), e.g. to switch stores.
+  useEffect(() => {
+    if (canWork && contextOpen) {
+      setContextConfirmed(true)
+      setContextOpen(false)
+    }
+  }, [canWork, contextOpen])
 
   const itemById = useMemo(() => {
     const m = new Map<string, WorkspaceItem>()
@@ -1710,7 +1733,7 @@ export default function PurchaseWorkspacePage() {
       const res = await procurementService.addManualItem(
         tenantId, refreshId, product.product_code, product.product_name ?? product.product_code, qty, actingUser || null,
       )
-      say('success', res.already_exists ? `${product.product_code} is already in this refresh` : `Added ${product.product_code}`)
+      say('success', res.already_exists ? `${product.product_code} is already in this order list` : `Added ${product.product_code}`)
       setManualOpen(false)
       loadWorkspace()
     } catch (e) {
@@ -1873,7 +1896,7 @@ export default function PurchaseWorkspacePage() {
     if (!guardRW()) return
     try {
       await procurementService.carryForwardPending(tenantId, item.order_item_id, actingUser || null)
-      say('success', 'Carried forward to next refresh')
+      say('success', 'Carried forward to the next order list')
       loadPending()
     } catch (e) {
       fail(e)
@@ -1967,7 +1990,7 @@ export default function PurchaseWorkspacePage() {
         {readOnly && (
           <span className="pm-ro-badge pm-header__readonly">
             <i className="bi bi-lock-fill" aria-hidden="true" />
-            {cycleClosed ? 'Closed cycle' : 'Closed refresh'}
+            {cycleClosed ? 'Closed' : 'Closed order list'}
           </span>
         )}
         {can('PROCUREMENT_ADMIN') && isVplHistoryScreenEnabled() && (
@@ -1984,8 +2007,8 @@ export default function PurchaseWorkspacePage() {
         <button
           className="pm-header__context"
           type="button"
-          title="Change tenant, store, cycle or refresh"
-          aria-label="Change tenant, store, cycle or refresh"
+          title="Change store"
+          aria-label="Change store"
           onClick={() => setContextOpen(true)}
         >
           <i className="bi bi-sliders2" aria-hidden="true" />
@@ -2009,7 +2032,7 @@ export default function PurchaseWorkspacePage() {
       fullWidth
     >
       {!canWork ? (
-        <EmptyState icon="bi-clipboard-check" title="Select a tenant and refresh" description="Choose a generated refresh to open the Purchase Manager workspace." />
+        <EmptyState icon="bi-clipboard-check" title="Select a store" description="Pick a tenant and store to open its order list." />
       ) : view === 'pending' ? (
         <PendingView
           pending={pending}
@@ -2807,28 +2830,9 @@ export default function PurchaseWorkspacePage() {
             resetWorkspaceContext('store')
             setSelectedStoreId(next)
           }}
-          cycles={cycles}
-          cycleId={cycleId}
-          onCycleChange={(next) => {
-            if (next === cycleId) return
-            resetWorkspaceContext('cycle')
-            setCycleId(next)
-          }}
-          refreshes={refreshesInCycle}
-          refreshId={refreshId}
-          onRefreshChange={(next) => {
-            if (next === refreshId) return
-            resetWorkspaceContext('refresh')
-            setRefreshId(next)
-          }}
           busy={contextLoading}
-          canOpen={canWork}
           canDismiss={contextConfirmed}
           onClose={() => setContextOpen(false)}
-          onOpen={() => {
-            setContextConfirmed(true)
-            setContextOpen(false)
-          }}
         />
       )}
 
@@ -2859,12 +2863,15 @@ export default function PurchaseWorkspacePage() {
   )
 }
 
+// Tenant + Store only — VB.NET OrderManagement had one picker (the store),
+// nothing else. Cycle and Refresh are resolved silently in the background
+// the moment a store is picked (see the ensureContext effect above); the
+// dialog dismisses itself as soon as the workspace is ready, no "Open"
+// button to click.
 function PurchaseContextDialog({
   tenants, tenantId, onTenantChange,
   stores, storeId, onStoreChange,
-  cycles, cycleId, onCycleChange,
-  refreshes, refreshId, onRefreshChange,
-  busy, canOpen, canDismiss, onClose, onOpen,
+  busy, canDismiss, onClose,
 }: {
   tenants: Tenant[]
   tenantId: string
@@ -2872,17 +2879,9 @@ function PurchaseContextDialog({
   stores: Store[]
   storeId: string
   onStoreChange: (value: string) => void
-  cycles: Cycle[]
-  cycleId: string
-  onCycleChange: (value: string) => void
-  refreshes: Refresh[]
-  refreshId: string
-  onRefreshChange: (value: string) => void
   busy: boolean
-  canOpen: boolean
   canDismiss: boolean
   onClose: () => void
-  onOpen: () => void
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -2899,26 +2898,13 @@ function PurchaseContextDialog({
           <span className="pm-context-dialog__mark"><i className="bi bi-cart-check" aria-hidden="true" /></span>
           <div>
             <p className="pm-context-dialog__eyebrow">Purchase Manager</p>
-            <h2 id="pm-context-title">Choose your working context</h2>
-            <p>Select where you are purchasing and which refresh you want to review.</p>
+            <h2 id="pm-context-title">Select a store</h2>
+            <p>Choose the store you are purchasing for.</p>
           </div>
           {canDismiss && <button className="btn-close" type="button" aria-label="Close" onClick={onClose} />}
         </header>
 
         <div className="pm-context-dialog__body">
-          <div className="pm-context-dialog__progress" aria-hidden="true">
-            {['Tenant', 'Store', 'Cycle', 'Refresh'].map((label, index) => (
-              <span key={label} className={[
-                tenantId,
-                storeId,
-                cycleId,
-                refreshId,
-              ][index] ? 'is-complete' : ''}>
-                <i>{index + 1}</i>{label}
-              </span>
-            ))}
-          </div>
-
           <div className="pm-context-dialog__grid">
             <label>
               <span><i className="bi bi-building" aria-hidden="true" /> Tenant</span>
@@ -2936,43 +2922,15 @@ function PurchaseContextDialog({
               </select>
               <small>The store whose stock will be reviewed</small>
             </label>
-            <label>
-              <span><i className="bi bi-arrow-repeat" aria-hidden="true" /> Purchase cycle</span>
-              <select value={cycleId} disabled={!storeId} onChange={(e) => onCycleChange(e.target.value)}>
-                <option value="">{storeId && cycles.length === 0 ? 'No cycles available' : 'Select cycle'}</option>
-                {cycles.map((cycle) => (
-                  <option key={cycle.cycle_id} value={cycle.cycle_id}>
-                    {cycle.name}{(cycle.status ?? '').toUpperCase() === 'ACTIVE' ? ' · Active' : ' · Closed'}
-                  </option>
-                ))}
-              </select>
-              <small>Active cycles are editable; closed cycles are view-only</small>
-            </label>
-            <label>
-              <span><i className="bi bi-clock-history" aria-hidden="true" /> Refresh</span>
-              <select value={refreshId} disabled={!cycleId} onChange={(e) => onRefreshChange(e.target.value)}>
-                <option value="">{cycleId && refreshes.length === 0 ? 'No refreshes available' : 'Select refresh'}</option>
-                {refreshes.map((refresh) => (
-                  <option key={refresh.refresh_id} value={refresh.refresh_id}>
-                    {refresh.snapshot_name} · {refresh.snapshot_status}
-                  </option>
-                ))}
-              </select>
-              <small>The latest refresh is selected automatically</small>
-            </label>
           </div>
         </div>
 
         <footer className="pm-context-dialog__foot">
-          <span className={canOpen ? 'is-ready' : ''}>
-            <i className={`bi ${canOpen ? 'bi-check-circle-fill' : 'bi-info-circle'}`} aria-hidden="true" />
-            {canOpen ? 'Workspace is ready' : 'Complete all four selections to continue'}
+          <span className={busy ? '' : 'is-ready'}>
+            <i className={`bi ${busy ? 'bi-arrow-repeat' : 'bi-check-circle-fill'}`} aria-hidden="true" />
+            {busy ? 'Opening workspace…' : storeId ? 'Workspace ready' : 'Pick a tenant and store to continue'}
           </span>
           {canDismiss && <button type="button" className="pm-btn pm-btn--ghost" onClick={onClose}>Close</button>}
-          <button type="button" className="pm-btn pm-btn--primary pm-context-dialog__open" disabled={!canOpen} onClick={onOpen}>
-            {busy ? <i className="bi bi-arrow-repeat" aria-hidden="true" /> : <i className="bi bi-box-arrow-in-right" aria-hidden="true" />}
-            {busy ? 'Loading workspace…' : 'Open workspace'}
-          </button>
         </footer>
       </div>
     </div>
@@ -3042,7 +3000,7 @@ function WorkspaceQuickActions({
       {canAddProduct && (
         <button type="button" role="menuitem" onClick={onAddProduct}>
           <i className="bi bi-plus-square" aria-hidden="true" />
-          <span><b>Add product</b><small>Add a manual product to this refresh</small></span>
+          <span><b>Add product</b><small>Add a manual product to this order list</small></span>
           <i className="bi bi-chevron-right pm-quick-actions__arrow" aria-hidden="true" />
         </button>
       )}
@@ -3200,7 +3158,7 @@ function PendingView({
         <button className="pm-btn pm-btn--ghost" disabled={busy} onClick={onFinalize}>Finalize all</button>
       </div>
       {pending.length === 0 ? (
-        <EmptyState icon="bi-check2-circle" title="No pending" description="Nothing remaining to review for this refresh." />
+        <EmptyState icon="bi-check2-circle" title="No pending" description="Nothing remaining to review for this order list." />
       ) : (
         <table className="pm-grid">
           <thead>

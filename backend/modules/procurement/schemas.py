@@ -80,6 +80,11 @@ class CycleOpen(BaseModel):
     created_by: str  # acting user (UNIQUEIDENTIFIER) — RBAC gate
 
 
+class EnsureContext(BaseModel):
+    """Get-or-create the store's active cycle + current refresh in one call."""
+    created_by: Optional[str] = None  # user_id (UNIQUEIDENTIFIER)
+
+
 class RefreshOrchestrate(BaseModel):
     """Create a Refresh and run the full pipeline (engine + working items)."""
     snapshot_name: Optional[str] = Field(None, max_length=200)

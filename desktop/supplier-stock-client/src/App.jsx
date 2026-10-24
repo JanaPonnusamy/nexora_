@@ -1,5 +1,6 @@
 import { Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { unzipSync } from 'fflate';
 import axythicLogo from './assets/axythic-logo-mark.png';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -1548,13 +1549,39 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   // Sales Trend sparkline and Purchase columns give up a little width for it so
   // Amount is never clipped at the right edge at 1366 (req §10). The header and
   // every store body read this same variable, so boundaries always align (§9).
+  // Auto-fit: below the width where every section's minimum fits (~1280px of
+  // grid), drop the right-hand sections -- Sales Trend first, then Billing,
+  // Purchase, Batches -- so the Product column gets the space and the grid
+  // never scrolls horizontally (e.g. 1056x768). The saved toggles are left
+  // untouched; this only affects what is shown at the current width.
+  const workbenchRef = useRef(null);
+  const [gridWidth, setGridWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = workbenchRef.current;
+    if (!el) return undefined;
+    const measure = () => setGridWidth(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const SECTION_MIN = { trend: 214, batches: 228, purchase: 280, billing: 300 };
+  const PRODUCT_MIN = 34 + 300; // select + a comfortably wide Product column
+  const effectiveSections = { ...visibleSections };
+  if (gridWidth > 0) {
+    const shown = () => PRODUCT_MIN + Object.keys(SECTION_MIN).reduce((w, k) => w + (effectiveSections[k] ? SECTION_MIN[k] : 0), 0);
+    for (const key of ['trend', 'billing', 'purchase', 'batches']) {
+      if (shown() <= gridWidth - 24) break;
+      effectiveSections[key] = false;
+    }
+  }
   const stockGridColumns = [
     '34px',
     'minmax(220px, 1.3fr)',
-    visibleSections.trend && 'minmax(214px, 1.15fr)',
-    visibleSections.batches && 'minmax(228px, .9fr)',
-    visibleSections.purchase && 'minmax(280px, 1.15fr)',
-    visibleSections.billing && 'minmax(300px, 1.3fr)'
+    effectiveSections.trend && 'minmax(214px, 1.15fr)',
+    effectiveSections.batches && 'minmax(228px, .9fr)',
+    effectiveSections.purchase && 'minmax(280px, 1.15fr)',
+    effectiveSections.billing && 'minmax(300px, 1.3fr)'
   ].filter(Boolean).join(' ');
 
   function toggleStockSection(section) {
@@ -2184,7 +2211,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
   }, [otherStores.length, visibleSections, gridDensity, columnWidths, columnOrder]);
 
   return (
-    <section className={`store-workbench density-${gridDensity}`} style={{ '--stock-grid-columns': stockGridColumns }}>
+    <section ref={workbenchRef} className={`store-workbench density-${gridDensity}`} style={{ '--stock-grid-columns': stockGridColumns }}>
       <div className="global-search-row">
         <div className="stock-search-field">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.7 19.3-4.2-4.2a7.5 7.5 0 1 0-1.4 1.4l4.2 4.2 1.4-1.4ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
@@ -2322,7 +2349,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
         <div className="store-row-grid-shell">
           <StoreColumnHeaders
             hideSupplierColumn={hideSupplierColumn}
-            visibleSections={visibleSections}
+            visibleSections={effectiveSections}
             visibleFields={visibleFields}
             columnOrder={columnOrder}
             columnWidths={columnWidths}
@@ -2347,7 +2374,7 @@ function StockAvailability({ session, settings, onOpenSettings, tenants = [], on
                 hideSupplierColumn={hideSupplierColumn}
                 visibility={visibility}
                 restrictWarehouse={false}
-                visibleSections={visibleSections}
+                visibleSections={effectiveSections}
                 visibleFields={visibleFields}
                 columnOrder={columnOrder}
                 columnWidths={columnWidths}
@@ -3078,6 +3105,7 @@ const OW_QTY_COLUMNS = [
   // columns were switched to tight px widths (see owColgroupPct) the spill
   // became a visible black/empty bar bleeding into Stock. 116px actually
   // contains input+gap+diff-slot.
+  { key: 'qtycheckstatus', label: 'Qty Check', width: 76 },
   { key: 'orqty', label: 'Or Qty', width: 116, align: 'right', locked: true },
   { key: 'stock', label: 'Stock', width: 54, align: 'right' },
   { key: 'pack', label: 'Pack', width: 46, align: 'right' },
@@ -3101,6 +3129,7 @@ const OW_REVIEW_COLUMNS = [
   // columns were switched to tight px widths (see owColgroupPct) the spill
   // became a visible black/empty bar bleeding into Stock. 116px actually
   // contains input+gap+diff-slot.
+  { key: 'qtycheckstatus', label: 'Qty Check', width: 76 },
   { key: 'orqty', label: 'Or Qty', width: 116, align: 'right', locked: true },
   { key: 'stock', label: 'Stock', width: 54, align: 'right' },
   { key: 'pack', label: 'Pack', width: 46, align: 'right' },
@@ -3120,7 +3149,7 @@ const OW_REVIEW_COLUMNS = [
 // slot and rendered on top of the Or Qty input next to it).
 const OW_SHARED_SPINE = OW_QTY_COLUMNS.filter((c) => ['sno', 'name', 'offer', 'orqty', 'stock', 'pack', 'desc', 'slsqty', 'mrp'].includes(c.key));
 const OW_WANTED_COL = { key: 'wanted', label: 'Wanted', width: 116 };
-const OW_PENDING_COLUMNS = [...OW_SHARED_SPINE, { key: 'maxqty', label: 'Max Qty', width: 56 }, OW_WANTED_COL];
+const OW_PENDING_COLUMNS = [...OW_SHARED_SPINE, { key: 'qtycheckstatus', label: 'Qty Check', width: 76 }, { key: 'maxqty', label: 'Max Qty', width: 56 }, OW_WANTED_COL];
 const OW_SUPPLIER_STOCK_EXTRA = [
   { key: 'sstock', label: 'S.Stock', width: 44, align: 'right' },
   { key: 'disc', label: 'Disc', width: 44, align: 'right' },
@@ -3603,16 +3632,9 @@ function OwExportCard({
       <div className="grid-settings-panel__body ow-export-body">
         <div className="ow-export-scope">Scope: <b>{scopeLabel}</b></div>
 
-        <label className="ow-export-field">
-          <span>Split every</span>
-          <input type="number" min="0" step="1" value={splitCount} onChange={(e) => setSplitCount(Number(e.target.value))} aria-label="Split count (products per file)" />
-          <span>products (0 = no split)</span>
-        </label>
-        <p className="ow-export-hint">Over the split count, the order is broken into separate files (Part 1, 2, …) delivered as one .zip — matching the legacy Export/Split behavior.</p>
-
         <div className="ow-export-field ow-export-path">
           <span>Save to</span>
-          <code className="ow-export-path-val" title={exportSettings.basePath}>{exportSettings.basePath}\ddmmyy\order no\</code>
+          <code className="ow-export-path-val" title={exportSettings.basePath}>{exportSettings.basePath}\Export\ddmmyyyy\order no\</code>
           <button
             type="button"
             className="ow-btn ow-btn-sm"
@@ -3634,6 +3656,24 @@ function OwExportCard({
             <option value="xlsx">Excel (.xlsx)</option>
             <option value="csv">CSV (.csv)</option>
           </select>
+        </label>
+
+        <label className="ow-export-field">
+          <span>Rows per file</span>
+          <input
+            type="number" min="0" step="1" value={splitCount || ''} placeholder="0 = single file"
+            onChange={(e) => setSplitCount(Math.max(0, Number(e.target.value) || 0))}
+            aria-label="Rows per file (0 for a single file)"
+          />
+        </label>
+
+        <label className="ow-export-check">
+          <input
+            type="checkbox"
+            checked={!!exportSettings.images}
+            onChange={(e) => onUpdateExportSettings({ images: e.target.checked })}
+          />
+          <span>Also save as images (20 products per image)</span>
         </label>
 
         {showSupplierWise && (
@@ -4339,7 +4379,6 @@ function OrderWorkspace({ session, settings, hidden }) {
         setRows((cur) => cur.map((r) => (
           r.ProductCode === row.ProductCode ? { ...r, OrgOrderQty: r.OrgOrderQty ?? r.OrderQty, OrderQty: value } : r
         )));
-        setQtyCheckedHere((cur) => new Set(cur).add(row.ProductCode));
       })
       .catch((e) => setError(e.message))
       .finally(() => { setSavingCode(null); loadWorkflow(); });
@@ -4474,7 +4513,13 @@ function OrderWorkspace({ session, settings, hidden }) {
       // and treat it as a history-shape export.
       const mode = view === 'supplier' ? (loadAll ? 'history' : supplierMode) : 'history';
       const dateFolder = owExportDateFolder();
-      const orderNo = workflow?.order_id != null ? String(workflow.order_id) : dateFolder;
+      // order_no is OrderHeaderDetails' short per-day sequence (1, 2, 3...),
+      // the human-readable number the operator expects as the subfolder
+      // name (e.g. "4"). order_id is a per-second generation TIMESTAMP
+      // (e.g. 20261023115659) -- never meant to be read by a person, and
+      // using it here was producing unreadable export subfolder names.
+      const orderNo = workflow?.order_no != null ? String(workflow.order_no)
+        : workflow?.order_id != null ? String(workflow.order_id) : dateFolder;
       // ProductCode round-trips through pyodbc as a float (e.g. 9810.0); the
       // backend's product_codes contract is list[str] and Pydantic v2 does
       // NOT coerce float->str, so sending the raw float 422s every time.
@@ -4485,17 +4530,12 @@ function OrderWorkspace({ session, settings, hidden }) {
       const productCodes = view === 'supplier'
         ? filteredRows.map((r) => String(r.ProductCode).replace(/\.0$/, ''))
         : undefined;
-      // Hard exclusion sent separately from productCodes (belt-and-braces):
-      // if productCodes were ever stale by the time this request lands (a
-      // reload racing the operator's delete), removedCodes still wins
-      // server-side -- see order_export.export_order's removed_product_codes.
-      const removedProductCodes = [...removedCodes].map((c) => String(c).replace(/\.0$/, ''));
       const { blob, filename: backendFilename, exportedCount } = await api.legacyExportOrder(
         store, supplier.supplier_code, supplier.supplier_name, mode, Number(splitCount) || 0, session,
-        { columns: selectedExportColumns, fileFormat: exportSettings.fileFormat, orderNo, productCodes, allProducts: view === 'supplier' && loadAll, removedProductCodes }
+        { columns: selectedExportColumns, fileFormat: exportSettings.fileFormat, orderNo, productCodes, allProducts: view === 'supplier' && loadAll, images: exportSettings.images }
       );
-      // Standard filename: "<supplier name> <ddmmyy> <order no>.<ext>",
-      // written to D:\Export Order\<ddmmyy>\<order no>\ (or the operator's
+      // Standard filename: "<supplier name> <ddmmyyyy> <order no>.<ext>",
+      // written to D:\Export Order\<ddmmyyyy>\<order no>\ (or the operator's
       // chosen base path) when running inside Electron — falls back to a
       // normal browser download on the web build, where there is no
       // filesystem to write to directly (and no fixed naming convention to
@@ -4503,22 +4543,12 @@ function OrderWorkspace({ session, settings, hidden }) {
       // A split export comes back as a .zip of parts -- keep the backend's
       // own name in that case rather than forcing a single xlsx/csv name
       // onto an archive.
-      const isSplitZip = /\.zip$/i.test(backendFilename || '');
-      const ext = exportSettings.fileFormat === 'csv' ? 'csv' : 'xlsx';
-      const filename = isSplitZip
-        ? backendFilename
-        : `${owSafePathSegment(supplier.supplier_name)} ${dateFolder} ${owSafePathSegment(orderNo)}.${ext}`;
-      const folderParts = [exportSettings.basePath, dateFolder, owSafePathSegment(orderNo)];
+      const ext = ['csv', 'xlsx'].includes(exportSettings.fileFormat) ? exportSettings.fileFormat : 'xls';
+      // Legacy VB: <supplier> <store name>   <ddMMyyyy> (3 spaces before the date).
+      const filename = `${owSafeFileName(`${supplier.supplier_name} ${store}   ${dateFolder}`)}.${ext}`;
+      const folderParts = [exportSettings.basePath, 'Export', dateFolder, owSafePathSegment(orderNo)];
       if (exportSettings.supplierWise) folderParts.push(owSafePathSegment(supplier.supplier_name));
-      let savedTo = null;
-      if (window.nexoraDesktop?.writeExportFile) {
-        const folder = folderParts.join('\\');
-        const absolutePath = `${folder}\\${filename}`;
-        const contentBase64 = await blobToBase64(blob);
-        savedTo = await window.nexoraDesktop.writeExportFile(absolutePath, contentBase64);
-      } else {
-        owDownloadBlob(blob, filename);
-      }
+      const savedTo = await owSaveExport(blob, backendFilename, filename, folderParts.join('\\'));
       setBanner(savedTo
         ? `Exported ${exportedCount} product(s) for ${supplier.supplier_name} → ${savedTo}`
         : `Exported ${exportedCount} product(s) for ${supplier.supplier_name}.`);
@@ -4540,24 +4570,16 @@ function OrderWorkspace({ session, settings, hidden }) {
     setExporting(true); setError('');
     try {
       const dateFolder = owExportDateFolder();
-      const orderNo = workflow?.order_id != null ? String(workflow.order_id) : dateFolder;
+      const orderNo = workflow?.order_no != null ? String(workflow.order_no)
+        : workflow?.order_id != null ? String(workflow.order_id) : dateFolder;
       const { blob, filename: backendFilename, exportedCount } = await api.legacyExportPendingOrder(
         store, Number(splitCount) || 0, session,
-        { fileFormat: exportSettings.fileFormat, orderNo }
+        { fileFormat: exportSettings.fileFormat, orderNo, images: exportSettings.images }
       );
-      const isSplitZip = /\.zip$/i.test(backendFilename || '');
-      const ext = exportSettings.fileFormat === 'csv' ? 'csv' : 'xlsx';
-      const filename = isSplitZip ? backendFilename : `Pending ${dateFolder} ${owSafePathSegment(orderNo)}.${ext}`;
-      const folderParts = [exportSettings.basePath, dateFolder, owSafePathSegment(orderNo)];
-      let savedTo = null;
-      if (window.nexoraDesktop?.writeExportFile) {
-        const folder = folderParts.join('\\');
-        const absolutePath = `${folder}\\${filename}`;
-        const contentBase64 = await blobToBase64(blob);
-        savedTo = await window.nexoraDesktop.writeExportFile(absolutePath, contentBase64);
-      } else {
-        owDownloadBlob(blob, filename);
-      }
+      const ext = ['csv', 'xlsx'].includes(exportSettings.fileFormat) ? exportSettings.fileFormat : 'xls';
+      const filename = `Pending ${dateFolder} ${owSafePathSegment(orderNo)}.${ext}`;
+      const folderParts = [exportSettings.basePath, 'Export', dateFolder, owSafePathSegment(orderNo)];
+      const savedTo = await owSaveExport(blob, backendFilename, filename, folderParts.join('\\'));
       setBanner(savedTo ? `Exported ${exportedCount} pending product(s) → ${savedTo}` : `Exported ${exportedCount} pending product(s).`);
       setExportOpen(false);
     } catch (e) {
@@ -4624,9 +4646,19 @@ function OrderWorkspace({ session, settings, hidden }) {
     switch (col.key) {
       case 'sno': return index + 1;
       case 'name': return <span className="ow-cellname" title={row.productname}>{owCleanName(row.productname)}</span>;
+      case 'qtycheckstatus': {
+        const status = reviewed ? 'checked' : 'pending';
+        return <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>;
+      }
       case 'offer': return row.IsOffer ? <span title="Has had a free-qty offer in purchase history">🎁</span> : null;
       case 'orqty': {
         const value = edits[row.productcode] ?? row.orderqty;
+        // A not-yet-reviewed row's orderqty already differs from the engine's
+        // orgorderqty (stock/pending-order netting), which is NOT a user
+        // change -- so its baseline is the loaded orderqty, and the chip
+        // appears only once the user edits it. Reviewed rows keep the
+        // orgorderqty baseline so a committed change stays visible.
+        const diffBase = reviewed ? (row.orgorderqty ?? row.orderqty) : row.orderqty;
         return (
           <span className="ow-qty-cell">
             <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.productname} order quantity`}
@@ -4635,8 +4667,8 @@ function OrderWorkspace({ session, settings, hidden }) {
               onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: owWholeQty(e.target.value) }))}
               onKeyDown={(e) => onQtyKey(e, row, index)} />
             <span className="ow-qty-diff-slot">
-              {Number(value) !== Number(row.orgorderqty ?? row.orderqty) && (
-                <OwQtyDiffArrow from={row.orgorderqty ?? row.orderqty} to={value} />
+              {Number(value) !== Number(diffBase) && (
+                <OwQtyDiffArrow from={diffBase} to={value} />
               )}
             </span>
           </span>
@@ -4658,6 +4690,10 @@ function OrderWorkspace({ session, settings, hidden }) {
     switch (col.key) {
       case 'sno': return index + 1;
       case 'name': return <span className="ow-cellname" title={row.productname}>{owCleanName(row.productname)}</span>;
+      case 'qtycheckstatus': {
+        const status = 'checked';
+        return <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>;
+      }
       case 'offer': return row.IsOffer ? <span title="Has had a free-qty offer in purchase history">🎁</span> : null;
       case 'orqty': {
         const value = edits[row.productcode] ?? row.orderqty;
@@ -4688,6 +4724,10 @@ function OrderWorkspace({ session, settings, hidden }) {
     switch (col.key) {
       case 'sno': return index + 1;
       case 'name': return <span className="ow-cellname" title={row.ProductName}>{owCleanName(row.ProductName)}</span>;
+      case 'qtycheckstatus': {
+        const status = owQtyCheckStatus(row);
+        return <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>;
+      }
       case 'offer': return row.IsOffer ? <span title="Has had a free-qty offer in purchase history">🎁</span> : null;
       case 'orqty': {
         const value = edits[row.ProductCode] ?? row.OrderQty;
@@ -4768,7 +4808,11 @@ function OrderWorkspace({ session, settings, hidden }) {
               }
             }} />
           <span className="ow-qty-diff-slot">
-            {Number(value) !== Number(row.OrgOrderQty ?? row.OrderQty) && (
+            {/* Only flag a change the operator made: a row that is qty-checked
+                (✓) or edited in this session. An untouched row's OrderQty is
+                already below OrgOrderQty (earlier-order qty subtracted by the
+                Auto Pur UpDate process) and must not look edited. */}
+            {(reviewed || Number(value) !== Number(row.OrderQty)) && Number(value) !== Number(row.OrgOrderQty ?? row.OrderQty) && (
               <OwQtyDiffArrow from={row.OrgOrderQty ?? row.OrderQty} to={value} />
             )}
           </span>
@@ -4957,7 +5001,23 @@ function OrderWorkspace({ session, settings, hidden }) {
           onUpdateExportSettings={updateExportSettings}
         />
       )}
-      {banner && <div className="ow-banner">{banner}<button type="button" onClick={() => setBanner('')} aria-label="Dismiss">×</button></div>}
+      {banner && (() => {
+        // An export banner ends "... → <saved path>"; offer to open that file
+        // (Excel) or folder straight from the banner.
+        const savedPath = window.nexoraDesktop?.openExportPath ? (banner.split(' → ')[1] || '').trim() : '';
+        const isFile = /\.(xls|xlsx|csv)$/i.test(savedPath);
+        const openSaved = async () => {
+          const err = await window.nexoraDesktop.openExportPath(savedPath);
+          if (err) setError(`Could not open ${savedPath}: ${err}`);
+        };
+        return (
+          <div className="ow-banner">
+            <span>{banner}</span>
+            {savedPath && <button type="button" className="ow-banner-open" onClick={openSaved}>{isFile ? 'Open in Excel' : 'Open folder'}</button>}
+            <button type="button" className="ow-banner-x" onClick={() => setBanner('')} aria-label="Dismiss">×</button>
+          </div>
+        );
+      })()}
       {settingsFor && (() => {
         // Per-grid {title, base columns} the ⚙ button opens -- 'supplier'
         // uses the CURRENT stock/history layout (owSupplierColumns(isStockMode)),
@@ -5385,7 +5445,9 @@ function owDefaultExportSettings() {
     // Owner request (2026-10-22): land directly in <basePath>\<ddmmyyyy>\
     // <order no>\file.xls by default, no extra supplier-named subfolder --
     // the checkbox is still available to turn it back on per-install.
-    supplierWise: false
+    supplierWise: false,
+    // Also render the sheet as PNGs, 20 products per image (Part 1, 2, ...).
+    images: false
   };
 }
 // One-time migration (2026-10-22): supplierWise's default flipped true->
@@ -5425,15 +5487,39 @@ function writeOwExportSettings(data) {
   try { window.nexoraDesktop?.writeSession?.(OW_EXPORT_SETTINGS_FILE, data); } catch { /* ignore */ }
   try { localStorage.setItem(OW_EXPORT_SETTINGS_LS_KEY, JSON.stringify(data)); } catch { /* ignore */ }
 }
-// ddmmyy, matching the legacy app's own folder-date convention.
+// ddmmyyyy, matching the legacy app's own folder-date convention.
 function owExportDateFolder(date = new Date()) {
   const dd = String(date.getDate()).padStart(2, '0');
   const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const yy = String(date.getFullYear()).slice(-2);
-  return `${dd}${mm}${yy}`;
+  const yyyy = String(date.getFullYear());
+  return `${dd}${mm}${yyyy}`;
+}
+// Writes an export to <folder>. A split export arrives as a .zip of "Part n of
+// m" files -- unpack it so each part lands as its own file in the order folder
+// (legacy VB behaviour); otherwise write the single file under `filename`.
+// Outside Electron there is no filesystem, so fall back to a browser download.
+async function owSaveExport(blob, backendFilename, filename, folder) {
+  const isZip = /\.zip$/i.test(backendFilename || '');
+  const desktop = window.nexoraDesktop?.writeExportFile;
+  if (isZip) {
+    const parts = unzipSync(new Uint8Array(await blob.arrayBuffer()));
+        for (const [name, bytes] of Object.entries(parts)) {
+      const partBlob = new Blob([bytes]);
+      if (desktop) await window.nexoraDesktop.writeExportFile(`${folder}\\${name}`, await blobToBase64(partBlob));
+      else owDownloadBlob(partBlob, name);
+    }
+    return desktop ? folder : null;
+  }
+  if (desktop) return window.nexoraDesktop.writeExportFile(`${folder}\\${filename}`, await blobToBase64(blob));
+  owDownloadBlob(blob, filename);
+  return null;
 }
 // Strip characters Windows paths can't contain so a supplier/order name
 // never breaks the subfolder it's building.
+// VB SafeFileName: invalid chars -> '_', and [ ] -> ( ) (Excel-hostile).
+function owSafeFileName(name) {
+  return owSafePathSegment(name).replace(/\[/g, '(').replace(/\]/g, ')');
+}
 function owSafePathSegment(name) {
   return String(name || '').replace(/[<>:"/\\|?*]/g, '_').replace(/[\x00-\x1f]/g, '').trim() || 'Export';
 }
@@ -6322,10 +6408,12 @@ function LabelUnitCombo({ current, options, onPick, onCancel }) {
   const [active, setActive] = useState(0);
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
+  const menuRef = useRef(null);
+  const [menuPos, setMenuPos] = useState(null);
 
   useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
   useEffect(() => {
-    function onDoc(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) onCancel(); }
+    function onDoc(e) { if (wrapRef.current && !wrapRef.current.contains(e.target) && !menuRef.current?.contains(e.target)) onCancel(); }
     document.addEventListener('mousedown', onDoc, true);
     return () => document.removeEventListener('mousedown', onDoc, true);
   }, [onCancel]);
@@ -6334,6 +6422,13 @@ function LabelUnitCombo({ current, options, onPick, onCancel }) {
   const base = term ? options.filter((o) => o.toUpperCase().includes(term)) : options;
   // Offer the typed value as a "create new" row when it isn't already an option.
   const matches = term && !base.some((o) => o.toUpperCase() === term) ? [term, ...base].slice(0, 40) : base.slice(0, 40);
+
+  // The grid cell clips overflow, so the list is portalled to <body> and
+  // positioned from the input's rect.
+  useLayoutEffect(() => {
+    const r = inputRef.current?.getBoundingClientRect();
+    if (r) setMenuPos({ top: r.bottom + 2, left: r.left, width: Math.max(r.width, 160) });
+  }, [query]);
 
   function commit(value) {
     const v = String(value || '').trim().toUpperCase();
@@ -6358,8 +6453,8 @@ function LabelUnitCombo({ current, options, onPick, onCancel }) {
         onChange={(event) => { setQuery(event.target.value.toUpperCase()); setActive(0); }}
         onKeyDown={onKeyDown}
       />
-      {matches.length > 0 && (
-        <div className="lbl-unit-combo-menu" role="listbox">
+      {matches.length > 0 && menuPos && createPortal(
+        <div className="lbl-unit-combo-menu" role="listbox" ref={menuRef} style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, minWidth: menuPos.width }}>
           {matches.map((value, i) => (
             <button
               type="button"
@@ -6375,7 +6470,8 @@ function LabelUnitCombo({ current, options, onPick, onCancel }) {
               {term && value === term && !options.some((o) => o.toUpperCase() === term) && <em>new</em>}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -6462,6 +6558,7 @@ function LabelExporter({ session, settings }) {
   // Sent to the backend as a comma-separated list; empty = no letter restriction.
   const [selectedLetters, setSelectedLetters] = useState(() => new Set());
   const [unitOptions, setUnitOptions] = useState([]);
+  const [unitChoices, setUnitChoices] = useState([]);
   const [selectedUnits, setSelectedUnits] = useState(() => new Set());
   // Which unit the Unit filter/options match against: 'new' (effective,
   // reviewer-corrected) or 'old' (raw master unit). Switching clears the
@@ -6572,7 +6669,7 @@ function LabelExporter({ session, settings }) {
             {editingUnitCode === code ? (
               <LabelUnitCombo
                 current={newUnit}
-                options={Array.from(new Set([...LABEL_UNIT_PRESETS, ...unitOptions]))}
+                options={Array.from(new Set([...LABEL_UNIT_PRESETS, ...unitChoices, ...unitOptions])).sort()}
                 onPick={(value) => commitUnit(row, value)}
                 onCancel={() => setEditingUnitCode(null)}
               />
@@ -7032,6 +7129,7 @@ function LabelExporter({ session, settings }) {
       // applies correctly via the isLocked closure).
       if (!isLocked) autoMarkStaleN(nextRows, tenantId, effStoreId);
       setUnitOptions(asArray(result?.unit_descriptions));
+      setUnitChoices(asArray(result?.unit_choices));
       setSublocOptions(asArray(result?.sublocations));
       const nextSubLoc = {};
       const nextRemarks = {};
@@ -7205,6 +7303,9 @@ function LabelExporter({ session, settings }) {
           corrected_unit: next,
           old_unit_description: row.old_unit_description || row.unit_description || null
         });
+        // A newly typed unit becomes selectable immediately (and on every
+        // later load, via the backend's unit_choices).
+        setUnitChoices((prev) => (prev.includes(next) ? prev : [...prev, next]));
         flashToast(`✓ Unit → ${next}`);
       })
       .catch((error) => { setStatus({ state: 'error', message: error.message }); flashToast('⚠ Save failed', 'err'); })

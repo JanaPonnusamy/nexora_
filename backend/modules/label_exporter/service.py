@@ -70,6 +70,7 @@ def search_products(
     )
     t1 = time.perf_counter()
     result["unit_descriptions"] = repository.get_unit_descriptions(tenant_id, store_id, starts_with, unit_source)
+    result["unit_choices"] = repository.get_unit_choices(tenant_id, store_id)
     t2 = time.perf_counter()
     result["sublocations"] = repository.get_sublocations(tenant_id, store_id)
     t3 = time.perf_counter()

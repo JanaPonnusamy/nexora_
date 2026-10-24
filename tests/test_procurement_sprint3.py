@@ -119,6 +119,91 @@ def test_reconcile_matches_and_rolls_up(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# read_purchase_receipts — GRN-watermark-by-date fix (2026-10-23)
+# --------------------------------------------------------------------------
+
+class _FakeCursor:
+    """Records every executed statement (sql text + params) and returns a
+    scripted fetchone/fetchall result per call, in call order."""
+    def __init__(self, fetchone_results=None, fetchall_result=None):
+        self.calls = []
+        self._fetchone_results = list(fetchone_results or [])
+        self._fetchall_result = fetchall_result or []
+        self.description = [("product_code",), ("supplier_code",),
+                             ("received_qty",), ("grn_no",), ("supplier_bill_no",)]
+
+    def execute(self, sql, params):
+        self.calls.append((sql, params))
+
+    def fetchone(self):
+        return self._fetchone_results.pop(0) if self._fetchone_results else None
+
+    def fetchall(self):
+        return self._fetchall_result
+
+
+class _FakeConnWithCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def cursor(self):
+        return self._cursor
+
+
+def test_read_purchase_receipts_resolves_last_grn_to_a_date_cutoff():
+    """A supplied last_grn is first resolved to its own GRNDate (not compared
+    directly, per owner decision 2026-10-23: GRNNumber is not a safe
+    sequential key) — the second query must filter GRNDate <= that
+    resolved date, not GRNNumber <= last_grn."""
+    import datetime
+    cutoff = datetime.date(2026, 9, 1)
+    cursor = _FakeCursor(fetchone_results=[(cutoff,)])
+    conn = _FakeConnWithCursor(cursor)
+
+    reconciliation_repository.read_purchase_receipts(conn, "T1", "S1", "4567")
+
+    assert len(cursor.calls) == 2
+    lookup_sql, lookup_params = cursor.calls[0]
+    assert "MAX(pt.GRNDate)" in lookup_sql
+    assert "GRNNumber" in lookup_sql
+    assert lookup_params == ("T1", "S1", "4567")
+
+    read_sql, read_params = cursor.calls[1]
+    assert "GRNDate <= ?" in read_sql
+    assert "GRNNumber <= " not in read_sql  # never a direct GRNNumber comparison
+    assert read_params == ("T1", "S1", cutoff, cutoff)
+
+
+def test_read_purchase_receipts_unmatched_last_grn_falls_back_to_unbounded():
+    """A last_grn that doesn't resolve to any GRNDate (typo, wrong store,
+    never synced) must not silently return zero receipts — falls back to the
+    prior unbounded read rather than making reconciliation look like nothing
+    was ever received."""
+    cursor = _FakeCursor(fetchone_results=[(None,)])
+    conn = _FakeConnWithCursor(cursor)
+
+    reconciliation_repository.read_purchase_receipts(conn, "T1", "S1", "NOPE")
+
+    read_sql, read_params = cursor.calls[1]
+    assert read_params == ("T1", "S1", None, None)
+
+
+def test_read_purchase_receipts_no_last_grn_skips_the_lookup_entirely():
+    """No last_grn supplied (last_grn=None, e.g. close_cycle's own
+    reconcile() call, which passes no last_grn) must not run the GRNDate
+    lookup query at all — exactly one query, unbounded, same as before this
+    fix for a caller that never supplies a GRN number."""
+    cursor = _FakeCursor()
+    conn = _FakeConnWithCursor(cursor)
+
+    reconciliation_repository.read_purchase_receipts(conn, "T1", "S1", None)
+
+    assert len(cursor.calls) == 1
+    read_sql, read_params = cursor.calls[0]
+    assert read_params == ("T1", "S1", None, None)
+
+
+# --------------------------------------------------------------------------
 # submit_grn / reconcile — shared-transaction fix (GRN audit follow-up)
 # --------------------------------------------------------------------------
 

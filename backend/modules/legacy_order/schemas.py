@@ -25,6 +25,10 @@ class OrderProcessRequest(BaseModel):
     confirmed: bool = False
     confirmed_order_id: Optional[int] = None
     confirmed_count: Optional[int] = None
+    # Separate acknowledgement for the stale-current-order warning (see
+    # service.StaleCurrentOrder) -- independent of `confirmed` above so
+    # confirming one warning never silently waves through the other.
+    confirmed_stale_order: bool = False
 
 
 class RestoreBackupOrderRequest(BaseModel):
@@ -101,17 +105,9 @@ class ExportOrderRequest(BaseModel):
     # the curated codes against the all-open set instead of the supplier match
     # -- otherwise a deliberately-added, unmatched product would be dropped.
     all_products: bool = False
-    # Hard exclusion list: every product code the operator pressed Delete/✕ on
-    # THIS session (App.jsx's removedCodes, client-side only, never persisted
-    # to the DB). product_codes already omits these (filteredRows already
-    # drops removedCodes before building it), so in the normal case this is
-    # redundant with product_codes -- it exists as a second, independent
-    # guard: if product_codes is ever stale (e.g. a reload race re-adds a
-    # product the operator already deleted before Export was clicked),
-    # removed_product_codes still wins and the product is excluded from BOTH
-    # assignment and export, never just from the display. See
-    # order_export.export_order.
-    removed_product_codes: list[str] | None = None
+    # Also render the sheet as PNGs, 20 products per image ("<name> Part n.png");
+    # the response becomes a .zip the desktop client unpacks.
+    images: bool = False
 
 
 class ExportPendingOrderRequest(BaseModel):
@@ -122,6 +118,7 @@ class ExportPendingOrderRequest(BaseModel):
     columns: list[str] | None = None
     file_format: str = "xls"  # owner default (2026-10-22): 'xls'
     order_no: str | None = None
+    images: bool = False  # see ExportOrderRequest.images
 
 
 class EmergencyRepairRequest(BaseModel):

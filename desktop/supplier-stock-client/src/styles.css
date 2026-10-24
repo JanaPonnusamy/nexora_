@@ -8197,7 +8197,13 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   padding: 5px 10px; border: 1px solid var(--nx-success-ink); border-radius: var(--nx-radius-sm);
   background: var(--nx-success-sunk); color: var(--nx-success-ink); font-size: 12px;
 }
-.ow-banner button { margin-left: auto; border: 0; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+.ow-banner button { border: 0; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+.ow-banner > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-banner .ow-banner-open {
+  flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 2px 10px;
+  border: 1px solid currentColor; border-radius: var(--nx-radius-sm);
+}
+.ow-banner .ow-banner-open:hover { background: var(--nx-success-ink); color: var(--nx-success-sunk); }
 
 /* Searchable supplier combo (By Supplier / Assigned toolbar). Explicit
    font-size/weight throughout -- this list isn't inside .ow-screen (it's not
@@ -9488,4 +9494,12 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
   .scm-cell .ns-mini-table .num-col { width: 38px; }
   .scm-cell--purchase .ns-mini-table .num-col { width: auto; }
   .scm-cell--batch .ns-mini-table td:nth-child(3), .scm-cell--batch .ns-mini-table th:nth-child(3) { width: 52px; }
+}
+
+/* Stock Check: the section tracks (--stock-grid-columns) already carry their own
+   minimums and the grid auto-hides right-hand sections when narrow, so drop the
+   fixed 1320px floor -- otherwise 1056x768 scrolls horizontally. */
+.store-workbench .store-column-headers,
+.store-workbench .store-row-grid-body {
+  min-width: 0;
 }

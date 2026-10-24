@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { legacyOrderService } from '../../services/legacyOrderService'
+import { ApiError } from '../../services/apiClient'
 import type { LegacyDbHealth, LegacyDbRecovery, LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, QtyCheckConfirmation, RestorableOrderPreview, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
 import { FilterBar, FilterSearch, FilterSelect } from '../../design-system/components/FilterBar'
@@ -36,6 +37,12 @@ export default function LegacyOrderPage() {
   // Admin Override & Process to continue despite the warning.
   const [confirmFor, setConfirmFor] = useState<{ storeName: string; preview: QtyCheckConfirmation } | null>(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
+  // Stale-current-order WARNING dialog (see service.StaleCurrentOrder): the
+  // store's latest order was not generated today. Also not a lock -- the
+  // operator can Continue (confirmed_stale_order=True) to generate a fresh
+  // order anyway, or Cancel and go look at/restore the previous order first.
+  const [staleFor, setStaleFor] = useState<{ storeName: string; message: string } | null>(null)
+  const [staleBusy, setStaleBusy] = useState(false)
   const [compareStore, setCompareStore] = useState('')
   const [previousOrders, setPreviousOrders] = useState<PreviousOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState('')
@@ -146,9 +153,21 @@ export default function LegacyOrderPage() {
   // every attempt, never a locally-cached guess. This is NOT a lock: a
   // cancelled dialog simply doesn't process yet; nothing blocks a later
   // attempt once the count drops, or the user confirms via Order & Process.
+  //
+  // Agent-synced stores (no server_name/database on file -- e.g. NMV) skip
+  // BOTH warnings server-side (owner-simplified 2026-10-23: no gates for an
+  // internet-connected store, just sync platform -> OrderNMC -> generate).
+  // Pre-empt the client-side preview call too, so the picker never shows a
+  // dialog the server will no longer honor.
   const startProcess = (storeName: string) => {
     const config = settings[storeName] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
     setError(null)
+    const storeInfo = stores.find((s) => s.store_name === storeName)
+    const agentSynced = storeInfo ? !storeInfo.server_name && !storeInfo.database : false
+    if (agentSynced) {
+      runProcess(storeName, config)
+      return
+    }
     legacyOrderService.qtyCheckConfirmation(storeName)
       .then((preview) => {
         if (preview.count > 1) {
@@ -161,15 +180,42 @@ export default function LegacyOrderPage() {
       .catch((e: Error) => setError(e.message))
   }
 
+  // service.StaleCurrentOrder is the only 409 that reaches runProcess
+  // directly (the pending-supplier-assignment 409 is pre-empted by
+  // startProcess's qtyCheckConfirmation preview above, before this ever
+  // runs) -- so any 409 here is the stale-order warning.
   const runProcess = (
     storeName: string,
     config: StoreSettings,
     confirm?: { orderId: number; count: number },
+    confirmStaleOrder = false,
   ) => {
     setError(null)
-    legacyOrderService.startOrderProcess(storeName, config.minDays, config.maxDays, config.mode, confirm)
+    legacyOrderService.startOrderProcess(
+      storeName, config.minDays, config.maxDays, config.mode, confirm, confirmStaleOrder,
+    )
       .then(({ job_id }) => watch(job_id))
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => {
+        if (e instanceof ApiError && e.status === 409) {
+          setStaleFor({ storeName, message: e.message })
+          setCompareStore(storeName)
+          return
+        }
+        setError(e.message)
+      })
+  }
+
+  // Continue: re-submit with the stale-order warning acknowledged. Cancel
+  // (dialog's own Cancel button) just closes it -- nothing is processed,
+  // matching the existing pending-supplier-assignment dialog's semantics.
+  const confirmStaleAndProcess = () => {
+    if (!staleFor) return
+    const { storeName } = staleFor
+    const config = settings[storeName] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+    setStaleBusy(true)
+    setStaleFor(null)
+    runProcess(storeName, config, undefined, true)
+    setStaleBusy(false)
   }
 
   // Order & Process: re-fetches the preview immediately before submitting
@@ -634,6 +680,32 @@ export default function LegacyOrderPage() {
                 <button type="button" className="lo-btn" onClick={() => setConfirmFor(null)}>Cancel</button>
                 <button type="button" className="lo-btn lo-btn-danger" disabled={confirmBusy} onClick={confirmAndProcess}>
                   {confirmBusy ? 'Checking…' : 'Order & Process'}
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {staleFor && (
+        <div className="lo-drawer-backdrop" role="presentation" onClick={() => setStaleFor(null)}>
+          <aside className="lo-drawer lo-drawer-compact" role="dialog" aria-label="Stale current order warning" onClick={(e) => e.stopPropagation()}>
+            <div className="lo-drawer-head">
+              <h3>Order not from today — {staleFor.storeName}</h3>
+              <button type="button" className="lo-icon-btn" aria-label="Close" onClick={() => setStaleFor(null)}>×</button>
+            </div>
+            <div className="lo-drawer-body">
+              <p>{staleFor.message}</p>
+              <p className="lo-note">
+                Cancel to leave the existing order untouched — you can review it below in{' '}
+                <strong>Compare previous order</strong>{isAdmin ? ' (an admin can restore it from there)' : ''} first.
+                Continue to generate a fresh order for today anyway; the existing order is retained in backup
+                {isAdmin ? ' and can still be restored afterward if needed' : ''}.
+              </p>
+              <div className="lo-op-settings-actions">
+                <button type="button" className="lo-btn" onClick={() => setStaleFor(null)}>Cancel</button>
+                <button type="button" className="lo-btn lo-btn-danger" disabled={staleBusy} onClick={confirmStaleAndProcess}>
+                  {staleBusy ? 'Processing…' : 'Continue & Process'}
                 </button>
               </div>
             </div>

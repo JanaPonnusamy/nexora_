@@ -15,7 +15,12 @@ from config.database import get_connection as platform_connection
 from modules.sync import scheduler_repository
 
 POLL_INTERVAL_SECONDS = 2
-DEFAULT_TIMEOUT_SECONDS = 300
+# First-time full syncs for a store with a large existing sale/purchase
+# history (e.g. SMGH: ~100k+ rows per table) routinely run past 300s; a
+# device that is genuinely still uploading should not be abandoned seconds
+# before it reaches COMPLETED (observed: SMGH finished at +330s, 30s after
+# the old 300s timeout gave up and skipped the platform copy entirely).
+DEFAULT_TIMEOUT_SECONDS = 900
 
 
 class DeviceSyncTimeout(TimeoutError):

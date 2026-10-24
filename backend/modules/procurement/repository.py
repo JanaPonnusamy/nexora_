@@ -225,6 +225,32 @@ def active_cycle_exists(tenant_id, store_id=None):
         conn.close()
 
 
+def get_active_cycle(tenant_id, store_id):
+    """The store's one ACTIVE cycle row (or None) — same columns as
+    get_cycle, but looked up by store+status instead of by id. Backs the
+    ensure-context flow: callers need the actual row (name, active_refresh_id,
+    etc.), not just the active_cycle_exists boolean."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT cycle_id, tenant_id, store_id, name, description, status,
+                   start_date, end_date,
+                   start_grn_number, start_sale_bill_number,
+                   end_grn_number, end_sale_bill_number, active_refresh_id,
+                   created_at, created_by, updated_at, updated_by
+            FROM procurement.procurement_cycles
+            WHERE tenant_id = ? AND store_id = ? AND is_deleted = 0 AND status = 'ACTIVE'
+            """,
+            (tenant_id, store_id),
+        )
+        rows = _rows_to_dicts(cursor)
+        return _stringify(rows[0]) if rows else None
+    finally:
+        conn.close()
+
+
 def get_active_refresh_id(tenant_id, cycle_id):
     """The cycle's current active_refresh_id (or None)."""
     conn = get_connection()

@@ -395,3 +395,146 @@ def test_create_refresh_validates_parameters(monkeypatch):
     with pytest.raises(HTTPException) as ei:
         orch.create_refresh("T1", "C1", {"min_days": 20, "max_days": 10})
     assert ei.value.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# ensure_active_context — single-screen buyer entry flow
+# --------------------------------------------------------------------------
+
+def test_ensure_active_context_requires_store_id():
+    with pytest.raises(HTTPException) as ei:
+        orch.ensure_active_context("T1", "", "U1")
+    assert ei.value.status_code == 400
+
+
+def test_ensure_active_context_creates_cycle_and_refresh_when_neither_exists(monkeypatch):
+    """No active cycle at all for the store: both the cycle and its first
+    refresh must be created in one call."""
+    calls = []
+    monkeypatch.setattr(orch, "StoreRepository", lambda: _StoreOK())
+    monkeypatch.setattr(cycle_repo, "get_active_cycle", lambda t, s: None)
+
+    created_cycle = {"cycle_id": "C_NEW", "status": "ACTIVE", "store_id": "S1",
+                      "active_refresh_id": None}
+
+    def _create_cycle(data):
+        calls.append(("create_cycle", data["store_id"]))
+        return created_cycle
+
+    monkeypatch.setattr(cycle_repo, "create_cycle", _create_cycle)
+    monkeypatch.setattr(cycle_repo, "active_cycle_exists", lambda t, s=None: False)
+    monkeypatch.setattr(cycle_repo, "get_active_refresh_id", lambda t, c: None)
+    monkeypatch.setattr(refresh_repo, "next_refresh_no", lambda t, c: 1)
+    monkeypatch.setattr(
+        refresh_repo, "create_vpl",
+        lambda data: {"refresh_id": "R_NEW", **data},
+    )
+    monkeypatch.setattr(
+        decision_service, "generate_vpl",
+        lambda t, r: {
+            "status": "Ready", "generated_product_count": 0,
+            "included_count": 0, "excluded_count": 0,
+            "parameters": {"rolling_days": 90, "min_days": 13, "max_days": 18},
+        },
+    )
+    monkeypatch.setattr(orch.comparison_service, "carry_forward", lambda *a: 0)
+    monkeypatch.setattr(orch, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(items_repo, "clear_working_items", lambda *a: 0)
+    monkeypatch.setattr(items_repo, "generate_working_items", lambda *a, **k: 0)
+    monkeypatch.setattr(items_repo, "carry_forward_skips", lambda *a, **k: 0)
+    monkeypatch.setattr(refresh_repo, "set_status", lambda *a: None)
+    monkeypatch.setattr(
+        refresh_repo, "get_vpl",
+        lambda t, r: {"refresh_id": r, "snapshot_status": "Current"},
+    )
+    monkeypatch.setattr(
+        cycle_repo, "get_cycle",
+        lambda t, c: {**created_cycle, "active_refresh_id": "R_NEW"},
+    )
+
+    result = orch.ensure_active_context("T1", "S1", "U1")
+
+    assert calls == [("create_cycle", "S1")]
+    assert result["cycle"]["cycle_id"] == "C_NEW"
+    assert result["refresh"]["refresh_id"] == "R_NEW"
+
+
+def test_ensure_active_context_creates_refresh_when_cycle_exists_but_no_refresh(monkeypatch):
+    """Active cycle already exists but has no refresh yet (active_refresh_id
+    is None): only the refresh is created, the cycle is reused as-is."""
+    calls = []
+    monkeypatch.setattr(orch, "StoreRepository", lambda: _StoreOK())
+    monkeypatch.setattr(
+        cycle_repo, "get_active_cycle",
+        lambda t, s: {"cycle_id": "C_EXISTING", "status": "ACTIVE",
+                      "store_id": "S1", "active_refresh_id": None},
+    )
+
+    def _create_cycle(data):
+        calls.append("create_cycle")
+        raise AssertionError("must not create a new cycle when one is already active")
+
+    monkeypatch.setattr(cycle_repo, "create_cycle", _create_cycle)
+    monkeypatch.setattr(cycle_repo, "get_active_refresh_id", lambda t, c: None)
+    monkeypatch.setattr(refresh_repo, "next_refresh_no", lambda t, c: 1)
+    monkeypatch.setattr(
+        refresh_repo, "create_vpl",
+        lambda data: calls.append("create_vpl") or {"refresh_id": "R_NEW", **data},
+    )
+    monkeypatch.setattr(
+        decision_service, "generate_vpl",
+        lambda t, r: {
+            "status": "Ready", "generated_product_count": 0,
+            "included_count": 0, "excluded_count": 0,
+            "parameters": {"rolling_days": 90, "min_days": 13, "max_days": 18},
+        },
+    )
+    monkeypatch.setattr(orch.comparison_service, "carry_forward", lambda *a: 0)
+    monkeypatch.setattr(orch, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(items_repo, "clear_working_items", lambda *a: 0)
+    monkeypatch.setattr(items_repo, "generate_working_items", lambda *a, **k: 0)
+    monkeypatch.setattr(items_repo, "carry_forward_skips", lambda *a, **k: 0)
+    monkeypatch.setattr(refresh_repo, "set_status", lambda *a: None)
+    monkeypatch.setattr(
+        refresh_repo, "get_vpl",
+        lambda t, r: {"refresh_id": r, "snapshot_status": "Current"},
+    )
+    monkeypatch.setattr(
+        cycle_repo, "get_cycle",
+        lambda t, c: {"cycle_id": c, "status": "ACTIVE", "store_id": "S1",
+                      "active_refresh_id": "R_NEW"},
+    )
+
+    result = orch.ensure_active_context("T1", "S1", "U1")
+
+    assert calls == ["create_vpl"]
+    assert result["cycle"]["cycle_id"] == "C_EXISTING"
+    assert result["refresh"]["refresh_id"] == "R_NEW"
+
+
+def test_ensure_active_context_reuses_existing_cycle_and_refresh_unchanged(monkeypatch):
+    """Active cycle AND a current refresh already exist: this must be a pure
+    read — no new cycle, no new refresh, no Decision Engine run. This is the
+    repeat-visit case that distinguishes ensure_active_context from
+    CycleRefreshConsolePage's runPipeline (which always reruns the engine)."""
+    monkeypatch.setattr(
+        cycle_repo, "get_active_cycle",
+        lambda t, s: {"cycle_id": "C_EXISTING", "status": "ACTIVE",
+                      "store_id": "S1", "active_refresh_id": "R_EXISTING"},
+    )
+
+    def _fail(*a, **k):
+        raise AssertionError("must not write anything on the repeat-visit path")
+
+    monkeypatch.setattr(cycle_repo, "create_cycle", _fail)
+    monkeypatch.setattr(refresh_repo, "create_vpl", _fail)
+    monkeypatch.setattr(decision_service, "generate_vpl", _fail)
+    monkeypatch.setattr(
+        refresh_repo, "get_vpl",
+        lambda t, r: {"refresh_id": r, "snapshot_status": "Current"},
+    )
+
+    result = orch.ensure_active_context("T1", "S1", "U1")
+
+    assert result["cycle"]["cycle_id"] == "C_EXISTING"
+    assert result["refresh"]["refresh_id"] == "R_EXISTING"

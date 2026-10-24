@@ -46,16 +46,40 @@ def store_last_grn(conn, tenant_id, refresh_id, last_grn):
 def read_purchase_receipts(conn, tenant_id, store_id, last_grn):
     """Synced supplier receipts (PurchaseTrans) up to the Last GRN Number.
 
+    GRNNumber is not safely comparable directly (not a clean sequential
+    store-wide key — owner-confirmed 2026-10-23) — the watermark is resolved
+    by date instead: look up the GRNDate of the entered last_grn, then bound
+    the read to receipts on or before that date. Without a resolvable
+    last_grn (not supplied, or no matching GRNNumber found for this
+    tenant/store), falls back to the previous all-time read rather than
+    silently returning nothing — an unmatched/typo'd GRN number should not
+    make reconciliation appear to find zero receipts.
+
     Returns product_code / supplier_code / received_qty / grn_no /
-    supplier_bill_no. INTEGRATION POINT — wire the real PurchaseTrans read here;
-    empty until then, so reconciliation is a safe no-op.
+    supplier_bill_no.
     """
     cursor = conn.cursor()
+    cutoff_date = None
+    if last_grn:
+        cursor.execute(
+            """
+            SELECT MAX(pt.GRNDate)
+            FROM sync.PurchaseTrans pt
+            WHERE pt.tenant_id = ? AND pt.store_id = ?
+              AND CAST(pt.GRNNumber AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
+            """,
+            (tenant_id, store_id, last_grn),
+        )
+        row = cursor.fetchone()
+        cutoff_date = row[0] if row else None
+
     cursor.execute(
         """
         /* Real synced receipts, attributed by SupplierCode (canonical supplier
            reference in sync.PurchaseTrans). Grouped by product + supplier so
-           multi-supplier order items reconcile per assignment. */
+           multi-supplier order items reconcile per assignment. Bounded by
+           GRNDate <= the resolved Last GRN Number's own date when one was
+           found; otherwise unbounded (see docstring). */
         SELECT
             CAST(pt.ProductCode AS VARCHAR(100))            AS product_code,
             CAST(pt.SupplierCode AS VARCHAR(100))           AS supplier_code,
@@ -64,9 +88,10 @@ def read_purchase_receipts(conn, tenant_id, store_id, last_grn):
             CAST(MAX(pt.InvoiceSeries) AS VARCHAR(100))     AS supplier_bill_no
         FROM sync.PurchaseTrans pt
         WHERE pt.tenant_id = ? AND pt.store_id = ?
+          AND (? IS NULL OR pt.GRNDate <= ?)
         GROUP BY pt.ProductCode, pt.SupplierCode
         """,
-        (tenant_id, store_id),
+        (tenant_id, store_id, cutoff_date, cutoff_date),
     )
     return _rows_to_dicts(cursor)
 

@@ -154,10 +154,8 @@ def test_status_contract_never_checked_for_any_non_one_value():
 
 
 # ===========================================================================
-# export_order's removed_product_codes hard exclusion -- a second,
-# independent guard against a deleted row still appearing in an export, even
-# if product_codes is ever stale (see schemas.ExportOrderRequest docstring
-# and order_export.export_order docstring for the full rationale).
+# export_order exports exactly the grid's product_codes -- no separate
+# "removed" list to maintain.
 # ===========================================================================
 
 def _candidate_row(code, name="Product", qty=1):
@@ -168,55 +166,22 @@ def _candidate_row(code, name="Product", qty=1):
     }
 
 
-def test_export_order_excludes_removed_product_from_assignment(monkeypatch):
-    """A product in removed_product_codes must never be assigned, even if it
-    is still present in the server-side re-resolved candidate set."""
+def test_export_order_assigns_and_exports_only_grid_products(monkeypatch):
+    """Only the product_codes left in the grid are assigned and exported; a
+    product the operator deleted from the grid is neither."""
     assigned = []
     monkeypatch.setattr(repository, "orders_by_supplier",
-                         lambda sn, sc, m: [_candidate_row("101"), _candidate_row("102")])
+                         lambda sn, sc, m: [_candidate_row("101"), _candidate_row("102"), _candidate_row("103")])
     monkeypatch.setattr(repository, "bulk_assign_rows",
                          lambda sn, sc, sname, codes, actor: assigned.extend(codes))
+    # 102 was assigned to this supplier by an earlier, unrelated action.
     monkeypatch.setattr(repository, "assigned_orders",
-                         lambda sn, sc: [_candidate_row("101")])  # 102 was excluded, never assigned
-
-    order_export.export_order(
-        "NMA", "S1", "Supplier One", "history", 0, "actor",
-        product_codes=["101", "102"], removed_product_codes=["102"],
-    )
-
-    assert "102" not in assigned
-    assert "101" in assigned
-
-
-def test_export_order_excludes_removed_product_from_final_rows(monkeypatch):
-    """Even if assigned_orders() (sourced from the live DB, not today's
-    session) still returns a removed product -- e.g. because it was assigned
-    by a SEPARATE, earlier action -- it must be excluded from the exported
-    workbook rows, not just skipped for assignment."""
-    monkeypatch.setattr(repository, "orders_by_supplier", lambda sn, sc, m: [_candidate_row("101")])
-    monkeypatch.setattr(repository, "bulk_assign_rows", lambda sn, sc, sname, codes, actor: None)
-    # Simulate the exact reported bug: assigned_orders() returns a row the
-    # operator deleted this session (assigned via some earlier, unrelated action).
-    monkeypatch.setattr(repository, "assigned_orders",
-                         lambda sn, sc: [_candidate_row("101"), _candidate_row("999", name="NIFUTIN TAB")])
+                         lambda sn, sc: [_candidate_row("101"), _candidate_row("102")])
 
     result = order_export.export_order(
         "NMA", "S1", "Supplier One", "history", 0, "actor",
-        product_codes=["101", "999"], removed_product_codes=["999"],
+        product_codes=["101"],
     )
 
-    assert result.count == 1  # only 101 -- 999 (NIFUTIN TAB) excluded despite assigned_orders() returning it
-
-
-def test_export_order_assigned_view_also_honors_removed_product_codes(monkeypatch):
-    """The Assigned-view export path (product_codes=None) must also respect
-    removed_product_codes, not just the By-Supplier curated-list path."""
-    monkeypatch.setattr(repository, "assigned_orders",
-                         lambda sn, sc: [_candidate_row("101"), _candidate_row("999")])
-
-    result = order_export.export_order(
-        "NMA", "S1", "Supplier One", "history", 0, "actor",
-        removed_product_codes=["999"],
-    )
-
+    assert assigned == ["101"]
     assert result.count == 1

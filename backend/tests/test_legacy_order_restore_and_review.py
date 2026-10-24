@@ -180,6 +180,67 @@ def test_start_order_process_proceeds_with_no_order_yet(base_env, thread_spy, mo
     assert thread_spy
 
 
+def test_start_order_process_confirmed_stale_order_skips_the_check(base_env, thread_spy, monkeypatch):
+    """confirmed_stale_order=True is the Continue path on the stale-order
+    warning dialog -- it must skip require_current_date_order_if_any
+    entirely (not call it and ignore the result), same shape as how
+    QtyCheckConfirmationRequired's `confirmed` skips its own re-raise."""
+    def raise_if_called(sn):
+        raise AssertionError("require_current_date_order_if_any must not be called when confirmed_stale_order=True")
+
+    monkeypatch.setattr(service.repository, "require_current_date_order_if_any", raise_if_called)
+    monkeypatch.setattr(service.repository, "qty_check_confirmation_count", lambda sn: (None, 0, []))
+
+    job_id = service.start_order_process("NMA", confirmed_stale_order=True)
+
+    assert job_id
+    assert thread_spy
+
+
+def test_start_order_process_agent_synced_store_skips_both_warnings(thread_spy, monkeypatch):
+    """Agent-synced stores (NMV) have no operator directly working their
+    grids between runs the way an on-LAN store does, so the owner asked to
+    drop BOTH confirmation gates for them entirely (2026-10-23) -- neither
+    require_current_date_order_if_any nor qty_check_confirmation_count
+    should even be CALLED for this path, not just bypassed by a confirm
+    flag, and the agent-sync job must start with no confirmed_* args at
+    all."""
+    nmv_store = {"store_name": "NMV", "store_code": "10", "server_name": "",
+                 "database": "", "username": "", "password": ""}
+    monkeypatch.setattr(service, "_resolve_store", lambda sn: dict(nmv_store))
+    monkeypatch.setattr(service, "_running_job_kind", lambda sn: None)
+    monkeypatch.setattr(service.database, "platform_store_id", lambda sn: "11111111-1111-1111-1111-111111111111")
+
+    def raise_if_called(*a, **k):
+        raise AssertionError("neither gate check must run for an agent-synced store")
+
+    monkeypatch.setattr(service.repository, "require_current_date_order_if_any", raise_if_called)
+    monkeypatch.setattr(service.repository, "qty_check_confirmation_count", raise_if_called)
+
+    job_id = service.start_order_process("NMV")
+
+    assert job_id
+    assert thread_spy
+    assert thread_spy[0].target is service._run_agent_sync_then_order
+
+
+def test_start_order_process_stale_confirm_does_not_bypass_qtycheck_warning(base_env, thread_spy, monkeypatch):
+    """The two warnings are independent: confirming the stale-order dialog
+    must NOT silently wave through the separate pending-supplier-assignment
+    warning too -- the caller must still see and confirm that one on its
+    own merits."""
+    monkeypatch.setattr(service.repository, "require_current_date_order_if_any", lambda sn: None)
+    monkeypatch.setattr(
+        service.repository, "qty_check_confirmation_count",
+        lambda sn: (20260101120000, 3, [{"product_code": 1, "product_name": "X"}]),
+    )
+
+    with pytest.raises(service.QtyCheckConfirmationRequired):
+        service.start_order_process("NMA", confirmed_stale_order=True)
+
+    assert not thread_spy
+
+
 # ===========================================================================
 # C. record_protected_backup_snapshot (REPOSITORY)
 # ===========================================================================

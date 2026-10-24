@@ -27,5 +27,6 @@ contextBridge.exposeInMainWorld('nexoraDesktop', {
   sessionPath: (name) => ipcRenderer.invoke('session:path', name),
   // Order Workspace export-to-disk.
   writeExportFile: (absolutePath, contentBase64) => ipcRenderer.invoke('export:writeFile', { absolutePath, contentBase64 }),
+  openExportPath: (absolutePath) => ipcRenderer.invoke('export:openPath', { absolutePath }),
   chooseExportFolder: (defaultPath) => ipcRenderer.invoke('export:chooseFolder', { defaultPath })
 });

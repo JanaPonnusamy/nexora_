@@ -679,6 +679,17 @@ export const procurementService = {
     created_by: string
   }) => api.post<Cycle>(`/api/procurement/cycles/open`, payload),
 
+  // Get-or-create the store's active cycle + current refresh in one call —
+  // backs the single-screen entry flow (pick a store, land in the workspace,
+  // no separate Cycle/Refresh step). A repeat call for a store that already
+  // has an active cycle+refresh is a pure read: it never creates a second
+  // cycle or reruns the Decision Engine.
+  ensureContext: (tenantId: string, storeId: string, createdBy: string | null) =>
+    api.post<{ cycle: Cycle; refresh: Refresh }>(
+      `/api/procurement/stores/${storeId}/ensure-context${qs({ tenant_id: tenantId })}`,
+      { created_by: createdBy },
+    ),
+
   refreshesForCycle: (tenantId: string, cycleId: string) =>
     api
       .get<{ items: Refresh[] }>(

@@ -359,6 +359,29 @@ def get_unit_descriptions(tenant_id, store_id, starts_with, unit_source="new"):
     return [row["unit_description"] for row in rows if row.get("unit_description")]
 
 
+def get_unit_choices(tenant_id, store_id):
+    """Every unit the New Unit editor may offer: master units AND reviewer-
+    corrected units, store-wide (not letter-scoped), so a unit created once
+    by typing it is selectable on every later load."""
+    rows = _fetch_all(
+        """
+        SELECT TOP 500 u AS unit_description FROM (
+            SELECT CAST(LTRIM(RTRIM(p.UnitDescription)) AS NVARCHAR(100)) AS u
+            FROM sync.Products p
+            WHERE p.tenant_id = ? AND p.store_id = ? AND ISNULL(p.isactive, 1) = 1
+            UNION
+            SELECT CAST(LTRIM(RTRIM(r.unit_description)) AS NVARCHAR(100))
+            FROM dbo.label_review r
+            WHERE r.tenant_id = ? AND r.store_id = ?
+        ) x
+        WHERE u IS NOT NULL AND u <> ''
+        ORDER BY u
+        """,
+        (tenant_id, store_id, tenant_id, store_id),
+    )
+    return [row["unit_description"] for row in rows if row.get("unit_description")]
+
+
 def get_sublocations(tenant_id, store_id):
     """Distinct existing SubLocation values, for the 'Old Loc' multi-select
     filter - so users pick from what's really in the table instead of

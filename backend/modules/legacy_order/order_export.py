@@ -99,19 +99,18 @@ def _safe_file_name(name):
 # --------------------------------------------------------------------------
 # Workbook -- port of Form1.ExportSelectedColumnsFromGrid's column layout,
 # header styling and S.No./OrderQty cell fills (Form1.vb ~lines 4441-4634).
-# ProductCode is additionally forced to a TEXT cell (NumberFormat "@") --
-# the legacy routine never did this (ProductCode is a plain int column in
-# this schema), kept here only as a cheap safety margin.
+# Every builder is split into a *layout* (headers + value table) and a
+# *writer* (xlsx / xls / csv / png), so the files and the images render the
+# exact same table.
 # --------------------------------------------------------------------------
 
 def _format_product_code(value):
     """ordermanagement.productcode round-trips through pyodbc as a Python
     float (e.g. 9810.0), not an int, even though it's always a whole number.
-    str(9810.0) == "9810.0" -- writing that straight into the text cell would
-    silently corrupt every exported ProductCode with a bogus ".0" suffix.
-    Only numeric types get this treatment -- a string value is left exactly
-    as-is (never round-tripped through float()), so a genuine text code with
-    leading zeros is never touched."""
+    str(9810.0) == "9810.0" -- matching on that string would silently fail
+    with a bogus ".0" suffix. Only numeric types get this treatment -- a
+    string value is left exactly as-is (never round-tripped through float()),
+    so a genuine text code with leading zeros is never touched."""
     if value is None:
         return ""
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -120,80 +119,104 @@ def _format_product_code(value):
     return str(value)
 
 
-def _build_workbook(rows, has_rack):
+def _product_code_value(value):
+    """ProductCode as written into the sheet: a real NUMBER (owner request
+    2026-10-24 -- was a "@" text cell, which Excel flags with the green
+    number-stored-as-text triangle and left-aligns). Anything that isn't a
+    plain whole number (letters, a leading zero) stays text so it's never
+    mangled."""
+    code = _format_product_code(value)
+    if code.isdigit() and (code == "0" or not code.startswith("0")):
+        return int(code)
+    return code
+
+
+# --------------------------------------------------------------------------
+# Cell styling -- the legacy VB.NET colour rules (Form1.vb ~lines 4332-4366:
+# S.No. bold/centred/LightYellow, OrderQty bold/centred/LightGreen, SaleUnit
+# grey centred, MRP grey "0.00") on a cleaner sheet (owner request
+# 2026-10-24): Calibri 12 everywhere, header row on a soft blue fill, thin
+# inner borders with a THICK border around the used range, rows >= 15pt,
+# ProductCode numeric + right-aligned, roomier column widths. Styling is
+# keyed off the header label so every builder (fixed, custom, pending; xlsx,
+# xls and png) renders identically.
+# --------------------------------------------------------------------------
+
+_VB_LIGHT_YELLOW = "FFFFE0"
+_VB_LIGHT_GREEN = "90EE90"
+_VB_GRAY = "808080"
+_HEADER_FILL = "D9E1F2"  # soft blue -- black bold text stays fully readable
+_FONT_NAME = "Calibri"
+_FONT_SIZE = 12
+_ROW_HEIGHT_PT = 18  # owner floor is 15pt; 18 gives Calibri 12 breathing room
+_PRODUCTS_PER_IMAGE = 20
+
+
+def _cell_spec(label, header=False):
+    """bold / fill / font colour / horizontal align / number format for one
+    cell. align None = Excel's General (numbers right, text left)."""
+    spec = {"bold": False, "fill": None, "color": "000000", "align": None, "num_format": None}
+    label = str(label)
+    if header:
+        spec.update(bold=True, fill=_HEADER_FILL, align="center")
+    elif label == "S.No.":
+        spec.update(bold=True, fill=_VB_LIGHT_YELLOW, align="center")
+    elif label == "OrderQty":
+        spec.update(bold=True, fill=_VB_LIGHT_GREEN, align="center")
+    elif label == "SaleUnit":
+        spec.update(color=_VB_GRAY, align="center")
+    elif label == "MRP":
+        spec.update(color=_VB_GRAY, align="right", num_format="0.00")
+    elif label.lower() == "productcode":
+        spec.update(align="right", num_format="0")
+    return spec
+
+
+def _column_widths(headers, table):
+    """Character widths, sized for Calibri 12 (wider than Excel's 11pt
+    default the old auto-fit assumed, which is what made it look cramped)."""
+    widths = []
+    for c, h in enumerate(headers):
+        longest = max([len(str(h))] + [len(str(row[c])) for row in table if row[c] is not None])
+        widths.append(min(longest, 45) * 1.15 + 4)
+    return widths
+
+
+def _write_xlsx(headers, table):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-
-    headers = ["S.No.", "ProductName", "OrderQty", "SaleUnit", "MRP", "ProductCode", "Discount", "Category", "SubLocation"]
-    if has_rack:
-        headers.append("Rack")
+    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws.append(headers)
-
-    # Owner request (2026-10-22): the exported sheet rendered with NO cell
-    # borders at all and no header background -- only the Order Qty fill --
-    # which read as unfinished next to the legacy VB.NET app's output. Same
-    # border/header-fill treatment _build_workbook_custom already had
-    # (thin interior, thick outer edge + header row), applied here too so
-    # BOTH export paths (fixed legacy layout vs. operator-picked columns)
-    # look identical, not just the custom one.
-    header_fill = PatternFill("solid", fgColor="D9E6F2")
-    sno_fill = PatternFill("solid", fgColor="FFFFE0")
-    qty_fill = PatternFill("solid", fgColor="90EE90")
-    thin = Side(style="thin", color="B7B7B7")
-    thick = Side(style="medium", color="404040")
-    n_cols = len(headers)
-    n_rows = len(rows) + 1
-
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-        cell.fill = header_fill
-        cell.border = Border(top=thick, bottom=thick,
-                              left=thick if cell.column == 1 else thin,
-                              right=thick if cell.column == n_cols else thin)
-
-    for i, row in enumerate(rows, start=1):
-        values = [
-            i,
-            row.get("ProductName") or "",
-            row.get("OrderQty") or 0,
-            row.get("SaleUnit") or "",
-            row.get("MRP") or 0,
-            _format_product_code(row.get("ProductCode")),
-            row.get("Discount") if has_rack else "",
-            row.get("Category") or "",
-            row.get("SubLocation") or "",
-        ]
-        if has_rack:
-            values.append(row.get("Rack") or "")
+    for values in table:
         ws.append(values)
 
-        excel_row = ws[i + 1]
-        excel_row[0].fill = sno_fill
-        excel_row[0].font = Font(bold=True)
-        excel_row[0].alignment = Alignment(horizontal="center")
-        excel_row[2].fill = qty_fill
-        excel_row[2].font = Font(bold=True)
-        excel_row[2].alignment = Alignment(horizontal="center")
-        code_cell = excel_row[5]
-        code_cell.number_format = "@"
-        code_cell.value = _format_product_code(row.get("ProductCode"))
-
-        is_last_row = (i + 1) == n_rows
-        for c in range(1, n_cols + 1):
-            cell = ws.cell(row=i + 1, column=c)
+    thin = Side(style="thin", color="000000")
+    thick = Side(style="thick", color="000000")
+    last_row, last_col = len(table) + 1, len(headers)
+    specs = [_cell_spec(h) for h in headers]
+    for row in ws.iter_rows(min_row=1, max_row=last_row, max_col=last_col):
+        for cell in row:
+            r, c = cell.row, cell.column
+            spec = _cell_spec(headers[c - 1], header=True) if r == 1 else specs[c - 1]
             cell.border = Border(
-                top=thin, bottom=thick if is_last_row else thin,
-                left=thick if c == 1 else thin, right=thick if c == n_cols else thin,
+                left=thick if c == 1 else thin, right=thick if c == last_col else thin,
+                top=thick if r == 1 else thin, bottom=thick if r == last_row else thin,
             )
-
-    for col in ws.columns:
-        width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
-        ws.column_dimensions[col[0].column_letter].width = min(width + 2, 40)
+            cell.font = Font(name=_FONT_NAME, size=_FONT_SIZE, bold=spec["bold"], color=spec["color"])
+            cell.alignment = Alignment(horizontal=spec["align"], vertical="center")
+            if spec["fill"]:
+                cell.fill = PatternFill("solid", fgColor=spec["fill"])
+            if spec["num_format"]:
+                cell.number_format = spec["num_format"]
+    for r in range(1, last_row + 1):
+        ws.row_dimensions[r].height = _ROW_HEIGHT_PT
+    for c, w in enumerate(_column_widths(headers, table), start=1):
+        ws.column_dimensions[get_column_letter(c)].width = w
+    ws.freeze_panes = "A2"
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -201,16 +224,205 @@ def _build_workbook(rows, has_rack):
 
 
 # --------------------------------------------------------------------------
+# .xls (legacy BIFF binary format, Excel 97-2003) -- owner request
+# (2026-10-22): some downstream consumer needs the real old binary format,
+# not just an .xlsx renamed to .xls. openpyxl cannot write this format at
+# all (it is xlsx-only); xlwt is the only maintained-enough library in this
+# dependency set that can (already a tracked dependency -- requirements.txt
+# -- version 1.3.0, last released ~2015 but functionally complete for this
+# use case). xlwt's styling model is a much older, flatter API (easyxf
+# strings, not openpyxl's Font/Border/PatternFill objects) and BIFF itself
+# caps out at 65,536 rows / 256 columns per sheet -- both completely fine
+# for this export's realistic row counts, so no fallback/warning is needed
+# for that limit in practice.
+# --------------------------------------------------------------------------
+
+# BIFF fills come from a 56-colour palette; the header blue isn't in it, so
+# it's registered under its own name and the slot is re-pointed per workbook.
+_XLS_HEADER_COLOUR_INDEX = 0x21
+_XLS_FILL_NAMES = {_HEADER_FILL: "nexora_header", _VB_LIGHT_YELLOW: "light_yellow", _VB_LIGHT_GREEN: "light_green"}
+_XLS_COLOUR_NAMES = {"000000": "black", _VB_GRAY: "gray50"}
+_XLS_ALIGN = {"center": "center", "right": "right", "left": "left"}
+
+
+def _xls_style(spec, left, right, top, bottom):
+    """xlwt easyxf for one cell from a _cell_spec; the four flags pick a
+    thick edge on the outside of the used range, thin inside."""
+    import xlwt
+    edge = lambda outer: "thick" if outer else "thin"
+    parts = [
+        f"borders: left {edge(left)}, right {edge(right)}, top {edge(top)}, bottom {edge(bottom)}",
+        f"font: name {_FONT_NAME}, height {_FONT_SIZE * 20}, colour {_XLS_COLOUR_NAMES[spec['color']]}"
+        + (", bold on" if spec["bold"] else ""),
+        "align: vert centre" + (f", horiz {_XLS_ALIGN[spec['align']]}" if spec["align"] else ""),
+    ]
+    if spec["fill"]:
+        parts.append(f"pattern: pattern solid, fore_colour {_XLS_FILL_NAMES[spec['fill']]}")
+    xf = xlwt.easyxf("; ".join(parts))
+    if spec["num_format"]:
+        xf.num_format_str = spec["num_format"]
+    return xf
+
+
+def _write_xls(headers, table):
+    """headers: labels; table: list of value lists (already in header order)."""
+    import xlwt
+    xlwt.add_palette_colour("nexora_header", _XLS_HEADER_COLOUR_INDEX)
+    wb = xlwt.Workbook()
+    wb.set_colour_RGB(_XLS_HEADER_COLOUR_INDEX, *(int(_HEADER_FILL[i:i + 2], 16) for i in (0, 2, 4)))
+    ws = wb.add_sheet("Sheet1")
+
+    last_row, last_col = len(table), len(headers) - 1
+    specs = [_cell_spec(h) for h in headers]
+    header_spec = _cell_spec(None, header=True)
+    styles = {}  # BIFF caps a workbook at ~4k XFs -- one per distinct combo
+
+    def style(r, c):
+        key = (r == 0, c, r == last_row)
+        if key not in styles:
+            styles[key] = _xls_style(header_spec if r == 0 else specs[c],
+                                     c == 0, c == last_col, r == 0, r == last_row)
+        return styles[key]
+
+    for c, label in enumerate(headers):
+        ws.write(0, c, label, style(0, c))
+    for r, values in enumerate(table, start=1):
+        for c, value in enumerate(values):
+            ws.write(r, c, value, style(r, c))
+    for r in range(last_row + 1):
+        ws.row(r).height_mismatch = True
+        ws.row(r).height = _ROW_HEIGHT_PT * 20
+    for c, w in enumerate(_column_widths(headers, table)):
+        ws.col(c).width = int(256 * w)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _write_csv(headers, table):
+    import csv
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    writer.writerows(table)
+    return buf.getvalue().encode("utf-8-sig")  # BOM so Excel opens non-ASCII cleanly
+
+
+_WRITERS = {"xlsx": _write_xlsx, "xls": _write_xls, "csv": _write_csv}
+
+
+# --------------------------------------------------------------------------
+# Image export (owner request 2026-10-24) -- the same table the sheet holds,
+# rendered to PNGs of 20 products each ("<base> Part 1.png", "Part 2", ...).
+# Every image repeats the header row, the sheet's fills/borders, and keeps
+# a white padding margin outside the thick outer border. Column widths are
+# measured over the WHOLE table so every part lines up identically.
+# --------------------------------------------------------------------------
+
+def _image_font(px, bold=False):
+    from PIL import ImageFont
+    for name in (["calibrib.ttf", "arialbd.ttf"] if bold else ["calibri.ttf", "arial.ttf"]):
+        try:
+            return ImageFont.truetype(name, px)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _image_text(value, label):
+    if value is None:
+        return ""
+    if str(label) == "MRP" and isinstance(value, (int, float)):
+        return f"{value:.2f}"
+    if isinstance(value, float) and value == int(value):
+        return str(int(value))
+    return str(value)
+
+
+def _render_images(headers, table, base_name, per_image=_PRODUCTS_PER_IMAGE):
+    """[(filename, png bytes), ...] -- one PNG per `per_image` rows."""
+    from PIL import Image, ImageDraw
+
+    rgb = lambda h: tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    font, font_bold = _image_font(16), _image_font(16, bold=True)  # 12pt @ 96 dpi
+    pad, cell_pad, row_h, thick = 28, 10, 30, 3
+    specs = [_cell_spec(h) for h in headers]
+    header_spec = _cell_spec(None, header=True)
+    texts = [[_image_text(v, headers[c]) for c, v in enumerate(row)] for row in table]
+
+    scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    col_w = []
+    for c, h in enumerate(headers):
+        widest = max([scratch.textlength(str(h), font=font_bold)]
+                     + [scratch.textlength(row[c], font=font_bold if specs[c]["bold"] else font) for row in texts])
+        col_w.append(int(widest) + cell_pad * 2)
+    table_w = sum(col_w)
+
+    def draw_row(draw, y, values, row_specs, raw_values):
+        x = pad
+        for c, text in enumerate(values):
+            spec = row_specs[c]
+            box = [x, y, x + col_w[c], y + row_h]
+            if spec["fill"]:
+                draw.rectangle(box, fill=rgb(spec["fill"]))
+            draw.rectangle(box, outline=(0, 0, 0), width=1)
+            f = font_bold if spec["bold"] else font
+            tw = draw.textlength(text, font=f)
+            align = spec["align"] or ("right" if isinstance(raw_values[c], (int, float)) else "left")
+            tx = (x + (col_w[c] - tw) / 2 if align == "center"
+                  else x + col_w[c] - cell_pad - tw if align == "right" else x + cell_pad)
+            draw.text((tx, y + row_h / 2), text, font=f, fill=rgb(spec["color"]), anchor="lm")
+            x += col_w[c]
+
+    images = []
+    for part, start in enumerate(range(0, len(table), per_image), start=1):
+        chunk = range(start, min(start + per_image, len(table)))
+        table_h = row_h * (len(chunk) + 1)
+        img = Image.new("RGB", (table_w + pad * 2, table_h + pad * 2), "white")
+        draw = ImageDraw.Draw(img)
+        draw_row(draw, pad, [str(h) for h in headers], [header_spec] * len(headers), headers)
+        for n, i in enumerate(chunk, start=1):
+            draw_row(draw, pad + n * row_h, texts[i], specs, table[i])
+        draw.rectangle([pad - 1, pad - 1, pad + table_w + 1, pad + table_h + 1], outline=(0, 0, 0), width=thick)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        images.append((f"{base_name} Part {part}.png", buf.getvalue()))
+    return images
+
+
+# --------------------------------------------------------------------------
+# Layouts. Legacy fixed layout (no `columns`): S.No., ProductName, OrderQty,
+# SaleUnit, MRP, ProductCode, Discount, Category, SubLocation[, Rack].
+# --------------------------------------------------------------------------
+
+def _layout_fixed(rows, has_rack):
+    headers = ["S.No.", "ProductName", "OrderQty", "SaleUnit", "MRP", "ProductCode", "Discount", "Category", "SubLocation"]
+    if has_rack:
+        headers.append("Rack")
+    table = []
+    for i, row in enumerate(rows, start=1):
+        values = [
+            i, row.get("ProductName") or "", row.get("OrderQty") or 0, row.get("SaleUnit") or "",
+            row.get("MRP") or 0, _product_code_value(row.get("ProductCode")),
+            row.get("Discount") if has_rack else "", row.get("Category") or "", row.get("SubLocation") or "",
+        ]
+        if has_rack:
+            values.append(row.get("Rack") or "")
+        table.append(values)
+    return headers, table
+
+
+# --------------------------------------------------------------------------
 # Configurable export — operator-chosen column subset + xlsx/csv, used when
 # the request supplies `columns`/`file_format`. ProductCode/ProductName/
 # OrderQty are always included regardless of selection (enforced here, not
 # just client-side, since this is a public API contract). Keeps the legacy
-# _build_workbook() path above completely untouched for existing callers
-# that omit `columns` — this is strictly additive.
+# fixed layout above completely untouched for existing callers that omit
+# `columns` — this is strictly additive.
 # --------------------------------------------------------------------------
 
 _EXPORT_COLUMN_MAP = {
-    "product_code": ("ProductCode", lambda r: _format_product_code(r.get("ProductCode"))),
+    "product_code": ("ProductCode", lambda r: _product_code_value(r.get("ProductCode"))),
     "product_name": ("ProductName", lambda r: r.get("ProductName") or ""),
     "order_qty": ("OrderQty", lambda r: r.get("OrderQty") or 0),
     "sale_unit": ("SaleUnit", lambda r: r.get("SaleUnit") or ""),
@@ -231,73 +443,29 @@ def _resolve_columns(columns):
     return ordered
 
 
-def _build_workbook_custom(rows, columns):
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-
-    keys = _resolve_columns(columns)
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Sheet1"
-    ws.append([_EXPORT_COLUMN_MAP[k][0] for k in keys])
-
-    # Same green the legacy VB.NET export used for Order Qty (90EE90, see
-    # _build_workbook's qty_fill) -- operators expect that column to stand out
-    # the same way it always has. Thin border on every used cell, thick on the
-    # header row and the whole table's outer edge -- a plain borderless sheet
-    # read as unfinished/placeholder next to the legacy app's output.
-    qty_fill = PatternFill("solid", fgColor="90EE90")
-    thin = Side(style="thin", color="B7B7B7")
-    thick = Side(style="medium", color="404040")
-    qty_col = keys.index("order_qty") + 1 if "order_qty" in keys else None
-
-    n_rows = len(rows) + 1  # +1 for header
-    n_cols = len(keys)
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-        cell.border = Border(top=thick, bottom=thick,
-                              left=thick if cell.column == 1 else thin,
-                              right=thick if cell.column == n_cols else thin)
-
-    for row in rows:
-        ws.append([_EXPORT_COLUMN_MAP[k][1](row) for k in keys])
-        r = ws.max_row
-        if "product_code" in keys:
-            code_cell = ws.cell(row=r, column=keys.index("product_code") + 1)
-            code_cell.number_format = "@"
-            code_cell.value = _format_product_code(row.get("ProductCode"))
-        is_last_row = r == n_rows
-        for c in range(1, n_cols + 1):
-            cell = ws.cell(row=r, column=c)
-            cell.border = Border(
-                top=thin, bottom=thick if is_last_row else thin,
-                left=thick if c == 1 else thin, right=thick if c == n_cols else thin,
-            )
-            if c == qty_col:
-                cell.fill = qty_fill
-                cell.font = Font(bold=True)
-                cell.alignment = Alignment(horizontal="center")
-
-    for col in ws.columns:
-        width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
-        ws.column_dimensions[col[0].column_letter].width = min(width + 2, 40)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+def _layout_generic(rows, keys, column_map):
+    """Operator-chosen columns in the given key order, against any column
+    map (By Supplier's _EXPORT_COLUMN_MAP or Pending's _PENDING_COLUMN_MAP)."""
+    return ([column_map[k][0] for k in keys],
+            [[column_map[k][1](row) for k in keys] for row in rows])
 
 
-def _build_csv_custom(rows, columns):
-    import csv
+# Legacy VB export layout (Form1.ExportSelectedColumnsFromGrid): S.No. first,
+# then ProductName, OrderQty, SaleUnit, MRP, Productcode, Discound (sic),
+# Category, SubLocation, Rack -- header spellings copied verbatim because the
+# supplier-side consumers of these sheets were built against the VB output.
+# Used for the custom .xls export.
+_VB_COLUMN_ORDER = ("product_name", "order_qty", "sale_unit", "mrp", "product_code",
+                    "discount", "category", "sub_location", "rack")
+_VB_HEADER = {"product_code": "Productcode", "discount": "Discound"}
 
-    keys = _resolve_columns(columns)
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow([_EXPORT_COLUMN_MAP[k][0] for k in keys])
-    for row in rows:
-        writer.writerow([_EXPORT_COLUMN_MAP[k][1](row) for k in keys])
-    return buf.getvalue().encode("utf-8-sig")  # BOM so Excel opens non-ASCII cleanly
+
+def _layout_custom_vb(rows, columns):
+    chosen = set(_resolve_columns(columns))
+    keys = [k for k in _VB_COLUMN_ORDER if k in chosen]
+    headers = ["S.No."] + [_VB_HEADER.get(k, _EXPORT_COLUMN_MAP[k][0]) for k in keys]
+    table = [[i] + [_EXPORT_COLUMN_MAP[k][1](row) for k in keys] for i, row in enumerate(rows, start=1)]
+    return headers, table
 
 
 # --------------------------------------------------------------------------
@@ -313,7 +481,7 @@ def _build_csv_custom(rows, columns):
 # --------------------------------------------------------------------------
 
 _PENDING_COLUMN_MAP = {
-    "product_code": ("ProductCode", lambda r: _format_product_code(r.get("ProductCode"))),
+    "product_code": ("ProductCode", lambda r: _product_code_value(r.get("ProductCode"))),
     "product_name": ("ProductName", lambda r: r.get("ProductName") or ""),
     "order_qty": ("OrderQty", lambda r: r.get("OrderQty") or 0),
     "sale_unit": ("SaleUnit", lambda r: r.get("SaleUnit") or ""),
@@ -341,9 +509,8 @@ def _resolve_pending_columns(columns):
 def _normalize_pending_row(row):
     """pending_order_rows() returns the lowercase column names from its own
     SQL projection (see repository.pending_order_rows) -- reshape to the
-    same PascalCase keys _build_workbook_custom/_build_csv_custom already
-    expect, so this reuses those builders unchanged instead of forking a
-    parallel Pending-only workbook function."""
+    same PascalCase keys the column maps already expect, so this reuses the
+    shared layout/writers instead of forking a Pending-only workbook."""
     return {
         "ProductCode": row.get("productcode"),
         "ProductName": row.get("productname"),
@@ -357,7 +524,33 @@ def _normalize_pending_row(row):
     }
 
 
-def export_pending_order(store_name, split_size, columns=None, file_format="xlsx", order_no=None):
+def _package(base_name, ext, chunks, layout, images):
+    """Build the files for every chunk (+ optional PNGs over the full row
+    set) -> (content, filename, media_type). One plain file when that's all
+    there is; otherwise a .zip the desktop client unpacks into the order
+    folder (split "Part n of m" files and/or the "Part n" images)."""
+    writer = _WRITERS[ext]
+    files = []
+    if len(chunks) == 1:
+        files.append((f"{base_name}.{ext}", writer(*layout(chunks[0]))))
+    else:
+        for idx, chunk in enumerate(chunks, start=1):
+            files.append((f"{base_name} Part {idx} of {len(chunks)}.{ext}", writer(*layout(chunk))))
+    if images:
+        all_rows = [r for chunk in chunks for r in chunk]
+        files.extend(_render_images(*layout(all_rows), base_name))
+
+    if len(files) == 1:
+        media_type = "text/csv" if ext == "csv" else (XLS_MEDIA_TYPE if ext == "xls" else XLSX_MEDIA_TYPE)
+        return files[0][1], files[0][0], media_type
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in files:
+            zf.writestr(name, data)
+    return buf.getvalue(), f"{base_name}.zip", ZIP_MEDIA_TYPE
+
+
+def export_pending_order(store_name, split_size, columns=None, file_format="xlsx", order_no=None, images=False):
     rows = [_normalize_pending_row(r) for r in repository.pending_order_rows(store_name)]
     rows = [r for r in rows if (r.get("OrderQty") or 0) > 0]
     if not rows:
@@ -370,6 +563,8 @@ def export_pending_order(store_name, split_size, columns=None, file_format="xlsx
     order_part = order_no if order_no else date_part
     base_name = _safe_file_name(f"Pending {date_part} {order_part}")
 
+    # Rows-per-file split (legacy VB "split size"): the desktop client unpacks
+    # the resulting .zip into separate "Part n of m" files in the order folder.
     try:
         split_size = int(split_size or 0)
     except (TypeError, ValueError):
@@ -381,36 +576,11 @@ def export_pending_order(store_name, split_size, columns=None, file_format="xlsx
         chunks = [rows]
 
     keys = _resolve_pending_columns(columns)
-    file_format = file_format if file_format in ("xlsx", "xls", "csv") else "xls"
-    ext = "csv" if file_format == "csv" else file_format
-
-    def build_one(chunk):
-        if file_format == "csv":
-            import csv
-            buf = io.StringIO()
-            writer = csv.writer(buf)
-            writer.writerow([_PENDING_COLUMN_MAP[k][0] for k in keys])
-            for row in chunk:
-                writer.writerow([_PENDING_COLUMN_MAP[k][1](row) for k in keys])
-            return buf.getvalue().encode("utf-8-sig")
-        if file_format == "xls":
-            return _build_workbook_custom_generic_xls(chunk, keys, _PENDING_COLUMN_MAP)
-        return _build_workbook_custom_generic(chunk, keys, _PENDING_COLUMN_MAP)
+    ext = file_format if file_format in ("xlsx", "xls", "csv") else "xls"
 
     try:
-        if len(chunks) == 1:
-            content = build_one(chunks[0])
-            filename = f"{base_name}.{ext}"
-            media_type = "text/csv" if ext == "csv" else (XLS_MEDIA_TYPE if ext == "xls" else XLSX_MEDIA_TYPE)
-        else:
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for idx, chunk in enumerate(chunks, start=1):
-                    part_name = f"{base_name} Part {idx} of {len(chunks)}.{ext}"
-                    zf.writestr(part_name, build_one(chunk))
-            content = buf.getvalue()
-            filename = f"{base_name}.zip"
-            media_type = ZIP_MEDIA_TYPE
+        content, filename, media_type = _package(
+            base_name, ext, chunks, lambda chunk: _layout_generic(chunk, keys, _PENDING_COLUMN_MAP), images)
     except Exception as exc:
         logger.exception(
             "Pending order export: workbook build failed for store=%s (%s rows)",
@@ -421,205 +591,7 @@ def export_pending_order(store_name, split_size, columns=None, file_format="xlsx
     return ExportResult(content, filename, media_type, pending_count, "Pending")
 
 
-def _build_workbook_custom_generic(rows, keys, column_map):
-    """Same layout/styling as _build_workbook_custom (green Order Qty column,
-    borders, product-code-as-text), generalized to take its own column map
-    instead of the By-Supplier-specific _EXPORT_COLUMN_MAP -- so Pending's
-    different field set (Stock/Max Qty/Wanted instead of Discount/Category/
-    SubLocation/Rack) still gets the identical visual treatment."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Sheet1"
-    ws.append([column_map[k][0] for k in keys])
-
-    qty_fill = PatternFill("solid", fgColor="90EE90")
-    thin = Side(style="thin", color="B7B7B7")
-    thick = Side(style="medium", color="404040")
-    qty_col = keys.index("order_qty") + 1 if "order_qty" in keys else None
-
-    n_cols = len(keys)
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-        cell.border = Border(top=thick, bottom=thick,
-                              left=thick if cell.column == 1 else thin,
-                              right=thick if cell.column == n_cols else thin)
-
-    n_rows = len(rows) + 1
-    for row in rows:
-        ws.append([column_map[k][1](row) for k in keys])
-        r = ws.max_row
-        if "product_code" in keys:
-            code_cell = ws.cell(row=r, column=keys.index("product_code") + 1)
-            code_cell.number_format = "@"
-            code_cell.value = _format_product_code(row.get("ProductCode"))
-        is_last_row = r == n_rows
-        for c in range(1, n_cols + 1):
-            cell = ws.cell(row=r, column=c)
-            cell.border = Border(
-                top=thin, bottom=thick if is_last_row else thin,
-                left=thick if c == 1 else thin, right=thick if c == n_cols else thin,
-            )
-            if c == qty_col:
-                cell.fill = qty_fill
-                cell.font = Font(bold=True)
-                cell.alignment = Alignment(horizontal="center")
-
-    for col in ws.columns:
-        width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
-        ws.column_dimensions[col[0].column_letter].width = min(width + 2, 40)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-# --------------------------------------------------------------------------
-# .xls (legacy BIFF binary format, Excel 97-2003) -- owner request
-# (2026-10-22): some downstream consumer needs the real old binary format,
-# not just an .xlsx renamed to .xls. openpyxl cannot write this format at
-# all (it is xlsx-only); xlwt is the only maintained-enough library in this
-# dependency set that can (already a tracked dependency -- requirements.txt
-# -- version 1.3.0, last released ~2015 but functionally complete for this
-# use case). xlwt's styling model is a much older, flatter API (easyxf
-# strings, not openpyxl's Font/Border/PatternFill objects) and BIFF itself
-# caps out at 65,536 rows / 256 columns per sheet -- both completely fine
-# for this export's realistic row counts, so no fallback/warning is needed
-# for that limit in practice.
-# --------------------------------------------------------------------------
-
-def _build_workbook_custom_generic_xls(rows, keys, column_map):
-    """xls counterpart of _build_workbook_custom_generic -- same column_map
-    pattern (used by export_pending_order), xlwt styling instead of
-    openpyxl."""
-    import xlwt
-    wb = xlwt.Workbook()
-    ws = wb.add_sheet("Sheet1")
-    header_style = _xls_style(bold=True, fill_rgb="pale_blue", border=True, align_center=True, border_thick="medium")
-    qty_style = _xls_style(bold=True, fill_rgb="light_green", border=True, align_center=True)
-    plain_style = _xls_style(border=True)
-    code_style = _xls_style(border=True, num_format="@")
-    qty_col_idx = keys.index("order_qty") if "order_qty" in keys else None
-    code_col_idx = keys.index("product_code") if "product_code" in keys else None
-
-    for c, key in enumerate(keys):
-        ws.write(0, c, column_map[key][0], header_style)
-
-    for r, row in enumerate(rows, start=1):
-        for c, key in enumerate(keys):
-            value = column_map[key][1](row)
-            if c == qty_col_idx:
-                ws.write(r, c, value, qty_style)
-            elif c == code_col_idx:
-                ws.write(r, c, value, code_style)
-            else:
-                ws.write(r, c, value, plain_style)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def _xls_style(bold=False, fill_rgb=None, border=False, align_center=False, border_thick=None, num_format=None):
-    """Builds an xlwt easyxf style string. fill_rgb picks the nearest of
-    xlwt's fixed 56-color BIFF palette (xlwt has no arbitrary RGB fill --
-    only named palette entries), chosen to match this file's existing
-    openpyxl colors as closely as that palette allows."""
-    import xlwt
-    parts = []
-    font = "font:"
-    if bold:
-        font += " bold on,"
-    font = font.rstrip(",")
-    if font != "font:":
-        parts.append(font)
-    if align_center:
-        parts.append("align: horiz center")
-    if fill_rgb:
-        parts.append(f"pattern: pattern solid, fore_colour {fill_rgb}")
-    if border:
-        weight = border_thick or "thin"
-        parts.append(f"borders: left {weight}, right {weight}, top {weight}, bottom {weight}")
-    xf = xlwt.easyxf("; ".join(parts)) if parts else xlwt.easyxf("")
-    if num_format:
-        xf.num_format_str = num_format
-    return xf
-
-
-def _build_workbook_xls(rows, has_rack):
-    import xlwt
-    headers = ["S.No.", "ProductName", "OrderQty", "SaleUnit", "MRP", "ProductCode", "Discount", "Category", "SubLocation"]
-    if has_rack:
-        headers.append("Rack")
-
-    wb = xlwt.Workbook()
-    ws = wb.add_sheet("Sheet1")
-    header_style = _xls_style(bold=True, fill_rgb="pale_blue", border=True, align_center=True, border_thick="medium")
-    sno_style = _xls_style(bold=True, fill_rgb="light_yellow", border=True, align_center=True)
-    qty_style = _xls_style(bold=True, fill_rgb="light_green", border=True, align_center=True)
-    plain_style = _xls_style(border=True)
-    code_style = _xls_style(border=True, num_format="@")
-
-    for c, label in enumerate(headers):
-        ws.write(0, c, label, header_style)
-
-    for i, row in enumerate(rows, start=1):
-        values = [
-            i, row.get("ProductName") or "", row.get("OrderQty") or 0, row.get("SaleUnit") or "",
-            row.get("MRP") or 0, _format_product_code(row.get("ProductCode")),
-            row.get("Discount") if has_rack else "", row.get("Category") or "", row.get("SubLocation") or "",
-        ]
-        if has_rack:
-            values.append(row.get("Rack") or "")
-        for c, value in enumerate(values):
-            if c == 0:
-                ws.write(i, c, value, sno_style)
-            elif c == 2:
-                ws.write(i, c, value, qty_style)
-            elif c == 5:
-                ws.write(i, c, value, code_style)
-            else:
-                ws.write(i, c, value, plain_style)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def _build_workbook_custom_xls(rows, columns):
-    import xlwt
-    keys = _resolve_columns(columns)
-    wb = xlwt.Workbook()
-    ws = wb.add_sheet("Sheet1")
-    header_style = _xls_style(bold=True, fill_rgb="pale_blue", border=True, align_center=True, border_thick="medium")
-    qty_style = _xls_style(bold=True, fill_rgb="light_green", border=True, align_center=True)
-    plain_style = _xls_style(border=True)
-    code_style = _xls_style(border=True, num_format="@")
-    qty_col_idx = keys.index("order_qty") if "order_qty" in keys else None
-    code_col_idx = keys.index("product_code") if "product_code" in keys else None
-
-    for c, key in enumerate(keys):
-        ws.write(0, c, _EXPORT_COLUMN_MAP[key][0], header_style)
-
-    for r, row in enumerate(rows, start=1):
-        for c, key in enumerate(keys):
-            value = _EXPORT_COLUMN_MAP[key][1](row)
-            if c == qty_col_idx:
-                ws.write(r, c, value, qty_style)
-            elif c == code_col_idx:
-                ws.write(r, c, value, code_style)
-            else:
-                ws.write(r, c, value, plain_style)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def export_order(store_name, supplier_code, supplier_name, mode, split_size, actor, columns=None, file_format="xlsx", order_no=None, product_codes=None, all_products=False, removed_product_codes=None):
+def export_order(store_name, supplier_code, supplier_name, mode, split_size, actor, columns=None, file_format="xlsx", order_no=None, product_codes=None, all_products=False, images=False):
     """Resolve the rows to export -> build Excel -> return.
 
     Two entry shapes, both from the Order Workspace:
@@ -635,15 +607,10 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
     * Assigned view (product_codes is None): export simply reflects whatever
       is already Assigned (status=1) to this supplier; nothing is assigned.
 
-    removed_product_codes is a SECOND, independent exclusion on top of
-    product_codes (see schemas.ExportOrderRequest's docstring) -- subtracted
-    from both the to-assign set and the final exported rows, even if
-    `rows` (sourced from assigned_orders(), which returns every row already
-    assigned to this supplier regardless of today's session) would otherwise
-    have included one of them from an earlier, unrelated assignment."""
-    removed = {_format_product_code(c) for c in (removed_product_codes or [])}
+    The grid is the single source of truth: no separate "removed" list is kept.
+    A product not in product_codes is neither assigned nor exported."""
     if product_codes is not None:
-        wanted = {_format_product_code(c) for c in product_codes} - removed
+        wanted = {_format_product_code(c) for c in product_codes}
         # Never trust the client's code list to bypass store/orderqty>0 scoping:
         # re-resolve the legitimate open candidates server-side (the same set
         # the grid loaded from) and assign only the intersection of "still in
@@ -663,8 +630,6 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
         rows = [r for r in rows if _format_product_code(r.get("ProductCode")) in wanted]
     else:
         rows = repository.assigned_orders(store_name, supplier_code)
-        if removed:
-            rows = [r for r in rows if _format_product_code(r.get("ProductCode")) not in removed]
     rows = [r for r in rows if (r.get("OrderQty") or 0) > 0]
     if not rows:
         raise NoExportableRows("No assigned products with a positive order quantity to export for this supplier.")
@@ -685,8 +650,11 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
     # wants (D:\Export Order\22102026\<order no>\*.xls).
     date_part = datetime.date.today().strftime("%d%m%Y")
     order_part = order_no if order_no else date_part
-    base_name = _safe_file_name(f"{supplier_name} {date_part} {order_part}")
+    # Legacy VB name: "<supplier> <store name>   <ddMMyyyy>" (3 spaces).
+    base_name = _safe_file_name(f"{supplier_name} {store_name}   {date_part}")
 
+    # Rows-per-file split (legacy VB "split size"): the desktop client unpacks
+    # the resulting .zip into separate "Part n of m" files in the order folder.
     try:
         split_size = int(split_size or 0)
     except (TypeError, ValueError):
@@ -697,33 +665,16 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
     else:
         chunks = [rows]
 
-    custom = columns is not None
-    file_format = file_format if file_format in ("xlsx", "xls", "csv") else "xls"
-    ext = "csv" if (custom and file_format == "csv") else file_format if file_format in ("xlsx", "xls") else "xls"
-
-    def build_one(chunk):
-        if file_format == "xls":
-            return _build_workbook_custom_xls(chunk, columns) if custom else _build_workbook_xls(chunk, has_rack)
-        if not custom:
-            return _build_workbook(chunk, has_rack)
-        if file_format == "csv":
-            return _build_csv_custom(chunk, columns)
-        return _build_workbook_custom(chunk, columns)
+    ext = file_format if file_format in ("xlsx", "xls", "csv") else "xls"
+    if columns is None:
+        layout = lambda chunk: _layout_fixed(chunk, has_rack)
+    elif ext == "xls":
+        layout = lambda chunk: _layout_custom_vb(chunk, columns)
+    else:
+        layout = lambda chunk: _layout_generic(chunk, _resolve_columns(columns), _EXPORT_COLUMN_MAP)
 
     try:
-        if len(chunks) == 1:
-            content = build_one(chunks[0])
-            filename = f"{base_name}.{ext}"
-            media_type = "text/csv" if ext == "csv" else (XLS_MEDIA_TYPE if ext == "xls" else XLSX_MEDIA_TYPE)
-        else:
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for idx, chunk in enumerate(chunks, start=1):
-                    part_name = f"{base_name} Part {idx} of {len(chunks)}.{ext}"
-                    zf.writestr(part_name, build_one(chunk))
-            content = buf.getvalue()
-            filename = f"{base_name}.zip"
-            media_type = ZIP_MEDIA_TYPE
+        content, filename, media_type = _package(base_name, ext, chunks, layout, images)
     except Exception as exc:
         logger.exception(
             "Order export: workbook build failed for store=%s supplier=%s (%s assigned rows)",

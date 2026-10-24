@@ -262,14 +262,20 @@ class QtyCheckConfirmationRequired(ValueError):
 class StaleCurrentOrder(ValueError):
     """The store's latest order exists but was not generated today (see
     repository.current_date_order) -- there is no current-date order to
-    validate pending rows against, so start_order_process refuses to
-    silently treat a stale prior-day order as "current". The operator must
-    investigate (e.g. via Compare Previous Order) before processing."""
+    validate pending rows against. This is a WARNING, not a lock, matching
+    QtyCheckConfirmationRequired's shape: the caller must either pass
+    confirmed=True to acknowledge and proceed anyway (the operator has
+    looked and decided a fresh order is fine despite the stale one), or
+    investigate first (e.g. via Compare Previous Order)."""
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(f"{reason} Confirm Order & Process to continue anyway.")
 
 
 def start_order_process(store_name, min_days=None, max_days=None, mode="local",
                          confirmed=False,
-                         confirmed_order_id=None, confirmed_count=None):
+                         confirmed_order_id=None, confirmed_count=None,
+                         confirmed_stale_order=False):
     """confirmed_order_id/confirmed_count are the caller's claim about WHICH
     order/count it is acknowledging, purely to satisfy requirement 8
     ("revalidate ... require renewed confirmation if the relevant state has
@@ -277,7 +283,11 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     server-side recompute below, never trusted as the count itself.
     confirmed is the caller's acknowledgement of the pending-supplier-
     assignment warning; this is an ordinary confirmation (any authenticated
-    caller may set it), not a privileged override."""
+    caller may set it), not a privileged override.
+    confirmed_stale_order is a SEPARATE flag acknowledging the stale-
+    current-order warning (StaleCurrentOrder) -- kept independent of
+    `confirmed` so confirming one warning never silently waves through the
+    other; a caller who hits both must see and confirm each in turn."""
     store = _resolve_store(store_name)
     warehouse = is_warehouse_store(store_name)
     agent_synced = is_agent_synced_store(store_name)
@@ -304,38 +314,19 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
             f"A {running} job is already running for '{store_name}'. Wait for it to finish."
         )
 
-    # Current-date order check: if this store already has an order, it must
-    # be provably today's (see repository.current_date_order) before the Qty
-    # Check gate below is allowed to treat its pending rows as live. A store
-    # with no order yet is fine (nothing to validate); a store whose latest
-    # order is from a previous day and was simply never regenerated is NOT --
-    # silently falling back to that stale order's pending count would let a
-    # leftover/forgotten order be reprocessed as if it were today's.
-    try:
-        repository.require_current_date_order_if_any(store_name)
-    except repository.NoCurrentDateOrder as exc:
-        raise StaleCurrentOrder(str(exc)) from exc
-
-    # Pending-supplier-assignment WARNING (not a lock): more than one
-    # qty_check=1/status=0 product on the current-date order requires
-    # confirmation to proceed. Recomputed here fresh every call (never
-    # trusted from the request alone) so a stale preview, a direct API call
-    # that skipped the preview endpoint, or state that changed between the
-    # dialog opening and Order & Process being clicked all get caught:
-    # confirmed_order_id/confirmed_count (the dialog's own snapshot) must
-    # still match the live order_id/count, or the caller must re-fetch and
-    # reconfirm (requirement: "require renewed confirmation if the relevant
-    # state has changed").
-    order_id, count, sample = repository.qty_check_confirmation_count(store_name)
-    if order_id is not None and count > 1:
-        if not confirmed or confirmed_order_id != order_id or confirmed_count != count:
-            raise QtyCheckConfirmationRequired(order_id, count, sample)
-
-    # Agent-synced stores (NMV) have no branch to pull. Their live data lands in
-    # NEXORA_PLATFORM.sync.* via the platform sync pipeline, so the Order Process
-    # begins with a fresh platform->central copy (filtered by store_id) and then
-    # generates the order against the central copy -- mirroring the LAN path,
-    # just with a different sync source. LAN stores keep the branch path below.
+    # Agent-synced stores (NMV) have no branch to pull and no operator ever
+    # directly works their grids between runs the way an on-LAN store's
+    # operator does -- there's nothing for the stale-order/pending-supplier-
+    # assignment WARNINGS to be protecting against here, so both are skipped
+    # outright for this path (owner-simplified 2026-10-23: "remove gate
+    # just internet connect store first sync to nexora_platform then that to
+    # ordernmc then generate order no more confusion"). Their live data
+    # lands in NEXORA_PLATFORM.sync.* via the platform sync pipeline, so
+    # Order Process begins with a fresh platform->central copy (filtered by
+    # store_id) and then generates the order against the central copy --
+    # mirroring the LAN path's sync-then-order shape, just with a different
+    # sync source and no confirmation gates. LAN stores keep both warnings
+    # and the branch path below.
     if agent_synced:
         store_id = database.platform_store_id(store["store_name"])
         if not store_id:
@@ -351,6 +342,42 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
             daemon=True,
         ).start()
         return job_id
+
+    # Current-date order check: if this store already has an order, it must
+    # be provably today's (see repository.current_date_order) before the Qty
+    # Check gate below is allowed to treat its pending rows as live. A store
+    # with no order yet is fine (nothing to validate); a store whose latest
+    # order is from a previous day and was simply never regenerated is NOT --
+    # silently falling back to that stale order's pending count would let a
+    # leftover/forgotten order be reprocessed as if it were today's.
+    #
+    # This is a WARNING (confirm-and-proceed), not a hard lock: confirmed=True
+    # acknowledges it and skips straight to generating a fresh order, same
+    # shape as the pending-supplier-assignment warning below. There is no
+    # order_id/count to revalidate here (unlike that warning) since a stale
+    # order never becomes "current" between the dialog opening and the
+    # retry -- only a NEW order process run changes that state, and this
+    # very call is that run.
+    if not confirmed_stale_order:
+        try:
+            repository.require_current_date_order_if_any(store_name)
+        except repository.NoCurrentDateOrder as exc:
+            raise StaleCurrentOrder(str(exc)) from exc
+
+    # Pending-supplier-assignment WARNING (not a lock): more than one
+    # qty_check=1/status=0 product on the current-date order requires
+    # confirmation to proceed. Recomputed here fresh every call (never
+    # trusted from the request alone) so a stale preview, a direct API call
+    # that skipped the preview endpoint, or state that changed between the
+    # dialog opening and Order & Process being clicked all get caught:
+    # confirmed_order_id/confirmed_count (the dialog's own snapshot) must
+    # still match the live order_id/count, or the caller must re-fetch and
+    # reconfirm (requirement: "require renewed confirmation if the relevant
+    # state has changed").
+    order_id, count, sample = repository.qty_check_confirmation_count(store_name)
+    if order_id is not None and count > 1:
+        if not confirmed or confirmed_order_id != order_id or confirmed_count != count:
+            raise QtyCheckConfirmationRequired(order_id, count, sample)
 
     # Order Process always begins with a fresh full branch sync.
     ok, error = repository.test_branch_connection(store)

@@ -3,12 +3,15 @@
 Mounted onto the module's main `router` (which carries /api/procurement), so:
     POST /api/procurement/cycles/open
     POST /api/procurement/cycles/{cycle_id}/refreshes
+    POST /api/procurement/stores/{store_id}/ensure-context
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from dependencies.store_scope import assert_tenant_access
 from modules.procurement import orchestration_service as service
-from modules.procurement.schemas import CycleOpen, RefreshOrchestrate
+from modules.procurement.access import require_procurement_workspace
+from modules.procurement.schemas import CycleOpen, EnsureContext, RefreshOrchestrate
 from modules.procurement.pm_schemas import CycleClose
 
 router = APIRouter(tags=["Procurement Orchestration"])
@@ -46,3 +49,17 @@ def close_cycle(cycle_id: str, payload: CycleClose, tenant_id: str = Query(...))
     return service.close_cycle(
         tenant_id, cycle_id, payload.closed_by, force=payload.force,
     )
+
+
+@router.post("/stores/{store_id}/ensure-context")
+def ensure_context(
+    store_id: str,
+    payload: EnsureContext,
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(require_procurement_workspace),
+):
+    """Get-or-create the store's active cycle and current refresh in one
+    call, for the single-screen buyer entry flow — the buyer picks a store
+    and lands directly in the workspace, with no separate cycle/refresh step."""
+    assert_tenant_access(current_user, tenant_id)
+    return service.ensure_active_context(tenant_id, store_id, payload.created_by)

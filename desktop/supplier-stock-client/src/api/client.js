@@ -949,7 +949,7 @@ export const api = {
           ...(options.orderNo ? { order_no: options.orderNo } : {}),
           ...(options.productCodes ? { product_codes: options.productCodes } : {}),
           ...(options.allProducts ? { all_products: true } : {}),
-          ...(options.removedProductCodes?.length ? { removed_product_codes: options.removedProductCodes } : {})
+          ...(options.images ? { images: true } : {})
         })
       });
     } catch {
@@ -991,7 +991,8 @@ export const api = {
           split_size: splitSize || 0,
           ...(options.columns ? { columns: options.columns } : {}),
           ...(options.fileFormat ? { file_format: options.fileFormat } : {}),
-          ...(options.orderNo ? { order_no: options.orderNo } : {})
+          ...(options.orderNo ? { order_no: options.orderNo } : {}),
+          ...(options.images ? { images: true } : {})
         })
       });
     } catch {

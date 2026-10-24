@@ -52,12 +52,17 @@ export const legacyOrderService = {
   // ordinary confirmation, not a privileged override. The server always
   // recomputes order_id/count fresh and rejects (409) if they no longer
   // match confirmedOrderId/confirmedCount.
+  // confirmStaleOrder is a SEPARATE acknowledgement of the stale-current-
+  // order warning (see service.StaleCurrentOrder) -- independent of
+  // `confirm` above so confirming one warning never silently waves through
+  // the other.
   startOrderProcess: (
     storeName: string,
     minDays: number,
     maxDays: number,
     mode: OrderMode,
     confirm?: { orderId: number; count: number },
+    confirmStaleOrder = false,
   ) =>
     api.post<{ job_id: string }>(`${BASE}/order-process`, {
       store_name: storeName,
@@ -67,6 +72,7 @@ export const legacyOrderService = {
       confirmed: Boolean(confirm),
       confirmed_order_id: confirm?.orderId ?? null,
       confirmed_count: confirm?.count ?? null,
+      confirmed_stale_order: confirmStaleOrder,
     }),
 
   restorableOrderPreview: (storeName: string, orderId: number) =>

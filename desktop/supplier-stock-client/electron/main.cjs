@@ -106,6 +106,16 @@ ipcMain.handle('export:writeFile', (_event, { absolutePath, contentBase64 }) => 
   return absolutePath;
 });
 
+// Opens an exported file in its default app (Excel for .xls/.xlsx/.csv) or an
+// export folder in Explorer. Restricted to those so the renderer can't use it
+// to launch arbitrary executables.
+ipcMain.handle('export:openPath', async (_event, { absolutePath }) => {
+  if (!absolutePath || !fs.existsSync(absolutePath)) return 'File not found.';
+  const isDir = fs.statSync(absolutePath).isDirectory();
+  if (!isDir && !/\.(xls|xlsx|csv)$/i.test(absolutePath)) return 'Unsupported file type.';
+  return shell.openPath(absolutePath);
+});
+
 // Native "choose a folder" dialog, seeded at the operator's current default
 // (or the D:\Export Order fallback) so changing it is a couple of clicks,
 // not a typed path.

@@ -339,6 +339,57 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
     }
 
 
+# --------------------------------------------------------------------------
+# Ensure-context — one-call "open the store, get a working refresh" for the
+# single-screen buyer entry flow. No new concept: just get-or-create on top
+# of the existing Cycle/Refresh primitives above, so the buyer never has to
+# create or pick between them (VB.NET OrderManagement had no such step).
+# --------------------------------------------------------------------------
+
+def ensure_active_context(tenant_id: str, store_id: str, created_by=None):
+    """Return {cycle, refresh} for the store, creating whichever is missing.
+
+    Does NOT create a new refresh just because one is being asked for again —
+    an existing active cycle with an existing current refresh is returned
+    unchanged (no Decision Engine run, no new working items). A refresh is
+    only generated the first time a store's active cycle has none yet.
+    Mirrors the client-side "find active cycle, else open one" recipe already
+    used by CycleRefreshConsolePage.runPipeline, but as a single idempotent
+    server call for the plain single-store entry path instead of a bulk
+    multi-store batch-refresh operation.
+    """
+    if not store_id:
+        raise HTTPException(status_code=400, detail="store_id is required")
+
+    cycle = cycle_repo.get_active_cycle(tenant_id, store_id)
+    if cycle is None:
+        cycle = create_business_cycle({
+            "tenant_id": tenant_id,
+            "store_id": store_id,
+            "created_by": created_by,
+        })
+
+    refresh_id = cycle.get("active_refresh_id")
+    if refresh_id:
+        refresh = refresh_repo.get_vpl(tenant_id, refresh_id)
+    else:
+        refresh = None
+
+    if refresh is None:
+        result = create_refresh(tenant_id, cycle["cycle_id"], {
+            "rolling_days": 90,
+            "min_days": 13,
+            "max_days": 18,
+            "created_by": created_by,
+        })
+        refresh = refresh_repo.get_vpl(tenant_id, result["refresh_id"])
+        # create_refresh may have archived the old cycle row's view of itself —
+        # re-read so the returned cycle reflects the just-created refresh.
+        cycle = cycle_repo.get_cycle(tenant_id, cycle["cycle_id"])
+
+    return {"cycle": cycle, "refresh": refresh}
+
+
 def close_refresh(tenant_id: str, refresh_id: str, closed_by=None):
     """Lock a Refresh as 'Closed' (read-only) WITHOUT touching the cycle.
 

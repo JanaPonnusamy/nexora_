@@ -187,9 +187,12 @@ def start_order_process(
             confirmed=payload.confirmed,
             confirmed_order_id=payload.confirmed_order_id,
             confirmed_count=payload.confirmed_count,
+            confirmed_stale_order=payload.confirmed_stale_order,
         )
         return JobStarted(job_id=job_id)
     except service.QtyCheckConfirmationRequired as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except service.StaleCurrentOrder as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ConnectionError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
@@ -459,7 +462,7 @@ def export_order(
             current_user.get("username") or current_user.get("sub"),
             columns=payload.columns, file_format=payload.file_format, order_no=payload.order_no,
             product_codes=payload.product_codes, all_products=payload.all_products,
-            removed_product_codes=payload.removed_product_codes,
+            images=payload.images,
         )
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -494,6 +497,7 @@ def export_pending_order(
         result = order_export.export_pending_order(
             store_name, payload.split_size,
             columns=payload.columns, file_format=payload.file_format, order_no=payload.order_no,
+            images=payload.images,
         )
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
