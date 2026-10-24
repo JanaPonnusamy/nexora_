@@ -61,6 +61,7 @@ _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+/remarks$"), # PATCH Remarks
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+/assign$"),  # POST assign/unassign
     re.compile(r"^/api/legacy-order/orders/[^/]+/export$"),      # POST export
+    re.compile(r"^/api/legacy-order/orders/[^/]+/export-pending$"),  # POST pending export (read-only)
     re.compile(r"^/api/legacy-order/orders/[^/]+/unavailable/remove$"),  # POST stock-out bulk remove
     re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+$"),      # PATCH qty-check review
 )

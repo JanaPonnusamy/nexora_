@@ -355,14 +355,21 @@ def test_legacy_order_console_access_matrix():
             _FakeReq("GET", "/api/legacy-order/orders/NMA", {"store_name": "NMA"}), nmv)
     assert e1.value.status_code == 403
 
-    # a mutating POST on their own store -> 403 (ops stays admin-only)
+    # own-store order actions a remote PM needs: supplier export + pending export
+    for path in ("/api/legacy-order/orders/NMV/export", "/api/legacy-order/orders/NMV/export-pending"):
+        assert require_order_console_access(_FakeReq("POST", path, {"store_name": "NMV"}), nmv) is nmv
+
+    # ...but never on another store
     with pytest.raises(HTTPException) as e2:
         require_order_console_access(
-            _FakeReq("POST", "/api/legacy-order/orders/NMV/export", {"store_name": "NMV"}), nmv)
+            _FakeReq("POST", "/api/legacy-order/orders/NMA/export-pending", {"store_name": "NMA"}), nmv)
     assert e2.value.status_code == 403
 
-    # an admin-only non-viewer read (store list) -> 403
+    # admin-only ops (DB recovery) -> 403
     with pytest.raises(HTTPException) as e3:
         require_order_console_access(
-            _FakeReq("GET", "/api/legacy-order/stores", {}), nmv)
+            _FakeReq("POST", "/api/legacy-order/db/recover", {}), nmv)
     assert e3.value.status_code == 403
+
+    # store list is allowed (list_stores filters it to the user's own store)
+    assert require_order_console_access(_FakeReq("GET", "/api/legacy-order/stores", {}), nmv) is nmv
