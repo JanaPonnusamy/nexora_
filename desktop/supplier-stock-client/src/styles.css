@@ -8598,6 +8598,23 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .ow-main .ow-grid { flex: 1 1 auto; min-height: 0; }
 .ow-left > .ow-panel--history { flex: 0 0 auto; height: clamp(120px, 22vh, 190px); }
 
+/* Layout settings (grid settings panel -> Layout; every role incl. PM). */
+.ow-body { --ow-side-w: minmax(320px, 1fr); }
+.ow-body.ow-side-w-narrow { --ow-side-w: minmax(280px, 0.7fr); }
+.ow-body.ow-side-w-wide { --ow-side-w: minmax(420px, 1.5fr); }
+.ow-body.ow-side-right { grid-template-columns: minmax(0, 2.4fr) var(--ow-side-w); }
+.ow-body.ow-side-left { grid-template-columns: var(--ow-side-w) minmax(0, 2.4fr); }
+.ow-body.ow-side-left > .ow-side { order: -1; }
+.ow-body.ow-side-hidden { grid-template-columns: minmax(0, 1fr); }
+.ow-body.ow-side-hidden > .ow-side { display: none; }
+.ow-body.ow-history-hidden .ow-left > .ow-panel--history { display: none; }
+.ow-body.ow-history-small .ow-left > .ow-panel--history { height: 110px; }
+.ow-body.ow-history-large .ow-left > .ow-panel--history { height: clamp(220px, 34vh, 340px); }
+/* Row height: #root + !important to win over the global table density
+   system (data-tables.css), same as the base .ow-screen tbody td rule. */
+#root .ow-screen.ow-rows-compact tbody td { height: 24px !important; }
+#root .ow-screen.ow-rows-large tbody td { height: 36px !important; }
+
 /* Right intelligence column. */
 .ow-side {
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;

@@ -3394,7 +3394,18 @@ function resolveOwColumns(base, cfg) {
 
 // Modern grid-settings card (reuses the app's .grid-settings-panel styling):
 // show/hide, reorder and resize the columns of ONE grid.
-function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth, onReset, onClose }) {
+// Order Workspace layout (owner request 2026-10-24): every role -- PM
+// included -- can size the grid rows and move/size the detail panels. Saved
+// per PC (localStorage), same as the column settings.
+const OW_LAYOUT_DEFAULT = { rowSize: 'normal', sidePosition: 'right', sideWidth: 'normal', historyHeight: 'normal' };
+const OW_LAYOUT_OPTIONS = [
+  { key: 'rowSize', label: 'Row height', options: [['compact', 'Compact'], ['normal', 'Normal'], ['large', 'Large']] },
+  { key: 'sidePosition', label: 'Detail panel', options: [['right', 'Right'], ['left', 'Left'], ['hidden', 'Hidden']] },
+  { key: 'sideWidth', label: 'Detail panel width', options: [['narrow', 'Narrow'], ['normal', 'Normal'], ['wide', 'Wide']] },
+  { key: 'historyHeight', label: 'Previous decisions', options: [['hidden', 'Hidden'], ['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']] },
+];
+
+function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth, onReset, onClose, layout, onLayout }) {
   const ref = useRef(null);
   const [pos, setPos] = useState(null);
   useLayoutEffect(() => {
@@ -3442,6 +3453,22 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
           })}
         </ul>
       </div>
+      {onLayout && OW_LAYOUT_OPTIONS.map((group) => (
+        <div className="grid-settings-panel__section" key={group.key}>
+          <div className="grid-settings-panel__title">{group.label}</div>
+          <div className="grid-settings-panel__chips">
+            {group.options.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={`grid-settings-panel__chip${layout[group.key] === value ? ' is-on' : ''}`}
+                disabled={group.key === 'sideWidth' && layout.sidePosition === 'hidden'}
+                onClick={() => onLayout({ [group.key]: value })}
+              >{label}</button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>,
     document.body
   );
@@ -3894,6 +3921,13 @@ function OrderWorkspace({ session, settings, hidden }) {
   const cfgMove = (id, base, key, dir) => setOwColCfg((c) => { const order = orderOwKeys(base, c[id]); const i = order.indexOf(key); const j = i + dir; if (i < 0 || j < 0 || j >= order.length) return c; const n = [...order]; [n[i], n[j]] = [n[j], n[i]]; return { ...c, [id]: { ...(c[id] || {}), order: n } }; });
   const cfgWidth = (id, key, w) => setOwColCfg((c) => { const g = { ...(c[id] || {}) }; const widths = { ...(g.widths || {}) }; if (w === '' || w == null) delete widths[key]; else widths[key] = Number(w); return { ...c, [id]: { ...g, widths } }; });
   const cfgReset = (id) => setOwColCfg((c) => { const n = { ...c }; delete n[id]; return n; });
+  const [owLayout, setOwLayout] = useState(() => {
+    try { return { ...OW_LAYOUT_DEFAULT, ...JSON.parse(localStorage.getItem('nexora.desktop.owLayout') || '{}') }; }
+    catch { return OW_LAYOUT_DEFAULT; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('nexora.desktop.owLayout', JSON.stringify(owLayout)); } catch { /* best effort */ }
+  }, [owLayout]);
 
   useEffect(() => {
     api.legacyStores(session)
@@ -4868,7 +4902,7 @@ function OrderWorkspace({ session, settings, hidden }) {
   }
 
   return (
-    <section className={`screen-panel ow-screen${hidden ? ' ow-screen-hidden' : ''}`}>
+    <section className={`screen-panel ow-screen ow-rows-${owLayout.rowSize}${hidden ? ' ow-screen-hidden' : ''}`}>
       <div className="ow-toolbar">
         <h2 className="ow-title">Order Workspace</h2>
         <label className="ow-field">
@@ -5036,6 +5070,8 @@ function OrderWorkspace({ session, settings, hidden }) {
             onWidth={(key, w) => cfgWidth(settingsFor, key, w)}
             onReset={() => cfgReset(settingsFor)}
             onClose={() => setSettingsFor(null)}
+            layout={owLayout}
+            onLayout={(patch) => setOwLayout((l) => ({ ...l, ...patch }))}
           />
         );
       })()}
@@ -5048,7 +5084,7 @@ function OrderWorkspace({ session, settings, hidden }) {
         </div>
       )}
 
-      <div className="ow-body">
+      <div className={`ow-body ow-side-${owLayout.sidePosition} ow-side-w-${owLayout.sideWidth} ow-history-${owLayout.historyHeight}`}>
         <div className="ow-left">
         <div className="ow-main">
           <div className="ow-help">
