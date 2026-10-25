@@ -41,6 +41,7 @@ _DDL_FILES = [
     os.path.join(_SQL_DIR, "0021_supplier_stock_distribution.sql"),
     os.path.join(_SQL_DIR, "0022_store_supplier_map.sql"),
     os.path.join(_SQL_DIR, "0023_supplier_stock_distribution_rack_status.sql"),
+    os.path.join(_SQL_DIR, "0031_distribution_store_whatsapp_sender.sql"),
 ]
 _DEFAULT_STORAGE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "distribution"
@@ -96,6 +97,7 @@ def list_config(tenant_id, source_store_code="NMW"):
             SELECT s.store_id, s.store_code, s.store_name,
                    s.w_group_name AS whatsapp_group, c.phone_number,
                    COALESCE(c.enabled, 1) AS enabled,
+                   COALESCE(c.whatsapp_sender, 'HO') AS whatsapp_sender,
                    m.local_supplier_code
             FROM dbo.stores s
             LEFT JOIN procurement.distribution_config c
@@ -204,10 +206,15 @@ def save_supplier_map(tenant_id, store_id, source_store_code, local_code):
         conn.close()
 
 
-def save_config(tenant_id, store_id, whatsapp_group, phone_number, enabled):
+def save_config(tenant_id, store_id, whatsapp_group, phone_number, enabled, whatsapp_sender=None):
     """WhatsApp group name lives on dbo.stores.w_group_name (a property of
-    the store, not of one distribution feed); phone_number/enabled stay in
-    procurement.distribution_config."""
+    the store, not of one distribution feed); phone_number/enabled/
+    whatsapp_sender stay in procurement.distribution_config. whatsapp_sender
+    None = leave unchanged."""
+    if whatsapp_sender is not None:
+        whatsapp_sender = str(whatsapp_sender).upper()
+        if whatsapp_sender not in WHATSAPP_SENDERS:
+            raise ValueError("whatsapp_sender must be HO or STORE.")
     apply_ddl()
     conn = get_connection()
     try:
@@ -227,15 +234,17 @@ def save_config(tenant_id, store_id, whatsapp_group, phone_number, enabled):
         if row:
             cur.execute(
                 "UPDATE procurement.distribution_config SET phone_number = ?, "
-                "enabled = ?, updated_at = GETDATE() WHERE distribution_config_id = ?",
-                (phone_number, 1 if enabled else 0, row[0]),
+                "enabled = ?, whatsapp_sender = COALESCE(?, whatsapp_sender), "
+                "updated_at = GETDATE() WHERE distribution_config_id = ?",
+                (phone_number, 1 if enabled else 0, whatsapp_sender, row[0]),
             )
         else:
             cur.execute(
                 "INSERT INTO procurement.distribution_config "
-                "(tenant_id, store_id, store_code, phone_number, enabled) "
-                "SELECT ?, ?, store_code, ?, ? FROM dbo.stores WHERE store_id = ?",
-                (tenant_id, store_id, phone_number, 1 if enabled else 0, store_id),
+                "(tenant_id, store_id, store_code, phone_number, enabled, whatsapp_sender) "
+                "SELECT ?, ?, store_code, ?, ?, ? FROM dbo.stores WHERE store_id = ?",
+                (tenant_id, store_id, phone_number, 1 if enabled else 0,
+                 whatsapp_sender or "HO", store_id),
             )
         conn.commit()
         return {"saved": True}
@@ -307,6 +316,28 @@ def _replace_supplier_stock(conn, tenant_id, target_store_id, supplier_code, row
     return inserted
 
 
+WHATSAPP_SENDERS = ("HO", "STORE")
+STORE_PENDING = "store_pending"
+STORE_SENDING = "store_sending"
+# A store app that claimed an item but never reported back (closed / crashed
+# mid-send) releases it after this long so another attempt can pick it up.
+_STORE_CLAIM_TIMEOUT_MINUTES = 10
+# Older store-pending items are not offered -- a stock file from days ago is
+# stale and must not suddenly post into a store group.
+_STORE_OUTBOX_MAX_AGE_HOURS = 36
+
+
+def _whatsapp_sender(conn, tenant_id, store_id):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT whatsapp_sender FROM procurement.distribution_config "
+        "WHERE tenant_id = ? AND store_id = ?",
+        (tenant_id, store_id),
+    )
+    row = cur.fetchone()
+    return (row[0] if row and row[0] else "HO").upper()
+
+
 def _whatsapp_login_error():
     """One-shot WhatsApp send pre-flight: return a clear, actionable message if
     WhatsApp cannot send right now (no profile configured, or the session is
@@ -362,13 +393,23 @@ def _send_whatsapp(conn, run_item_id, tenant_id, target_store_id, excel_path, me
         return "not_queued", None
 
     whatsapp_group, phone_number = row[0], row[1]
+    store_sends = _whatsapp_sender(conn, tenant_id, target_store_id) == "STORE"
+    if store_sends:
+        # A manual re-send re-queues the same run item -- keep one queue row.
+        cur.execute("DELETE FROM procurement.distribution_queue WHERE run_item_id = ?", (run_item_id,))
     cur.execute(
         "INSERT INTO procurement.distribution_queue "
         "(run_item_id, tenant_id, store_id, whatsapp_group, phone_number, excel_path, status) "
-        "VALUES (?, ?, ?, ?, ?, ?, 'queued')",
-        (run_item_id, tenant_id, target_store_id, whatsapp_group, phone_number, excel_path),
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (run_item_id, tenant_id, target_store_id, whatsapp_group, phone_number, excel_path,
+         STORE_PENDING if store_sends else "queued"),
     )
     conn.commit()
+    if store_sends:
+        # The store's own Electron app picks this up from its outbox
+        # (store_outbox / claim_store_item / report_store_result) and sends it
+        # from the store's own linked WhatsApp -- HO's session isn't used.
+        return STORE_PENDING, None
 
     try:
         from modules.whatsapp import service as wa
@@ -520,7 +561,9 @@ def generate(tenant_id, source_store_code, provider_name, only_store_ids=None,
         # all target stores with one fast, clear, QR-actionable status instead
         # of each store spinning up a headless browser only to fail identically.
         wa_preflight_error = None
-        if not supplier_update_only and not excel_only:
+        if not supplier_update_only and not excel_only and any(
+            _whatsapp_sender(conn, tenant_id, t["store_id"]) != "STORE" for t in targets
+        ):
             wa_preflight_error = _whatsapp_login_error()
 
         succeeded, failed, items, errors = 0, 0, [], []
@@ -575,7 +618,7 @@ def generate(tenant_id, source_store_code, provider_name, only_store_ids=None,
             # Selected") -- "Generate Excel Only" must not send, "Update
             # Supplier Stock Only" must not export or send.
             if excel_path and excel_status == "success" and not supplier_update_only and not excel_only:
-                if wa_preflight_error:
+                if wa_preflight_error and _whatsapp_sender(conn, tenant_id, store["store_id"]) != "STORE":
                     # Session is down -- skip the (futile) send and report the one
                     # clear pre-flight reason on every store, fast.
                     wa_status, wa_error = "failed", wa_preflight_error
@@ -772,7 +815,9 @@ def send_run_item_whatsapp(run_item_id):
         if not excel_path or not os.path.exists(excel_path):
             raise ValueError("No generated Excel file found for this store. Re-run the export first.")
 
-        preflight = _whatsapp_login_error()
+        preflight = None
+        if _whatsapp_sender(conn, tenant_id, store_id) != "STORE":
+            preflight = _whatsapp_login_error()
         if preflight:
             status, error = "failed", preflight
         else:
@@ -813,5 +858,119 @@ def retry_failed(run_id, provider_name=None, started_by=None):
             str(tenant_id), source_store_code, provider_name or provider,
             only_store_ids=failed_store_ids, started_by=started_by,
         )
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------
+# Store outbox -- stores whose whatsapp_sender = 'STORE' send their own stock
+# file from the WhatsApp linked in their Electron Stock Client.
+# --------------------------------------------------------------------------
+
+def store_outbox(tenant_id, store_id):
+    """Run items waiting for this store's own WhatsApp to send them."""
+    apply_ddl()
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT i.run_item_id, i.store_code, i.excel_path, i.started_at,
+                   q.whatsapp_group, q.phone_number
+            FROM procurement.distribution_run_item i
+            JOIN procurement.distribution_run r ON r.run_id = i.run_id
+            LEFT JOIN procurement.distribution_queue q ON q.run_item_id = i.run_item_id
+            WHERE r.tenant_id = ? AND i.store_id = ?
+              AND i.started_at >= DATEADD(HOUR, -?, GETDATE())
+              AND (i.whatsapp_status = ?
+                   OR (i.whatsapp_status = ?
+                       AND i.whatsapp_claimed_at < DATEADD(MINUTE, -?, GETDATE())))
+            ORDER BY i.started_at
+            """,
+            (tenant_id, store_id, _STORE_OUTBOX_MAX_AGE_HOURS, STORE_PENDING,
+             STORE_SENDING, _STORE_CLAIM_TIMEOUT_MINUTES),
+        )
+        items = []
+        for row in rows_to_dicts(cur):
+            row = stringify(row)
+            row["file_name"] = os.path.basename(row.pop("excel_path") or "")
+            items.append(row)
+        return {"items": items}
+    finally:
+        conn.close()
+
+
+def _store_item(cur, run_item_id):
+    cur.execute(
+        "SELECT r.tenant_id, i.store_id, i.excel_path FROM procurement.distribution_run_item i "
+        "JOIN procurement.distribution_run r ON r.run_id = i.run_id WHERE i.run_item_id = ?",
+        (run_item_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise LookupError("Run item not found.")
+    return {"tenant_id": str(row[0]), "store_id": str(row[1]), "excel_path": row[2]}
+
+
+def store_item_owner(run_item_id):
+    """(tenant_id, store_id) of a run item -- for the router's store check."""
+    conn = get_connection()
+    try:
+        item = _store_item(conn.cursor(), run_item_id)
+        return item["tenant_id"], item["store_id"]
+    finally:
+        conn.close()
+
+
+def claim_store_item(run_item_id):
+    """Atomically claim an outbox item so two PCs of the same store can't
+    both post the file. Returns True only for the caller that won."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE procurement.distribution_run_item SET whatsapp_status = ?, "
+            "whatsapp_claimed_at = GETDATE(), whatsapp_error = NULL "
+            "WHERE run_item_id = ? AND (whatsapp_status = ? OR (whatsapp_status = ? "
+            "AND whatsapp_claimed_at < DATEADD(MINUTE, -?, GETDATE())))",
+            (STORE_SENDING, run_item_id, STORE_PENDING, STORE_SENDING, _STORE_CLAIM_TIMEOUT_MINUTES),
+        )
+        claimed = cur.rowcount == 1
+        conn.commit()
+        return claimed
+    finally:
+        conn.close()
+
+
+def store_item_file(run_item_id):
+    """(path, filename) of the generated Excel for an outbox item."""
+    conn = get_connection()
+    try:
+        path = _store_item(conn.cursor(), run_item_id)["excel_path"]
+    finally:
+        conn.close()
+    if not path or not os.path.exists(path):
+        raise FileNotFoundError("The generated Excel file is no longer available.")
+    return path, os.path.basename(path)
+
+
+def report_store_result(run_item_id, sent, error=None):
+    status = "sent" if sent else "failed"
+    error = None if sent else (str(error or "Store WhatsApp send failed.")[:1000])
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE procurement.distribution_run_item SET whatsapp_status = ?, whatsapp_error = ? "
+            "WHERE run_item_id = ?",
+            (status, error, run_item_id),
+        )
+        cur.execute(
+            "UPDATE procurement.distribution_queue SET status = ?, error_message = ?, "
+            "sent_at = CASE WHEN ? = 'sent' THEN GETDATE() ELSE sent_at END WHERE run_item_id = ?",
+            (status, error, status, run_item_id),
+        )
+        conn.commit()
+        return {"run_item_id": run_item_id, "status": status, "error": error}
     finally:
         conn.close()

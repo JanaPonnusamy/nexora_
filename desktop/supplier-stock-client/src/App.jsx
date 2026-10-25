@@ -30,6 +30,7 @@ import {
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 import SchemaSyncPage from './SchemaSyncPage.jsx';
+import { StoreWhatsAppScreen, WhatsAppSendDialog, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
 
 // Dev-only login bypass: when running under `vite` (npm run dev) with
 // credentials set in .env.development.local, the app auto-signs-in as that
@@ -54,6 +55,7 @@ const screens = [
   { id: 'nmw_sales', label: 'NMW Sales Report', module: 'nmw_sales_report' },
   { id: 'order_workspace', label: 'Order Workspace', module: 'order_workspace' },
   { id: 'schema_sync', label: 'Schema Sync', module: 'schema_sync' },
+  { id: 'whatsapp', label: 'WhatsApp', module: 'whatsapp' },
   { id: 'settings', label: 'Settings', module: 'settings' }
 ];
 
@@ -348,6 +350,9 @@ function AppShell() {
     storeName: effectiveStoreName
   };
   const isConfigured = Boolean(effectiveTenantId && effectiveStoreId);
+  // Sends the NMW stock files HO queued for this store from the store's own
+  // WhatsApp, whichever screen is open.
+  const storeOutbox = useStoreWhatsAppOutbox({ session, tenantId: effectiveTenantId, storeId: effectiveStoreId });
 
   const navItems = useMemo(() => {
     // Review-only login: trim the nav to just Label Exporter + Settings.
@@ -361,6 +366,8 @@ function AppShell() {
     // module-grant early-return below so it also applies to logins with no
     // module list.
     let base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
+    // Store WhatsApp runs inside the Electron app only (not the web build).
+    if (!storeWhatsAppAvailable()) base = base.filter((s) => s.id !== 'whatsapp');
     // NMW dispatch-bill LIST: every branch/store login may see it (owner ruling
     // 2026-10-03: "all branches must see the NMW stock list"); only pure salesman
     // logins are barred outright. The per-product DETAILS inside a bill are
@@ -390,6 +397,8 @@ function AppShell() {
     // for any login whose modules list isn't empty (e.g. superadmin).
     const always = new Set(nmwBlocked ? ['settings', 'label_exporter'] : ['settings', 'nmw_sales', 'label_exporter']);
     if (orderWorkspaceAllowed) always.add('order_workspace');
+    // Every store login may link and use its own store's WhatsApp.
+    always.add('whatsapp');
     if (isSuperAdmin(session)) always.add('schema_sync');
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
@@ -645,6 +654,8 @@ function AppShell() {
           <LabelExporter session={session} settings={runtimeSettings} />
         ) : activeScreen === 'nmw_sales' ? (
           <NmwSalesReport session={session} settings={runtimeSettings} />
+        ) : activeScreen === 'whatsapp' ? (
+          <StoreWhatsAppScreen outbox={storeOutbox} />
         ) : activeScreen === 'order_workspace' ? null : activeScreen === 'schema_sync' ? (
           <SchemaSyncPage session={session} />
         ) : (
@@ -3951,6 +3962,9 @@ function OrderWorkspace({ session, settings, hidden }) {
   const [qtyCheckedHere, setQtyCheckedHere] = useState(() => new Set());
   const [assigningCode, setAssigningCode] = useState(null);
   const [banner, setBanner] = useState('');
+  // Files the last export wrote + who they're for, for "Send on WhatsApp".
+  const [lastExport, setLastExport] = useState(null);
+  const [waSendOpen, setWaSendOpen] = useState(false);
   // Export + split.
   const [exportOpen, setExportOpen] = useState(false);
   const [splitCount, setSplitCount] = useState(0);
@@ -4654,7 +4668,12 @@ function OrderWorkspace({ session, settings, hidden }) {
       const filename = `${owSafeFileName(`${supplier.supplier_name} ${store}   ${dateFolder}`)}.${ext}`;
       const folderParts = [exportSettings.basePath, 'Export', dateFolder, owSafePathSegment(orderNo)];
       if (exportSettings.supplierWise) folderParts.push(owSafePathSegment(supplier.supplier_name));
-      const savedTo = await owSaveExport(blob, backendFilename, filename, folderParts.join('\\'));
+      const written = [];
+      const savedTo = await owSaveExport(blob, backendFilename, filename, folderParts.join('\\'), written);
+      setLastExport(written.length ? {
+        files: written, rememberKey: `supplier:${supplier.supplier_code}`, defaultChat: supplier.supplier_name,
+        title: `Send ${supplier.supplier_name} order on WhatsApp`, source: 'Order'
+      } : null);
       setBanner(savedTo
         ? `Exported ${exportedCount} product(s) for ${supplier.supplier_name} → ${savedTo}`
         : `Exported ${exportedCount} product(s) for ${supplier.supplier_name}.`);
@@ -4685,7 +4704,11 @@ function OrderWorkspace({ session, settings, hidden }) {
       const ext = ['csv', 'xlsx'].includes(exportSettings.fileFormat) ? exportSettings.fileFormat : 'xls';
       const filename = `Pending ${dateFolder} ${owSafePathSegment(orderNo)}.${ext}`;
       const folderParts = [exportSettings.basePath, 'Export', dateFolder, owSafePathSegment(orderNo)];
-      const savedTo = await owSaveExport(blob, backendFilename, filename, folderParts.join('\\'));
+      const written = [];
+      const savedTo = await owSaveExport(blob, backendFilename, filename, folderParts.join('\\'), written);
+      setLastExport(written.length ? {
+        files: written, rememberKey: 'pending', defaultChat: '', title: 'Send pending order on WhatsApp', source: 'Pending order'
+      } : null);
       setBanner(savedTo ? `Exported ${exportedCount} pending product(s) → ${savedTo}` : `Exported ${exportedCount} pending product(s).`);
       setExportOpen(false);
     } catch (e) {
@@ -5167,10 +5190,20 @@ function OrderWorkspace({ session, settings, hidden }) {
           <div className="ow-banner">
             <span>{banner}</span>
             {savedPath && <button type="button" className="ow-banner-open" onClick={openSaved}>{isFile ? 'Open in Excel' : 'Open folder'}</button>}
+            {savedPath && lastExport && storeWhatsAppAvailable() && (
+              <button type="button" className="ow-banner-open" onClick={() => setWaSendOpen(true)}>Send on WhatsApp</button>
+            )}
             <button type="button" className="ow-banner-x" onClick={() => setBanner('')} aria-label="Dismiss">×</button>
           </div>
         );
       })()}
+      {waSendOpen && lastExport && (
+        <WhatsAppSendDialog
+          {...lastExport}
+          onClose={() => setWaSendOpen(false)}
+          onSent={(chat) => setBanner(`Sent on WhatsApp to ${chat}.`)}
+        />
+      )}
       {settingsFor && (() => {
         // Per-grid {title, base columns} the ⚙ button opens -- 'supplier'
         // uses the CURRENT stock/history layout (owSupplierColumns(isStockMode)),
@@ -5651,19 +5684,24 @@ function owExportDateFolder(date = new Date()) {
 // m" files -- unpack it so each part lands as its own file in the order folder
 // (legacy VB behaviour); otherwise write the single file under `filename`.
 // Outside Electron there is no filesystem, so fall back to a browser download.
-async function owSaveExport(blob, backendFilename, filename, folder) {
+// `written` (optional) collects every file path actually written.
+async function owSaveExport(blob, backendFilename, filename, folder, written = []) {
   const isZip = /\.zip$/i.test(backendFilename || '');
   const desktop = window.nexoraDesktop?.writeExportFile;
   if (isZip) {
     const parts = unzipSync(new Uint8Array(await blob.arrayBuffer()));
         for (const [name, bytes] of Object.entries(parts)) {
       const partBlob = new Blob([bytes]);
-      if (desktop) await window.nexoraDesktop.writeExportFile(`${folder}\\${name}`, await blobToBase64(partBlob));
+      if (desktop) written.push(await window.nexoraDesktop.writeExportFile(`${folder}\\${name}`, await blobToBase64(partBlob)));
       else owDownloadBlob(partBlob, name);
     }
     return desktop ? folder : null;
   }
-  if (desktop) return window.nexoraDesktop.writeExportFile(`${folder}\\${filename}`, await blobToBase64(blob));
+  if (desktop) {
+    const savedPath = await window.nexoraDesktop.writeExportFile(`${folder}\\${filename}`, await blobToBase64(blob));
+    written.push(savedPath);
+    return savedPath;
+  }
   owDownloadBlob(blob, filename);
   return null;
 }

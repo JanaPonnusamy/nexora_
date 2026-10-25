@@ -28,5 +28,15 @@ contextBridge.exposeInMainWorld('nexoraDesktop', {
   // Order Workspace export-to-disk.
   writeExportFile: (absolutePath, contentBase64) => ipcRenderer.invoke('export:writeFile', { absolutePath, contentBase64 }),
   openExportPath: (absolutePath) => ipcRenderer.invoke('export:openPath', { absolutePath }),
-  chooseExportFolder: (defaultPath) => ipcRenderer.invoke('export:chooseFolder', { defaultPath })
+  chooseExportFolder: (defaultPath) => ipcRenderer.invoke('export:chooseFolder', { defaultPath }),
+  // This store PC's own WhatsApp (electron/whatsapp.cjs).
+  whatsapp: {
+    status: () => ipcRenderer.invoke('wa:status'),
+    enable: () => ipcRenderer.invoke('wa:enable'),
+    disable: () => ipcRenderer.invoke('wa:disable'),
+    show: () => ipcRenderer.invoke('wa:show'),
+    unlink: () => ipcRenderer.invoke('wa:unlink'),
+    send: (payload) => ipcRenderer.invoke('wa:send', payload),
+    log: () => ipcRenderer.invoke('wa:log')
+  }
 });

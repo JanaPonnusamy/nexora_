@@ -31,6 +31,9 @@ function waStatusLine(status: string | null | undefined) {
   if (s === 'sent') return { icon: <span style={{ color: 'var(--nx-success-ink)' }}>✓</span>, label: 'Sent' }
   if (s === 'failed') return { icon: <span style={{ color: 'var(--nx-danger-ink)' }}>✕</span>, label: 'Failed' }
   if (s === 'queued') return { icon: <span className="sx-dim">…</span>, label: 'Queued' }
+  // Store-sender stores: the store's own Stock Client app sends the file.
+  if (s === 'store_pending') return { icon: <span className="sx-dim">…</span>, label: 'Waiting for store app' }
+  if (s === 'store_sending') return { icon: <span className="sx-dim">…</span>, label: 'Store app sending' }
   return { icon: <span className="sx-dim">–</span>, label: 'Not sent' }
 }
 
@@ -216,6 +219,7 @@ export default function SupplierStockDistributionPage() {
         whatsapp_group: next.whatsapp_group ?? undefined,
         phone_number: next.phone_number ?? undefined,
         enabled: next.enabled,
+        whatsapp_sender: next.whatsapp_sender,
       })
     } catch (e) { fail(e); load() }
   }
@@ -281,7 +285,7 @@ export default function SupplierStockDistributionPage() {
           <table className="pm-grid pm-admin__table">
             <thead>
               <tr>
-                <th></th><th>Store</th><th>Supplier Code</th><th>WhatsApp Group</th><th>Phone Number</th><th>Enabled</th>
+                <th></th><th>Store</th><th>Supplier Code</th><th>WhatsApp Group</th><th>Phone Number</th><th>Send From</th><th>Enabled</th>
               </tr>
             </thead>
             <tbody>
@@ -312,6 +316,16 @@ export default function SupplierStockDistributionPage() {
                       className="pm-input pm-input--sm" defaultValue={c.phone_number ?? ''}
                       onBlur={(e) => saveConfig(c, { phone_number: e.target.value })}
                     />
+                  </td>
+                  <td>
+                    <select
+                      className="pm-input pm-input--sm" value={c.whatsapp_sender ?? 'HO'}
+                      title="HO = sent from HO's WhatsApp. Store = queued for the store's own WhatsApp, linked in its Stock Client app."
+                      onChange={(e) => saveConfig(c, { whatsapp_sender: e.target.value as 'HO' | 'STORE' })}
+                    >
+                      <option value="HO">HO WhatsApp</option>
+                      <option value="STORE">Store WhatsApp</option>
+                    </select>
                   </td>
                   <td>
                     <input type="checkbox" checked={c.enabled} onChange={(e) => saveConfig(c, { enabled: e.target.checked })} />

@@ -7,6 +7,7 @@ const path = require('node:path');
 const http = require('node:http');
 const fs = require('node:fs');
 const { app, BrowserWindow, shell, ipcMain, nativeTheme, Menu, dialog } = require('electron');
+const storeWhatsApp = require('./whatsapp.cjs');
 // electron-updater's `autoUpdater` export is a lazy getter that constructs an
 // NsisUpdater the first time it's touched -- requiring it (and destructuring
 // autoUpdater out of it) at module load time can hang/throw before app is
@@ -189,6 +190,9 @@ async function createWindow() {
   // Open at the 1366x768 design size (centered) instead of maximizing, so the
   // installed app presents the intended layout. The user can still maximize.
   win.once('ready-to-show', () => win.show());
+  // The hidden store-WhatsApp window would otherwise keep the app alive
+  // (window-all-closed never fires) after the operator closes the app.
+  win.on('closed', () => storeWhatsApp.shutdown());
 
   if (isDev) {
     const devPort = process.env.NEXORA_DEV_PORT || 5173;
@@ -235,6 +239,7 @@ app.whenReady().then(() => {
   // space at the top — enough that a maximized window on a 1366×768 laptop
   // clipped the last store row. DevTools stays reachable via F12/Ctrl+Shift+I.
   Menu.setApplicationMenu(null);
+  storeWhatsApp.init();
   createWindow();
   initAutoUpdates();
 

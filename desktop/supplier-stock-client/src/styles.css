@@ -9561,3 +9561,20 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .store-workbench .store-row-grid-body {
   min-width: 0;
 }
+
+/* Store WhatsApp (storeWhatsApp.jsx) */
+.swa-screen h3 { margin: 0 0 8px; font-size: 13px; color: var(--nx-text); }
+.swa-grid { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.4fr); gap: 12px; margin-bottom: 12px; }
+.swa-card { display: flex; flex-direction: column; gap: 8px; }
+.swa-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--ui-small-font); color: var(--nx-text-soft); }
+.swa-field input, .swa-field textarea { font: inherit; font-size: var(--ui-font-size); color: var(--nx-text); }
+.swa-muted { margin: 0; font-size: var(--ui-small-font); color: var(--nx-text-muted); }
+.swa-qr { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.swa-qr img { width: 228px; height: 228px; padding: 8px; background: #ffffff; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); image-rendering: pixelated; }
+.swa-ok { color: var(--nx-success-ink); }
+.swa-bad { color: var(--nx-danger-ink); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swa-dialog { width: min(460px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 18px; background: var(--nx-surface-raised); color: var(--nx-text); border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); box-shadow: var(--nx-shadow-lg); }
+.swa-dialog h3 { margin: 0; font-size: 14px; }
+.swa-files { margin: 0; padding: 8px 10px 8px 26px; max-height: 110px; overflow: auto; background: var(--nx-surface-sunk); border-radius: var(--nx-radius-sm); font-size: var(--ui-small-font); }
+.swa-dialog .action-row { justify-content: flex-end; }
+@media (max-width: 900px) { .swa-grid { grid-template-columns: 1fr; } }

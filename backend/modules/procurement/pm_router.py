@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from dependencies.auth import get_current_user_optional
 from dependencies.store_scope import assert_tenant_access
 from modules.procurement.access import (
+    get_current_user,
     require_procurement_admin,
     require_procurement_export,
     require_procurement_grn,
@@ -439,10 +440,80 @@ def distribution_config_save(
     whatsapp_group: Optional[str] = Query(None),
     phone_number: Optional[str] = Query(None),
     enabled: bool = Query(True),
+    whatsapp_sender: Optional[str] = Query(None, description="HO | STORE; omit to keep"),
     current_user: dict = Depends(require_procurement_admin),
 ):
+    from fastapi import HTTPException
     assert_tenant_access(current_user, tenant_id)
-    return distribution_service.save_config(tenant_id, store_id, whatsapp_group, phone_number, enabled)
+    try:
+        return distribution_service.save_config(
+            tenant_id, store_id, whatsapp_group, phone_number, enabled, whatsapp_sender,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Store outbox: stock files a store sends from its OWN WhatsApp (linked in
+# the Electron Stock Client) when its distribution whatsapp_sender = STORE.
+# Any signed-in user of the store may use these; a store-bound login is
+# locked to its own store.
+
+def _assert_own_store(current_user: dict, tenant_id: str, store_id: str) -> None:
+    from fastapi import HTTPException
+    from dependencies.store_scope import has_unrestricted_scope
+    assert_tenant_access(current_user, tenant_id)
+    own = str(current_user.get("store_id") or "")
+    if own and not has_unrestricted_scope(current_user) and own.lower() != str(store_id).lower():
+        raise HTTPException(status_code=403, detail="You do not have access to this store.")
+
+
+def _assert_own_item(current_user: dict, run_item_id: str) -> None:
+    from fastapi import HTTPException
+    try:
+        tenant_id, store_id = distribution_service.store_item_owner(run_item_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _assert_own_store(current_user, tenant_id, store_id)
+
+
+@router.get("/distribution/store-outbox")
+def distribution_store_outbox(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+):
+    _assert_own_store(current_user, tenant_id, store_id)
+    return distribution_service.store_outbox(tenant_id, store_id)
+
+
+@router.post("/distribution/store-outbox/{run_item_id}/claim")
+def distribution_store_outbox_claim(run_item_id: str, current_user: dict = Depends(get_current_user)):
+    _assert_own_item(current_user, run_item_id)
+    return {"run_item_id": run_item_id, "claimed": distribution_service.claim_store_item(run_item_id)}
+
+
+@router.get("/distribution/store-outbox/{run_item_id}/file")
+def distribution_store_outbox_file(run_item_id: str, current_user: dict = Depends(get_current_user)):
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+    _assert_own_item(current_user, run_item_id)
+    try:
+        path, filename = distribution_service.store_item_file(run_item_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=filename, media_type="application/vnd.ms-excel")
+
+
+@router.post("/distribution/store-outbox/{run_item_id}/result")
+def distribution_store_outbox_result(
+    run_item_id: str,
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    _assert_own_item(current_user, run_item_id)
+    return distribution_service.report_store_result(
+        run_item_id, bool(payload.get("sent")), payload.get("error"),
+    )
 
 
 @router.put("/distribution/supplier-map/{store_id}")

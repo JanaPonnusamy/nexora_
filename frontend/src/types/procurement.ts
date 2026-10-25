@@ -525,6 +525,9 @@ export interface DistributionConfigRow {
   whatsapp_group: string | null
   phone_number: string | null
   enabled: boolean
+  /** Who sends this store's stock file: HO's WhatsApp, or the store's own
+   *  WhatsApp linked in its Electron Stock Client. */
+  whatsapp_sender: 'HO' | 'STORE'
   local_supplier_code: string | null
 }
 

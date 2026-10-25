@@ -777,7 +777,7 @@ export const procurementService = {
   saveDistributionConfig: (
     tenantId: string,
     storeId: string,
-    payload: { whatsapp_group?: string; phone_number?: string; enabled: boolean },
+    payload: { whatsapp_group?: string; phone_number?: string; enabled: boolean; whatsapp_sender?: 'HO' | 'STORE' },
   ) =>
     api.put<{ saved: boolean }>(
       `/api/procurement/distribution/config/${storeId}${qs({
@@ -785,6 +785,7 @@ export const procurementService = {
         whatsapp_group: payload.whatsapp_group,
         phone_number: payload.phone_number,
         enabled: String(payload.enabled),
+        whatsapp_sender: payload.whatsapp_sender,
       })}`,
       {},
     ),

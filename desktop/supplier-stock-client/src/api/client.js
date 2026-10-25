@@ -1066,6 +1066,37 @@ export const api = {
       timeoutMs: 300000,
       body: JSON.stringify({ target, statements })
     });
+  },
+
+  // Store outbox: NMW stock files HO queued for THIS store to send from its
+  // own WhatsApp (distribution whatsapp_sender = STORE).
+  getStoreWhatsAppOutbox(tenantId, storeId, session) {
+    return request(`/api/procurement/distribution/store-outbox${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+
+  claimStoreWhatsAppItem(runItemId, session) {
+    return request(`/api/procurement/distribution/store-outbox/${encodeURIComponent(runItemId)}/claim`, { method: 'POST', session });
+  },
+
+  async getStoreWhatsAppFile(runItemId, session) {
+    const settings = loadSettings();
+    const response = await fetch(joinUrl(settings.apiBaseUrl, `/api/procurement/distribution/store-outbox/${encodeURIComponent(runItemId)}/file`), {
+      headers: authHeaders(session)
+    });
+    if (!response.ok) {
+      let detail = response.statusText || 'Download failed';
+      try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    return response.blob();
+  },
+
+  reportStoreWhatsAppResult(runItemId, sent, error, session) {
+    return request(`/api/procurement/distribution/store-outbox/${encodeURIComponent(runItemId)}/result`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ sent, error: error || null })
+    });
   }
 };
 
