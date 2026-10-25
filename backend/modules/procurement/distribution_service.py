@@ -329,7 +329,12 @@ def _whatsapp_login_error():
         )
         if not profile:
             return "No WhatsApp profile configured to send from. Add one in WhatsApp settings first."
+        # check_status already waits out / self-heals a hung "Loading your
+        # chats" page, so only a real QR screen reads as logged out here.
         status = wa.check_status(profile["profile_id"])
+        if status.get("state") == "loading":
+            return ("WhatsApp Web is still loading chats (session is linked, no QR scan needed) "
+                    "-- re-run the distribution in a minute.")
         if not status.get("logged_in"):
             return ("WhatsApp is not logged in -- open 'Link WhatsApp' and scan the QR code "
                     "once, then re-run the distribution.")

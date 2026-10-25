@@ -397,6 +397,16 @@ def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
     try:
         context = driver.firefox.launch_persistent_context(**launch_kwargs)
     except Exception as exc:
+        if "Timeout" in str(exc):
+            # A launch that hangs the full 120s is almost always an orphaned
+            # Firefox (left behind by a crashed/restarted backend) still
+            # holding this profile's lock. Nothing live of ours can own this
+            # profile at this point -- callers drop the context first -- so
+            # kill the orphans, clear the lock, and retry once.
+            _kill_orphan_firefox(session_dir)
+            context = driver.firefox.launch_persistent_context(**launch_kwargs)
+            page = context.pages[0] if context.pages else context.new_page()
+            return context, page
         # A `pip install` that bumps the `playwright` package silently bumps
         # the bundled-Firefox revision it expects too -- if `playwright
         # install firefox` isn't rerun in lockstep, every send fails with
@@ -417,6 +427,33 @@ def _build_context(profile: dict[str, Any], headless: bool) -> tuple[Any, Any]:
         context = driver.firefox.launch_persistent_context(**launch_kwargs)
     page = context.pages[0] if context.pages else context.new_page()
     return context, page
+
+
+def _kill_orphan_firefox(session_dir: Path) -> None:
+    """Kill Playwright Firefox processes launched on this exact profile dir
+    (matched by command line, so the user's own Firefox is never touched) and
+    remove the stale profile lock files. Best-effort, Windows-only."""
+    if sys.platform != "win32":
+        return
+    needle = str(session_dir).replace("'", "''")
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"Name='firefox.exe'\" | "
+        f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{needle}') }} | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            timeout=60, capture_output=True,
+        )
+    except Exception:
+        pass
+    time.sleep(2)
+    for name in ("parent.lock", "lock", ".parentlock"):
+        try:
+            (session_dir / name).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _context_alive(entry: dict[str, Any] | None) -> bool:
@@ -448,16 +485,89 @@ def _acquire_context(profile: dict[str, Any], settings: dict[str, Any], want_hea
             pass
         _CONTEXTS.pop(profile_id, None)
 
-    context, page = _build_context(profile, want_headless)
-    _CONTEXTS[profile_id] = {"context": context, "page": page, "headless": want_headless}
+    page = _open_fresh_context(profile, settings, want_headless)
+    if not want_headless:
+        # Headed = QR-login window: hand it straight to the user, no settling.
+        return page
+    return _settle_session(profile, settings, page)
 
+
+def _open_fresh_context(profile: dict[str, Any], settings: dict[str, Any], want_headless: bool) -> Any:
+    context, page = _build_context(profile, want_headless)
+    _CONTEXTS[profile["profile_id"]] = {"context": context, "page": page, "headless": want_headless}
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     try:
         page.goto("https://web.whatsapp.com/", timeout=wait_seconds * 1000)
-        # Short settle only; _ensure_logged_in polls for the chat UI afterwards.
+        # Short settle only; _settle_session / _ensure_logged_in poll afterwards.
         page.wait_for_timeout(1000)
     except Exception:
         pass
+    return page
+
+
+# How long WhatsApp Web may sit on its own "Loading your chats" splash before
+# we treat it as hung. A cold start on this (large) account normally finishes
+# in well under a minute.
+_LOADING_STUCK_SECONDS = 60
+
+
+def _page_state(page: Any) -> str:
+    """Classify the WhatsApp Web page: "ready" (chat list), "qr" (genuinely
+    logged out -- QR shown), or "loading" (splash / "Loading your chats" /
+    blank / navigating). Only "qr" means a re-scan is needed."""
+    if _is_logged_in(page):
+        return "ready"
+    if _locate_qr(page) is not None:
+        return "qr"
+    return "loading"
+
+
+def _wait_for_state(page: Any, seconds: float) -> str:
+    """Poll until the page is ready or showing the QR, or `seconds` pass."""
+    end = time.time() + seconds
+    state = _page_state(page)
+    while state == "loading" and time.time() < end:
+        time.sleep(1)
+        state = _page_state(page)
+    return state
+
+
+def _settle_session(profile: dict[str, Any], settings: dict[str, Any], page: Any) -> Any:
+    """Make sure a (possibly long-lived, reused) headless page is not hung on
+    WhatsApp Web's loading splash.
+
+    2026-10-24/25 outage: the cached page sat on "Loading your chats [100%]"
+    for over a day while the session was still linked. _is_logged_in saw no
+    chat list, so every status check / distribution pre-flight reported
+    "not logged in -- scan QR" and every store send failed, and because the
+    same hung page was reused, it never recovered until a backend restart.
+    Recovery ladder: wait -> reload the page -> recycle the whole browser
+    context. Returns the (possibly new) page; never raises."""
+    state = _wait_for_state(page, _LOADING_STUCK_SECONDS)
+    if state != "loading":
+        return page
+    _warmup_log(f"'{profile.get('profile_name')}' stuck loading WhatsApp Web -- reloading page")
+    try:
+        page.goto("https://web.whatsapp.com/", timeout=60000)
+    except Exception:
+        pass
+    state = _wait_for_state(page, _LOADING_STUCK_SECONDS)
+    if state != "loading":
+        return page
+    _warmup_log(f"'{profile.get('profile_name')}' still stuck after reload -- recycling browser context")
+    _capture_debug(page, "stuck-loading")
+    entry = _CONTEXTS.pop(profile["profile_id"], None)
+    if entry is not None:
+        try:
+            entry["context"].close()
+        except Exception:
+            pass
+    try:
+        page = _open_fresh_context(profile, settings, want_headless=True)
+    except Exception as exc:
+        _warmup_log(f"'{profile.get('profile_name')}' context recycle failed: {exc}")
+        return page
+    _wait_for_state(page, _LOADING_STUCK_SECONDS * 1.5)
     return page
 
 
@@ -672,12 +782,17 @@ def _dismiss_startup_dialogs(page: Any) -> None:
 
 def _ensure_logged_in(page: Any, settings: dict[str, Any]) -> None:
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
-    end = time.time() + wait_seconds
-    while time.time() < end:
-        if _is_logged_in(page):
-            _dismiss_startup_dialogs(page)
-            return
-        time.sleep(1)
+    state = _wait_for_state(page, wait_seconds)
+    if state == "ready":
+        _dismiss_startup_dialogs(page)
+        return
+    if state == "loading":
+        # Session is linked but WhatsApp Web hasn't finished loading -- a QR
+        # re-scan would not help, so don't tell the user to do one.
+        raise RuntimeError(
+            "WhatsApp Web is still loading chats (the session is linked, no QR scan needed). "
+            "Retry in a minute."
+        )
     raise RuntimeError(
         "WhatsApp Web is not logged in for this profile. "
         "Open the profile and scan the QR code once (Launch WhatsApp), then retry."
@@ -1605,15 +1720,14 @@ def _check_status_impl(profile_id: str) -> dict[str, Any]:
     profiles = _load_profiles()
     profile = _resolve_profile(profile_id, profiles)
     with _DRIVER_LOCK:
+        # _acquire_context already waits out (and self-heals) a hung loading
+        # splash, so this is the real state, not a cold-page false negative.
         page = _acquire_context(profile, settings, want_headless=True)
-        try:
-            page.wait_for_timeout(1500)
-        except Exception:
-            pass
-        logged_in = _is_logged_in(page)
+        state = _wait_for_state(page, 5)
     return {
         "profile_id": profile_id,
-        "logged_in": logged_in,
+        "logged_in": state == "ready",
+        "state": state,
         "checked_at": _now_iso(),
     }
 
