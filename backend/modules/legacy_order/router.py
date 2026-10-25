@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, order_export, repository, service, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -63,6 +63,7 @@ _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/export$"),      # POST export
     re.compile(r"^/api/legacy-order/orders/[^/]+/export-pending$"),  # POST pending export (read-only)
     re.compile(r"^/api/legacy-order/orders/[^/]+/unavailable/remove$"),  # POST stock-out bulk remove
+    re.compile(r"^/api/legacy-order/orders/[^/]+/auto-assign$"),  # POST bulk assign (best margin)
     re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+$"),      # PATCH qty-check review
 )
 
@@ -418,6 +419,31 @@ def remove_unavailable_from_supplier(
             current_user.get("username") or current_user.get("sub"),
         )
         return {"removed_product_codes": removed, "removed_count": len(removed)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/auto-assign")
+def auto_assign_preview(store_name: str):
+    """Bulk Assign · Best Margin preview: proposed supplier per Pending Order
+    line (see repository.auto_assign_proposals)."""
+    try:
+        return repository.auto_assign_proposals(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/auto-assign")
+def auto_assign_apply(
+    store_name: str, payload: AutoAssignRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Assign the best-margin proposals (recomputed server-side)."""
+    try:
+        return repository.auto_assign_apply(
+            store_name, payload.product_codes,
+            current_user.get("username") or current_user.get("sub"),
+        )
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

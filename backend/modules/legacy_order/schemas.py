@@ -78,6 +78,11 @@ class AssignSupplierRequest(BaseModel):
     supplier_name: str
 
 
+class AutoAssignRequest(BaseModel):
+    # None = every proposed line; otherwise only these product codes.
+    product_codes: list[int] | None = None
+
+
 class SupplierCodeRequest(BaseModel):
     supplier_code: str
 

@@ -1,4 +1,6 @@
 """Reads from the legacy OrderNMC database."""
+import datetime
+
 from modules.legacy_order import database
 from modules.product_mapping import repository as product_mapping_repository
 
@@ -1316,6 +1318,188 @@ def bulk_assign_rows(store_name, supplier_code, supplier_name, product_codes, ac
                 )
         conn.commit()
         return assigned_count
+
+
+# ---- Bulk Assign · Best Margin (Order Workspace process after Qty Check) ----
+# Owner rule (2026-10-25): every reviewed, still-unassigned line (the Pending
+# Order set: qtycheck = 1, status = 0, orderqty > 0) goes to the supplier
+# with the best margin over the product's last 5 supplies (real supplier
+# invoices, series IV, GRN-level). Margin = (MRP - net cost) / MRP, with the
+# net cost spread over received + free qty. A product with no usable supply
+# (never received, or only from inactive suppliers) falls back to its most
+# frequent supplier -- all-time purchase receipts first, then past order
+# assignments in OrderManagementBackup. PurchaseTrans.Margin is NULL on every
+# row, so the margin is computed here, never read from it.
+
+AUTO_ASSIGN_LAST_SUPPLIES = 5
+
+_AUTO_ASSIGN_PENDING_SQL = (
+    "SELECT productcode, productname, orderqty FROM ordermanagement "
+    "WHERE storename = ? AND qtycheck = 1 AND status = 0 AND orderqty > 0 "
+    "AND producttypename IN ('Pharma', 'Non Pharma')"
+)
+
+
+def receipt_margin(mrp, item_cost, received, free):
+    """Margin % of one supply: (MRP - net unit cost) / MRP, where the net
+    cost is ItemCost spread over received + free qty. None when MRP or cost
+    is missing."""
+    mrp = float(mrp or 0)
+    cost = float(item_cost or 0)
+    received = float(received or 0)
+    free = float(free or 0)
+    if mrp <= 0 or cost <= 0 or received <= 0:
+        return None
+    net = cost * received / (received + max(free, 0))
+    return (mrp - net) / mrp * 100
+
+
+def pick_auto_assign_supplier(receipts, frequent, active):
+    """receipts: the product's last supplies, newest first, as dicts with
+    supplier_code / margin / grn_date. frequent: supplier codes, most
+    frequent first (the fallback). active: {supplier_code: name} of this
+    store's active OrderSuppliers. Returns (code, basis, margin, supplies):
+    the best-margin supplier among the receipts, judged on each supplier's
+    most recent supply (ties -> more of the 5 supplies, then most recent);
+    else the first active frequent supplier; else (None, None, None, 0)."""
+    per = {}
+    for r in receipts:
+        code = r["supplier_code"]
+        if code not in active or r["margin"] is None:
+            continue
+        s = per.get(code)
+        if s is None:
+            per[code] = {"margin": r["margin"], "count": 1,
+                         "latest": r["grn_date"] or datetime.date.min}
+        else:
+            s["count"] += 1
+    if per:
+        code = max(per, key=lambda c: (round(per[c]["margin"], 2), per[c]["count"], per[c]["latest"]))
+        return code, "best_margin", per[code]["margin"], per[code]["count"]
+    for code in frequent:
+        if code in active:
+            return code, "most_frequent", None, 0
+    return None, None, None, 0
+
+
+def auto_assign_proposals(store_name):
+    """Proposed supplier for every Pending Order line (see the rule above).
+    Read-only; auto_assign_apply recomputes it before writing."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        pending = cur.execute(_AUTO_ASSIGN_PENDING_SQL, store_name).fetchall()
+        if not pending:
+            return {"rows": [], "last_supplies": AUTO_ASSIGN_LAST_SUPPLIES}
+        active = {
+            str(r[0]).strip(): (r[1] or "").strip()
+            for r in cur.execute(
+                "SELECT suppliercode, Suppliername FROM OrderSuppliers WITH (NOLOCK) "
+                "WHERE StoreName = ? AND ISNULL(IsActive, 1) = 1", store_name,
+            ).fetchall()
+            if r[0] is not None
+        }
+        receipts = {}
+        for r in cur.execute(
+            "WITH pend AS (" + _AUTO_ASSIGN_PENDING_SQL + "), "
+            "grn AS ("
+            "  SELECT pt.ProductCode, RTRIM(pt.SupplierCode) AS SupplierCode, pt.Grnnumber, "
+            "  CAST(pt.GRNDate AS date) AS GRNDate, MAX(pt.MRP) AS MRP, "
+            "  SUM(pt.ItemCost * pt.StockReceived) / NULLIF(SUM(pt.StockReceived), 0) AS ItemCost, "
+            "  SUM(pt.StockReceived) AS Received, SUM(ISNULL(pt.FreeQty, 0)) AS Free "
+            "  FROM PurchaseTrans pt WITH (NOLOCK) JOIN pend ON pend.productcode = pt.ProductCode "
+            "  WHERE pt.StoreName = ? AND RTRIM(pt.InvoiceSeries) = 'IV' AND pt.StockReceived > 0 "
+            "  GROUP BY pt.ProductCode, RTRIM(pt.SupplierCode), pt.Grnnumber, CAST(pt.GRNDate AS date)"
+            "), ranked AS ("
+            "  SELECT *, ROW_NUMBER() OVER (PARTITION BY ProductCode ORDER BY GRNDate DESC, Grnnumber DESC) AS rn "
+            "  FROM grn"
+            ") "
+            "SELECT ProductCode, SupplierCode, GRNDate, MRP, ItemCost, Received, Free "
+            "FROM ranked WHERE rn <= ? ORDER BY ProductCode, rn",
+            store_name, store_name, AUTO_ASSIGN_LAST_SUPPLIES,
+        ).fetchall():
+            receipts.setdefault(int(r[0]), []).append({
+                "supplier_code": str(r[1] or "").strip(),
+                "grn_date": r[2],
+                "margin": receipt_margin(r[3], r[4], r[5], r[6]),
+            })
+        frequent = {}
+        for r in cur.execute(
+            "WITH pend AS (" + _AUTO_ASSIGN_PENDING_SQL + ") "
+            "SELECT pt.ProductCode, RTRIM(pt.SupplierCode), COUNT(DISTINCT pt.Grnnumber) AS n, MAX(pt.GRNDate) "
+            "FROM PurchaseTrans pt WITH (NOLOCK) JOIN pend ON pend.productcode = pt.ProductCode "
+            "WHERE pt.StoreName = ? AND RTRIM(pt.InvoiceSeries) = 'IV' AND pt.StockReceived > 0 "
+            "GROUP BY pt.ProductCode, RTRIM(pt.SupplierCode) "
+            "UNION ALL "
+            "SELECT b.ProductCode, RTRIM(b.OrSupplierCode), -COUNT(*), MAX(b.OrderId) "
+            "FROM OrderManagementBackup b WITH (NOLOCK) JOIN pend ON pend.productcode = b.ProductCode "
+            "WHERE b.StoreName = ? AND b.OrSupplierCode IS NOT NULL "
+            "GROUP BY b.ProductCode, RTRIM(b.OrSupplierCode)",
+            store_name, store_name, store_name,
+        ).fetchall():
+            # Purchase counts are positive, assignment counts negative, so
+            # sorting by (purchases first, count desc) is one key.
+            frequent.setdefault(int(r[0]), []).append((r[2] > 0, abs(r[2]), str(r[1] or "").strip()))
+
+    rows = []
+    for p in pending:
+        code = int(p[0])
+        ranked = [c for _, _, c in sorted(frequent.get(code, []), key=lambda f: (f[0], f[1]), reverse=True)]
+        supplier, basis, margin, supplies = pick_auto_assign_supplier(receipts.get(code, []), ranked, active)
+        rows.append({
+            "product_code": code,
+            "product_name": p[1],
+            "order_qty": p[2],
+            "supplier_code": supplier,
+            "supplier_name": active.get(supplier) if supplier else None,
+            "basis": basis,
+            "margin": None if margin is None else round(margin, 2),
+            "supplies": supplies,
+            "supplies_seen": len(receipts.get(code, [])),
+        })
+    rows.sort(key=lambda r: (r["supplier_name"] is None, r["supplier_name"] or "", r["product_name"] or ""))
+    return {"rows": rows, "last_supplies": AUTO_ASSIGN_LAST_SUPPLIES}
+
+
+def auto_assign_apply(store_name, product_codes=None, actor=None):
+    """Assign the proposals from auto_assign_proposals -- recomputed here,
+    never taken from the client. product_codes (optional) limits it to the
+    lines the operator left ticked. Same status 0 -> 1 write as
+    bulk_assign_rows, re-checking qtycheck = 1 / orderqty > 0 so a line
+    changed since the preview is skipped."""
+    wanted = None if product_codes is None else {int(c) for c in product_codes}
+    groups = {}
+    for p in auto_assign_proposals(store_name)["rows"]:
+        if not p["supplier_code"] or (wanted is not None and p["product_code"] not in wanted):
+            continue
+        groups.setdefault((p["supplier_code"], p["supplier_name"]), []).append(p)
+    if not groups:
+        return {"assigned": 0, "suppliers": 0}
+    assigned = 0
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        order_id = _latest_order_id(cur, store_name)
+        for (supplier_code, supplier_name), items in groups.items():
+            codes = [p["product_code"] for p in items]
+            for i in range(0, len(codes), 500):
+                chunk = codes[i:i + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cur.execute(
+                    "UPDATE ordermanagement SET orqty = orderqty, orsupplier = ?, "
+                    "orsuppliercode = ?, status = 1 "
+                    "WHERE storename = ? AND status = 0 AND qtycheck = 1 AND orderqty > 0 "
+                    f"AND productcode IN ({placeholders})",
+                    supplier_name, supplier_code, store_name, *chunk,
+                )
+                assigned += cur.rowcount
+            if order_id is not None:
+                for p in items:
+                    _record_line_audit(
+                        cur, store_name, order_id, p["product_code"], "SUPPLIER_ASSIGNED_AUTO",
+                        None, f"{supplier_code} ({p['basis']})", actor,
+                    )
+        conn.commit()
+    return {"assigned": assigned, "suppliers": len(groups)}
 
 
 def qty_check_rows(store_name):
