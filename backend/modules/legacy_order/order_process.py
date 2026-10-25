@@ -505,12 +505,23 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
             logger.exception("warehouse stock refresh failed for %s", store["store_name"])
             report(f"{_WAREHOUSE_STOCK_SOURCE} stock refresh failed (continuing order generation): {exc}")
 
-    report(f"Fetching order data ({mode_label} mode, since {odata})...")
-    columns, rows = fetch_source_data(
-        query_cs, odata, store["store_name"], store["store_code"],
-        min_days, max_days, mode, recency_days=recency_days, sql_name=sql_name,
-    )
-    report(f"Order query returned {len(rows)} rows.")
+    # Engine: LEGACY = the ported VB.NET SQL above; RULEBOOK = the Procurement
+    # rule book (rulebook_order.py). Both write through the same backup ->
+    # rewrite -> header steps below, into the same tables.
+    engine = store.get("engine") or "LEGACY"
+    rulebook_summary = None
+    if engine == "RULEBOOK":
+        from modules.legacy_order import rulebook_order
+        report("Calculating the order by the rule book (central OrderNMC data)...")
+        columns, rows, rulebook_summary = rulebook_order.build_order(store, warehouse=is_warehouse)
+        report(f"Rule book ordered {len(rows)} of {rulebook_summary['evaluated']} products.")
+    else:
+        report(f"Fetching order data ({mode_label} mode, since {odata})...")
+        columns, rows = fetch_source_data(
+            query_cs, odata, store["store_name"], store["store_code"],
+            min_days, max_days, mode, recency_days=recency_days, sql_name=sql_name,
+        )
+        report(f"Order query returned {len(rows)} rows.")
 
     # The pending-supplier-assignment warning was already confirmed (or
     # admin-overridden) at request time in service.start_order_process --
@@ -529,4 +540,7 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
     )
 
     report(f"Order processing completed ({inserted} rows).")
-    return {"rows": inserted, "odata": odata, "header": header}
+    result = {"rows": inserted, "odata": odata, "header": header, "engine": engine}
+    if rulebook_summary:
+        result["rulebook"] = rulebook_summary
+    return result

@@ -275,7 +275,7 @@ class StaleCurrentOrder(ValueError):
 def start_order_process(store_name, min_days=None, max_days=None, mode="local",
                          confirmed=False,
                          confirmed_order_id=None, confirmed_count=None,
-                         confirmed_stale_order=False):
+                         confirmed_stale_order=False, engine=None):
     """confirmed_order_id/confirmed_count are the caller's claim about WHICH
     order/count it is acknowledging, purely to satisfy requirement 8
     ("revalidate ... require renewed confirmation if the relevant state has
@@ -291,6 +291,13 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     store = _resolve_store(store_name)
     warehouse = is_warehouse_store(store_name)
     agent_synced = is_agent_synced_store(store_name)
+    # Engine: this run's choice, else the store's setting (default LEGACY).
+    # Both engines stay available; neither replaces the other.
+    from modules.legacy_order import rulebook_order
+    engine = str(engine).upper() if engine else rulebook_order.get_store_engine(store["store_name"])
+    if engine not in rulebook_order.ENGINES:
+        raise ValueError(f"Engine must be one of {', '.join(rulebook_order.ENGINES)}.")
+    store["engine"] = engine
 
     # Warehouse Min/Max default to the warehouse profile (not the retail 13/18).
     default_min = WAREHOUSE_MIN_DAYS if warehouse else DEFAULT_MIN_DAYS

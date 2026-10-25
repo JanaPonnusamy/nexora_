@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
-from modules.legacy_order import database, order_export, repository, service, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order import database, order_export, repository, rulebook_order, service, sync_engine
+from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -190,6 +190,7 @@ def start_order_process(
             confirmed_order_id=payload.confirmed_order_id,
             confirmed_count=payload.confirmed_count,
             confirmed_stale_order=payload.confirmed_stale_order,
+            engine=payload.engine,
         )
         return JobStarted(job_id=job_id)
     except service.QtyCheckConfirmationRequired as exc:
@@ -201,6 +202,52 @@ def start_order_process(
     except ValueError as exc:
         status = 409 if "already running" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc))
+
+
+# ---- Order engine: legacy SQL or Procurement rule book (both kept) ----
+
+@router.get("/engine/{store_name}")
+def get_order_engine(store_name: str):
+    try:
+        return {"store_name": store_name, "engine": rulebook_order.get_store_engine(store_name),
+                "engines": list(rulebook_order.ENGINES), "rulebook_params": rulebook_order.rule_params(store_name)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/engine/{store_name}")
+def set_order_engine(store_name: str, payload: OrderEngineRequest, current_user: dict = Depends(require_admin)):
+    """The store's default engine for Order Process (admin only)."""
+    try:
+        return rulebook_order.set_store_engine(store_name, payload.engine,
+                                               current_user.get("username") or current_user.get("sub"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/engine/{store_name}/compare.xlsx")
+def compare_order_engines(store_name: str, current_user: dict = Depends(require_admin)):
+    """Dry run: legacy vs rule-book order for the store from the same central
+    data, as an Excel workbook. Writes nothing."""
+    try:
+        store = service._resolve_store(store_name)
+        warehouse = service.is_warehouse_store(store_name)
+        data = rulebook_order.compare_engines(
+            store, warehouse,
+            service.WAREHOUSE_MIN_DAYS if warehouse else service.DEFAULT_MIN_DAYS,
+            service.WAREHOUSE_MAX_DAYS if warehouse else service.DEFAULT_MAX_DAYS,
+            service.WAREHOUSE_RECENCY_DAYS if warehouse else service.DEFAULT_RECENCY_DAYS,
+        )
+        body = rulebook_order.compare_workbook(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    name = f"{store_name}_Legacy_vs_RuleBook_{data['as_of']:%Y%m%d_%H%M}.xlsx"
+    return Response(content=body, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/orders/{store_name}/qty-check-confirmation")

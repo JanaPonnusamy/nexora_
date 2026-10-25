@@ -34,6 +34,8 @@ import type {
 
 const BASE = '/api/legacy-order'
 
+export type OrderEngine = 'LEGACY' | 'RULEBOOK'
+
 export const legacyOrderService = {
   listStores: (activeOnly = true) =>
     api.get<LegacyStore[]>(`${BASE}/stores?active_only=${activeOnly}`),
@@ -56,6 +58,16 @@ export const legacyOrderService = {
   // order warning (see service.StaleCurrentOrder) -- independent of
   // `confirm` above so confirming one warning never silently waves through
   // the other.
+  // Order engine per store: LEGACY (ported VB.NET SQL) or RULEBOOK
+  // (Procurement rule book). Both write the same OrderNMC tables.
+  getOrderEngine: (storeName: string) =>
+    api.get<{ store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number> }>(
+      `${BASE}/engine/${encodeURIComponent(storeName)}`),
+  setOrderEngine: (storeName: string, engine: OrderEngine) =>
+    api.put<{ store_name: string; engine: OrderEngine }>(`${BASE}/engine/${encodeURIComponent(storeName)}`, { engine }),
+  // Dry run: legacy vs rule-book order as Excel; writes nothing.
+  compareEnginesXlsx: (storeName: string) =>
+    api.blob(`${BASE}/engine/${encodeURIComponent(storeName)}/compare.xlsx`),
   startOrderProcess: (
     storeName: string,
     minDays: number,

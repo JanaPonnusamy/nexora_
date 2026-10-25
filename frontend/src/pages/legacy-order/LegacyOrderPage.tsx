@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { legacyOrderService } from '../../services/legacyOrderService'
+import { legacyOrderService, type OrderEngine } from '../../services/legacyOrderService'
 import { ApiError } from '../../services/apiClient'
 import type { LegacyDbHealth, LegacyDbRecovery, LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, QtyCheckConfirmation, RestorableOrderPreview, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
@@ -57,6 +57,9 @@ export default function LegacyOrderPage() {
   const [orderSearch, setOrderSearch] = useState('')
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null)
   const [infoOpenFor, setInfoOpenFor] = useState<string | null>(null)
+  // Order engine per store (both kept): legacy SQL or the Procurement rule book.
+  const [engines, setEngines] = useState<Record<string, OrderEngine>>({})
+  const [comparing, setComparing] = useState<string | null>(null)
   const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
   const [dbBusy, setDbBusy] = useState<'' | 'check' | 'recover' | 'repair'>('')
   const [recovery, setRecovery] = useState<LegacyDbRecovery | null>(null)
@@ -71,7 +74,32 @@ export default function LegacyOrderPage() {
           { minDays: defaults.min_days, maxDays: defaults.max_days, mode: 'local' as const },
         ])))
         setCompareStore((current) => current || (storeList[0]?.store_name ?? ''))
+        void Promise.all(storeList.map((store) => legacyOrderService.getOrderEngine(store.store_name)
+          .then((r) => [store.store_name, r.engine] as const)
+          .catch(() => [store.store_name, 'LEGACY' as OrderEngine] as const)))
+          .then((pairs) => setEngines(Object.fromEntries(pairs)))
       }), [])
+
+  const changeEngine = (storeName: string, engine: OrderEngine) => {
+    legacyOrderService.setOrderEngine(storeName, engine)
+      .then((r) => { setEngines((cur) => ({ ...cur, [storeName]: r.engine })); setError(null) })
+      .catch((e: Error) => setError(e.message))
+  }
+
+  const downloadEngineCompare = (storeName: string) => {
+    setComparing(storeName)
+    legacyOrderService.compareEnginesXlsx(storeName)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${storeName}_Legacy_vs_RuleBook.xlsx`
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setComparing(null))
+  }
 
   // Read DB state without changing it. On success (DB healthy) reload the stores
   // and clear the outage banner; on failure surface it so the recovery card shows.
@@ -457,6 +485,7 @@ export default function LegacyOrderPage() {
                 <div className="lo-op-head">
                   <span className={`lo-dot ${dotClass}`} />
                   <strong>{store.store_name}</strong>
+                  {engines[store.store_name] === 'RULEBOOK' && <span className="lo-chip lo-chip-ok" title="Order Process uses the Procurement rule book">Rule book</span>}
                   {lastJob?.warning && (
                     <i className="bi bi-exclamation-triangle-fill lo-stale-warn" title={lastJob.warning} aria-label="Stale sale bill warning" />
                   )}
@@ -473,10 +502,19 @@ export default function LegacyOrderPage() {
                     <label><span>Min days</span><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /></label>
                     <label><span>Max days</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></label>
                     <label><span>Source</span><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option></select></label>
+                    <label title="Which calculation Order Process uses for this store. Both write the same order tables; switch any time.">
+                      <span>Order engine</span>
+                      <select aria-label={`${store.store_name} order engine`} value={engines[store.store_name] ?? 'LEGACY'} disabled={Boolean(running)}
+                        onChange={(e) => changeEngine(store.store_name, e.target.value as OrderEngine)}>
+                        <option value="LEGACY">Legacy (old SQL)</option>
+                        <option value="RULEBOOK">Rule book</option>
+                      </select>
+                    </label>
                     {invalid && <small className="lo-invalid">Min must be ≤ max</small>}
                     <div className="lo-op-settings-actions">
                       <button type="button" className="lo-btn" onClick={() => { patchSettings(store.store_name, { minDays: 13, maxDays: 18, mode: 'local' }) }}>Reset default</button>
                       <button type="button" className="lo-btn" disabled={Boolean(running)} onClick={() => start(() => legacyOrderService.startSync(store.store_name))}><i className="bi bi-arrow-repeat" /> Sync only</button>
+                      <button type="button" className="lo-btn" disabled={comparing === store.store_name} title="Calculate both engines from the current data and download an Excel comparison. Writes nothing." onClick={() => downloadEngineCompare(store.store_name)}><i className="bi bi-file-earmark-spreadsheet" /> {comparing === store.store_name ? 'Comparing…' : 'Compare engines (dry run)'}</button>
                       {store.store_name !== HO_STORE_NAME && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${HO_STORE_NAME}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, HO_STORE_NAME))}><i className="bi bi-cloud-arrow-up" /> Stock update only</button>}
                     </div>
                   </div>

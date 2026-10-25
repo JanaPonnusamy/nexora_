@@ -10,6 +10,9 @@ class SyncRequest(BaseModel):
 
 class OrderProcessRequest(BaseModel):
     store_name: str
+    # LEGACY (ported VB.NET SQL) or RULEBOOK (Procurement rule book); None =
+    # the store's setting (rulebook_order.get_store_engine, default LEGACY).
+    engine: Optional[str] = None
     min_days: Optional[int] = None  # Nexora defaults: 13 / 18
     max_days: Optional[int] = None
     mode: str = "local"  # 'local' = OrderNMC's synced copy, 'remote' = branch DB
@@ -76,6 +79,10 @@ class WorkflowActionRequest(BaseModel):
 class AssignSupplierRequest(BaseModel):
     supplier_code: str
     supplier_name: str
+
+
+class OrderEngineRequest(BaseModel):
+    engine: str  # LEGACY or RULEBOOK
 
 
 class AutoAssignRequest(BaseModel):
