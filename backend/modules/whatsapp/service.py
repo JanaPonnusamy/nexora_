@@ -643,10 +643,16 @@ _COMPOSER_SELECTORS = [
     "xpath=//footer//div[@contenteditable='true']",
     "xpath=(//div[@contenteditable='true'])[last()]",
 ]
+# 2026-10-25: the attachment-preview send control became
+# <div role="button" aria-label="Send 1 selected"> (no <button>, no data-icon),
+# so every distribution Excel send failed at this step. Match the role + a
+# "Send…" label generically; voice-message buttons are excluded.
 _SEND_BUTTON_SELECTORS = [
     "xpath=//button[@aria-label='Send']",
+    "xpath=//*[@role='button'][@aria-label='Send']",
+    "xpath=//*[self::button or @role='button'][starts-with(@aria-label,'Send ')][not(contains(@aria-label,'oice'))]",
     "xpath=//span[@data-icon='send']",
-    "xpath=//span[@data-icon='wds-ic-send-filled']",
+    "xpath=//span[starts-with(@data-icon,'wds-ic-send')]",
 ]
 # After a file is attached, WhatsApp opens a preview overlay with its OWN
 # caption box -- it is NOT inside <footer>, unlike the normal chat composer.
@@ -844,9 +850,27 @@ def _caption_and_send_attachment(page: Any, settings: dict[str, Any], message: s
     if message:
         caption.type(message, delay=8)
         time.sleep(0.3)
-    send = _first_locator(page, _SEND_BUTTON_SELECTORS, wait_seconds)
-    _safe_click(send)
-    time.sleep(3)
+    try:
+        send = _first_locator(page, _SEND_BUTTON_SELECTORS, wait_seconds)
+        _safe_click(send)
+    except Exception:
+        # Send control renamed again -- Enter in the preview's caption box
+        # sends the attachment too, so don't fail the whole send over a label.
+        send = None
+        caption.press("Enter")
+    # Confirm the preview actually closed (= file sent) instead of assuming.
+    end = time.time() + 20
+    while time.time() < end:
+        try:
+            still_open = (send.is_visible() if send is not None
+                          else page.locator(_CAPTION_SELECTORS[-1]).count() > 0)
+        except Exception:
+            still_open = False
+        if not still_open:
+            time.sleep(1)
+            return
+        time.sleep(0.5)
+    raise RuntimeError("Attachment preview did not close after Send -- the file was not sent.")
 
 
 # The open conversation's header title (the chat currently loaded in #main).
