@@ -152,7 +152,9 @@ def _workflow_counts(cur, store_name, order_id):
     row = cur.execute(
         """
         SELECT COUNT(*) AS TotalLines,
-               SUM(CASE WHEN Status = 0 AND QtyCheck = 0 THEN 1 ELSE 0 END) AS QtyPending,
+               -- Or Qty 0 lines are "no need" (counted as closed below) and are
+               -- not listed on the Qty Check grid, so they never block Finalize.
+               SUM(CASE WHEN Status = 0 AND QtyCheck = 0 AND OrderQty > 0 THEN 1 ELSE 0 END) AS QtyPending,
                SUM(CASE WHEN Status = 0 AND QtyCheck = 1 THEN 1 ELSE 0 END) AS QtyReviewed,
                SUM(CASE WHEN Status = 1 AND OrderQty > 0 THEN 1 ELSE 0 END) AS AssignedLines,
                SUM(CASE WHEN Status = 0 AND OrderQty > 0 THEN 1 ELSE 0 END) AS UnassignedLines,
@@ -1318,7 +1320,10 @@ def bulk_assign_rows(store_name, supplier_code, supplier_name, product_codes, ac
 
 def qty_check_rows(store_name):
     """Port of Form1.GetQtyCheckQuery('All', 'All') -- the Qty Check screen's
-    main grid: only rows not yet reviewed (qtycheck = 0, status = 0).
+    main grid: only rows not yet reviewed (qtycheck = 0, status = 0) that
+    actually order something -- owner ruling 2026-10-25: Or Qty 0 lines are
+    not loaded for review (they are "no need" lines; _workflow_counts no
+    longer counts them as pending, so they don't block Finalize).
 
     IsOffer is read directly off OrderManagement (set once per product at
     order-generation time -- see order_process.insert_data_into_destination /
@@ -1342,7 +1347,7 @@ def qty_check_rows(store_name):
         "lastoffer.LastOfferBaseQty, lastoffer.LastOfferFreeQty "
         "FROM ordermanagement om "
         f"{_LAST_OFFER_PATTERN_APPLY} "
-        "WHERE om.qtycheck = 0 AND om.status = 0 AND om.storename = ? "
+        "WHERE om.qtycheck = 0 AND om.status = 0 AND om.orderqty > 0 AND om.storename = ? "
         "ORDER BY om.productname"
     )
     with database.get_central_connection() as conn:
