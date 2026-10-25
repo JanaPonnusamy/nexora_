@@ -75,6 +75,7 @@ def report_xlsx(tenant_id, refresh_id):
     wb = Workbook()
     ws = wb.active
     ws.title = "Pending"
+    ws.freeze_panes = "A2"  # header row stays visible while scrolling
     headers = [
         "Product Code", "Product Name", "Supplier", "Movement", "Stock Status",
         "Final Qty", "Received Qty", "Pending Qty", "Status",

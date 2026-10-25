@@ -293,6 +293,10 @@ def _write_xls(headers, table):
         ws.row(r).height = _ROW_HEIGHT_PT * 20
     for c, w in enumerate(_column_widths(headers, table)):
         ws.col(c).width = int(256 * w)
+    # Header row stays on screen while scrolling (same as the .xlsx A2 freeze).
+    ws.set_panes_frozen(True)
+    ws.set_horz_split_pos(1)
+    ws.set_remove_splits(True)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

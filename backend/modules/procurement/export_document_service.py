@@ -231,6 +231,7 @@ def _excel_from_plan_rows(plan, rows):
     wb = Workbook()
     ws = wb.active
     ws.title = "Purchase Order"
+    ws.freeze_panes = "A2"  # header row stays visible while scrolling
 
     ws.append(headers + ["Assignment ID"])
     for c in ws[1]:
