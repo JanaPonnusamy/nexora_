@@ -224,6 +224,18 @@ export default function LegacyOrderPage() {
     )
       .then(({ job_id }) => watch(job_id))
       .catch((e: Error) => {
+        // Not every 409 is the stale-order warning: re-showing the stale
+        // dialog for these made "Continue & Process" loop on a warning.
+        if (e instanceof ApiError && e.status === 409 && /already running/i.test(e.message)) {
+          setError(e.message)
+          return
+        }
+        if (e instanceof ApiError && e.status === 409 && /pending supplier assignment/i.test(e.message)) {
+          legacyOrderService.qtyCheckConfirmation(storeName)
+            .then((preview) => { setConfirmFor({ storeName, preview }); setCompareStore(storeName) })
+            .catch((err: Error) => setError(err.message))
+          return
+        }
         if (e instanceof ApiError && e.status === 409) {
           setStaleFor({ storeName, message: e.message })
           setCompareStore(storeName)

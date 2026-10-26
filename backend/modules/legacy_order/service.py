@@ -365,7 +365,12 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     # order never becomes "current" between the dialog opening and the
     # retry -- only a NEW order process run changes that state, and this
     # very call is that run.
-    if not confirmed_stale_order:
+    #
+    # Owner ruling 2026-10-26: ONE warning only. Confirming either dialog
+    # (stale order, or pending supplier assignment) acknowledges both and
+    # goes straight to processing -- chaining a second warning after
+    # "Continue" made it look like Continue did nothing.
+    if not (confirmed_stale_order or confirmed):
         try:
             repository.require_current_date_order_if_any(store_name)
         except repository.NoCurrentDateOrder as exc:
@@ -381,10 +386,14 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     # still match the live order_id/count, or the caller must re-fetch and
     # reconfirm (requirement: "require renewed confirmation if the relevant
     # state has changed").
-    order_id, count, sample = repository.qty_check_confirmation_count(store_name)
-    if order_id is not None and count > 1:
-        if not confirmed or confirmed_order_id != order_id or confirmed_count != count:
-            raise QtyCheckConfirmationRequired(order_id, count, sample)
+    #
+    # Skipped once the stale-order warning was confirmed (single warning --
+    # see above).
+    if not confirmed_stale_order:
+        order_id, count, sample = repository.qty_check_confirmation_count(store_name)
+        if order_id is not None and count > 1:
+            if not confirmed or confirmed_order_id != order_id or confirmed_count != count:
+                raise QtyCheckConfirmationRequired(order_id, count, sample)
 
     # Order Process always begins with a fresh full branch sync.
     ok, error = repository.test_branch_connection(store)

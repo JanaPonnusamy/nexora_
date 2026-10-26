@@ -197,6 +197,23 @@ def test_start_order_process_confirmed_stale_order_skips_the_check(base_env, thr
     assert thread_spy
 
 
+def test_confirmed_stale_order_is_not_blocked_by_old_orders_pending_rows(base_env, thread_spy, monkeypatch):
+    """Regression (2026-10-26): Continue on the stale-order dialog raised the
+    pending-supplier-assignment 409 for the OLD order's rows, which the page
+    re-showed as the same stale dialog -- Continue looped and never
+    processed. Confirming the stale order must go straight to processing."""
+    def stale(sn):
+        raise repository.NoCurrentDateOrder(sn, "Order is from yesterday")
+
+    monkeypatch.setattr(service.repository, "require_current_date_order_if_any", stale)
+    monkeypatch.setattr(service.repository, "qty_check_confirmation_count", lambda sn: (42, 135, []))
+
+    job_id = service.start_order_process("NMA", confirmed_stale_order=True)
+
+    assert job_id
+    assert thread_spy
+
+
 def test_start_order_process_agent_synced_store_skips_both_warnings(thread_spy, monkeypatch):
     """Agent-synced stores (NMV) have no operator directly working their
     grids between runs the way an on-LAN store does, so the owner asked to
@@ -224,21 +241,31 @@ def test_start_order_process_agent_synced_store_skips_both_warnings(thread_spy, 
     assert thread_spy[0].target is service._run_agent_sync_then_order
 
 
-def test_start_order_process_stale_confirm_does_not_bypass_qtycheck_warning(base_env, thread_spy, monkeypatch):
-    """The two warnings are independent: confirming the stale-order dialog
-    must NOT silently wave through the separate pending-supplier-assignment
-    warning too -- the caller must still see and confirm that one on its
-    own merits."""
+def test_start_order_process_stale_confirm_also_clears_qtycheck_warning(base_env, thread_spy, monkeypatch):
+    """Owner ruling 2026-10-26 ("only single time warning"): confirming the
+    stale-order dialog processes straight away -- the pending-supplier-
+    assignment warning is not chained after it."""
     monkeypatch.setattr(service.repository, "require_current_date_order_if_any", lambda sn: None)
     monkeypatch.setattr(
         service.repository, "qty_check_confirmation_count",
         lambda sn: (20260101120000, 3, [{"product_code": 1, "product_name": "X"}]),
     )
 
-    with pytest.raises(service.QtyCheckConfirmationRequired):
-        service.start_order_process("NMA", confirmed_stale_order=True)
+    assert service.start_order_process("NMA", confirmed_stale_order=True)
+    assert thread_spy
 
-    assert not thread_spy
+
+def test_start_order_process_qtycheck_confirm_also_clears_stale_warning(base_env, thread_spy, monkeypatch):
+    """Single warning, the other way round: confirming Order & Process on
+    the pending-assignment dialog must not then raise the stale warning."""
+    def stale(sn):
+        raise repository.NoCurrentDateOrder(sn, "Order is from yesterday")
+
+    monkeypatch.setattr(service.repository, "require_current_date_order_if_any", stale)
+    monkeypatch.setattr(service.repository, "qty_check_confirmation_count", lambda sn: (42, 3, []))
+
+    assert service.start_order_process("NMA", confirmed=True, confirmed_order_id=42, confirmed_count=3)
+    assert thread_spy
 
 
 # ===========================================================================
