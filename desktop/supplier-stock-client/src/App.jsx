@@ -13926,16 +13926,14 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
     if (!code) return <div className="scm-empty">Not stocked here</div>;
     const core = storeCore(store);
 
-    // NMW for a store user: not the full tables (HO-only), but a useful summary
-    // of the selected product in the warehouse — In warehouse / Expiry / PTR /
-    // MRP, one per row (owner request).
+    // NMW for a store user: the chart like every other store (owner ruling
+    // 2026-10-26: "view all charts, only restrict NMW product details"), but
+    // not the full batch/purchase/sales tables (HO-only) -- a useful summary of
+    // the selected product in the warehouse instead: Expiry / PTR / MRP.
     if (isWarehouse && !superAdmin) {
       const product = asArray(store.products).find((p) => p.product_code === code);
-      if (rowKey === 'chart') {
-        const stock = product ? (product.stock ?? product.total_stock ?? 0) : null;
-        return <NmwTile label="In warehouse" value={product ? formatQty(stock) : '—'} hint="Transfer from HO" zero={Number(stock) === 0} />;
-      }
       if (!core) return <div className="ns-card__waiting">Loading…</div>;
+      if (rowKey === 'chart') return svbChartCell(core, () => setChartModal({ store, core }));
       const batches = asArray(core.batches);
       const ref = batches.find((b) => Number(b.stock) > 0) || batches[0]; // FEFO: in-stock, earliest expiry first
       if (rowKey === 'batch') return <NmwTile label="Nearest expiry" value={ref ? formatMonthYear(ref.expiry_date) : '—'} />;
