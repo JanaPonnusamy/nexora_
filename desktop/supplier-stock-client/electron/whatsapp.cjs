@@ -247,6 +247,14 @@ const ATTACH_DOCUMENT = [
   "//span[normalize-space(text())='Document']",
   "//div[normalize-space(text())='Document']"
 ];
+// Images go as photos (inline, all in ONE message), not as documents.
+const ATTACH_MEDIA = [
+  "//div[@aria-label='Photos & videos']",
+  "//li[@aria-label='Photos & videos']",
+  "//li[.//span[normalize-space()='Photos & videos']]",
+  "//span[normalize-space(text())='Photos & videos']",
+  "//div[normalize-space(text())='Photos & videos']"
+];
 const PREVIEW_CAPTION = [
   "//div[@aria-label='Add a caption'][@contenteditable='true']",
   "//div[@contenteditable='true'][@data-tab='10'][not(ancestor::footer)]"
@@ -362,14 +370,15 @@ async function waitPendingUploads(timeoutMs) {
   }
 }
 
-function chooseFile(filePath) {
+function chooseFile(filePath, option = ATTACH_DOCUMENT, what = '"Document" attach option') {
+  const files = Array.isArray(filePath) ? filePath : [filePath];
   const wc = ensureWindow().webContents;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { cleanup(); reject(new Error('file chooser did not open')); }, 10000);
     const onMessage = (_event, method, params) => {
       if (method !== 'Page.fileChooserOpened') return;
       cleanup();
-      wc.debugger.sendCommand('DOM.setFileInputFiles', { files: [filePath], backendNodeId: params.backendNodeId })
+      wc.debugger.sendCommand('DOM.setFileInputFiles', { files, backendNodeId: params.backendNodeId })
         .then(resolve, reject);
     };
     function cleanup() {
@@ -379,27 +388,31 @@ function chooseFile(filePath) {
     }
     wc.debugger.on('message', onMessage);
     wc.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true })
-      .then(() => clickFirst(ATTACH_DOCUMENT, 5000, '"Document" attach option'))
+      .then(() => clickFirst(option, 5000, what))
       .catch((err) => { cleanup(); reject(err); });
   });
 }
 
-async function attachFallback(filePath) {
+async function attachFallback(filePath, media = false) {
   // Older UI: no Document menu/chooser -- set the hidden <input type=file>.
-  const { result } = await cdp('Runtime.evaluate', {
-    expression: "[...document.querySelectorAll(\"input[type='file']\")].pop() || null"
-  });
-  if (!result || !result.objectId) throw new Error('No file input was found to attach the document.');
-  await cdp('DOM.setFileInputFiles', { files: [filePath], objectId: result.objectId });
+  const files = Array.isArray(filePath) ? filePath : [filePath];
+  const pick = media
+    ? "[...document.querySelectorAll(\"input[type='file'][accept*='image']\")].pop() || [...document.querySelectorAll(\"input[type='file']\")].pop() || null"
+    : "[...document.querySelectorAll(\"input[type='file']\")].pop() || null";
+  const { result } = await cdp('Runtime.evaluate', { expression: pick });
+  if (!result || !result.objectId) throw new Error('No file input was found to attach the file.');
+  await cdp('DOM.setFileInputFiles', { files, objectId: result.objectId });
 }
 
-async function sendFile(filePath, caption) {
+// filePath: one path, or several image paths sent together as ONE message.
+async function sendFile(filePath, caption, media = false) {
   await clickFirst(ATTACH, 15000, 'attach button');
   await sleep(400);
   try {
-    await chooseFile(filePath);
+    if (media) await chooseFile(filePath, ATTACH_MEDIA, '"Photos & videos" attach option');
+    else await chooseFile(filePath);
   } catch {
-    await attachFallback(filePath);
+    await attachFallback(filePath, media);
   }
   const send = await locate(SEND_BUTTON, 30000);
   if (!send) throw new Error('WhatsApp attachment preview did not open.');
@@ -449,6 +462,8 @@ async function doSend(payload) {
     paths.push(p);
   }
   for (const p of paths) if (!fs.existsSync(p)) throw new Error(`File not found: ${p}`);
+  // Owner rule: never a .zip on WhatsApp -- send the images / sheets themselves.
+  if (paths.some((p) => /\.zip$/i.test(p))) throw new Error('Zip files are not sent on WhatsApp -- send the files inside it.');
   if (!paths.length && !String(payload.text || '').trim()) throw new Error('Nothing to send.');
 
   setEnabled(true);
@@ -458,7 +473,12 @@ async function doSend(payload) {
   await dismissDialogs();
   await openChat(chat);
   if (paths.length) {
-    for (let i = 0; i < paths.length; i++) await sendFile(paths[i], i === 0 ? payload.text : '');
+    // All images in ONE message (one attach, one Send); other files after.
+    const images = paths.filter((p) => /\.(png|jpe?g)$/i.test(p));
+    const others = paths.filter((p) => !images.includes(p));
+    let caption = payload.text;
+    if (images.length) { await sendFile(images, caption, true); caption = ''; }
+    for (const p of others) { await sendFile(p, caption); caption = ''; }
   } else {
     await sendText(payload.text);
   }
@@ -482,6 +502,97 @@ function send(payload) {
       sending = false;
     }
   });
+  sendChain = run.catch(() => {});
+  return run;
+}
+
+// --- chat list / search (supplier contact picker) ---------------------------
+// Same approach as the HO sender's list_chats: one JS pass per scroll over
+// #pane-side reading each row's title cell; groups are labelled from the
+// "Groups" filter chip (cached for the session, since search results carry
+// no reliable group marker).
+
+const FILTER_GROUPS = [
+  "//button[@role='tab'][starts-with(normalize-space(.),'Groups') or starts-with(normalize-space(.),'Group')]",
+  "//*[@role='tab'][contains(translate(.,'GROUP','group'),'group')]"
+];
+const FILTER_ALL = ["//button[@id='all-filter']", "//*[@role='tab'][normalize-space()='All']"];
+
+const SCRAPE_NAMES_JS = `(() => {
+  const pane = document.getElementById('pane-side');
+  if (!pane) return [];
+  const cells = pane.querySelectorAll("div[data-testid='cell-frame-title'] span[title]");
+  const nodes = cells.length ? cells : pane.querySelectorAll('[role="listitem"] span[title], [role="row"] span[title]');
+  const out = [];
+  nodes.forEach((s) => { const t = (s.getAttribute('title') || '').trim(); if (t && !out.includes(t)) out.push(t); });
+  return out;
+})()`;
+const SCROLL_PANE_JS = `(() => { const p = document.getElementById('pane-side'); if (!p) return;
+  const g = p.querySelector('[role="grid"]'); [p, g].forEach((el) => { if (el) el.scrollTop = el.scrollHeight; }); })()`;
+const TOP_PANE_JS = `(() => { const p = document.getElementById('pane-side'); if (!p) return;
+  const g = p.querySelector('[role="grid"]'); [p, g].forEach((el) => { if (el) el.scrollTop = 0; }); })()`;
+
+let groupNames = null;
+
+async function scrapeNames(budgetMs, max = 800) {
+  await js(TOP_PANE_JS).catch(() => {});
+  await sleep(250);
+  const names = [];
+  const end = Date.now() + budgetMs;
+  let stagnant = 0;
+  while (Date.now() < end && names.length < max && stagnant < 3) {
+    const batch = await js(SCRAPE_NAMES_JS).catch(() => []);
+    let added = 0;
+    for (const n of batch || []) if (!names.includes(n)) { names.push(n); added++; }
+    stagnant = added ? 0 : stagnant + 1;
+    await js(SCROLL_PANE_JS).catch(() => {});
+    await sleep(300);
+  }
+  return names;
+}
+
+async function loadGroupNames(force) {
+  if (groupNames && !force) return groupNames;
+  const pos = await locate(FILTER_GROUPS, 3000);
+  if (!pos) return groupNames || new Set();
+  await clickAt(pos);
+  await sleep(700);
+  groupNames = new Set(await scrapeNames(12000));
+  const all = await locate(FILTER_ALL, 2000);
+  if (all) { await clickAt(all); await sleep(500); }
+  return groupNames;
+}
+
+// opts: { query?, filter?: 'all'|'groups'|'contacts', refresh? }
+async function doListChats(opts) {
+  const st = await settle();
+  if (st.state === 'qr') throw new Error('WhatsApp is not linked on this PC. Scan the QR code first.');
+  if (st.state !== 'ready') throw new Error('WhatsApp Web is still loading. Try again in a minute.');
+  await dismissDialogs();
+  const groups = await loadGroupNames(Boolean(opts.refresh));
+  const query = String(opts.query || '').trim();
+  let names;
+  if (query) {
+    await clickFirst(SEARCH_BOX, 15000, 'search box');
+    await clearFocused();
+    await cdp('Input.insertText', { text: query });
+    await sleep(1500);
+    names = await scrapeNames(4000, 100);
+    await clickFirst(SEARCH_BOX, 3000, 'search box').catch(() => {});
+    await clearFocused().catch(() => {});
+    await press('Escape').catch(() => {});
+  } else {
+    names = await scrapeNames(12000);
+    for (const g of groups) if (!names.includes(g)) names.push(g);
+  }
+  const chats = names.map((name) => ({ name, kind: groups.has(name) ? 'group' : 'contact' }));
+  const filter = opts.filter || 'all';
+  return chats.filter((c) => filter === 'all' || (filter === 'groups' ? c.kind === 'group' : c.kind === 'contact'));
+}
+
+function listChats(opts = {}) {
+  // Shares the send queue: both drive the same page.
+  const run = sendChain.then(() => doListChats(opts).then((chats) => ({ chats }), (err) => ({ chats: [], error: err?.message || String(err) })));
   sendChain = run.catch(() => {});
   return run;
 }
@@ -513,6 +624,7 @@ function init() {
   });
   ipcMain.handle('wa:send', (_event, payload) => send(payload || {}));
   ipcMain.handle('wa:log', () => readJson(logPath(), []));
+  ipcMain.handle('wa:chats', (_event, opts) => listChats(opts || {}));
   // Only start the (~300 MB) WhatsApp page on PCs that have linked it.
   if (isEnabled()) setTimeout(() => ensureWindow(), 8000);
 }

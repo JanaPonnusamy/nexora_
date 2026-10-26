@@ -30,7 +30,9 @@ import {
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 import SchemaSyncPage from './SchemaSyncPage.jsx';
-import { StoreWhatsAppScreen, WhatsAppSendDialog, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
+import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareHost, offerWhatsAppShare, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
+import { NavMenu } from './navMenu.jsx';
+import TimeReport from './TimeReport.jsx';
 
 // Dev-only login bypass: when running under `vite` (npm run dev) with
 // credentials set in .env.development.local, the app auto-signs-in as that
@@ -46,17 +48,20 @@ const DEV_AUTO_LOGIN = Boolean(DEV_AUTO_LOGIN_USER);
 const DEV_SCREEN = import.meta.env.DEV ? (import.meta.env.VITE_DEV_SCREEN || '') : '';
 const DEV_STORE = import.meta.env.DEV ? (import.meta.env.VITE_DEV_STORE || '') : '';
 
+// `group` places each screen in the grouped menubar (navMenu.jsx NAV_GROUPS);
+// `short` is the name shown on the group button while that screen is open.
 const screens = [
-  { id: 'stock', label: 'Stock Availability', module: 'stock_availability' },
-  { id: 'stock_vertical', label: 'Stock (Vertical)', module: 'stock_availability' },
-  { id: 'network_stock', label: 'Network Stock', module: 'stock_availability' },
-  { id: 'label_exporter', label: 'Label Exporter', module: 'label_exporter' },
-  { id: 'analysis', label: 'Supplier Stock Analysis', module: 'supplier_stock_analysis' },
-  { id: 'nmw_sales', label: 'NMW Sales Report', module: 'nmw_sales_report' },
-  { id: 'order_workspace', label: 'Order Workspace', module: 'order_workspace' },
-  { id: 'schema_sync', label: 'Schema Sync', module: 'schema_sync' },
-  { id: 'whatsapp', label: 'WhatsApp', module: 'whatsapp' },
-  { id: 'settings', label: 'Settings', module: 'settings' }
+  { id: 'stock', label: 'Stock Availability', short: 'Availability', group: 'stock', module: 'stock_availability' },
+  { id: 'stock_vertical', label: 'Stock (Vertical)', short: 'Vertical', group: 'stock', module: 'stock_availability' },
+  { id: 'network_stock', label: 'Network Stock', short: 'Network', group: 'stock', module: 'stock_availability' },
+  { id: 'order_workspace', label: 'Order Workspace', short: 'Order WS', group: 'purchase', module: 'order_workspace' },
+  { id: 'analysis', label: 'Supplier Stock Analysis', short: 'Supplier Analysis', group: 'purchase', module: 'supplier_stock_analysis' },
+  { id: 'nmw_sales', label: 'NMW Sales Report', short: 'NMW Sales', group: 'reports', module: 'nmw_sales_report' },
+  { id: 'time_report', label: 'Time Report', short: 'Time', group: 'reports', module: 'time_report' },
+  { id: 'label_exporter', label: 'Label Exporter', short: 'Labels', group: 'tools', module: 'label_exporter' },
+  { id: 'whatsapp', label: 'WhatsApp', group: 'tools', module: 'whatsapp' },
+  { id: 'schema_sync', label: 'Schema Sync', group: 'tools', module: 'schema_sync' },
+  { id: 'settings', label: 'Settings', group: 'system', module: 'settings' }
 ];
 
 function asArray(value) {
@@ -384,6 +389,10 @@ function AppShell() {
     // Schema Sync runs live DDL against Production/HO - super admin only, no
     // per-user module grant can unlock it.
     if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'schema_sync');
+    // Time Report (COSEC staff attendance): super admins, or a TIME_REPORT
+    // module grant -- never implied by an empty module list.
+    const timeReportAllowed = isSuperAdmin(session) || modules.some((m) => String(m).toLowerCase() === 'time_report');
+    if (!timeReportAllowed) base = base.filter((s) => s.id !== 'time_report');
     if (!modules.length) return base;
     // 'settings' is always available; 'nmw_sales' is too unless blocked above.
     // The NMW Sales Report is scoped server-side (store users see only their
@@ -400,6 +409,7 @@ function AppShell() {
     // Every store login may link and use its own store's WhatsApp.
     always.add('whatsapp');
     if (isSuperAdmin(session)) always.add('schema_sync');
+    if (timeReportAllowed) always.add('time_report');
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
 
@@ -567,18 +577,7 @@ function AppShell() {
           </div>
         </div>
 
-        <nav className="menubar-nav" aria-label="Main navigation">
-          {navItems.map((screen) => (
-            <button
-              key={screen.id}
-              className={activeScreen === screen.id ? 'active' : ''}
-              onClick={() => setActiveScreen(screen.id)}
-              aria-current={activeScreen === screen.id ? 'page' : undefined}
-            >
-              {screen.label}
-            </button>
-          ))}
-        </nav>
+        <NavMenu items={navItems} activeScreen={activeScreen} onSelect={setActiveScreen} />
 
         <div className="menubar-right">
           <LastSyncBadge tenantId={runtimeSettings?.tenantId || session?.user?.tenant_id || ''} />
@@ -656,6 +655,8 @@ function AppShell() {
           <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : activeScreen === 'whatsapp' ? (
           <StoreWhatsAppScreen outbox={storeOutbox} />
+        ) : activeScreen === 'time_report' ? (
+          <TimeReport session={session} />
         ) : activeScreen === 'order_workspace' ? null : activeScreen === 'schema_sync' ? (
           <SchemaSyncPage session={session} />
         ) : (
@@ -677,6 +678,7 @@ function AppShell() {
           <OrderWorkspace session={session} settings={runtimeSettings} hidden={activeScreen !== 'order_workspace'} />
         )}
       </main>
+      <WhatsAppShareHost />
     </div>
   );
 }
@@ -5859,6 +5861,7 @@ function owDownloadBlob(blob, filename) {
   link.href = url; link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+  offerWhatsAppShare({ blobs: [{ name: filename, blob }] });
 }
 
 // Base64-encodes a Blob for the Electron IPC bridge (ipcRenderer can't pass
@@ -9208,6 +9211,7 @@ function NmwSalesReport({ session, settings }) {
     link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
+    offerWhatsAppShare({ blobs: [{ name: filename, blob }], source: 'NMW Sales Report' });
   }
 
   const activeBill = bills.find((b) => nmwBillKey(b) === activeKey) || null;

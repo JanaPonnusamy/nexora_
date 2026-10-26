@@ -181,7 +181,45 @@ def _column_widths(headers, table):
     return widths
 
 
-def _write_xlsx(headers, table):
+# --------------------------------------------------------------------------
+# Supplier WhatsApp decoration (owner request 2026-10-26): an organisation +
+# supplier title (every image; the sheet only when asked -- its file name
+# already says who it is for) and the supplier's recent bills and returns
+# (CN) at the end (last image, end of the last sheet).
+# decor = {"title": [lines], "excel_title": bool,
+#          "footer": supplier_whatsapp.recent_bills(...)}  -- all optional.
+# --------------------------------------------------------------------------
+
+def _decor_date(value):
+    return value.strftime("%d-%m-%Y") if hasattr(value, "strftime") else str(value or "")
+
+
+def _footer_sections(footer, for_image=False):
+    """[(title, headers, rows)]: bills, then returns, each with a Total row
+    when it has more than one line, or a single "None" row when empty."""
+    if not footer or not footer.get("days"):
+        return []
+    days = footer["days"]
+    span = "today" if days == 1 else f"last {days} days"
+    money = (lambda v: f"{v:,.2f}") if for_image else (lambda v: v)
+    qty = (lambda v: _image_text(v, "")) if for_image else (lambda v: v)
+
+    def section(title, headers, items, lead):
+        rows = [lead(i) + [i["items"], qty(i["qty"]), money(i["value"])] for i in items]
+        if len(items) > 1:
+            rows.append(["Total"] + [""] * (len(headers) - 4) + [
+                sum(i["items"] for i in items), qty(sum(i["qty"] for i in items)), money(round(sum(i["value"] for i in items), 2))])
+        return title, headers, rows or [["None"] + [""] * (len(headers) - 1)]
+
+    return [
+        section(f"Bills received ({span})", ["Date", "GRN No", "Invoice No", "Items", "Qty", "Value"],
+                footer.get("bills") or [], lambda b: [_decor_date(b["date"]), b["grn_no"], b["invoice_no"] or "-"]),
+        section(f"Returns / CN ({span})", ["Date", "Return No", "Items", "Qty", "Value"],
+                footer.get("returns") or [], lambda r: [_decor_date(r["date"]), r["grn_no"]]),
+    ]
+
+
+def _write_xlsx(headers, table, title=None, tail=None):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
@@ -189,21 +227,34 @@ def _write_xlsx(headers, table):
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
+    last_col = len(headers)
+    top = 0
+    for i, line in enumerate(title or []):
+        ws.append([line])
+        cell = ws.cell(row=i + 1, column=1)
+        cell.font = Font(name=_FONT_NAME, size=_FONT_SIZE + (4 if i == 0 else 1), bold=True)
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+        if last_col > 1:
+            ws.merge_cells(start_row=i + 1, start_column=1, end_row=i + 1, end_column=last_col)
+        top = i + 1
+    if title:
+        ws.append([])
+        top += 1
     ws.append(headers)
     for values in table:
         ws.append(values)
 
     thin = Side(style="thin", color="000000")
     thick = Side(style="thick", color="000000")
-    last_row, last_col = len(table) + 1, len(headers)
+    first_row, last_row = top + 1, top + len(table) + 1
     specs = [_cell_spec(h) for h in headers]
-    for row in ws.iter_rows(min_row=1, max_row=last_row, max_col=last_col):
+    for row in ws.iter_rows(min_row=first_row, max_row=last_row, max_col=last_col):
         for cell in row:
             r, c = cell.row, cell.column
-            spec = _cell_spec(headers[c - 1], header=True) if r == 1 else specs[c - 1]
+            spec = _cell_spec(headers[c - 1], header=True) if r == first_row else specs[c - 1]
             cell.border = Border(
                 left=thick if c == 1 else thin, right=thick if c == last_col else thin,
-                top=thick if r == 1 else thin, bottom=thick if r == last_row else thin,
+                top=thick if r == first_row else thin, bottom=thick if r == last_row else thin,
             )
             cell.font = Font(name=_FONT_NAME, size=_FONT_SIZE, bold=spec["bold"], color=spec["color"])
             cell.alignment = Alignment(horizontal=spec["align"], vertical="center")
@@ -211,11 +262,28 @@ def _write_xlsx(headers, table):
                 cell.fill = PatternFill("solid", fgColor=spec["fill"])
             if spec["num_format"]:
                 cell.number_format = spec["num_format"]
-    for r in range(1, last_row + 1):
+    for r in range(first_row, last_row + 1):
         ws.row_dimensions[r].height = _ROW_HEIGHT_PT
-    for c, w in enumerate(_column_widths(headers, table), start=1):
+    widths = _column_widths(headers, table)
+
+    r = last_row + 1
+    for sec_title, sec_headers, sec_rows in tail or []:
+        r += 1
+        ws.cell(row=r, column=1, value=sec_title).font = Font(name=_FONT_NAME, size=_FONT_SIZE, bold=True)
+        for i, values in enumerate([sec_headers] + sec_rows):
+            r += 1
+            for c, value in enumerate(values, start=1):
+                cell = ws.cell(row=r, column=c, value=value)
+                cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+                cell.font = Font(name=_FONT_NAME, size=_FONT_SIZE, bold=(i == 0 or values[0] == "Total"))
+                if isinstance(value, float):
+                    cell.number_format = "#,##0.00"
+                if c <= len(widths):
+                    widths[c - 1] = max(widths[c - 1], len(str(value)) * 1.15 + 4)
+        r += 1
+    for c, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(c)].width = w
-    ws.freeze_panes = "A2"
+    ws.freeze_panes = f"A{first_row + 1}"
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -263,7 +331,7 @@ def _xls_style(spec, left, right, top, bottom):
     return xf
 
 
-def _write_xls(headers, table):
+def _write_xls(headers, table, title=None, tail=None):
     """headers: labels; table: list of value lists (already in header order)."""
     import xlwt
     wb = xlwt.Workbook()
@@ -271,43 +339,71 @@ def _write_xls(headers, table):
         wb.set_colour_RGB(xlwt.Style.colour_map[name], *(int(rgb[i:i + 2], 16) for i in (0, 2, 4)))
     ws = wb.add_sheet("Sheet1")
 
-    last_row, last_col = len(table), len(headers) - 1
+    top = len(title) + 1 if title else 0
+    last_row, last_col = top + len(table), len(headers) - 1
     specs = [_cell_spec(h) for h in headers]
     header_spec = _cell_spec(None, header=True)
     styles = {}  # BIFF caps a workbook at ~4k XFs -- one per distinct combo
 
     def style(r, c):
-        key = (r == 0, c, r == last_row)
+        key = (r == top, c, r == last_row)
         if key not in styles:
-            styles[key] = _xls_style(header_spec if r == 0 else specs[c],
-                                     c == 0, c == last_col, r == 0, r == last_row)
+            styles[key] = _xls_style(header_spec if r == top else specs[c],
+                                     c == 0, c == last_col, r == top, r == last_row)
         return styles[key]
 
+    for i, line in enumerate(title or []):
+        size = (_FONT_SIZE + (4 if i == 0 else 1)) * 20
+        ws.write_merge(i, i, 0, last_col, line, xlwt.easyxf(f"font: name {_FONT_NAME}, height {size}, bold on; align: vert centre, horiz left"))
     for c, label in enumerate(headers):
-        ws.write(0, c, label, style(0, c))
-    for r, values in enumerate(table, start=1):
+        ws.write(top, c, label, style(top, c))
+    for r, values in enumerate(table, start=top + 1):
         for c, value in enumerate(values):
             ws.write(r, c, value, style(r, c))
-    for r in range(last_row + 1):
+    for r in range(top, last_row + 1):
         ws.row(r).height_mismatch = True
         ws.row(r).height = _ROW_HEIGHT_PT * 20
-    for c, w in enumerate(_column_widths(headers, table)):
+    widths = _column_widths(headers, table)
+
+    tail_font = f"font: name {_FONT_NAME}, height {_FONT_SIZE * 20}"
+    tail_border = "borders: left thin, right thin, top thin, bottom thin"
+    tail_styles = {
+        (bold, money): xlwt.easyxf(f"{tail_font}{', bold on' if bold else ''}; {tail_border}",
+                                   num_format_str="#,##0.00" if money else "General")
+        for bold in (False, True) for money in (False, True)
+    }
+    r = last_row + 1
+    for sec_title, sec_headers, sec_rows in tail or []:
+        r += 1
+        ws.write(r, 0, sec_title, xlwt.easyxf(f"{tail_font}, bold on"))
+        for i, values in enumerate([sec_headers] + sec_rows):
+            r += 1
+            for c, value in enumerate(values):
+                ws.write(r, c, value, tail_styles[(i == 0 or values[0] == "Total", isinstance(value, float))])
+                if c < len(widths):
+                    widths[c] = max(widths[c], len(str(value)) * 1.15 + 4)
+        r += 1
+    for c, w in enumerate(widths):
         ws.col(c).width = int(256 * w)
     # Header row stays on screen while scrolling (same as the .xlsx A2 freeze).
     ws.set_panes_frozen(True)
-    ws.set_horz_split_pos(1)
+    ws.set_horz_split_pos(top + 1)
     ws.set_remove_splits(True)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def _write_csv(headers, table):
+def _write_csv(headers, table, title=None, tail=None):
     import csv
     buf = io.StringIO()
     writer = csv.writer(buf)
+    if title:
+        writer.writerows([[line] for line in title] + [[]])
     writer.writerow(headers)
     writer.writerows(table)
+    for sec_title, sec_headers, sec_rows in tail or []:
+        writer.writerows([[], [sec_title], sec_headers] + sec_rows)
     return buf.getvalue().encode("utf-8-sig")  # BOM so Excel opens non-ASCII cleanly
 
 
@@ -378,8 +474,10 @@ def _image_text(value, label):
     return str(value)
 
 
-def _render_images(headers, table, base_name, per_image=_PRODUCTS_PER_IMAGE):
-    """[(filename, png bytes), ...] -- one PNG per `per_image` rows."""
+def _render_images(headers, table, base_name, per_image=_PRODUCTS_PER_IMAGE, title=None, tail=None):
+    """[(filename, png bytes), ...] -- one PNG per `per_image` rows. `title`
+    lines head EVERY image (the last line gets "Part n of m"); `tail`
+    sections (bills / returns) go under the table of the LAST image."""
     from PIL import Image, ImageDraw
 
     rgb = lambda h: tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
@@ -390,37 +488,91 @@ def _render_images(headers, table, base_name, per_image=_PRODUCTS_PER_IMAGE):
     texts = [[_image_text(v, headers[c]) for c, v in enumerate(row)] for row in table]
 
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    col_w = []
-    for c, h in enumerate(headers):
-        widest = max([scratch.textlength(str(h), font=font_bold)]
-                     + [scratch.textlength(row[c], font=font_bold if specs[c]["bold"] else font) for row in texts])
-        col_w.append(int(widest) + cell_pad * 2)
-    table_w = sum(col_w)
 
-    def draw_row(draw, y, values, row_specs, raw_values, row_fill):
+    def widths_for(head, rows, row_specs):
+        out = []
+        for c, h in enumerate(head):
+            widest = max([scratch.textlength(str(h), font=font_bold)]
+                         + [scratch.textlength(str(row[c]), font=font_bold if row_specs[c]["bold"] else font) for row in rows])
+            out.append(int(widest) + cell_pad * 2)
+        return out
+
+    col_w = widths_for(headers, texts, specs)
+    table_w = sum(col_w)
+    parts = max(1, -(-len(table) // per_image))
+
+    # Title band: organisation (large), supplier, then the meta line.
+    title = [str(t) for t in (title or []) if t]
+    title_fonts = [_image_font(26, bold=True), _image_font(20, bold=True)] + [_image_font(16)] * max(0, len(title) - 2)
+    title_line_h = [40, 32] + [26] * max(0, len(title) - 2)
+    title_colors = [_IMG_TEXT, _IMG_OUTER] + [_IMG_TEXT_MUTED] * max(0, len(title) - 2)
+
+    def title_lines(part):
+        if not title:
+            return []
+        lines = list(title)
+        if parts > 1:
+            lines[-1] = f"{lines[-1]}  ·  Part {part} of {parts}"
+        return lines
+
+    title_w = max([scratch.textlength(line, font=title_fonts[i]) for i, line in enumerate(title_lines(parts))] or [0])
+    title_h = sum(title_line_h[:len(title)]) + 14 if title else 0
+
+    # Tail sections: their own column widths; numbers right-aligned.
+    plain = {"bold": False, "fill": None, "color": _IMG_TEXT, "align": None}
+    tail_layout = []
+    for sec_title, sec_headers, sec_rows in tail or []:
+        sec_rows = [[str(v) for v in row] for row in sec_rows]
+        n = len(sec_headers)
+        row_specs = [dict(plain, align="right" if c >= n - 3 else "left") for c in range(n)]
+        tail_layout.append((sec_title, [str(h) for h in sec_headers], sec_rows, row_specs,
+                            widths_for(sec_headers, sec_rows, [plain] * n)))
+    tail_h = sum(36 + row_h * (1 + len(rows)) + 16 for _, _, rows, _, _ in tail_layout) + (12 if tail_layout else 0)
+    canvas_w = max([table_w, int(title_w)] + [sum(w) for *_, w in tail_layout])
+
+    def draw_row(draw, y, values, row_specs, raw_values, row_fill, widths=None):
+        widths = widths or col_w
         x = pad
         for c, text in enumerate(values):
             spec = row_specs[c]
-            box = [x, y, x + col_w[c], y + row_h]
+            box = [x, y, x + widths[c], y + row_h]
             draw.rectangle(box, fill=rgb(spec["fill"] or row_fill), outline=rgb(_IMG_RULE), width=1)
             f = font_bold if spec["bold"] else font
             tw = draw.textlength(text, font=f)
             align = spec["align"] or ("right" if isinstance(raw_values[c], (int, float)) else "left")
-            tx = (x + (col_w[c] - tw) / 2 if align == "center"
-                  else x + col_w[c] - cell_pad - tw if align == "right" else x + cell_pad)
+            tx = (x + (widths[c] - tw) / 2 if align == "center"
+                  else x + widths[c] - cell_pad - tw if align == "right" else x + cell_pad)
             draw.text((tx, y + row_h / 2), text, font=f, fill=rgb(spec["color"]), anchor="lm")
-            x += col_w[c]
+            x += widths[c]
 
     images = []
     for part, start in enumerate(range(0, len(table), per_image), start=1):
         chunk = range(start, min(start + per_image, len(table)))
         table_h = row_h * (len(chunk) + 1)
-        img = Image.new("RGB", (table_w + pad * 2, table_h + pad * 2), rgb(_IMG_CANVAS))
+        last = part == parts
+        img = Image.new("RGB", (canvas_w + pad * 2, title_h + table_h + (tail_h if last else 0) + pad * 2), rgb(_IMG_CANVAS))
         draw = ImageDraw.Draw(img)
-        draw_row(draw, pad, [str(h) for h in headers], [header_spec] * len(headers), headers, _IMG_HEADER)
+        y = pad
+        for i, line in enumerate(title_lines(part)):
+            draw.text((pad, y + title_line_h[i] / 2), line, font=title_fonts[i], fill=rgb(title_colors[i]), anchor="lm")
+            y += title_line_h[i]
+        top = pad + title_h
+        draw_row(draw, top, [str(h) for h in headers], [header_spec] * len(headers), headers, _IMG_HEADER)
         for n, i in enumerate(chunk, start=1):
-            draw_row(draw, pad + n * row_h, texts[i], specs, table[i], _IMG_ROW if n % 2 else _IMG_ROW_ALT)
-        draw.rectangle([pad - 1, pad - 1, pad + table_w + 1, pad + table_h + 1], outline=rgb(_IMG_OUTER), width=thick)
+            draw_row(draw, top + n * row_h, texts[i], specs, table[i], _IMG_ROW if n % 2 else _IMG_ROW_ALT)
+        draw.rectangle([pad - 1, top - 1, pad + table_w + 1, top + table_h + 1], outline=rgb(_IMG_OUTER), width=thick)
+        if last and tail_layout:
+            y = top + table_h + 12
+            for sec_title, sec_headers, sec_rows, row_specs, widths in tail_layout:
+                y += 16
+                draw.text((pad, y + 10), sec_title, font=_image_font(18, bold=True), fill=rgb(_IMG_TEXT_SOFT), anchor="lm")
+                y += 20
+                draw_row(draw, y, sec_headers, [header_spec] * len(sec_headers), sec_headers, _IMG_HEADER, widths)
+                for n, values in enumerate(sec_rows, start=1):
+                    total = values[0] == "Total"
+                    draw_row(draw, y + n * row_h, values, [dict(s, bold=total) for s in row_specs], values,
+                             _IMG_ROW if n % 2 else _IMG_ROW_ALT, widths)
+                y += row_h * (1 + len(sec_rows))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         images.append((f"{base_name} Part {part}.png", buf.getvalue()))
@@ -561,21 +713,28 @@ def _normalize_pending_row(row):
     }
 
 
-def _package(base_name, ext, chunks, layout, images):
+def _package(base_name, ext, chunks, layout, images, decor=None):
     """Build the files for every chunk (+ optional PNGs over the full row
     set) -> (content, filename, media_type). One plain file when that's all
     there is; otherwise a .zip the desktop client unpacks into the order
-    folder (split "Part n of m" files and/or the "Part n" images)."""
+    folder (split "Part n of m" files and/or the "Part n" images). `decor`:
+    see _footer_sections -- the sheet title only with excel_title, the
+    bills/returns tail on the LAST sheet part."""
+    decor = decor or {}
     writer = _WRITERS[ext]
+    sheet_title = decor.get("title") if decor.get("excel_title") else None
+    sheet_tail = _footer_sections(decor.get("footer"))
     files = []
     if len(chunks) == 1:
-        files.append((f"{base_name}.{ext}", writer(*layout(chunks[0]))))
+        files.append((f"{base_name}.{ext}", writer(*layout(chunks[0]), title=sheet_title, tail=sheet_tail)))
     else:
         for idx, chunk in enumerate(chunks, start=1):
-            files.append((f"{base_name} Part {idx} of {len(chunks)}.{ext}", writer(*layout(chunk))))
+            files.append((f"{base_name} Part {idx} of {len(chunks)}.{ext}",
+                          writer(*layout(chunk), title=sheet_title, tail=sheet_tail if idx == len(chunks) else None)))
     if images:
         all_rows = [r for chunk in chunks for r in chunk]
-        files.extend(_render_images(*layout(all_rows), base_name))
+        files.extend(_render_images(*layout(all_rows), base_name, title=decor.get("title"),
+                                    tail=_footer_sections(decor.get("footer"), for_image=True)))
 
     if len(files) == 1:
         media_type = "text/csv" if ext == "csv" else (XLS_MEDIA_TYPE if ext == "xls" else XLSX_MEDIA_TYPE)
@@ -628,7 +787,7 @@ def export_pending_order(store_name, split_size, columns=None, file_format="xlsx
     return ExportResult(content, filename, media_type, pending_count, "Pending")
 
 
-def export_order(store_name, supplier_code, supplier_name, mode, split_size, actor, columns=None, file_format="xlsx", order_no=None, product_codes=None, all_products=False, images=False):
+def export_order(store_name, supplier_code, supplier_name, mode, split_size, actor, columns=None, file_format="xlsx", order_no=None, product_codes=None, all_products=False, images=False, only_codes=None, decor=None, name_suffix=None):
     """Resolve the rows to export -> build Excel -> return.
 
     Two entry shapes, both from the Order Workspace:
@@ -645,8 +804,15 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
       is already Assigned (status=1) to this supplier; nothing is assigned.
 
     The grid is the single source of truth: no separate "removed" list is kept.
-    A product not in product_codes is neither assigned nor exported."""
-    if product_codes is not None:
+    A product not in product_codes is neither assigned nor exported.
+
+    * Supplier WhatsApp auto-send (only_codes is a list): read-only -- just
+      those of the supplier's ALREADY-assigned rows (the next batch)."""
+    if only_codes is not None:
+        wanted = {_format_product_code(c) for c in only_codes}
+        rows = [r for r in repository.assigned_orders(store_name, supplier_code)
+                if _format_product_code(r.get("ProductCode")) in wanted]
+    elif product_codes is not None:
         wanted = {_format_product_code(c) for c in product_codes}
         # Never trust the client's code list to bypass store/orderqty>0 scoping:
         # re-resolve the legitimate open candidates server-side (the same set
@@ -688,7 +854,7 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
     date_part = datetime.date.today().strftime("%d%m%Y")
     order_part = order_no if order_no else date_part
     # Legacy VB name: "<supplier> <store name>   <ddMMyyyy>" (3 spaces).
-    base_name = _safe_file_name(f"{supplier_name} {store_name}   {date_part}")
+    base_name = _safe_file_name(f"{supplier_name} {store_name}   {date_part}" + (f" {name_suffix}" if name_suffix else ""))
 
     # Rows-per-file split (legacy VB "split size"): the desktop client unpacks
     # the resulting .zip into separate "Part n of m" files in the order folder.
@@ -702,6 +868,15 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
     else:
         chunks = [rows]
 
+    if decor and decor.get("title") is True:
+        # Default title: organisation, supplier, then store/date/order/count.
+        meta = [store_name, datetime.date.today().strftime("%d-%m-%Y")]
+        if order_no:
+            meta.append(f"Order No {order_no}")
+        meta.append(f"{assigned_count} product{'' if assigned_count == 1 else 's'}")
+        decor = dict(decor, title=[t for t in (decor.get("org_name"), f"Order to: {' '.join(str(supplier_name).split())}",
+                                              "  ·  ".join(meta)) if t])
+
     ext = file_format if file_format in ("xlsx", "xls", "csv") else "xls"
     if columns is None:
         layout = lambda chunk: _layout_fixed(chunk, has_rack)
@@ -711,7 +886,7 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
         layout = lambda chunk: _layout_generic(chunk, _resolve_columns(columns), _EXPORT_COLUMN_MAP)
 
     try:
-        content, filename, media_type = _package(base_name, ext, chunks, layout, images)
+        content, filename, media_type = _package(base_name, ext, chunks, layout, images, decor)
     except Exception as exc:
         logger.exception(
             "Order export: workbook build failed for store=%s supplier=%s (%s assigned rows)",

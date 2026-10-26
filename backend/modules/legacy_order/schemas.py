@@ -125,6 +125,39 @@ class ExportOrderRequest(BaseModel):
     # Also render the sheet as PNGs, 20 products per image ("<name> Part n.png");
     # the response becomes a .zip the desktop client unpacks.
     images: bool = False
+    # Supplier WhatsApp auto-send: export ONLY these already-assigned codes
+    # (read-only, no assignment step) -- the next unsent batch.
+    only_codes: list[str] | None = None
+    # Organisation + supplier title on every image (and on the sheet when
+    # excel_header); bills_days > 0 appends the supplier's bills / returns
+    # (CN) of the last N days at the end (last image, end of the sheet).
+    image_header: bool = False
+    excel_header: bool = False
+    org_name: str | None = None
+    bills_days: int = 0
+    name_suffix: str | None = None  # e.g. "Batch 2" / "Complete"
+
+
+class SupplierWhatsAppTarget(BaseModel):
+    name: str
+    kind: str = "contact"  # 'group' | 'contact'
+
+
+class SupplierWhatsAppContactRequest(BaseModel):
+    supplier_code: str
+    supplier_name: str | None = None
+    # ONE group, or one or more contacts. Empty = remove the supplier's entry.
+    targets: list[SupplierWhatsAppTarget] = []
+    auto_send: bool = False
+    batch_size: int = 20
+    send_format: str = "image"  # 'image' | 'excel' | 'both'
+    bill_days: int = 2  # 0 = no bills/CN footer
+
+
+class SupplierWhatsAppSentRequest(BaseModel):
+    supplier_code: str
+    product_codes: list[str] = []
+    kind: str = "batch"  # 'batch' | 'final'
 
 
 class ExportPendingOrderRequest(BaseModel):

@@ -731,6 +731,31 @@ export const api = {
     });
   },
 
+  // Supplier-wise WhatsApp (store-level WhatsApp): saved targets + auto-send.
+  legacyWhatsAppContacts(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/whatsapp/contacts`, { session });
+  },
+
+  legacySaveWhatsAppContact(storeName, payload, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/whatsapp/contacts`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  legacyWhatsAppStatus(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/whatsapp/status${toQuery({ supplier_code: supplierCode })}`, { session });
+  },
+
+  legacyMarkWhatsAppSent(storeName, supplierCode, productCodes, kind, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/whatsapp/sent`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ supplier_code: supplierCode, product_codes: productCodes, kind })
+    });
+  },
+
   legacyAssignSupplier(storeName, productCode, supplierCode, supplierName, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/${productCode}/assign`, {
       method: 'POST',
@@ -958,7 +983,13 @@ export const api = {
           ...(options.orderNo ? { order_no: options.orderNo } : {}),
           ...(options.productCodes ? { product_codes: options.productCodes } : {}),
           ...(options.allProducts ? { all_products: true } : {}),
-          ...(options.images ? { images: true } : {})
+          ...(options.images ? { images: true } : {}),
+          ...(options.onlyCodes ? { only_codes: options.onlyCodes } : {}),
+          ...(options.imageHeader ? { image_header: true } : {}),
+          ...(options.excelHeader ? { excel_header: true } : {}),
+          ...(options.orgName ? { org_name: options.orgName } : {}),
+          ...(options.billsDays ? { bills_days: options.billsDays } : {}),
+          ...(options.nameSuffix ? { name_suffix: options.nameSuffix } : {})
         })
       });
     } catch {
@@ -1083,6 +1114,36 @@ export const api = {
     const response = await fetch(joinUrl(settings.apiBaseUrl, `/api/procurement/distribution/store-outbox/${encodeURIComponent(runItemId)}/file`), {
       headers: authHeaders(session)
     });
+    if (!response.ok) {
+      let detail = response.statusText || 'Download failed';
+      try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    return response.blob();
+  },
+
+  // Time Report (COSEC attendance, /api/time-report/*).
+  timeReportMeta(session) {
+    return request('/api/time-report/meta', { session });
+  },
+
+  timeReport(report, params, session) {
+    return request(`/api/time-report/${encodeURIComponent(report)}${toQuery(params)}`, { session });
+  },
+
+  timeReportPath(report, params) {
+    return `/api/time-report/${report}${toQuery(params)}`;
+  },
+
+  // GET any file-returning path (report Excel / image) as a Blob.
+  async getBlob(path, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, path), { headers: authHeaders(session) });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
     if (!response.ok) {
       let detail = response.statusText || 'Download failed';
       try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }

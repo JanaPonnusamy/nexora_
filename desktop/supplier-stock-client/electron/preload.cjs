@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('nexoraDesktop', {
     show: () => ipcRenderer.invoke('wa:show'),
     unlink: () => ipcRenderer.invoke('wa:unlink'),
     send: (payload) => ipcRenderer.invoke('wa:send', payload),
-    log: () => ipcRenderer.invoke('wa:log')
+    log: () => ipcRenderer.invoke('wa:log'),
+    // { query?, filter?: 'all'|'groups'|'contacts', refresh? } -> { chats: [{ name, kind }], error? }
+    chats: (opts) => ipcRenderer.invoke('wa:chats', opts)
   }
 });

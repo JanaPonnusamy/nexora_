@@ -14,8 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
-from modules.legacy_order import database, order_export, repository, rulebook_order, service, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order import database, order_export, repository, rulebook_order, service, supplier_whatsapp, sync_engine
+from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def _header_value(value) -> str:
@@ -76,6 +76,7 @@ _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/export-pending$"),  # POST pending export (read-only)
     re.compile(r"^/api/legacy-order/orders/[^/]+/unavailable/remove$"),  # POST stock-out bulk remove
     re.compile(r"^/api/legacy-order/orders/[^/]+/auto-assign$"),  # POST bulk assign (best margin)
+    re.compile(r"^/api/legacy-order/orders/[^/]+/whatsapp/(contacts|sent)$"),  # POST supplier WhatsApp contacts / sent log
     re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+$"),      # PATCH qty-check review
     re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+/skip$"),  # POST skip (Procurement Esc)
 )
@@ -574,6 +575,79 @@ def assign_supplier(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def _export_decor(store_name, payload):
+    """Title / bills-footer options for export_order (None when unused)."""
+    if not (payload.image_header or payload.excel_header or payload.bills_days):
+        return None
+    decor = {"excel_title": payload.excel_header}
+    if payload.image_header or payload.excel_header:
+        decor["title"] = True
+        decor["org_name"] = (payload.org_name or "").strip() or supplier_whatsapp.organization_name(store_name)
+    if payload.bills_days and payload.bills_days > 0:
+        try:
+            decor["footer"] = supplier_whatsapp.recent_bills(store_name, payload.supplier_code, payload.bills_days)
+        except Exception:
+            decor["footer"] = None  # a footer must never block the order itself
+    return decor
+
+
+@router.get("/orders/{store_name}/whatsapp/contacts")
+def supplier_whatsapp_contacts(store_name: str):
+    """Every supplier of this store with saved WhatsApp targets."""
+    try:
+        return {"items": supplier_whatsapp.list_contacts(store_name)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/whatsapp/contacts")
+def save_supplier_whatsapp_contact(
+    store_name: str, payload: SupplierWhatsAppContactRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Upsert one supplier's WhatsApp targets + auto-send rule (ONE group, or
+    one or more contacts). An empty target list removes the entry."""
+    try:
+        item = supplier_whatsapp.save_contact(
+            store_name, payload.supplier_code, payload.supplier_name,
+            [t.model_dump() for t in payload.targets], payload.auto_send, payload.batch_size,
+            payload.send_format, payload.bill_days,
+            current_user.get("username") or current_user.get("sub"),
+        )
+        return {"item": item}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/whatsapp/status")
+def supplier_whatsapp_status(store_name: str, supplier_code: str):
+    """Auto-send state for one supplier on the current order: assigned,
+    already-sent and the unsent product codes (the next batch)."""
+    try:
+        return supplier_whatsapp.send_status(store_name, supplier_code)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/whatsapp/sent")
+def mark_supplier_whatsapp_sent(
+    store_name: str, payload: SupplierWhatsAppSentRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Record products the Stock Client just posted to the supplier."""
+    try:
+        return supplier_whatsapp.mark_sent(
+            store_name, payload.supplier_code, payload.product_codes, payload.kind,
+            current_user.get("username") or current_user.get("sub"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/orders/{store_name}/export")
 def export_order(
     store_name: str, payload: ExportOrderRequest,
@@ -597,7 +671,8 @@ def export_order(
             current_user.get("username") or current_user.get("sub"),
             columns=payload.columns, file_format=payload.file_format, order_no=payload.order_no,
             product_codes=payload.product_codes, all_products=payload.all_products,
-            images=payload.images,
+            images=payload.images, only_codes=payload.only_codes, name_suffix=payload.name_suffix,
+            decor=_export_decor(store_name, payload),
         )
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -6,6 +6,7 @@
 //   - useStoreWhatsAppOutbox: sends the NMW stock files HO queued for this
 //     store (distribution whatsapp_sender = STORE) from the store's number.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { unzipSync } from 'fflate';
 import { api } from './api/client.js';
 
 const wa = () => window.nexoraDesktop?.whatsapp;
@@ -78,24 +79,100 @@ function ChatInput({ value, onChange, id }) {
   );
 }
 
-// "Send on WhatsApp" for already-saved files (an order export). Remembers the
-// chat per rememberKey (e.g. the supplier code) for next time.
-export function WhatsAppSendDialog({ title, files, rememberKey, defaultChat = '', source, onClose, onSent }) {
-  const [chat, setChat] = useState(() => rememberedChat(rememberKey) || defaultChat);
-  const [text, setText] = useState('');
+// Owner rule: never a .zip on WhatsApp. Images go first, sheets last.
+export function sendableFiles(paths) {
+  const list = (paths || []).filter((p) => p && !/\.zip$/i.test(p));
+  const isImage = (p) => /\.(png|jpe?g)$/i.test(p);
+  return [...list.filter(isImage), ...list.filter((p) => !isImage(p))];
+}
+
+// Send the same files/text to every target in turn (one group, or several
+// contacts). -> { sent: [names], failed: [{ name, error }] }
+export async function sendToTargets(targets, { text, paths, files, source }) {
+  const sent = [];
+  const failed = [];
+  for (const t of targets) {
+    const name = typeof t === 'string' ? t : t.name;
+    const result = await wa().send({ chat: name, text, paths, files, source });
+    if (result.status === 'sent') sent.push(name); else failed.push({ name, error: result.error || 'Send failed.' });
+  }
+  return { sent, failed };
+}
+
+// Search this PC's WhatsApp for contacts / groups. Each search drives the
+// hidden WhatsApp page, so it runs on Enter / the button, not per keystroke.
+export function ChatPicker({ onPick, picked = [] }) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [state, setState] = useState({ busy: false, error: '', chats: null });
+  const run = async (refresh = false, nextFilter = filter) => {
+    setState((cur) => ({ ...cur, busy: true, error: '' }));
+    const res = await wa().chats({ query, filter: nextFilter, refresh });
+    setState({ busy: false, error: res.error || '', chats: res.chats || [] });
+  };
+  const pickedNames = new Set(picked.map((p) => p.name.toLowerCase()));
+  return (
+    <div className="swa-picker">
+      <div className="swa-picker-bar">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } }}
+          placeholder="Search WhatsApp contacts and groups"
+          aria-label="Search WhatsApp contacts and groups"
+        />
+        <button type="button" className="secondary-button" onClick={() => run()} disabled={state.busy}>{state.busy ? 'Searching…' : 'Search'}</button>
+      </div>
+      <div className="swa-picker-tabs" role="tablist" aria-label="Chat type">
+        {[['all', 'All'], ['groups', 'Groups'], ['contacts', 'Contacts']].map(([key, label]) => (
+          <button key={key} type="button" role="tab" aria-selected={filter === key}
+            className={filter === key ? 'is-active' : ''}
+            onClick={() => { setFilter(key); if (state.chats) run(false, key); }}>{label}</button>
+        ))}
+        <button type="button" className="swa-link" onClick={() => run(true)} disabled={state.busy} title="Re-read the group list from WhatsApp">Refresh groups</button>
+      </div>
+      {state.error && <div className="status-line error">{state.error}</div>}
+      {state.chats && (
+        <ul className="swa-picker-list">
+          {state.chats.length ? state.chats.map((c) => (
+            <li key={`${c.kind}:${c.name}`}>
+              <button type="button" disabled={pickedNames.has(c.name.toLowerCase())} onClick={() => onPick(c)}>
+                <span className={`swa-kind swa-kind-${c.kind}`}>{c.kind === 'group' ? 'Group' : 'Contact'}</span>
+                <span className="swa-picker-name">{c.name}</span>
+              </button>
+            </li>
+          )) : <li className="swa-muted">No chats found.</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// "Send on WhatsApp" for already-saved files (an order export, a report).
+// `targets` (saved supplier contacts) are sent to by default; otherwise the
+// chat is remembered per rememberKey (e.g. the supplier code) for next time.
+// files: saved paths; blobs: in-memory [{ name, blob }] (a report download).
+export function WhatsAppSendDialog({ title, files = [], blobs = [], rememberKey, defaultChat = '', defaultText = '', targets = [], source, onClose, onSent }) {
+  const [chat, setChat] = useState(() => (targets.length ? '' : rememberedChat(rememberKey) || defaultChat));
+  const [useSaved, setUseSaved] = useState(targets.length > 0);
+  const [text, setText] = useState(defaultText);
+  const [searching, setSearching] = useState(false);
   const [state, setState] = useState({ busy: false, error: '' });
+  const sendFiles = [...sendableFiles(files), ...sendableFiles(blobs.map((b) => b.name))];
 
   const send = async () => {
-    const target = chat.trim();
-    if (!target) { setState({ busy: false, error: 'Enter the WhatsApp chat, group or number.' }); return; }
+    const list = useSaved ? targets : chat.trim() ? [chat.trim()] : [];
+    if (!list.length) { setState({ busy: false, error: 'Enter the WhatsApp chat, group or number.' }); return; }
     setState({ busy: true, error: '' });
-    const result = await wa().send({ chat: target, text, paths: files, source });
-    if (result.status === 'sent') {
-      rememberChat(rememberKey, target);
-      onSent?.(target);
+    const order = sendableFiles(blobs.map((b) => b.name));
+    const payloadFiles = await Promise.all(order.map(async (name) => ({ name, base64: await blobToBase64(blobs.find((b) => b.name === name).blob) })));
+    const { sent, failed } = await sendToTargets(list, { text, paths: sendableFiles(files), files: payloadFiles, source });
+    if (!failed.length) {
+      if (!useSaved) rememberChat(rememberKey, list[0]);
+      onSent?.(sent.join(', '));
       onClose();
     } else {
-      setState({ busy: false, error: result.error || 'Send failed.' });
+      setState({ busy: false, error: failed.map((f) => `${f.name}: ${f.error}`).join(' · ') });
     }
   };
 
@@ -105,12 +182,23 @@ export function WhatsAppSendDialog({ title, files, rememberKey, defaultChat = ''
         <h3 id="swa-dialog-title">{title || 'Send on WhatsApp'}</h3>
         <p className="swa-muted">From this store&apos;s own WhatsApp.</p>
         <ul className="swa-files">
-          {files.map((f) => <li key={f} title={f}>{f.split(/[\\/]/).pop()}</li>)}
+          {sendFiles.map((f) => <li key={f} title={f}>{f.split(/[\\/]/).pop()}</li>)}
         </ul>
-        <label className="swa-field" htmlFor="swa-dialog-chat">
-          Send to
-          <ChatInput id="swa-dialog-chat" value={chat} onChange={setChat} />
-        </label>
+        {targets.length > 0 && (
+          <label className="swa-check">
+            <input type="checkbox" checked={useSaved} onChange={(e) => setUseSaved(e.target.checked)} />
+            Saved: {targets.map((t) => t.name).join(', ')}
+          </label>
+        )}
+        {!useSaved && (
+          <label className="swa-field" htmlFor="swa-dialog-chat">
+            Send to
+            <ChatInput id="swa-dialog-chat" value={chat} onChange={setChat} />
+          </label>
+        )}
+        {!useSaved && (searching
+          ? <ChatPicker onPick={(c) => { setChat(c.name); setSearching(false); }} />
+          : <button type="button" className="swa-link swa-link-start" onClick={() => setSearching(true)}>Search WhatsApp contacts / groups</button>)}
         <label className="swa-field" htmlFor="swa-dialog-text">
           Message (optional)
           <textarea id="swa-dialog-text" rows={2} value={text} onChange={(e) => setText(e.target.value)} />
@@ -124,6 +212,95 @@ export function WhatsAppSendDialog({ title, files, rememberKey, defaultChat = ''
         </div>
       </div>
     </div>
+  );
+}
+
+// --- Share any report / export on WhatsApp ----------------------------------
+// Report downloads call offerWhatsAppShare(); <WhatsAppShareHost/> (mounted
+// once in App) shows a "Send on WhatsApp" toast for the last file. A .zip is
+// opened and its files offered instead -- a zip is never sent.
+const SHARE_EVENT = 'nexora:wa-share';
+
+async function expandZipBlobs(blobs) {
+  const out = [];
+  for (const b of blobs) {
+    if (!/\.zip$/i.test(b.name)) { out.push(b); continue; }
+    const parts = unzipSync(new Uint8Array(await b.blob.arrayBuffer()));
+    for (const [name, bytes] of Object.entries(parts)) {
+      if (!name.endsWith('/')) out.push({ name: name.split('/').pop(), blob: new Blob([bytes]) });
+    }
+  }
+  return out;
+}
+
+// detail: { blobs: [{ name, blob }], title?, caption?, source? }
+export function offerWhatsAppShare(detail) {
+  if (!storeWhatsAppAvailable()) return;
+  window.dispatchEvent(new CustomEvent(SHARE_EVENT, { detail }));
+}
+
+export function WhatsAppShareHost() {
+  const [offer, setOffer] = useState(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const onShare = async (e) => {
+      const blobs = await expandZipBlobs(e.detail?.blobs || []);
+      if (!blobs.length) return;
+      setOffer({ ...e.detail, blobs });
+      if (e.detail?.openNow) setOpen(true);
+    };
+    window.addEventListener(SHARE_EVENT, onShare);
+    return () => window.removeEventListener(SHARE_EVENT, onShare);
+  }, []);
+  useEffect(() => {
+    if (!offer || open) return undefined;
+    const timer = setTimeout(() => setOffer(null), 20000);
+    return () => clearTimeout(timer);
+  }, [offer, open]);
+  if (!offer) return null;
+  const label = offer.blobs.length === 1 ? offer.blobs[0].name : `${offer.blobs.length} files`;
+  return (
+    <>
+      {!open && (
+        <div className="swa-share-toast" role="status">
+          <span title={label}>Saved {label}</span>
+          <button type="button" className="primary-button" onClick={() => setOpen(true)}>Send on WhatsApp</button>
+          <button type="button" className="swa-share-x" aria-label="Dismiss" onClick={() => setOffer(null)}>×</button>
+        </div>
+      )}
+      {open && (
+        <WhatsAppSendDialog
+          title={offer.title || 'Send on WhatsApp'}
+          blobs={offer.blobs}
+          defaultText={offer.caption || ''}
+          rememberKey={offer.rememberKey || `share:${offer.source || 'report'}`}
+          source={offer.source || 'Report'}
+          onClose={() => { setOpen(false); setOffer(null); }}
+        />
+      )}
+    </>
+  );
+}
+
+// Explicit button: builds its files on click, then opens the send dialog.
+export function WhatsAppShareButton({ label = 'WhatsApp', title, caption, source, buildFiles, disabled, className = 'secondary-button' }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!storeWhatsAppAvailable()) return null;
+  const click = async () => {
+    setBusy(true); setError('');
+    try {
+      offerWhatsAppShare({ blobs: await buildFiles(), title, caption, source, openNow: true });
+    } catch (e) {
+      setError(e.message || 'Could not prepare the file.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button type="button" className={className} disabled={disabled || busy} onClick={click} title={error || title}>
+      {busy ? 'Preparing…' : label}
+    </button>
   );
 }
 
