@@ -1086,14 +1086,17 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
         # bill number" test in Python. Doing that test as a per-row SQL LIKE
         # instead (LIKE '%' + column) is non-sargable and was ~160x slower on
         # a 6-week range (162s vs <1s) -- see nmw-purchase-entry-matching memory.
-        iv_pairs = {(r[2], r[3]) for r in rows if r[4] == "IV" and r[2] and r[3]}
+        # TI (transfer) stores too: since 2026-10 NMC keys the TO bill's
+        # trailing digits into InvoiceNumber on its transfer rows, which carry
+        # an EMPTY SupplierCode -- so '' is fetched alongside the mapped codes.
+        iv_pairs = {(r[2], r[3]) for r in rows if r[4] in ("IV", "TI") and r[2] and r[3]}
         invoice_lookup = {}
         if iv_pairs:
-            bill_dates = [r[1] for r in rows if r[4] == "IV"]
+            bill_dates = [r[1] for r in rows if r[4] in ("IV", "TI")]
             window_start = min(bill_dates)
             window_end = max(bill_dates) + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
             store_ids = sorted({p[0] for p in iv_pairs})
-            codes = sorted({p[1] for p in iv_pairs})
+            codes = sorted({p[1] for p in iv_pairs} | ({""} if any(r[4] == "TI" for r in rows) else set()))
             sph = ", ".join("?" for _ in store_ids)
             cph = ", ".join("?" for _ in codes)
             cursor.execute(
@@ -1152,17 +1155,20 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
             amount_grn = None
             if series in ("IV", "TI") and dest_store_id and raw_code:
                 window_end = bill_date + timedelta(days=PURCHASE_MATCH_WINDOW_DAYS)
-                # Bill-number match is IV-only: TI transfer receipts carry the
-                # store's own transfer-doc number in InvoiceNumber, not NMW's bill
-                # number (see module docstring), so only amount matching applies.
-                if series == "IV":
-                    candidates = [
-                        grn_number
-                        for invoice_number, grn_number, grn_date in invoice_lookup.get((dest_store_id, raw_code), [])
-                        if bnumber.endswith(invoice_number) and bill_date <= grn_date <= window_end
-                    ]
-                    if candidates:
-                        invoice_grn = min(candidates)
+                # Bill-number match: the store keys NMW's bill number (or its
+                # trailing digits) into Batches.InvoiceNumber. Owner ruling
+                # 2026-10-26: a bill-number hit completes the bill even when the
+                # amounts differ. TI receipts carry an empty SupplierCode, so
+                # their '' rows count too (TI bills only).
+                pools = [(dest_store_id, raw_code)] + ([(dest_store_id, "")] if series == "TI" else [])
+                candidates = [
+                    grn_number
+                    for pool in pools
+                    for invoice_number, grn_number, grn_date in invoice_lookup.get(pool, [])
+                    if bnumber.endswith(invoice_number) and bill_date <= grn_date <= window_end
+                ]
+                if candidates:
+                    invoice_grn = min(candidates)
                 # Amount match when the bill number isn't available (every TI bill,
                 # and any IV bill whose Batches invoice numbers lag): the single GRN
                 # whose PTR total equals this bill's, within tolerance, not a
@@ -1456,18 +1462,20 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
         # is authoritative and overrides the per-product read above, which can
         # under-report when NMW and the store disagree on a product's code for
         # the same physical item.
-        if series == "IV":
+        if series in ("IV", "TI"):
+            # TI transfer rows carry an empty SupplierCode (see the batch path).
             cursor.execute(
                 f"""
                 SELECT TOP (1) GrnNumber, MAX(GrnDate)
                 FROM sync.Batches
-                WHERE tenant_id = ? AND store_id = ? AND SupplierCode = ?
+                WHERE tenant_id = ? AND store_id = ?
+                  AND (SupplierCode = ? OR (? = 'TI' AND SupplierCode = ''))
                   AND LEN(InvoiceNumber) >= 4 AND ? LIKE '%' + InvoiceNumber
                   AND CAST(GrnDate AS DATE) BETWEEN ? AND DATEADD(DAY, {PURCHASE_MATCH_WINDOW_DAYS}, ?)
                 GROUP BY GrnNumber
                 ORDER BY MAX(GrnDate)
                 """,
-                (tenant_id, dest_store_id, raw_code, bnumber, bdate, bdate),
+                (tenant_id, dest_store_id, raw_code, series, bnumber, bdate, bdate),
             )
             inv_row = cursor.fetchone()
             if inv_row:
