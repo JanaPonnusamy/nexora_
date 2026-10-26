@@ -1,5 +1,7 @@
 """Reads from the legacy OrderNMC database."""
 import datetime
+import os
+import re
 
 from modules.legacy_order import database
 from modules.product_mapping import repository as product_mapping_repository
@@ -1527,7 +1529,7 @@ def qty_check_rows(store_name):
     sql = (
         "SELECT om.productcode, om.productname, om.orderqty, om.orgorderqty, om.totalstock, om.saleunit, om.unitdescription, "
         "om.slsqty, om.mrp, om.lastreceiveddate, om.lastsaledate, om.maxsaleqty, om.Transactiondate, om.wantedtype, "
-        "om.producttypename, om.remarks, om.IsOffer, "
+        "om.producttypename, om.remarks, om.IsOffer, om.SkipReason, om.SkippedAt, "
         "lastoffer.LastOfferBaseQty, lastoffer.LastOfferFreeQty "
         "FROM ordermanagement om "
         f"{_LAST_OFFER_PATTERN_APPLY} "
@@ -1535,7 +1537,9 @@ def qty_check_rows(store_name):
         "ORDER BY om.productname"
     )
     with database.get_central_connection() as conn:
-        cur = conn.cursor().execute(sql, store_name)
+        cur = conn.cursor()
+        _ensure_skip_schema(cur)
+        cur.execute(sql, store_name)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -1554,7 +1558,7 @@ def pending_order_rows(store_name):
     sql = (
         "SELECT om.productcode, om.productname, om.orderqty, om.orgorderqty, om.totalstock, om.slsqty, om.unitdescription, "
         "om.saleunit, om.mrp, om.lastreceiveddate, om.lastsaledate, om.maxsaleqty, om.Transactiondate, om.wantedtype, "
-        "om.producttypename, om.remarks, om.IsOffer, "
+        "om.producttypename, om.remarks, om.IsOffer, om.SkipReason, om.SkippedAt, "
         "lastoffer.LastOfferBaseQty, lastoffer.LastOfferFreeQty "
         "FROM ordermanagement om "
         f"{_LAST_OFFER_PATTERN_APPLY} "
@@ -1562,7 +1566,9 @@ def pending_order_rows(store_name):
         "AND om.producttypename IN ('Pharma', 'Non Pharma') ORDER BY om.productname"
     )
     with database.get_central_connection() as conn:
-        cur = conn.cursor().execute(sql, store_name)
+        cur = conn.cursor()
+        _ensure_skip_schema(cur)
+        cur.execute(sql, store_name)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -1665,12 +1671,141 @@ def update_qty_check(store_name, product_code, order_qty, actor=None):
             "WHERE productcode = ? AND storename = ? AND status = 0",
             order_qty, remark, product_code, store_name,
         )
+        # Ordering a skipped line again (qty > 0) ends its skip -- the line's
+        # mode and the carried store+product skip both clear.
+        if order_qty > 0:
+            _ensure_skip_schema(cur)
+            cur.execute(
+                "UPDATE ordermanagement SET SkipReason = NULL, SkippedAt = NULL, SkippedBy = NULL "
+                "WHERE productcode = ? AND storename = ? AND status = 0 AND SkipReason IS NOT NULL",
+                product_code, store_name,
+            )
+            _clear_active_skip(cur, store_name, product_code, "manual", actor)
         _record_line_audit(
             cur, store_name, int(row.OrderId), product_code, "QTY_REVIEWED",
             old_qty, order_qty, actor,
         )
         conn.commit()
         return {"order_qty": order_qty, "remarks": remark}
+
+
+# ---------------------------------------------------------------------------
+# Skip rules -- the platform's three skip modes (skipModes.ts) on OrderNMC.
+# Schema: sql/0010_order_skip_rules.sql (applied here at runtime, once).
+# ---------------------------------------------------------------------------
+
+SKIP_MODES = {
+    "current_refresh": "Current Order",
+    "until_next_sales": "Until Next Sales",
+    "until_next_demand": "Until Next Demand",
+}
+# Carried into newly generated orders until a real sale after the skip --
+# 'current_refresh' never is (same rule as order_items_repository.
+# carry_forward_skips on the platform).
+PERSISTENT_SKIP_MODES = ("until_next_sales", "until_next_demand")
+
+_SKIP_SCHEMA_READY = False
+
+
+def _ensure_skip_schema(cur=None):
+    """Apply sql/0010 once per process on its OWN connection and commit it --
+    never inside the caller's transaction (a read path would roll the DDL
+    back; the order-generation transaction must not be committed early).
+    `cur` is accepted for call-site symmetry and ignored."""
+    global _SKIP_SCHEMA_READY
+    if _SKIP_SCHEMA_READY:
+        return
+    path = os.path.join(os.path.dirname(__file__), "sql", "0010_order_skip_rules.sql")
+    with open(path, encoding="utf-8") as fh:
+        script = fh.read()
+    with database.get_central_connection() as conn:
+        ddl = conn.cursor()
+        for batch in [b.strip() for b in re.split(r"^\s*GO\s*$", script, flags=re.MULTILINE) if b.strip()]:
+            ddl.execute(batch)
+        conn.commit()
+    _SKIP_SCHEMA_READY = True
+
+
+def _clear_active_skip(cur, store_name, product_code, reason, actor):
+    cur.execute(
+        "UPDATE dbo.OrderProductSkip SET ClearedAt = GETDATE(), ClearedBy = ?, ClearReason = ? "
+        "WHERE StoreName = ? AND ProductCode = ? AND ClearedAt IS NULL",
+        actor, reason, store_name, product_code,
+    )
+
+
+def skip_product(store_name, product_code, mode, actor=None):
+    """Skip one open line with a platform skip mode: Or Qty 0, reviewed
+    (it lands in Rejected), the mode recorded on the line, and -- for the
+    two persistent modes -- an active store+product skip that the next
+    generated orders re-apply until the product sells again. Re-skipping
+    with another mode replaces the previous one."""
+    if mode not in SKIP_MODES:
+        raise ValueError(f"Skip mode must be one of {', '.join(SKIP_MODES)}.")
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_workflow_schema(cur)
+        _ensure_skip_schema(cur)
+        row = cur.execute(
+            "SELECT orderqty, OrderId FROM ordermanagement "
+            "WHERE productcode = ? AND storename = ? AND status = 0",
+            product_code, store_name,
+        ).fetchone()
+        if not row:
+            return None
+        old_qty = int(row[0]) if row[0] is not None else 0
+        remark = f"Skipped - {SKIP_MODES[mode]}"
+        cur.execute(
+            "UPDATE ordermanagement SET orderqty = 0, qtycheck = 1, remarks = ?, "
+            "SkipReason = ?, SkippedAt = GETDATE(), SkippedBy = ? "
+            "WHERE productcode = ? AND storename = ? AND status = 0",
+            remark, mode, actor, product_code, store_name,
+        )
+        _clear_active_skip(cur, store_name, product_code, "replaced", actor)
+        if mode in PERSISTENT_SKIP_MODES:
+            cur.execute(
+                "INSERT INTO dbo.OrderProductSkip (StoreName, ProductCode, SkipReason, OrderId, SkippedBy) "
+                "VALUES (?, ?, ?, ?, ?)",
+                store_name, product_code, mode, int(row.OrderId), actor,
+            )
+        _record_line_audit(
+            cur, store_name, int(row.OrderId), product_code, "QTY_SKIPPED",
+            old_qty, 0, actor,
+        )
+        conn.commit()
+        return {"order_qty": 0, "remarks": remark, "skip_reason": mode}
+
+
+def apply_carried_skips(cur, store_name):
+    """Called by order_process inside the order-generation transaction,
+    right after the new OrderManagement rows are inserted (both LEGACY and
+    RULEBOOK engines go through it). First ends every active skip whose
+    product has sold since it was skipped, then re-applies the rest to the
+    new order (Or Qty 0, reviewed -> Rejected, with the mode on the line).
+    Returns the number of new lines re-skipped."""
+    _ensure_skip_schema(cur)
+    cur.execute(
+        "UPDATE s SET ClearedAt = GETDATE(), ClearReason = 'sale' "
+        "FROM dbo.OrderProductSkip s "
+        "WHERE s.StoreName = ? AND s.ClearedAt IS NULL "
+        "AND EXISTS (SELECT 1 FROM ProductSaleInformation ps WITH (NOLOCK) "
+        "  WHERE ps.StoreName = s.StoreName AND ps.ProductCode = s.ProductCode "
+        "  AND ps.SeriesTransID = 1 AND ps.TransactionValidity = 0 AND ps.Quantity > 0 "
+        "  AND ps.TransactionDate > s.SkippedAt)",
+        store_name,
+    )
+    cur.execute(
+        "UPDATE om SET om.OrderQty = 0, om.Qtycheck = 1, "
+        "om.Remarks = 'Skipped - ' + CASE s.SkipReason WHEN 'until_next_sales' THEN 'Until Next Sales' "
+        "  ELSE 'Until Next Demand' END, "
+        "om.SkipReason = s.SkipReason, om.SkippedAt = s.SkippedAt, om.SkippedBy = s.SkippedBy "
+        "FROM OrderManagement om "
+        "JOIN dbo.OrderProductSkip s ON s.StoreName = om.StoreName AND s.ProductCode = om.ProductCode "
+        "  AND s.ClearedAt IS NULL "
+        "WHERE om.StoreName = ? AND om.Status = 0",
+        store_name,
+    )
+    return cur.rowcount
 
 
 def qty_check_purchase_details(store, product_code, mode):

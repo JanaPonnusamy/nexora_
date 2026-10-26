@@ -518,6 +518,10 @@ def test_insert_data_into_destination_acquires_applock_before_writes(monkeypatch
     monkeypatch.setattr(order_process, "_connect", lambda cs, timeout=30: conn)
     monkeypatch.setattr(order_process.repository, "_with_store_applock", fake_applock)
     monkeypatch.setattr(order_process.repository, "_ensure_workflow_schema", lambda cur: None)
+    # Skip rules: schema is applied on its own connection; carry-forward is
+    # covered by its own test -- neither is what this test is about.
+    monkeypatch.setattr(order_process.repository, "_ensure_skip_schema", lambda cur=None: None)
+    monkeypatch.setattr(order_process.repository, "apply_carried_skips", lambda cur, sn: 0)
     monkeypatch.setattr(order_process.repository, "record_protected_backup_snapshot", lambda cur, sn, oid: None)
     monkeypatch.setattr(order_process.repository, "_latest_order_id", lambda cur, sn: 42)
 

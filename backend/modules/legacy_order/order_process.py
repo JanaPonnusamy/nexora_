@@ -180,6 +180,9 @@ def insert_data_into_destination(columns, rows, store_name):
     payload = [tuple(r[i] for i in picks) for r in rows]
     order_id_pos = dest_cols.index("OrderId")
     new_order_ids = {row[order_id_pos] for row in payload}
+    # Skip-rule columns/table must exist BEFORE the transaction below: their
+    # DDL runs on its own connection and would block on this run's locks.
+    repository._ensure_skip_schema()
 
     # Multiple stores' one-click runs can land in this transaction at the same
     # time; all writes are scoped to StoreName so a deadlocked attempt is safe
@@ -295,6 +298,10 @@ def insert_data_into_destination(columns, rows, store_name):
                             "  AND pt.InvoiceSeries <> 'TI' AND pt.FreeQty > 0)",
                             store_name,
                         )
+                    # Skip rules: 'Until Next Sales/Demand' skips carry into
+                    # this new order until the product sells again.
+                    if payload:
+                        repository.apply_carried_skips(cur, store_name)
                     conn.commit()
                     return len(payload)
                 except pyodbc.Error as exc:

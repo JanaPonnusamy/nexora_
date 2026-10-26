@@ -68,6 +68,11 @@ class UpdateQtyCheckRequest(BaseModel):
     order_qty: int
 
 
+class SkipProductRequest(BaseModel):
+    # current_refresh | until_next_sales | until_next_demand (platform skipModes)
+    mode: str = "current_refresh"
+
+
 class UpdateRemarksRequest(BaseModel):
     remarks: str = ""
 

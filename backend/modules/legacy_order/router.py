@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, order_export, repository, rulebook_order, service, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -728,6 +728,28 @@ def update_qty_check(
         if result is None:
             raise HTTPException(status_code=404, detail="Order row not found")
         return result
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/qty-check/{store_name}/{product_code}/skip")
+def skip_product(
+    store_name: str, product_code: int, payload: SkipProductRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Skip a line with one of the platform's skip modes (see
+    repository.skip_product): it goes to Rejected with Or Qty 0, and the two
+    persistent modes carry into future orders until the product sells."""
+    try:
+        result = repository.skip_product(
+            store_name, product_code, payload.mode,
+            current_user.get("username") or current_user.get("sub"),
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Open order row not found")
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
