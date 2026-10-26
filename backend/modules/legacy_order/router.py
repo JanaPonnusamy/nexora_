@@ -11,6 +11,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, order_export, repository, rulebook_order, service, sync_engine
@@ -52,10 +53,11 @@ _NO_PARAM_READ_PATHS = (
 # store -- the remote-store purchase manager working their own order from
 # outside the LAN via the Order Management desktop client. Each carries a
 # {store_name} path param that _user_owns_store checks, so a store user can
-# only ever touch their own store. Everything NOT in this set stays admin-only:
-# sync, order-process, stock-update, DB recovery/repair, workflow finalize/
-# reopen, and the previous-order compares (their store_name is in the body, not
-# the path, so request.path_params has none -> ownership check can't pass).
+# only ever touch their own store(s). Everything NOT in this set (or in
+# _PM_WRITE_PATHS below) stays admin-only: sync, order-process, stock-update,
+# DB recovery/repair, and the previous-order compares (their store_name is in
+# the body, not the path, so request.path_params has none -> ownership check
+# can't pass).
 _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+$"),         # PATCH OrderQty
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+/remarks$"), # PATCH Remarks
@@ -65,15 +67,53 @@ _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/unavailable/remove$"),  # POST stock-out bulk remove
     re.compile(r"^/api/legacy-order/orders/[^/]+/auto-assign$"),  # POST bulk assign (best margin)
     re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+$"),      # PATCH qty-check review
+    re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+/skip$"),  # POST skip (Procurement Esc)
+)
+
+# Order workflow finalize/reopen: purchase-manager logins only (not every store
+# user), on a store they are assigned to -- owner ruling 2026-10-26 "enable
+# procurement for PM users". Handlers use require_admin_or_store_pm.
+_PM_WRITE_PATHS = (
+    re.compile(r"^/api/legacy-order/orders/[^/]+/workflow/(finalize|reopen)$"),
 )
 
 
+def _is_purchase_manager(user: dict) -> bool:
+    return any("purchase" in str(r or "").lower() for r in (user.get("role_names") or []))
+
+
+def _user_store_codes(user: dict) -> set:
+    """Every store the user is assigned to (dbo.user_store_roles), not just the
+    JWT's primary-role store -- a PM bound to several stores (e.g. NMCPM, NMHO)
+    must reach each of them. Cached on the user dict for the request."""
+    cached = user.get("_legacy_store_codes")
+    if cached is not None:
+        return cached
+    codes = {str(user.get("store_code") or "").strip().upper()} - {""}
+    try:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT DISTINCT s.store_code FROM dbo.user_store_roles usr "
+                "JOIN dbo.stores s ON s.store_id = usr.store_id "
+                "WHERE usr.user_id = TRY_CAST(? AS uniqueidentifier) AND usr.is_active = 1",
+                (str(user.get("sub") or ""),),
+            )
+            codes |= {str(row[0] or "").strip().upper() for row in cur.fetchall()} - {""}
+        finally:
+            conn.close()
+    except Exception:
+        pass  # fall back to the primary store only
+    user["_legacy_store_codes"] = codes
+    return codes
+
+
 def _user_owns_store(user: dict, store_name: str) -> bool:
-    """A non-admin store user is locked to their own store (the JWT's primary-
-    role store_code, same source Label Exporter uses for its per-store lock).
+    """A non-admin store user is locked to the stores they are assigned to.
     store_name here is the OrderNMC StoreName, which equals the platform
     store_code (globally unique)."""
-    return str(user.get("store_code") or "").strip().upper() == str(store_name or "").strip().upper()
+    return str(store_name or "").strip().upper() in _user_store_codes(user)
 
 
 def require_order_console_access(request: Request, current_user: dict = Depends(get_current_user)) -> dict:
@@ -95,6 +135,17 @@ def require_order_console_access(request: Request, current_user: dict = Depends(
             return current_user
         if request.method in ("PATCH", "POST") and any(p.match(path) for p in _STORE_WRITE_PATHS):
             return current_user
+        if request.method == "POST" and _is_purchase_manager(current_user) and any(p.match(path) for p in _PM_WRITE_PATHS):
+            return current_user
+    raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
+
+
+def require_admin_or_store_pm(store_name: str, current_user: dict = Depends(get_current_user)) -> dict:
+    """Platform admin, or a purchase-manager login assigned to this store."""
+    if has_unrestricted_scope(current_user):
+        return current_user
+    if _is_purchase_manager(current_user) and _user_owns_store(current_user, store_name):
+        return current_user
     raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
 
 
@@ -340,7 +391,7 @@ def order_workflow_audit(store_name: str, limit: int = 50):
 def finalize_order(
     store_name: str,
     payload: WorkflowActionRequest,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin_or_store_pm),
 ):
     try:
         return repository.set_order_workflow_finalized(
@@ -356,7 +407,7 @@ def finalize_order(
 def reopen_order(
     store_name: str,
     payload: WorkflowActionRequest,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin_or_store_pm),
 ):
     try:
         return repository.set_order_workflow_finalized(

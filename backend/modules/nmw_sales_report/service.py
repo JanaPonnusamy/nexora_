@@ -21,17 +21,12 @@ def _assert_can_view(user):
 
 def _assert_can_view_details(user):
     """Who may drill into a bill's product/line-item DETAILS (and purchase-entry
-    drill-down, and the Excel/CSV export): super-admin / HO plus purchase-manager
-    (PM-rights) logins. Owner ruling 2026-10-03 first restricted details to
-    super-admin only (branches see the stock list, not product details); ruling
-    2026-10-06 extended viewing + export to PM-rights logins too. PM stays
-    store-scoped (super-admin alone is network-wide) -- that scope is enforced in
-    get_bill_items() / get_purchase_entry(), not here. Guards get_bill_items()
-    and get_purchase_entry()."""
+    drill-down, and the Excel/CSV export): super-admin / HO only -- see
+    can_view_details(). Guards get_bill_items() and get_purchase_entry()."""
     if not can_view_details(user):
         raise HTTPException(
             status_code=403,
-            detail="NMW product details are restricted to super-admin / HO / purchase-manager logins.",
+            detail="NMW product details are restricted to super-admin / HO logins.",
         )
 
 
@@ -43,20 +38,12 @@ def is_super_admin(user):
     return any("superadmin" in name or "super admin" in name for name in _role_names(user))
 
 
-def is_purchase_manager(user):
-    """A purchase-manager (PM-rights) login: any role name containing
-    'purchase'. Mirrors the desktop client's canViewPurchaseDetails() -- the same
-    tier that already gets Order Workspace and FULL purchase/billing history. PM
-    logins may view + export NMW bill line items (owner ruling 2026-10-06) but
-    stay store-scoped unless they are also a super admin."""
-    return any("purchase" in name for name in _role_names(user))
-
-
 def can_view_details(user):
     """Who may drill into a bill's product/line-item DETAILS and export them:
-    super-admin / HO (every store) plus purchase-manager logins (their own
-    store's bills). Branch / salesman logins see the dispatch-bill list only."""
-    return is_super_admin(user) or is_purchase_manager(user)
+    super-admin / HO only. Owner ruling 2026-10-26 ("NMW product details only
+    restrict all users") withdraws the earlier PM (2026-10-06) and STOCK_VIEWER
+    (2026-10-24) extensions; every other login sees the bill list only."""
+    return is_super_admin(user)
 
 
 def can_view_all(user):

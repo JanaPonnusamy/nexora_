@@ -3,9 +3,9 @@
 require_order_console_access lets a non-admin STORE user work their OWN store's
 order from outside the LAN (the Order Management desktop client): read its
 views, and do the interactive mutations (edit OrderQty / qty-check, assign a
-supplier, export). It must still block another store, and every admin-only
-trigger (sync / order-process / stock-update / workflow finalize), for a store
-user. Admins keep full access. No app/DB wiring -- the function takes a request
+supplier, export, skip; finalize/reopen for purchase-manager logins). It must
+still block another store, and every admin-only trigger (sync / order-process
+/ stock-update / DB recovery), for a store user. Admins keep full access. No app/DB wiring -- the function takes a request
 and a user dict, so a tiny fake request is enough.
 """
 from __future__ import annotations
@@ -32,6 +32,16 @@ class _FakeRequest:
 ADMIN = {"is_platform_user": True, "role_names": ["PLATFORM_OWNER"], "store_code": None}
 SUPER = {"is_platform_user": False, "role_names": ["SUPER_ADMIN"], "store_code": None}
 NMV_USER = {"is_platform_user": False, "role_names": ["PURCHASE_MANAGER"], "store_code": "NMV", "sub": "u1", "username": "nmvpm"}
+NMV_VIEWER = {"is_platform_user": False, "role_names": ["STOCK_VIEWER"], "store_code": "NMV", "sub": "u2", "username": "nmv1"}
+
+
+@pytest.fixture(autouse=True)
+def _no_db(monkeypatch):
+    # The assigned-store lookup falls back to the JWT's primary store when the
+    # DB is unreachable -- keep these tests off the live DB.
+    def _boom():
+        raise RuntimeError("no db in tests")
+    monkeypatch.setattr(lo, "get_connection", _boom)
 
 
 def _allow(method, path, path_params, user):
@@ -75,11 +85,35 @@ def test_store_user_blocked_on_admin_triggers():
     _denied("POST", "/api/legacy-order/order-process", {}, NMV_USER)
     _denied("POST", "/api/legacy-order/stock-update", {}, NMV_USER)
     _denied("POST", "/api/legacy-order/compare-previous-order", {}, NMV_USER)
-    # finalize/reopen are store-path but NOT in the interactive write set.
-    _denied("POST", "/api/legacy-order/orders/NMV/workflow/finalize", {"store_name": "NMV"}, NMV_USER)
-    _denied("POST", "/api/legacy-order/orders/NMV/workflow/reopen", {"store_name": "NMV"}, NMV_USER)
     # DB recovery has no store param at all.
     _denied("POST", "/api/legacy-order/db/recover", {}, NMV_USER)
+
+
+# --- Procurement: PM finalize/reopen + skip on their own store -----------
+
+def test_pm_workflow_and_skip_own_store_only():
+    for action in ("finalize", "reopen"):
+        path = f"/api/legacy-order/orders/NMV/workflow/{action}"
+        assert _allow("POST", path, {"store_name": "NMV"}, NMV_USER) is NMV_USER
+        assert lo.require_admin_or_store_pm("NMV", NMV_USER) is NMV_USER
+        # A non-PM store login can't finalize, and a PM can't touch another store.
+        _denied("POST", path, {"store_name": "NMV"}, NMV_VIEWER)
+        _denied("POST", path.replace("NMV", "NMC"), {"store_name": "NMC"}, NMV_USER)
+    with pytest.raises(HTTPException):
+        lo.require_admin_or_store_pm("NMC", NMV_USER)
+    with pytest.raises(HTTPException):
+        lo.require_admin_or_store_pm("NMV", NMV_VIEWER)
+    skip = "/api/legacy-order/qty-check/NMV/123/skip"
+    assert _allow("POST", skip, {"store_name": "NMV", "product_code": "123"}, NMV_USER) is NMV_USER
+    _denied("POST", skip.replace("NMV", "NMC"), {"store_name": "NMC", "product_code": "123"}, NMV_USER)
+
+
+def test_multi_store_pm_reaches_every_assigned_store():
+    # NMCPM / NMHO are PURCHASE_MANAGER on several stores; the JWT only names
+    # the primary one, so ownership comes from all assigned stores.
+    user = dict(NMV_USER, store_code="NMC", _legacy_store_codes={"NMC", "NMV"})
+    assert _allow("GET", "/api/legacy-order/orders/NMV", {"store_name": "NMV"}, user) is user
+    _denied("GET", "/api/legacy-order/orders/NMG", {"store_name": "NMG"}, user)
 
 
 # --- admins keep full access ---------------------------------------------
