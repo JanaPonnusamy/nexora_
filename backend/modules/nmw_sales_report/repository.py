@@ -52,6 +52,31 @@ PURCHASE_MATCH_WINDOW_DAYS = 30
 # ruling 2026-10-06: decide a bill by bill number + amount, not per-product.
 AMOUNT_MATCH_TOLERANCE = 1.0
 
+
+def _pick_amount_grn(grn_amounts, targets):
+    """The single GRN whose total equals one of the bill's `targets` (within
+    AMOUNT_MATCH_TOLERANCE, and not in a near-tie with the next-closest GRN
+    unless essentially exact). `grn_amounts`: [(grn, amount, extra)].
+    Returns that (grn, amount, extra) or None.
+
+    Transfer (TI) bills pass TWO targets: the bill's NMW purchase-price
+    total AND its header GrossAmount. Since 2026-10-23 NMW transfers at a
+    rate that differs from its own purchase price, and NMC books the receipt
+    at the transfer value -- the GRN equals GrossAmount to the paisa (e.g.
+    TO002001432 11821.93 = NMC GRN 1440), so a PTR-only comparison left every
+    such entered transfer "Pending"."""
+    for target in targets:
+        if not target or target <= 0:
+            continue
+        cands = sorted(((abs(amt - target), grn, amt, extra) for grn, amt, extra in grn_amounts),
+                       key=lambda c: (c[0], -c[1]))
+        if cands and cands[0][0] <= AMOUNT_MATCH_TOLERANCE and (
+            len(cands) < 2 or cands[1][0] > AMOUNT_MATCH_TOLERANCE or cands[0][0] <= 0.1
+        ):
+            _, grn, amt, extra = cands[0]
+            return grn, amt, extra
+    return None
+
 _schema_ready = False
 
 # Per-store local code for "goods received from NMW", read from
@@ -989,14 +1014,14 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
             f"""
             ;WITH src AS (
                 SELECT si.tenant_id, si.store_id, si.BNumber, si.BillNumber,
-                       CAST(si.BillDate AS DATE) AS BillDate, si.CustomerCode,
+                       CAST(si.BillDate AS DATE) AS BillDate, si.CustomerCode, si.GrossAmount,
                        CASE WHEN LTRIM(RTRIM(ISNULL(si.SeriesName, ''))) = 'TO'
                                  OR si.BNumber LIKE 'TO%' THEN 1 ELSE 0 END AS is_transfer
                 FROM sync.SaleInformation si
                 WHERE si.tenant_id = ? AND si.store_id = ?
             ),
             resolved AS (
-                SELECT src.BNumber, src.BillNumber, src.BillDate,
+                SELECT src.BNumber, src.BillNumber, src.BillDate, src.GrossAmount,
                        CAST(dst.store_id AS VARCHAR(50)) AS dest_store_id
                 FROM src
                 INNER JOIN dbo.stores dst
@@ -1010,7 +1035,8 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
             bill_products AS (
                 SELECT r.BNumber, r.BillDate, r.dest_store_id, psi.ProductCode,
                        SUM(psi.Quantity) AS req_qty,
-                       SUM(ISNULL(psi.PurchasePrice, 0) * psi.Quantity) AS prod_ptr
+                       SUM(ISNULL(psi.PurchasePrice, 0) * psi.Quantity) AS prod_ptr,
+                       MAX(r.GrossAmount) AS gross
                 FROM resolved r
                 JOIN sync.ProductSaleInformation psi
                     ON psi.tenant_id = ? AND psi.store_id = ?
@@ -1033,7 +1059,7 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                    -- in Python below when a bill-number match is found.
                    MAX(CASE WHEN sm.store_id IS NOT NULL AND ISNULL(got.got_qty, 0) >= bp.req_qty - 0.01
                             THEN got.max_grn END) AS completing_grn,
-                   SUM(bp.prod_ptr) AS bill_ptr
+                   SUM(bp.prod_ptr) AS bill_ptr, MAX(bp.gross) AS bill_gross
             FROM bill_products bp
             LEFT JOIN smap sm ON sm.store_id = bp.dest_store_id
             OUTER APPLY (
@@ -1118,7 +1144,7 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                 grn_ptr_map.setdefault((store_id, supplier_code, grn_series), []).append((int(grn), gd, float(ptr or 0)))
 
         out = {}
-        for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr in rows:
+        for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr, bill_gross in rows:
             bd_iso = bill_date.isoformat() if hasattr(bill_date, "isoformat") else str(bill_date)
             matched_products = int(matched_products or 0)
             bill_ptr = float(bill_ptr or 0)
@@ -1141,17 +1167,16 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
                 # and any IV bill whose Batches invoice numbers lag): the single GRN
                 # whose PTR total equals this bill's, within tolerance, not a
                 # near-tie.
-                if invoice_grn is None and bill_ptr > 0:
-                    cands = sorted(
-                        ((abs(ptr - bill_ptr), grn)
+                if invoice_grn is None:
+                    targets = [bill_ptr] + ([float(bill_gross or 0)] if series == "TI" else [])
+                    hit = _pick_amount_grn(
+                        [(grn, ptr, None)
                          for grn, gd, ptr in grn_ptr_map.get((dest_store_id, raw_code, series), [])
-                         if bill_date <= gd <= window_end),
-                        key=lambda c: (c[0], -c[1]),
+                         if bill_date <= gd <= window_end],
+                        targets,
                     )
-                    if cands and cands[0][0] <= AMOUNT_MATCH_TOLERANCE and (
-                        len(cands) < 2 or cands[1][0] > AMOUNT_MATCH_TOLERANCE or cands[0][0] <= 0.1
-                    ):
-                        amount_grn = cands[0][1]
+                    if hit:
+                        amount_grn = hit[0]
             matched_grn = invoice_grn if invoice_grn is not None else amount_grn
             if matched_grn is not None:
                 matched_products = total_products
@@ -1199,12 +1224,12 @@ def get_purchase_status_map(tenant_id, nmw_store_id, dest_store_ids, date_from, 
         # memory for the original per-bill design and why it seemed fine).
         need_fallback = [
             (bnumber, bill_date, dest_store_id, raw_code, series)
-            for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr in rows
+            for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr, bill_gross in rows
             if dest_store_id and raw_code
             and out.get((bnumber, bill_date.isoformat() if hasattr(bill_date, "isoformat") else str(bill_date)), {}).get("purchase_status") != "completed"
         ]
         fallback_results = _name_fallback_batch(cursor, tenant_id, nmw_store_id, need_fallback) if need_fallback else {}
-        for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr in rows:
+        for bnumber, bill_date, dest_store_id, raw_code, series, total_products, matched_products, unmapped, completing_grn, bill_ptr, bill_gross in rows:
             bd_iso = bill_date.isoformat() if hasattr(bill_date, "isoformat") else str(bill_date)
             entry = out.get((bnumber, bd_iso))
             if not entry or entry["purchase_status"] == "completed" or not dest_store_id or not raw_code:
@@ -1248,7 +1273,7 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
             """
             ;WITH bill_match AS (
                 SELECT TOP (1) si.tenant_id, si.store_id, si.BNumber, si.BillNumber,
-                       CAST(si.BillDate AS DATE) AS BillDate, si.CustomerCode,
+                       CAST(si.BillDate AS DATE) AS BillDate, si.CustomerCode, si.GrossAmount,
                        CASE WHEN LTRIM(RTRIM(ISNULL(si.SeriesName, ''))) = 'TO'
                                  OR si.BNumber LIKE 'TO%' THEN 1 ELSE 0 END AS is_transfer
                 FROM sync.SaleInformation si
@@ -1258,7 +1283,7 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
             )
             SELECT bm.BillNumber, bm.BNumber, bm.BillDate,
                    CAST(dst.store_id AS VARCHAR(50)) AS dest_store_id,
-                   dst.store_code, dst.store_name
+                   dst.store_code, dst.store_name, bm.GrossAmount
             FROM bill_match bm
             INNER JOIN dbo.stores dst
                 ON dst.tenant_id = bm.tenant_id
@@ -1275,7 +1300,8 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
                 "purchase_status": "not_found", "matched_products": 0, "total_products": 0,
                 "entry_no": None, "entry_date": None, "reason": "bill_not_routed_to_a_store",
             }
-        billnumber, bnumber, bdate, dest_store_id, dest_store_code, dest_store_name = row
+        billnumber, bnumber, bdate, dest_store_id, dest_store_code, dest_store_name, bill_gross = row
+        bill_gross = float(bill_gross or 0)
 
         cursor.execute(
             """
@@ -1471,7 +1497,7 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
         # exactly (verified: ptr == cost == bill subtotal to the paisa). The query
         # is scoped by `series`, so IV supplier '2' (a real PENTACARE purchase) is
         # never confused with TI supplier '2' (an NMW transfer).
-        if match_basis != "bill_number" and series in ("IV", "TI") and bill_ptr > 0:
+        if match_basis != "bill_number" and series in ("IV", "TI") and (bill_ptr > 0 or bill_gross > 0):
             cursor.execute(
                 f"""
                 SELECT Grnnumber, MAX(CAST(grndate AS DATE)) AS gd,
@@ -1485,18 +1511,15 @@ def get_purchase_entry_detail(tenant_id, nmw_store_id, bill_no, bill_date):
                 """,
                 (tenant_id, dest_store_id, raw_code, series, bdate, bdate),
             )
-            cands = sorted(
-                ((abs(float(ptr or 0) - bill_ptr), int(grn), gd, float(cost or 0))
-                 for grn, gd, ptr, cost in cursor.fetchall()),
-                key=lambda c: (c[0], -c[1]),
+            # Closest GRN within tolerance and not in a near-tie (see
+            # _pick_amount_grn); transfers also try the bill's GrossAmount.
+            targets = [bill_ptr] + ([bill_gross] if series == "TI" else [])
+            hit = _pick_amount_grn(
+                [(int(grn), float(ptr or 0), (gd, float(cost or 0))) for grn, gd, ptr, cost in cursor.fetchall()],
+                targets,
             )
-            # Accept the closest GRN only when it is within tolerance AND not in a
-            # near-tie with the next candidate (unless essentially exact), so we
-            # never guess between two equally-plausible GRNs.
-            if cands and cands[0][0] <= AMOUNT_MATCH_TOLERANCE and (
-                len(cands) < 2 or cands[1][0] > AMOUNT_MATCH_TOLERANCE or cands[0][0] <= 0.1
-            ):
-                _, amt_grn, amt_gd, amt_cost = cands[0]
+            if hit:
+                amt_grn, _amt, (amt_gd, amt_cost) = hit
                 status = "completed"
                 matched_products = total_products
                 pending_products = []
