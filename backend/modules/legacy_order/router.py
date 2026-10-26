@@ -18,6 +18,16 @@ from modules.legacy_order import database, order_export, repository, rulebook_or
 from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
+def _header_value(value) -> str:
+    # h11 rejects a header value with leading/trailing whitespace and Starlette
+    # can only encode latin-1. OrderNMC supplier names carry trailing padding
+    # ('PURANI HOSPITAL SUPPLIES LTD  (CBM) '), and a rejected header aborts the
+    # response after the 200 is logged -- the client sees a dropped connection
+    # ("Unable to reach the server") instead of the file.
+    text = " ".join(str(value or "").split())
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     if not has_unrestricted_scope(current_user):
         raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
@@ -600,9 +610,9 @@ def export_order(
         content=result.content,
         media_type=result.media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "Content-Disposition": _header_value(f'attachment; filename="{result.filename}"'),
             "X-Exported-Count": str(result.count),
-            "X-Supplier-Name": result.supplier_name,
+            "X-Supplier-Name": _header_value(result.supplier_name),
             "Access-Control-Expose-Headers": "Content-Disposition, X-Exported-Count, X-Supplier-Name",
         },
     )
@@ -635,7 +645,7 @@ def export_pending_order(
         content=result.content,
         media_type=result.media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "Content-Disposition": _header_value(f'attachment; filename="{result.filename}"'),
             "X-Exported-Count": str(result.count),
             "Access-Control-Expose-Headers": "Content-Disposition, X-Exported-Count",
         },
