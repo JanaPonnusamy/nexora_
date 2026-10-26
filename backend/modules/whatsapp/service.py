@@ -683,6 +683,14 @@ _ATTACH_DOCUMENT_SELECTORS = [
     "xpath=//span[normalize-space(text())='Document']",
     "xpath=//div[normalize-space(text())='Document']",
 ]
+# Images go as photos (inline, several in ONE message), not documents.
+_ATTACH_MEDIA_SELECTORS = [
+    "xpath=//div[@aria-label='Photos & videos']",
+    "xpath=//li[@aria-label='Photos & videos']",
+    "xpath=//li[.//span[normalize-space()='Photos & videos']]",
+    "xpath=//span[normalize-space(text())='Photos & videos']",
+]
+_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 
 
 def _capture_debug(page: Any, tag: str) -> str | None:
@@ -1043,14 +1051,18 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
     )
 
 
-def _attach_file(page: Any, settings: dict[str, Any], attachment_path: str) -> None:
+def _attach_file(page: Any, settings: dict[str, Any], attachment_path: "str | list[str]") -> None:
+    """One path, or several -- all attached at once so they go as ONE
+    message (all images -> the Photos & videos picker, else Document)."""
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
-    resolved_path = str(Path(attachment_path).resolve())
+    paths = attachment_path if isinstance(attachment_path, list) else [attachment_path]
+    resolved_path = [str(Path(p).resolve()) for p in paths]
+    media = all(p.lower().endswith(_IMAGE_SUFFIXES) for p in resolved_path)
     clip = _first_locator(page, _ATTACH_SELECTORS, wait_seconds)
     _safe_click(clip)
 
     try:
-        doc_item = _first_locator(page, _ATTACH_DOCUMENT_SELECTORS, 5)
+        doc_item = _first_locator(page, _ATTACH_MEDIA_SELECTORS if media else _ATTACH_DOCUMENT_SELECTORS, 5)
         # expect_file_chooser intercepts the native/JS file dialog directly --
         # more robust than hunting for a hidden <input type="file"> whose
         # visibility/activation is menu-state-dependent in the current UI.
@@ -1319,11 +1331,11 @@ def _list_chats_impl(profile_id: str) -> dict[str, Any]:
 
 # --- Ad-hoc send to any chat by name (no saved target needed) ---------------
 
-def send_to_chat(profile_id: str, chat_name: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
-    return _run_on_driver_thread(_send_to_chat_impl, profile_id, chat_name, message, attachment_name, attachment_content)
+def send_to_chat(profile_id: str, chat_name: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None, attachments: "list[tuple[str, bytes]] | None" = None) -> dict[str, Any]:
+    return _run_on_driver_thread(_send_to_chat_impl, profile_id, chat_name, message, attachment_name, attachment_content, attachments)
 
 
-def _send_to_chat_impl(profile_id: str, chat_name: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None) -> dict[str, Any]:
+def _send_to_chat_impl(profile_id: str, chat_name: str, message: str, attachment_name: str | None = None, attachment_content: bytes | None = None, attachments: "list[tuple[str, bytes]] | None" = None) -> dict[str, Any]:
     settings = _load_settings()
     profiles = _load_profiles()
     profile = _resolve_profile(profile_id, profiles)
@@ -1333,6 +1345,9 @@ def _send_to_chat_impl(profile_id: str, chat_name: str, message: str, attachment
     staged_attachment = None
     if attachment_name and attachment_content is not None:
         staged_attachment = _stage_attachment(attachment_name, attachment_content)
+    elif attachments:
+        # Several files in ONE message (e.g. every store's Time Report image).
+        staged_attachment = [_stage_attachment(name, content) for name, content in attachments]
     profile["last_used_at"] = _now_iso()
     _save_profiles(profiles)
 

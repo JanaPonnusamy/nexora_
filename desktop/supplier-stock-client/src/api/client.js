@@ -1122,6 +1122,36 @@ export const api = {
     return response.blob();
   },
 
+  // HO server's WhatsApp profile (backend/modules/whatsapp) -- used when this
+  // PC sends through HO's already-linked WhatsApp instead of its own.
+  hoWhatsAppState(session) {
+    return request('/api/whatsapp/state', { session });
+  },
+
+  hoWhatsAppStatus(profileId, session) {
+    return request(`/api/whatsapp/profiles/${encodeURIComponent(profileId)}/status`, { session, timeoutMs: 90000 });
+  },
+
+  hoWhatsAppChats(profileId, session) {
+    return request(`/api/whatsapp/profiles/${encodeURIComponent(profileId)}/chats`, { session, timeoutMs: 120000 });
+  },
+
+  hoWhatsAppSendFiles(payload, session) {
+    return request('/api/whatsapp/send/chat-files', {
+      method: 'POST', session, timeoutMs: 300000, body: JSON.stringify(payload)
+    });
+  },
+
+  hoWhatsAppSendText(payload, session) {
+    return request('/api/whatsapp/send/chat', {
+      method: 'POST', session, timeoutMs: 180000, body: JSON.stringify(payload)
+    });
+  },
+
+  hoWhatsAppLog(session) {
+    return request('/api/whatsapp/send-log?limit=100', { session });
+  },
+
   // Time Report (COSEC attendance, /api/time-report/*).
   timeReportMeta(session) {
     return request('/api/time-report/meta', { session });

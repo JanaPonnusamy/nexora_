@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
@@ -169,6 +169,32 @@ async def send_whatsapp_chat_file(
 ):
     content = await file.read()
     return await run_in_threadpool(send_to_chat, profile_id, chat_name, message, file.filename, content)
+
+
+class WhatsAppChatFile(BaseModel):
+    name: str
+    base64: str
+
+
+class WhatsAppChatFilesPayload(BaseModel):
+    profile_id: str
+    chat_name: str
+    message: str = ""
+    files: list[WhatsAppChatFile] = []
+
+
+@router.post("/send/chat-files")
+async def send_whatsapp_chat_files(payload: WhatsAppChatFilesPayload):
+    """Several files to one chat as ONE message (images go as photos). Used by
+    the Stock Client when it sends through this server's WhatsApp profile.
+    Zip files are refused -- send the files inside them."""
+    import base64
+    if any(f.name.lower().endswith(".zip") for f in payload.files):
+        raise HTTPException(status_code=400, detail="Zip files are not sent on WhatsApp -- send the files inside it.")
+    files = [(f.name, base64.b64decode(f.base64)) for f in payload.files]
+    if len(files) == 1:
+        return await run_in_threadpool(send_to_chat, payload.profile_id, payload.chat_name, payload.message, files[0][0], files[0][1])
+    return await run_in_threadpool(send_to_chat, payload.profile_id, payload.chat_name, payload.message, None, None, files or None)
 
 
 @router.get("/send-log")

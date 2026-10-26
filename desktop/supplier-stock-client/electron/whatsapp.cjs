@@ -625,6 +625,8 @@ function init() {
   ipcMain.handle('wa:send', (_event, payload) => send(payload || {}));
   ipcMain.handle('wa:log', () => readJson(logPath(), []));
   ipcMain.handle('wa:chats', (_event, opts) => listChats(opts || {}));
+  // Saved export files as base64, for sending through HO's WhatsApp profile.
+  ipcMain.handle('wa:readFiles', (_event, paths) => (paths || []).map((p) => ({ name: path.basename(p), base64: fs.readFileSync(p).toString('base64') })));
   // Only start the (~300 MB) WhatsApp page on PCs that have linked it.
   if (isEnabled()) setTimeout(() => ensureWindow(), 8000);
 }

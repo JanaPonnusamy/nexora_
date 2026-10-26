@@ -9691,3 +9691,7 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .trp-pill-w830 { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
 .trp-pill-w800 { background: var(--nx-info-sunk); color: var(--nx-info-ink); }
 @media (max-width: 900px) { .trp-actions { margin-left: 0; } }
+.swa-engine { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: var(--nx-surface-sunk); border-radius: var(--nx-radius-sm); }
+.swa-engine input[type='radio'] { flex: none; width: 15px; height: 15px; min-height: 0; margin: 0; }
+.pw-cmp--compact { padding: 5px 8px; }
+.pw-cmp--compact .pw-cmp-head { margin-bottom: 0; }

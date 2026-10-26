@@ -9,7 +9,88 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { unzipSync } from 'fflate';
 import { api } from './api/client.js';
 
-const wa = () => window.nexoraDesktop?.whatsapp;
+// Engine (per PC): 'local' = this PC's own WhatsApp window (QR-linked here);
+// 'ho' = send through the HO server's already-linked WhatsApp profile
+// (/api/whatsapp, e.g. "Jana") -- for the HO PC, so it never needs a second
+// login of the same number.
+const ENGINE_KEY = 'nexora.desktop.waEngine';
+export function whatsAppEngine() {
+  try { return localStorage.getItem(ENGINE_KEY) === 'ho' ? 'ho' : 'local'; } catch { return 'local'; }
+}
+export function setWhatsAppEngine(engine) {
+  try { localStorage.setItem(ENGINE_KEY, engine === 'ho' ? 'ho' : 'local'); } catch { /* per-PC preference */ }
+}
+
+let hoSession = null;
+let hoProfile = null; // { profile_id, profile_name }
+let hoChats = { at: 0, chats: [] };
+// App passes the signed-in session so the HO engine can call the API.
+export function setWhatsAppSession(session) {
+  if (session?.token !== hoSession?.token) { hoProfile = null; hoChats = { at: 0, chats: [] }; }
+  hoSession = session;
+}
+
+async function hoProfileId() {
+  if (hoProfile) return hoProfile.profile_id;
+  const state = await api.hoWhatsAppState(hoSession);
+  const profiles = state?.profiles || [];
+  hoProfile = profiles.find((p) => p.is_default) || profiles[0] || null;
+  if (!hoProfile) throw new Error('No WhatsApp profile is set up on the HO server.');
+  return hoProfile.profile_id;
+}
+
+const hoBridge = {
+  async status() {
+    if (!hoSession) return { state: 'off', engine: 'ho' };
+    try {
+      const id = await hoProfileId();
+      const st = await api.hoWhatsAppStatus(id, hoSession);
+      return { state: st.state === 'ready' || st.logged_in ? 'ready' : st.state || 'loading', engine: 'ho', profileName: hoProfile?.profile_name || '' };
+    } catch (e) {
+      return { state: 'error', engine: 'ho', error: e.message };
+    }
+  },
+  async send({ chat, text, paths = [], files = [] }) {
+    try {
+      const id = await hoProfileId();
+      const all = [...(paths.length ? await window.nexoraDesktop.whatsapp.readFiles(paths) : []), ...files];
+      const res = all.length
+        ? await api.hoWhatsAppSendFiles({ profile_id: id, chat_name: chat, message: text || '', files: all }, hoSession)
+        : await api.hoWhatsAppSendText({ profile_id: id, chat_name: chat, message: text || '' }, hoSession);
+      return res?.status === 'sent' ? { status: 'sent' } : { status: 'failed', error: res?.message || res?.error || 'Send failed.' };
+    } catch (e) {
+      return { status: 'failed', error: e.message || 'Send failed.' };
+    }
+  },
+  async chats({ query = '', filter = 'all', refresh = false } = {}) {
+    try {
+      if (refresh || !hoChats.chats.length || Date.now() - hoChats.at > 10 * 60000) {
+        const res = await api.hoWhatsAppChats(await hoProfileId(), hoSession);
+        hoChats = { at: Date.now(), chats: res?.chats || [] };
+      }
+      const q = query.trim().toLowerCase();
+      return {
+        chats: hoChats.chats.filter((c) => (!q || c.name.toLowerCase().includes(q))
+          && (filter === 'all' || (filter === 'groups' ? c.kind === 'group' : c.kind === 'contact'))),
+      };
+    } catch (e) {
+      return { chats: [], error: e.message };
+    }
+  },
+  async log() {
+    const res = await api.hoWhatsAppLog(hoSession);
+    return (res?.entries || []).map((e) => ({
+      at: e.at, chat: e.target_name, files: [], text: e.message_preview, source: e.profile_name ? `HO · ${e.profile_name}` : 'HO',
+      status: e.status === 'sent' ? 'sent' : 'failed', error: e.error,
+    }));
+  },
+};
+
+const wa = () => {
+  const local = window.nexoraDesktop?.whatsapp;
+  if (!local) return null;
+  return whatsAppEngine() === 'ho' ? hoBridge : local;
+};
 export const storeWhatsAppAvailable = () => Boolean(wa());
 
 const RECENT_KEY = 'store-wa-recent-chats';
@@ -43,11 +124,18 @@ const STATE_TEXT = {
   starting: 'Starting WhatsApp…',
   loading: 'Loading WhatsApp…',
   qr: 'Not linked — scan the QR code with the store phone.',
-  ready: 'Linked and ready to send.'
+  ready: 'Linked and ready to send.',
+  error: 'HO WhatsApp could not be reached.'
+};
+const HO_STATE_TEXT = {
+  off: 'Sign in to use the HO WhatsApp.',
+  loading: 'HO WhatsApp is loading…',
+  qr: 'HO WhatsApp is logged out — scan its QR on the HO WhatsApp page.',
+  ready: 'Ready — sending through the HO WhatsApp.',
 };
 
-export function useStoreWhatsAppStatus(pollMs = 3000) {
-  const [status, setStatus] = useState({ state: 'off' });
+export function useStoreWhatsAppStatus(pollMs = 3000, engine = whatsAppEngine()) {
+  const [status, setStatus] = useState({ state: engine === 'ho' ? 'loading' : 'off' });
   const refresh = useCallback(async () => {
     if (!wa()) return;
     try { setStatus(await wa().status()); } catch { /* main process busy */ }
@@ -55,9 +143,9 @@ export function useStoreWhatsAppStatus(pollMs = 3000) {
   useEffect(() => {
     if (!wa()) return undefined;
     refresh();
-    const timer = setInterval(refresh, pollMs);
+    const timer = setInterval(refresh, engine === 'ho' ? Math.max(pollMs, 30000) : pollMs);
     return () => clearInterval(timer);
-  }, [refresh, pollMs]);
+  }, [refresh, pollMs, engine]);
   return [status, refresh];
 }
 
@@ -305,7 +393,9 @@ export function WhatsAppShareButton({ label = 'WhatsApp', title, caption, source
 }
 
 export function StoreWhatsAppScreen({ outbox }) {
-  const [status, refresh] = useStoreWhatsAppStatus(3000);
+  const [engine, setEngine] = useState(whatsAppEngine);
+  const [status, refresh] = useStoreWhatsAppStatus(3000, engine);
+  const switchEngine = (next) => { setWhatsAppEngine(next); setEngine(next); };
   const [log, setLog] = useState([]);
   const [chat, setChat] = useState('');
   const [text, setText] = useState('');
@@ -316,7 +406,7 @@ export function StoreWhatsAppScreen({ outbox }) {
   const loadLog = useCallback(async () => {
     try { setLog(await wa().log()); } catch { /* ignore */ }
   }, []);
-  useEffect(() => { loadLog(); }, [loadLog, status.sending]);
+  useEffect(() => { loadLog(); }, [loadLog, status.sending, engine]);
 
   const act = async (fn) => { await fn(); refresh(); };
 
@@ -344,28 +434,38 @@ export function StoreWhatsAppScreen({ outbox }) {
       <header className="screen-header">
         <div>
           <h2>WhatsApp</h2>
-          <p>This store&apos;s own WhatsApp — orders, pending lists and the NMW stock file go out from the store&apos;s number.</p>
+          <p>Orders, reports and the NMW stock file go out from this store&apos;s WhatsApp — this PC&apos;s own login, or the HO profile.</p>
         </div>
       </header>
 
       <div className="swa-grid">
         <div className="table-wrap swa-card">
-          <h3>Link</h3>
-          <div className={`status-line ${ready ? 'ok' : status.state === 'qr' ? 'error' : 'loading'}`}>
-            {STATE_TEXT[status.state] || status.state}{status.sending ? ' Sending…' : ''}
+          <h3>Send from</h3>
+          <div className="swa-engine" role="radiogroup" aria-label="Which WhatsApp sends from this PC">
+            <label className="swa-check">
+              <input type="radio" name="swa-engine" checked={engine === 'local'} onChange={() => switchEngine('local')} />
+              This PC&apos;s own WhatsApp (scan a QR here)
+            </label>
+            <label className="swa-check">
+              <input type="radio" name="swa-engine" checked={engine === 'ho'} onChange={() => switchEngine('ho')} />
+              HO WhatsApp profile{engine === 'ho' && status.profileName ? ` (${status.profileName})` : ''} — already logged in on the HO server
+            </label>
           </div>
-          {status.state === 'qr' && status.qr && (
+          <div className={`status-line ${ready ? 'ok' : status.state === 'qr' || status.state === 'error' ? 'error' : 'loading'}`}>
+            {engine === 'ho' ? (status.error || HO_STATE_TEXT[status.state] || status.state) : STATE_TEXT[status.state] || status.state}{status.sending ? ' Sending…' : ''}
+          </div>
+          {engine === 'local' && status.state === 'qr' && status.qr && (
             <div className="swa-qr">
               <img src={status.qr} alt="WhatsApp login QR code" />
               <p className="swa-muted">On the store phone: WhatsApp → Settings → Linked devices → Link a device.</p>
             </div>
           )}
-          <div className="action-row">
+          {engine === 'local' && <div className="action-row">
             {status.state === 'off' && <button type="button" className="primary-button" onClick={() => act(() => wa().enable())}>Set up WhatsApp</button>}
             {status.state !== 'off' && <button type="button" className="secondary-button" onClick={() => wa().show()}>Open WhatsApp window</button>}
             {ready && <button type="button" className="secondary-button" onClick={() => { if (window.confirm('Unlink WhatsApp from this PC? You will need to scan the QR again.')) act(() => wa().unlink()); }}>Unlink</button>}
             {status.state !== 'off' && <button type="button" className="secondary-button" onClick={() => { if (window.confirm('Turn off WhatsApp on this PC? Queued stock files will not be sent from here.')) act(() => wa().disable()); }}>Turn off</button>}
-          </div>
+          </div>}
           {outbox && (
             <p className="swa-muted">
               NMW stock file: {outbox.lastError ? `last attempt failed — ${outbox.lastError}` : outbox.lastSent ? `last sent ${outbox.lastSent}` : 'none waiting'}

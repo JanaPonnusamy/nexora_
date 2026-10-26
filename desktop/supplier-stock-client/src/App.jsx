@@ -30,7 +30,7 @@ import {
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 import SchemaSyncPage from './SchemaSyncPage.jsx';
-import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareHost, offerWhatsAppShare, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
+import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
 import { NavMenu } from './navMenu.jsx';
 import TimeReport from './TimeReport.jsx';
 
@@ -357,6 +357,8 @@ function AppShell() {
   const isConfigured = Boolean(effectiveTenantId && effectiveStoreId);
   // Sends the NMW stock files HO queued for this store from the store's own
   // WhatsApp, whichever screen is open.
+  // The HO WhatsApp engine calls the API as the signed-in user.
+  setWhatsAppSession(session);
   const storeOutbox = useStoreWhatsAppOutbox({ session, tenantId: effectiveTenantId, storeId: effectiveStoreId });
 
   const navItems = useMemo(() => {
