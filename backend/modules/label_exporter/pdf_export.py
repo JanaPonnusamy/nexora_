@@ -291,7 +291,9 @@ def _draw_card(page, x0, y0, card_w, group):
 
     label_rect = fitz.Rect(col_x[1], row_y[2], col_x[2], row_y[_NUM_ROWS])
     page.draw_rect(label_rect, color=(0, 0, 0), width=_INNER_BORDER_W)
-    _draw_text(page, label_rect, _short_location(group["location"]) or "-", _LOC_FONT_MAX, _LOC_FONT_MIN, _LOC_COLOR, "center")
+    # location None = a blank filler card (see build_label_queue_pdf): borders only.
+    if group["location"] is not None:
+        _draw_text(page, label_rect, _short_location(group["location"]) or "-", _LOC_FONT_MAX, _LOC_FONT_MIN, _LOC_COLOR, "center")
 
 
 def build_label_queue_pdf(rows: list[dict], letter: str | None = None) -> bytes:
@@ -319,6 +321,12 @@ def build_label_queue_pdf(rows: list[dict], letter: str | None = None) -> bytes:
     used_h = rows_per_page * _CARD_H + (rows_per_page - 1) * _GAP
     margin_x = (page_w - used_w) / 2
     margin_y = (page_h - used_h) / 2
+
+    # Owner request: a part-filled last page (e.g. 20 of 32) is padded with
+    # empty card outlines so every printed sheet is a full grid — the blank
+    # cards can be cut out and hand-written later.
+    if groups and len(groups) % per_page:
+        groups = groups + [{"location": None, "items": []}] * (per_page - len(groups) % per_page)
 
     doc = fitz.open()
     page = None

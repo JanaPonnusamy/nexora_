@@ -136,6 +136,26 @@ function isLabelReviewOnly(session) {
   return roleNames.every((name) => name.includes('labelreview') || name.includes('reviewonly'));
 }
 
+// A stock-viewer login (role STOCK_VIEWER): sees ONLY Stock (Vertical) and the
+// NMW bills (NMW Sales Report, already store-scoped server-side) -- no Settings
+// (the HO address is set from the login screen, before signing in).
+function isStockViewerOnly(session) {
+  const roles = session?.user?.roles || [];
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase().replace(/[^a-z]/g, ''));
+  if (!roleNames.length) return false;
+  return roleNames.every((name) => name.includes('stockviewer'));
+}
+
+// A combined stock + label login (roles STOCK_VIEWER + LABEL_REVIEW, e.g. NMA1):
+// sees Stock (Vertical), the NMW bills and the Label Exporter -- nothing else.
+// Assign/clear inside the Label Exporter stay super-admin only.
+function isStockAndLabelViewer(session) {
+  const roles = session?.user?.roles || [];
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase().replace(/[^a-z]/g, ''));
+  if (!roleNames.length) return false;
+  return roleNames.every((name) => name.includes('stockviewer') || name.includes('labelreview'));
+}
+
 // Mirrors backend dependencies.store_scope.is_supplier_analysis_blocked:
 // Supplier Stock Analysis is admin-tier only - a login whose roles are ALL
 // purchase-manager and/or salesman must not see the tab at all.
@@ -365,6 +385,12 @@ function AppShell() {
     // Review-only login: trim the nav to just Label Exporter + Settings.
     if (isLabelReviewOnly(session)) {
       return screens.filter((s) => s.id === 'label_exporter' || s.id === 'settings');
+    }
+    if (isStockViewerOnly(session)) {
+      return screens.filter((s) => ['stock_vertical', 'nmw_sales'].includes(s.id));
+    }
+    if (isStockAndLabelViewer(session)) {
+      return screens.filter((s) => ['stock_vertical', 'nmw_sales', 'label_exporter'].includes(s.id));
     }
     const modules = userModules(session?.user);
     // Supplier Stock Analysis is admin-tier only - a purchase-manager-only or
