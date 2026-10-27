@@ -155,11 +155,26 @@ export default function LegacyOrderPage() {
   }, [])
 
   const watch = useCallback((jobId: string) => {
-    const poll = () => legacyOrderService.getJob(jobId).then(updateJob).catch((e: Error) => {
+    // Jobs live in the backend's memory: a 404 means the server restarted
+    // mid-run and the task is gone. Other errors (server briefly down while
+    // restarting) keep polling for a while instead of freezing the card.
+    let failures = 0
+    const lose = (message: string) => {
+      setJobs((current) => {
+        const job = current[jobId]
+        return job ? { ...current, [jobId]: { ...job, status: 'failed', message, error: message } } : current
+      })
       const poller = pollers.current.get(jobId)
       if (poller) window.clearInterval(poller)
       pollers.current.delete(jobId)
-      setError(e.message)
+      setError(message)
+    }
+    const poll = () => legacyOrderService.getJob(jobId).then((job) => { failures = 0; updateJob(job) }).catch((e: Error) => {
+      if (e instanceof ApiError && e.status === 404) {
+        lose('The server restarted while this task was running, so the task was lost. Run it again.')
+      } else if (++failures * POLL_MS >= 120_000) {
+        lose(`Lost contact with the server: ${e.message}`)
+      }
     })
     void poll()
     pollers.current.set(jobId, window.setInterval(poll, POLL_MS))
