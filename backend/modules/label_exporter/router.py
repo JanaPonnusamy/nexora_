@@ -12,7 +12,7 @@ from fastapi.responses import Response
 
 from dependencies.auth import get_current_user
 from dependencies.store_scope import assert_label_exporter_store_access, require_super_admin
-from modules.label_exporter import service
+from modules.label_exporter import pdf_export, service
 from modules.label_exporter.schemas import (
     BoxProductResult,
     BoxSearchResult,
@@ -302,13 +302,13 @@ def export_label_queue_pdf(
     letter: str = "",
     current_user: dict = Depends(get_current_user),
 ):
-    """Box-wise A3 label sheet. An optional `letter` restricts it to a single
-    shelf letter (e.g. ?letter=C -> only the C###/SYPC### boxes) so each letter
-    can be printed on its own; omit it for the whole queue."""
+    """Box-wise A3 label sheet. An optional `letter` restricts it to one or
+    more shelf letters (e.g. ?letter=C -> only the C###/SYPC### boxes;
+    ?letter=A,C -> the A and C boxes); omit it for the whole queue."""
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
     pdf_bytes = service.build_label_queue_pdf(tenant_id, store_id, letter)
-    letter = (letter or "").strip().upper()[:1]
-    filename = f"label-queue-{letter}.pdf" if letter else "label-queue.pdf"
+    letters = "".join(pdf_export.parse_letters(letter))
+    filename = f"label-queue-{letters}.pdf" if letters else "label-queue.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

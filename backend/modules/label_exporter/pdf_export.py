@@ -296,17 +296,25 @@ def _draw_card(page, x0, y0, card_w, group):
         _draw_text(page, label_rect, _short_location(group["location"]) or "-", _LOC_FONT_MAX, _LOC_FONT_MIN, _LOC_COLOR, "center")
 
 
+def parse_letters(letter: str | None) -> list[str]:
+    """`letter` is one shelf letter ("C") or a comma-separated set ("A,C,D")
+    from the queue's multi-select picker. Returns the distinct uppercase
+    letters, sorted; empty means no letter restriction."""
+    return sorted({part.strip().upper()[:1] for part in (letter or "").split(",") if part.strip()})
+
+
 def build_label_queue_pdf(rows: list[dict], letter: str | None = None) -> bytes:
     """One box-card per assigned location, tiled top-to-bottom within a
     group of box-columns, then left-to-right across groups (centered on the
     sheet), across as many landscape A3 pages as needed.
 
-    `letter` restricts the sheet to a single shelf letter (e.g. "C" -> only
-    the C### / SYPC### boxes) so each letter can be printed on its own; falsy
-    means the whole queue, as before."""
-    letter = (letter or "").strip().upper()[:1]
-    if letter:
-        rows = [r for r in rows if location_letter(r.get("location")) == letter]
+    `letter` restricts the sheet to one or more shelf letters (e.g. "C" ->
+    only the C### / SYPC### boxes; "A,C" -> the A and C boxes, in location
+    order) so letters can be printed on their own; falsy means the whole
+    queue, as before."""
+    letters = set(parse_letters(letter))
+    if letters:
+        rows = [r for r in rows if location_letter(r.get("location")) in letters]
     groups = _group_by_location(rows)
     portrait_w, portrait_h = fitz.paper_size("a3")
     page_w, page_h = portrait_h, portrait_w  # landscape

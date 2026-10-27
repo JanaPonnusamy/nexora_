@@ -7168,7 +7168,7 @@ function LabelExporter({ session, settings }) {
   const [queueRows, setQueueRows] = useState([]);
   const [queueBusy, setQueueBusy] = useState(false);
   const [queuePrintFilter, setQueuePrintFilter] = useState('all'); // 'all' | 'ready' | 'printed'
-  const [queueLetter, setQueueLetter] = useState(''); // '' = all letters; else a single shelf letter
+  const [queueLetterSel, setQueueLetterSel] = useState(() => new Set()); // empty = all letters; else the ticked shelf letters
 
   const [trendRows, setTrendRows] = useState([]);
   const [trendMonths, setTrendMonths] = useState(LBL_TREND_MONTHS_DEFAULT); // 4-12, default 6 (spec §5A/5B)
@@ -7840,15 +7840,15 @@ function LabelExporter({ session, settings }) {
     setQueueOpen(true);
     setQueueBusy(true);
     setQueuePrintFilter('all');
-    setQueueLetter('');
+    setQueueLetterSel(new Set());
     api.getLabelQueue(tenantId, storeId, session)
       .then((result) => setQueueRows(asArray(result?.rows)))
       .catch((error) => setStatus({ state: 'error', message: error.message }))
       .finally(() => setQueueBusy(false));
   }
 
-  // Letters present in the queue (A, B, C…), so the operator can print one
-  // shelf letter at a time. Mirrors the backend's pdf_export.location_letter:
+  // Letters present in the queue (A, B, C…), so the operator can print one or
+  // more chosen shelf letters together. Mirrors the backend's pdf_export.location_letter:
   // only real box codes (letters then digits, optionally "SYP"-prefixed) count,
   // and a SYP bucket resolves to the letter under its prefix ("SYPC003" -> C).
   const queueLetters = useMemo(() => {
@@ -7861,14 +7861,14 @@ function LabelExporter({ session, settings }) {
   // stamped by a prior Print/Export or Export PDF run. Print/Export + the
   // printed-mark call below act on this filtered set, so switching to "Ready
   // to print" and printing only stamps the ones actually printed just now.
-  // The Letter picker narrows the same set so both the browser Print/Export and
-  // the A3 PDF print just that letter.
+  // The Letter picker (multi-select) narrows the same set so both the browser
+  // Print/Export and the A3 PDF print just the ticked letters.
   const filteredQueueRows = useMemo(() => queueRows.filter((r) => (
     (queuePrintFilter === 'ready' ? !r.label_created_at
       : queuePrintFilter === 'printed' ? !!r.label_created_at
         : true)
-    && (!queueLetter || queueLocationLetter(r.location) === queueLetter)
-  )), [queueRows, queuePrintFilter, queueLetter]);
+    && (!queueLetterSel.size || queueLetterSel.has(queueLocationLetter(r.location)))
+  )), [queueRows, queuePrintFilter, queueLetterSel]);
 
   function printQueue() {
     if (!filteredQueueRows.length) return;
@@ -7900,8 +7900,9 @@ function LabelExporter({ session, settings }) {
   function exportQueuePdf() {
     if (!filteredQueueRows.length || pdfBusy) return;
     setPdfBusy(true);
-    const letterTag = queueLetter ? queueLetter : 'all';
-    api.exportLabelQueuePdf(tenantId, storeId, session, queueLetter)
+    const letters = Array.from(queueLetterSel).sort();
+    const letterTag = letters.length ? letters.join('') : 'all';
+    api.exportLabelQueuePdf(tenantId, storeId, session, letters.join(','))
       .then((blob) => {
         owDownloadBlob(blob, `label-queue-${letterTag}-a3-${new Date().toISOString().slice(0, 10)}.pdf`);
         return api.markLabelsPrinted(tenantId, storeId, filteredQueueRows.map((r) => r.product_code), session);
@@ -8976,13 +8977,10 @@ function LabelExporter({ session, settings }) {
                     <option value="printed">Already printed</option>
                   </select>
                 </label>
-                <label className="lblx-field lbl-queue-filter">
+                <div className="lblx-field lbl-queue-filter" title="Tick one or more shelf letters to print/export together">
                   <span>Letter</span>
-                  <select value={queueLetter} onChange={(event) => setQueueLetter(event.target.value)} title="Print/export one shelf letter at a time">
-                    <option value="">All letters</option>
-                    {queueLetters.map((L) => <option key={L} value={L}>{L}</option>)}
-                  </select>
-                </label>
+                  <LabelMultiPicker options={queueLetters} selected={queueLetterSel} onChange={setQueueLetterSel} placeholder="All letters" noun="letter" />
+                </div>
                 {admin && (
                   <button
                     type="button"
