@@ -371,14 +371,14 @@ export function WhatsAppShareHost() {
 }
 
 // Explicit button: builds its files on click, then opens the send dialog.
-export function WhatsAppShareButton({ label = 'WhatsApp', title, caption, source, buildFiles, disabled, className = 'secondary-button' }) {
+export function WhatsAppShareButton({ label = 'WhatsApp', title, caption, source, rememberKey, buildFiles, disabled, className = 'secondary-button' }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   if (!storeWhatsAppAvailable()) return null;
   const click = async () => {
     setBusy(true); setError('');
     try {
-      offerWhatsAppShare({ blobs: await buildFiles(), title, caption, source, openNow: true });
+      offerWhatsAppShare({ blobs: await buildFiles(), title, caption, source, rememberKey, openNow: true });
     } catch (e) {
       setError(e.message || 'Could not prepare the file.');
     } finally {

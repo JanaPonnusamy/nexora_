@@ -30,7 +30,7 @@ import {
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 import SchemaSyncPage from './SchemaSyncPage.jsx';
-import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
+import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareButton, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
 import { NavMenu } from './navMenu.jsx';
 import TimeReport from './TimeReport.jsx';
 
@@ -7897,14 +7897,27 @@ function LabelExporter({ session, settings }) {
   // each), sized to match the legacy VB6 Excel export's column/row dimensions
   // -- distinct from printQueue's per-product 50x25mm browser-print sheet.
   const [pdfBusy, setPdfBusy] = useState(false);
+  // WhatsApp: the chat/group is remembered per exported store, so each store's
+  // label sheet goes back to that store's group without retyping it.
+  const queueStore = stores.find((s) => s.store_id === storeId);
+  const queueWaShare = () => {
+    const letters = Array.from(queueLetterSel).sort();
+    return {
+      letters,
+      fileName: `label-queue-${queueStore?.store_code || 'store'}-${letters.length ? letters.join('') : 'all'}-a3-${new Date().toISOString().slice(0, 10)}.pdf`,
+      caption: `Label sheet (A3) — ${queueStore ? `${queueStore.store_code} ${queueStore.store_name}` : 'store'} — letters ${letters.length ? letters.join(', ') : 'all'}`,
+      rememberKey: `label-queue:${storeId}`,
+    };
+  };
   function exportQueuePdf() {
     if (!filteredQueueRows.length || pdfBusy) return;
     setPdfBusy(true);
-    const letters = Array.from(queueLetterSel).sort();
-    const letterTag = letters.length ? letters.join('') : 'all';
-    api.exportLabelQueuePdf(tenantId, storeId, session, letters.join(','))
+    const share = queueWaShare();
+    api.exportLabelQueuePdf(tenantId, storeId, session, share.letters.join(','))
       .then((blob) => {
-        owDownloadBlob(blob, `label-queue-${letterTag}-a3-${new Date().toISOString().slice(0, 10)}.pdf`);
+        owDownloadBlob(blob, share.fileName);
+        // Replace owDownloadBlob's generic share offer with the store's own group.
+        offerWhatsAppShare({ blobs: [{ name: share.fileName, blob }], caption: share.caption, source: 'Label Queue', rememberKey: share.rememberKey });
         return api.markLabelsPrinted(tenantId, storeId, filteredQueueRows.map((r) => r.product_code), session);
       })
       .then(() => setQueueRows((current) => current.map((r) => ({ ...r, label_created_at: r.label_created_at || 'printed' }))))
@@ -8996,6 +9009,20 @@ function LabelExporter({ session, settings }) {
                 <button type="button" className="lbl-assign-btn" disabled={!filteredQueueRows.length || pdfBusy} onClick={exportQueuePdf} title="Box-wise A3 PDF matching the legacy label sheet layout">
                   {pdfBusy ? 'Building PDF…' : 'Export PDF (A3)'}
                 </button>
+                <WhatsAppShareButton
+                  className="lbl-assign-btn"
+                  label="WhatsApp"
+                  title="Send the A3 label PDF (ticked letters) to this store's WhatsApp group"
+                  disabled={!filteredQueueRows.length}
+                  source="Label Queue"
+                  caption={queueWaShare().caption}
+                  rememberKey={`label-queue:${storeId}`}
+                  buildFiles={async () => {
+                    const share = queueWaShare();
+                    const blob = await api.exportLabelQueuePdf(tenantId, storeId, session, share.letters.join(','));
+                    return [{ name: share.fileName, blob }];
+                  }}
+                />
                 <button type="button" className="lbl-assign-close" onClick={() => setQueueOpen(false)} aria-label="Close">✕</button>
               </div>
             </div>
