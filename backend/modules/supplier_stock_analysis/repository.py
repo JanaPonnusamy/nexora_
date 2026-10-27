@@ -1,13 +1,78 @@
-﻿"""Platform-only data access for Supplier Stock Analysis."""
+"""Data access for Supplier Stock Analysis.
+
+Supplier live stock is read from (and Excel imports write to) the central
+legacy ``OrderNMC.dbo.SupplierStock`` table -- the same table the legacy
+order screens and the Order Workspace use -- so there is ONE supplier stock
+for every screen. Everything else (stores, products, mappings, sync.*) is
+NEXORA_PLATFORM. Both databases live on the same SQL Server instance, so the
+OrderNMC rows are joined in cross-database.
+"""
+
+import os
+import re
 
 from config.database import get_connection
+from modules.legacy_order import database as legacy_database
 from modules.procurement._dbutil import rows_to_dicts
 
 
-def _object_exists(cur, name):
-    cur.execute("SELECT OBJECT_ID(?)", (name,))
-    row = cur.fetchone()
-    return bool(row and row[0])
+def _ordernmc():
+    name = os.getenv("LEGACY_DB_DATABASE", "OrderNMC")
+    if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+        raise RuntimeError(f"Invalid LEGACY_DB_DATABASE: {name!r}")
+    return f"[{name}]"
+
+
+def _supplier_stock_source():
+    """OrderNMC.SupplierStock shaped like the old procurement.supplier_stock
+    table, so the analysis queries below keep their column names. The legacy
+    storename is the store CODE; product_code resolves through the store's
+    OrderNMC SupplierProductMatch (unique per store+supplier+product, same
+    join the legacy order screens use). OrderNMC is Latin1_General_CI_AI and
+    NEXORA_PLATFORM is SQL_Latin1_General_CP1_CI_AS, hence the COLLATEs.
+    supplier_stock_id is the hex of storename|supplier|product (URL-safe,
+    decoded by supplier_stock_row)."""
+    db = _ordernmc()
+    return f"""(
+        SELECT
+            st.tenant_id,
+            st.store_id,
+            CONVERT(VARCHAR(400), CAST(s.storename + CHAR(31) + s.suppliercode + CHAR(31)
+                + s.supplierproductcode AS VARBINARY(200)), 2) AS supplier_stock_id,
+            s.storename COLLATE DATABASE_DEFAULT AS store_code,
+            s.suppliercode COLLATE DATABASE_DEFAULT AS supplier_code,
+            s.supplierproductcode COLLATE DATABASE_DEFAULT AS supplier_product_code,
+            s.supplierproductname COLLATE DATABASE_DEFAULT AS supplier_product_name,
+            CAST(spm.ProductCode AS VARCHAR(50)) AS product_code,
+            s.stock AS available_stock,
+            s.ptr,
+            s.mrp,
+            s.discound COLLATE DATABASE_DEFAULT AS discount,
+            s.packing COLLATE DATABASE_DEFAULT AS packing,
+            s.free,
+            s.minqty AS minimum_qty,
+            s.sch AS scheme,
+            s.Rack COLLATE DATABASE_DEFAULT AS rack,
+            s.transactiondate AS transaction_date,
+            s.transactiondate AS imported_at,
+            'ordernmc' AS source,
+            1 AS is_active
+        FROM {db}.dbo.SupplierStock s
+        JOIN dbo.stores st
+          ON st.store_code = s.storename COLLATE DATABASE_DEFAULT
+        LEFT JOIN {db}.dbo.SupplierProductMatch spm
+          ON spm.StoreName = s.storename
+         AND spm.SupplierCode = s.suppliercode
+         AND spm.SupplierProductCode = s.supplierproductcode
+    )"""
+
+
+def _store_code(tenant_id, store_id):
+    rows = _fetch(
+        "SELECT store_code FROM dbo.stores WHERE tenant_id = ? AND store_id = ?",
+        (tenant_id, store_id),
+    )
+    return (rows[0]["store_code"] or "").strip() if rows else None
 
 
 def _fetch(sql, params=()):
@@ -24,36 +89,47 @@ def list_suppliers(tenant_id, store_id=None, search=""):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        if not _object_exists(cur, "procurement.supplier_stock"):
-            return []
         store_clause = "AND ss.store_id = ?" if store_id else ""
         params = [tenant_id]
         if store_id:
             params.append(store_id)
         term = (search or "").strip()
         params.extend([term, term, term])
+        db = _ordernmc()
+        # Supplier name: the store's own OrderSuppliers row (what the legacy
+        # order screens show), falling back to the synced store master.
         cur.execute(
             f"""
-            SELECT
-                CAST(ss.supplier_code AS VARCHAR(100)) AS supplier_code,
-                COALESCE(MAX(NULLIF(s.suppliername, '')), '') AS supplier_name,
-                COUNT(1) AS product_count,
-                SUM(CASE WHEN ISNULL(ss.available_stock, 0) > 0 THEN 1 ELSE 0 END) AS available_count,
-                SUM(ISNULL(ss.available_stock, 0)) AS total_available_stock,
-                MAX(ss.imported_at) AS last_imported_at
-            FROM procurement.supplier_stock ss
-            LEFT JOIN sync.Suppliers s
-                ON s.tenant_id = ss.tenant_id
-               AND s.store_id = ss.store_id
-               AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(ss.supplier_code AS VARCHAR(100))
-            WHERE ss.tenant_id = ?
-              {store_clause}
-              AND ss.is_active = 1
-              AND (? = ''
-                   OR CAST(ss.supplier_code AS VARCHAR(100)) LIKE ? + '%'
-                   OR s.suppliername LIKE '%' + ? + '%')
-            GROUP BY ss.supplier_code
-            ORDER BY supplier_name, ss.supplier_code
+            SELECT x.supplier_code, x.supplier_name, x.product_count,
+                   x.available_count, x.total_available_stock, x.last_imported_at
+            FROM (
+                SELECT
+                    ss.supplier_code,
+                    COALESCE(
+                        MAX(NULLIF(RTRIM(os.Suppliername COLLATE DATABASE_DEFAULT), '')),
+                        MAX(NULLIF(RTRIM(s.suppliername), '')),
+                        ''
+                    ) AS supplier_name,
+                    COUNT(1) AS product_count,
+                    SUM(CASE WHEN ISNULL(ss.available_stock, 0) > 0 THEN 1 ELSE 0 END) AS available_count,
+                    SUM(ISNULL(ss.available_stock, 0)) AS total_available_stock,
+                    MAX(ss.imported_at) AS last_imported_at
+                FROM {_supplier_stock_source()} ss
+                LEFT JOIN {db}.dbo.OrderSuppliers os
+                    ON os.StoreName COLLATE DATABASE_DEFAULT = ss.store_code
+                   AND os.suppliercode COLLATE DATABASE_DEFAULT = ss.supplier_code
+                LEFT JOIN sync.Suppliers s
+                    ON s.tenant_id = ss.tenant_id
+                   AND s.store_id = ss.store_id
+                   AND CAST(s.suppliercode AS VARCHAR(100)) = ss.supplier_code
+                WHERE ss.tenant_id = ?
+                  {store_clause}
+                GROUP BY ss.supplier_code
+            ) x
+            WHERE ? = ''
+               OR x.supplier_code LIKE ? + '%'
+               OR x.supplier_name LIKE '%' + ? + '%'
+            ORDER BY x.supplier_name, x.supplier_code
             """,
             tuple(params),
         )
@@ -62,12 +138,27 @@ def list_suppliers(tenant_id, store_id=None, search=""):
         conn.close()
 
 
+def list_order_suppliers(tenant_id, store_id):
+    """Every supplier on the store's OrderNMC.OrderSuppliers list -- the
+    choices for an Excel import (a supplier need not have stock rows yet)."""
+    store_code = _store_code(tenant_id, store_id)
+    if not store_code:
+        return []
+    with legacy_database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT RTRIM(suppliercode) AS supplier_code, RTRIM(ISNULL(Suppliername, '')) AS supplier_name "
+            "FROM OrderSuppliers WHERE StoreName = ? AND ISNULL(IsActive, 1) = 1 "
+            "ORDER BY Suppliername, suppliercode",
+            (store_code,),
+        )
+        return rows_to_dicts(cur)
+
+
 def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", only_available=True):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        if not _object_exists(cur, "procurement.supplier_stock"):
-            return []
         store_clause = "AND ss.store_id = ?" if store_id else ""
         term = (search or "").strip()
         # Placeholder order must match the CTEs below, top to bottom.
@@ -95,7 +186,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
             -- product_mapping = 55s / timeout; this is ~100x faster).
             supplier_keys AS (
                 SELECT DISTINCT ss.store_id, ss.product_code
-                FROM procurement.supplier_stock ss
+                FROM {_supplier_stock_source()} ss
                 WHERE ss.tenant_id = ?
                   AND ss.supplier_code = ?
                   {store_clause}
@@ -147,7 +238,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                 GROUP BY mr.key_store, mr.key_code
             )
             SELECT TOP 3000
-                CAST(ss.supplier_stock_id AS VARCHAR(36)) AS supplier_stock_id,
+                ss.supplier_stock_id,
                 CAST(ss.tenant_id AS VARCHAR(36)) AS tenant_id,
                 CAST(ss.store_id AS VARCHAR(36)) AS store_id,
                 st.store_code,
@@ -191,7 +282,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                 -- existing ISNULL(...,0) stock convention throughout.
                 ISNULL(p.totalstock, 0) AS own_store_stock,
                 ISNULL(mapagg.other_store_has_stock, 0) AS other_store_has_stock
-            FROM procurement.supplier_stock ss
+            FROM {_supplier_stock_source()} ss
             CROSS JOIN active_store_count ascnt
             LEFT JOIN dbo.stores st ON st.tenant_id = ss.tenant_id AND st.store_id = ss.store_id
             -- sync.Products.productcode is INT; convert the varchar supplier code
@@ -423,8 +514,6 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
     conn = get_connection()
     try:
         cur = conn.cursor()
-        if not _object_exists(cur, "procurement.supplier_stock"):
-            return []
         store_clause = "AND ss.store_id = ?" if store_id else ""
         params = [tenant_id, tenant_id, supplier_code]
         if store_id:
@@ -440,7 +529,7 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
             ),
             supplier_rows AS (
                 SELECT
-                    CAST(ss.supplier_stock_id AS VARCHAR(36)) AS supplier_stock_id,
+                    ss.supplier_stock_id,
                     CAST(ss.tenant_id AS VARCHAR(36)) AS tenant_id,
                     CAST(ss.store_id AS VARCHAR(36)) AS source_store_id,
                     st.store_code AS source_store_code,
@@ -454,7 +543,7 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
                     ss.ptr,
                     ss.mrp,
                     ascnt.total_store_count
-                FROM procurement.supplier_stock ss
+                FROM {_supplier_stock_source()} ss
                 CROSS JOIN active_store_count ascnt
                 LEFT JOIN dbo.stores st
                   ON st.tenant_id = ss.tenant_id AND st.store_id = ss.store_id
@@ -616,26 +705,30 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
 
 
 def supplier_stock_row(supplier_stock_id, tenant_id=None):
+    try:
+        bytes.fromhex(supplier_stock_id or "")
+    except ValueError:
+        return None
     params = [supplier_stock_id]
     tenant_clause = ""
     if tenant_id:
-        tenant_clause = "AND tenant_id = ?"
+        tenant_clause = "AND ss.tenant_id = ?"
         params.append(tenant_id)
     rows = _fetch(
         f"""
         SELECT TOP 1
-            CAST(supplier_stock_id AS VARCHAR(36)) AS supplier_stock_id,
-            CAST(tenant_id AS VARCHAR(36)) AS tenant_id,
-            CAST(store_id AS VARCHAR(36)) AS store_id,
-            CAST(supplier_code AS VARCHAR(100)) AS supplier_code,
-            CAST(supplier_product_code AS VARCHAR(100)) AS supplier_product_code,
-            supplier_product_name,
-            CAST(product_code AS VARCHAR(100)) AS product_code,
-            available_stock, ptr, mrp, discount, packing, free, minimum_qty, scheme
-        FROM procurement.supplier_stock
-        WHERE supplier_stock_id = ?
+            ss.supplier_stock_id,
+            CAST(ss.tenant_id AS VARCHAR(36)) AS tenant_id,
+            CAST(ss.store_id AS VARCHAR(36)) AS store_id,
+            ss.supplier_code,
+            ss.supplier_product_code,
+            ss.supplier_product_name,
+            ss.product_code,
+            ss.available_stock, ss.ptr, ss.mrp, ss.discount, ss.packing, ss.free,
+            ss.minimum_qty, ss.scheme
+        FROM {_supplier_stock_source()} ss
+        WHERE ss.supplier_stock_id = ?
           {tenant_clause}
-          AND is_active = 1
         """,
         tuple(params),
     )
@@ -1016,14 +1109,6 @@ def upsert_mapping(payload):
                     (store_id, tenant_id, SupplierCode, SupplierProductCode,
                      SupplierProductName, ProductCode, UserName, LastModifiedDate, IsActive)
                 VALUES (?, ?, ?, ?, ?, ?, ?, GETDATE(), 1)
-
-            UPDATE procurement.supplier_stock
-               SET product_code = ?
-             WHERE tenant_id = ?
-               AND store_id = ?
-               AND CAST(supplier_code AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
-               AND CAST(supplier_product_code AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
-               AND is_active = 1
             """,
             (
                 payload["tenant_id"], payload["store_id"], payload["supplier_code"], payload["supplier_product_code"],
@@ -1031,73 +1116,146 @@ def upsert_mapping(payload):
                 payload["tenant_id"], payload["store_id"], payload["supplier_code"], payload["supplier_product_code"],
                 payload["store_id"], payload["tenant_id"], payload["supplier_code"], payload["supplier_product_code"],
                 payload.get("supplier_product_name"), payload["product_code"], payload.get("username"),
-                payload["product_code"], payload["tenant_id"], payload["store_id"],
-                payload["supplier_code"], payload["supplier_product_code"],
             ),
         )
         conn.commit()
-        return {"success": True}
     finally:
         conn.close()
+    _upsert_ordernmc_match(payload)
+    return {"success": True}
 
 
-def replace_supplier_stock(tenant_id, store_id, supplier_code, rows, imported_by):
-    conn = get_connection()
-    try:
+def _upsert_ordernmc_match(payload):
+    """Mirror a manual mapping into the store's OrderNMC.SupplierProductMatch
+    -- the table supplier stock rows resolve their ProductCode through (see
+    _supplier_stock_source), and what the legacy order screens join on."""
+    store_code = _store_code(payload["tenant_id"], payload["store_id"])
+    if not store_code:
+        return
+    key = (store_code, str(payload["supplier_code"]), str(payload["supplier_product_code"]))
+    name = payload.get("supplier_product_name") or None
+    user = payload.get("username") or None
+    with legacy_database.get_central_connection() as conn:
         cur = conn.cursor()
         cur.execute(
-            """
-            UPDATE procurement.supplier_stock
-               SET is_active = 0
-             WHERE tenant_id = ? AND store_id = ? AND supplier_code = ? AND source = 'excel'
-            """,
-            (tenant_id, store_id, supplier_code),
+            "UPDATE SupplierProductMatch SET ProductCode = ?, SupplierProductName = ?, "
+            "UserName = ?, LastModifiedDate = GETDATE(), IsActive = 1 "
+            "WHERE StoreName = ? AND SupplierCode = ? AND SupplierProductCode = ?",
+            (payload["product_code"], name, user, *key),
+        )
+        if cur.rowcount == 0:
+            cur.execute(
+                "INSERT INTO SupplierProductMatch (StoreName, SupplierCode, SupplierProductCode, "
+                "SupplierProductName, ProductCode, UserName, LastModifiedDate, IsActive) "
+                "VALUES (?, ?, ?, ?, ?, ?, GETDATE(), 1)",
+                (*key, name, payload["product_code"], user),
+            )
+        conn.commit()
+
+
+# OrderNMC.SupplierStock column widths: text columns varchar(50), sch/free/
+# minqty int, mrp/ptr decimal(10,2).
+_TEXT_MAX = 50
+
+
+def _text(value):
+    text = "" if value is None else str(value).strip()
+    return text[:_TEXT_MAX] or None
+
+
+def _money(value):
+    try:
+        return None if value is None else round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def replace_supplier_stock(tenant_id, store_id, supplier_code, rows, imported_by=None):
+    """REPLACE this supplier's rows for the store in OrderNMC.SupplierStock
+    (storename = store code) -- the same delete+reinsert the legacy Excel
+    import did. A row's Rack is carried forward when the file has none, so a
+    re-upload doesn't wipe racks already on file."""
+    store_code = _store_code(tenant_id, store_id)
+    if not store_code:
+        raise ValueError("Unknown store for this tenant.")
+    supplier_code = str(supplier_code).strip()
+    with legacy_database.get_central_connection() as conn:
+        cur = conn.cursor()
+        existing_racks = {
+            str(r.supplierproductcode): r.Rack
+            for r in cur.execute(
+                "SELECT supplierproductcode, Rack FROM SupplierStock "
+                "WHERE storename = ? AND suppliercode = ?",
+                (store_code, supplier_code),
+            ).fetchall()
+            if r.Rack
+        }
+        cur.execute(
+            "DELETE FROM SupplierStock WHERE storename = ? AND suppliercode = ?",
+            (store_code, supplier_code),
         )
         if rows:
             cur.fast_executemany = True
             cur.executemany(
-                """
-                INSERT INTO procurement.supplier_stock
-                    (tenant_id, store_id, supplier_code, supplier_product_code,
-                     supplier_product_name, available_stock, ptr, mrp, discount,
-                     packing, free, minimum_qty, scheme, transaction_date, source,
-                     is_active, imported_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'excel', 1, ?)
-                """,
+                "INSERT INTO SupplierStock "
+                "(suppliercode, supplierproductcode, supplierproductname, mrp, ptr, "
+                "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)",
                 [
                     (
-                        tenant_id, store_id, supplier_code,
-                        r.get("supplier_product_code"), r.get("supplier_product_name"),
-                        r.get("available_stock"), r.get("ptr"), r.get("mrp"),
-                        r.get("discount"), r.get("packing"), r.get("free"),
-                        r.get("minimum_qty"), r.get("scheme"), r.get("transaction_date"),
-                        imported_by,
+                        supplier_code, _text(r["supplier_product_code"]),
+                        _text(r.get("supplier_product_name")),
+                        _money(r.get("mrp")), _money(r.get("ptr")),
+                        r.get("available_stock") or 0, _text(r.get("discount")),
+                        _text(r.get("packing")), store_code,
+                        r.get("scheme") or 0, r.get("free") or 0, r.get("minimum_qty"),
+                        _text(r.get("rack")) or existing_racks.get(_text(r["supplier_product_code"])),
                     )
                     for r in rows
                 ],
             )
-        cur.execute(
-            """
-            UPDATE ss
-               SET ss.product_code = CAST(spm.ProductCode AS VARCHAR(50))
-            FROM procurement.supplier_stock ss
-            JOIN sync.SupplierProductMatch spm
-              ON spm.tenant_id = ss.tenant_id
-             AND spm.store_id = ss.store_id
-             AND CAST(spm.SupplierCode AS VARCHAR(100)) = CAST(ss.supplier_code AS VARCHAR(100))
-             AND CAST(spm.SupplierProductCode AS VARCHAR(100)) = CAST(ss.supplier_product_code AS VARCHAR(100))
-             AND ISNULL(spm.IsActive, 1) = 1
-            WHERE ss.tenant_id = ?
-              AND ss.store_id = ?
-              AND CAST(ss.supplier_code AS VARCHAR(100)) = CAST(? AS VARCHAR(100))
-              AND ss.source = 'excel'
-              AND ss.is_active = 1
-            """,
-            (tenant_id, store_id, supplier_code),
-        )
-        resolved = cur.rowcount
+        resolved = cur.execute(
+            "SELECT COUNT(1) FROM SupplierStock ss "
+            "JOIN SupplierProductMatch spm ON spm.StoreName = ss.storename "
+            " AND spm.SupplierCode = ss.suppliercode AND spm.SupplierProductCode = ss.supplierproductcode "
+            "WHERE ss.storename = ? AND ss.suppliercode = ?",
+            (store_code, supplier_code),
+        ).fetchone()[0]
         conn.commit()
-        return {"imported": len(rows), "product_codes_resolved": resolved}
-    finally:
-        conn.close()
+    return {"imported": len(rows), "product_codes_resolved": resolved, "store_code": store_code}
 
+
+def saved_excel_mapping(tenant_id, store_id, supplier_code):
+    """The supplier's saved column mapping from OrderNMC.SupplierExcelMapping
+    as {excel header: legacy column name} (legacy names, e.g. 'stock')."""
+    store_code = _store_code(tenant_id, store_id)
+    if not store_code or not supplier_code:
+        return {}
+    with legacy_database.get_central_connection() as conn:
+        rows = conn.cursor().execute(
+            "SELECT SupplierColumnName, ColumnName FROM SupplierExcelMapping "
+            "WHERE StoreName = ? AND SupplierCode = ?",
+            (store_code, str(supplier_code).strip()),
+        ).fetchall()
+    return {str(r.SupplierColumnName).strip(): str(r.ColumnName).strip() for r in rows if r.SupplierColumnName}
+
+
+def save_excel_mapping(tenant_id, store_id, supplier_code, columns):
+    """Replace the supplier's saved mapping: columns = {excel header: legacy column}."""
+    store_code = _store_code(tenant_id, store_id)
+    if not store_code:
+        return
+    supplier_code = str(supplier_code).strip()
+    with legacy_database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM SupplierExcelMapping WHERE StoreName = ? AND SupplierCode = ?",
+            (store_code, supplier_code),
+        )
+        for header, column in columns.items():
+            cur.execute(
+                "INSERT INTO SupplierExcelMapping (SupplierCode, SupplierColumnName, ColumnName, StoreName) "
+                "VALUES (?, ?, ?, ?)",
+                (supplier_code, str(header)[:100], column, store_code),
+            )
+        conn.commit()

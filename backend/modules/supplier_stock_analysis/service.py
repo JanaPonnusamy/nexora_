@@ -448,8 +448,12 @@ def update_mapping(payload):
     }
 
 
-def preview_excel(file_bytes):
-    return excel_import.preview(file_bytes)
+def preview_excel(file_bytes, tenant_id=None, store_id=None, supplier_code=None):
+    return excel_import.preview(file_bytes, tenant_id, store_id, supplier_code)
+
+
+def list_order_suppliers(tenant_id, store_id):
+    return {"suppliers": repository.list_order_suppliers(tenant_id, store_id)}
 
 
 def import_excel(tenant_id, store_id, supplier_code, file_bytes, mapping, imported_by=None):

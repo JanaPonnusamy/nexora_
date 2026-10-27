@@ -1,7 +1,8 @@
-"""Excel preview/import helpers for procurement.supplier_stock.
+"""Excel preview/import helpers for the central OrderNMC.SupplierStock table.
 
-This importer is platform-only: it writes to NEXORA_PLATFORM through
-config.database and does not read any legacy database.
+Imports REPLACE the supplier's rows for the selected store (storename = store
+code) in OrderNMC.SupplierStock, and the column mapping is saved per supplier
+in OrderNMC.SupplierExcelMapping -- the same tables the legacy VB import used.
 
 Normalization mirrors the daily desktop tool ``D:\\VBDOTNET\\Mapping\\free.py``
 (and the procurement importer in ``modules.procurement.supplier_stock_import``):
@@ -12,8 +13,10 @@ Normalization mirrors the daily desktop tool ``D:\\VBDOTNET\\Mapping\\free.py``
   band above the column names, so we no longer assume row 1;
 * both ``.xlsx`` and legacy ``.xls`` are read (pandas picks the engine from the
   file's own magic bytes, so no filename is required);
-* duplicate product rows are merged, **summing** the stock;
-* a combined scheme cell like ``"10 F 1"`` is split into buy/free.
+* duplicate product rows are merged, **summing** the stock (keyed on the
+  product code -- OrderNMC.SupplierStock's PK is supplier+product+store);
+* a combined scheme cell like ``"10 F 1"`` (e.g. "Batch Free Scheme") is
+  split into sch/free; a plain number is taken as sch.
 """
 
 from io import BytesIO
@@ -36,8 +39,25 @@ TARGETS = [
     {"value": "scheme", "label": "Scheme (buy)", "mandatory": False},
     {"value": "free", "label": "Free Qty", "mandatory": False},
     {"value": "minimum_qty", "label": "Min Qty", "mandatory": False},
-    {"value": "transaction_date", "label": "Transaction Date", "mandatory": False},
+    {"value": "rack", "label": "Rack", "mandatory": False},
 ]
+
+# Target <-> legacy OrderNMC column name (what SupplierExcelMapping.ColumnName
+# stores, so mappings saved by the old VB import keep working).
+_LEGACY_COLUMN = {
+    "supplier_product_code": "supplierproductcode",
+    "supplier_product_name": "supplierproductname",
+    "available_stock": "stock",
+    "ptr": "ptr",
+    "mrp": "mrp",
+    "discount": "discound",
+    "packing": "packing",
+    "scheme": "sch",
+    "free": "free",
+    "minimum_qty": "minqty",
+    "rack": "rack",
+}
+_TARGET_BY_LEGACY = {v: k for k, v in _LEGACY_COLUMN.items()}
 
 # Exact normalized-header -> target (fast path for known supplier headers).
 _SUGGESTIONS = {
@@ -65,6 +85,8 @@ _SUGGESTIONS = {
     "free": "free",
     "minqty": "minimum_qty",
     "minimumqty": "minimum_qty",
+    "batchfreescheme": "scheme",
+    "rack": "rack",
 }
 
 # Cells that make a row "look like" a header (used to find the real header row).
@@ -106,6 +128,8 @@ def _guess(header):
         return "ptr"
     if "min" in h:
         return "minimum_qty"
+    if "rack" in h:
+        return "rack"
     return ""
 
 
@@ -151,17 +175,30 @@ def _detect_header_row(matrix, known_headers):
     return 0
 
 
-def preview(file_bytes):
+def _saved_mapping(tenant_id, store_id, supplier_code):
+    """{excel header (lower): target} from the supplier's saved mapping."""
+    if not (tenant_id and store_id and supplier_code):
+        return {}
+    saved = repository.saved_excel_mapping(tenant_id, store_id, supplier_code)
+    return {
+        header.lower(): _TARGET_BY_LEGACY[column.lower()]
+        for header, column in saved.items()
+        if column.lower() in _TARGET_BY_LEGACY
+    }
+
+
+def preview(file_bytes, tenant_id=None, store_id=None, supplier_code=None):
+    saved = _saved_mapping(tenant_id, store_id, supplier_code)
     sheet_name, matrix = _read_matrix(file_bytes)
     if not matrix:
         return {
             "sheet_name": sheet_name, "row_count": 0, "headers": [],
             "suggested_mapping": {}, "targets": TARGETS, "sample_rows": [],
         }
-    hi = _detect_header_row(matrix, [])
+    hi = _detect_header_row(matrix, list(saved))
     headers = [("" if c is None else str(c).strip()) for c in matrix[hi]]
     headers = [h for h in headers if h]
-    suggested = {h: _guess(h) for h in headers}
+    suggested = {h: saved.get(h.lower()) or _guess(h) for h in headers}
     sample = []
     for row in matrix[hi + 1: hi + 11]:
         sample.append({headers[i]: (row[i] if i < len(row) else None) for i in range(len(headers))})
@@ -172,6 +209,7 @@ def preview(file_bytes):
         "suggested_mapping": suggested,
         "targets": TARGETS,
         "sample_rows": sample,
+        "saved_mapping": bool(saved),
     }
 
 
@@ -195,9 +233,10 @@ def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, importe
     ci_ptr, ci_mrp = col("ptr"), col("mrp")
     ci_disc, ci_pack = col("discount"), col("packing")
     ci_sch, ci_free, ci_min = col("scheme"), col("free"), col("minimum_qty")
-    ci_txn = col("transaction_date")
+    ci_txn, ci_rack = col("transaction_date"), col("rack")
 
-    # Build + merge duplicates (sum stock) keyed on product code + name.
+    # Build + merge duplicates (sum stock) keyed on the product code -- the
+    # OrderNMC.SupplierStock PK is (supplier, product code, store).
     merged = {}
     for row in matrix[hi + 1:]:
         def g(i):
@@ -210,10 +249,12 @@ def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, importe
             continue
         name = g(ci_name)
         name_str = "" if name is None else str(name).strip()
-        key = (code_str, name_str)
+        key = code_str
         stock = _number(g(ci_stock)) or 0.0
         # Split a combined "10 F 1" scheme; a dedicated Free column wins if mapped.
         sch, free = (parse_scheme(g(ci_sch)) if ci_sch is not None else (0, 0))
+        if not sch and ci_sch is not None:
+            sch = _int(g(ci_sch), 0)  # a plain "sch" column (already split)
         if ci_free is not None:
             free = _int(g(ci_free), free) or free
         if key in merged:
@@ -231,9 +272,15 @@ def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, importe
             "minimum_qty": _int(g(ci_min)),
             "scheme": sch or None,
             "transaction_date": g(ci_txn),
+            "rack": (str(g(ci_rack)).strip() if g(ci_rack) is not None else None),
         }
 
     result = repository.replace_supplier_stock(
         tenant_id, store_id, supplier_code, list(merged.values()), imported_by or "desktop-import"
+    )
+    repository.save_excel_mapping(
+        tenant_id, store_id, supplier_code,
+        {source: _LEGACY_COLUMN[target] for source, target in (mapping or {}).items()
+         if target in _LEGACY_COLUMN},
     )
     return {"success": True, **result}

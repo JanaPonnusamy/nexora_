@@ -163,10 +163,28 @@ def update_mapping(payload: MappingUpdate, current_user: dict = Depends(require_
     return service.update_mapping(payload.dict())
 
 
+@router.get("/order-suppliers")
+def order_suppliers(tenant_id: str, store_id: str, current_user: dict = Depends(require_admin_role)):
+    """The store's OrderNMC supplier list - Excel import choices."""
+    _assert_scope(current_user, tenant_id, store_id)
+    return service.list_order_suppliers(tenant_id, store_id)
+
+
 @router.post("/excel/preview")
-async def excel_preview(file: UploadFile = File(...), current_user: dict = Depends(require_admin_role)):
+async def excel_preview(
+    file: UploadFile = File(...),
+    tenant_id: Optional[str] = Form(None),
+    store_id: Optional[str] = Form(None),
+    supplier_code: Optional[str] = Form(None),
+    current_user: dict = Depends(require_admin_role),
+):
+    """supplier_code + store pre-fill the supplier's saved column mapping."""
+    if tenant_id and store_id:
+        _assert_scope(current_user, tenant_id, store_id)
+    else:
+        tenant_id = store_id = None
     data = await file.read()
-    return service.preview_excel(data)
+    return service.preview_excel(data, tenant_id, store_id, supplier_code)
 
 
 @router.post("/excel/import")
