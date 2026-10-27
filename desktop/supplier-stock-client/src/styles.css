@@ -2940,21 +2940,42 @@ th {
 }
 :root[data-theme="dark"] .sa-chart__plotbg { stroke: rgba(148, 163, 184, 0.16); }
 
+.sa-chart__svg text {
+  text-rendering: geometricPrecision;
+}
+
 .sa-chart__axis {
   fill: var(--nx-text-muted);
-  font-size: 7px;
+  font-size: 8.5px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
+/* Bar value labels: series-coloured, with a halo in the panel colour
+   (paint-order stroke) so a number stays legible where it crosses a
+   gridline, a neighbouring bar or another label. Light theme uses the dark
+   shade of each series; dark theme the light shade — the old fixed dark
+   shade was near-invisible on the dark panel. font-size must match valFont
+   in MonthlyMovementChart (App.jsx). */
 .sa-chart__barval {
-  font-size: 7px;
-  font-weight: 700;
+  font-size: 9px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
+  paint-order: stroke;
+  stroke: var(--nx-surface);
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
 }
+.sa-chart__barval--pur { fill: #1a3fae; }
+.sa-chart__barval--sal { fill: #12662f; }
+.sa-chart__barval--stk { fill: #9c1414; }
+:root[data-theme="dark"] .sa-chart__barval--pur { fill: #9cc3ff; }
+:root[data-theme="dark"] .sa-chart__barval--sal { fill: #7ee8a0; }
+:root[data-theme="dark"] .sa-chart__barval--stk { fill: #ff9b9b; }
 
 .sa-chart__month {
   fill: var(--nx-text-muted);
-  font-size: 7.5px;
+  font-size: 8.5px;
   font-weight: 600;
 }
 
@@ -7785,8 +7806,6 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
    so a 5-6 char number stays legible above a narrow bar without abbreviating
    back to "10.9k" (req §1/§13). tabular-nums keeps digits from jittering. */
 .store-workbench .sa-chart__barval {
-  font-size: 7px;
-  font-weight: 800;
   letter-spacing: -0.3px;
 }
 

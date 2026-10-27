@@ -10820,9 +10820,6 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
   const plotW = Math.max(30, W - padL - padR);
   const plotH = Math.max(30, H - padT - padB);
   const baseY = padT + plotH;
-  const labelBand = plotH * 0.12;
-  const barAreaH = plotH - labelBand;
-  const barTopLimit = padT + labelBand;
 
   const groupW = plotW / n;
   // Wider bars / tighter gaps for a bold, clear view (max usable bar width).
@@ -10838,6 +10835,19 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
   const barGap = maxBarWidth && barW < rawBarW ? Math.max(rawBarGap, 6) : rawBarGap;
   const innerW = barW * series.length + barGap * (series.length - 1);
 
+  // Value labels: when an exact quantity ("1,190") is wider than its bar slot,
+  // adjacent labels in a month group overlapped into an unreadable smear. In
+  // that case every other bar's label is lifted one text row, and the label
+  // band above the bars reserves room for both rows. Must match the
+  // .sa-chart__barval font-size in styles.css.
+  const valFont = 9;
+  const labelWidth = (value) => exactQuantity(value).length * valFont * 0.6;
+  const crowded = series.length > 1 && months.some((row) => series.some((s) => labelWidth(s.value(row)) > barW + barGap));
+  const labelRow = valFont + 1;
+  const labelBand = Math.max(plotH * 0.12, crowded ? labelRow * 2 + 2 : labelRow + 2);
+  const barAreaH = plotH - labelBand;
+  const barTopLimit = padT + labelBand;
+
   return (
     <div className="sa-chart">
       <div
@@ -10846,7 +10856,7 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
         onMouseMove={(event) => setTip({ x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY })}
         onMouseLeave={() => setHover(null)}
       >
-        <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Monthly movement chart" className="sa-chart__svg" preserveAspectRatio="none">
+        <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Monthly movement chart" className="sa-chart__svg" preserveAspectRatio="xMinYMin meet">
           <defs>
             <linearGradient id="sa-chart-glass" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" className="sa-chart__glass-a" />
@@ -10883,7 +10893,8 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
                   const x = groupX + j * (barW + barGap);
                   const cx = x + barW / 2;
                   const top = baseY - h;
-                  const labelY = Math.max(barTopLimit - 1, top - 3);
+                  const lift = crowded && j % 2 === 1 ? labelRow : 0;
+                  const labelY = Math.max(barTopLimit - 1, top - 3) - lift;
                   return (
                     <g key={s.key}>
                       <rect x={x} y={top} width={Math.max(4, barW)} height={h} rx={3} fill={`url(#sa-bar-${s.key})`}>
@@ -10894,7 +10905,7 @@ function MonthlyMovementChart({ rows, purchases = [], sales = [], visibleFields 
                         <rect x={x + 1} y={top + 1} width={Math.max(1, Math.min(2.5, barW * 0.22))} height={Math.max(0, h - 2)} rx={1.5} fill="rgba(255,255,255,0.38)" />
                       )}
                       {value > 0 && (
-                        <text x={cx} y={labelY} textAnchor="middle" className="sa-chart__barval" fill={s.dark}>{exactQuantity(value)}</text>
+                        <text x={cx} y={labelY} textAnchor="middle" className={`sa-chart__barval sa-chart__barval--${s.key}`}>{exactQuantity(value)}</text>
                       )}
                     </g>
                   );
