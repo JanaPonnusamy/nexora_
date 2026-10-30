@@ -19,7 +19,7 @@ type OrderDefaults = Awaited<ReturnType<typeof legacyOrderService.defaults>>
 // A store's Order settings defaults: recency (only products sold in the last
 // N days are ordered) is 15 for a store and 90 for a warehouse.
 function defaultSettings(defaults: OrderDefaults | null, storeName: string): StoreSettings {
-  const warehouse = defaults?.warehouse_stores.includes(storeName.toUpperCase()) ?? false
+  const warehouse = defaults?.warehouse_stores?.includes(storeName.toUpperCase()) ?? false
   return {
     minDays: defaults?.min_days ?? 13,
     maxDays: defaults?.max_days ?? 18,

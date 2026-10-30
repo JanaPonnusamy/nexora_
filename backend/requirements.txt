@@ -51,3 +51,7 @@ anthropic
 # BIFF) files because the receiving 3rd-party supplier app can't read
 # openpyxl's modern .xlsx (OOXML) output.
 xlwt
+
+# Supplier Excel import (supplier_stock_analysis/excel_import.py) — suppliers
+# send legacy .xls stock reports; pandas reads those only through xlrd.
+xlrd>=2.0.1

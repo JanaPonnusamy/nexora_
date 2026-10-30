@@ -29,7 +29,9 @@ ML_EXCLUDES = [
     "skimage", "albumentations", "albucore", "shapely", "pyclipper", "lmdb",
 ]
 
-datas, binaries, hiddenimports = [], [], ["pyodbc", "dotenv", "api.app"]
+# xlrd: pandas imports it lazily for supplier .xls uploads, so PyInstaller
+# can't see it.
+datas, binaries, hiddenimports = [], [], ["pyodbc", "dotenv", "api.app", "xlrd"]
 
 for pkg in ("uvicorn", "fastapi", "starlette", "pydantic", "anyio"):
     d, b, h = collect_all(pkg)
