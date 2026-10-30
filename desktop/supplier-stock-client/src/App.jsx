@@ -11862,6 +11862,21 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   });
 
   const [importOpen, setImportOpen] = useState(false);
+  // The store's full OrderNMC supplier list, offered in the top supplier box
+  // while importing so a supplier with no stock rows yet can be picked.
+  const [orderSuppliers, setOrderSuppliers] = useState([]);
+  useEffect(() => {
+    setOrderSuppliers([]);
+    if (!importOpen || !scopeStoreId) return;
+    api.getOrderSuppliers(selectedWarehouse?.tenant_id, scopeStoreId, session)
+      .then((result) => setOrderSuppliers(result.suppliers || []))
+      .catch(() => setOrderSuppliers([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importOpen, scopeStoreId]);
+  const importOnlySuppliers = useMemo(() => {
+    const stocked = new Set(suppliers.map((s) => String(s.supplier_code).trim()));
+    return orderSuppliers.filter((s) => s.supplier_code && !stocked.has(String(s.supplier_code).trim()));
+  }, [suppliers, orderSuppliers]);
   const selectedStockIdRef = useRef('');
   const exactFallbackCacheRef = useRef(new Map());
   const [persistedAnalysisView, setPersistedAnalysisView] = useState(null);
@@ -13169,6 +13184,15 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
               {supplier.supplier_name || supplier.supplier_code}
             </option>
           ))}
+          {importOpen && importOnlySuppliers.length > 0 && (
+            <optgroup label="Other suppliers (no stock yet)">
+              {importOnlySuppliers.map((supplier) => (
+                <option key={supplier.supplier_code} value={supplier.supplier_code}>
+                  {supplier.supplier_name || supplier.supplier_code}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <input
           className="toolbar-search"
@@ -13229,11 +13253,12 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
       {importOpen && (
         <SupplierExcelImport
           session={session}
-          suppliers={suppliers}
+          supplierCode={selectedSupplier}
+          supplierName={[...suppliers, ...orderSuppliers].find((s) => s.supplier_code === selectedSupplier)?.supplier_name}
           tenantId={selectedWarehouse?.tenant_id}
           storeId={scopeStoreId}
           storeCode={selectedWarehouse?.store_code}
-          onImported={() => { setImportOpen(false); loadSuppliers(supplierSearch); if (selectedSupplier) loadProducts(selectedSupplier); }}
+          onImported={() => { loadSuppliers(supplierSearch); if (selectedSupplier) loadProducts(selectedSupplier); }}
         />
       )}
 
@@ -14487,41 +14512,20 @@ function StockVerticalView({ session, settings }) {
 
 // Imports REPLACE the supplier's rows in the central OrderNMC.SupplierStock for
 // the selected warehouse store (same table the legacy order screens read).
-function SupplierExcelImport({ session, suppliers, tenantId, storeId, storeCode, onImported }) {
+// The supplier is the one picked in the toolbar's supplier box.
+function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, storeId, storeCode, onImported }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [mapping, setMapping] = useState({});
-  const [supplierCode, setSupplierCode] = useState('');
-  const [orderSuppliers, setOrderSuppliers] = useState([]);
-  const [status, setStatus] = useState({ state: 'idle', message: 'Choose a supplier and an Excel file to preview.' });
+  const [status, setStatus] = useState({ state: 'idle', message: 'Choose a supplier above and an Excel file to preview.' });
+  const previewSupplier = String(supplierCode || '').trim();
 
-  useEffect(() => {
-    setOrderSuppliers([]);
-    if (!storeId) return;
-    api.getOrderSuppliers(tenantId, storeId, session)
-      .then((result) => setOrderSuppliers(result.suppliers || []))
-      .catch(() => setOrderSuppliers([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, storeId]);
-
-  // Suppliers already holding stock first, then the rest of the store's list.
-  const supplierOptions = useMemo(() => {
-    const seen = new Set();
-    return [...suppliers, ...orderSuppliers].filter((s) => {
-      const code = String(s.supplier_code || '').trim();
-      if (!code || seen.has(code)) return false;
-      seen.add(code);
-      return true;
-    });
-  }, [suppliers, orderSuppliers]);
-  const knownSupplier = supplierOptions.some((s) => String(s.supplier_code).trim() === supplierCode.trim());
-  const previewSupplier = knownSupplier ? supplierCode.trim() : '';
-
-  // (Re)preview whenever the file or a known supplier changes, so that
-  // supplier's saved column mapping is pre-filled.
+  // (Re)preview whenever the file or supplier changes, so that supplier's
+  // saved column mapping is pre-filled.
   useEffect(() => {
     if (!file) return undefined;
     let cancelled = false;
+    setPreview(null);
     setStatus({ state: 'loading', message: 'Reading file...' });
     api.previewSupplierExcel(file, session, previewSupplier ? { tenantId, storeId, supplierCode: previewSupplier } : {})
       .then((result) => {
@@ -14548,28 +14552,35 @@ function SupplierExcelImport({ session, suppliers, tenantId, storeId, storeCode,
   }
 
   async function runImport() {
-    if (!file || !supplierCode.trim() || !storeId) {
+    if (!file || !previewSupplier || !storeId) {
       setStatus({ state: 'error', message: 'Warehouse, supplier and a file are all required.' });
       return;
     }
-    setStatus({ state: 'loading', message: 'Importing...' });
+    setStatus({ state: 'loading', message: `Importing ${preview?.row_count ?? ''} line(s)... please wait.` });
     try {
       const result = await api.importSupplierExcel({
         tenantId,
         storeId,
-        supplierCode,
+        supplierCode: previewSupplier,
         mapping,
         file,
         importedBy: session?.user?.username || session?.user?.name
       }, session);
       if (result.success === false) {
-        setStatus({ state: 'error', message: `Missing mapping for: ${(result.missing || []).join(', ')}` });
+        setStatus({ state: 'error', message: `Import failed - missing mapping for: ${(result.missing || []).join(', ')}` });
         return;
       }
-      setStatus({ state: 'ok', message: `Imported ${result.imported} row(s) into ${result.store_code || storeCode} supplier stock; ${result.product_codes_resolved} matched to products.` });
+      // File lines minus imported = duplicate codes merged + blank/total rows dropped.
+      const dropped = Math.max((preview?.row_count || 0) - result.imported, 0);
+      setStatus({
+        state: 'ok',
+        message: `Import successful: ${result.imported} product(s) saved to ${result.store_code || storeCode} supplier stock`
+          + ` from ${preview?.row_count ?? '?'} file line(s)${dropped ? ` (${dropped} duplicate/blank/total line(s) merged or skipped)` : ''};`
+          + ` ${result.product_codes_resolved} matched to products.`
+      });
       onImported();
     } catch (error) {
-      setStatus({ state: 'error', message: error.message });
+      setStatus({ state: 'error', message: `Import failed - ${error.message}` });
     }
   }
 
@@ -14577,16 +14588,11 @@ function SupplierExcelImport({ session, suppliers, tenantId, storeId, storeCode,
     <div className="table-wrap import-panel">
       <div className="form-grid">
         <label>
-          Supplier code
+          Supplier
           <input
-            list="supplier-code-options"
-            value={supplierCode}
-            onChange={(event) => setSupplierCode(event.target.value)}
-            placeholder="Enter or pick supplier code"
+            value={previewSupplier ? `${supplierName || previewSupplier} (${previewSupplier})` : 'Choose a supplier in the box above'}
+            readOnly
           />
-          <datalist id="supplier-code-options">
-            {supplierOptions.map((s) => <option key={s.supplier_code} value={s.supplier_code}>{s.supplier_name}</option>)}
-          </datalist>
         </label>
         <label>
           Warehouse
@@ -14619,7 +14625,14 @@ function SupplierExcelImport({ session, suppliers, tenantId, storeId, storeCode,
       )}
 
       <div className="action-row">
-        <button className="primary-button" disabled={!file} onClick={runImport}>Import to supplier stock</button>
+        {/* Wait for the preview: importing before it lands sends an empty mapping. */}
+        <button
+          className="primary-button"
+          disabled={!file || !preview || !previewSupplier || status.state === 'loading'}
+          onClick={runImport}
+        >
+          Import to supplier stock
+        </button>
         <span className={`status ${status.state}`}>{status.message}</span>
       </div>
     </div>
