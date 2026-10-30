@@ -501,9 +501,23 @@ export const api = {
     })}`, { session });
   },
 
-  previewSupplierExcel(file, session) {
+  // The store's OrderNMC supplier list (Excel import choices).
+  getOrderSuppliers(tenantId, storeId, session) {
+    return request(`/api/supplier-stock-analysis/order-suppliers${toQuery({
+      tenant_id: tenantId || loadSettings().tenantId,
+      store_id: storeId
+    })}`, { session });
+  },
+
+  // tenantId/storeId/supplierCode (optional) pre-fill the supplier's saved mapping.
+  previewSupplierExcel(file, session, { tenantId, storeId, supplierCode } = {}) {
     const form = new FormData();
     form.append('file', file);
+    if (storeId && supplierCode) {
+      form.append('tenant_id', tenantId || loadSettings().tenantId);
+      form.append('store_id', storeId);
+      form.append('supplier_code', supplierCode);
+    }
     return request('/api/supplier-stock-analysis/excel/preview', {
       method: 'POST',
       session,
@@ -511,19 +525,21 @@ export const api = {
     });
   },
 
-  importSupplierExcel({ storeId, supplierCode, mapping, file, importedBy }, session) {
+  importSupplierExcel({ tenantId, storeId, supplierCode, mapping, file, importedBy }, session) {
     const settings = loadSettings();
     const form = new FormData();
-    form.append('tenant_id', settings.tenantId);
+    form.append('tenant_id', tenantId || settings.tenantId);
     form.append('store_id', storeId || settings.storeId);
     form.append('supplier_code', supplierCode);
     form.append('mapping_json', JSON.stringify(mapping));
     if (importedBy) form.append('imported_by', importedBy);
     form.append('file', file);
+    // Replace + reinsert of a large supplier file can outlast the 45s default.
     return request('/api/supplier-stock-analysis/excel/import', {
       method: 'POST',
       session,
-      body: form
+      body: form,
+      timeoutMs: 180000
     });
   },
 
