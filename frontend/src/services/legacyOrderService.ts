@@ -42,7 +42,10 @@ export const legacyOrderService = {
 
   listTables: () => api.get<LegacyTable[]>(`${BASE}/tables`),
 
-  defaults: () => api.get<{ min_days: number; max_days: number }>(`${BASE}/defaults`),
+  defaults: () => api.get<{
+    min_days: number; max_days: number
+    recency_days: number; warehouse_recency_days: number; warehouse_stores: string[]
+  }>(`${BASE}/defaults`),
 
   startSync: (storeName: string, tables?: string[]) =>
     api.post<{ job_id: string }>(`${BASE}/sync`, {
@@ -66,8 +69,8 @@ export const legacyOrderService = {
   setOrderEngine: (storeName: string, engine: OrderEngine) =>
     api.put<{ store_name: string; engine: OrderEngine }>(`${BASE}/engine/${encodeURIComponent(storeName)}`, { engine }),
   // Dry run: legacy vs rule-book order as Excel; writes nothing.
-  compareEnginesXlsx: (storeName: string) =>
-    api.blob(`${BASE}/engine/${encodeURIComponent(storeName)}/compare.xlsx`),
+  compareEnginesXlsx: (storeName: string, recencyDays?: number) =>
+    api.blob(`${BASE}/engine/${encodeURIComponent(storeName)}/compare.xlsx${recencyDays ? `?recency_days=${recencyDays}` : ''}`),
   startOrderProcess: (
     storeName: string,
     minDays: number,
@@ -75,11 +78,13 @@ export const legacyOrderService = {
     mode: OrderMode,
     confirm?: { orderId: number; count: number },
     confirmStaleOrder = false,
+    recencyDays?: number,
   ) =>
     api.post<{ job_id: string }>(`${BASE}/order-process`, {
       store_name: storeName,
       min_days: minDays,
       max_days: maxDays,
+      recency_days: recencyDays ?? null,
       mode,
       confirmed: Boolean(confirm),
       confirmed_order_id: confirm?.orderId ?? null,

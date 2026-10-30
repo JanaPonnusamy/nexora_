@@ -520,7 +520,7 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
     if engine == "RULEBOOK":
         from modules.legacy_order import rulebook_order
         report("Calculating the order by the rule book (central OrderNMC data)...")
-        columns, rows, rulebook_summary = rulebook_order.build_order(store, warehouse=is_warehouse)
+        columns, rows, rulebook_summary = rulebook_order.build_order(store, warehouse=is_warehouse, recency_days=recency_days)
         report(f"Rule book ordered {len(rows)} of {rulebook_summary['evaluated']} products.")
     else:
         report(f"Fetching order data ({mode_label} mode, since {odata})...")

@@ -15,6 +15,9 @@ class OrderProcessRequest(BaseModel):
     engine: Optional[str] = None
     min_days: Optional[int] = None  # Nexora defaults: 13 / 18
     max_days: Optional[int] = None
+    # Only products sold in the last N days are ordered; None = the store's
+    # default (service.default_recency_days: 15 store / 90 warehouse).
+    recency_days: Optional[int] = None
     mode: str = "local"  # 'local' = OrderNMC's synced copy, 'remote' = branch DB
     # Pending-supplier-assignment WARNING (see repository.
     # qty_check_confirmation_count / service.QtyCheckConfirmationRequired):

@@ -34,7 +34,7 @@ WAREHOUSE_STORES = {
     for s in os.getenv("LEGACY_WAREHOUSE_STORES", "NMW").split(",")
     if s.strip()
 }
-WAREHOUSE_RECENCY_DAYS = int(os.getenv("LEGACY_WAREHOUSE_RECENCY_DAYS", "30"))
+WAREHOUSE_RECENCY_DAYS = int(os.getenv("LEGACY_WAREHOUSE_RECENCY_DAYS", "90"))
 WAREHOUSE_MIN_DAYS = int(os.getenv("LEGACY_WAREHOUSE_MIN_DAYS", "32"))
 WAREHOUSE_MAX_DAYS = int(os.getenv("LEGACY_WAREHOUSE_MAX_DAYS", "35"))
 
@@ -43,6 +43,12 @@ def is_warehouse_store(store_name):
     """True if this store should use the warehouse order query (Transfer-Out
     demand + configurable recency) instead of the retail query."""
     return bool(store_name) and store_name.strip().upper() in WAREHOUSE_STORES
+
+
+def default_recency_days(store_name):
+    """Default "sold in the last N days" gate: 15 for a store, 90 (the whole
+    sales window) for a warehouse, which supplies slow movers to branches."""
+    return WAREHOUSE_RECENCY_DAYS if is_warehouse_store(store_name) else DEFAULT_RECENCY_DAYS
 
 
 # Agent-synced stores (e.g. NMV) have NO direct branch SQL connection from HO:
@@ -275,8 +281,10 @@ class StaleCurrentOrder(ValueError):
 def start_order_process(store_name, min_days=None, max_days=None, mode="local",
                          confirmed=False,
                          confirmed_order_id=None, confirmed_count=None,
-                         confirmed_stale_order=False, engine=None):
-    """confirmed_order_id/confirmed_count are the caller's claim about WHICH
+                         confirmed_stale_order=False, engine=None, recency_days=None):
+    """recency_days: only products sold in the last N days are ordered (the
+    store's Order settings); None = default_recency_days(store_name).
+    confirmed_order_id/confirmed_count are the caller's claim about WHICH
     order/count it is acknowledging, purely to satisfy requirement 8
     ("revalidate ... require renewed confirmation if the relevant state has
     changed") -- they are an assertion that gets compared against a fresh
@@ -308,12 +316,14 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
         raise ValueError("Min days and max days must be positive.")
     if min_days > max_days:
         raise ValueError("Min days cannot be greater than max days.")
+    recency_days = default_recency_days(store_name) if recency_days is None else recency_days
+    if recency_days <= 0:
+        raise ValueError("Recency days must be positive.")
     if mode not in ("local", "remote"):
         raise ValueError("Mode must be 'local' or 'remote'.")
     # The warehouse query is StoreName-scoped and must read the central copy.
     if warehouse:
         mode = "local"
-    recency_days = WAREHOUSE_RECENCY_DAYS if warehouse else DEFAULT_RECENCY_DAYS
 
     running = _running_job_kind(store_name)
     if running:

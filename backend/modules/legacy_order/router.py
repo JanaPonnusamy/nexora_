@@ -8,6 +8,7 @@ of its own, so it's gated to super admin / platform users only rather than
 tenant-scoped like the rest of the API.
 """
 import re
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
@@ -227,7 +228,10 @@ def list_tables():
 
 @router.get("/defaults")
 def defaults():
-    return {"min_days": service.DEFAULT_MIN_DAYS, "max_days": service.DEFAULT_MAX_DAYS}
+    return {"min_days": service.DEFAULT_MIN_DAYS, "max_days": service.DEFAULT_MAX_DAYS,
+            "recency_days": service.DEFAULT_RECENCY_DAYS,
+            "warehouse_recency_days": service.WAREHOUSE_RECENCY_DAYS,
+            "warehouse_stores": sorted(service.WAREHOUSE_STORES)}
 
 
 @router.post("/sync", response_model=JobStarted)
@@ -253,6 +257,7 @@ def start_order_process(
             confirmed_count=payload.confirmed_count,
             confirmed_stale_order=payload.confirmed_stale_order,
             engine=payload.engine,
+            recency_days=payload.recency_days,
         )
         return JobStarted(job_id=job_id)
     except service.QtyCheckConfirmationRequired as exc:
@@ -290,9 +295,11 @@ def set_order_engine(store_name: str, payload: OrderEngineRequest, current_user:
 
 
 @router.get("/engine/{store_name}/compare.xlsx")
-def compare_order_engines(store_name: str, current_user: dict = Depends(require_admin)):
+def compare_order_engines(store_name: str, recency_days: Optional[int] = None,
+                          current_user: dict = Depends(require_admin)):
     """Dry run: legacy vs rule-book order for the store from the same central
-    data, as an Excel workbook. Writes nothing."""
+    data, as an Excel workbook. Writes nothing. recency_days: the store's
+    Order-settings value (default service.default_recency_days)."""
     try:
         store = service._resolve_store(store_name)
         warehouse = service.is_warehouse_store(store_name)
@@ -300,7 +307,7 @@ def compare_order_engines(store_name: str, current_user: dict = Depends(require_
             store, warehouse,
             service.WAREHOUSE_MIN_DAYS if warehouse else service.DEFAULT_MIN_DAYS,
             service.WAREHOUSE_MAX_DAYS if warehouse else service.DEFAULT_MAX_DAYS,
-            service.WAREHOUSE_RECENCY_DAYS if warehouse else service.DEFAULT_RECENCY_DAYS,
+            recency_days or service.default_recency_days(store_name),
         )
         body = rulebook_order.compare_workbook(data)
     except ValueError as exc:

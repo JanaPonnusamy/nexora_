@@ -13,7 +13,20 @@ const POLL_MS = 1500
 // SupplierStock rows (Stock Update button). Matches dbo.Stores.StoreName.
 const HO_STORE_NAME = 'NMW'
 
-type StoreSettings = { minDays: number; maxDays: number; mode: OrderMode }
+type StoreSettings = { minDays: number; maxDays: number; recencyDays: number; mode: OrderMode }
+type OrderDefaults = Awaited<ReturnType<typeof legacyOrderService.defaults>>
+
+// A store's Order settings defaults: recency (only products sold in the last
+// N days are ordered) is 15 for a store and 90 for a warehouse.
+function defaultSettings(defaults: OrderDefaults | null, storeName: string): StoreSettings {
+  const warehouse = defaults?.warehouse_stores.includes(storeName.toUpperCase()) ?? false
+  return {
+    minDays: defaults?.min_days ?? 13,
+    maxDays: defaults?.max_days ?? 18,
+    recencyDays: (warehouse ? defaults?.warehouse_recency_days : defaults?.recency_days) ?? (warehouse ? 90 : 15),
+    mode: 'local',
+  }
+}
 
 function fmtDateTime(value: string | null): string {
   if (!value) return '—'
@@ -29,6 +42,7 @@ export default function LegacyOrderPage() {
   const isAdmin = isSuperAdmin(user)
   const [stores, setStores] = useState<LegacyStore[]>([])
   const [settings, setSettings] = useState<Record<string, StoreSettings>>({})
+  const [orderDefaults, setOrderDefaults] = useState<OrderDefaults | null>(null)
   const [jobs, setJobs] = useState<Record<string, LegacyJob>>({})
   const [error, setError] = useState<string | null>(null)
   // Pending-supplier-assignment WARNING dialog state (count > 1 of
@@ -69,9 +83,9 @@ export default function LegacyOrderPage() {
     Promise.all([legacyOrderService.listStores(), legacyOrderService.defaults()])
       .then(([storeList, defaults]) => {
         setStores(storeList)
+        setOrderDefaults(defaults)
         setSettings(Object.fromEntries(storeList.map((store) => [
-          store.store_name,
-          { minDays: defaults.min_days, maxDays: defaults.max_days, mode: 'local' as const },
+          store.store_name, defaultSettings(defaults, store.store_name),
         ])))
         setCompareStore((current) => current || (storeList[0]?.store_name ?? ''))
         void Promise.all(storeList.map((store) => legacyOrderService.getOrderEngine(store.store_name)
@@ -88,7 +102,7 @@ export default function LegacyOrderPage() {
 
   const downloadEngineCompare = (storeName: string) => {
     setComparing(storeName)
-    legacyOrderService.compareEnginesXlsx(storeName)
+    legacyOrderService.compareEnginesXlsx(storeName, (settings[storeName] ?? defaultSettings(orderDefaults, storeName)).recencyDays)
       .then((blob) => {
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
@@ -203,7 +217,7 @@ export default function LegacyOrderPage() {
   // Pre-empt the client-side preview call too, so the picker never shows a
   // dialog the server will no longer honor.
   const startProcess = (storeName: string) => {
-    const config = settings[storeName] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+    const config = settings[storeName] ?? defaultSettings(orderDefaults, storeName)
     setError(null)
     const storeInfo = stores.find((s) => s.store_name === storeName)
     const agentSynced = storeInfo ? !storeInfo.server_name && !storeInfo.database : false
@@ -235,7 +249,7 @@ export default function LegacyOrderPage() {
   ) => {
     setError(null)
     legacyOrderService.startOrderProcess(
-      storeName, config.minDays, config.maxDays, config.mode, confirm, confirmStaleOrder,
+      storeName, config.minDays, config.maxDays, config.mode, confirm, confirmStaleOrder, config.recencyDays,
     )
       .then(({ job_id }) => watch(job_id))
       .catch((e: Error) => {
@@ -266,7 +280,7 @@ export default function LegacyOrderPage() {
   const confirmStaleAndProcess = () => {
     if (!staleFor) return
     const { storeName } = staleFor
-    const config = settings[storeName] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+    const config = settings[storeName] ?? defaultSettings(orderDefaults, storeName)
     setStaleBusy(true)
     setStaleFor(null)
     runProcess(storeName, config, undefined, true)
@@ -283,7 +297,7 @@ export default function LegacyOrderPage() {
   const confirmAndProcess = () => {
     if (!confirmFor) return
     const { storeName, preview } = confirmFor
-    const config = settings[storeName] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+    const config = settings[storeName] ?? defaultSettings(orderDefaults, storeName)
     setConfirmBusy(true)
     setError(null)
     legacyOrderService.qtyCheckConfirmation(storeName)
@@ -500,9 +514,9 @@ export default function LegacyOrderPage() {
         </div>
         <div className="lo-store-cards">
           {stores.map((store) => {
-            const config = settings[store.store_name] ?? { minDays: 13, maxDays: 18, mode: 'local' as const }
+            const config = settings[store.store_name] ?? defaultSettings(orderDefaults, store.store_name)
             const running = runningFor(store.store_name)
-            const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays
+            const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays || config.recencyDays <= 0
             const failed = (store.last_sync_status ?? '').toLowerCase() === 'failed'
             const dotClass = running ? 'lo-dot-run' : failed ? 'lo-dot-fail' : 'lo-dot-ok'
             const lastJob = sortedJobs.find((job) => job.store_name === store.store_name && job.status !== 'running')
@@ -528,6 +542,7 @@ export default function LegacyOrderPage() {
                   <div className="lo-op-settings">
                     <label><span>Min days</span><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /></label>
                     <label><span>Max days</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></label>
+                    <label title="Only products sold in the last N days are ordered (store default 15, warehouse 90)."><span>Recency days</span><input aria-label={`${store.store_name} recency days`} type="number" min={1} value={config.recencyDays} onChange={(e) => patchSettings(store.store_name, { recencyDays: Number(e.target.value) })} /></label>
                     <label><span>Source</span><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option></select></label>
                     <label title="Which calculation Order Process uses for this store. Both write the same order tables; switch any time.">
                       <span>Order engine</span>
@@ -537,9 +552,9 @@ export default function LegacyOrderPage() {
                         <option value="RULEBOOK">Rule book</option>
                       </select>
                     </label>
-                    {invalid && <small className="lo-invalid">Min must be ≤ max</small>}
+                    {invalid && <small className="lo-invalid">{config.recencyDays <= 0 ? 'Recency days must be positive' : 'Min must be ≤ max'}</small>}
                     <div className="lo-op-settings-actions">
-                      <button type="button" className="lo-btn" onClick={() => { patchSettings(store.store_name, { minDays: 13, maxDays: 18, mode: 'local' }) }}>Reset default</button>
+                      <button type="button" className="lo-btn" onClick={() => { patchSettings(store.store_name, defaultSettings(orderDefaults, store.store_name)) }}>Reset default</button>
                       <button type="button" className="lo-btn" disabled={Boolean(running)} onClick={() => start(() => legacyOrderService.startSync(store.store_name))}><i className="bi bi-arrow-repeat" /> Sync only</button>
                       <button type="button" className="lo-btn" disabled={comparing === store.store_name} title="Calculate both engines from the current data and download an Excel comparison. Writes nothing." onClick={() => downloadEngineCompare(store.store_name)}><i className="bi bi-file-earmark-spreadsheet" /> {comparing === store.store_name ? 'Comparing…' : 'Compare engines (dry run)'}</button>
                       {store.store_name !== HO_STORE_NAME && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${HO_STORE_NAME}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, HO_STORE_NAME))}><i className="bi bi-cloud-arrow-up" /> Stock update only</button>}

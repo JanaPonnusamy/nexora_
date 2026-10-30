@@ -112,7 +112,8 @@ def set_store_engine(store_name, engine, actor=None):
 
 def rule_params(store_name):
     """The Rules Registry's effective quantity parameters for the store
-    (catalog defaults when the store is not on the platform)."""
+    (catalog defaults when the store is not on the platform). Recency is the
+    store's Order-settings default (service.default_recency_days)."""
     params = dict(DEFAULT_PARAMS)
     try:
         from modules.procurement.rules_resolution import REGISTRY
@@ -125,6 +126,8 @@ def rule_params(store_name):
                     params[key] = values[rule_id]
     except Exception:
         logger.exception("rule-book params for %s: falling back to defaults", store_name)
+    from modules.legacy_order import service
+    params["recency_days"] = service.default_recency_days(store_name)
     return params
 
 
@@ -215,10 +218,13 @@ def _inputs(store_name, warehouse, params, as_of):
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def build_order(store, warehouse=False, as_of=None):
-    """Rule-book order for the store as (columns, rows, summary)."""
+def build_order(store, warehouse=False, as_of=None, recency_days=None):
+    """Rule-book order for the store as (columns, rows, summary).
+    recency_days: this run's Order-settings value (overrides the default)."""
     as_of = as_of or datetime.datetime.now()
     params = rule_params(store["store_name"])
+    if recency_days:
+        params["recency_days"] = recency_days
     decisions = evaluate_rows(_inputs(store["store_name"], warehouse, params, as_of), params, as_of)
     columns, rows = order_rows(decisions, params, store["store_name"], store["store_code"], as_of)
     reasons = {}
@@ -233,7 +239,7 @@ def compare_engines(store, warehouse, legacy_min_days, legacy_max_days, legacy_r
     """Both orders from the same central data, nothing written. Returns
     {'params', 'legacy_params', 'rows': per-product comparison, 'summary'}."""
     as_of = datetime.datetime.now()
-    params = rule_params(store["store_name"])
+    params = dict(rule_params(store["store_name"]), recency_days=legacy_recency_days)
     decisions = evaluate_rows(_inputs(store["store_name"], warehouse, params, as_of), params, as_of)
     by_code = {d["ProductCode"]: d for d in decisions}
 
