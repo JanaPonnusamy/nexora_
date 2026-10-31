@@ -5185,14 +5185,17 @@ th {
    wrapping at 1366px. The grid uses fixed px column widths (readable headers,
    no cryptic truncation) with Remarks flexing to fill.                     */
 
-/* ---- Filter bar: ONE row, inline mini-labels, ~46px, no wrap ---- */
+/* ---- Filter bar: one row on wide screens; on smaller windows the fields WRAP
+   to a second row instead of shrinking under their content and drawing over
+   each other (only Search flexes; every other field keeps its natural width). */
 .lblx-filterbar {
-  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
   padding: 6px 10px; min-height: 44px;
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
 }
 .lblx-field { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.lblx-filterbar > .lblx-field:not(.lblx-search) { flex-shrink: 0; }
 .lblx-field > span {
   flex: 0 0 auto; font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
   text-transform: uppercase; color: var(--nx-text-muted); white-space: nowrap;
@@ -5223,12 +5226,12 @@ th {
 /* Search: a comfortable fixed-ish width (shrinks, never grabs all the slack) with
    a leading magnifier icon; the flex slack is handed to .lblx-filterspace so the
    Advanced/Reset cluster pins cleanly to the right edge. */
-.lblx-search { flex: 0 1 236px; min-width: 150px; }
+.lblx-search { flex: 0 1 236px; min-width: 190px; }
 .lblx-search-box { position: relative; display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
 .lblx-search-ico { position: absolute; left: 8px; color: var(--nx-text-muted); pointer-events: none; }
 .lblx-search-box > input { width: 100%; padding-left: 27px; }
 .lblx-filterspace { flex: 1 1 auto; min-width: 8px; }
-.lblx-filteractions { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; padding-left: 10px; border-left: 1px solid var(--nx-rule); }
+.lblx-filteractions { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; margin-left: auto; padding-left: 10px; border-left: 1px solid var(--nx-rule); }
 .lblx-searching { font-size: 11px; font-weight: 600; color: var(--nx-accent); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
 .lblx-search-cancel {
   font-size: 11px; font-weight: 600; color: var(--nx-danger); background: none;
@@ -5260,10 +5263,11 @@ th {
   padding-left: 10px; margin-left: 2px; border-left: 1px solid var(--nx-rule-strong);
 }
 
-/* ---- Status strip: kbd hints · progress (informational only) ---- */
+/* ---- Status strip: kbd hints · progress (informational only) ----
+   Wraps on smaller windows so every count stays visible (was clipped). */
 .lblx-statusbar {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-height: 40px;
-  padding: 0 10px; font-size: 11px; color: var(--nx-text-muted); overflow: hidden;
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 10px; min-height: 32px;
+  padding: 4px 10px; font-size: 11px; color: var(--nx-text-muted);
   border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface-sunk);
 }
 .lblx-kbd { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--nx-text-soft); }
@@ -5273,7 +5277,7 @@ th {
   font: inherit; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; color: var(--nx-text-soft);
 }
 .lblx-kbd i { color: var(--nx-rule-strong); font-style: normal; margin: 0 2px; }
-.lblx-progress { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.lblx-progress { flex: 0 1 auto; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px 5px; min-width: 0; white-space: nowrap; }
 .lblx-progress b { color: var(--nx-text); font-weight: 800; font-variant-numeric: tabular-nums; }
 .lblx-progress i { color: var(--nx-rule-strong); font-style: normal; }
 .lblx-progress .lblx-reviewed { color: var(--nx-success-ink); }

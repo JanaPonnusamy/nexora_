@@ -3378,9 +3378,28 @@ function OwFilterRow({ cols, gridKind, values, onChange, wantedOptions }) {
 // table-layout:fixed the fixed columns render at their literal px and the
 // filler absorbs any leftover width — so slack never inflates a real column
 // (spec §5-7: leave empty space / use a filler, never expand Product).
-function owColgroupExact(cols) {
+// fitWidth (the grid's visible width): on a smaller window, when the columns
+// add up to more than that, shrink to fit instead of pushing the right-hand
+// columns (LPD/LSD/Review) off-screen — the ellipsized Product column gives up
+// width first (down to 140px), then every column scales down proportionally.
+function owColgroupExact(cols, fitWidth = 0) {
+  const widths = cols.map((c) => Number(c.width) || 0);
+  const total = widths.reduce((a, b) => a + b, 0);
+  if (fitWidth > 0 && total > fitWidth) {
+    let excess = total - fitWidth;
+    const grow = cols.findIndex((c) => (c.thClass || '').includes('ow-grow'));
+    if (grow >= 0) {
+      const give = Math.min(excess, Math.max(0, widths[grow] - 140));
+      widths[grow] -= give;
+      excess -= give;
+    }
+    if (excess > 0) {
+      const scale = fitWidth / (fitWidth + excess); // fitWidth + excess = current total
+      for (let i = 0; i < widths.length; i += 1) widths[i] = Math.max(28, Math.floor(widths[i] * scale));
+    }
+  }
   return [
-    ...cols.map((c) => <col key={c.key} style={{ width: `${Number(c.width) || 0}px` }} />),
+    ...cols.map((c, i) => <col key={c.key} style={{ width: `${widths[i]}px` }} />),
     <col key="__filler" />,
   ];
 }
@@ -6670,8 +6689,10 @@ function lblColMatch(value, filter) {
   if (!f) return true;
   const isBlank = value === '' || value === null || value === undefined;
   const fLower = f.toLowerCase();
-  if (fLower === 'null' || fLower === 'blank') return isBlank;
-  if (fLower === '!null' || fLower === '!blank') return !isBlank;
+  // "-" / "—" is what an empty cell shows (New Loc not assigned, no unit,
+  // Review not done), so typing it filters to the blanks; "!-" to the filled.
+  if (fLower === 'null' || fLower === 'blank' || fLower === '-' || fLower === '—') return isBlank;
+  if (fLower === '!null' || fLower === '!blank' || fLower === '!-' || fLower === '!—') return !isBlank;
   const m = f.match(/^(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)$/);
   if (m) {
     const num = parseFloat(value);
@@ -7180,6 +7201,20 @@ function LabelExporter({ session, settings }) {
   const searchAbortRef = useRef(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const gridRef = useRef(null);
+  // Visible grid width, so the columns can shrink to fit a smaller window
+  // (owColgroupExact fitWidth) instead of hiding LPD/LSD/Review off the right.
+  const [gridFitWidth, setGridFitWidth] = useState(0);
+  const gridResizeRef = useRef(null);
+  const setGridEl = useCallback((el) => {
+    gridRef.current = el;
+    gridResizeRef.current?.disconnect();
+    gridResizeRef.current = null;
+    if (!el) return;
+    const measure = () => setGridFitWidth(Math.max(0, el.clientWidth - 2)); // 2px: cell borders/rounding
+    measure();
+    gridResizeRef.current = new ResizeObserver(measure);
+    gridResizeRef.current.observe(el);
+  }, []);
 
   // Single active shelf letter — Lock / Export-to-Excel / last-edit only make
   // sense once exactly one letter is selected (the workflow is "walk the
@@ -8587,12 +8622,12 @@ function LabelExporter({ session, settings }) {
             <div
               className="ow-grid lbl-grid"
               tabIndex={0}
-              ref={gridRef}
+              ref={setGridEl}
               onKeyDown={handleGridKeyDown}
               onScroll={(event) => { scrollTopRef.current = event.currentTarget.scrollTop; scheduleSave(); }}
             >
               <table className="ow-fixed lbl-table">
-                <colgroup>{owColgroupExact(labelCols)}</colgroup>
+                <colgroup>{owColgroupExact(labelCols, gridFitWidth)}</colgroup>
                 <thead>
                   <tr>
                     {labelCols.map((col) => (
@@ -8632,8 +8667,8 @@ function LabelExporter({ session, settings }) {
                             <input
                               className="lbl-colfilter-input"
                               value={colFilters[col.key] || ''}
-                              placeholder="filter"
-                              title={'Type to filter. Numbers accept >, <, >=, <=, = (e.g. >90)'}
+                              placeholder="- blank"
+                              title={'Type to filter.\n-  = blank only (e.g. New Loc not assigned, no Unit, Review not done)\n!- = not blank\nNumbers accept >, <, >=, <=, = (e.g. >90)'}
                               onChange={(event) => setColFilters((cur) => ({ ...cur, [col.key]: event.target.value }))}
                               onKeyDown={(event) => event.stopPropagation()}
                             />
