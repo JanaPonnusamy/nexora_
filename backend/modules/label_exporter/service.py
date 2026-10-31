@@ -423,6 +423,45 @@ def lock_letter(tenant_id: str, store_id: str, letter: str, user_id: str | None)
     return get_letter_lock_status(tenant_id, store_id, letter)
 
 
+def get_finalise_check(tenant_id: str, store_id: str, letter: str):
+    """Finalise dialog data: the must-review list (unreviewed, stock > 0,
+    sale unit > 1) plus the letter's review counts."""
+    repository.ensure_schema()
+    letter = _norm_letter(letter)
+    counts = repository.get_letter_review_counts(tenant_id, store_id, letter)
+    return {
+        "letter": letter,
+        "locked": repository.get_letter_lock(tenant_id, store_id, letter) is not None,
+        "counts": counts,
+        "auto_n_count": counts["unreviewed"] - counts["needs_review"],
+        "needs_review": repository.get_finalise_review_list(tenant_id, store_id, letter),
+    }
+
+
+def finalise_letter(tenant_id: str, store_id: str, letter: str, user_id: str | None):
+    """Complete a letter: refuse while any stock>0 / sale-unit>1 product is
+    unreviewed, auto-mark every other unreviewed product N, then lock. Returns
+    the report (counts before/after + how many were auto-marked)."""
+    repository.ensure_schema()
+    letter = _norm_letter(letter)
+    if repository.get_letter_lock(tenant_id, store_id, letter) is not None:
+        raise HTTPException(status_code=400, detail=f"Letter '{letter}' is already locked")
+    pending = repository.get_letter_review_counts(tenant_id, store_id, letter)["needs_review"]
+    if pending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{pending} product(s) under '{letter}' with stock and sale unit > 1 still need a Y/N review",
+        )
+    auto_marked = repository.auto_review_letter_n(tenant_id, store_id, letter, user_id)
+    repository.set_letter_lock(tenant_id, store_id, letter, True, user_id)
+    return {
+        "letter": letter,
+        "auto_marked_n": auto_marked,
+        "counts": repository.get_letter_review_counts(tenant_id, store_id, letter),
+        "lock": get_letter_lock_status(tenant_id, store_id, letter),
+    }
+
+
 def unlock_letter(tenant_id: str, store_id: str, letter: str):
     repository.ensure_schema()
     letter = _norm_letter(letter)

@@ -9078,6 +9078,26 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .lbl-queue-body { padding: 8px 14px 16px; overflow: auto; }
 .lbl-queue-table { width: 100%; }
 
+/* Finalise-letter dialog: counts strip, must-review list with inline Y/N,
+   and the completion report. */
+.lbl-finalise-modal { width: 860px; }
+.lbl-finalise-counts { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 2px 10px; font-size: 12.5px; color: var(--nx-text-soft); }
+.lbl-finalise-counts b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.lbl-finalise-counts .is-warn, .lbl-finalise-counts .is-warn b { color: var(--nx-danger); font-weight: 700; }
+.lbl-finalise-counts .is-ok b { color: var(--nx-success-ink); }
+.lbl-finalise-note { margin: 6px 0 8px; padding: 8px 10px; border-radius: 8px; background: var(--nx-surface-sunk); font-size: 12.5px; color: var(--nx-text-soft); }
+.lbl-finalise-note.is-ok { color: var(--nx-success-ink); }
+.lbl-finalise-note.is-error { color: var(--nx-danger); }
+.lbl-finalise-table { font-size: 12px; border-collapse: collapse; }
+.lbl-finalise-table th { position: sticky; top: 0; z-index: 1; background: var(--nx-surface-raised); text-align: left; padding: 5px 6px; font-size: 10.5px; text-transform: uppercase; color: var(--nx-text-muted); }
+.lbl-finalise-table td { padding: 3px 6px; border-top: 1px solid var(--nx-rule); }
+.lbl-finalise-table th.ow-num, .lbl-finalise-table td.ow-num { text-align: right; }
+.lbl-finalise-yn { white-space: nowrap; text-align: right; }
+.lbl-finalise-yn .lbl-review-badge { margin-left: 4px; }
+.lbl-finalise-yn .lbl-review-badge.is-no { background: var(--nx-danger); border-color: var(--nx-danger); color: #fff; }
+.lbl-finalise-report { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 10px; background: var(--nx-success-sunk, var(--nx-surface-sunk)); font-size: 13px; }
+.lbl-finalise-report > b { color: var(--nx-success-ink); }
+
 /* ── Review workspace redesign (spec §4–§17) ─────────────────────────────── */
 
 /* Fix the Unit filter dropdown: the global `input{width:100%;min-height:42px}`

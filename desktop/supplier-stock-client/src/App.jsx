@@ -7249,6 +7249,55 @@ function LabelExporter({ session, settings }) {
       .finally(() => setLockBusy(false));
   }
 
+  // ── Finalise a letter ─────────────────────────────────────────────────────
+  // Labels are needed for tablets / strip products (sale unit > 1 with stock),
+  // so those must be reviewed by hand — listed here with inline Y/N. Every
+  // other unreviewed product is auto-marked N on Finalise, then the letter is
+  // locked and the counts shown as the completion report.
+  const [finalise, setFinalise] = useState(null); // { loading, error, data, busy, report }
+
+  function openFinalise() {
+    if (!activeLetter) return;
+    setFinalise({ loading: true });
+    api.getLabelLetterFinalise(tenantId, storeId, activeLetter, session)
+      .then((data) => setFinalise({ data }))
+      .catch((error) => setFinalise({ error: error.message || 'Could not load the finalise check' }));
+  }
+
+  function reviewFinaliseRows(codes, value) {
+    if (!codes.length || isLocked || finalise?.busy) return;
+    const codeSet = new Set(codes);
+    setFinalise((cur) => ({ ...cur, busy: true }));
+    const chunks = [];
+    for (let i = 0; i < codes.length; i += 1000) chunks.push(codes.slice(i, i + 1000));
+    chunks.reduce((p, chunk) => p.then(() => api.bulkSetLabelInclude(tenantId, storeId, chunk, value, session)), Promise.resolve())
+      .then(() => {
+        setRows((current) => current.map((row) => (codeSet.has(row.product_code) ? { ...row, include_label: value } : row)));
+        setFinalise((cur) => {
+          const counts = { ...cur.data.counts };
+          counts.needs_review -= codes.length;
+          counts.unreviewed -= codes.length;
+          counts[value === 'Y' ? 'included' : 'excluded'] += codes.length;
+          return { data: { ...cur.data, counts, needs_review: cur.data.needs_review.filter((r) => !codeSet.has(r.product_code)) } };
+        });
+        refreshLetterLock(activeLetter);
+      })
+      .catch((error) => { setFinalise((cur) => ({ ...cur, busy: false })); flashToast(error.message || '⚠ Review update failed', 'err'); });
+  }
+
+  function runFinalise() {
+    if (!finalise?.data || finalise.busy) return;
+    setFinalise((cur) => ({ ...cur, busy: true }));
+    api.finaliseLabelLetter(tenantId, storeId, activeLetter, session)
+      .then((report) => {
+        setLetterLock(report.lock);
+        setFinalise((cur) => ({ ...cur, busy: false, report }));
+        flashToast(`✓ Letter ${report.letter} finalised and locked`);
+        runSearch();
+      })
+      .catch((error) => { setFinalise((cur) => ({ ...cur, busy: false })); flashToast(error.message || '⚠ Finalise failed', 'err'); });
+  }
+
   function exportCurrentLetterExcel() {
     if (!activeLetter || exportBusy) return;
     setExportBusy(true);
@@ -8491,27 +8540,35 @@ function LabelExporter({ session, settings }) {
         >
           {exportBusy ? 'Exporting…' : 'Export to Excel'}
         </button>
-        {admin && (
+        {isLocked ? (
+          admin && (
+            <button
+              type="button"
+              className="lblx-mark lblx-lock is-locked"
+              disabled={lockBusy}
+              onClick={toggleLetterLock}
+              title={`Letter ${activeLetter} is locked — click to unlock`}
+            >
+              {lockBusy ? '…' : '🔒 Locked'}
+            </button>
+          )
+        ) : (
           <button
             type="button"
-            className={`lblx-mark lblx-lock ${isLocked ? 'is-locked' : ''}`}
-            disabled={!activeLetter || lockBusy || (!isLocked && (letterLock?.unreviewed_count || 0) > 0 && letterLock?.letter === activeLetter)}
-            onClick={toggleLetterLock}
+            className="lblx-mark lblx-lock"
+            disabled={!activeLetter}
+            onClick={openFinalise}
             title={
               !activeLetter
-                ? 'Pick exactly one letter to lock'
-                : isLocked
-                  ? `Letter ${activeLetter} is locked — click to unlock`
-                  : (letterLock?.unreviewed_count || 0) > 0
-                    ? `${letterLock.unreviewed_count} product(s) still need a Y/N review`
-                    : `Lock letter ${activeLetter} (no further edits until unlocked)`
+                ? 'Pick exactly one letter to finalise'
+                : `Finalise letter ${activeLetter}: review the products that need a label (stock > 0, sale unit > 1), auto-mark the rest N, then lock`
             }
           >
-            {lockBusy ? '…' : isLocked ? '🔒 Locked' : '🔓 Lock'}
+            ✔ Finalise…
           </button>
         )}
         {activeLetter && letterLock?.letter === activeLetter && !isLocked && (letterLock?.unreviewed_count || 0) > 0 && (
-          <span className="lblx-unreviewed-warn" title="Every product must be reviewed Y or N before this letter can be locked">
+          <span className="lblx-unreviewed-warn" title="Unreviewed products under this letter — Finalise lists the ones that need a label decision">
             {letterLock.unreviewed_count} unreviewed
           </span>
         )}
@@ -9006,6 +9063,98 @@ function LabelExporter({ session, settings }) {
               <button type="button" className="lbl-assign-btn lbl-assign-btn--primary" disabled={bulkBusy || !unitReplaceMatches.length || !(unitReplace.to || '').trim()} onClick={applyUnitReplace}>
                 {bulkBusy ? 'Replacing…' : `Replace${unitReplaceMatches.length ? ` (${unitReplaceMatches.length})` : ''}`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {finalise && (
+        <div className="modal-overlay" onClick={() => !finalise.busy && setFinalise(null)}>
+          <div className="lbl-queue-modal lbl-finalise-modal" role="dialog" aria-modal="true" aria-label="Finalise letter" onClick={(event) => event.stopPropagation()}>
+            <div className="lbl-assign-head">
+              <strong>Finalise letter {activeLetter}</strong>
+              <button type="button" className="lbl-assign-close" disabled={finalise.busy} onClick={() => setFinalise(null)} aria-label="Close">✕</button>
+            </div>
+            <div className="lbl-queue-body">
+              {finalise.loading && <div className="lbl-finalise-note">Checking letter {activeLetter}…</div>}
+              {finalise.error && <div className="lbl-finalise-note is-error">{finalise.error}</div>}
+              {finalise.report && (
+                <div className="lbl-finalise-report">
+                  <b>✓ Letter {finalise.report.letter} finalised and locked.</b>
+                  <span>{finalise.report.counts.total} products · <b className="lblx-cnt-y">{finalise.report.counts.included}</b> Y (label) · <b className="lblx-cnt-n">{finalise.report.counts.excluded}</b> N</span>
+                  <span>{finalise.report.auto_marked_n} unreviewed product(s) with zero stock or sale unit ≤ 1 were auto-marked N (remark “Auto N at finalise”).</span>
+                </div>
+              )}
+              {finalise.data && !finalise.report && (() => {
+                const { counts, needs_review: needs } = finalise.data;
+                const autoN = counts.unreviewed - counts.needs_review;
+                return (
+                  <>
+                    <div className="lbl-finalise-counts">
+                      <span><b>{counts.total}</b> products</span>
+                      <span><b className="lblx-cnt-y">{counts.included}</b> Y</span>
+                      <span><b className="lblx-cnt-n">{counts.excluded}</b> N</span>
+                      <span><b>{counts.unreviewed}</b> unreviewed</span>
+                      <span className={needs.length ? 'is-warn' : 'is-ok'}><b>{needs.length}</b> need review</span>
+                    </div>
+                    {needs.length > 0 ? (
+                      <>
+                        <div className="lbl-finalise-note">
+                          These products have <b>stock &gt; 0</b> and <b>sale unit &gt; 1</b> (tablets / strips) and are not reviewed yet — mark each Y (needs a label) or N before finalising.
+                        </div>
+                        <table className="lbl-queue-table lbl-finalise-table">
+                          <thead>
+                            <tr><th>Code</th><th>Product</th><th>Unit</th><th className="ow-num">Sale U</th><th className="ow-num">Stock</th><th>Old Loc</th><th /></tr>
+                          </thead>
+                          <tbody>
+                            {needs.map((row) => (
+                              <tr key={row.product_code}>
+                                <td>{row.product_code}</td>
+                                <td>{row.product_name}</td>
+                                <td>{row.unit_description || '—'}</td>
+                                <td className="ow-num">{fmtOwQty(row.sale_unit)}</td>
+                                <td className="ow-num">{fmtOwQty(row.total_stock)}</td>
+                                <td>{row.current_sublocation || '—'}</td>
+                                <td className="lbl-finalise-yn">
+                                  <button type="button" className="lbl-review-badge is-yes" disabled={finalise.busy} onClick={() => reviewFinaliseRows([row.product_code], 'Y')}>Y</button>
+                                  <button type="button" className="lbl-review-badge is-no" disabled={finalise.busy} onClick={() => reviewFinaliseRows([row.product_code], 'N')}>N</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </>
+                    ) : (
+                      <div className="lbl-finalise-note is-ok">Every product that needs a label decision is reviewed.</div>
+                    )}
+                    {autoN > 0 && (
+                      <div className="lbl-finalise-note">
+                        On Finalise, the other <b>{autoN}</b> unreviewed product(s) (zero stock or sale unit ≤ 1) are auto-marked <b>N</b>.
+                      </div>
+                    )}
+                    {!admin && <div className="lbl-finalise-note">Only a super admin can finalise and lock a letter.</div>}
+                  </>
+                );
+              })()}
+            </div>
+            <div className="lbl-assign-foot">
+              {finalise.data && !finalise.report && finalise.data.needs_review.length > 0 && (
+                <button type="button" className="lbl-assign-btn" disabled={finalise.busy || isLocked} onClick={() => reviewFinaliseRows(finalise.data.needs_review.map((r) => r.product_code), 'Y')}>
+                  Mark all {finalise.data.needs_review.length} Y
+                </button>
+              )}
+              <button type="button" className="lbl-assign-btn" disabled={finalise.busy} onClick={() => setFinalise(null)}>{finalise.report ? 'Close' : 'Cancel'}</button>
+              {admin && finalise.data && !finalise.report && (
+                <button
+                  type="button"
+                  className="lbl-assign-btn lbl-assign-btn--primary"
+                  disabled={finalise.busy || finalise.data.needs_review.length > 0}
+                  title={finalise.data.needs_review.length ? 'Review every listed product first' : `Auto-mark the rest N and lock letter ${activeLetter}`}
+                  onClick={runFinalise}
+                >
+                  {finalise.busy ? 'Working…' : `Finalise & Lock ${activeLetter}`}
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -356,6 +356,32 @@ def lock_letter(
     return service.lock_letter(tenant_id, store_id, letter, current_user.get("sub"))
 
 
+@router.get("/letter-finalise")
+def get_letter_finalise_check(
+    tenant_id: str,
+    store_id: str,
+    letter: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Finalise dialog: unreviewed products that still need a label decision
+    (stock > 0, sale unit > 1) + the letter's Y/N/unreviewed counts."""
+    assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    return service.get_finalise_check(tenant_id, store_id, letter)
+
+
+@router.post("/letter-finalise")
+def finalise_letter(
+    tenant_id: str,
+    store_id: str,
+    letter: str,
+    current_user: dict = Depends(require_super_admin),
+):
+    """Complete a letter: auto-mark N every unreviewed product that does not
+    need a label, then lock. Rejected while any must-review product is left.
+    Super-admin only (same as lock)."""
+    return service.finalise_letter(tenant_id, store_id, letter, current_user.get("sub"))
+
+
 @router.post("/letter-lock/unlock", response_model=LabelLetterLockStatus)
 def unlock_letter(
     tenant_id: str,

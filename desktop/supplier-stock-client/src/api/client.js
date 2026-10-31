@@ -963,6 +963,17 @@ export const api = {
     return request(`/api/label-exporter/letter-lock${toQuery({ tenant_id: tenantId, store_id: storeId, letter })}`, { method: 'POST', session });
   },
 
+  // Finalise dialog: unreviewed stock>0 / sale-unit>1 products that must be
+  // reviewed by hand + the letter's review counts.
+  getLabelLetterFinalise(tenantId, storeId, letter, session) {
+    return request(`/api/label-exporter/letter-finalise${toQuery({ tenant_id: tenantId, store_id: storeId, letter })}`, { session });
+  },
+
+  // Complete a letter: auto-N every other unreviewed product, then lock.
+  finaliseLabelLetter(tenantId, storeId, letter, session) {
+    return request(`/api/label-exporter/letter-finalise${toQuery({ tenant_id: tenantId, store_id: storeId, letter })}`, { method: 'POST', session });
+  },
+
   unlockLabelLetter(tenantId, storeId, letter, session) {
     return request(`/api/label-exporter/letter-lock/unlock${toQuery({ tenant_id: tenantId, store_id: storeId, letter })}`, { method: 'POST', session });
   },

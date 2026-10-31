@@ -1246,6 +1246,120 @@ def count_unreviewed(tenant_id, store_id, letter):
     return (row or {}).get("n", 0)
 
 
+# Finalise rule (owner, 2026-10-31): shelf labels are needed for tablets /
+# strip products — sale unit > 1 with stock on hand. An unreviewed product
+# matching this must be reviewed by hand before a letter can be finalised;
+# every other unreviewed product (zero stock or sale unit <= 1) is auto-N.
+_NEEDS_LABEL_REVIEW = "ISNULL(p.TotalStock, 0) > 0 AND TRY_CAST(p.SaleUnit AS DECIMAL(18, 2)) > 1"
+
+_LETTER_PRODUCTS = """
+        FROM sync.Products p
+        LEFT JOIN dbo.label_review r
+            ON r.tenant_id = p.tenant_id
+           AND r.store_id = p.store_id
+           AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+        WHERE p.tenant_id = ?
+          AND p.store_id = ?
+          AND ISNULL(p.isactive, 1) = 1
+          AND p.ProductName LIKE ? + '%'
+"""
+
+
+def get_finalise_review_list(tenant_id, store_id, letter):
+    """Unreviewed products under `letter` that need a label decision by hand
+    (stock > 0 and sale unit > 1) — the finalise dialog's must-review list."""
+    return _fetch_all(
+        f"""
+        SELECT
+            CAST(p.ProductCode AS NVARCHAR(50)) AS product_code,
+            p.ProductName AS product_name,
+            CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.unit_description)), ''), ISNULL(LTRIM(RTRIM(p.UnitDescription)), '')) AS NVARCHAR(100)) AS unit_description,
+            CAST(ISNULL(p.SaleUnit, 0) AS DECIMAL(18, 2)) AS sale_unit,
+            CAST(ISNULL(p.TotalStock, 0) AS DECIMAL(18, 2)) AS total_stock,
+            CAST(ISNULL(LTRIM(RTRIM(p.SubLocation)), '') AS NVARCHAR(50)) AS current_sublocation
+        {_LETTER_PRODUCTS}
+          AND r.include_label IS NULL
+          AND {_NEEDS_LABEL_REVIEW}
+        ORDER BY p.ProductName
+        """,
+        (tenant_id, store_id, letter),
+    )
+
+
+def get_letter_review_counts(tenant_id, store_id, letter):
+    row = _fetch_one(
+        f"""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN r.include_label = 'Y' THEN 1 ELSE 0 END) AS included,
+            SUM(CASE WHEN r.include_label = 'N' THEN 1 ELSE 0 END) AS excluded,
+            SUM(CASE WHEN r.include_label IS NULL THEN 1 ELSE 0 END) AS unreviewed,
+            SUM(CASE WHEN r.include_label IS NULL AND {_NEEDS_LABEL_REVIEW} THEN 1 ELSE 0 END) AS needs_review
+        {_LETTER_PRODUCTS}
+        """,
+        (tenant_id, store_id, letter),
+    ) or {}
+    return {k: int(row.get(k) or 0) for k in ("total", "included", "excluded", "unreviewed", "needs_review")}
+
+
+def auto_review_letter_n(tenant_id, store_id, letter, user_id):
+    """Mark N every still-unreviewed product under `letter` that does NOT need
+    a label (zero stock or sale unit <= 1). Set-based (a letter can have
+    thousands), one transaction. Returns how many were marked."""
+    not_needed = f"CASE WHEN {_NEEDS_LABEL_REVIEW} THEN 1 ELSE 0 END = 0"
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"""
+            UPDATE r
+            SET include_label = 'N', reviewed_by = ?, reviewed_at = SYSUTCDATETIME(), updated_at = SYSUTCDATETIME(),
+                remarks = COALESCE(NULLIF(LTRIM(RTRIM(r.remarks)), ''), 'Auto N at finalise')
+            FROM dbo.label_review r
+            JOIN sync.Products p
+                ON r.tenant_id = p.tenant_id
+               AND r.store_id = p.store_id
+               AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+            WHERE p.tenant_id = ?
+              AND p.store_id = ?
+              AND ISNULL(p.isactive, 1) = 1
+              AND p.ProductName LIKE ? + '%'
+              AND r.include_label IS NULL
+              AND {not_needed}
+            """,
+            (user_id, tenant_id, store_id, letter),
+        )
+        updated = max(cursor.rowcount, 0)
+        cursor.execute(
+            f"""
+            INSERT INTO dbo.label_review (tenant_id, store_id, product_code, include_label, reviewed_by, reviewed_at, remarks)
+            SELECT p.tenant_id, p.store_id, CAST(p.ProductCode AS NVARCHAR(50)), 'N', ?, SYSUTCDATETIME(), 'Auto N at finalise'
+            FROM sync.Products p
+            WHERE p.tenant_id = ?
+              AND p.store_id = ?
+              AND ISNULL(p.isactive, 1) = 1
+              AND p.ProductName LIKE ? + '%'
+              AND {not_needed}
+              AND NOT EXISTS (
+                    SELECT 1 FROM dbo.label_review r
+                    WHERE r.tenant_id = p.tenant_id
+                      AND r.store_id = p.store_id
+                      AND r.product_code = CAST(p.ProductCode AS NVARCHAR(50))
+                  )
+            """,
+            (user_id, tenant_id, store_id, letter),
+        )
+        inserted = max(cursor.rowcount, 0)
+        conn.commit()
+        return updated + inserted
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def set_letter_lock(tenant_id, store_id, letter, locked, user_id):
     existing = _fetch_one(
         "SELECT id FROM dbo.label_letter_lock WHERE tenant_id = ? AND store_id = ? AND letter = ?",
