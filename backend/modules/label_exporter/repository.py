@@ -150,7 +150,11 @@ def search_products(
                 CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.assigned_sublocation)), ''), '') AS NVARCHAR(50)) AS assigned_sublocation,
                 CAST(ISNULL(NULLIF(LTRIM(RTRIM(r.old_sublocation)), ''), '') AS NVARCHAR(50)) AS old_sublocation,
                 r.assignment_type,
-                CAST(ISNULL(r.label_required, 0) AS BIT) AS label_required
+                CAST(ISNULL(r.label_required, 0) AS BIT) AS label_required,
+                -- Created in the store master in the last 90 days: shown by the
+                -- default 'all' filter even with zero stock and no sale yet, so a
+                -- new product reaches the grid as soon as sync.Products has it.
+                CASE WHEN p.CreationDate >= DATEADD(DAY, -90, GETDATE()) THEN 1 ELSE 0 END AS is_new
             FROM sync.Products p
             LEFT JOIN dbo.label_review r
                 ON r.tenant_id = p.tenant_id
@@ -239,6 +243,7 @@ def search_products(
                     ? = 'all'
                     AND (
                         fp.total_stock > 0
+                        OR fp.is_new = 1
                         OR (
                             fp.total_stock = 0
                             AND agg.sale_days IS NOT NULL
@@ -259,6 +264,7 @@ def search_products(
                 OR (
                     ? = 'zero_stale'
                     AND fp.total_stock = 0
+                    AND fp.is_new = 0
                     AND (agg.sale_days IS NULL OR agg.sale_days > 90)
                 )
               )

@@ -411,6 +411,18 @@ def _start_sync_scheduler_on_startup():
         print("[SCHEDULER] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
+def _start_sync_health_monitor_on_startup():
+    # Watches every store/table sync and WhatsApps an alert when one keeps
+    # failing / goes stale / an agent drops (silent when all good). See
+    # modules/sync/health_monitor.py.
+    try:
+        from modules.sync import health_monitor
+        health_monitor.start_background_loop()
+    except Exception:
+        import traceback
+        print("[SYNC_HEALTH] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
 def _start_file_transfer_receiver_on_startup():
     # Additive to DIRECT_HTTP sync (objective 20): a no-op unless
     # NEXORA_FILE_TRANSFER_ENABLED=true is set. See

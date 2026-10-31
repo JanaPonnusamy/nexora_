@@ -23,6 +23,13 @@ def status(_: dict = Depends(require_super_admin)):
     return service.local_status()
 
 
+@router.get("/sync-health")
+def sync_health(_: dict = Depends(require_super_admin)):
+    """Live sync health across all stores (same checks the WhatsApp alert uses)."""
+    from modules.sync import health_monitor
+    return health_monitor.current_status()
+
+
 @router.post("/self-update")
 def self_update(payload: SelfUpdateRequest = Body(default=SelfUpdateRequest()),
                 _: dict = Depends(require_super_admin),
