@@ -100,6 +100,9 @@ from modules.expiry_stock.router import (
 from modules.nonmoving_report.router import (
     router as nonmoving_report_router
 )
+from modules.rate_analysis.router import (
+    router as rate_analysis_router
+)
 from modules.sale_analysis.router import (
     router as sale_analysis_router
 )
@@ -364,6 +367,7 @@ app.include_router(reports_router)
 app.include_router(expiry_report_router)
 app.include_router(expiry_stock_router)
 app.include_router(nonmoving_report_router)
+app.include_router(rate_analysis_router)
 app.include_router(sale_analysis_router)
 app.include_router(time_report_router)
 app.include_router(product_mapping_router)

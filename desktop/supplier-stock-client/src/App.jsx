@@ -6480,7 +6480,7 @@ function writeLabelSession(userKey, data) {
 
 const LABEL_STOCK_FILTERS = [
   { value: 'every', short: 'All', label: 'Every product, no stock/sale filter' },
-  { value: 'all', short: '>0 or zero (sold <90d)', label: 'Stock > 0 or zero stock sale within 90 days' },
+  { value: 'all', short: '>0, sold <90d or new', label: 'Stock > 0, or zero stock sold within 90 days, or a new product (created within 90 days)' },
   { value: 'in_stock', short: 'In stock only', label: 'Stock > 0 only' },
   { value: 'zero_recent_sale', short: 'Zero, sold <90d', label: 'Stock = 0 and sale within 90 days' },
   { value: 'zero_stale', short: 'Zero, no sale >90d', label: 'Stock = 0 and no sale in over 90 days' }

@@ -1204,6 +1204,43 @@ export const api = {
       session,
       body: JSON.stringify({ sent, error: error || null })
     });
+  },
+
+  // ----- Rate Analysis (supplier purchase-rate tools) -----
+  rateSuppliers(tenantId, days, session) {
+    return request(`/api/rate-analysis/suppliers?tenant_id=${encodeURIComponent(tenantId)}&days=${days || 90}`, { session, timeoutMs: 120000 });
+  },
+
+  rateQuoteMatch(body, session) {
+    return request('/api/rate-analysis/quote/match', { method: 'POST', session, timeoutMs: 120000, body: JSON.stringify(body) });
+  },
+
+  // kind: 'quote/compare' | 'fast-movers' | 'rate-difference'. These read
+  // months of bills + sales across every store, so they get a long timeout.
+  rateReport(kind, body, session) {
+    return request(`/api/rate-analysis/${kind}`, { method: 'POST', session, timeoutMs: 300000, body: JSON.stringify(body) });
+  },
+
+  async rateReportExcel(kind, body, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/rate-analysis/${kind}?format=xlsx`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(session) },
+        body: JSON.stringify(body)
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const match = /filename="?([^"]+)"?/.exec(response.headers.get('Content-Disposition') || '');
+    return { blob, filename: match?.[1] || 'Rate_Analysis.xlsx' };
   }
 };
 
