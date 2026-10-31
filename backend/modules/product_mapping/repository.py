@@ -813,6 +813,45 @@ def search_mapped(tenant_id, source_store_id, source_product_code, target_store_
         conn.close()
 
 
+def supplier_bridge_targets(tenant_id, source_store_id, target_store_id):
+    """{source_product_code: target_product_code} for a whole store pair in
+    one query -- the bridge the HO-warehouse stock push (legacy_order
+    sync_supplier_product_match_from_mapping) writes into SupplierProductMatch.
+
+    APPROVED/AUTO as usual, PLUS a PENDING row whose target code IS the source
+    code: the chain shares one Shopaid product master, so an identical code is
+    the same item and only the name drifted ("D MAG SPRAY 100ML" vs
+    "... [VET]", "R/C" vs "ROTACAPS"). The legacy Shopaid stock import matches
+    on that very code. A PENDING row pointing at a DIFFERENT code still waits
+    for review -- those are where the fuzzy matcher picks wrong pack sizes."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT source_product_code, target_product_code FROM (
+                SELECT LTRIM(RTRIM(source_product_code)) AS source_product_code,
+                       LTRIM(RTRIM(target_product_code)) AS target_product_code,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY LTRIM(RTRIM(source_product_code))
+                           ORDER BY CASE WHEN status IN ('APPROVED','AUTO') THEN 0 ELSE 1 END,
+                                    confidence DESC
+                       ) AS rn
+                FROM dbo.product_mapping
+                WHERE tenant_id = ? AND source_store_id = ? AND target_store_id = ?
+                  AND is_deleted = 0 AND target_product_code IS NOT NULL
+                  AND (status IN ('APPROVED','AUTO')
+                       OR (status = 'PENDING'
+                           AND LTRIM(RTRIM(target_product_code)) = LTRIM(RTRIM(source_product_code))))
+            ) x WHERE rn = 1
+            """,
+            (tenant_id, source_store_id, target_store_id),
+        )
+        return {r[0]: r[1] for r in cur.fetchall()}
+    finally:
+        conn.close()
+
+
 def status_counts(tenant_id, source_store_id=None, target_store_id=None):
     where = ["tenant_id = ?", "is_deleted = 0"]
     params = [tenant_id]

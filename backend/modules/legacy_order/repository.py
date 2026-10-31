@@ -745,14 +745,19 @@ def sync_supplier_product_match_from_mapping(store_name, supplier_code, source_s
     # -> target_store_id/target_product_code. ``rows`` carries NMW's own
     # ProductCode (r["code"]), so NMW is the mapping's "source" here and this
     # store is the "target" -- the lookup direction is the reverse of how this
-    # store's own ProductCode would normally be looked up.
+    # store's own ProductCode would normally be looked up. One bulk query for
+    # the pair (was one connection per NMW product); it also accepts a PENDING
+    # mapping whose target code equals NMW's -- e.g. NMC's "D MAG SPRAY 100ML
+    # [VET]" sat PENDING on the name suffix alone, so NMW's stock never
+    # reached NMC's order screen (see supplier_bridge_targets).
+    targets = product_mapping_repository.supplier_bridge_targets(
+        tenant_id, source_store_id, store_id,
+    )
     matches = []
     for r in rows:
-        mapped = product_mapping_repository.search_mapped(
-            tenant_id, source_store_id, r["code"], target_store_id=store_id,
-        )
-        if mapped:
-            matches.append((mapped[0]["target_product_code"], mapped[0]["source_product_code"]))
+        target = targets.get(str(r["code"]).strip())
+        if target:
+            matches.append((target, str(r["code"]).strip()))
 
     if not matches:
         return 0
