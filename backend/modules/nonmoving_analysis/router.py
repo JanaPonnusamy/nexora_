@@ -4,8 +4,8 @@ Read-only analysis over sync.* -- no endpoint writes stock, creates a transfer
 or changes Procurement data. POST is used only where the client sends a list
 (transfer proposal / review list) and the answer is an Excel file.
 
-Tenant-scoped and limited to the Order Workspace / Rate Analysis audience
-(super admins, purchase and admin logins). The store must belong to the
+Tenant-scoped and limited to super admins (owner ruling 2026-11-01). The
+store must belong to the
 tenant (checked server-side). Every list endpoint accepts ?format=xlsx and
 then returns all filtered rows (not one page) as Excel.
 """
@@ -29,12 +29,11 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _assert_allowed(user: dict, tenant_id: str) -> None:
+    # Owner ruling 2026-11-01: super admin only (no purchase / admin role,
+    # no per-user module grant unlocks it).
+    if not (is_super_admin(user) or user.get("is_platform_user")):
+        raise HTTPException(status_code=403, detail="Non-Moving Stock analysis is limited to super admin")
     assert_tenant_access(user, tenant_id)
-    if is_super_admin(user) or user.get("is_platform_user"):
-        return
-    names = [str(r or "").lower() for r in (user.get("role_names") or [])]
-    if not any("purchase" in n or "admin" in n for n in names):
-        raise HTTPException(status_code=403, detail="Non-Moving Stock analysis is limited to purchase and admin logins")
 
 
 def _xlsx(result: dict, name: str):

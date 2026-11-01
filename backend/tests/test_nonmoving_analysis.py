@@ -221,14 +221,14 @@ def test_filters_and_paging():
     assert total == 5 and [r["product_code"] for r in page] == ["4", "3"]   # never sold sorts oldest
 
 
-def test_router_requires_purchase_or_admin_role():
+def test_router_is_super_admin_only():
     from modules.nonmoving_analysis.router import _assert_allowed
-    with pytest.raises(HTTPException) as exc:
-        _assert_allowed({"tenant_id": "T", "role_names": ["Salesman"]}, "T")
-    assert exc.value.status_code == 403
-    with pytest.raises(HTTPException):
-        _assert_allowed({"tenant_id": "OTHER", "role_names": ["Purchase Manager"]}, "T")
-    _assert_allowed({"tenant_id": "T", "role_names": ["Purchase Manager"]}, "T")
+    for roles in (["Salesman"], ["Purchase Manager"], ["Admin"], ["Store Admin"]):
+        with pytest.raises(HTTPException) as exc:
+            _assert_allowed({"tenant_id": "T", "role_names": roles}, "T")
+        assert exc.value.status_code == 403
+    _assert_allowed({"tenant_id": "T", "role_names": ["SUPER_ADMIN"]}, "T")
+    _assert_allowed({"tenant_id": None, "is_platform_user": True, "role_names": []}, "T")
 
 
 def test_store_must_belong_to_tenant(monkeypatch):
