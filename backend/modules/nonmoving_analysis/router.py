@@ -4,8 +4,9 @@ Read-only analysis over sync.* -- no endpoint writes stock, creates a transfer
 or changes Procurement data. POST is used only where the client sends a list
 (transfer proposal / review list) and the answer is an Excel file.
 
-Tenant-scoped and limited to super admins (owner ruling 2026-11-01). The
-store must belong to the
+Tenant-scoped. Super admins see every store; a purchase manager sees only
+the store(s) of their active PURCHASE_MANAGER assignment (owner ruling
+2026-11-02); everyone else is refused. The store must belong to the
 tenant (checked server-side). Every list endpoint accepts ?format=xlsx and
 then returns all filtered rows (not one page) as Excel.
 """
@@ -20,7 +21,7 @@ from pydantic import BaseModel
 
 from dependencies.auth import get_current_user
 from dependencies.store_scope import assert_tenant_access, is_super_admin
-from modules.nonmoving_analysis import service
+from modules.nonmoving_analysis import repository as repo, service
 from modules.rate_analysis import excel
 
 router = APIRouter(prefix="/api/non-moving-analysis", tags=["Non-Moving Stock Analysis"])
@@ -28,12 +29,29 @@ router = APIRouter(prefix="/api/non-moving-analysis", tags=["Non-Moving Stock An
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def _assert_allowed(user: dict, tenant_id: str) -> None:
-    # Owner ruling 2026-11-01: super admin only (no purchase / admin role,
-    # no per-user module grant unlocks it).
-    if not (is_super_admin(user) or user.get("is_platform_user")):
-        raise HTTPException(status_code=403, detail="Non-Moving Stock analysis is limited to super admin")
+def _assert_allowed(user: dict, tenant_id: str):
+    """The caller's store scope: None = every store (super admin / platform
+    user), else the set of STORE_IDs (upper case) a purchase manager is
+    assigned to. Owner rulings: 2026-11-01 super admin only, 2026-11-02 plus
+    each store's purchase manager for their own store."""
+    if is_super_admin(user) or user.get("is_platform_user"):
+        assert_tenant_access(user, tenant_id)
+        return None
+    names = [str(r or "").lower() for r in (user.get("role_names") or [])]
+    if not any("purchase" in n for n in names):
+        raise HTTPException(status_code=403, detail="Non-Moving Stock analysis is limited to super admin and purchase managers")
     assert_tenant_access(user, tenant_id)
+    allowed = set(repo.purchase_manager_store_ids(user.get("sub") or user.get("user_id")))
+    if not allowed and user.get("store_id"):
+        allowed = {str(user["store_id"]).upper()}
+    if not allowed:
+        raise HTTPException(status_code=403, detail="No store is assigned to this purchase manager")
+    return allowed
+
+
+def _check_store(scope, store_id) -> None:
+    if scope is not None and str(store_id or "").upper() not in scope:
+        raise HTTPException(status_code=403, detail="You can only analyse your own store.")
 
 
 def _xlsx(result: dict, name: str):
@@ -130,8 +148,12 @@ def _flat_own(rows):
 
 @router.get("/stores")
 def stores(tenant_id: str = Query(...), current_user: dict = Depends(get_current_user)):
-    _assert_allowed(current_user, tenant_id)
-    return {"stores": service.tenant_stores(tenant_id), "config": service.config_info(service.Config())}
+    scope = _assert_allowed(current_user, tenant_id)
+    stores = service.tenant_stores(tenant_id)
+    if scope is not None:
+        stores = [s for s in stores if str(s["store_id"]).upper() in scope]
+    return {"stores": stores, "scope": "all" if scope is None else "own",
+            "config": service.config_info(service.Config())}
 
 
 @router.get("/own-store")
@@ -157,7 +179,8 @@ def own_store(
     format: str = "json",
     current_user: dict = Depends(get_current_user),
 ):
-    _assert_allowed(current_user, tenant_id)
+    scope = _assert_allowed(current_user, tenant_id)
+    _check_store(scope, store_id)
     cfg = _cfg(bands, new_days, None, None)
     filters = dict(search=search, classes=classes, ptype=ptype, supplier=supplier, min_days=min_days,
                    max_days=max_days, expiry=expiry, include_zero=include_zero, non_moving_only=non_moving_only)
@@ -182,7 +205,8 @@ def product(
     new_days: Optional[int] = Query(None, ge=1, le=730),
     current_user: dict = Depends(get_current_user),
 ):
-    _assert_allowed(current_user, tenant_id)
+    scope = _assert_allowed(current_user, tenant_id)
+    _check_store(scope, store_id)
     return service.product_detail(tenant_id, store_id, product_code, _cfg(bands, new_days, None, None))
 
 
@@ -193,7 +217,8 @@ def product_batches(
     product_code: str = Query(...),
     current_user: dict = Depends(get_current_user),
 ):
-    _assert_allowed(current_user, tenant_id)
+    scope = _assert_allowed(current_user, tenant_id)
+    _check_store(scope, store_id)
     return service.product_batches(tenant_id, store_id, product_code)
 
 
@@ -213,7 +238,8 @@ def other_stores(
     format: str = "json",
     current_user: dict = Depends(get_current_user),
 ):
-    _assert_allowed(current_user, tenant_id)
+    scope = _assert_allowed(current_user, tenant_id)
+    _check_store(scope, store_id)
     xlsx = format.lower() == "xlsx"
     res = service.other_stores(tenant_id, store_id, _cfg(bands, new_days, None, None), search, scope,
                                sort, direction, page, page_size, refresh, all_rows=xlsx)
@@ -247,7 +273,9 @@ def transfers(
     format: str = "json",
     current_user: dict = Depends(get_current_user),
 ):
-    _assert_allowed(current_user, tenant_id)
+    scope = _assert_allowed(current_user, tenant_id)
+    if scope is not None:
+        _check_store(scope, store_id)     # a PM sees transfers into / out of their store only
     if store_id:
         service._store_of(tenant_id, store_id)
     cfg = _cfg(bands, new_days, dest_cover_days, source_keep_days)
@@ -279,10 +307,14 @@ class ProposalBody(BaseModel):
 def transfer_proposal(body: ProposalBody, current_user: dict = Depends(get_current_user)):
     """Excel transfer PROPOSAL for the chosen recommendations. Prepares a
     document for the existing authorised transfer process -- executes nothing."""
-    _assert_allowed(current_user, body.tenant_id)
-    if not body.ids:
+    scope = _assert_allowed(current_user, body.tenant_id)
+    ids = body.ids
+    if scope is not None:
+        # id = "<source store>|<code>|<dest store>|<code>": keep only lines touching their store
+        ids = [i for i in ids if {p.upper() for p in i.split("|")[0::2]} & scope]
+    if not ids:
         raise HTTPException(status_code=400, detail="Choose at least one recommendation")
-    res = service.transfers(body.tenant_id, None, service.Config(), all_rows=True, ids=body.ids)
+    res = service.transfers(body.tenant_id, None, service.Config(), all_rows=True, ids=ids)
     res["blocked_rows"] = []
     return _transfer_xlsx(res, "Transfer Proposal (for approval)", "Transfer_Proposal")
 
@@ -298,8 +330,11 @@ def dashboard(
     format: str = "json",
     current_user: dict = Depends(get_current_user),
 ):
-    _assert_allowed(current_user, tenant_id)
+    scope = _assert_allowed(current_user, tenant_id)
+    _check_store(scope, store_id)
     res = service.dashboard(tenant_id, store_id, _cfg(bands, new_days, None, None), refresh, months)
+    if scope is not None:
+        res["stores"] = [s for s in res["stores"] if str(s["store_id"]).upper() in scope]
     if format.lower() != "xlsx":
         return res
     store_cols = [
@@ -345,8 +380,10 @@ class ReviewBody(BaseModel):
 def review_export(body: ReviewBody, current_user: dict = Depends(get_current_user)):
     """Excel of the user's manual-review list (the list itself lives on the
     client -- no database table exists for it yet)."""
-    _assert_allowed(current_user, body.tenant_id)
-    rows = service.review_rows(body.tenant_id, [i.model_dump() for i in body.items], service.Config())
+    scope = _assert_allowed(current_user, body.tenant_id)
+    items = [i.model_dump() for i in body.items
+             if scope is None or str(i.store_id).upper() in scope]
+    rows = service.review_rows(body.tenant_id, items, service.Config())
     cols = [{"key": "store_code", "label": "Store"}] + _OWN_COLS + [{"key": "note", "label": "Note", "width": 40}]
     return _xlsx({"title": "Non-Moving Stock - Manual Review List", "notes": [],
                   "sheets": [{"name": "Review", "columns": cols, "rows": _flat_own(rows)}]},

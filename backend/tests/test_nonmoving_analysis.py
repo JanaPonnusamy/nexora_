@@ -221,14 +221,32 @@ def test_filters_and_paging():
     assert total == 5 and [r["product_code"] for r in page] == ["4", "3"]   # never sold sorts oldest
 
 
-def test_router_is_super_admin_only():
-    from modules.nonmoving_analysis.router import _assert_allowed
-    for roles in (["Salesman"], ["Purchase Manager"], ["Admin"], ["Store Admin"]):
+def test_access_super_admin_all_stores_pm_own_store(monkeypatch):
+    from modules.nonmoving_analysis import router as r
+    monkeypatch.setattr(r.repo, "purchase_manager_store_ids",
+                        lambda uid: ["S-NMC"] if uid == "U-PM" else [])
+    # Super admin / platform user: every store.
+    assert r._assert_allowed({"tenant_id": "T", "role_names": ["SUPER_ADMIN"]}, "T") is None
+    assert r._assert_allowed({"tenant_id": None, "is_platform_user": True, "role_names": []}, "T") is None
+    # Purchase manager: only their assigned store.
+    scope = r._assert_allowed({"sub": "U-PM", "tenant_id": "T", "role_names": ["PURCHASE_MANAGER"]}, "T")
+    assert scope == {"S-NMC"}
+    r._check_store(scope, "s-nmc")
+    with pytest.raises(HTTPException) as exc:
+        r._check_store(scope, "S-NMA")
+    assert exc.value.status_code == 403
+    # PM with no assignment row falls back to the JWT store, else refused.
+    assert r._assert_allowed({"sub": "U-X", "tenant_id": "T", "store_id": "s-nmg",
+                              "role_names": ["PURCHASE_MANAGER"]}, "T") == {"S-NMG"}
+    with pytest.raises(HTTPException):
+        r._assert_allowed({"sub": "U-X", "tenant_id": "T", "role_names": ["PURCHASE_MANAGER"]}, "T")
+    # Another tenant, or a non-PM role: refused.
+    with pytest.raises(HTTPException):
+        r._assert_allowed({"sub": "U-PM", "tenant_id": "OTHER", "role_names": ["PURCHASE_MANAGER"]}, "T")
+    for roles in (["SALESMAN"], ["STORE_ADMIN"], ["TENANT_ADMIN"], ["STOCK_VIEWER"]):
         with pytest.raises(HTTPException) as exc:
-            _assert_allowed({"tenant_id": "T", "role_names": roles}, "T")
+            r._assert_allowed({"sub": "U-PM", "tenant_id": "T", "role_names": roles}, "T")
         assert exc.value.status_code == 403
-    _assert_allowed({"tenant_id": "T", "role_names": ["SUPER_ADMIN"]}, "T")
-    _assert_allowed({"tenant_id": None, "is_platform_user": True, "role_names": []}, "T")
 
 
 def test_store_must_belong_to_tenant(monkeypatch):

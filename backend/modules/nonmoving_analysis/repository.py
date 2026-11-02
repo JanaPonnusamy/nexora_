@@ -317,3 +317,26 @@ def mapping_edges(tenant_id, store_ids, keep):
         return out
     finally:
         conn.close()
+
+
+def purchase_manager_store_ids(user_id):
+    """Stores where this user holds an active purchase-manager role
+    (dbo.user_store_roles) -- the stores a PM may analyse."""
+    if not user_id:
+        return []
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT DISTINCT UPPER(CAST(usr.store_id AS VARCHAR(36)))
+            FROM dbo.user_store_roles usr
+            INNER JOIN dbo.roles r ON r.role_id = usr.role_id
+            WHERE usr.user_id = TRY_CAST(? AS UNIQUEIDENTIFIER) AND usr.is_active = 1
+              AND UPPER(r.role_name) LIKE '%PURCHASE%'
+            """,
+            (str(user_id),),
+        )
+        return [row[0] for row in cur.fetchall() if row[0]]
+    finally:
+        conn.close()
