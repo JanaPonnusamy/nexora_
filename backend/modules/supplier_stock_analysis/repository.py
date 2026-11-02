@@ -161,47 +161,45 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
         cur = conn.cursor()
         store_clause = "AND ss.store_id = ?" if store_id else ""
         term = (search or "").strip()
-        # Placeholder order must match the CTEs below, top to bottom.
-        params = [tenant_id]                       # active_store_count
-        params += [tenant_id, supplier_code]       # supplier_keys
-        if store_id:
-            params.append(store_id)
-        params += [tenant_id, tenant_id]           # map_resolved (source + target sides)
-        params += [tenant_id]                       # mapagg (sync.Products.tenant_id, other-store stock join)
-        params += [tenant_id, supplier_code]       # final WHERE
-        if store_id:
-            params.append(store_id)
-        params += [1 if only_available else 0, term, term, term, term]
+        store_param = [store_id] if store_id else []
+        # The cross-store mapping summary is materialized into #temp tables
+        # first. As CTEs, SQL Server re-ran the product_mapping walk per
+        # supplier row once suppliers grew to ~3000 lines (Annai: 85-90s, the
+        # client's 90s timeout) even though each step alone takes <0.5s.
+        # Tables are CREATEd unparameterized - a parameterized SELECT INTO runs
+        # inside sp_executesql and its #table would vanish with that batch.
+        cur.execute(
+            """
+            CREATE TABLE #supplier_keys (store_id UNIQUEIDENTIFIER, product_code VARCHAR(50) COLLATE DATABASE_DEFAULT);
+            CREATE TABLE #mapagg (key_store UNIQUEIDENTIFIER, key_code VARCHAR(50) COLLATE DATABASE_DEFAULT,
+                                  mapped_other_store_count INT, other_store_has_stock INT);
+            """
+        )
+        # Distinct (store, product_code) keys this supplier actually has, so
+        # the cross-store mapping walk runs ONCE set-based.
         cur.execute(
             f"""
-            WITH active_store_count AS (
-                SELECT COUNT(1) AS total_store_count
-                FROM dbo.stores
-                WHERE tenant_id = ?
-                  AND ISNULL(is_active, 1) = 1
-            ),
-            -- Distinct (store, product_code) keys this supplier actually has, so
-            -- the cross-store mapping walk runs ONCE set-based instead of as a
-            -- correlated OUTER APPLY per candidate row (2342 rows x 1.1M-row
-            -- product_mapping = 55s / timeout; this is ~100x faster).
-            supplier_keys AS (
-                SELECT DISTINCT ss.store_id, ss.product_code
-                FROM {_supplier_stock_source()} ss
-                WHERE ss.tenant_id = ?
-                  AND ss.supplier_code = ?
-                  {store_clause}
-                  AND ss.is_active = 1
-                  AND ss.product_code IS NOT NULL
-            ),
-            -- Every OTHER store this supplier's products resolve to, in both
-            -- mapping directions, along with that store's own product_code for
-            -- the mapping (needed to look up its stock below - codes differ
-            -- across stores). Raw (uncast) predicates keep the source/target
-            -- product_mapping index seeks sargable.
-            map_resolved AS (
+            INSERT INTO #supplier_keys (store_id, product_code)
+            SELECT DISTINCT ss.store_id, ss.product_code
+            FROM {_supplier_stock_source()} ss
+            WHERE ss.tenant_id = ?
+              AND ss.supplier_code = ?
+              {store_clause}
+              AND ss.is_active = 1
+              AND ss.product_code IS NOT NULL
+            """,
+            tuple([tenant_id, supplier_code] + store_param),
+        )
+        # Every OTHER store those products resolve to, in both mapping
+        # directions (raw predicates keep the product_mapping index seeks
+        # sargable), then per key: how many other stores are mapped and whether
+        # any of them carries stock - one aggregation pass.
+        cur.execute(
+            """
+            WITH map_resolved AS (
                 SELECT sk.store_id AS key_store, sk.product_code AS key_code,
                        pm.target_store_id AS other_store, pm.target_product_code AS other_code
-                FROM supplier_keys sk
+                FROM #supplier_keys sk
                 JOIN dbo.product_mapping pm
                   ON pm.tenant_id = ?
                  AND pm.is_deleted = 0
@@ -211,7 +209,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                  AND pm.target_store_id <> sk.store_id
                 UNION
                 SELECT sk.store_id, sk.product_code, pm.source_store_id, pm.source_product_code
-                FROM supplier_keys sk
+                FROM #supplier_keys sk
                 JOIN dbo.product_mapping pm
                   ON pm.tenant_id = ?
                  AND pm.is_deleted = 0
@@ -219,23 +217,31 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                  AND pm.target_store_id = sk.store_id
                  AND pm.target_product_code = sk.product_code
                  AND pm.source_store_id <> sk.store_id
-            ),
-            -- mapped_other_store_count and other_store_has_stock both aggregate
-            -- off map_resolved - computed together in one pass (not as two CTEs
-            -- each referencing map_resolved) because SQL Server re-evaluates a
-            -- CTE for every reference to it rather than materializing it once;
-            -- two references here doubled the product_mapping walk and turned a
-            -- ~2s query into ~29s (measured against a 1600-row supplier).
-            mapagg AS (
-                SELECT mr.key_store, mr.key_code,
-                       COUNT(DISTINCT mr.other_store) AS mapped_other_store_count,
-                       MAX(CASE WHEN ISNULL(op.totalstock, 0) > 0 THEN 1 ELSE 0 END) AS other_store_has_stock
-                FROM map_resolved mr
-                LEFT JOIN sync.Products op
-                  ON op.tenant_id = ?
-                 AND op.store_id = mr.other_store
-                 AND op.productcode = TRY_CAST(mr.other_code AS INT)
-                GROUP BY mr.key_store, mr.key_code
+            )
+            INSERT INTO #mapagg (key_store, key_code, mapped_other_store_count, other_store_has_stock)
+            SELECT mr.key_store, mr.key_code,
+                   COUNT(DISTINCT mr.other_store),
+                   MAX(CASE WHEN ISNULL(op.totalstock, 0) > 0 THEN 1 ELSE 0 END)
+            FROM map_resolved mr
+            LEFT JOIN sync.Products op
+              ON op.tenant_id = ?
+             AND op.store_id = mr.other_store
+             AND op.productcode = TRY_CAST(mr.other_code AS INT)
+            GROUP BY mr.key_store, mr.key_code
+            """,
+            (tenant_id, tenant_id, tenant_id),
+        )
+        params = [tenant_id]                       # active_store_count
+        params += [tenant_id, supplier_code]       # final WHERE
+        params += store_param
+        params += [1 if only_available else 0, term, term, term, term]
+        cur.execute(
+            f"""
+            WITH active_store_count AS (
+                SELECT COUNT(1) AS total_store_count
+                FROM dbo.stores
+                WHERE tenant_id = ?
+                  AND ISNULL(is_active, 1) = 1
             )
             SELECT TOP 3000
                 ss.supplier_stock_id,
@@ -292,7 +298,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                 ON p.tenant_id = ss.tenant_id
                AND p.store_id = ss.store_id
                AND p.productcode = TRY_CAST(ss.product_code AS INT)
-            LEFT JOIN mapagg
+            LEFT JOIN #mapagg mapagg
                 ON mapagg.key_store = ss.store_id
                AND mapagg.key_code = ss.product_code
             WHERE ss.tenant_id = ?
