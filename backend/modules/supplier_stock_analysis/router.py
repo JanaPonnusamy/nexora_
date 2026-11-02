@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from dependencies.auth import get_current_user
 from dependencies.store_scope import assert_store_access, assert_tenant_access, has_unrestricted_scope, is_supplier_analysis_blocked
-from modules.supplier_stock_analysis import service
-from modules.supplier_stock_analysis.schemas import MappingUpdate
+from modules.supplier_stock_analysis import service, store_need
+from modules.supplier_stock_analysis.schemas import AssignmentUpdate, MappingUpdate
 
 router = APIRouter(prefix="/api/supplier-stock-analysis", tags=["Supplier Stock Analysis"])
 
@@ -161,6 +161,30 @@ def product_dashboard(
 def update_mapping(payload: MappingUpdate, current_user: dict = Depends(require_admin_role)):
     _assert_scope(current_user, payload.tenant_id, payload.store_id)
     return service.update_mapping(payload.dict())
+
+
+@router.get("/store-need")
+def store_need_rows(tenant_id: str, store_id: str, supplier_code: str, current_user: dict = Depends(require_admin_role)):
+    """Supplier lines the warehouse has no stock of but the branches are
+    selling, with each branch's 1-month need (see store_need.py)."""
+    _assert_scope(current_user, tenant_id, store_id)
+    return store_need.store_need(tenant_id, store_id, supplier_code)
+
+
+@router.get("/assignments/today")
+def today_assignments(tenant_id: str, store_id: str, current_user: dict = Depends(require_admin_role)):
+    _assert_scope(current_user, tenant_id, store_id)
+    return store_need.today_assignments(tenant_id, store_id)
+
+
+@router.put("/assignments")
+def save_assignment(payload: AssignmentUpdate, current_user: dict = Depends(require_admin_role)):
+    _assert_scope(current_user, payload.tenant_id, payload.store_id)
+    return store_need.save_assignments(
+        payload.tenant_id, payload.store_id, payload.supplier_code,
+        [item.dict() for item in payload.items],
+        current_user.get("username") or current_user.get("sub"),
+    )
 
 
 @router.get("/order-suppliers")
