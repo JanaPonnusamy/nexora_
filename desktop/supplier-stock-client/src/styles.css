@@ -5362,6 +5362,10 @@ th {
   font-size: 12px; font-weight: 500; color: var(--nx-text-soft); cursor: pointer;
 }
 .lbl-unit-options label:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.lbl-unit-options label.lbl-unit-all {
+  position: sticky; top: 0; z-index: 1; background: var(--nx-surface);
+  font-weight: 700; color: var(--nx-text); border-bottom: 1px solid var(--nx-rule);
+}
 
 /* ---- Grid: compact 34px rows, single-line cells, fixed columns ---- */
 /* Guarantee the colgroup percentage widths actually govern the label grid —

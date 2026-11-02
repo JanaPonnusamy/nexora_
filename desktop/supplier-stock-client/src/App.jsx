@@ -6757,6 +6757,15 @@ function LabelMultiPicker({ options, selected, onChange, placeholder = 'Any', no
     onChange(next);
   }
 
+  // "All" ticks/unticks every option currently shown (respects the search box).
+  const allShown = filtered.length > 0 && filtered.every((v) => localSelected.has(v));
+  function toggleAll() {
+    const next = new Set(localSelected);
+    filtered.forEach((v) => (allShown ? next.delete(v) : next.add(v)));
+    setLocalSelected(next);
+    onChange(next);
+  }
+
   const picked = Array.from(localSelected);
   // A few short picks (e.g. letters B, C) read better spelled out than "2 letters".
   const summary = picked.length === 0 ? placeholder
@@ -6782,9 +6791,15 @@ function LabelMultiPicker({ options, selected, onChange, placeholder = 'Any', no
             autoFocus
           />
           <div className="lbl-unit-options">
+            {filtered.length > 1 && (
+              <label className="lbl-unit-all">
+                <input type="checkbox" checked={allShown} onChange={toggleAll} />
+                All{term ? ' shown' : ''}
+              </label>
+            )}
             {filtered.map((value) => (
               <label key={value}>
-                <input type="checkbox" checked={selected.has(value)} onChange={() => toggle(value)} />
+                <input type="checkbox" checked={localSelected.has(value)} onChange={() => toggle(value)} />
                 {value}
               </label>
             ))}
