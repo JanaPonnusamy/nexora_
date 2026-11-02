@@ -9070,11 +9070,19 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 
 /* label queue modal */
 .lbl-queue-modal {
-  width: 760px; max-width: 94vw; max-height: 84vh; background: var(--nx-surface);
+  width: 1080px; max-width: 96vw; max-height: 84vh; background: var(--nx-surface);
   border-radius: 12px; display: flex; flex-direction: column; box-shadow: var(--nx-shadow-sm), 0 12px 40px rgba(15, 23, 42, 0.28);
 }
-.lbl-queue-actions { display: flex; align-items: center; gap: 8px; }
+/* Header controls wrap onto a second row on narrow windows instead of
+   squashing the Show/Letter pickers under the buttons. */
+.lbl-queue-modal > .lbl-assign-head { flex-wrap: wrap; row-gap: 8px; }
+.lbl-queue-modal > .lbl-assign-head > strong { white-space: nowrap; }
+.lbl-queue-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+.lbl-queue-actions > * { flex-shrink: 0; }
 .lbl-queue-actions .lbl-assign-btn { flex: none; height: 32px; padding: 0 14px; }
+.lbl-queue-filter select { min-width: 140px; }
+.lbl-queue-filter .lbl-unit-pick { min-width: 130px; }
+.lbl-queue-filter .lbl-unit-trigger { height: 30px; min-width: 130px; font-size: 12px; }
 .lbl-queue-body { padding: 8px 14px 16px; overflow: auto; }
 .lbl-queue-table { width: 100%; }
 

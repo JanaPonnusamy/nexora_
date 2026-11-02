@@ -6757,7 +6757,11 @@ function LabelMultiPicker({ options, selected, onChange, placeholder = 'Any', no
     onChange(next);
   }
 
-  const summary = localSelected.size === 0 ? placeholder : localSelected.size === 1 ? Array.from(localSelected)[0] : `${localSelected.size} ${noun}s`;
+  const picked = Array.from(localSelected);
+  // A few short picks (e.g. letters B, C) read better spelled out than "2 letters".
+  const summary = picked.length === 0 ? placeholder
+    : picked.length <= 3 && picked.every((v) => String(v).length <= 3) ? picked.join(', ')
+    : picked.length === 1 ? picked[0] : `${picked.length} ${noun}s`;
 
   return (
     <div className="ow-supplier-pick lbl-unit-pick" ref={wrapRef}>
