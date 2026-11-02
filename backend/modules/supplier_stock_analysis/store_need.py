@@ -8,9 +8,10 @@ branches are selling it - how much does each branch need for a month?":
     dbo.product_mapping, both directions - APPROVED/AUTO, or PENDING with the
     same code (the shared Shopaid master; same trust rule as the HO stock
     bridge, product_mapping.repository.supplier_bridge_targets);
-  * branch retail movement over the last 90 days (sold in the last 30 days
-    and in >= MIN_BILLS bills); need = 90-day sales / 3 - branch stock, in
-    packs (SaleUnit).
+  * branch movement from monthly sync.ProductTrans (last 3 whole months +
+    this month to date; net of returns; last sale within 30 days and
+    >= MIN_BILLS sale transactions); need = monthly-average sales - branch
+    stock, in packs (SaleUnit).
 Stock everywhere is the latest sync.ProductTrans.StockInHand (_dbutil).
 
 Assignments record "this warehouse product is being ordered from supplier X
@@ -18,16 +19,19 @@ today", so the same product shows as already assigned under every other
 supplier. Only today's rows count; older ones are simply ignored.
 """
 
+import logging
 import math
+import sys
 import threading
-from datetime import date
+from datetime import date, datetime, timedelta
 from time import monotonic
 
 from config.database import get_connection
 from modules.procurement._dbutil import rows_to_dicts, store_stock_expr
 from modules.supplier_stock_analysis.repository import _supplier_stock_source
 
-SALES_DAYS = 90
+logger = logging.getLogger(__name__)
+
 RECENT_DAYS = 30
 MIN_BILLS = 3
 FAST_BILLS = 6
@@ -56,10 +60,20 @@ def _ensure_assignment_table(cur):
     )
 
 
-_CACHE_TTL_SECONDS = 15 * 60
-_need_cache = {}
+# The HO SQL Server is Express (~1.4 GB buffer pool, page life expectancy of
+# seconds), so this computation swings from ~1s to ~2 min with cache state.
+# Keep it off the request path: a background thread refreshes every
+# warehouse requested in the last few hours, requests get the last result
+# immediately (even if older than the refresh interval), and the warehouses
+# are pre-warmed shortly after the backend starts. Only a request that finds
+# no result at all computes inline.
+_REFRESH_SECONDS = 10 * 60
+_KEEP_WARM_SECONDS = 6 * 3600
+_need_cache = {}        # key -> (computed_at monotonic, value)
+_last_requested = {}    # key -> monotonic of last request
 _need_locks = {}
 _locks_guard = threading.Lock()
+_refresher_started = False
 
 
 def _supplier_lines(cur, tenant_id, store_id, supplier_code=None):
@@ -110,22 +124,77 @@ def store_need(tenant_id, store_id, supplier_code):
 
 def _branch_need(tenant_id, store_id):
     """{warehouse product_code: {branch_code: need}} for every zero-stock
-    warehouse product ANY supplier holds. Supplier-independent, so it is
-    computed once (~15s: 90 days of branch sales) and cached; switching
-    supplier is then instant."""
+    warehouse product ANY supplier holds. Supplier-independent, so switching
+    supplier never recomputes; see the cache notes above."""
     key = (str(tenant_id).upper(), str(store_id).upper())
+    _last_requested[key] = monotonic()
+    _start_refresher()
+    hit = _need_cache.get(key)
+    if hit:
+        return hit[1]
+    return _refresh(key)
+
+
+def _refresh(key):
     with _locks_guard:
         lock = _need_locks.setdefault(key, threading.Lock())
     with lock:
         hit = _need_cache.get(key)
-        if hit and hit[0] > monotonic():
+        if hit and monotonic() - hit[0] < 60:   # refreshed while we waited
             return hit[1]
-        value = _compute_branch_need(tenant_id, store_id)
-        _need_cache[key] = (monotonic() + _CACHE_TTL_SECONDS, value)
+        value = _compute_branch_need(*key)
+        _need_cache[key] = (monotonic(), value)
         return value
 
 
+def _refresher_loop():
+    import time
+    time.sleep(20)  # let the backend finish starting
+    try:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT CAST(tenant_id AS VARCHAR(36)), CAST(store_id AS VARCHAR(36)) "
+                        "FROM dbo.stores WHERE is_warehouse = 1 AND ISNULL(is_active, 1) = 1")
+            for tenant_id, store_id in cur.fetchall():
+                _last_requested.setdefault((tenant_id.upper(), store_id.upper()), monotonic())
+        finally:
+            conn.close()
+    except Exception:
+        logger.warning("store-need prewarm: could not list warehouses", exc_info=True)
+    while True:
+        for key, requested in list(_last_requested.items()):
+            if monotonic() - requested > _KEEP_WARM_SECONDS:
+                continue
+            hit = _need_cache.get(key)
+            if hit and monotonic() - hit[0] < _REFRESH_SECONDS:
+                continue
+            try:
+                _refresh(key)
+            except Exception:
+                logger.warning("store-need refresh failed for %s", key, exc_info=True)
+        time.sleep(30)
+
+
+def _start_refresher():
+    global _refresher_started
+    with _locks_guard:
+        if _refresher_started:
+            return
+        _refresher_started = True
+    threading.Thread(target=_refresher_loop, name="store-need-refresher", daemon=True).start()
+
+
+# Pre-warm only inside the running API server (not tests/scripts importing this).
+if "uvicorn" in sys.modules:
+    _start_refresher()
+
+
 def _compute_branch_need(tenant_id, store_id):
+    today = date.today()
+    month = today.month - 3
+    window_start = date(today.year + (month - 1) // 12, (month - 1) % 12 + 1, 1)
+    window_days = (today - window_start).days + 1
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -193,32 +262,45 @@ def _compute_branch_need(tenant_id, store_id):
             """,
             (tenant_id,),
         )
-        # tenant_id + store_id + ProductCode = IX_ProductSaleInformation_Product seek.
+        # Monthly sync.ProductTrans rows (clustered store_id, ProductCode,
+        # MonthOfStatistics = a seek, ~4 rows per product) instead of 90 days
+        # of ProductSaleInformation lines: same answer at ~1/100th the I/O
+        # (that scan took ~2 min on a cold HO server). Window = the last 3
+        # whole months + the current month to date.
+        # HASH JOIN: one pass over the window beats ~6000 random seeks on a
+        # cold server (0.3s vs 8-15s measured).
+        cur.execute(
+            """
+            CREATE TABLE #sales (wh_code varchar(50) COLLATE DATABASE_DEFAULT, sid uniqueidentifier, code int,
+                                 qty float, bills int, last_sale datetime)
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO #sales (wh_code, sid, code, qty, bills, last_sale)
+            SELECT r.wh_code, r.sid, r.code,
+                   SUM(ISNULL(pt.SaleQuantity, 0) - ISNULL(pt.SaleReturnQuantity, 0)),
+                   SUM(ISNULL(pt.SaleTransactionCount, 0)),
+                   MAX(pt.LastBillDate)
+            FROM #r r
+            JOIN sync.ProductTrans pt
+              ON pt.store_id = r.sid AND pt.ProductCode = r.code
+            WHERE pt.MonthOfStatistics >= ?
+            GROUP BY r.wh_code, r.sid, r.code
+            OPTION (HASH JOIN)
+            """,
+            (window_start,),
+        )
         cur.execute(
             f"""
-            WITH sales AS (
-                SELECT r.wh_code, r.sid, r.code,
-                       SUM(ps.Quantity) AS q90,
-                       SUM(CASE WHEN ps.TransactionDate >= DATEADD(day, -{RECENT_DAYS}, CAST(GETDATE() AS date))
-                                THEN ps.Quantity ELSE 0 END) AS q30,
-                       COUNT(DISTINCT ps.Bnumber) AS bills90,
-                       MAX(ps.TransactionDate) AS last_sale
-                FROM #r r
-                JOIN sync.ProductSaleInformation ps
-                  ON ps.tenant_id = ? AND ps.store_id = r.sid AND ps.ProductCode = r.code
-                WHERE ps.TransactionDate >= DATEADD(day, -{SALES_DAYS}, CAST(GETDATE() AS date))
-                  AND ps.SeriesTransID = 1 AND ps.TransactionValidity = 0
-                  AND ISNULL(ps.DontConsiderInOrder, 0) = 0 AND ps.Quantity > 0
-                GROUP BY r.wh_code, r.sid, r.code
-            )
-            SELECT s.wh_code, st.store_code, s.q90, s.q30, s.bills90, s.last_sale,
+            SELECT s.wh_code, st.store_code, s.qty, s.bills, s.last_sale,
                    ISNULL(p.SaleUnit, 1) AS sale_unit,
                    {store_stock_expr('p')} AS store_stock
-            FROM sales s
+            FROM #sales s
             JOIN dbo.stores st ON st.store_id = s.sid
             LEFT JOIN sync.Products p ON p.tenant_id = ? AND p.store_id = s.sid AND p.ProductCode = s.code
             """,
-            (tenant_id, tenant_id),
+            (tenant_id,),
         )
         movement = rows_to_dicts(cur)
     finally:
@@ -228,18 +310,20 @@ def _compute_branch_need(tenant_id, store_id):
     per = {}
     for m in movement:
         key = (m["wh_code"], (m["store_code"] or "").strip())
-        agg = per.setdefault(key, {"q90": 0, "q30": 0, "bills90": 0, "stock": 0, "sale_unit": 1})
-        agg["q90"] += float(m["q90"] or 0)
-        agg["q30"] += float(m["q30"] or 0)
-        agg["bills90"] += int(m["bills90"] or 0)
+        agg = per.setdefault(key, {"qty": 0, "bills": 0, "stock": 0, "sale_unit": 1, "last_sale": None})
+        agg["qty"] += float(m["qty"] or 0)
+        agg["bills"] += int(m["bills"] or 0)
         agg["stock"] += float(m["store_stock"] or 0)
         agg["sale_unit"] = max(agg["sale_unit"], float(m["sale_unit"] or 1), 1)
+        if m["last_sale"] and (agg["last_sale"] is None or m["last_sale"] > agg["last_sale"]):
+            agg["last_sale"] = m["last_sale"]
 
+    recent_cutoff = datetime.now() - timedelta(days=RECENT_DAYS)
     by_code = {}
     for (wh_code, store_code), a in per.items():
-        if a["q30"] <= 0 or a["bills90"] < MIN_BILLS:
+        if not a["last_sale"] or a["last_sale"] < recent_cutoff or a["bills"] < MIN_BILLS:
             continue
-        month_need = math.ceil(a["q90"] / 3)
+        month_need = math.ceil(a["qty"] * 30.4 / window_days)
         packs = math.ceil(max(month_need - a["stock"], 0) / a["sale_unit"])
         if packs <= 0:
             continue
@@ -247,11 +331,11 @@ def _compute_branch_need(tenant_id, store_id):
             "need_packs": packs,
             "month_need_units": month_need,
             "store_stock": a["stock"],
-            "sold_90d": a["q90"],
-            "sold_30d": a["q30"],
-            "bills_90d": a["bills90"],
+            "sold_90d": a["qty"],
+            "bills_90d": a["bills"],
+            "last_sale": a["last_sale"].date().isoformat(),
             "sale_unit": a["sale_unit"],
-            "movement": "Fast" if a["bills90"] >= FAST_BILLS else "Medium",
+            "movement": "Fast" if a["bills"] >= FAST_BILLS else "Medium",
         }
 
     return by_code
