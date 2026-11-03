@@ -197,6 +197,11 @@ def run_multi_store():
 
     threading.Thread(target=_heartbeat_loop, args=(registry,), daemon=True).start()
 
+    # HO -> local OrderNMC mirror. Idles (one cheap config check every few
+    # minutes) unless HO has a mirror target configured for this device.
+    from store_agent.ordernmc_mirror import start_mirror_thread
+    start_mirror_thread(device, log=_log)
+
     # Keep the shared SQLite cache trimmed + VACUUMed so it never bloats across
     # N stores. One pass covers every store's rows in the shared DB.
     start_cache_maintenance_thread(SqliteCacheService().db_path, log=_log)

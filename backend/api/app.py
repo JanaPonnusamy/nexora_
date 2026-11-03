@@ -164,6 +164,10 @@ from modules.device_identity.router import (
     agent_router as device_agent_router,
     admin_router as device_admin_router,
 )
+from modules.ordernmc_mirror.router import (
+    agent_router as ordernmc_mirror_agent_router,
+    admin_router as ordernmc_mirror_admin_router,
+)
 
 try:
     ensure_audit_schema()
@@ -400,6 +404,8 @@ app.include_router(ho_ops_router)
 app.include_router(device_auth_router)
 app.include_router(device_agent_router)
 app.include_router(device_admin_router)
+app.include_router(ordernmc_mirror_agent_router)
+app.include_router(ordernmc_mirror_admin_router)
 
 @app.on_event('startup')
 def _start_sync_scheduler_on_startup():
