@@ -5,6 +5,8 @@ which device mirrors which HO OrderNMC, the local SQL connection (password
 Fernet-encrypted like store DB passwords), the interval, and which rows changed.
 This side just loops pull -> apply -> ack until HO says idle, then sleeps.
 
+Local login: Windows auth first, then the HO-configured SQL login.
+
 Apply rules (HO is the source of truth for every row it sends):
   * upsert  (table has a PK on HO): MERGE on the key -- insert new, update
     changed. Local rows HO does not have are never touched.
@@ -124,19 +126,27 @@ def open_target(target):
         password = StoreAgentConfigDecryptionService().decrypt_password(
             bytes.fromhex(target["password_encrypted"]), FernetKeyService().load_key()
         )
-    parts = [
+    base = [
         "DRIVER={" + _driver() + "}",
         "SERVER=" + target["server_name"],
         "DATABASE=" + (target.get("database_name") or "OrderNMC"),
+        "TrustServerCertificate=yes",
     ]
+    # Windows auth first (the agent service account); the HO-configured SQL
+    # login is the fallback when that account has no access.
+    attempts = [base + ["Trusted_Connection=yes"]]
     if target.get("username"):
-        parts += ["UID=" + target["username"], "PWD=" + (password or "")]
-    else:
-        parts.append("Trusted_Connection=yes")
-    parts.append("TrustServerCertificate=yes")
-    conn = pyodbc.connect(";".join(parts) + ";", timeout=15, autocommit=False)
-    conn.timeout = 600
-    return conn
+        attempts.append(base + ["UID=" + target["username"], "PWD=" + (password or "")])
+    last_error = None
+    for parts in attempts:
+        try:
+            conn = pyodbc.connect(";".join(parts) + ";", timeout=15, autocommit=False)
+        except pyodbc.Error as exc:
+            last_error = exc
+            continue
+        conn.timeout = 600
+        return conn
+    raise last_error or RuntimeError("no connection attempt made")
 
 
 class TargetApplier:
