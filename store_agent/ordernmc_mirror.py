@@ -92,6 +92,8 @@ class MirrorClient:
 
     def config(self):
         resp = self._request("GET", "/config")
+        if resp.status_code == 404:
+            return {"enabled": False}  # HO build without the mirror: stay quiet
         resp.raise_for_status()
         return resp.json()
 
