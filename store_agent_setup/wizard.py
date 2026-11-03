@@ -266,7 +266,12 @@ class SetupWizard(tk.Tk):
                 log=lambda m: self.after(0, self._logln, m), route_urls=routes,
             )
             self.after(0, self._logln, "[1/4] Authenticating store login...")
-            self.deployment.authenticate()
+            if self._token:
+                # Reuse the Connect-step sign-in: a second login for the same
+                # store user is refused by HO's single-session policy.
+                self.deployment._token = self._token
+            else:
+                self.deployment.authenticate()
             self.after(0, self._logln, "[2/4] Registering this machine (device key)...")
             self.deployment.register_device()
             self.after(0, self._logln, "[3/4] Installing agent + watchdog services...")
