@@ -622,6 +622,40 @@ export const api = {
     return request(`/api/legacy-order/stores${toQuery({ active_only: activeOnly })}`, { session });
   },
 
+  // ----- Legacy Order generation (super admin, every tenant) -----
+  // Every platform store incl. inactive ones: only used to map an OrderNMC
+  // StoreName (= store_code) to its tenant, never for a selector.
+  listAllStores(session) {
+    return request('/api/stores', { session });
+  },
+
+  legacyDefaults(session) {
+    return request('/api/legacy-order/defaults', { session });
+  },
+
+  legacyStoreEngine(storeName, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  // POST /order-process -> {job_id}. A 409 carries either "already running"
+  // or one of the two Order Process warnings ("... Confirm Order & Process").
+  legacyStartOrderProcess(payload, session) {
+    return request('/api/legacy-order/order-process', {
+      method: 'POST',
+      session,
+      timeoutMs: 120000,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  legacyJobs(session, limit = 50) {
+    return request(`/api/legacy-order/jobs${toQuery({ limit })}`, { session });
+  },
+
+  legacyJob(jobId, session) {
+    return request(`/api/legacy-order/jobs/${encodeURIComponent(jobId)}`, { session, transientRetries: 0 });
+  },
+
   legacyQtyCheckRows(storeName, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}`, { session });
   },

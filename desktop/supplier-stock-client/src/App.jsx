@@ -30,6 +30,7 @@ import {
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 import SchemaSyncPage from './SchemaSyncPage.jsx';
+import LegacyOrderGeneration from './LegacyOrderGeneration.jsx';
 import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareButton, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
 import { NavMenu } from './navMenu.jsx';
 import TimeReport from './TimeReport.jsx';
@@ -55,6 +56,7 @@ const screens = [
   { id: 'stock_vertical', label: 'Stock (Vertical)', short: 'Vertical', group: 'stock', module: 'stock_availability' },
   { id: 'network_stock', label: 'Network Stock', short: 'Network', group: 'stock', module: 'stock_availability' },
   { id: 'order_workspace', label: 'Order Workspace', short: 'Order WS', group: 'purchase', module: 'order_workspace' },
+  { id: 'legacy_order', label: 'Legacy Order', short: 'Legacy Order', hint: 'All tenants', group: 'purchase', module: 'legacy_order' },
   { id: 'analysis', label: 'Supplier Stock Analysis', short: 'Supplier Analysis', group: 'purchase', module: 'supplier_stock_analysis' },
   { id: 'nmw_sales', label: 'NMW Sales Report', short: 'NMW Sales', group: 'reports', module: 'nmw_sales_report' },
   { id: 'time_report', label: 'Time Report', short: 'Time', group: 'reports', module: 'time_report' },
@@ -340,6 +342,12 @@ function AppShell() {
   useEffect(() => {
     if (activeScreen === 'order_workspace') setOrderWorkspaceVisited(true);
   }, [activeScreen]);
+  // Legacy Order: kept mounted too, so a running generation queue keeps
+  // going (and keeps polling its jobs) while the operator uses other screens.
+  const [legacyOrderVisited, setLegacyOrderVisited] = useState(false);
+  useEffect(() => {
+    if (activeScreen === 'legacy_order') setLegacyOrderVisited(true);
+  }, [activeScreen]);
   // Guards the one-time "land on Settings on a fresh device" auto-route below.
   const didAutoRoute = useRef(false);
   const didDevScreen = useRef(false);
@@ -417,6 +425,9 @@ function AppShell() {
     // Schema Sync runs live DDL against Production/HO - super admin only, no
     // per-user module grant can unlock it.
     if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'schema_sync');
+    // Legacy Order generation runs Order Process for any tenant's store -
+    // super admin only (the API's POST /order-process is admin-only too).
+    if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'legacy_order');
     // Time Report (COSEC staff attendance): super admins, or a TIME_REPORT
     // module grant -- never implied by an empty module list.
     const timeReportAllowed = isSuperAdmin(session) || modules.some((m) => String(m).toLowerCase() === 'time_report');
@@ -436,7 +447,7 @@ function AppShell() {
     if (orderWorkspaceAllowed) always.add('order_workspace');
     // Every store login may link and use its own store's WhatsApp.
     always.add('whatsapp');
-    if (isSuperAdmin(session)) always.add('schema_sync');
+    if (isSuperAdmin(session)) { always.add('schema_sync'); always.add('legacy_order'); }
     if (timeReportAllowed) always.add('time_report');
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
@@ -685,7 +696,7 @@ function AppShell() {
           <StoreWhatsAppScreen outbox={storeOutbox} />
         ) : activeScreen === 'time_report' ? (
           <TimeReport session={session} />
-        ) : activeScreen === 'order_workspace' ? null : activeScreen === 'schema_sync' ? (
+        ) : activeScreen === 'order_workspace' || activeScreen === 'legacy_order' ? null : activeScreen === 'schema_sync' ? (
           <SchemaSyncPage session={session} />
         ) : (
           <StockAvailability
@@ -704,6 +715,9 @@ function AppShell() {
             filters) survives switching to another screen and back. */}
         {session && orderWorkspaceVisited && (
           <OrderWorkspace session={session} settings={runtimeSettings} hidden={activeScreen !== 'order_workspace'} />
+        )}
+        {session && legacyOrderVisited && isSuperAdmin(session) && (
+          <LegacyOrderGeneration session={session} hidden={activeScreen !== 'legacy_order'} />
         )}
       </main>
       <WhatsAppShareHost />

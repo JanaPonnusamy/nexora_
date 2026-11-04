@@ -9781,3 +9781,53 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .rta-table td.rta-good { background: var(--nx-success-sunk); color: var(--nx-success-ink); font-weight: 600; }
 .rta-table td.rta-bad { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); font-weight: 600; }
 .rta-table td.rta-warn, .rta-match td.rta-warn { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+
+/* ===== Legacy Order generation (LegacyOrderGeneration.jsx) =====
+   Super-admin Order Process across tenants. Kept mounted after the first
+   visit (App.jsx), so hidden = display:none. Reuses trp-bar / trp-table /
+   rta-chip; theme tokens only (Electron 22 / Chromium 108: no color-mix()). */
+.workspace:has(> .lgo-screen:not(.lgo-hidden)) { padding: var(--ui-workspace-padding); overflow: hidden; }
+.screen-panel.lgo-screen {
+  display: flex; flex-direction: column; gap: 10px; max-width: none; width: 100%;
+  height: calc(100vh - var(--ui-nav-height) - (2 * var(--ui-workspace-padding)));
+  min-height: 0; overflow: hidden; box-sizing: border-box;
+}
+.screen-panel.lgo-screen.lgo-hidden { display: none; }
+.lgo-header { flex-wrap: wrap; gap: 12px; }
+.lgo-header h2 { margin: 0; }
+.lgo-header p { margin: 2px 0 0; }
+.lgo-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.lgo-count { padding: 3px 10px; border-radius: 12px; border: 1px solid var(--nx-rule); background: var(--nx-surface); font-size: 12px; font-weight: 600; color: var(--nx-text-soft); white-space: nowrap; }
+.lgo-bar { justify-content: space-between; align-items: center; }
+.lgo-screen input:not([type=checkbox]), .lgo-screen select { min-height: 28px; padding: 3px 8px; border-radius: 6px; font-size: 12.5px; }
+.lgo-screen input[type=checkbox] { width: 14px; height: 14px; min-height: 0; margin: 0; padding: 0; flex: none; accent-color: var(--nx-accent); cursor: pointer; }
+.lgo-screen .primary-button, .lgo-screen .secondary-button { min-height: 30px; padding: 4px 12px; border-radius: 6px; font-size: 12.5px; }
+.lgo-screen .lgo-btn { min-height: 24px; padding: 1px 10px; white-space: nowrap; }
+.lgo-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--nx-text-soft); white-space: nowrap; }
+.lgo-inline select { width: auto; }
+.lgo-tablewrap { flex: 1 1 auto; max-height: none; min-height: 140px; }
+.lgo-table td, .lgo-table th { text-align: center; }
+.lgo-table select { width: auto; min-width: 0; max-width: 150px; }
+.lgo-table .lgo-num { width: 52px; text-align: center; }
+.lgo-check-col { width: 28px; }
+.lgo-table .lgo-group td { background: var(--nx-surface-sunk); font-weight: 700; color: var(--nx-text); text-align: left; }
+.lgo-row { cursor: pointer; }
+.lgo-row.lgo-selected td { background: var(--nx-accent-sunk); }
+.lgo-store { font-size: 13px; }
+.lgo-status-col { min-width: 200px; }
+.lgo-status { display: inline-flex; align-items: center; gap: 6px; max-width: 270px; font-weight: 600; }
+.lgo-status progress { width: 70px; height: 8px; flex: none; }
+.lgo-msg, .lgo-status.lgo-warn, .lgo-status.lgo-bad { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; max-width: 270px; vertical-align: middle; }
+.lgo-muted { color: var(--nx-text-muted); font-weight: 400; }
+.lgo-run { color: var(--nx-accent-ink); }
+.lgo-ok { color: var(--nx-success-ink); }
+.lgo-warn { color: var(--nx-warning-ink); }
+.lgo-bad { color: var(--nx-danger-ink); }
+.lgo-tag { display: inline-block; padding: 0 7px; border-radius: 8px; font-size: 10.5px; font-weight: 700; line-height: 17px; background: var(--nx-surface-sunk); color: var(--nx-text-soft); border: 1px solid var(--nx-rule); }
+.lgo-tag-wh { background: var(--nx-info-sunk); color: var(--nx-info-ink); border-color: transparent; }
+.lgo-tag-agent { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); border-color: transparent; }
+.lgo-tag-today { margin-left: 6px; background: var(--nx-success-sunk); color: var(--nx-success-ink); border-color: transparent; }
+.lgo-log { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--nx-surface); border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); min-height: 0; }
+.lgo-log-head { padding: 6px 10px; border-bottom: 1px solid var(--nx-rule); font-size: 12px; font-weight: 600; color: var(--nx-text-soft); }
+.lgo-log-body { padding: 6px 10px; height: 110px; overflow: auto; font-family: Consolas, monospace; font-size: 11.5px; color: var(--nx-text); }
+.lgo-log-line { white-space: pre-wrap; word-break: break-word; }
