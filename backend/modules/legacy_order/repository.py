@@ -599,6 +599,105 @@ def stale_sale_bill_warning(store_name):
     return None
 
 
+# --------------------------------------------------------------------------
+# Order Process checkpoint: before Order Process the operator types the store's
+# last sale bill and last GRN from its POS. After the pre-order sync both must
+# be in central OrderNMC, or the sync has not caught up with the store yet and
+# the order is not generated.
+# --------------------------------------------------------------------------
+
+CHECKPOINT_DAYS = 30
+
+
+def normalize_checkpoint(last_bill, last_grn):
+    """(bill, grn) as entered -> (str or None, int or None); ValueError when
+    malformed. The bill is the printed number (C01042645) or just its series
+    number (42645); the GRN is a number."""
+    bill = str(last_bill or "").strip().upper() or None
+    grn = str(last_grn if last_grn is not None else "").strip() or None
+    if bill and len(bill) > 50:
+        raise ValueError("Last bill number is too long.")
+    if grn is not None:
+        if not grn.isdigit() or len(grn) > 9:
+            raise ValueError("Last GRN must be a number, e.g. 2742.")
+        grn = int(grn)
+    return bill, grn
+
+
+def _fmt_at(value):
+    return value.strftime("%d/%m %I:%M %p") if hasattr(value, "strftime") else ""
+
+
+def check_order_checkpoint(store_name, last_bill=None, last_grn=None):
+    """Are the entered last bill / last GRN in central OrderNMC (last
+    CHECKPOINT_DAYS days) for this store? Returns {"ok", "message", "bill",
+    "grn"}; a part that was not entered is None and passes."""
+    since = datetime.datetime.combine(
+        datetime.date.today() - datetime.timedelta(days=CHECKPOINT_DAYS), datetime.time())
+    bill_info = grn_info = None
+    problems, found = [], []
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        if last_bill:
+            numeric = int(last_bill) if last_bill.isdigit() and len(last_bill) <= 9 else None
+            row = cur.execute(
+                "SELECT TOP 1 BNumber, COALESCE(Billtime, BillDate) AS BillAt FROM SaleInformation "
+                "WHERE StoreName = ? AND BillDate >= ? AND (BNumber = ? OR BillNumber = ?) "
+                "ORDER BY BillDate DESC, Billtime DESC",
+                store_name, since, last_bill, numeric,
+            ).fetchone()
+            latest = cur.execute(
+                "SELECT TOP 1 BNumber, COALESCE(Billtime, BillDate) AS BillAt FROM SaleInformation "
+                "WHERE StoreName = ? AND BillDate >= ? ORDER BY BillDate DESC, Billtime DESC",
+                store_name, since,
+            ).fetchone()
+            bill_info = {
+                "entered": last_bill, "found": bool(row),
+                "matched": str(row.BNumber).strip() if row else None,
+                "at": row.BillAt.isoformat() if row and row.BillAt else None,
+                "latest": str(latest.BNumber).strip() if latest else None,
+                "latest_at": latest.BillAt.isoformat() if latest and latest.BillAt else None,
+            }
+            if row:
+                found.append(f"bill {bill_info['matched']} ({_fmt_at(row.BillAt)})")
+            else:
+                problems.append(
+                    f"last bill {last_bill} is not in OrderNMC"
+                    + (f" (latest synced bill: {bill_info['latest']}, {_fmt_at(latest.BillAt)})"
+                       if latest else " (no bill synced in the last 30 days)"))
+        if last_grn is not None:
+            row = cur.execute(
+                "SELECT TOP 1 Grnnumber, grndate, InvoiceSeries FROM PurchaseTrans "
+                "WHERE StoreName = ? AND Grnnumber = ? AND grndate >= ? ORDER BY grndate DESC",
+                store_name, last_grn, since,
+            ).fetchone()
+            latest = cur.execute(
+                "SELECT TOP 1 Grnnumber, grndate FROM PurchaseTrans "
+                "WHERE StoreName = ? AND grndate >= ? ORDER BY grndate DESC, Grnnumber DESC",
+                store_name, since,
+            ).fetchone()
+            grn_info = {
+                "entered": last_grn, "found": bool(row),
+                "series": str(row.InvoiceSeries or "").strip() if row else None,
+                "at": row.grndate.isoformat() if row and row.grndate else None,
+                "latest": int(latest.Grnnumber) if latest and latest.Grnnumber is not None else None,
+                "latest_at": latest.grndate.isoformat() if latest and latest.grndate else None,
+            }
+            if row:
+                found.append(f"GRN {last_grn} ({row.grndate:%d/%m})" if row.grndate else f"GRN {last_grn}")
+            else:
+                problems.append(
+                    f"last GRN {last_grn} is not in OrderNMC"
+                    + (f" (latest synced GRN: {grn_info['latest']}, {latest.grndate:%d/%m})"
+                       if latest and latest.grndate else " (no GRN synced in the last 30 days)"))
+    if problems:
+        message = "; ".join(problems) + ". The sync has not reached it yet, or the number is wrong."
+        message = message[0].upper() + message[1:]
+    else:
+        message = "Found " + " and ".join(found) + " after sync."
+    return {"ok": not problems, "message": message, "bill": bill_info, "grn": grn_info}
+
+
 def test_branch_connection(store):
     """Port of the Syncbtn_Click pre-flight: fail early with a clear message."""
     try:

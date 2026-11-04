@@ -12,6 +12,10 @@
 // "warning"; Continue & Process re-sends with confirmed_stale_order, which
 // acknowledges both gates server-side.
 //
+// Before a manual run the operator types each store's last sale bill and last
+// GRN off its POS. The server syncs, checks both are in OrderNMC, and only then
+// generates the order (then pushes it to the store's remote OrderNMC, if any).
+//
 // Settings (OrderAutomationSettings) is the one place for the automation the
 // HO backend runs on its own: the evening (second) order -- every chosen store
 // one after another from a set time, each compared with that store's earlier
@@ -473,9 +477,16 @@ export default function LegacyOrderGeneration({ session, hidden }) {
         recency_days: positiveInt(c.recencyDays),
         mode: 'local',
         confirmed_stale_order: Boolean(acknowledge),
+        last_bill: String(c.lastBill || '').trim() || null,
+        last_grn: String(c.lastGrn || '').trim() || null,
       }, sessionRef.current);
       patchRun(name, { state: 'running' });
-      return await watch(jobId, name);
+      const job = await watch(jobId, name);
+      // Next run needs today's fresh numbers; a miss keeps them to correct.
+      if (job?.status === 'completed' && alive.current) {
+        setCfg((cur) => ({ ...cur, [name]: { ...cur[name], lastBill: '', lastGrn: '' } }));
+      }
+      return job;
     } catch (err) {
       const message = err.message || 'Could not start Order Process.';
       const warning = /confirm order & process/i.test(message) && !/already running/i.test(message);
@@ -555,11 +566,18 @@ export default function LegacyOrderGeneration({ session, hidden }) {
   });
   const patchCfg = (name, patch) => setCfg((cur) => ({ ...cur, [name]: { ...cur[name], ...patch } }));
 
+  const missingCheckpoint = (name) => !String(cfg[name]?.lastBill || '').trim() || !String(cfg[name]?.lastGrn || '').trim();
+
   const generate = (names) => {
     if (!names.length) return;
-    const list = names.join(', ');
+    const missing = names.filter(missingCheckpoint);
+    if (missing.length) {
+      setError(`Enter the last bill and last GRN (from the store's POS) for: ${missing.join(', ')}`);
+      return;
+    }
+    const list = names.map((n) => `${n}  (bill ${cfg[n].lastBill.trim()}, GRN ${cfg[n].lastGrn.trim()})`).join('\n');
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Generate a new order for ${names.length} store${names.length > 1 ? 's' : ''}?\n\n${list}\n\nEach store runs Order Process (sync + order) on the HO backend.${ackWarnings ? '\nWarnings (stale order / pending assignment) are acknowledged for this batch.' : ''}`)) return;
+    if (!window.confirm(`Generate a new order for ${names.length} store${names.length > 1 ? 's' : ''}?\n\n${list}\n\nEach store syncs first; the order is generated only if its last bill and last GRN are found after the sync.${ackWarnings ? '\nWarnings (stale order / pending assignment) are acknowledged for this batch.' : ''}`)) return;
     setError('');
     enqueue(names, ackWarnings);
   };
@@ -638,7 +656,8 @@ export default function LegacyOrderGeneration({ session, hidden }) {
               <th title="Max days of cover (blank = store/warehouse default)">Max</th>
               <th title="Only products sold in the last N days are ordered">Recency</th>
               <th className="trp-left">Current order</th>
-              <th className="trp-left">Last bill</th>
+              <th title="The store's last sale bill number, as on its POS (C01042645 or 42645)">Last bill</th>
+              <th title="The store's last GRN number, as on its POS">Last GRN</th>
               <th className="trp-left lgo-status-col">Status</th>
               <th aria-label="Action" />
             </tr>
@@ -653,7 +672,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                   <td className="lgo-check-col">
                     <input type="checkbox" aria-label={`Select every store in ${g.name}`} checked={allOn} disabled={!idle.length} onChange={(e) => toggle(idle, e.target.checked)} />
                   </td>
-                  <td colSpan={10} className="trp-left">
+                  <td colSpan={11} className="trp-left">
                     {g.name} <span className="lgo-muted">· {g.stores.length} store{g.stores.length > 1 ? 's' : ''}</span>
                   </td>
                 </tr>,
@@ -706,7 +725,29 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                           </span>
                         ) : <span className="lgo-muted">—</span>}
                       </td>
-                      <td className="trp-left lgo-muted">{fmtStamp(head?.last_bill_datetime) || '—'}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          className="lgo-ref"
+                          aria-label={`${name} last bill`}
+                          value={c.lastBill ?? ''}
+                          disabled={busy}
+                          placeholder="Bill no."
+                          title={head?.last_sale_bill_no ? `Previous order stopped at bill ${head.last_sale_bill_no} (${fmtStamp(head.last_bill_datetime)})` : ''}
+                          onChange={(e) => patchCfg(name, { lastBill: e.target.value.replace(/\s/g, '').toUpperCase() })}
+                        />
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          className="lgo-ref"
+                          inputMode="numeric"
+                          aria-label={`${name} last GRN`}
+                          value={c.lastGrn ?? ''}
+                          disabled={busy}
+                          placeholder="GRN no."
+                          title={head?.last_grn ? `Previous order stopped at GRN ${head.last_grn}` : ''}
+                          onChange={(e) => patchCfg(name, { lastGrn: e.target.value.replace(/\D/g, '') })}
+                        />
+                      </td>
                       <td className="trp-left lgo-status-col"><StatusCell entry={entry} /></td>
                       <td onClick={(e) => e.stopPropagation()}>
                         {entry?.state === 'warning' ? (
@@ -721,7 +762,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
               ];
             })}
             {!loading && !visibleGroups.length && (
-              <tr><td colSpan={11} className="lgo-muted">No active OrderNMC stores.</td></tr>
+              <tr><td colSpan={12} className="lgo-muted">No active OrderNMC stores.</td></tr>
             )}
           </tbody>
         </table>

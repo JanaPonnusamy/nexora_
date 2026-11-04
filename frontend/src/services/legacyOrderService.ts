@@ -90,6 +90,9 @@ export const legacyOrderService = {
     confirm?: { orderId: number; count: number },
     confirmStaleOrder = false,
     recencyDays?: number,
+    // The store's last sale bill / last GRN off its POS: the server syncs,
+    // checks both reached OrderNMC, and only then generates the order.
+    checkpoint?: { lastBill: string; lastGrn: string },
   ) =>
     api.post<{ job_id: string }>(`${BASE}/order-process`, {
       store_name: storeName,
@@ -101,6 +104,8 @@ export const legacyOrderService = {
       confirmed_order_id: confirm?.orderId ?? null,
       confirmed_count: confirm?.count ?? null,
       confirmed_stale_order: confirmStaleOrder,
+      last_bill: checkpoint?.lastBill.trim() || null,
+      last_grn: checkpoint?.lastGrn.trim() || null,
     }),
 
   restorableOrderPreview: (storeName: string, orderId: number) =>

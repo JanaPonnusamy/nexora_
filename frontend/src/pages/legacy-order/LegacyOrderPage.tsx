@@ -76,6 +76,8 @@ export default function LegacyOrderPage() {
   const [compareToday, setCompareToday] = useState<Record<string, boolean>>({})
   const [comparing, setComparing] = useState<string | null>(null)
   const [pushNote, setPushNote] = useState<Record<string, string>>({})
+  // Last bill / last GRN typed off each store's POS before Process.
+  const [checkpoints, setCheckpoints] = useState<Record<string, { lastBill: string; lastGrn: string }>>({})
   const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
   const [dbBusy, setDbBusy] = useState<'' | 'check' | 'recover' | 'repair'>('')
   const [recovery, setRecovery] = useState<LegacyDbRecovery | null>(null)
@@ -187,6 +189,10 @@ export default function LegacyOrderPage() {
 
   const updateJob = useCallback((job: LegacyJob) => {
     setJobs((current) => ({ ...current, [job.job_id]: job }))
+    // The next order needs fresh numbers; a miss keeps them to correct.
+    if (job.kind === 'order' && job.status === 'completed') {
+      setCheckpoints((current) => (current[job.store_name] ? { ...current, [job.store_name]: { lastBill: '', lastGrn: '' } } : current))
+    }
     if (job.status !== 'running') {
       const poller = pollers.current.get(job.job_id)
       if (poller) window.clearInterval(poller)
@@ -276,6 +282,7 @@ export default function LegacyOrderPage() {
     setError(null)
     legacyOrderService.startOrderProcess(
       storeName, config.minDays, config.maxDays, config.mode, confirm, confirmStaleOrder, config.recencyDays,
+      checkpoints[storeName],
     )
       .then(({ job_id }) => watch(job_id))
       .catch((e: Error) => {
@@ -354,6 +361,13 @@ export default function LegacyOrderPage() {
     setSettings((current) => ({
       ...current,
       [storeName]: { ...current[storeName], ...patch },
+    }))
+  }
+
+  const patchCheckpoint = (storeName: string, patch: Partial<{ lastBill: string; lastGrn: string }>) => {
+    setCheckpoints((current) => ({
+      ...current,
+      [storeName]: { ...(current[storeName] ?? { lastBill: '', lastGrn: '' }), ...patch },
     }))
   }
 
@@ -541,6 +555,7 @@ export default function LegacyOrderPage() {
         <div className="lo-store-cards">
           {stores.map((store) => {
             const config = settings[store.store_name] ?? defaultSettings(orderDefaults, store.store_name)
+            const checkpoint = checkpoints[store.store_name] ?? { lastBill: '', lastGrn: '' }
             const running = runningFor(store.store_name)
             const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays || config.recencyDays <= 0
             const failed = (store.last_sync_status ?? '').toLowerCase() === 'failed'
@@ -607,14 +622,23 @@ export default function LegacyOrderPage() {
                     <button type="button" className="lo-btn lo-op-process" disabled><i className="bi bi-hourglass-split" /> Processing…</button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    className={`lo-btn lo-btn-primary lo-op-process${failed ? ' lo-op-retry' : ''}`}
-                    disabled={invalid}
-                    onClick={() => startProcess(store.store_name)}
-                  >
-                    <i className={`bi ${failed ? 'bi-arrow-clockwise' : 'bi-play-fill'}`} /> {failed ? 'Retry' : 'Process'}
-                  </button>
+                  <>
+                    <div className="lo-op-checkpoint" title="Read these off the store's POS. Process syncs first and generates the order only if both are found after the sync.">
+                      <label><span>Last bill</span><input aria-label={`${store.store_name} last bill`} placeholder="C01042645" value={checkpoint.lastBill}
+                        onChange={(e) => patchCheckpoint(store.store_name, { lastBill: e.target.value.replace(/\s/g, '').toUpperCase() })} /></label>
+                      <label><span>Last GRN</span><input aria-label={`${store.store_name} last GRN`} placeholder="2742" inputMode="numeric" value={checkpoint.lastGrn}
+                        onChange={(e) => patchCheckpoint(store.store_name, { lastGrn: e.target.value.replace(/\D/g, '') })} /></label>
+                    </div>
+                    <button
+                      type="button"
+                      className={`lo-btn lo-btn-primary lo-op-process${failed ? ' lo-op-retry' : ''}`}
+                      disabled={invalid || !checkpoint.lastBill || !checkpoint.lastGrn}
+                      title={!checkpoint.lastBill || !checkpoint.lastGrn ? 'Enter the last bill and last GRN first' : ''}
+                      onClick={() => startProcess(store.store_name)}
+                    >
+                      <i className={`bi ${failed ? 'bi-arrow-clockwise' : 'bi-play-fill'}`} /> {failed ? 'Retry' : 'Process'}
+                    </button>
+                  </>
                 )}
               </article>
             )

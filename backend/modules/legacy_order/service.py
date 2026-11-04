@@ -110,6 +110,35 @@ def _update(job_id, **fields):
         job.update(fields)
 
 
+def _log(job_id, message):
+    """Task-log line that leaves the job's status message alone."""
+    with _lock:
+        job = _jobs.get(job_id)
+        if job:
+            job["log"].append({
+                "at": datetime.datetime.now().isoformat(timespec="seconds"),
+                "message": message,
+            })
+
+
+def _check_checkpoint(job_id, store_name, checkpoint):
+    """After the pre-order sync, the operator's last bill / last GRN must be in
+    OrderNMC. Returns (ok, check); check is None when nothing was entered. A
+    check that cannot run counts as a miss: no order on unverified data."""
+    bill, grn = checkpoint or (None, None)
+    if not bill and grn is None:
+        return True, None
+    _update(job_id, message="Checking the last bill / last GRN in OrderNMC...")
+    try:
+        check = repository.check_order_checkpoint(store_name, bill, grn)
+    except Exception as exc:
+        logger.exception("last bill / last GRN check failed for %s", store_name)
+        check = {"ok": False, "message": f"Could not check the last bill / last GRN: {exc}",
+                 "bill": None, "grn": None}
+    _update(job_id, message=check["message"])
+    return check["ok"], check
+
+
 def get_job(job_id):
     with _lock:
         job = _jobs.get(job_id)
@@ -289,9 +318,13 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
                          confirmed=False,
                          confirmed_order_id=None, confirmed_count=None,
                          confirmed_stale_order=False, engine=None, recency_days=None,
-                         compare_today_previous=None):
+                         compare_today_previous=None, last_bill=None, last_grn=None):
     """recency_days: only products sold in the last N days are ordered (the
     store's Order settings); None = default_recency_days(store_name).
+    last_bill/last_grn: the store's last sale bill and last GRN as the
+    operator reads them off the POS. After the pre-order sync both must be in
+    OrderNMC (repository.check_order_checkpoint), or the order is not
+    generated. None = no check (the evening order, older clients).
     compare_today_previous: after the order is generated, run Compare against
     the store's earlier order from TODAY (skipped when there is none); None =
     the store's saved setting (rulebook_order.get_compare_today).
@@ -307,6 +340,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     current-order warning (StaleCurrentOrder) -- kept independent of
     `confirmed` so confirming one warning never silently waves through the
     other; a caller who hits both must see and confirm each in turn."""
+    checkpoint = repository.normalize_checkpoint(last_bill, last_grn)
     store = _resolve_store(store_name)
     warehouse = is_warehouse_store(store_name)
     agent_synced = is_agent_synced_store(store_name, store)
@@ -373,7 +407,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
         threading.Thread(
             target=_run_agent_sync_then_order,
             args=(job_id, store, store_id, plan, min_days, max_days, mode,
-                  warehouse, recency_days, compare_today_previous),
+                  warehouse, recency_days, compare_today_previous, checkpoint),
             daemon=True,
         ).start()
         return job_id
@@ -433,7 +467,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     threading.Thread(
         target=_run_sync_then_order,
         args=(job_id, store, plan, min_days, max_days, mode, warehouse, recency_days,
-              compare_today_previous),
+              compare_today_previous, checkpoint),
         daemon=True,
     ).start()
     return job_id
@@ -460,7 +494,8 @@ def _compare_todays_previous(job_id, store_name):
 
 
 def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
-                         is_warehouse=False, recency_days=10, compare_today=False):
+                         is_warehouse=False, recency_days=10, compare_today=False,
+                         checkpoint=None):
     """One durable job: full sync must succeed before order generation."""
     source_cs = order_process.database.branch_connection_string(
         store["server_name"], store["database"], store["username"], store["password"]
@@ -510,6 +545,16 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
         )
         return
 
+    ok, check = _check_checkpoint(job_id, store["store_name"], checkpoint)
+    if not ok:
+        _update(
+            job_id, status="failed", result={"tables": tables, "checkpoint": check},
+            error=check["message"], warning=warning,
+            message="Order not generated: the last bill / last GRN was not found after sync.",
+            finished_at=datetime.datetime.now(),
+        )
+        return
+
     base_step = len(plan)
     step = {"n": 0}
 
@@ -524,6 +569,7 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
             is_warehouse=is_warehouse, recency_days=recency_days,
         )
         result["tables"] = tables
+        result["checkpoint"] = check
         if compare_today:
             result["compare"] = _compare_todays_previous(job_id, store["store_name"])
         _update(
@@ -532,7 +578,7 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
             message=f"Sync and order processing completed ({result['rows']} rows).",
             finished_at=datetime.datetime.now(),
         )
-        _push_to_mirrors(store["store_name"])
+        _push_to_mirrors(store["store_name"], job_id)
     except Exception as exc:
         logger.exception("legacy order process failed after sync")
         _update(
@@ -630,7 +676,8 @@ def _run_agent_sync(job_id, store, store_id, plan, live_device_sync=True):
 
 
 def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days,
-                               mode, is_warehouse=False, recency_days=10, compare_today=False):
+                               mode, is_warehouse=False, recency_days=10, compare_today=False,
+                               checkpoint=None):
     """One durable job for an agent-synced store: platform sync must succeed
     before order generation (same guarantee as the LAN sync-then-order path)."""
     try:
@@ -659,6 +706,16 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
         )
         return
 
+    ok, check = _check_checkpoint(job_id, store["store_name"], checkpoint)
+    if not ok:
+        _update(
+            job_id, status="failed", result={"tables": tables, "checkpoint": check},
+            error=check["message"], warning=warning,
+            message="Order not generated: the last bill / last GRN was not found after sync.",
+            finished_at=datetime.datetime.now(),
+        )
+        return
+
     base_step = len(plan) + 1
     step = {"n": 0}
 
@@ -673,6 +730,7 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
             is_warehouse=is_warehouse, is_agent_synced=True, recency_days=recency_days,
         )
         result["tables"] = tables
+        result["checkpoint"] = check
         if compare_today:
             result["compare"] = _compare_todays_previous(job_id, store["store_name"])
         _update(
@@ -681,7 +739,7 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
             message=f"Sync and order processing completed ({result['rows']} rows).",
             finished_at=datetime.datetime.now(),
         )
-        _push_to_mirrors(store["store_name"])
+        _push_to_mirrors(store["store_name"], job_id)
     except Exception as exc:
         logger.exception("agent order process failed after sync")
         _update(
@@ -747,14 +805,17 @@ def _run_stock_update(job_id, store, source_store):
         )
 
 
-def _push_to_mirrors(store_name):
+def _push_to_mirrors(store_name, job_id=None):
     """A finished order goes to every remote OrderNMC that carries this store
     on the agent's next pull (OrderNMC mirror), instead of after the next
-    change-detection pass. Best effort: never fails the order job."""
+    change-detection pass. Best effort: never fails the order job. A store
+    with no remote OrderNMC has no mirror target, so nothing is sent."""
     try:
         from modules.ordernmc_mirror import service as mirror_service
 
-        mirror_service.push_for_store(store_name)
+        pushed = mirror_service.push_for_store(store_name)
+        if pushed and job_id:
+            _log(job_id, f"Sent to {len(pushed)} remote OrderNMC on its next pull.")
     except Exception:
         logger.exception("could not push %s to the OrderNMC mirror", store_name)
 
@@ -781,7 +842,7 @@ def _run_order(job_id, store, min_days, max_days, mode, is_warehouse=False,
             message=f"Order processing completed ({result['rows']} rows).",
             finished_at=datetime.datetime.now(),
         )
-        _push_to_mirrors(store["store_name"])
+        _push_to_mirrors(store["store_name"], job_id)
     except Exception as exc:
         logger.exception("legacy order process failed")
         _update(

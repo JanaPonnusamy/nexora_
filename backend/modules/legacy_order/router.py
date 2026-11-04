@@ -259,6 +259,8 @@ def start_order_process(
             engine=payload.engine,
             recency_days=payload.recency_days,
             compare_today_previous=payload.compare_today_previous,
+            last_bill=payload.last_bill,
+            last_grn=payload.last_grn,
         )
         return JobStarted(job_id=job_id)
     except service.QtyCheckConfirmationRequired as exc:
@@ -793,7 +795,9 @@ def compare_previous_order(payload: ComparePreviousOrderRequest):
     try:
         if not repository.get_store(payload.store_name):
             raise HTTPException(status_code=404, detail="Store not found")
-        return repository.compare_previous_order(payload.store_name, payload.order_id)
+        result = repository.compare_previous_order(payload.store_name, payload.order_id)
+        service._push_to_mirrors(payload.store_name)  # remote OrderNMC gets it now
+        return result
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -821,9 +825,11 @@ def previous_order_supplier_products(
 @router.post("/compare-previous-order/supplier")
 def compare_previous_order_supplier(payload: CompareSupplierRequest):
     try:
-        return repository.compare_previous_order_supplier(
+        result = repository.compare_previous_order_supplier(
             payload.store_name, payload.order_id, payload.supplier_code
         )
+        service._push_to_mirrors(payload.store_name)
+        return result
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

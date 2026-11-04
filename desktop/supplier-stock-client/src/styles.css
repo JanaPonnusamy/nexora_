@@ -9809,6 +9809,7 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .lgo-table td, .lgo-table th { text-align: center; }
 .lgo-table select { width: auto; min-width: 0; max-width: 150px; }
 .lgo-table .lgo-num { width: 52px; text-align: center; }
+.lgo-table .lgo-ref { width: 92px; text-align: center; }
 .lgo-check-col { width: 28px; }
 .lgo-table .lgo-group td { background: var(--nx-surface-sunk); font-weight: 700; color: var(--nx-text); text-align: left; }
 .lgo-row { cursor: pointer; }

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -38,6 +38,11 @@ class OrderProcessRequest(BaseModel):
     # Compare with the store's earlier order from TODAY after generating;
     # None = the store's saved "Compare today's previous order" setting.
     compare_today_previous: Optional[bool] = None
+    # The store's last sale bill (C01042645, or just 42645) and last GRN as
+    # read off its POS. After the pre-order sync both must be in OrderNMC or
+    # no order is generated; None = no check (service.start_order_process).
+    last_bill: Optional[str] = None
+    last_grn: Optional[Union[int, str]] = None
 
 
 class RestoreBackupOrderRequest(BaseModel):
