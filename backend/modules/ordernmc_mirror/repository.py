@@ -359,6 +359,23 @@ def complete_pass(conn, target_id, table_id, pass_started_at, cur=None):
         conn.commit()
 
 
+def mark_due(conn, target_id, table_ids_=None):
+    """Make the next pull re-verify these tables now ("push"). The ledger is
+    kept, so only rows that differ from what the target already has are sent;
+    a pass already in progress just carries on."""
+    cur = conn.cursor()
+    sql = ("UPDATE nexora_mirror.table_state SET last_pass_completed_at = NULL, "
+           "error_until = NULL WHERE target_id = ? AND pass_started_at IS NULL")
+    params = [int(target_id)]
+    if table_ids_:
+        sql += " AND table_id IN (" + ",".join("?" * len(table_ids_)) + ")"
+        params += [int(t) for t in table_ids_]
+    cur.execute(sql, params)
+    n = cur.rowcount
+    conn.commit()
+    return n
+
+
 def purge_stale_batches(conn, target_id, older_than_hours=24):
     cur = conn.cursor()
     cur.execute(

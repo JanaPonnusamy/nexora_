@@ -298,6 +298,43 @@ def reset(target_id, tables=None):
         conn.close()
 
 
+def push(target_id, tables=None):
+    """Send this target's changes on the agent's next pull instead of waiting
+    for the change detection / periodic pass."""
+    target = repo.get_target(target_id)
+    if not target:
+        raise MirrorError(404, "Target not found")
+    conn = sources.connect(target["source_name"])
+    try:
+        repo.ensure_source_schema(conn, target["source_name"])
+        scope = list(repo.table_ids(conn, tables).values()) if tables else None
+        return {"target_id": target["target_id"], "tables_due": repo.mark_due(conn, target_id, scope),
+                "interval_seconds": target["interval_seconds"]}
+    finally:
+        conn.close()
+
+
+def push_for_store(store_name):
+    """Push every enabled target that carries ``store_name`` (store-scoped
+    targets listing it, and unscoped ones). Never raises: called after an
+    Order Process / Sync finishes."""
+    pushed = []
+    try:
+        for target in repo.list_targets():
+            if not target["is_enabled"]:
+                continue
+            scoped = _stores(target)
+            if scoped and store_name.upper() not in {s.upper() for s in scoped}:
+                continue
+            try:
+                pushed.append(push(target["target_id"]))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return pushed
+
+
 def public_target(target):
     t = dict(target)
     t["has_password"] = bool(t.pop("password_encrypted", None))

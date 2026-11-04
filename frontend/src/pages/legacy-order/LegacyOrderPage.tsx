@@ -74,6 +74,7 @@ export default function LegacyOrderPage() {
   // Order engine per store (both kept): legacy SQL or the Procurement rule book.
   const [engines, setEngines] = useState<Record<string, OrderEngine>>({})
   const [comparing, setComparing] = useState<string | null>(null)
+  const [pushNote, setPushNote] = useState<Record<string, string>>({})
   const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
   const [dbBusy, setDbBusy] = useState<'' | 'check' | 'recover' | 'repair'>('')
   const [recovery, setRecovery] = useState<LegacyDbRecovery | null>(null)
@@ -98,6 +99,21 @@ export default function LegacyOrderPage() {
     legacyOrderService.setOrderEngine(storeName, engine)
       .then((r) => { setEngines((cur) => ({ ...cur, [storeName]: r.engine })); setError(null) })
       .catch((e: Error) => setError(e.message))
+  }
+
+  const pushToRemote = (storeName: string) => {
+    setPushNote((cur) => ({ ...cur, [storeName]: 'Pushing…' }))
+    legacyOrderService.pushToRemoteOrderNmc(storeName)
+      .then((r) => {
+        const minutes = Math.max(1, Math.round(Math.max(0, ...r.pushed.map((p) => p.interval_seconds)) / 60))
+        setPushNote((cur) => ({
+          ...cur,
+          [storeName]: r.pushed.length
+            ? `Queued for ${r.pushed.length} remote OrderNMC — arrives within ~${minutes} min`
+            : 'No remote OrderNMC carries this store',
+        }))
+      })
+      .catch((e: Error) => { setPushNote((cur) => ({ ...cur, [storeName]: '' })); setError(e.message) })
   }
 
   const downloadEngineCompare = (storeName: string) => {
@@ -556,6 +572,8 @@ export default function LegacyOrderPage() {
                     <div className="lo-op-settings-actions">
                       <button type="button" className="lo-btn" onClick={() => { patchSettings(store.store_name, defaultSettings(orderDefaults, store.store_name)) }}>Reset default</button>
                       <button type="button" className="lo-btn" disabled={Boolean(running)} onClick={() => start(() => legacyOrderService.startSync(store.store_name))}><i className="bi bi-arrow-repeat" /> Sync only</button>
+                      <button type="button" className="lo-btn" disabled={pushNote[store.store_name] === 'Pushing…'} title="Send this store's current order and transaction data to the remote OrderNMC (only changed rows are sent). Order Process does this automatically when it finishes." onClick={() => pushToRemote(store.store_name)}><i className="bi bi-send" /> Push to remote OrderNMC</button>
+                      {pushNote[store.store_name] && <span className="lo-push-note">{pushNote[store.store_name]}</span>}
                       <button type="button" className="lo-btn" disabled={comparing === store.store_name} title="Calculate both engines from the current data and download an Excel comparison. Writes nothing." onClick={() => downloadEngineCompare(store.store_name)}><i className="bi bi-file-earmark-spreadsheet" /> {comparing === store.store_name ? 'Comparing…' : 'Compare engines (dry run)'}</button>
                       {store.store_name !== HO_STORE_NAME && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${HO_STORE_NAME}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, HO_STORE_NAME))}><i className="bi bi-cloud-arrow-up" /> Stock update only</button>}
                     </div>

@@ -10,6 +10,8 @@ Admin (super-admin):
   PUT    /api/ordernmc-mirror/v1/admin/targets            (by device_id)
   GET    /api/ordernmc-mirror/v1/admin/targets/{id}/status
   POST   /api/ordernmc-mirror/v1/admin/targets/{id}/reset
+  POST   /api/ordernmc-mirror/v1/admin/targets/{id}/push    send changes on the next pull
+  POST   /api/ordernmc-mirror/v1/admin/push                 push every target carrying a store
   DELETE /api/ordernmc-mirror/v1/admin/targets/{id}
 """
 from __future__ import annotations
@@ -140,6 +142,25 @@ def target_status(target_id: int, _: dict = Depends(require_super_admin)):
 def reset_target(target_id: int, body: ResetRequest | None = None,
                  _: dict = Depends(require_super_admin)):
     return _call(service.reset, target_id, body.tables if body else None)
+
+
+class PushRequest(BaseModel):
+    store_name: str | None = Field(None, max_length=50)
+    tables: list[str] | None = None
+
+
+@admin_router.post("/targets/{target_id}/push")
+def push_target(target_id: int, body: PushRequest | None = None,
+                _: dict = Depends(require_super_admin)):
+    return _call(service.push, target_id, body.tables if body else None)
+
+
+@admin_router.post("/push")
+def push_store(body: PushRequest, _: dict = Depends(require_super_admin)):
+    """Push every target that carries this store (Legacy Order 'Push' button)."""
+    if not body.store_name:
+        raise HTTPException(status_code=400, detail="store_name is required")
+    return {"pushed": service.push_for_store(body.store_name)}
 
 
 @admin_router.delete("/targets/{target_id}")

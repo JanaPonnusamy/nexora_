@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from modules.ordernmc_mirror import catalog, router, service, sql_builder
+from modules.ordernmc_mirror import catalog, repository, router, service, sql_builder
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from store_agent import ordernmc_mirror as agent  # noqa: E402
@@ -231,3 +231,46 @@ def test_agent_endpoints_require_device_token():
     app.include_router(router.agent_router)
     resp = TestClient(app).post("/api/ordernmc-mirror/v1/agent/pull")
     assert resp.status_code == 401
+
+
+# ---- push ------------------------------------------------------------------
+
+class _RecCur:
+    def __init__(self):
+        self.calls, self.rowcount = [], 3
+
+    def execute(self, sql, params=None):
+        self.calls.append((sql, params))
+
+
+class _RecConn:
+    def __init__(self):
+        self.cur = _RecCur()
+        self.committed = False
+
+    def cursor(self):
+        return self.cur
+
+    def commit(self):
+        self.committed = True
+
+
+def test_mark_due_keeps_ledger_and_running_passes():
+    conn = _RecConn()
+    assert repository.mark_due(conn, 1, [5, 9]) == 3 and conn.committed
+    sql, params = conn.cur.calls[0]
+    assert sql.startswith("UPDATE nexora_mirror.table_state SET last_pass_completed_at = NULL")
+    assert "pass_started_at IS NULL" in sql and "ledger" not in sql
+    assert params == [1, 5, 9]
+
+
+def test_push_for_store_only_targets_carrying_it(monkeypatch):
+    targets = [
+        {"target_id": 1, "is_enabled": True, "stores": "SMG,SMF"},
+        {"target_id": 2, "is_enabled": True, "stores": "SMA"},
+        {"target_id": 3, "is_enabled": True, "stores": None},      # unscoped: carries all
+        {"target_id": 4, "is_enabled": False, "stores": "SMF"},
+    ]
+    monkeypatch.setattr(service.repo, "list_targets", lambda: targets)
+    monkeypatch.setattr(service, "push", lambda tid, tables=None: {"target_id": tid})
+    assert [p["target_id"] for p in service.push_for_store("smf")] == [1, 3]

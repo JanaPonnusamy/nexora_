@@ -498,6 +498,7 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
             message=f"Sync and order processing completed ({result['rows']} rows).",
             finished_at=datetime.datetime.now(),
         )
+        _push_to_mirrors(store["store_name"])
     except Exception as exc:
         logger.exception("legacy order process failed after sync")
         _update(
@@ -644,6 +645,7 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
             message=f"Sync and order processing completed ({result['rows']} rows).",
             finished_at=datetime.datetime.now(),
         )
+        _push_to_mirrors(store["store_name"])
     except Exception as exc:
         logger.exception("agent order process failed after sync")
         _update(
@@ -709,6 +711,18 @@ def _run_stock_update(job_id, store, source_store):
         )
 
 
+def _push_to_mirrors(store_name):
+    """A finished order goes to every remote OrderNMC that carries this store
+    on the agent's next pull (OrderNMC mirror), instead of after the next
+    change-detection pass. Best effort: never fails the order job."""
+    try:
+        from modules.ordernmc_mirror import service as mirror_service
+
+        mirror_service.push_for_store(store_name)
+    except Exception:
+        logger.exception("could not push %s to the OrderNMC mirror", store_name)
+
+
 def _run_order(job_id, store, min_days, max_days, mode, is_warehouse=False,
                is_agent_synced=False, recency_days=10):
     step = {"n": 0}
@@ -731,6 +745,7 @@ def _run_order(job_id, store, min_days, max_days, mode, is_warehouse=False,
             message=f"Order processing completed ({result['rows']} rows).",
             finished_at=datetime.datetime.now(),
         )
+        _push_to_mirrors(store["store_name"])
     except Exception as exc:
         logger.exception("legacy order process failed")
         _update(

@@ -47,6 +47,12 @@ export const legacyOrderService = {
     recency_days: number; warehouse_recency_days: number; warehouse_stores: string[]
   }>(`${BASE}/defaults`),
 
+  // OrderNMC mirror: send this store's current OrderNMC data to every remote
+  // OrderNMC that carries it, on that PC agent's next pull.
+  pushToRemoteOrderNmc: (storeName: string) =>
+    api.post<{ pushed: { target_id: number; tables_due: number; interval_seconds: number }[] }>(
+      '/api/ordernmc-mirror/v1/admin/push', { store_name: storeName }),
+
   startSync: (storeName: string, tables?: string[]) =>
     api.post<{ job_id: string }>(`${BASE}/sync`, {
       store_name: storeName,
