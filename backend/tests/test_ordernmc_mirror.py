@@ -138,6 +138,16 @@ def test_needs_pass():
 
 # ---- agent apply SQL ------------------------------------------------------
 
+def test_agent_stage_uses_local_column_collation():
+    # The SMG store's OrderNMC is CI_AS but OrderSuppliers.suppliercode is CI_AI.
+    local = {"suppliercode": {"collation": "Latin1_General_CI_AI"},
+             "storename": {"collation": "Latin1_General_CI_AS"}, "id": {"collation": None}}
+    assert agent._stage_collate({"name": "suppliercode", "type": "nvarchar"}, local) == \
+        " COLLATE Latin1_General_CI_AI"
+    assert agent._stage_collate({"name": "New", "type": "varchar"}, local) == " COLLATE DATABASE_DEFAULT"
+    assert agent._stage_collate({"name": "ID", "type": "int"}, local) == ""
+
+
 def test_agent_merge_never_updates_keys_or_identity():
     sql = agent._merge_sql("T", ["Id", "Code", "Name", "Qty"], ["Code"], {"id"})
     assert "WHEN MATCHED AND EXISTS (SELECT S.[Name], S.[Qty] EXCEPT SELECT T.[Name], T.[Qty])" in sql

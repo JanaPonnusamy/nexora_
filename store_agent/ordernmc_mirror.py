@@ -157,12 +157,13 @@ class TargetApplier:
 
     def _local_columns(self, cur, table):
         cur.execute(
-            "SELECT c.name, c.is_identity, c.is_computed, TYPE_NAME(c.system_type_id) "
-            "FROM sys.columns c WHERE c.object_id = OBJECT_ID(?)",
+            "SELECT c.name, c.is_identity, c.is_computed, TYPE_NAME(c.system_type_id), "
+            "c.collation_name FROM sys.columns c WHERE c.object_id = OBJECT_ID(?)",
             "dbo." + q(table),
         )
         return {r[0].lower(): {"name": r[0], "identity": bool(r[1]),
-                               "computed": bool(r[2]) or (r[3] or "").lower() == "timestamp"}
+                               "computed": bool(r[2]) or (r[3] or "").lower() == "timestamp",
+                               "collation": r[4]}
                 for r in cur.fetchall()}
 
     def ensure_table(self, cur, table, columns, pk_columns):
@@ -200,10 +201,8 @@ class TargetApplier:
             if missing_keys:
                 raise RuntimeError(f"{table}: local table cannot hold key column(s) {missing_keys}")
 
-            stage_defs = []
-            for c in use:
-                collate = " COLLATE DATABASE_DEFAULT" if c["type"] in ("char", "varchar", "nchar", "nvarchar") else ""
-                stage_defs.append(f"{q(c['name'])} {c['sql_type']}{collate} NULL")
+            stage_defs = [f"{q(c['name'])} {c['sql_type']}{_stage_collate(c, local)} NULL"
+                          for c in use]
             cur.execute(f"IF OBJECT_ID('tempdb..{STAGE}') IS NOT NULL DROP TABLE {STAGE}")
             cur.execute(f"CREATE TABLE {STAGE} (" + ", ".join(stage_defs) + ")")
 
@@ -243,6 +242,16 @@ class TargetApplier:
             except Exception:
                 pass
             raise
+
+
+def _stage_collate(col, local):
+    """COLLATE clause for a text staging column: the local table column's own
+    collation (a remote OrderNMC can mix collations, e.g. CI_AI key columns in
+    a CI_AS database, and the MERGE/DELETE key compare must not conflict)."""
+    if col["type"] not in ("char", "varchar", "nchar", "nvarchar"):
+        return ""
+    name = (local.get(col["name"].lower()) or {}).get("collation")
+    return f" COLLATE {name}" if name else " COLLATE DATABASE_DEFAULT"
 
 
 def _type_args(sql_type_text):
