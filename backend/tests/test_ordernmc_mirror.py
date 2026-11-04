@@ -83,6 +83,7 @@ def test_store_scoped_target_skips_tables_without_storename():
     assert service._stores({"stores": None}) == []
     assert service._store_params({"store_column": "StoreName"}, ["A"]) == ["A"]
     assert service._store_params({"store_column": None}, ["A"]) == []
+    assert "stores" in catalog.STORE_SCOPED_EXCLUDED
 
 
 # ---- codec ----------------------------------------------------------------

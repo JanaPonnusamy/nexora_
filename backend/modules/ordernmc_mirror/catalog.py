@@ -57,6 +57,9 @@ def is_mirrored(name: str, whitelist: list[str] | None = None) -> bool:
 # TESTSMS stores) mirrors just the tables that have it, and only those stores'
 # rows; tables without it are skipped so no other tenant's data can leak.
 STORE_COLUMN = "storename"
+# Per-site store config (StoreCode numbering, branch logins): a store-scoped
+# remote PC keeps its own copy.
+STORE_SCOPED_EXCLUDED = {"stores"}
 
 
 def list_tables(conn, whitelist: list[str] | None = None,
@@ -127,7 +130,7 @@ def list_tables(conn, whitelist: list[str] | None = None,
         if not tcols:
             continue
         store_column = names.get(STORE_COLUMN)
-        if store_scoped and not store_column:
+        if store_scoped and (not store_column or t["name"].lower() in STORE_SCOPED_EXCLUDED):
             continue
         out.append({**t, "columns": tcols, "pk_columns": pk, "key_columns": key,
                     "mode": mode, "store_column": store_column})
