@@ -22,6 +22,8 @@ const DeviceManagementPage = lazy(() => import('../pages/sync/DeviceManagementPa
 const StockClientMonitorPage = lazy(() => import('../pages/sync/StockClientMonitorPage'))
 const HoRoutesPage = lazy(() => import('../pages/sync/HoRoutesPage'))
 const BackendUpdatePage = lazy(() => import('../pages/sync/BackendUpdatePage'))
+const DeviceControllerPage = lazy(() => import('../pages/sync/DeviceControllerPage'))
+const RemoteTerminalPage = lazy(() => import('../pages/sync/RemoteTerminalPage'))
 const SyncMailTransferPage = lazy(() => import('../pages/sync/SyncMailTransferPage'))
 const ProductMappingPage = lazy(() => import('../pages/mapping/ProductMappingPage'))
 const StockAvailabilityPage = lazy(() => import('../pages/stock/StockAvailabilityPage'))
@@ -125,6 +127,8 @@ export const appRouter = createBrowserRouter(
         <Route path="/sync/stock-clients" element={<RequireCapability cap="SYNC"><StockClientMonitorPage /></RequireCapability>} />
         <Route path="/sync/ho-routes" element={<RequireCapability cap="SYNC"><HoRoutesPage /></RequireCapability>} />
         <Route path="/sync/backend-update" element={<RequireCapability cap="SYNC"><BackendUpdatePage /></RequireCapability>} />
+        <Route path="/sync/device-control" element={<RequireCapability cap="SYNC"><DeviceControllerPage /></RequireCapability>} />
+        <Route path="/sync/terminal" element={<RequireCapability cap="SYNC"><RemoteTerminalPage /></RequireCapability>} />
         <Route path="/product-mapping" element={<RequireCapability cap="PRODUCT_MAPPING"><ProductMappingPage /></RequireCapability>} />
         <Route path="/stock-availability" element={<RequireCapability cap="INVENTORY"><StockAvailabilityPage /></RequireCapability>} />
         <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />

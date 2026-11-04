@@ -84,6 +84,8 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Store Client Monitor', to: '/sync/stock-clients', icon: 'bi-pc-display-horizontal', cap: 'SYNC' },
       { label: 'HO Routes', to: '/sync/ho-routes', icon: 'bi-signpost-2', cap: 'SYNC' },
       { label: 'Backend Update', to: '/sync/backend-update', icon: 'bi-cloud-download', cap: 'SYNC' },
+      { label: 'Device Control', to: '/sync/device-control', icon: 'bi-hdd-network', cap: 'SYNC' },
+      { label: 'Remote Terminal', to: '/sync/terminal', icon: 'bi-terminal', cap: 'SYNC' },
       { label: 'Mail Transfer', to: '/sync/mail-transfer', icon: 'bi-envelope', cap: 'SYNC' },
     ],
   },
