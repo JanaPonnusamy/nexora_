@@ -5,6 +5,7 @@
     python -m store_agent_setup.build watchdog     # only the watchdog
     python -m store_agent_setup.build stock_client_watchdog # only the stock-client watchdog
     python -m store_agent_setup.build mail_transfer # only the mail transfer service
+    python -m store_agent_setup.build device_controller # only the device controller
 
 Outputs in E:\\Nexora\\dist\\:
     NexoraStoreAgent.exe              (onefile: single self-contained binary)
@@ -123,6 +124,40 @@ def build_stock_client_watchdog():
     _pyinstaller(*args)
 
 
+def build_device_controller():
+    """Standalone ONEFILE SYSTEM service + setup CLI that replaces the per-app
+    watchdogs (store agent / stock client / HO). Bundles the HO command-signing
+    PUBLIC key (every HO message is verified against it) and the release-signing
+    PUBLIC key (package verification). Kept free of store_agent imports so it
+    runs on any PC -- store, HO node or warehouse."""
+    cmd_pub = BACKEND / "config" / "device_controller_command_key.pub.pem"
+    if not cmd_pub.is_file():
+        raise SystemExit(f"{cmd_pub} missing -- run: python -m modules.device_controller.signing generate")
+    args = ["--onefile", "--name", "NexoraDeviceController", "--console",
+            "--paths", str(REPO), "--paths", str(BACKEND),
+            "--hidden-import", "store_agent_setup.device_controller.service",
+            "--hidden-import", "store_agent_setup.device_controller.apps",
+            "--hidden-import", "store_agent_setup.device_controller.terminal",
+            "--hidden-import", "store_agent_setup.stock_client_host",
+            "--hidden-import", "modules.device_identity.crypto",
+            "--hidden-import", "modules.device_controller.protocol",
+            "--hidden-import", "win32timezone",
+            "--hidden-import", "win32com.client",
+            "--hidden-import", "win32gui",
+            "--hidden-import", "win32profile",
+            "--hidden-import", "win32ts",
+            "--collect-submodules", "cryptography",
+            "--exclude-module", "tkinter",
+            "--exclude-module", "_tkinter",
+            "--exclude-module", "fastapi",
+            "--exclude-module", "sqlalchemy",
+            "--add-data", f"{cmd_pub}{SEP}."]
+    if STOCK_PUBKEY.is_file():
+        args += ["--add-data", f"{STOCK_PUBKEY}{SEP}."]
+    args.append(str(PKG / "launch_device_controller.py"))
+    _pyinstaller(*args)
+
+
 def build_mail_transfer():
     """Standalone ONEFILE EMAIL-delivery service (Phase 2 extraction). Embeds
     the same store_agent.file_transfer.* modules the main agent uses for
@@ -210,6 +245,8 @@ def main(argv=None):
         build_watchdog()
     if target in ("all", "stock_client_watchdog"):
         build_stock_client_watchdog()
+    if target in ("all", "device_controller"):
+        build_device_controller()
     if target in ("all", "mail_transfer"):
         build_mail_transfer()
     if target in ("all", "settings"):

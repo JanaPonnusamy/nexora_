@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from config.security import create_access_token, decode_access_token
 from dependencies.auth import get_current_user
-from dependencies.store_scope import require_super_admin
+from dependencies.store_scope import is_super_admin, require_super_admin
 from modules.device_identity import crypto
 from modules.device_identity import repository as repo
 
@@ -39,6 +39,9 @@ class RegisterRequest(BaseModel):
     machine_name: str | None = Field(None, max_length=200)
     app_type: str | None = Field(None, max_length=30)
     app_version: str | None = Field(None, max_length=50)
+    # Nexora Setup: bind to this store. A super admin may pick any store; any
+    # other user may only name their own.
+    store_id: str | None = Field(None, max_length=60)
 
 
 class TokenRequest(BaseModel):
@@ -74,6 +77,22 @@ def get_current_device(authorization: str | None = Header(default=None)) -> dict
 
 # ---- registration (store-user authorizes the machine) ---------------------
 
+def _setup_store(store_id, user):
+    """{"store_id", "tenant_id"} for an explicitly requested store, or None."""
+    if not store_id:
+        return None
+    if not is_super_admin(user):
+        if str(store_id).lower() != str(user.get("store_id") or "").lower():
+            raise HTTPException(status_code=403, detail="You can only bind this PC to your own store")
+        return {"store_id": user["store_id"], "tenant_id": user.get("tenant_id")}
+    from services.store_service import StoreService
+
+    store = StoreService().get_by_id(store_id)
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not found")
+    return {"store_id": str(store_id), "tenant_id": str(store[1]) if store[1] else None}
+
+
 @auth_router.post("/register")
 def register(body: RegisterRequest, user: dict = Depends(get_current_user)):
     """A store user (created in HO, assigned to a tenant+store) signs in once on
@@ -83,6 +102,7 @@ def register(body: RegisterRequest, user: dict = Depends(get_current_user)):
     device_id, is_new = repo.register_device(
         body.device_fingerprint, body.public_key, body.key_algo,
         body.machine_name, body.app_type, body.app_version, user,
+        _setup_store(body.store_id, user),
     )
     return {
         "device_id": device_id,

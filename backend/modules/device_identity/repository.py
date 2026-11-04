@@ -83,9 +83,12 @@ def ensure_schema():
 
 
 def register_device(device_fingerprint, public_key, key_algo, machine_name,
-                    app_type, app_version, user):
+                    app_type, app_version, user, store=None):
     """Upsert by fingerprint. Re-registering the same machine rotates its key
-    and reactivates it (status='active'). Returns (device_id, is_new)."""
+    and reactivates it (status='active'). Returns (device_id, is_new).
+
+    ``store`` ({"store_id", "tenant_id"}) binds the device to that store instead
+    of the registering user's own one (Nexora Setup: a super admin picks it)."""
     ensure_schema()
     conn = get_connection()
     try:
@@ -119,9 +122,10 @@ def register_device(device_fingerprint, public_key, key_algo, machine_name,
         # Convenience bootstrap: auto-assign the registering store-user's own
         # store so the agent can sync immediately after setup. Super admins add
         # more stores from HO. Skipped for users with no store (e.g. platform).
-        store_id = user.get("store_id")
-        if store_id:
-            _assign_store(conn, device_id, store_id, user.get("tenant_id"), user.get("sub"))
+        if store:
+            _assign_store(conn, device_id, store["store_id"], store.get("tenant_id"), user.get("sub"))
+        elif user.get("store_id"):
+            _assign_store(conn, device_id, user["store_id"], user.get("tenant_id"), user.get("sub"))
 
         return device_id, (action == "INSERT")
     finally:
@@ -137,7 +141,7 @@ def get_device(device_id):
         cur.execute(
             """
             SELECT device_id, device_fingerprint, machine_name, public_key, key_algo,
-                   app_type, app_version, status, tenant_id
+                   app_type, app_version, status, tenant_id, registered_by_user_id
             FROM dbo.device_registrations WHERE device_id = ?
             """,
             device_id,
@@ -155,6 +159,7 @@ def get_device(device_id):
             "app_version": row[6],
             "status": row[7],
             "tenant_id": str(row[8]) if row[8] else None,
+            "registered_by_user_id": str(row[9]) if row[9] else None,
         }
     finally:
         conn.close()

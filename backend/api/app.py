@@ -59,6 +59,13 @@ from modules.agent_ops.router import (
     router as agent_ops_router,
     agent_router as agent_ops_agent_router,
 )
+from modules.device_controller.router import (
+    router as device_controller_router,
+    agent_router as device_controller_agent_router,
+    enroll_router as device_controller_enroll_router,
+    peer_router as device_controller_peer_router,
+)
+from modules.setup_kit.router import router as setup_kit_router
 from modules.stock_client_ops.router import (
     router as stock_client_ops_router,
     agent_router as stock_client_ops_agent_router,
@@ -218,6 +225,9 @@ _PUBLIC_API_PATHS = {
     # (verified against the device's registered public key), not by a bearer
     # token - the device has none yet, that's the whole point of this call.
     '/api/auth/device/token',
+    # Device Controller first-time enrollment: authenticated by a one-time,
+    # HO-issued enrollment code in the body (the controller has no token yet).
+    '/api/auth/device-controller/enroll',
     # Mobile BFF. /handshake must answer before a client has any credential, and
     # /auth/refresh authenticates with the refresh token in its body precisely
     # because the bearer token has expired by the time it is called.
@@ -277,6 +287,9 @@ _PUBLIC_AGENT_PATTERNS = (
     # by the module's own HMAC dependency (authenticate_device); agent/register
     # is intentionally unauthenticated (the one-time code authorises it).
     re.compile(r'^/api/nmv/v1/.+$'),
+    # HO node <-> HO node package mirror: no user session; authenticated by the
+    # shared NEXORA_PACKAGE_PEER_KEY header inside the route (403 without it).
+    re.compile(r'^/api/device-controller/peer/.+$'),
 )
 
 def _is_public_agent_call(request: Request) -> bool:
@@ -395,6 +408,11 @@ app.include_router(agent_ops_router)
 app.include_router(agent_ops_agent_router)
 app.include_router(stock_client_ops_router)
 app.include_router(stock_client_ops_agent_router)
+app.include_router(device_controller_router)
+app.include_router(device_controller_agent_router)
+app.include_router(device_controller_enroll_router)
+app.include_router(device_controller_peer_router)
+app.include_router(setup_kit_router)
 app.include_router(licensing_router)
 app.include_router(licensing_agent_router)
 app.include_router(mobile_bff_router)
