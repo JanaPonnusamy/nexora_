@@ -9,7 +9,7 @@ controller dials OUT to HO (long-poll), so no inbound port is opened.
 import os
 from pathlib import Path
 
-CONTROLLER_VERSION = "1.0.5"
+CONTROLLER_VERSION = "1.0.6"
 
 SERVICE_NAME = "NexoraDeviceController"
 SERVICE_DISPLAY_NAME = "Nexora Device Controller"

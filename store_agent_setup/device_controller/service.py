@@ -309,6 +309,10 @@ class Controller:
         self.cfg["device_id"] = device_id
         self.cfg["ho_urls"] = normalize_urls(urls + list(self.cfg.get("ho_urls") or []))
         self.ho._tokens.clear()
+        with self.ho._lock:
+            # Prove the new id against the HO that issued it, not a previously
+            # active URL of another HO (which would reject it and undo this).
+            self.ho._active = urls[0]
         try:
             self.ho._token(self.ho.active_url(), force=True)  # proves HO knows OUR key
             save_config(self.cfg)

@@ -101,3 +101,34 @@ def test_controller_verify_rejects_forgery_wrong_device_and_expiry(keypair, monk
 
     expired = {**good, "expires_at": now - 3600}
     assert c.verify({"payload": expired, "signature": protocol.sign(priv, expired)}) == "message expired"
+
+
+def test_enrollment_is_proven_against_the_new_ho(monkeypatch, tmp_path):
+    """Moving an enrolled PC to another HO: the inbox enrollment must be proven
+    against the HO that issued the new id, not the previously active URL."""
+    import json as _json
+
+    from store_agent_setup.device_controller import ho as ctl_ho
+    from store_agent_setup.device_controller import service as ctl
+
+    monkeypatch.setattr(ctl, "INBOX_DIR", tmp_path)
+    monkeypatch.setattr(ctl, "save_config", lambda cfg: None)
+    (tmp_path / "enrollment.json").write_text(
+        _json.dumps({"device_id": "NEW-ID", "ho_urls": ["http://new-ho:8444"]}), encoding="utf-8")
+    c = ctl.Controller.__new__(ctl.Controller)
+    c.cfg = {"device_id": "OLD-ID", "ho_urls": ["http://old-ho:8000"], "device_private_key_pem": "k"}
+    c.ho = ctl_ho.HoClient(c.cfg)
+    c.ho._active = "http://old-ho:8000"
+    asked = []
+
+    def token(base, force=False):
+        asked.append(base)
+        if base != "http://new-ho:8444":
+            raise ctl_ho.NotEnrolled("unknown device")
+        return "T"
+
+    monkeypatch.setattr(c.ho, "_token", token)
+    c.pick_up_enrollment()
+    assert asked == ["http://new-ho:8444"]
+    assert c.cfg["device_id"] == "NEW-ID"
+    assert c.cfg["ho_urls"][0] == "http://new-ho:8444"

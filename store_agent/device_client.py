@@ -185,21 +185,27 @@ class DeviceIdentity:
 
     def register(self, ho_url: str, user_token: str, fingerprint: str,
                  machine_name: str | None = None, app_type: str = "store_agent",
-                 app_version: str | None = None, timeout: int = 15) -> dict:
+                 app_version: str | None = None, timeout: int = 15,
+                 store_id: str | None = None) -> dict:
         """Register this machine with HO using a signed-in store-user's bearer
-        token. Persists the returned device_id. Called once at install time."""
+        token. Persists the returned device_id. Called once at install time.
+        ``store_id`` (Nexora Setup) binds the device to that store; HO accepts
+        a store other than the user's own only from a super admin."""
         public_pem = self.ensure_keypair()
+        body = {
+            "device_fingerprint": fingerprint,
+            "public_key": public_pem,
+            "key_algo": "ED25519",
+            "machine_name": machine_name,
+            "app_type": app_type,
+            "app_version": app_version,
+        }
+        if store_id:
+            body["store_id"] = store_id
         resp = requests.post(
             f"{ho_url.rstrip('/')}/api/auth/device/register",
             headers={"Authorization": f"Bearer {user_token}"},
-            json={
-                "device_fingerprint": fingerprint,
-                "public_key": public_pem,
-                "key_algo": "ED25519",
-                "machine_name": machine_name,
-                "app_type": app_type,
-                "app_version": app_version,
-            },
+            json=body,
             timeout=timeout,
         )
         resp.raise_for_status()

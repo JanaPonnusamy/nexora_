@@ -224,6 +224,20 @@ def build_wizard():
     _pyinstaller(*args)
 
 
+def build_setup_kit():
+    """NexoraSetup.exe -- the one install kit (owner directive 2026-11-04). It
+    carries NO app exes: it reads the PC spec, signs in to HO, downloads the
+    Device Controller from HO and lets it install everything else. Its manifest
+    asks for admin rights (it installs a SYSTEM service)."""
+    _require_tkinter()
+    args = ["--onefile", "--windowed", "--uac-admin", "--name", "NexoraSetup",
+            "--paths", str(REPO), "--collect-all", "tkinter",
+            "--hidden-import", "store_agent.device_client",
+            "--exclude-module", "pyodbc"]
+    args.append(str(PKG / "launch_setup_kit.py"))
+    _pyinstaller(*args)
+
+
 def ensure_pyinstaller():
     try:
         import PyInstaller  # noqa: F401
@@ -253,6 +267,8 @@ def main(argv=None):
         build_settings()
     if target in ("all", "wizard"):
         build_wizard()
+    if target in ("all", "setup_kit"):
+        build_setup_kit()
     if BUILD.exists():
         shutil.rmtree(BUILD, ignore_errors=True)
     print("\nArtifacts in", DIST)
