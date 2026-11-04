@@ -15,8 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
-from modules.legacy_order import database, order_export, repository, rulebook_order, service, supplier_whatsapp, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order import database, evening_order, order_export, repository, rulebook_order, service, supplier_whatsapp, sync_engine
+from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def _header_value(value) -> str:
@@ -258,6 +258,7 @@ def start_order_process(
             confirmed_stale_order=payload.confirmed_stale_order,
             engine=payload.engine,
             recency_days=payload.recency_days,
+            compare_today_previous=payload.compare_today_previous,
         )
         return JobStarted(job_id=job_id)
     except service.QtyCheckConfirmationRequired as exc:
@@ -277,7 +278,8 @@ def start_order_process(
 def get_order_engine(store_name: str):
     try:
         return {"store_name": store_name, "engine": rulebook_order.get_store_engine(store_name),
-                "engines": list(rulebook_order.ENGINES), "rulebook_params": rulebook_order.rule_params(store_name)}
+                "engines": list(rulebook_order.ENGINES), "rulebook_params": rulebook_order.rule_params(store_name),
+                "compare_today_previous": rulebook_order.get_compare_today(store_name)}
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -290,6 +292,50 @@ def set_order_engine(store_name: str, payload: OrderEngineRequest, current_user:
                                                current_user.get("username") or current_user.get("sub"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/engine/{store_name}/compare-today")
+def set_compare_today(store_name: str, payload: CompareTodayRequest, current_user: dict = Depends(require_admin)):
+    """The store's "Compare today's previous order" setting (admin only):
+    every Order Process then compares the new order with the store's earlier
+    order from today (skipped when there is none)."""
+    try:
+        return rulebook_order.set_compare_today(store_name, payload.enabled,
+                                                current_user.get("username") or current_user.get("sub"))
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# ---- Evening (second) order: every chosen store + compare, at a set time ----
+
+@router.get("/schedule/evening")
+def get_evening_schedule(current_user: dict = Depends(require_admin)):
+    try:
+        return evening_order.get_schedule()
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/schedule/evening")
+def set_evening_schedule(payload: EveningScheduleRequest, current_user: dict = Depends(require_admin)):
+    try:
+        return evening_order.set_schedule(payload.enabled, payload.run_at, payload.stores,
+                                          current_user.get("username") or current_user.get("sub"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/schedule/evening/run")
+def run_evening_order_now(current_user: dict = Depends(require_admin)):
+    """Run the evening order now (counts as today's run)."""
+    try:
+        return evening_order.run_now()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

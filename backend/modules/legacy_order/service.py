@@ -288,9 +288,13 @@ class StaleCurrentOrder(ValueError):
 def start_order_process(store_name, min_days=None, max_days=None, mode="local",
                          confirmed=False,
                          confirmed_order_id=None, confirmed_count=None,
-                         confirmed_stale_order=False, engine=None, recency_days=None):
+                         confirmed_stale_order=False, engine=None, recency_days=None,
+                         compare_today_previous=None):
     """recency_days: only products sold in the last N days are ordered (the
     store's Order settings); None = default_recency_days(store_name).
+    compare_today_previous: after the order is generated, run Compare against
+    the store's earlier order from TODAY (skipped when there is none); None =
+    the store's saved setting (rulebook_order.get_compare_today).
     confirmed_order_id/confirmed_count are the caller's claim about WHICH
     order/count it is acknowledging, purely to satisfy requirement 8
     ("revalidate ... require renewed confirmation if the relevant state has
@@ -313,6 +317,13 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     if engine not in rulebook_order.ENGINES:
         raise ValueError(f"Engine must be one of {', '.join(rulebook_order.ENGINES)}.")
     store["engine"] = engine
+    if compare_today_previous is None:
+        try:
+            compare_today_previous = rulebook_order.get_compare_today(store["store_name"])
+        except Exception:
+            logger.exception("could not read the compare-today setting for %s", store_name)
+            compare_today_previous = False
+    compare_today_previous = bool(compare_today_previous)
 
     # Warehouse Min/Max default to the warehouse profile (not the retail 13/18).
     default_min = WAREHOUSE_MIN_DAYS if warehouse else DEFAULT_MIN_DAYS
@@ -362,7 +373,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
         threading.Thread(
             target=_run_agent_sync_then_order,
             args=(job_id, store, store_id, plan, min_days, max_days, mode,
-                  warehouse, recency_days),
+                  warehouse, recency_days, compare_today_previous),
             daemon=True,
         ).start()
         return job_id
@@ -421,14 +432,35 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     job_id = _new_job("order", store_name, len(plan) + 3)
     threading.Thread(
         target=_run_sync_then_order,
-        args=(job_id, store, plan, min_days, max_days, mode, warehouse, recency_days),
+        args=(job_id, store, plan, min_days, max_days, mode, warehouse, recency_days,
+              compare_today_previous),
         daemon=True,
     ).start()
     return job_id
 
 
+def _compare_todays_previous(job_id, store_name):
+    """Compare the order just generated with the store's earlier order from
+    TODAY (VB CompareOrderManagement rules, repository.compare_previous_order).
+    Never compares against an older day. A failure is logged on the job but
+    never fails it -- the order itself is already generated."""
+    try:
+        previous = repository.todays_previous_order_id(store_name)
+        if previous is None:
+            _update(job_id, message="Compare skipped: no earlier order today.")
+            return {"order_id": None, "affected_rows": 0}
+        compared = repository.compare_previous_order(store_name, previous)
+        _update(job_id, message=f"Compared with today's previous order {previous} "
+                                f"({compared['affected_rows']} row updates).")
+        return compared
+    except Exception as exc:
+        logger.exception("compare with today's previous order failed for %s", store_name)
+        _update(job_id, message=f"Compare with today's previous order failed: {exc}")
+        return {"order_id": None, "affected_rows": 0, "error": str(exc)}
+
+
 def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
-                         is_warehouse=False, recency_days=10):
+                         is_warehouse=False, recency_days=10, compare_today=False):
     """One durable job: full sync must succeed before order generation."""
     source_cs = order_process.database.branch_connection_string(
         store["server_name"], store["database"], store["username"], store["password"]
@@ -492,6 +524,8 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
             is_warehouse=is_warehouse, recency_days=recency_days,
         )
         result["tables"] = tables
+        if compare_today:
+            result["compare"] = _compare_todays_previous(job_id, store["store_name"])
         _update(
             job_id, status="completed", step=base_step + 3, result=result,
             warning=warning,
@@ -596,7 +630,7 @@ def _run_agent_sync(job_id, store, store_id, plan, live_device_sync=True):
 
 
 def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days,
-                               mode, is_warehouse=False, recency_days=10):
+                               mode, is_warehouse=False, recency_days=10, compare_today=False):
     """One durable job for an agent-synced store: platform sync must succeed
     before order generation (same guarantee as the LAN sync-then-order path)."""
     try:
@@ -639,6 +673,8 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
             is_warehouse=is_warehouse, is_agent_synced=True, recency_days=recency_days,
         )
         result["tables"] = tables
+        if compare_today:
+            result["compare"] = _compare_todays_previous(job_id, store["store_name"])
         _update(
             job_id, status="completed", step=base_step + 3, result=result,
             warning=warning,

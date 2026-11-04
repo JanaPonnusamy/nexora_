@@ -70,6 +70,12 @@ BEGIN
         CONSTRAINT CK_LegacyOrderEngine_Engine CHECK (Engine IN ('LEGACY', 'RULEBOOK'))
     );
 END;
+-- Per-store "Compare today's previous order" (Order Process carries an earlier
+-- same-day order's decisions onto the new one -- see service).
+IF COL_LENGTH('dbo.LegacyOrderEngine', 'CompareTodayPrevious') IS NULL
+    ALTER TABLE dbo.LegacyOrderEngine
+        ADD CompareTodayPrevious BIT NOT NULL
+            CONSTRAINT DF_LegacyOrderEngine_CompareToday DEFAULT 0;
 """
 
 
@@ -106,6 +112,33 @@ def set_store_engine(store_name, engine, actor=None):
         )
         conn.commit()
     return {"store_name": store_name, "engine": engine}
+
+
+def get_compare_today(store_name):
+    """The store's "Compare today's previous order" setting (default off)."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        conn.commit()
+        row = cur.execute(
+            "SELECT CompareTodayPrevious FROM dbo.LegacyOrderEngine WHERE StoreName = ?", store_name
+        ).fetchone()
+    return bool(row[0]) if row else False
+
+
+def set_compare_today(store_name, enabled, actor=None):
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        cur.execute(
+            "MERGE dbo.LegacyOrderEngine AS t USING (SELECT ? AS StoreName) AS s "
+            "ON t.StoreName = s.StoreName "
+            "WHEN MATCHED THEN UPDATE SET CompareTodayPrevious = ?, UpdatedAt = SYSUTCDATETIME(), UpdatedBy = ? "
+            "WHEN NOT MATCHED THEN INSERT (StoreName, CompareTodayPrevious, UpdatedBy) VALUES (?, ?, ?);",
+            store_name, 1 if enabled else 0, actor, store_name, 1 if enabled else 0, actor,
+        )
+        conn.commit()
+    return {"store_name": store_name, "compare_today_previous": bool(enabled)}
 
 
 # ---- parameters ------------------------------------------------------------

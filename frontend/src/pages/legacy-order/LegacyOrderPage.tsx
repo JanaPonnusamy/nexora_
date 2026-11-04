@@ -73,6 +73,7 @@ export default function LegacyOrderPage() {
   const [infoOpenFor, setInfoOpenFor] = useState<string | null>(null)
   // Order engine per store (both kept): legacy SQL or the Procurement rule book.
   const [engines, setEngines] = useState<Record<string, OrderEngine>>({})
+  const [compareToday, setCompareToday] = useState<Record<string, boolean>>({})
   const [comparing, setComparing] = useState<string | null>(null)
   const [pushNote, setPushNote] = useState<Record<string, string>>({})
   const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
@@ -90,14 +91,23 @@ export default function LegacyOrderPage() {
         ])))
         setCompareStore((current) => current || (storeList[0]?.store_name ?? ''))
         void Promise.all(storeList.map((store) => legacyOrderService.getOrderEngine(store.store_name)
-          .then((r) => [store.store_name, r.engine] as const)
-          .catch(() => [store.store_name, 'LEGACY' as OrderEngine] as const)))
-          .then((pairs) => setEngines(Object.fromEntries(pairs)))
+          .then((r) => [store.store_name, r.engine, Boolean(r.compare_today_previous)] as const)
+          .catch(() => [store.store_name, 'LEGACY' as OrderEngine, false] as const)))
+          .then((rows) => {
+            setEngines(Object.fromEntries(rows.map(([name, engine]) => [name, engine])))
+            setCompareToday(Object.fromEntries(rows.map(([name, , compare]) => [name, compare])))
+          })
       }), [])
 
   const changeEngine = (storeName: string, engine: OrderEngine) => {
     legacyOrderService.setOrderEngine(storeName, engine)
       .then((r) => { setEngines((cur) => ({ ...cur, [storeName]: r.engine })); setError(null) })
+      .catch((e: Error) => setError(e.message))
+  }
+
+  const changeCompareToday = (storeName: string, enabled: boolean) => {
+    legacyOrderService.setCompareToday(storeName, enabled)
+      .then((r) => { setCompareToday((cur) => ({ ...cur, [storeName]: r.compare_today_previous })); setError(null) })
       .catch((e: Error) => setError(e.message))
   }
 
@@ -543,6 +553,7 @@ export default function LegacyOrderPage() {
                   <span className={`lo-dot ${dotClass}`} />
                   <strong>{store.store_name}</strong>
                   {engines[store.store_name] === 'RULEBOOK' && <span className="lo-chip lo-chip-ok" title="Order Process uses the Procurement rule book">Rule book</span>}
+                  {compareToday[store.store_name] && <span className="lo-chip" title="Order Process compares the new order with the store's earlier order from today">Auto compare</span>}
                   {lastJob?.warning && (
                     <i className="bi bi-exclamation-triangle-fill lo-stale-warn" title={lastJob.warning} aria-label="Stale sale bill warning" />
                   )}
@@ -567,6 +578,11 @@ export default function LegacyOrderPage() {
                         <option value="LEGACY">Legacy (old SQL)</option>
                         <option value="RULEBOOK">Rule book</option>
                       </select>
+                    </label>
+                    <label className="lo-op-check" title="After Order Process, compare the new order with this store's earlier order from today (skipped when there is none). The separate Compare button still works.">
+                      <input type="checkbox" aria-label={`${store.store_name} compare today's previous order`} checked={Boolean(compareToday[store.store_name])} disabled={Boolean(running)}
+                        onChange={(e) => changeCompareToday(store.store_name, e.target.checked)} />
+                      <span>Compare today's previous order</span>
                     </label>
                     {invalid && <small className="lo-invalid">{config.recencyDays <= 0 ? 'Recency days must be positive' : 'Min must be ≤ max'}</small>}
                     <div className="lo-op-settings-actions">

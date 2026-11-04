@@ -35,6 +35,9 @@ class OrderProcessRequest(BaseModel):
     # service.StaleCurrentOrder) -- independent of `confirmed` above so
     # confirming one warning never silently waves through the other.
     confirmed_stale_order: bool = False
+    # Compare with the store's earlier order from TODAY after generating;
+    # None = the store's saved "Compare today's previous order" setting.
+    compare_today_previous: Optional[bool] = None
 
 
 class RestoreBackupOrderRequest(BaseModel):
@@ -91,6 +94,17 @@ class AssignSupplierRequest(BaseModel):
 
 class OrderEngineRequest(BaseModel):
     engine: str  # LEGACY or RULEBOOK
+
+
+class CompareTodayRequest(BaseModel):
+    enabled: bool
+
+
+class EveningScheduleRequest(BaseModel):
+    enabled: bool
+    run_at: str = "18:25"  # HH:MM, HO server local time
+    # OrderNMC StoreNames to run; None = every active store.
+    stores: Optional[List[str]] = None
 
 
 class AutoAssignRequest(BaseModel):

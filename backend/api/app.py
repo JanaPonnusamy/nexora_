@@ -450,6 +450,18 @@ def _start_legacy_auto_sync_on_startup():
         print("[LEGACY_AUTO_SYNC] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
+def _start_legacy_evening_order_on_startup():
+    # Evening (second) order at the time set in Legacy Order > Settings
+    # (off until enabled there). See legacy_order/evening_order.py.
+    try:
+        from modules.legacy_order import evening_order
+        evening_order.start_background_loop()
+    except Exception:
+        import traceback
+        print("[EVENING_ORDER] failed to start:
+" + traceback.format_exc())
+
+@app.on_event('startup')
 def _start_sync_health_monitor_on_startup():
     # Watches every store/table sync and WhatsApps an alert when one keeps
     # failing / goes stale / an agent drops (silent when all good). See

@@ -70,8 +70,13 @@ export const legacyOrderService = {
   // Order engine per store: LEGACY (ported VB.NET SQL) or RULEBOOK
   // (Procurement rule book). Both write the same OrderNMC tables.
   getOrderEngine: (storeName: string) =>
-    api.get<{ store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number> }>(
+    api.get<{ store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number>; compare_today_previous?: boolean }>(
       `${BASE}/engine/${encodeURIComponent(storeName)}`),
+  // Per-store "Compare today's previous order": every Order Process then
+  // compares the new order with the store's earlier order from today.
+  setCompareToday: (storeName: string, enabled: boolean) =>
+    api.put<{ store_name: string; compare_today_previous: boolean }>(
+      `${BASE}/engine/${encodeURIComponent(storeName)}/compare-today`, { enabled }),
   setOrderEngine: (storeName: string, engine: OrderEngine) =>
     api.put<{ store_name: string; engine: OrderEngine }>(`${BASE}/engine/${encodeURIComponent(storeName)}`, { engine }),
   // Dry run: legacy vs rule-book order as Excel; writes nothing.

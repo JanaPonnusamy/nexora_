@@ -2162,6 +2162,22 @@ def previous_orders(store_name):
         ]
 
 
+def todays_previous_order_id(store_name):
+    """OrderId of the most recent EARLIER order generated today for this store
+    (its OrderManagementBackup copy), excluding the current order; None when
+    the current order is the first one today -- an older day's order is never
+    returned, so "Compare today's previous order" can't compare across days."""
+    sql = (
+        "SELECT TOP 1 b.OrderId FROM OrderManagementBackup b "
+        "WHERE b.StoreName = ? AND CAST(b.WantedDate AS date) = CAST(GETDATE() AS date) "
+        "AND b.OrderId <> ISNULL((SELECT MAX(OrderId) FROM OrderManagement WHERE StoreName = ?), -1) "
+        "ORDER BY b.WantedDate DESC, b.OrderId DESC"
+    )
+    with database.get_central_connection() as conn:
+        row = conn.cursor().execute(sql, store_name, store_name).fetchone()
+    return int(row[0]) if row else None
+
+
 def compare_previous_order(store_name, order_id):
     """Port Form1.CompareOrderManagement's comparison rules atomically."""
     remarks = f"Compare Order with {order_id}"

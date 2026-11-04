@@ -648,6 +648,34 @@ export const api = {
     });
   },
 
+  // Per-store "Compare today's previous order" (saved in OrderNMC; read back
+  // through legacyStoreEngine's compare_today_previous).
+  legacySetCompareToday(storeName, enabled, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/compare-today`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ enabled })
+    });
+  },
+
+  // Evening (second) order schedule: {enabled, run_at, stores|null, next_run,
+  // last_run, running, ...}. stores null = every active store.
+  legacyEveningSchedule(session) {
+    return request('/api/legacy-order/schedule/evening', { session });
+  },
+
+  legacySaveEveningSchedule(payload, session) {
+    return request('/api/legacy-order/schedule/evening', {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  legacyRunEveningNow(session) {
+    return request('/api/legacy-order/schedule/evening/run', { method: 'POST', session });
+  },
+
   legacyJobs(session, limit = 50) {
     return request(`/api/legacy-order/jobs${toQuery({ limit })}`, { session });
   },
