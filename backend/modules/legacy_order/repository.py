@@ -526,6 +526,9 @@ def _row_to_store(row):
         # string across stores, so distribution must look this up per target
         # rather than writing the literal source store name as suppliercode.
         "ho_code": getattr(row, "Ho_code", None),
+        # 'AGENT' = no branch SQL; data arrives via a store agent into
+        # NEXORA_PLATFORM.sync.* (see service.is_agent_synced_store).
+        "connection_type": (getattr(row, "ConnectionType", None) or "").strip().upper(),
     }
 
 
@@ -533,7 +536,7 @@ def list_stores(active_only=True):
     """Branches configured in dbo.Stores -- the source DBs the legacy app synced."""
     sql = (
         "SELECT StoreCode, StoreName, ServerName, UserName, Password, [Database], "
-        "IsActive, LastSyncTime, LastSyncStatus, Ho_code FROM Stores"
+        "IsActive, LastSyncTime, LastSyncStatus, Ho_code, ConnectionType FROM Stores"
     )
     if active_only:
         sql += " WHERE IsActive = 1"
@@ -547,7 +550,7 @@ def get_store(store_name):
     with database.get_central_connection() as conn:
         row = conn.cursor().execute(
             "SELECT StoreCode, StoreName, ServerName, UserName, Password, [Database], "
-            "IsActive, LastSyncTime, LastSyncStatus, Ho_code FROM Stores WHERE StoreName = ?",
+            "IsActive, LastSyncTime, LastSyncStatus, Ho_code, ConnectionType FROM Stores WHERE StoreName = ?",
             store_name,
         ).fetchone()
     return _row_to_store(row) if row else None

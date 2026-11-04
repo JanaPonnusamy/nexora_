@@ -259,6 +259,18 @@ def test_resolve_store_still_requires_branch_db_for_lan(monkeypatch):
         service._resolve_store("NMA")
 
 
+def test_connection_type_agent_marks_store_agent_synced(monkeypatch):
+    # A new agent store (e.g. TESTSMG on the .32 HO) needs no env edit: its
+    # OrderNMC.Stores row says ConnectionType = 'AGENT'.
+    agent = {"store_name": "TESTSMG", "store_code": "8", "server_name": "",
+             "database": "", "connection_type": "AGENT"}
+    lan = dict(agent, store_name="NMA", connection_type="LAN")
+    assert service.is_agent_synced_store("TESTSMG", agent) is True
+    assert service.is_agent_synced_store("NMA", lan) is False
+    monkeypatch.setattr(service.repository, "get_store", lambda sn: agent)
+    assert service._resolve_store("TESTSMG")["store_name"] == "TESTSMG"
+
+
 # --------------------------------------------------------------------------
 # start_order_process routing: NMV skips branch sync/test, LAN keeps it
 # --------------------------------------------------------------------------

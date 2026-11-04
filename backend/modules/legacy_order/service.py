@@ -65,10 +65,13 @@ AGENT_SYNCED_STORES = {
 }
 
 
-def is_agent_synced_store(store_name):
-    """True if this store's data arrives via the NMV Integration agent rather
-    than a direct HO->branch SQL pull (so the Order Process must read the
-    already-synced central copy, never the branch)."""
+def is_agent_synced_store(store_name, store=None):
+    """True if this store's data arrives via an agent rather than a direct
+    HO->branch SQL pull (so the Order Process must read the already-synced
+    central copy, never the branch): listed in LEGACY_AGENT_SYNCED_STORES, or
+    its OrderNMC.Stores row says ConnectionType = 'AGENT'."""
+    if store and store.get("connection_type") == "AGENT":
+        return True
     return bool(store_name) and store_name.strip().upper() in AGENT_SYNCED_STORES
 
 
@@ -135,7 +138,7 @@ def _resolve_store(store_name):
     # Agent-synced stores (NMV) legitimately have no branch server/database -- HO
     # never connects to them directly; their data arrives via the NMV Integration
     # agent. LAN stores still require a configured source DB (unchanged).
-    if not is_agent_synced_store(store_name) and (
+    if not is_agent_synced_store(store_name, store) and (
         not store["server_name"] or not store["database"]
     ):
         raise ValueError(
@@ -162,7 +165,7 @@ def start_sync(store_name, tables=None):
     # Agent-synced stores (NMV) have no branch to pull: their live data is in
     # NEXORA_PLATFORM.sync.* (delivered by the platform sync pipeline). Copy that
     # into central OrderNMC, filtered by the store's platform store_id.
-    if is_agent_synced_store(store_name):
+    if is_agent_synced_store(store_name, store):
         store_id = database.platform_store_id(store["store_name"])
         if not store_id:
             raise ValueError(
@@ -298,7 +301,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     other; a caller who hits both must see and confirm each in turn."""
     store = _resolve_store(store_name)
     warehouse = is_warehouse_store(store_name)
-    agent_synced = is_agent_synced_store(store_name)
+    agent_synced = is_agent_synced_store(store_name, store)
     # Engine: this run's choice, else the store's setting (default LEGACY).
     # Both engines stay available; neither replaces the other.
     from modules.legacy_order import rulebook_order
