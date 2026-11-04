@@ -41,6 +41,9 @@ HEAP_GROUPS = _int_env("ORDERNMC_MIRROR_HEAP_GROUPS", 5000)
 PULL_BUDGET_SECONDS = _int_env("ORDERNMC_MIRROR_PULL_BUDGET_SECONDS", 20)
 # Even a table the usage stats call unchanged is fully re-verified this often.
 FULL_PASS_HOURS = _int_env("ORDERNMC_MIRROR_FULL_PASS_HOURS", 24)
+# Without trustworthy write stats every table is re-verified this often instead
+# (a pass only SENDS changed rows, but it hashes every in-scope row).
+UNTRACKED_RESCAN_MINUTES = _int_env("ORDERNMC_MIRROR_UNTRACKED_RESCAN_MINUTES", 30)
 
 
 def _whitelist(target):
@@ -70,7 +73,7 @@ def _needs_pass(state, object_id, now, server_start, last_updates):
     if done is None or now - done > datetime.timedelta(hours=FULL_PASS_HOURS):
         return True
     if last_updates is None:
-        return True
+        return now - done > datetime.timedelta(minutes=UNTRACKED_RESCAN_MINUTES)
     lu = last_updates.get(object_id)
     if lu is None:
         # No write since SQL Server started; unchanged only if our last pass

@@ -131,9 +131,39 @@ def test_needs_pass():
     assert service._needs_pass(st, 1, now, now, {})                         # SQL restarted after pass
     assert service._needs_pass(st, 1, now, start, {1: now})                 # written since
     assert not service._needs_pass(st, 1, now, start, {1: now - datetime.timedelta(hours=3)})
-    assert service._needs_pass(st, 1, now, start, None)                     # no stats permission
+    # untrusted stats (no permission / AUTO_CLOSE): timed rescan, not every cycle
+    assert service._needs_pass(st, 1, now, start, None)                     # done 50 min ago
+    fresh = dict(st, last_pass_completed_at=now - datetime.timedelta(minutes=5))
+    assert not service._needs_pass(fresh, 1, now, start, None)
     old = dict(st, last_pass_completed_at=now - datetime.timedelta(hours=service.FULL_PASS_HOURS + 1))
     assert service._needs_pass(old, 1, now, start, {})                      # periodic full verify
+
+
+class _Cur:
+    def __init__(self, auto_close):
+        self.auto_close, self.sql = auto_close, ""
+
+    def execute(self, sql, *a):
+        self.sql = sql
+
+    def fetchone(self):
+        return (self.auto_close,)
+
+    def fetchall(self):
+        return [(7, datetime.datetime(2026, 11, 4, 20, 0))]
+
+
+class _Conn:
+    def __init__(self, auto_close):
+        self.auto_close = auto_close
+
+    def cursor(self):
+        return _Cur(self.auto_close)
+
+
+def test_auto_close_database_stats_are_not_trusted():
+    assert catalog.last_user_updates(_Conn(True)) is None
+    assert catalog.last_user_updates(_Conn(False)) == {7: datetime.datetime(2026, 11, 4, 20, 0)}
 
 
 # ---- agent apply SQL ------------------------------------------------------

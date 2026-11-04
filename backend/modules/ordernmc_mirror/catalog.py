@@ -138,10 +138,17 @@ def list_tables(conn, whitelist: list[str] | None = None,
 
 
 def last_user_updates(conn) -> dict | None:
-    """{object_id: last write time} since SQL Server start, or None when the
-    login lacks VIEW SERVER STATE (caller then rescans every cycle)."""
+    """{object_id: last write time} since SQL Server start, or None when it
+    cannot be trusted: the login lacks VIEW SERVER STATE, or the database has
+    AUTO_CLOSE on -- SQL Server drops a database's usage stats every time it
+    auto-closes, so "no recorded write" would hide real changes (seen on the
+    .32 OrderNMC: tables written minutes earlier had no stats at all)."""
     try:
         cur = conn.cursor()
+        cur.execute("SELECT is_auto_close_on FROM sys.databases WHERE database_id = DB_ID()")
+        row = cur.fetchone()
+        if row and row[0]:
+            return None
         cur.execute(
             "SELECT object_id, MAX(last_user_update) FROM sys.dm_db_index_usage_stats "
             "WHERE database_id = DB_ID() GROUP BY object_id"
