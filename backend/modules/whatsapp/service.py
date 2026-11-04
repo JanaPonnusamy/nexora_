@@ -691,6 +691,58 @@ _ATTACH_MEDIA_SELECTORS = [
     "xpath=//span[normalize-space(text())='Photos & videos']",
 ]
 _IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+# Present ONLY while the attachment preview overlay is open (never the chat
+# composer) -- an attach is not done until one of these shows.
+_PREVIEW_OPEN_SELECTORS = [
+    "xpath=//*[self::button or @role='button'][starts-with(@aria-label,'Send ')][contains(@aria-label,'selected')]",
+    "xpath=//div[@data-testid='media-caption-input-container']",
+    "xpath=//div[@aria-label='Add a caption'][@contenteditable='true']",
+]
+
+
+def _preview_open(page: Any, seconds: float) -> bool:
+    end = time.time() + seconds
+    while True:
+        for sel in _PREVIEW_OPEN_SELECTORS:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    return True
+            except Exception:
+                continue
+        if time.time() >= end:
+            return False
+        page.wait_for_timeout(300)
+
+
+def _chat_open(page: Any) -> bool:
+    """True while a conversation (with its message footer) is open in #main."""
+    try:
+        return page.locator("xpath=//div[@id='main']//footer").count() > 0
+    except Exception:
+        return False
+
+
+def _close_overlays(page: Any) -> None:
+    """Close an open attach menu / dialog WITHOUT closing the chat. A bare
+    Escape on an open chat closes the conversation itself (2026-11-04: NMA/NMG
+    attach failed, the recovery Escape closed the chat, and the hidden-input
+    fallback then dropped the file into WhatsApp's 'Select chats' share
+    dialog) -- so only press Escape while something is actually overlaid."""
+    for _ in range(3):
+        overlaid = False
+        try:
+            for sel in ["xpath=//div[@role='dialog']"] + _ATTACH_DOCUMENT_SELECTORS + _ATTACH_MEDIA_SELECTORS:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    overlaid = True
+                    break
+        except Exception:
+            return
+        if not overlaid:
+            return
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(400)
 
 
 def _capture_debug(page: Any, tag: str) -> str | None:
@@ -755,10 +807,9 @@ def _safe_click(locator: Any) -> None:
         locator.click(timeout=5000)
         return
     except Exception:
-        try:
-            locator.evaluate("el => el.click()")
-        except Exception:
-            raise
+        # Bounded: if the element is already gone (menu closed, chat re-
+        # rendered) Playwright's default would block 30s waiting for it.
+        locator.evaluate("el => el.click()", timeout=5000)
 
 
 def _dismiss_startup_dialogs(page: Any) -> None:
@@ -859,7 +910,7 @@ def _caption_and_send_attachment(page: Any, settings: dict[str, Any], message: s
         caption.type(message, delay=8)
         time.sleep(0.3)
     try:
-        send = _first_locator(page, _SEND_BUTTON_SELECTORS, wait_seconds)
+        send = _first_locator(page, _PREVIEW_OPEN_SELECTORS[:1] + _SEND_BUTTON_SELECTORS, wait_seconds)
         _safe_click(send)
     except Exception:
         # Send control renamed again -- Enter in the preview's caption box
@@ -1053,53 +1104,101 @@ def _open_target_chat(page: Any, target: dict[str, Any], settings: dict[str, Any
 
 def _attach_file(page: Any, settings: dict[str, Any], attachment_path: "str | list[str]") -> None:
     """One path, or several -- all attached at once so they go as ONE
-    message (all images -> the Photos & videos picker, else Document)."""
+    message (all images -> the Photos & videos picker, else Document).
+    Done only when WhatsApp's attachment PREVIEW is open; otherwise it
+    raises, so a send can never silently go out as the caption text alone
+    (2026-10-26: a Time Report "all stores" send delivered only its text)."""
     wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
     paths = attachment_path if isinstance(attachment_path, list) else [attachment_path]
     resolved_path = [str(Path(p).resolve()) for p in paths]
     media = all(p.lower().endswith(_IMAGE_SUFFIXES) for p in resolved_path)
-    clip = _first_locator(page, _ATTACH_SELECTORS, wait_seconds)
-    _safe_click(clip)
+    attempts: list[str] = []
 
+    # Right after a chat switch the footer is still re-rendering; clicking
+    # Attach then can hit a node that is swapped out under the click (the
+    # send right after a successful one failed this way, alternately).
+    _first_locator(page, ["xpath=//div[@id='main']//footer"], wait_seconds)
+    page.wait_for_timeout(700)
+
+    # 1) Attach menu -> Photos & videos (images) / Document, via the chooser.
+    for label, options in ([("photos", _ATTACH_MEDIA_SELECTORS)] if media else []) + [("document", _ATTACH_DOCUMENT_SELECTORS)]:
+        try:
+            _safe_click(_first_locator(page, _ATTACH_SELECTORS, wait_seconds))
+            item = _first_locator(page, options, 5)
+            with page.expect_file_chooser(timeout=8000) as fc_info:
+                _safe_click(item)
+            fc_info.value.set_files(resolved_path)
+            if _preview_open(page, 15):
+                return
+            attempts.append(f"{label}: no preview")
+        except Exception as exc:
+            attempts.append(f"{label}: {str(exc).splitlines()[0][:120]}")
+        _close_overlays(page)
+        page.wait_for_timeout(500)
+
+    # 2) Hidden <input type=file> (display:none, so no visibility gate):
+    # image-accepting multi-file inputs first. Only inside an open chat --
+    # with none open, the first input is WhatsApp's share-to-chats picker.
+    if not _chat_open(page):
+        _capture_debug(page, "attach-no-preview")
+        raise RuntimeError("WhatsApp did not open the attachment preview -- nothing was sent. "
+                           + "; ".join(attempts[-4:] + ["chat closed"]))
     try:
-        doc_item = _first_locator(page, _ATTACH_MEDIA_SELECTORS if media else _ATTACH_DOCUMENT_SELECTORS, 5)
-        # expect_file_chooser intercepts the native/JS file dialog directly --
-        # more robust than hunting for a hidden <input type="file"> whose
-        # visibility/activation is menu-state-dependent in the current UI.
-        with page.expect_file_chooser(timeout=8000) as fc_info:
-            _safe_click(doc_item)
-        fc_info.value.set_files(resolved_path)
-        time.sleep(3)
+        _safe_click(_first_locator(page, _ATTACH_SELECTORS, wait_seconds))
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
+    inputs = page.locator("xpath=//input[@type='file']")
+    ranked = []
+    for idx in range(inputs.count()):
+        accept = (inputs.nth(idx).get_attribute("accept") or "").lower()
+        multiple = inputs.nth(idx).get_attribute("multiple") is not None
+        fits_type = ("image" in accept) == media
+        fits_count = multiple or len(resolved_path) == 1
+        ranked.append((not fits_type, not fits_count, idx))
+    for *_, idx in sorted(ranked):
+        try:
+            inputs.nth(idx).set_input_files(resolved_path)
+            if _preview_open(page, 15):
+                return
+            attempts.append(f"input {idx}: no preview")
+        except Exception as exc:
+            attempts.append(f"input {idx}: {str(exc).splitlines()[0][:120]}")
+    _capture_debug(page, "attach-no-preview")
+    raise RuntimeError("WhatsApp did not open the attachment preview -- nothing was sent. " + "; ".join(attempts[-4:]))
+
+
+def _attach_with_retry(page: Any, settings: dict[str, Any], attachment_path: "str | list[str]", reopen: Any) -> None:
+    """_attach_file raises only BEFORE anything is sent (no preview, nothing to
+    send), so one full retry -- overlays closed, chat re-opened via ``reopen``
+    -- can never double-send."""
+    try:
+        _attach_file(page, settings, attachment_path)
         return
     except Exception:
-        pass  # fall through: older UI, or no menu/chooser appeared
-
-    # File inputs are display:none, so a visibility-gated locator (_first_locator)
-    # never returns them -- that was the "None of the selectors matched
-    # [input[type=file]]" attach failure. Set files directly on the (hidden)
-    # input instead; Playwright supports this without the element being visible.
-    loc = page.locator("xpath=//input[@type='file']")
-    end = time.time() + wait_seconds
-    while loc.count() == 0 and time.time() < end:
-        page.wait_for_timeout(300)
-    if loc.count() == 0:
-        raise TimeoutError("No file input was found to attach the document.")
-    loc.last.set_input_files(resolved_path)
-    time.sleep(3)
+        pass
+    _close_overlays(page)
+    reopen()
+    _attach_file(page, settings, attachment_path)
 
 
 def _send_via_playwright(profile: dict[str, Any], settings: dict[str, Any], phone: str, message: str, attachment_path: str | None) -> dict[str, Any]:
     mode = "headless" if bool(settings.get("headless", True)) else "playwright"
-    url = _whatsapp_url(phone, message)
+    # With an attachment the message is the preview CAPTION; pre-filling it
+    # in the chat box would send it as a separate text instead.
+    url = _whatsapp_url(phone, "" if attachment_path else message)
     with _DRIVER_LOCK:
         page = _acquire_context(profile, settings, bool(settings.get("headless", True)))
         wait_seconds = max(int(settings.get("launch_wait_seconds", 15) or 15), 10)
-        try:
+        def _open() -> None:
             page.goto(url, timeout=wait_seconds * 1000)
             _ensure_logged_in(page, settings)
             time.sleep(1)
+
+        try:
+            _open()
             if attachment_path:
-                _attach_file(page, settings, attachment_path)
+                _attach_with_retry(page, settings, attachment_path, _open)
                 _caption_and_send_attachment(page, settings, message)
             else:
                 _type_and_send(page, settings, message)
@@ -1121,7 +1220,8 @@ def _send_target_via_playwright(profile: dict[str, Any], target: dict[str, Any],
         try:
             url = _open_target_chat(page, target, settings, message)
             if attachment_path:
-                _attach_file(page, settings, attachment_path)
+                _attach_with_retry(page, settings, attachment_path,
+                                   lambda: _open_target_chat(page, target, settings, message))
                 _caption_and_send_attachment(page, settings, message)
             else:
                 _type_and_send(page, settings, message)
