@@ -113,6 +113,7 @@ def test_enrollment_is_proven_against_the_new_ho(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ctl, "INBOX_DIR", tmp_path)
     monkeypatch.setattr(ctl, "save_config", lambda cfg: None)
+    monkeypatch.setattr(ctl, "log", lambda *a, **k: None)   # never touch the real controller.log
     (tmp_path / "enrollment.json").write_text(
         _json.dumps({"device_id": "NEW-ID", "ho_urls": ["http://new-ho:8444"]}), encoding="utf-8")
     c = ctl.Controller.__new__(ctl.Controller)
@@ -132,3 +133,65 @@ def test_enrollment_is_proven_against_the_new_ho(monkeypatch, tmp_path):
     assert asked == ["http://new-ho:8444"]
     assert c.cfg["device_id"] == "NEW-ID"
     assert c.cfg["ho_urls"][0] == "http://new-ho:8444"
+
+
+class _Resp:
+    def __init__(self, code):
+        self.status_code = code
+        self.text = "{}"
+
+
+def _ho_client(monkeypatch, answers, enrolled_at=None):
+    """HoClient whose URLs answer from `answers` {url: status}; `enrolled_at`
+    limits which HOs know the device (others reject its token)."""
+    import requests
+
+    from store_agent_setup.device_controller import ho as ctl_ho
+
+    urls = list(answers)
+    client = ctl_ho.HoClient({"ho_urls": urls, "device_id": "D", "device_private_key_pem": "k"})
+
+    def token(base, force=False):
+        if enrolled_at is not None and base not in enrolled_at:
+            raise ctl_ho.NotEnrolled("unknown device")
+        return "T"
+
+    def request(method, url, **kwargs):
+        for base, code in answers.items():
+            if url.startswith(base):
+                if code is None:
+                    raise requests.ConnectionError("down")
+                return _Resp(code)
+        raise AssertionError(url)
+
+    monkeypatch.setattr(client, "_token", token)
+    monkeypatch.setattr(requests, "request", request)
+    return client
+
+
+def test_controller_skips_an_ho_without_the_controller_api(monkeypatch):
+    """The 2026-11-04 outage: after its HO restarted, every controller failed
+    over to an older HO that answers 404/405 and stayed there for good."""
+    c = _ho_client(monkeypatch, {"http://old-build:8000": 404, "http://ho:8000": 200})
+    c._active = "http://old-build:8000"
+    assert c.request("GET", "/api/agent/controller/poll").status_code == 200
+    assert c._active == "http://ho:8000"
+
+
+def test_controller_skips_another_hos_url_that_does_not_know_it(monkeypatch):
+    c = _ho_client(monkeypatch, {"http://ho:8000": None, "http://127.0.0.1:8000": 200,
+                                 "http://ho-public:8443": 200},
+                   enrolled_at={"http://ho:8000", "http://ho-public:8443"})
+    assert c.request("POST", "/api/agent/controller/heartbeat").status_code == 200
+    assert c._active == "http://ho-public:8443"
+
+
+def test_controller_failover_keeps_old_answers_when_nothing_serves(monkeypatch):
+    from store_agent_setup.device_controller import ho as ctl_ho
+
+    c = _ho_client(monkeypatch, {"http://a:8000": 404, "http://b:8000": None})
+    c._active = "http://a:8000"
+    assert c.request("GET", "/api/agent/controller/poll").status_code == 404   # as before
+    c = _ho_client(monkeypatch, {"http://a:8000": 200, "http://b:8000": 200}, enrolled_at=set())
+    with pytest.raises(ctl_ho.NotEnrolled):
+        c.request("GET", "/api/agent/controller/poll")

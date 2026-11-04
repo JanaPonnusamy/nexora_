@@ -76,10 +76,17 @@ class HoClient:
 
     def request(self, method, path, timeout=30, base=None, **kwargs):
         """Authenticated request. Tries the active URL first, then the others;
-        the first URL that answers becomes active. 401 refreshes the token once."""
+        the first URL that answers becomes active. 401 refreshes the token once.
+
+        A URL whose HO lacks the controller API (an older build answers 404/405
+        from its web catch-all) or does not know this device (another HO's
+        address among the learned routes) is skipped, not settled on: sticking
+        to one left every controller silent after a brief outage of its HO."""
         import requests
 
         last_error = None
+        not_found = None       # 404/405 answer, used only if no HO serves the route
+        not_enrolled = None
         candidates = [base] if base else self._ordered()
         for url in candidates:
             for attempt in (0, 1):
@@ -93,15 +100,22 @@ class HoClient:
                     if resp.status_code >= 500:
                         last_error = RuntimeError(f"{url}{path}: HTTP {resp.status_code}")
                         break
+                    if resp.status_code in (404, 405) and not base:
+                        not_found = not_found or resp
+                        last_error = RuntimeError(f"{url}{path}: HTTP {resp.status_code}")
+                        break
                     with self._lock:
                         self._active = url
                     return resp
-                except NotEnrolled:
-                    raise
+                except NotEnrolled as ex:
+                    not_enrolled = not_enrolled or ex
+                    break
                 except Exception as ex:
                     last_error = ex
                     break
-        raise last_error or RuntimeError("no HO URL reachable")
+        if not_found is not None:
+            return not_found
+        raise not_enrolled or last_error or RuntimeError("no HO URL reachable")
 
     def download(self, sources, path, dest, timeout=900):
         """Download `path` from the first source that has it (each source with
