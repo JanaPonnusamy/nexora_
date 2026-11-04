@@ -149,7 +149,10 @@ def _resolve_store(store_name):
 
 # ----- Sync -------------------------------------------------------------------
 
-def start_sync(store_name, tables=None):
+def start_sync(store_name, tables=None, live_device_sync=True):
+    """``live_device_sync=False`` (the auto-sync loop) copies whatever the store
+    agent has already delivered to NEXORA_PLATFORM instead of first asking the
+    device for a fresh full sync. Only meaningful for agent-synced stores."""
     store = _resolve_store(store_name)
 
     running = _running_job_kind(store_name)
@@ -173,7 +176,8 @@ def start_sync(store_name, tables=None):
             )
         job_id = _new_job("sync", store_name, len(plan) + 1)
         threading.Thread(
-            target=_run_agent_sync, args=(job_id, store, store_id, plan), daemon=True
+            target=_run_agent_sync, args=(job_id, store, store_id, plan, live_device_sync),
+            daemon=True,
         ).start()
         return job_id
 
@@ -506,7 +510,7 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
 
 # ----- Agent-synced sync (platform sync.* -> central OrderNMC) ----------------
 
-def _run_platform_sync(job_id, store, store_id, plan):
+def _run_platform_sync(job_id, store, store_id, plan, live_device_sync=True):
     """Trigger a live device sync, wait for it to land in NEXORA_PLATFORM.sync.*,
     then copy it (filtered by store_id) into central OrderNMC, reusing the
     legacy sync engine's watermark + StoreName stamp + MERGE.
@@ -524,10 +528,11 @@ def _run_platform_sync(job_id, store, store_id, plan):
     except Exception:
         logger.exception("pre-sync clock check failed (continuing)")
 
-    device_sync.trigger_and_wait(
-        store_id, store["store_name"],
-        on_progress=lambda message: _update(job_id, step=0, message=message),
-    )
+    if live_device_sync:
+        device_sync.trigger_and_wait(
+            store_id, store["store_name"],
+            on_progress=lambda message: _update(job_id, step=0, message=message),
+        )
 
     dest_cs = database.central_connection_string()
     platform_cs = database.platform_connection_string()
@@ -560,10 +565,10 @@ def _run_platform_sync(job_id, store, store_id, plan):
     return tables, failed
 
 
-def _run_agent_sync(job_id, store, store_id, plan):
+def _run_agent_sync(job_id, store, store_id, plan, live_device_sync=True):
     """Sync-only job for an agent-synced store (the /sync trigger)."""
     try:
-        tables, failed = _run_platform_sync(job_id, store, store_id, plan)
+        tables, failed = _run_platform_sync(job_id, store, store_id, plan, live_device_sync)
     except (device_sync.DeviceSyncTimeout, device_sync.DeviceSyncFailed) as exc:
         _update(
             job_id, status="failed", result=None, error=str(exc),

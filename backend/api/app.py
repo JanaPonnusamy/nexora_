@@ -421,6 +421,17 @@ def _start_sync_scheduler_on_startup():
         print("[SCHEDULER] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
+def _start_legacy_auto_sync_on_startup():
+    # Keeps OrderNMC current from NEXORA_PLATFORM for the stores listed in
+    # LEGACY_AUTO_SYNC_STORES (no-op when unset). See legacy_order/auto_sync.py.
+    try:
+        from modules.legacy_order import auto_sync
+        auto_sync.start_background_loop()
+    except Exception:
+        import traceback
+        print("[LEGACY_AUTO_SYNC] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
 def _start_sync_health_monitor_on_startup():
     # Watches every store/table sync and WhatsApps an alert when one keeps
     # failing / goes stale / an agent drops (silent when all good). See
