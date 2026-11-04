@@ -48,6 +48,20 @@ def _whitelist(target):
     return [p.strip() for p in raw.split(",") if p.strip()] or None
 
 
+def _stores(target):
+    """Store names a store-scoped target is limited to, or [] for everything."""
+    raw = (target.get("stores") or "").strip()
+    return sorted({p.strip() for p in raw.split(",") if p.strip()})
+
+
+def _list_tables(conn, target):
+    return catalog.list_tables(conn, _whitelist(target), store_scoped=bool(_stores(target)))
+
+
+def _store_params(table, stores):
+    return list(stores) if table.get("store_column") and stores else []
+
+
 def _needs_pass(state, object_id, now, server_start, last_updates):
     started = state.get("last_pass_started_at") if state else None
     if started is None:
@@ -80,14 +94,16 @@ def _decode_cursor(table, cursor):
     return [catalog.decode_value(types[k], v) for k, v in zip(table["key_columns"], cursor)]
 
 
-def _fetch_pk_page(conn, target_id, table_id, table, cursor):
+def _fetch_pk_page(conn, target_id, table_id, table, cursor, stores=()):
     """-> (changed_rows, items, next_cursor, is_last). Rows are lists in column
     order; items are (ph, rh) for the ledger."""
     cols = table["columns"]
     by_name = {c["name"]: c for c in cols}
     key_cols = [by_name[k] for k in table["key_columns"]]
-    sql = pk_page_sql(table["name"], cols, key_cols, cursor is not None)
-    params = [PAGE_ROWS]
+    store_params = _store_params(table, stores)
+    sql = pk_page_sql(table["name"], cols, key_cols, cursor is not None,
+                      table.get("store_column"), len(store_params))
+    params = [PAGE_ROWS] + store_params
     if cursor is not None:
         params += keyset_params(_decode_cursor(table, cursor))
     params += [int(target_id), int(table_id), PAGE_ROWS]
@@ -108,13 +124,15 @@ def _fetch_pk_page(conn, target_id, table_id, table, cursor):
     return rows, items, next_cursor, is_last
 
 
-def _fetch_heap_groups(conn, target_id, table_id, table):
+def _fetch_heap_groups(conn, target_id, table_id, table, stores=()):
     cols = table["columns"]
     by_name = {c["name"]: c for c in cols}
     key_cols = [by_name[k] for k in table["key_columns"]]
+    store_params = _store_params(table, stores)
     cur = conn.cursor()
-    cur.execute(heap_groups_sql(table["name"], cols, key_cols),
-                [HEAP_GROUPS, int(target_id), int(table_id)])
+    cur.execute(heap_groups_sql(table["name"], cols, key_cols,
+                                table.get("store_column"), len(store_params)),
+                store_params + [HEAP_GROUPS, int(target_id), int(table_id)])
     names = [d[0] for d in cur.description]
     n = len(cols)
     i_ph, i_grh = names.index("__ph"), names.index("__grh")
@@ -160,7 +178,8 @@ def pull(device_id):
     try:
         repo.ensure_source_schema(conn, target["source_name"])
         repo.purge_stale_batches(conn, target_id)
-        tables = catalog.list_tables(conn, _whitelist(target))
+        tables = _list_tables(conn, target)
+        stores = _stores(target)
         ids = repo.table_ids(conn, [t["name"] for t in tables])
         states = repo.load_states(conn, target_id)
         now, server_start = repo.server_clock(conn)
@@ -181,9 +200,11 @@ def pull(device_id):
 
             while True:
                 if table["mode"] == "upsert":
-                    rows, items, next_cursor, is_last = _fetch_pk_page(conn, target_id, table_id, table, cursor)
+                    rows, items, next_cursor, is_last = _fetch_pk_page(conn, target_id, table_id, table,
+                                                                       cursor, stores)
                 else:
-                    rows, items, next_cursor, is_last = _fetch_heap_groups(conn, target_id, table_id, table)
+                    rows, items, next_cursor, is_last = _fetch_heap_groups(conn, target_id, table_id, table,
+                                                                           stores)
                 if rows:
                     batch_id = repo.save_batch(conn, target_id, table_id, next_cursor,
                                                pass_started, is_last, items)
@@ -237,7 +258,7 @@ def target_status(target_id):
     conn = sources.connect(target["source_name"])
     try:
         repo.ensure_source_schema(conn, target["source_name"])
-        tables = catalog.list_tables(conn, _whitelist(target))
+        tables = _list_tables(conn, target)
         ids = repo.table_ids(conn, [t["name"] for t in tables])
         states = repo.load_states(conn, target_id)
         counts = repo.ledger_counts(conn, target_id)

@@ -130,17 +130,30 @@ def keyset_params(values: list) -> list:
     return out
 
 
+def store_filter(store_column: str | None, n_stores: int, alias: str = "t") -> str:
+    """``t.[StoreName] IN (?, ?)`` for a store-scoped target, else ''."""
+    if not store_column or n_stores <= 0:
+        return ""
+    return f"{alias}.{q(store_column)} IN ({', '.join('?' * n_stores)})"
+
+
 def pk_page_sql(table: str, cols: list[dict], key_cols: list[dict],
-                has_cursor: bool) -> str:
+                has_cursor: bool, store_column: str | None = None,
+                n_stores: int = 0) -> str:
     """One keyset page of a PK table, filtered to rows whose hash differs from
     the target's ledger, plus the page's last row (rn = @n) so the caller can
     always advance the cursor.
 
-    Params: page_size, [keyset params], target_id, table_id, page_size.
+    Params: page_size, [store names], [keyset params], target_id, table_id,
+    page_size.
     """
     select_cols = ", ".join(f"t.{q(c['name'])}" for c in cols)
     order = ", ".join(f"t.{q(c['name'])}" for c in key_cols)
-    where = f"WHERE {keyset_where(key_cols)}" if has_cursor else ""
+    preds = [store_filter(store_column, n_stores)]
+    if has_cursor:
+        preds.append(keyset_where(key_cols))
+    preds = [x for x in preds if x]
+    where = f"WHERE {' AND '.join(preds)}" if preds else ""
     return (
         f"WITH p AS (SELECT TOP (?) {select_cols}, "
         f"{key_hash_expr(key_cols)} AS __ph, {row_hash_expr(cols)} AS __rh, "
@@ -152,18 +165,21 @@ def pk_page_sql(table: str, cols: list[dict], key_cols: list[dict],
     )
 
 
-def heap_groups_sql(table: str, cols: list[dict], key_cols: list[dict]) -> str:
+def heap_groups_sql(table: str, cols: list[dict], key_cols: list[dict],
+                    store_column: str | None = None, n_stores: int = 0) -> str:
     """Changed key-groups of a table without a primary key (full scan; such
     tables are small). A group = all source rows sharing the key; its hash is
     (sum of row hashes mod p, row count), so any edit/insert/removal inside a
     group changes it. Returns every row of the first @n changed groups.
 
-    Params: page_size, target_id, table_id.
+    Params: [store names], page_size, target_id, table_id.
     """
     select_cols = ", ".join(f"t.{q(c['name'])}" for c in cols)
+    sf = store_filter(store_column, n_stores)
+    where = f" WHERE {sf}" if sf else ""
     return (
         f"WITH r AS (SELECT {select_cols}, {key_hash_expr(key_cols)} AS __ph, "
-        f"{row_hash_expr(cols)} AS __rh FROM [dbo].{q(table)} AS t), "
+        f"{row_hash_expr(cols)} AS __rh FROM [dbo].{q(table)} AS t{where}), "
         f"g AS (SELECT __ph, CAST(CAST(CAST(SUM(CAST(CAST(SUBSTRING(__rh, 1, 4) AS int) AS bigint)) "
         f"% 2147483647 AS int) AS binary(4)) + CAST(CAST(COUNT_BIG(*) AS int) AS binary(4)) AS binary(8)) AS __grh "
         f"FROM r GROUP BY __ph), "

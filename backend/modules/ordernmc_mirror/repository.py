@@ -24,7 +24,7 @@ _platform_lock = threading.Lock()
 _TARGET_COLS = (
     "target_id, device_id, source_name, server_name, database_name, username, "
     "password_encrypted, interval_seconds, tables, is_enabled, last_pull_at, "
-    "last_ack_at, last_error, updated_at"
+    "last_ack_at, last_error, updated_at, stores"
 )
 
 
@@ -61,6 +61,8 @@ def ensure_platform_schema():
                     CREATE UNIQUE INDEX UX_ordernmc_mirror_targets_device
                         ON dbo.ordernmc_mirror_targets(device_id);
                 END;
+                IF COL_LENGTH('dbo.ordernmc_mirror_targets', 'stores') IS NULL
+                    ALTER TABLE dbo.ordernmc_mirror_targets ADD stores NVARCHAR(MAX) NULL;
                 """
             )
             conn.commit()
@@ -76,7 +78,7 @@ def _target_row(r) -> dict:
         "password_encrypted": bytes(r[6]) if r[6] else None,
         "interval_seconds": r[7], "tables": r[8], "is_enabled": bool(r[9]),
         "last_pull_at": r[10], "last_ack_at": r[11], "last_error": r[12],
-        "updated_at": r[13],
+        "updated_at": r[13], "stores": r[14],
     }
 
 
@@ -126,7 +128,7 @@ def list_targets():
 
 
 def upsert_target(device_id, source_name, server_name, database_name, username,
-                  password_encrypted, interval_seconds, tables, is_enabled):
+                  password_encrypted, interval_seconds, tables, is_enabled, stores=None):
     """Create/update the device's target. password_encrypted=None keeps the
     stored password. Returns target_id."""
     ensure_platform_schema()
@@ -140,22 +142,22 @@ def upsert_target(device_id, source_name, server_name, database_name, username,
                 "UPDATE dbo.ordernmc_mirror_targets SET source_name = ?, server_name = ?, "
                 "database_name = ?, username = ?, "
                 "password_encrypted = CASE WHEN ? = 1 THEN ? ELSE password_encrypted END, "
-                "interval_seconds = ?, tables = ?, is_enabled = ?, updated_at = SYSUTCDATETIME() "
+                "interval_seconds = ?, tables = ?, is_enabled = ?, stores = ?, updated_at = SYSUTCDATETIME() "
                 "WHERE target_id = ?",
                 source_name, server_name, database_name, username,
                 1 if password_encrypted is not None else 0,
                 pyodbc.Binary(password_encrypted) if password_encrypted is not None else None,
-                int(interval_seconds), tables, 1 if is_enabled else 0, r[0],
+                int(interval_seconds), tables, 1 if is_enabled else 0, stores, r[0],
             )
             target_id = r[0]
         else:
             cur.execute(
                 "INSERT INTO dbo.ordernmc_mirror_targets (device_id, source_name, server_name, "
-                "database_name, username, password_encrypted, interval_seconds, tables, is_enabled) "
-                "OUTPUT INSERTED.target_id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "database_name, username, password_encrypted, interval_seconds, tables, is_enabled, stores) "
+                "OUTPUT INSERTED.target_id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 str(device_id), source_name, server_name, database_name, username,
                 pyodbc.Binary(password_encrypted) if password_encrypted is not None else None,
-                int(interval_seconds), tables, 1 if is_enabled else 0,
+                int(interval_seconds), tables, 1 if is_enabled else 0, stores,
             )
             target_id = cur.fetchone()[0]
         conn.commit()

@@ -53,12 +53,20 @@ def is_mirrored(name: str, whitelist: list[str] | None = None) -> bool:
     return not _matches(name, excluded)
 
 
-def list_tables(conn, whitelist: list[str] | None = None) -> list[dict]:
+# Column that scopes a row to one store. A store-scoped target (e.g. only the
+# TESTSMS stores) mirrors just the tables that have it, and only those stores'
+# rows; tables without it are skipped so no other tenant's data can leak.
+STORE_COLUMN = "storename"
+
+
+def list_tables(conn, whitelist: list[str] | None = None,
+                store_scoped: bool = False) -> list[dict]:
     """Mirrored dbo tables with columns + key, ordered by name.
 
     Each: {"name", "object_id", "rows", "columns", "pk_columns", "key_columns",
-    "mode"} where mode is "upsert" (real PK) or "replace" (heap: rows grouped by
-    the natural key are replaced as a group)."""
+    "mode", "store_column"} where mode is "upsert" (real PK) or "replace" (heap:
+    rows grouped by the natural key are replaced as a group). With
+    ``store_scoped`` only tables that have a StoreName column are returned."""
     cur = conn.cursor()
     cur.execute(
         "SELECT t.object_id, t.name, "
@@ -118,7 +126,11 @@ def list_tables(conn, whitelist: list[str] | None = None) -> list[dict]:
             mode = "replace"
         if not tcols:
             continue
-        out.append({**t, "columns": tcols, "pk_columns": pk, "key_columns": key, "mode": mode})
+        store_column = names.get(STORE_COLUMN)
+        if store_scoped and not store_column:
+            continue
+        out.append({**t, "columns": tcols, "pk_columns": pk, "key_columns": key,
+                    "mode": mode, "store_column": store_column})
     return out
 
 

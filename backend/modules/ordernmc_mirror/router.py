@@ -48,6 +48,8 @@ class TargetRequest(BaseModel):
     password: str | None = Field(None, description="Blank keeps the stored password")
     interval_seconds: int = Field(900, ge=60, le=86400)
     tables: str | None = Field(None, description="Optional comma-separated whitelist (* wildcards)")
+    stores: str | None = Field(None, description="Optional comma-separated StoreNames; only those "
+                                                 "stores' rows (tables with StoreName) are mirrored")
     is_enabled: bool = True
 
 
@@ -124,6 +126,7 @@ def put_target(body: TargetRequest, _: dict = Depends(require_super_admin)):
         body.device_id, body.source_name.lower(), body.server_name.strip(),
         body.database_name.strip(), (body.username or "").strip() or None, encrypted,
         body.interval_seconds, (body.tables or "").strip() or None, body.is_enabled,
+        (body.stores or "").strip() or None,
     )
     return service.public_target(repo.get_target(target_id))
 

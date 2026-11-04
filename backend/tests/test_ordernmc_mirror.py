@@ -60,6 +60,31 @@ def test_pk_page_sql_param_order_shape():
     assert "OR p.__rn = ?" in sql
 
 
+def test_store_scoped_sql_filters_before_keyset_and_ledger():
+    cols = [_col("ID", "int"), _col("StoreName", "nvarchar", 100), _col("Qty", "float", 8)]
+    sql = sql_builder.pk_page_sql("PurchaseTrans", cols, cols[:2], has_cursor=True,
+                                  store_column="StoreName", n_stores=2)
+    assert sql.count("?") == 1 + 2 + 3 + 3  # TOP, stores, keyset, target/table/rn
+    assert "WHERE t.[StoreName] IN (?, ?) AND ((t.[ID] > ?)" in sql
+    first = sql_builder.pk_page_sql("PurchaseTrans", cols, cols[:2], has_cursor=False,
+                                    store_column="StoreName", n_stores=1)
+    assert "AS t WHERE t.[StoreName] IN (?) ORDER BY" in first
+    heap = sql_builder.heap_groups_sql("OrderManagement", cols, cols[:2],
+                                       store_column="StoreName", n_stores=2)
+    # store params bind first: the filter sits in the first CTE, before TOP (?).
+    assert heap.index("IN (?, ?)") < heap.index("TOP (?)")
+    assert sql_builder.store_filter(None, 2) == "" and sql_builder.store_filter("StoreName", 0) == ""
+
+
+def test_store_scoped_target_skips_tables_without_storename():
+    from modules.ordernmc_mirror import service
+    target = {"stores": " TESTSMG,TESTSMF ,TESTSMG", "tables": None}
+    assert service._stores(target) == ["TESTSMF", "TESTSMG"]
+    assert service._stores({"stores": None}) == []
+    assert service._store_params({"store_column": "StoreName"}, ["A"]) == ["A"]
+    assert service._store_params({"store_column": None}, ["A"]) == []
+
+
 # ---- codec ----------------------------------------------------------------
 
 @pytest.mark.parametrize("type_,value", [
