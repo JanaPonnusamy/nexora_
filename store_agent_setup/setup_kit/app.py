@@ -360,7 +360,26 @@ class SetupKit(tk.Tk):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="NexoraSetup")
     parser.add_argument("--ho", default="")
+    parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--finish", action="store_true")
+    parser.add_argument("--user", default="")
+    parser.add_argument("--store-id", default="")
+    parser.add_argument("--agent-dir", default="")
+    parser.add_argument("--agent-exe", default="")
+    parser.add_argument("--agent-version", default="")
     args, _ = parser.parse_known_args(argv)
+    if args.prepare or args.finish:
+        from store_agent_setup.setup_kit import unattended
+        try:
+            if args.finish:
+                return unattended.finish()
+            unattended.prepare(args.ho, args.user, args.store_id, args.agent_dir, args.agent_exe,
+                               args.agent_version, os.environ.get(unattended.PASSWORD_ENV, ""),
+                               sys.executable if getattr(sys, "frozen", False) else None)
+            return 0
+        except Exception:
+            unattended.log("ERROR: " + traceback.format_exc())
+            return 1
     try:
         SetupKit(normalize_url(args.ho) or None).mainloop()
     except Exception:
@@ -377,4 +396,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))

@@ -221,3 +221,96 @@ def test_spec_helpers():
     assert got["machine_name"] and got["ram_mb"] > 0 and got["drives"]
     assert set(got["services"]) == {"controller", "store_agent", "ho_backend"}
     assert any("PC name" in line for line in spec.summary_lines(got))
+
+
+# ---- unattended (prepare tonight, finish when HO answers) ---------------------
+
+@pytest.fixture
+def unattended_env(monkeypatch, tmp_path, ctl_dir):
+    from store_agent_setup.setup_kit import unattended
+    import store_agent.device_client as dc
+
+    setup = tmp_path / "Setup"
+    monkeypatch.setattr(unattended, "SETUP_DIR", setup)
+    monkeypatch.setattr(unattended, "PENDING_FILE", setup / "pending.json")
+    monkeypatch.setattr(unattended, "SECRET_FILE", setup / "pending.secret")
+    monkeypatch.setattr(unattended, "LOG_FILE", setup / "finish.log")
+    monkeypatch.setattr(dc, "dpapi_seal", lambda data: b"sealed:" + data)
+    monkeypatch.setattr(dc, "dpapi_unseal", lambda blob: blob[len(b"sealed:"):])
+    cmds = []
+
+    def run(cmd, timeout=120):
+        cmds.append(cmd)
+        out = "STATE : 4 RUNNING" if cmd[:2] == ["sc", "query"] and any(c[:2] == ["sc", "create"] for c in cmds) \
+            else ("FAILED 1060" if cmd[:2] == ["sc", "query"] else "")
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+
+    monkeypatch.setattr(unattended, "run", run)
+    return SimpleNamespace(mod=unattended, setup=setup, cmds=cmds, tmp=tmp_path)
+
+
+def _prepare(env):
+    agent_exe = env.tmp / "src" / "NexoraStoreAgent.exe"
+    agent_exe.parent.mkdir()
+    agent_exe.write_bytes(b"agent")
+    kit = env.tmp / "src" / "NexoraSetup.exe"
+    kit.write_bytes(b"kit")
+    agent_dir = env.tmp / "NexoraStoreAgent"
+    env.mod.prepare("122.252.246.181:8444", "smssma", STORE, agent_dir, agent_exe,
+                    "2026.11.04.1", "pw", kit)
+    return agent_dir
+
+
+def test_prepare_stages_agent_and_schedules_finish(unattended_env):
+    env = unattended_env
+    agent_dir = _prepare(env)
+    assert (agent_dir / "NexoraStoreAgent.exe").read_bytes() == b"agent"
+    assert (agent_dir / "config" / "device_key.bin").read_bytes().startswith(b"sealed:")
+    assert json.loads((agent_dir / "agent_config.json").read_text())["ho_url"] == "http://122.252.246.181:8444"
+    assert env.mod.SECRET_FILE.read_bytes() == b"sealed:pw"
+    pending = json.loads(env.mod.PENDING_FILE.read_text())
+    assert pending["user"] == "smssma" and pending["store_id"] == STORE
+    task = [c for c in env.cmds if c[0] == "schtasks"][0]
+    assert task[task.index("/RU") + 1] == "SYSTEM" and task[task.index("/TR") + 1].endswith("--finish")
+    with pytest.raises(engine.SetupError):
+        env.mod.prepare("h", "u", STORE, agent_dir, agent_dir / "x", "v", "", "kit")
+
+
+def test_finish_waits_for_ho_then_registers_and_cleans_up(unattended_env, monkeypatch, ctl_dir):
+    env = unattended_env
+    agent_dir = _prepare(env)
+    ctl_dir.PUBLIC_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ctl_dir.PUBLIC_KEY_FILE.write_text("PUBKEY", encoding="utf-8")
+    ctl_dir.FINGERPRINT_FILE.write_text("dc:guid", encoding="utf-8")
+
+    def down(*a, **k):
+        raise requests.ConnectionError("refused")
+    monkeypatch.setattr(requests, "request", down)
+    assert env.mod.finish() == 0 and env.mod.PENDING_FILE.is_file()        # HO still off
+
+    registered = []
+    login_status = {"code": 401}
+
+    def http(method, url, **k):
+        if url.endswith("/health"):
+            return Resp(body={"status": "healthy"})
+        if url.endswith("/api/auth/device/register"):
+            registered.append(k["json"])
+            return Resp(body={"device_id": "DEV-" + k["json"]["app_type"]})
+        return Resp(body={"ok": True})
+    monkeypatch.setattr(requests, "request", http)
+    def post(url, **k):
+        if url.endswith("/api/auth/login"):
+            ok = login_status["code"] == 200
+            return Resp(login_status["code"], {"token": "T", "user": {}} if ok else {"detail": "bad"})
+        return http("POST", url, **k)
+    monkeypatch.setattr(requests, "post", post)
+    assert env.mod.finish() == 0 and env.mod.PENDING_FILE.is_file()        # login not created yet
+
+    login_status["code"] = 200
+    assert env.mod.finish(sleep=_controller_picks_up(ctl_dir)) == 0
+    assert [r["app_type"] for r in registered] == ["device_controller", "store_agent"]
+    assert all(r["store_id"] == STORE for r in registered)
+    assert any(c[:2] == ["sc", "create"] for c in env.cmds) and ["sc", "start", "NexoraStoreAgent"] in env.cmds
+    assert not env.mod.PENDING_FILE.exists() and not env.mod.SECRET_FILE.exists()
+    assert ["schtasks", "/Delete", "/TN", "NexoraSetupFinish", "/F"] in env.cmds

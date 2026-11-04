@@ -74,6 +74,11 @@ class SetupRun:
         output = ((r.stdout or "") + (r.stderr or "")).strip()
         if r.returncode != 0:
             raise SetupError(f"Device Controller setup failed (exit {r.returncode}): {output[-400:]}")
+        return self.enroll_controller(pkg["version"])
+
+    def enroll_controller(self, version) -> str:
+        """Register the installed controller's key for the store and hand it its
+        device id through the inbox."""
         if not self._wait(lambda: PUBLIC_KEY_FILE.is_file() and FINGERPRINT_FILE.is_file(), 30):
             raise SetupError("The Device Controller did not create its device key")
         data = self.client.register_device({
@@ -82,7 +87,7 @@ class SetupRun:
             "key_algo": "ED25519",
             "machine_name": socket.gethostname(),
             "app_type": "device_controller",
-            "app_version": pkg["version"],
+            "app_version": version,
             "store_id": self.store_id,
         })
         device_id = str(data["device_id"])
