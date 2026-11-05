@@ -1,6 +1,9 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api/client.js';
 import { harvestRow, roEnumerate, siteScript } from './siteCheck.js';
+
+const HARVEST_RETRIES = 3;     // owner: auto-retry N times, then keep old stock
+const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 
 // Three separate concerns, kept apart (owner 2026-11-05):
 //  * useHarvest  -- read the supplier's whole catalog from its open portal and
@@ -10,38 +13,94 @@ import { harvestRow, roEnumerate, siteScript } from './siteCheck.js';
 //    SupplierProductMatch (so unmapped products become visible in Live Stock).
 // Adding to the site's cart is the existing Website site-check flow, not here.
 
-// --- Harvest: read site -> SupplierStock -------------------------------------
-export function useHarvest({ webRef, store, supplierCode, session }) {
+// --- Harvest: read the WHOLE site catalog -> SupplierStock -------------------
+// Atomic + resilient (owner 2026-11-05): read the ENTIRE catalog, then post once
+// with complete=true so the server swaps SupplierStock all-or-nothing. If a read
+// breaks mid-way, retry up to N times; if all fail, the old stock is kept
+// untouched (we never post a partial list). Also auto-runs when the selected
+// supplier's stock is stale (older than today's order).
+export function useHarvest({ webRef, store, supplierCode, session, orderAt }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [result, setResult] = useState(null);   // { stored } | null
   const [error, setError] = useState('');
+  const autoTried = useRef('');                  // store|supplier we've auto-run for
 
-  const harvest = useCallback(async () => {
-    if (!store || !supplierCode) return;
+  // One full-catalog read; throws on a broken/partial read so the caller retries.
+  const readCatalog = useCallback(async () => {
+    const web = webRef.current;
+    if (!web?.ready()) { const e = new Error('site-not-open'); e.soft = 'Open the supplier’s site first.'; throw e; }
+    const out = await web.exec(siteScript(roEnumerate)).catch(() => null);
+    if (!out) throw new Error('read-failed');       // exec died mid-way -> retry
+    if (!out.ok) {
+      const e = new Error(out.reason || 'read-failed');
+      e.soft = out.reason === 'login' ? 'Sign in to the supplier’s site first.'
+        : out.reason === 'pick-distributor' ? 'Open New Order for this distributor on the site, then try again.'
+          : 'Could not read the supplier’s product list.';
+      e.stop = out.reason === 'login' || out.reason === 'pick-distributor';  // don't retry these
+      throw e;
+    }
+    if (!out.rows?.length) throw new Error('empty');  // nothing read -> retry
+    return out.rows.map(harvestRow);
+  }, [webRef]);
+
+  const harvest = useCallback(async ({ silent = false } = {}) => {
+    if (!store || !supplierCode || busy) return false;
     setError(''); setResult(null); setBusy(true);
     try {
-      const web = webRef.current;
-      if (!web?.ready()) { setError('Open the supplier’s site first.'); return; }
-      setProgress('Reading the supplier’s product list…');
-      const out = await web.exec(siteScript(roEnumerate)).catch(() => null);
-      if (!out?.ok) {
-        setError(out?.reason === 'login' ? 'Sign in to the supplier’s site first.'
-          : out?.reason === 'pick-distributor' ? 'Open New Order for this distributor on the site, then try again.'
-          : 'Could not read the supplier’s product list.');
-        return;
+      let rows = null;
+      for (let attempt = 1; attempt <= HARVEST_RETRIES; attempt += 1) {
+        try {
+          if (!silent) setProgress(`Reading the supplier’s product list…${attempt > 1 ? ` (retry ${attempt - 1})` : ''}`);
+          rows = await readCatalog();
+          break;
+        } catch (e) {
+          if (e.stop) { setError(e.soft || 'Could not read the catalog.'); return false; }  // keep old stock, no retry
+          if (attempt >= HARVEST_RETRIES) {
+            // All retries failed -> keep the OLD stock untouched (never posted a partial).
+            setError((e.soft || 'Could not read the full catalog') + ' — kept the existing stock.');
+            return false;
+          }
+          await sleep(1500 * attempt);  // backoff before the next try
+        }
       }
-      const rows = out.rows.map(harvestRow);
-      setProgress(`Saving ${rows.length} products to stock…`);
-      const r = await api.legacyHarvestSupplierStock(store, supplierCode, rows, session);
+      // Only now, with a COMPLETE read, post it (server swaps atomically).
+      if (!silent) setProgress(`Saving ${rows.length} products to stock…`);
+      const r = await api.legacyHarvestSupplierStock(store, supplierCode, rows, true, session);
       setResult(r);
-      setProgress(`Saved ${r.stored} products. Switch to Live Stock to load them into the order.`);
+      setProgress(`Saved ${r.stored} products. Live Stock now shows this supplier’s stock.`);
+      return true;
     } catch (e) {
-      setError(e.message || 'Harvest failed.');
+      // A POST failure also keeps the old stock (the server rolled back).
+      setError((e.message || 'Harvest failed') + ' — kept the existing stock.');
+      return false;
     } finally {
       setBusy(false);
     }
-  }, [webRef, store, supplierCode, session]);
+  }, [store, supplierCode, session, busy, readCatalog]);
+
+  // Auto-harvest when this supplier's stock is stale vs. today's order. Runs
+  // once per (store, supplier) selection, silently, in the background.
+  useEffect(() => {
+    if (!store || !supplierCode || !orderAt) return;
+    const key = `${store}|${supplierCode}`;
+    if (autoTried.current === key) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const st = await api.legacySupplierHarvestStatus(store, supplierCode, session);
+        if (cancelled) return;
+        const fresh = st?.harvested_at && new Date(st.harvested_at) >= new Date(orderAt);
+        autoTried.current = key;
+        if (!fresh) {
+          // Give the site a moment to finish auto sign-in before reading.
+          await sleep(2500);
+          if (!cancelled) harvest({ silent: true });
+        }
+      } catch { autoTried.current = key; }
+    })();
+    return () => { cancelled = true; };
+  }, [store, supplierCode, orderAt, session, harvest]);
 
   return { busy, progress, result, error, harvest, setError };
 }

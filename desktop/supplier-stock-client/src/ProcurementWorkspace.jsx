@@ -760,7 +760,14 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   });
   useEffect(() => { if (siteMode) setWebOn(true); }, [siteMode]);
   // Harvest the supplier's catalog -> SupplierStock (then Live Stock shows it).
-  const harvestHook = useHarvest({ webRef, store, supplierCode: supplier?.supplier_code || '', session });
+  // orderAt = today's order's generation time (order_id is YYYYMMDDHHMMSS), so
+  // the hook auto-harvests a supplier whose stock is older than this order.
+  const orderAt = useMemo(() => {
+    const id = String(orderHeader?.order_id ?? '');
+    const m = id.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/);
+    return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}` : null;
+  }, [orderHeader]);
+  const harvestHook = useHarvest({ webRef, store, supplierCode: supplier?.supplier_code || '', session, orderAt });
   // The separate "Map supplier products" review (fuzzy-confirm / manual map).
   const matchReview = useMatchReview({ store, supplierCode: supplier?.supplier_code || '', session });
   const [showMapReview, setShowMapReview] = useState(false);

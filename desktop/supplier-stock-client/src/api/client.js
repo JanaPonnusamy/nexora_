@@ -1104,9 +1104,9 @@ export const api = {
   // HARVEST (write-only): post the supplier's portal catalog (rows:
   // [{ name, code, stock, mrp, ptr, discount, packing, scheme, free }]); the
   // server writes it to SupplierStock. Live Stock mode then shows it in the grid.
-  legacyHarvestSupplierStock(storeName, supplierCode, rows, session) {
+  legacyHarvestSupplierStock(storeName, supplierCode, rows, complete, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/harvest`, {
-      method: 'POST', session, body: JSON.stringify({ rows })
+      method: 'POST', session, body: JSON.stringify({ rows, complete: complete !== false })
     });
   },
 

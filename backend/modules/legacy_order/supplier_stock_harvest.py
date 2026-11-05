@@ -58,16 +58,9 @@ def _int(value):
     return int(n) if n is not None else None
 
 
-def replace_supplier_stock(conn, store, supplier_code, rows):
-    """Replace this supplier+store's SupplierStock with the harvested snapshot.
-    Returns the number of rows written."""
-    cur = conn.cursor()
-    cur.execute(
-        "DELETE FROM dbo.SupplierStock WHERE suppliercode = ? AND storename = ?",
-        supplier_code, store,
-    )
+def _prepare(store, supplier_code, rows):
+    """Clean + shape the posted rows into SupplierStock tuples. Skips blanks."""
     today = _dt.date.today()
-    placeholders = ", ".join("?" for _ in _STOCK_COLS)
     prepared = []
     for r in rows:
         name = " ".join(str(r.get("name") or "").split())
@@ -87,24 +80,48 @@ def replace_supplier_stock(conn, store, supplier_code, rows):
             _int(r.get("free")) or 0,
             today,
         ))
-    if prepared:
-        cur.executemany(
-            f"INSERT INTO dbo.SupplierStock ({', '.join(_STOCK_COLS)}) "
-            f"VALUES ({placeholders})",
-            prepared,
-        )
-    return len(prepared)
+    return prepared
 
 
-def harvest(store_name, supplier_code, rows, actor=None):
-    """Store the harvested catalog in SupplierStock. actor is accepted for a
-    uniform signature; SupplierStock has no audit columns. Returns how many rows
-    were stored and when."""
+def harvest(store_name, supplier_code, rows, complete=True, actor=None):
+    """Replace this supplier+store's SupplierStock with the harvested snapshot,
+    ALL-OR-NOTHING: the DELETE + INSERT run in one transaction, so any failure
+    rolls back and the OLD stock is kept untouched (owner rule 2026-11-05 --
+    "if it breaks mid-way keep the old one and retry").
+
+    `complete` must be True: the client only posts after it has read the WHOLE
+    catalog, so a partial read never reaches here. A post with complete=False, or
+    an empty catalog, is refused WITHOUT touching the existing stock -- a broken
+    harvest must never wipe good stock. actor is accepted for a uniform
+    signature (SupplierStock has no audit columns).
+    """
     store, supplier = _store(store_name), _supplier(supplier_code)
+    if not complete:
+        raise ValueError("Harvest was not complete — keeping the existing stock.")
+    prepared = _prepare(store, supplier, rows)
+    if not prepared:
+        raise ValueError("No products were read — keeping the existing stock.")
+    placeholders = ", ".join("?" for _ in _STOCK_COLS)
     with database.get_central_connection() as conn:
-        stored = replace_supplier_stock(conn, store, supplier, rows)
-        conn.commit()
-    return {"stored": stored, "harvested_at": _dt.datetime.now().isoformat(timespec="seconds")}
+        # One transaction: pyodbc opens it on the first statement and does not
+        # autocommit, so the DELETE is only visible once the INSERT also
+        # succeeds and we commit. Any error -> rollback -> old stock intact.
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM dbo.SupplierStock WHERE suppliercode = ? AND storename = ?",
+                supplier, store,
+            )
+            cur.executemany(
+                f"INSERT INTO dbo.SupplierStock ({', '.join(_STOCK_COLS)}) "
+                f"VALUES ({placeholders})",
+                prepared,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return {"stored": len(prepared), "harvested_at": _dt.datetime.now().isoformat(timespec="seconds")}
 
 
 def last_harvest(store_name, supplier_code):
