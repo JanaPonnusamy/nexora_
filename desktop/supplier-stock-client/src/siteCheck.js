@@ -310,6 +310,18 @@ export async function roAdd(n, qty, slow) {
   button.click();
   await new Promise((r) => { setTimeout(r, 900); });
   const packing = document.getElementById('packing');
+  // Some products sell only in box multiples: the site then rejects the add
+  // with "The order quantity should be a multiple of N" and leaves the form
+  // filled. Retry once with qty rounded UP to that multiple.
+  const multiple = Number((String(document.body.innerText || '').match(/quantity should be a multiple of\s*(\d+)/i) || [])[1] || 0);
+  if (box.value && multiple > 1 && Number(qty) % multiple !== 0 && !roAdd.retrying) {
+    const rounded = Math.ceil(Number(qty) / multiple) * multiple;
+    roAdd.retrying = true;
+    try {
+      const again = await roAdd(n, rounded, slow);
+      return { ...again, qty: rounded, note: `Site sells in multiples of ${multiple}: added ${rounded}` };
+    } finally { roAdd.retrying = false; }
+  }
   return { ok: true, cleared: !box.value && !(packing && packing.value) };
 }
 

@@ -118,7 +118,7 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep }) 
       const cartAfter = await web.exec(siteScript(site.cart)).catch(() => null);
       if (!siteInCart(cartAfter, best.row.name)) return done({ ...result, state: 'check', note: 'Add to cart pressed, but it is not in the site’s cart — check it' });
     } else if (added.cleared === false) return done({ ...result, state: 'check', note: 'Add to cart pressed — check the site’s cart' });
-    return done({ ...result, note: 'Added to the site’s cart' });
+    return done({ ...result, note: added.note || 'Added to the site’s cart' });
   }
 
   async function start() {
