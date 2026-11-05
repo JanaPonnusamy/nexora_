@@ -194,14 +194,14 @@ def test_pm_order_type_sets_compare(monkeypatch, order_type, compare):
     assert seen["compare_mode"] == compare and seen["confirmed_stale_order"] is True
 
 
-def test_first_order_of_day_compares_with_previous_day(monkeypatch):
+def test_first_order_of_day_is_not_compared_with_previous_day(monkeypatch):
     calls = []
     monkeypatch.setattr(service, "_update", lambda job_id, **f: None)
     monkeypatch.setattr(service.repository, "todays_previous_order_ids", lambda store: [])
     monkeypatch.setattr(service.repository, "previous_active_day_order_ids", lambda store: [11, 12])
     monkeypatch.setattr(service.repository, "compare_previous_order",
                         lambda store, oid: calls.append(oid) or {"affected_rows": 1})
-    assert service._compare_todays_previous("j", "NMC")["order_ids"] == [11, 12] and calls == [11, 12]
+    assert service._compare_todays_previous("j", "NMC")["order_ids"] == [] and calls == []
 
 
 def test_compare_mode_wins_and_previous_pending_uses_the_previous_order(monkeypatch):

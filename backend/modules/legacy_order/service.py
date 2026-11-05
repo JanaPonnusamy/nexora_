@@ -543,20 +543,15 @@ def _compare_todays_previous(job_id, store_name):
     """Compare the order just generated with EVERY earlier order the store
     generated TODAY (VB CompareOrderManagement rules, repository.
     compare_previous_order), oldest first, so a product decided in several of
-    them keeps the newest decision. The day's first order compares with the
-    previous active day's orders instead (their final, finalized state). A
-    failure is logged on the job but never fails it -- the order itself is
-    already generated. order_id in the result is the newest one compared."""
+    them keeps the newest decision. Never compares across days: the day's
+    first order is left as generated (owner ruling 2026-11-05). A failure is
+    logged on the job but never fails it -- the order itself is already
+    generated. order_id in the result is the newest one compared."""
     try:
         previous = repository.todays_previous_order_ids(store_name)
         label = "today's earlier order"
         if not previous:
-            # First order of the day: compare with the previous active day's
-            # (finalized) orders -- owner ruling 2026-11-05.
-            previous = repository.previous_active_day_order_ids(store_name)
-            label = "the previous day's order"
-        if not previous:
-            _update(job_id, message="Compare skipped: no earlier order today or on the previous day.")
+            _update(job_id, message="Compare skipped: no earlier order today.")
             return {"order_id": None, "order_ids": [], "affected_rows": 0}
         affected = 0
         for order_id in previous:
