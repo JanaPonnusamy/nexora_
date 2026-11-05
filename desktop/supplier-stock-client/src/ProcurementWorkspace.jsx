@@ -545,20 +545,10 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   // The Qty Check "Abnormal sales" list: 5x-rule products only (3x warnings
   // show their bills when the row is reviewed).
   const abnormalKeys = useMemo(() => new Set(abnormal.items.filter((i) => i.level === 'abnormal').map((i) => pwKey(i.product_code))), [abnormal.items]);
-  const abnormalOpenedFor = useRef('');
-  const abnormalPickedFor = useRef('');
-  // A new store starts on Qty Check; the effect below then opens Abnormal
-  // if that store has abnormal sales and the operator hasn't picked a tab.
+  // A new store starts on Qty Check. Abnormal opens only when the operator
+  // clicks its tab (the tab count still shows how many are waiting).
   useEffect(() => { setProcessKey((k) => (k === 'abnormal' ? 'qty' : k)); }, [store]);
-  useEffect(() => {
-    if (!store || abnormal.loading || abnormalOpenedFor.current === store) return;
-    if (abnormal.items.length || abnormal.error) abnormalOpenedFor.current = store;
-    if (abnormal.abnormalCount > 0 && abnormalPickedFor.current !== store) setProcessKey((k) => (k === 'qty' ? 'abnormal' : k));
-  }, [store, abnormal.loading, abnormal.items.length, abnormal.abnormalCount, abnormal.error]);
-  function pickProcess(key) {
-    abnormalPickedFor.current = store;
-    setProcessKey(key);
-  }
+  const pickProcess = setProcessKey;
   const abnormalView = Boolean(process.abnormal);
 
   // ---- filtering ----
