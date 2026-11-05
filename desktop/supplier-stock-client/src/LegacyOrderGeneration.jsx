@@ -428,7 +428,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
       if (!alive.current) return;
       const storeList = asArray(legacyRows);
       setTenants(asArray(tenantRows));
-      setTenantOf(Object.fromEntries(asArray(platformStores).map((p) => [codeKey(p.store_code), String(p.tenant_id || '')])));
+      setTenantOf(Object.fromEntries(asArray(platformStores).map((p) => [codeKey(p.store_code), String(p.tenant_id || '').toUpperCase()])));
       setStores(storeList);
       setDefaults(dflt);
       const names = storeList.map((st) => st.store_name);
@@ -531,13 +531,14 @@ export default function LegacyOrderGeneration({ session, hidden }) {
   const groups = useMemo(() => {
     const byTenant = new Map();
     stores.forEach((st) => {
-      const tid = tenantOf[codeKey(st.store_name)] || UNMAPPED;
+      // OrderNMC.Stores.tenant_id first: a store code can exist under two tenants (.32 SMA).
+      const tid = (st.tenant_id && String(st.tenant_id).toUpperCase()) || tenantOf[codeKey(st.store_name)] || UNMAPPED;
       if (!byTenant.has(tid)) byTenant.set(tid, []);
       byTenant.get(tid).push(st);
     });
     const nameOf = (tid) => (tid === UNMAPPED
       ? 'Not in platform'
-      : String(tenants.find((t) => String(t.tenant_id) === tid)?.tenant_name || 'Unknown tenant').trim());
+      : String(tenants.find((t) => String(t.tenant_id).toUpperCase() === tid)?.tenant_name || 'Unknown tenant').trim());
     return [...byTenant.entries()]
       .map(([tid, list]) => ({ tid, name: nameOf(tid), stores: list }))
       .sort((a, b) => (a.tid === UNMAPPED) - (b.tid === UNMAPPED) || a.name.localeCompare(b.name));

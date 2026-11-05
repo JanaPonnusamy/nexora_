@@ -629,6 +629,20 @@ export const api = {
     return request('/api/stores', { session });
   },
 
+  // ----- Sync Live (super admin): same data as the HO web Sync Live page -----
+  syncControlCenter(session) {
+    return request('/api/sync/control-center', { session });
+  },
+  syncLive(session) {
+    return request('/api/sync/live', { session });
+  },
+  syncHistory(session) {
+    return request('/api/sync/history', { session });
+  },
+  createSyncTask(body, session) {
+    return request('/api/sync/tasks/create', { method: 'POST', body: JSON.stringify(body), session });
+  },
+
   legacyDefaults(session) {
     return request('/api/legacy-order/defaults', { session });
   },
