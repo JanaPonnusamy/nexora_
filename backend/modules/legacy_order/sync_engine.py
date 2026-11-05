@@ -355,6 +355,26 @@ def _ensure_supplier_isactive_column(dest_cur, dest_conn):
         dest_conn.commit()
 
 
+def _ensure_supplier_portal_columns(dest_cur, dest_conn):
+    """OrderSuppliers predates the per-supplier web-order portal columns; add
+    them once. A supplier's own ordering site + login lives on its own row
+    (owner 2026-11-05: store-level, each supplier a different login/site -- no
+    shared portal table). PortalPasswordEnc is Fernet-encrypted, never plain.
+    The mirror carries these to the remote OrderNMC DBs (missing columns are
+    added on the store PC automatically)."""
+    for name, decl in (("PortalUrl", "NVARCHAR(1000) NULL"),
+                       ("PortalUserName", "NVARCHAR(200) NULL"),
+                       ("PortalPasswordEnc", "VARBINARY(MAX) NULL"),
+                       ("PortalAutoSubmit", "BIT NULL")):
+        exists = dest_cur.execute(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_NAME = 'OrderSuppliers' AND COLUMN_NAME = ?", name,
+        ).fetchone()[0]
+        if not exists:
+            dest_cur.execute(f"ALTER TABLE OrderSuppliers ADD {name} {decl}")
+    dest_conn.commit()
+
+
 def _stamp_unified_supplier_code(dest_cur, dest_conn, store_name):
     """Backfill OrderSuppliers.UnifiedSupplierCode = suppliercode for an
     AGENT-SYNCED store (e.g. NMV) wherever it is still NULL/blank.
@@ -417,6 +437,7 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name,
             _ensure_ho_supplier_code_column(dest_cur, dest_conn)
         if dest_table.lower() == "ordersuppliers":
             _ensure_supplier_isactive_column(dest_cur, dest_conn)
+            _ensure_supplier_portal_columns(dest_cur, dest_conn)
 
         # STEP 1 -- watermark
         param = _watermark(dest_cur, table_name, dest_table, store_name)
