@@ -344,6 +344,17 @@ if exist "%BACKUP%" rmdir /s /q "%BACKUP%"
 mkdir "%BACKUP%"
 robocopy "%INSTALL%" "%BACKUP%" /E /XD logs uploads backups config >nul
 
+REM Delete the OLD code before extracting. A plain Expand-Archive -Force only
+REM overwrites same-named files; it leaves "stale Extras" (files in the old
+REM PyInstaller onedir that are gone in the new one) behind, and those crash the
+REM new frozen bundle so the service won't start -> rollback. Remove _internal,
+REM the exe, frontend and the version stamp first; config/logs/uploads/backups
+REM are untouched (never in the bundle). See ho-backend-remote-update runbook.
+if exist "%INSTALL%\_internal" rmdir /s /q "%INSTALL%\_internal"
+if exist "%INSTALL%\HO_Backend.exe" del /f /q "%INSTALL%\HO_Backend.exe"
+if exist "%INSTALL%\frontend" rmdir /s /q "%INSTALL%\frontend"
+if exist "%INSTALL%\HO_BACKEND_VERSION.txt" del /f /q "%INSTALL%\HO_BACKEND_VERSION.txt"
+
 REM Apply the new bundle over the install (config/logs/etc. untouched).
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force -LiteralPath '%ZIP%' -DestinationPath '%INSTALL%'"
 
@@ -359,9 +370,13 @@ for /l %%i in (1,1,45) do (
 )
 if "!OK!"=="1" goto done
 
-REM Rollback: restore the backup and restart.
+REM Rollback: purge the half-applied new code, then restore the backup. Same
+REM stale-Extras hazard in reverse, so delete code dirs before copying back.
 sc stop "%SVC%" >nul 2>&1
 timeout /t 5 /nobreak >nul
+if exist "%INSTALL%\_internal" rmdir /s /q "%INSTALL%\_internal"
+if exist "%INSTALL%\HO_Backend.exe" del /f /q "%INSTALL%\HO_Backend.exe"
+if exist "%INSTALL%\frontend" rmdir /s /q "%INSTALL%\frontend"
 robocopy "%BACKUP%" "%INSTALL%" /E >nul
 sc start "%SVC%" >nul 2>&1
 
