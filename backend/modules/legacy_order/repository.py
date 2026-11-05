@@ -612,7 +612,7 @@ CHECKPOINT_DAYS = 30
 def normalize_checkpoint(last_bill, last_grn):
     """(bill, grn) as entered -> (str or None, int or None); ValueError when
     malformed. The bill is the printed number (C01042645) or just its series
-    number (42645); the GRN is a number."""
+    number (42645); the GRN is the supplier GRN (IV series) number."""
     bill = str(last_bill or "").strip().upper() or None
     grn = str(last_grn if last_grn is not None else "").strip() or None
     if bill and len(bill) > 50:
@@ -666,14 +666,17 @@ def check_order_checkpoint(store_name, last_bill=None, last_grn=None):
                     + (f" (latest synced bill: {bill_info['latest']}, {_fmt_at(latest.BillAt)})"
                        if latest else " (no bill synced in the last 30 days)"))
         if last_grn is not None:
+            # Supplier GRNs only: TI transfers / PR returns keep their own
+            # counters, so their numbers could falsely match.
             row = cur.execute(
                 "SELECT TOP 1 Grnnumber, grndate, InvoiceSeries FROM PurchaseTrans "
-                "WHERE StoreName = ? AND Grnnumber = ? AND grndate >= ? ORDER BY grndate DESC",
+                "WHERE StoreName = ? AND Grnnumber = ? AND InvoiceSeries = 'IV' AND grndate >= ? "
+                "ORDER BY grndate DESC",
                 store_name, last_grn, since,
             ).fetchone()
             latest = cur.execute(
                 "SELECT TOP 1 Grnnumber, grndate FROM PurchaseTrans "
-                "WHERE StoreName = ? AND grndate >= ? ORDER BY grndate DESC, Grnnumber DESC",
+                "WHERE StoreName = ? AND InvoiceSeries = 'IV' AND grndate >= ? ORDER BY ID DESC",
                 store_name, since,
             ).fetchone()
             grn_info = {

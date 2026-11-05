@@ -20,6 +20,10 @@ export interface ControlCenterStore {
   last_sale_bill_at: string | null
   last_sale_bill_minutes_ago: number | null
   sale_bill_stale: boolean
+  // Latest synced sale bill number (time = last_sale_bill_at) and supplier GRN.
+  last_bill_no?: string | null
+  last_grn_no?: number | null
+  last_grn_at?: string | null
 }
 
 export interface ControlCenter {

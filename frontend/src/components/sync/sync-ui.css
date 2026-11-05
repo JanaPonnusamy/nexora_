@@ -245,7 +245,7 @@
 .sx-storegrid__head,
 .sx-storegrid__row {
   display: grid;
-  grid-template-columns: minmax(150px, 1.2fr) 110px minmax(180px, 1.4fr) minmax(150px, 1fr) 90px 120px 88px;
+  grid-template-columns: minmax(150px, 1.2fr) 100px minmax(150px, 1.2fr) minmax(130px, 1fr) 80px 110px minmax(130px, 1fr) minmax(100px, 0.8fr) 64px;
   gap: 0.45rem;
   align-items: center;
 }
@@ -313,6 +313,30 @@
 .sx-storegrid__action {
   display: flex;
   justify-content: flex-end;
+}
+
+.sx-storegrid__ref {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.32rem;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.sx-storegrid__refno {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--sx-text);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.sx-storegrid__reftime {
+  flex-shrink: 0;
+  color: var(--sx-muted);
+  font-size: 0.64rem;
 }
 
 .sx-storegrid__progress {
@@ -2138,7 +2162,7 @@
 
   .sx-storegrid__head,
   .sx-storegrid__row {
-    grid-template-columns: minmax(120px, 1.1fr) 110px minmax(160px, 1.2fr) minmax(130px, 1fr) 80px 110px 80px;
+    grid-template-columns: minmax(120px, 1.1fr) 96px minmax(130px, 1.1fr) minmax(110px, 1fr) 70px 100px minmax(120px, 1fr) minmax(90px, 0.8fr) 56px;
   }
 
   .sx-overview-grid {

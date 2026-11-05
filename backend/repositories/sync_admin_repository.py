@@ -142,9 +142,27 @@ class SyncAdminRepository:
             CASE WHEN reg.last_heartbeat >= DATEADD(SECOND, -90, GETDATE()) THEN 'Online' ELSE 'Offline' END AS agent_status,
             (SELECT MAX(h.completed_at) FROM dbo.sync_execution h WHERE h.store_id = s.store_id AND h.execution_status = 'COMPLETED') AS last_sync,
             (SELECT COUNT(*) FROM dbo.sync_execution e WHERE e.store_id = s.store_id AND e.execution_status = 'RUNNING') AS running,
-            (SELECT MAX(si.Billtime) FROM sync.SaleInformation si WHERE si.store_id = s.store_id) AS last_sale_bill
+            lb.BillAt AS last_sale_bill,
+            lb.BNumber AS last_bill_no,
+            lg.Grnnumber AS last_grn_no,
+            lg.grndate AS last_grn_at
         FROM dbo.stores s
         LEFT JOIN dbo.store_agent_registry reg ON reg.store_id = s.store_id AND reg.is_active = 1
+        -- Latest synced bill / supplier GRN (IV; not TI transfers or PR returns):
+        -- one seek each on the clustered keys (store_id, BillDate, BNumber) and
+        -- (store_id, ID); this grid polls every 2s.
+        OUTER APPLY (
+            SELECT TOP 1 si.BNumber, COALESCE(si.Billtime, si.BillDate) AS BillAt
+            FROM sync.SaleInformation si
+            WHERE si.store_id = s.store_id
+            ORDER BY si.BillDate DESC, si.Billtime DESC
+        ) lb
+        OUTER APPLY (
+            SELECT TOP 1 pt.Grnnumber, pt.grndate
+            FROM sync.PurchaseTrans pt
+            WHERE pt.store_id = s.store_id AND pt.InvoiceSeries = 'IV'
+            ORDER BY pt.ID DESC
+        ) lg
         WHERE s.is_active = 1
         ORDER BY s.store_code
         """)
@@ -174,6 +192,9 @@ class SyncAdminRepository:
                 # actually landed -- flag that silently-stale case even though
                 # the agent heartbeat itself looks healthy.
                 "sale_bill_stale": sale_bill_stale,
+                "last_bill_no": str(r[8]).strip() if r[8] is not None else None,
+                "last_grn_no": r[9],
+                "last_grn_at": _iso(r[10]),
             })
 
         conn.close()

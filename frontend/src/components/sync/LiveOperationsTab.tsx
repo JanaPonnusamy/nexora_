@@ -51,15 +51,35 @@ function storePriority(row: DashboardStore): number {
   return 3
 }
 
+// Running / Online / Offline only; how fresh the data is shows in the
+// Last Bill / Last GRN columns.
 function storeStatus(row: DashboardStore): string {
-  if (row.live?.status === 'PAUSED') return 'PAUSED'
-  if (row.live) return 'RUNNING'
-  if ((row.status ?? '').toUpperCase() === 'FAILED') return 'FAILED'
-  // Agent heartbeat and sync executions can look healthy while no fresh sale
-  // bill has actually landed in 30+ minutes -- surface that as a strong,
-  // distinct warning rather than folding it into a plain "Online".
-  if (row.sale_bill_stale) return 'STALE_SALES'
-  return row.agent_status || row.status || 'Offline'
+  if (row.live || row.is_syncing) return 'RUNNING'
+  return (row.agent_status ?? '').toLowerCase() === 'online' ? 'Online' : 'Offline'
+}
+
+// 09:29 for today, else 04/11 19:23; a date-only stamp (GRN) shows just 04/11.
+function stamp(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  const today = d.toDateString() === new Date().toDateString()
+  const dateOnly = d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0
+  const day = today ? 'Today' : d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })
+  if (dateOnly) return day
+  return today ? time : `${day} ${time}`
+}
+
+function RefCell({ no, at }: { no: string | number | null | undefined; at: string | null | undefined }) {
+  if (no == null || no === '') return <div className="sx-storegrid__ref sx-dim">-</div>
+  const when = stamp(at)
+  return (
+    <div className="sx-storegrid__ref" title={at ? `${no} · ${new Date(at).toLocaleString()}` : String(no)}>
+      <span className="sx-storegrid__refno">{no}</span>
+      {when && <span className="sx-storegrid__reftime">{when}</span>}
+    </div>
+  )
 }
 
 function activityTone(status: string | null): 'success' | 'danger' | 'indigo' | 'warning' | 'muted' {
@@ -69,12 +89,6 @@ function activityTone(status: string | null): 'success' | 'danger' | 'indigo' | 
   if (value === 'RUNNING') return 'indigo'
   if (value === 'PENDING' || value === 'QUEUED') return 'warning'
   return 'muted'
-}
-
-function staleBillTooltip(row: DashboardStore): string {
-  return row.last_sale_bill_minutes_ago == null
-    ? 'STRONG WARNING: no synced sale bill found for this store at all.'
-    : `STRONG WARNING: last sale bill synced ${row.last_sale_bill_minutes_ago} minutes ago (over 30-minute threshold).`
 }
 
 function activityAbbr(status: string | null): string {
@@ -249,6 +263,8 @@ export function LiveOperationsTab() {
                 <span>Progress</span>
                 <span>Speed</span>
                 <span>Last Sync</span>
+                <span>Last Bill</span>
+                <span>Last GRN</span>
                 <span>Action</span>
               </div>
               <div className="sx-storegrid__body">
@@ -262,7 +278,7 @@ export function LiveOperationsTab() {
                         <span className="sx-storegrid__name" title={store.store_name}>{store.store_name}</span>
                       </span>
                     </div>
-                    <div title={store.sale_bill_stale ? staleBillTooltip(store) : undefined}>
+                    <div>
                       <SyncStatusBadge status={storeStatus(store)} compact />
                     </div>
                     <div className="sx-storegrid__table">{store.live?.current_table ?? store.current_activity ?? '-'}</div>
@@ -278,6 +294,8 @@ export function LiveOperationsTab() {
                       {store.live?.speed_rows_sec ? `${store.live.speed_rows_sec.toLocaleString()}/s` : '-'}
                     </div>
                     <div className="sx-storegrid__sync">{shortDateTime(store.last_sync)}</div>
+                    <RefCell no={store.last_bill_no} at={store.last_sale_bill_at} />
+                    <RefCell no={store.last_grn_no} at={store.last_grn_at} />
                     <div className="sx-storegrid__action">
                       <SxButton
                         sm
