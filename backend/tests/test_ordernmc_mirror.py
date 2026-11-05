@@ -76,6 +76,19 @@ def test_store_scoped_sql_filters_before_keyset_and_ledger():
     assert sql_builder.store_filter(None, 2) == "" and sql_builder.store_filter("StoreName", 0) == ""
 
 
+def test_store_rename_sends_rows_under_the_remotes_store_name():
+    target = {"stores": "SMG, SMF ,TESTSMA=SMA"}
+    assert service._stores(target) == ["SMF", "SMG", "TESTSMA"]   # filter by this HO's names
+    assert service._store_renames(target) == {"TESTSMA": "SMA"}
+    table = {"store_column": "StoreName",
+             "columns": [{"name": "OrderId"}, {"name": "StoreName"}, {"name": "Qty"}]}
+    renames = service._store_renames(target)
+    assert service._rename_store(table, [1, "testsma ", 5], renames) == [1, "SMA", 5]
+    assert service._rename_store(table, [2, "SMG", 5], renames) == [2, "SMG", 5]
+    assert service._rename_store({"store_column": None, "columns": table["columns"]},
+                                 [3, "TESTSMA", 5], renames) == [3, "TESTSMA", 5]
+
+
 def test_store_scoped_target_skips_tables_without_storename():
     from modules.ordernmc_mirror import service
     target = {"stores": " TESTSMG,TESTSMF ,TESTSMG", "tables": None}

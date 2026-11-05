@@ -51,10 +51,37 @@ def _whitelist(target):
     return [p.strip() for p in raw.split(",") if p.strip()] or None
 
 
-def _stores(target):
-    """Store names a store-scoped target is limited to, or [] for everything."""
+def _store_entries(target):
+    """[(name here, name on the remote)] from ``stores``: "SMG,SMF,TESTSMA=SMA"
+    sends this HO's TESTSMA rows to the remote as store SMA (the remote OrderNMC
+    can name a store differently, e.g. when the code clashes with another tenant's)."""
     raw = (target.get("stores") or "").strip()
-    return sorted({p.strip() for p in raw.split(",") if p.strip()})
+    out = {}
+    for part in raw.split(","):
+        local, _, remote = part.partition("=")
+        if local.strip():
+            out[local.strip()] = remote.strip() or local.strip()
+    return sorted(out.items())
+
+
+def _stores(target):
+    """Store names (as on this HO) a store-scoped target is limited to, or [] for everything."""
+    return [local for local, _ in _store_entries(target)]
+
+
+def _store_renames(target):
+    """{NAME HERE (upper): remote name} for the stores the remote names differently."""
+    return {local.upper(): remote for local, remote in _store_entries(target) if remote != local}
+
+
+def _rename_store(table, values, renames):
+    """Rewrite the store column of one row (list in column order) to the remote's name."""
+    column = table.get("store_column")
+    if renames and column:
+        i = [c["name"] for c in table["columns"]].index(column)
+        if isinstance(values[i], str):
+            values[i] = renames.get(values[i].strip().upper(), values[i])
+    return values
 
 
 def _list_tables(conn, target):
@@ -97,7 +124,7 @@ def _decode_cursor(table, cursor):
     return [catalog.decode_value(types[k], v) for k, v in zip(table["key_columns"], cursor)]
 
 
-def _fetch_pk_page(conn, target_id, table_id, table, cursor, stores=()):
+def _fetch_pk_page(conn, target_id, table_id, table, cursor, stores=(), renames=None):
     """-> (changed_rows, items, next_cursor, is_last). Rows are lists in column
     order; items are (ph, rh) for the ledger."""
     cols = table["columns"]
@@ -119,7 +146,7 @@ def _fetch_pk_page(conn, target_id, table_id, table, cursor, stores=()):
     for r in cur.fetchall():
         changed = r[i_lrh] is None or bytes(r[i_lrh]) != bytes(r[i_rh])
         if changed:
-            rows.append([catalog.encode_value(v) for v in r[:n]])
+            rows.append([catalog.encode_value(v) for v in _rename_store(table, list(r[:n]), renames)])
             items.append((bytes(r[i_ph]), bytes(r[i_rh])))
         if r[i_rn] == PAGE_ROWS:
             is_last = False
@@ -127,7 +154,7 @@ def _fetch_pk_page(conn, target_id, table_id, table, cursor, stores=()):
     return rows, items, next_cursor, is_last
 
 
-def _fetch_heap_groups(conn, target_id, table_id, table, stores=()):
+def _fetch_heap_groups(conn, target_id, table_id, table, stores=(), renames=None):
     cols = table["columns"]
     by_name = {c["name"]: c for c in cols}
     key_cols = [by_name[k] for k in table["key_columns"]]
@@ -141,7 +168,7 @@ def _fetch_heap_groups(conn, target_id, table_id, table, stores=()):
     i_ph, i_grh = names.index("__ph"), names.index("__grh")
     rows, groups = [], {}
     for r in cur.fetchall():
-        rows.append([catalog.encode_value(v) for v in r[:n]])
+        rows.append([catalog.encode_value(v) for v in _rename_store(table, list(r[:n]), renames)])
         groups[bytes(r[i_ph])] = bytes(r[i_grh])
     return rows, list(groups.items()), None, len(groups) < HEAP_GROUPS
 
@@ -183,6 +210,7 @@ def pull(device_id):
         repo.purge_stale_batches(conn, target_id)
         tables = _list_tables(conn, target)
         stores = _stores(target)
+        renames = _store_renames(target)
         ids = repo.table_ids(conn, [t["name"] for t in tables])
         states = repo.load_states(conn, target_id)
         now, server_start = repo.server_clock(conn)
@@ -204,10 +232,10 @@ def pull(device_id):
             while True:
                 if table["mode"] == "upsert":
                     rows, items, next_cursor, is_last = _fetch_pk_page(conn, target_id, table_id, table,
-                                                                       cursor, stores)
+                                                                       cursor, stores, renames)
                 else:
                     rows, items, next_cursor, is_last = _fetch_heap_groups(conn, target_id, table_id, table,
-                                                                           stores)
+                                                                           stores, renames)
                 if rows:
                     batch_id = repo.save_batch(conn, target_id, table_id, next_cursor,
                                                pass_started, is_last, items)
