@@ -458,8 +458,7 @@ def _start_legacy_evening_order_on_startup():
         evening_order.start_background_loop()
     except Exception:
         import traceback
-        print("[EVENING_ORDER] failed to start:
-" + traceback.format_exc())
+        print("[EVENING_ORDER] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
 def _start_sync_health_monitor_on_startup():
