@@ -122,13 +122,35 @@ def platform_connection_string():
 def platform_store_id(store_code):
     """Resolve an agent-synced store's platform store_id (GUID) from
     NEXORA_PLATFORM.dbo.stores -- the ``sync.*`` tables are scoped by it.
-    Returns the GUID string, or None if the store is not provisioned there."""
+
+    The same store_code can exist under two tenants (.32: Success's SMA and the
+    SMS group's SMA); the central dbo.Stores row's tenant_id then decides, so one
+    tenant's order is never built from the other's data. Returns the GUID
+    string, or None if the store is not provisioned there or stays ambiguous."""
     with pyodbc.connect(platform_connection_string(), timeout=15) as conn:
-        row = conn.cursor().execute(
-            "SELECT CONVERT(varchar(40), store_id) FROM dbo.stores WHERE store_code = ?",
+        rows = conn.cursor().execute(
+            "SELECT CONVERT(varchar(40), store_id), CONVERT(varchar(40), tenant_id) "
+            "FROM dbo.stores WHERE store_code = ?",
             store_code,
+        ).fetchall()
+    if len(rows) > 1:
+        tenant_id = central_store_tenant(store_code)
+        rows = [r for r in rows if tenant_id and (r[1] or "").upper() == tenant_id.upper()]
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def central_store_tenant(store_name):
+    """tenant_id of the central OrderNMC dbo.Stores row, or None (no row, or an
+    OrderNMC without the tenant_id column)."""
+    with get_central_connection() as conn:
+        cur = conn.cursor()
+        if cur.execute("SELECT COL_LENGTH('dbo.Stores', 'tenant_id')").fetchone()[0] is None:
+            return None
+        row = cur.execute(
+            "SELECT CONVERT(varchar(40), tenant_id) FROM dbo.Stores WHERE StoreName = ?",
+            store_name,
         ).fetchone()
-    return row[0] if row else None
+    return row[0] if row and row[0] else None
 
 
 def platform_tenant_id(store_id):

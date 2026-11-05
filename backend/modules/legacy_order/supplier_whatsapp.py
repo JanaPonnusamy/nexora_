@@ -261,11 +261,14 @@ def recent_bills(store_name, supplier_code, days):
 def organization_name(store_name):
     """Tenant name for the export header (platform dbo.tenants), '' if unknown."""
     try:
+        store_id = database.platform_store_id(store_name)
+        if not store_id:
+            return ""
         with pyodbc.connect(database.platform_connection_string(), timeout=15) as conn:
             row = conn.cursor().execute(
-                "SELECT TOP 1 t.tenant_name FROM dbo.stores s JOIN dbo.tenants t ON t.tenant_id = s.tenant_id "
-                "WHERE s.store_code = ?",
-                store_name,
+                "SELECT t.tenant_name FROM dbo.stores s JOIN dbo.tenants t ON t.tenant_id = s.tenant_id "
+                "WHERE s.store_id = ?",
+                store_id,
             ).fetchone()
         return (row[0] or "").strip() if row else ""
     except Exception:
