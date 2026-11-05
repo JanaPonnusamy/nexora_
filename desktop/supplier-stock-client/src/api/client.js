@@ -1101,24 +1101,29 @@ export const api = {
     });
   },
 
-  // Supplier stock harvest + match: post the supplier's portal catalog (rows:
+  // HARVEST (write-only): post the supplier's portal catalog (rows:
   // [{ name, code, stock, mrp, ptr, discount, packing, scheme, free }]); the
-  // server stores it in SupplierStock and returns the match review by tier
-  // (matched / suggested / needs_mapping).
+  // server writes it to SupplierStock. Live Stock mode then shows it in the grid.
   legacyHarvestSupplierStock(storeName, supplierCode, rows, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/harvest`, {
       method: 'POST', session, body: JSON.stringify({ rows })
     });
   },
 
-  // The match review from the already-stored stock (no re-harvest).
-  legacySupplierHarvestReview(storeName, supplierCode, session) {
+  // When this supplier's stock was last harvested, and how many rows (freshness).
+  legacySupplierHarvestStatus(storeName, supplierCode, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/harvest`, { session });
   },
 
-  // Confirm a suggestion / map an unmapped supplier product (blank product_code unmaps).
+  // MAP REVIEW (separate): match the harvested stock to the store's products,
+  // by tier (matched / suggested / needs_mapping) -- the "Map supplier products" panel.
+  legacySupplierMatchReview(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/match-review`, { session });
+  },
+
+  // Save a chosen mapping to SupplierProductMatch (blank product_code unmaps).
   legacyConfirmSupplierMatch(storeName, supplierCode, payload, session) {
-    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/harvest/confirm`, {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/match-review/confirm`, {
       method: 'POST', session, body: JSON.stringify(payload)
     });
   },

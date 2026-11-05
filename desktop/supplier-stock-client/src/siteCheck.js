@@ -381,19 +381,6 @@ export function harvestRow(row) {
   return { name: row.name, stock: row.stock, ptr: rate ? Number(String(rate).replace(/,/g, '')) : null, mrp: mrp ? Number(String(mrp).replace(/,/g, '')) : null, packing: pack || '' };
 }
 
-// ---- instant bulk compare (stock already harvested) ----
-// Given the order's products and the supplier's matched stock (product_code ->
-// { stock, supplier_name }), decide each order row WITHOUT touching the site.
-export function bulkDecide(orderRow, matchByCode) {
-  const m = matchByCode[String(orderRow.product_code)];
-  if (!m) return { state: 'none', note: 'Not in this supplier’s catalog' };
-  const stock = Number(m.stock) || 0;
-  const qty = Number(orderRow.order_qty) || 0;
-  if (stock <= 0) return { state: 'none', note: 'Out of stock' };
-  if (qty && stock < qty) return { state: 'partial', note: `Only ${stock} in stock`, supplierName: m.supplier_name };
-  return { state: 'available', note: '', supplierName: m.supplier_name };
-}
-
 // ---- stock-checked auto-assign (read-only availability) ----
 // One product checked on whatever site is open, WITHOUT picking or adding
 // (read-only): search brand+strength then brand, match, decide. `web` is the

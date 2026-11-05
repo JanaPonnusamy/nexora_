@@ -8,7 +8,7 @@ import { StoreTrendsPanel } from './storeTrends.jsx';
 import { SupplierCompareBadge, SupplierCompareCard, useSupplierCompare } from './supplierCompare.jsx';
 import WebPanel from './webPanel.jsx';
 import { SiteCheckBar, SiteMark, useSiteCheck } from './siteCheckBar.jsx';
-import { HarvestReview, useHarvestBulk } from './harvestReview.jsx';
+import { MatchReview, useHarvest, useMatchReview } from './harvestReview.jsx';
 import { OwBulkAssign } from './bulkAssign.jsx';
 import { roEnter, siteAvailable, siteCheckOne, siteKind, siteScript } from './siteCheck.js';
 import { WhatsAppSendDialog, storeWhatsAppAvailable } from './storeWhatsApp.jsx';
@@ -769,9 +769,11 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
     },
   });
   useEffect(() => { if (siteMode) setWebOn(true); }, [siteMode]);
-  // Fast bulk: harvest the supplier's whole catalog once, match it on the
-  // server, then compare the order locally in seconds (harvestReview.jsx).
-  const harvestBulk = useHarvestBulk({ webRef, store, supplierCode: supplier?.supplier_code || '', session });
+  // Harvest the supplier's catalog -> SupplierStock (then Live Stock shows it).
+  const harvestHook = useHarvest({ webRef, store, supplierCode: supplier?.supplier_code || '', session });
+  // The separate "Map supplier products" review (fuzzy-confirm / manual map).
+  const matchReview = useMatchReview({ store, supplierCode: supplier?.supplier_code || '', session });
+  const [showMapReview, setShowMapReview] = useState(false);
   const [siteAssigning, setSiteAssigning] = useState(false);
   // Confirm: assign every In-cart / Available product to the supplier, one by one (the
   // same assign as Enter); stops at the first failure.
@@ -1788,26 +1790,28 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       {siteMode && supplier && (
         <>
           <SiteCheckBar site={site} total={visible.length} siteName={sitePortal?.url ? pwCleanName(supplier.supplier_name) : ''} supplierName={pwCleanName(supplier.supplier_name)}
-            busy={siteAssigning || finalized || harvestBulk.busy} onConfirm={confirmSiteOrder}
+            busy={siteAssigning || finalized || harvestHook.busy} onConfirm={confirmSiteOrder}
             extra={(
-              <button type="button" className="ow-btn ow-btn-sm" disabled={harvestBulk.busy || !sitePortal?.url}
-                title="Read the supplier's whole stock once, then compare the order in seconds"
-                onClick={harvestBulk.harvest}>
-                {harvestBulk.busy && harvestBulk.phase === 'harvesting' ? 'Reading catalog…'
-                  : harvestBulk.busy && harvestBulk.phase === 'matching' ? 'Matching…'
-                    : '⚡ Bulk (harvest stock)'}
-              </button>
+              <>
+                <button type="button" className="ow-btn ow-btn-sm" disabled={harvestHook.busy || !sitePortal?.url}
+                  title="Read the supplier's whole stock once into Live Stock"
+                  onClick={harvestHook.harvest}>
+                  {harvestHook.busy ? 'Reading stock…' : '↻ Harvest stock'}
+                </button>
+                <button type="button" className="ow-btn ow-btn-sm"
+                  title="Map this supplier's products to the store's products"
+                  onClick={() => { setShowMapReview((v) => !v); if (!matchReview.review) matchReview.load(); }}>
+                  Map products…
+                </button>
+              </>
             )} />
-          {harvestBulk.error && <div className="ow-banner" role="alert">{harvestBulk.error}</div>}
-          {harvestBulk.review && (
-            <HarvestReview review={harvestBulk.review} store={store}
-              suppliers={visible.map((r) => ({ product_code: r.product_code || r.key, product_name: pwCleanName(r.name) }))}
-              busy={harvestBulk.busy} progress={harvestBulk.progress}
-              onConfirm={harvestBulk.confirm}
-              onBulkCart={() => harvestBulk.addToCart(visible.map((r) => ({
-                product_code: r.product_code || r.key, product_name: pwCleanName(r.name),
-                order_qty: valueOf(r), status: r.status,
-              })))} />
+          {harvestHook.progress && <div className="ow-banner" role="status">{harvestHook.progress}</div>}
+          {harvestHook.error && <div className="ow-banner" role="alert">{harvestHook.error}</div>}
+          {matchReview.error && <div className="ow-banner" role="alert">{matchReview.error}</div>}
+          {showMapReview && (
+            <MatchReview review={matchReview.review} busy={matchReview.busy}
+              storeProducts={visible.map((r) => ({ product_code: r.product_code || r.key, product_name: pwCleanName(r.name) }))}
+              onConfirm={matchReview.confirm} />
           )}
         </>
       )}
