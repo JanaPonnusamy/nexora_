@@ -142,3 +142,30 @@ def test_agent_order_generated_and_pushed_when_checkpoint_found(monkeypatch):
     assert ran == ["SMF"] and pushed == [("SMF", "j1")]
     final = [u for u in updates if u.get("status") == "completed"][-1]
     assert final["result"]["checkpoint"]["ok"] is True and final["result"]["rows"] == 525
+
+
+@pytest.mark.parametrize("per_run, expected", [(None, True), (False, False), (True, True)])
+def test_per_run_compare_overrides_the_store_setting(monkeypatch, per_run, expected):
+    """Store setting ON; a run can still say "no compare" (e.g. a warehouse order)."""
+    from modules.legacy_order import rulebook_order
+    started = []
+    monkeypatch.setattr(service, "_resolve_store", lambda name: {"store_name": name})
+    monkeypatch.setattr(service, "is_warehouse_store", lambda name: False)
+    monkeypatch.setattr(service, "is_agent_synced_store", lambda name, store: True)
+    monkeypatch.setattr(service, "default_recency_days", lambda name: 15)
+    monkeypatch.setattr(service.database, "platform_store_id", lambda name: "sid")
+    monkeypatch.setattr(rulebook_order, "get_store_engine", lambda name: "LEGACY")
+    monkeypatch.setattr(rulebook_order, "get_compare_today", lambda name: True)
+    monkeypatch.setattr(service, "_running_job_kind", lambda name: None)
+    monkeypatch.setattr(service, "_new_job", lambda kind, name, steps: "job-1")
+
+    class _Thread:
+        def __init__(self, target, args, daemon):
+            started.append(args)
+
+        def start(self):
+            pass
+    monkeypatch.setattr(service.threading, "Thread", _Thread)
+    service.start_order_process("SMF", compare_today_previous=per_run, last_bill="C1", last_grn="5")
+    *_, compare_today, checkpoint = started[0]
+    assert compare_today is expected and checkpoint == ("C1", 5)

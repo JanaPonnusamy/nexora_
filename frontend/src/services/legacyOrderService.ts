@@ -93,6 +93,8 @@ export const legacyOrderService = {
     // The store's last sale bill / last GRN off its POS: the server syncs,
     // checks both reached OrderNMC, and only then generates the order.
     checkpoint?: { lastBill: string; lastGrn: string },
+    // Compare with today's earlier order for this run; undefined = the store's setting.
+    compareToday?: boolean,
   ) =>
     api.post<{ job_id: string }>(`${BASE}/order-process`, {
       store_name: storeName,
@@ -106,6 +108,7 @@ export const legacyOrderService = {
       confirmed_stale_order: confirmStaleOrder,
       last_bill: checkpoint?.lastBill.trim() || null,
       last_grn: checkpoint?.lastGrn.trim() || null,
+      compare_today_previous: compareToday ?? null,
     }),
 
   restorableOrderPreview: (storeName: string, orderId: number) =>

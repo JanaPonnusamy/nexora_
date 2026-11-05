@@ -78,6 +78,8 @@ export default function LegacyOrderPage() {
   const [pushNote, setPushNote] = useState<Record<string, string>>({})
   // Last bill / last GRN typed off each store's POS before Process.
   const [checkpoints, setCheckpoints] = useState<Record<string, { lastBill: string; lastGrn: string }>>({})
+  // This run's Compare choice per store; unset = the store's saved setting.
+  const [runCompare, setRunCompare] = useState<Record<string, boolean | undefined>>({})
   const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
   const [dbBusy, setDbBusy] = useState<'' | 'check' | 'recover' | 'repair'>('')
   const [recovery, setRecovery] = useState<LegacyDbRecovery | null>(null)
@@ -192,6 +194,7 @@ export default function LegacyOrderPage() {
     // The next order needs fresh numbers; a miss keeps them to correct.
     if (job.kind === 'order' && job.status === 'completed') {
       setCheckpoints((current) => (current[job.store_name] ? { ...current, [job.store_name]: { lastBill: '', lastGrn: '' } } : current))
+      setRunCompare((current) => (current[job.store_name] === undefined ? current : { ...current, [job.store_name]: undefined }))
     }
     if (job.status !== 'running') {
       const poller = pollers.current.get(job.job_id)
@@ -282,7 +285,7 @@ export default function LegacyOrderPage() {
     setError(null)
     legacyOrderService.startOrderProcess(
       storeName, config.minDays, config.maxDays, config.mode, confirm, confirmStaleOrder, config.recencyDays,
-      checkpoints[storeName],
+      checkpoints[storeName], runCompare[storeName],
     )
       .then(({ job_id }) => watch(job_id))
       .catch((e: Error) => {
@@ -629,6 +632,12 @@ export default function LegacyOrderPage() {
                       <label><span>Last GRN</span><input aria-label={`${store.store_name} last GRN`} placeholder="2742" inputMode="numeric" value={checkpoint.lastGrn}
                         onChange={(e) => patchCheckpoint(store.store_name, { lastGrn: e.target.value.replace(/\D/g, '') })} /></label>
                     </div>
+                    <label className="lo-op-compare" title="Compare this run with the store's earlier order from today. Starts from the store's Compare setting; untick for a run that shouldn't carry the earlier order's decisions, e.g. a warehouse order.">
+                      <input type="checkbox" aria-label={`${store.store_name} compare this run with today's earlier order`}
+                        checked={runCompare[store.store_name] ?? Boolean(compareToday[store.store_name])}
+                        onChange={(e) => { const on = e.target.checked; setRunCompare((current) => ({ ...current, [store.store_name]: on })) }} />
+                      <span>Compare with today's earlier order</span>
+                    </label>
                     <button
                       type="button"
                       className={`lo-btn lo-btn-primary lo-op-process${failed ? ' lo-op-retry' : ''}`}

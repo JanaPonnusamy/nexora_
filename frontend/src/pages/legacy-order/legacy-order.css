@@ -767,6 +767,8 @@
 .lo-op-checkpoint { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
 .lo-op-checkpoint label { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 0.2rem; font-size: 0.7rem; }
 .lo-op-checkpoint input { width: 100%; min-width: 0; padding: 0.25rem 0.4rem; font-size: 0.82rem; }
+.lo-op-compare { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; font-size: 0.75rem; }
+.lo-op-compare input { width: auto; }
 
 .lo-op-progress { margin-top: 0.5rem; }
 

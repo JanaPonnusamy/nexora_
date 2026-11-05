@@ -479,12 +479,15 @@ export default function LegacyOrderGeneration({ session, hidden }) {
         confirmed_stale_order: Boolean(acknowledge),
         last_bill: String(c.lastBill || '').trim() || null,
         last_grn: String(c.lastGrn || '').trim() || null,
+        // Untouched = the store's saved Compare setting; ticked/unticked = this run only.
+        compare_today_previous: c.compare === undefined ? null : Boolean(c.compare),
       }, sessionRef.current);
       patchRun(name, { state: 'running' });
       const job = await watch(jobId, name);
-      // Next run needs today's fresh numbers; a miss keeps them to correct.
+      // Next run needs today's fresh numbers and starts from the saved Compare
+      // setting again; a miss keeps them to correct.
       if (job?.status === 'completed' && alive.current) {
-        setCfg((cur) => ({ ...cur, [name]: { ...cur[name], lastBill: '', lastGrn: '' } }));
+        setCfg((cur) => ({ ...cur, [name]: { ...cur[name], lastBill: '', lastGrn: '', compare: undefined } }));
       }
       return job;
     } catch (err) {
@@ -566,6 +569,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
   });
   const patchCfg = (name, patch) => setCfg((cur) => ({ ...cur, [name]: { ...cur[name], ...patch } }));
 
+  const compareFor = (name) => cfg[name]?.compare ?? Boolean(compareToday[name]);
   const missingCheckpoint = (name) => !String(cfg[name]?.lastBill || '').trim() || !String(cfg[name]?.lastGrn || '').trim();
 
   const generate = (names) => {
@@ -575,7 +579,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
       setError(`Enter the last bill and last GRN (from the store's POS) for: ${missing.join(', ')}`);
       return;
     }
-    const list = names.map((n) => `${n}  (bill ${cfg[n].lastBill.trim()}, GRN ${cfg[n].lastGrn.trim()})`).join('\n');
+    const list = names.map((n) => `${n}  (bill ${cfg[n].lastBill.trim()}, GRN ${cfg[n].lastGrn.trim()}, ${compareFor(n) ? 'compare with today\'s earlier order' : 'no compare'})`).join('\n');
     // eslint-disable-next-line no-alert
     if (!window.confirm(`Generate a new order for ${names.length} store${names.length > 1 ? 's' : ''}?\n\n${list}\n\nEach store syncs first; the order is generated only if its last bill and last GRN are found after the sync.${ackWarnings ? '\nWarnings (stale order / pending assignment) are acknowledged for this batch.' : ''}`)) return;
     setError('');
@@ -658,6 +662,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
               <th className="trp-left">Current order</th>
               <th title="The store's last sale bill number, as on its POS (C01042645 or 42645)">Last bill</th>
               <th title="The store's last GRN number, as on its POS">Last GRN</th>
+              <th title="Compare this run with the store's earlier order from today. Starts from the store's Compare setting; untick for a run that shouldn't carry the earlier order's decisions, e.g. a warehouse order.">Compare</th>
               <th className="trp-left lgo-status-col">Status</th>
               <th aria-label="Action" />
             </tr>
@@ -672,7 +677,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                   <td className="lgo-check-col">
                     <input type="checkbox" aria-label={`Select every store in ${g.name}`} checked={allOn} disabled={!idle.length} onChange={(e) => toggle(idle, e.target.checked)} />
                   </td>
-                  <td colSpan={11} className="trp-left">
+                  <td colSpan={12} className="trp-left">
                     {g.name} <span className="lgo-muted">· {g.stores.length} store{g.stores.length > 1 ? 's' : ''}</span>
                   </td>
                 </tr>,
@@ -748,6 +753,16 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                           onChange={(e) => patchCfg(name, { lastGrn: e.target.value.replace(/\D/g, '') })}
                         />
                       </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`${name} compare this run with today's earlier order`}
+                          checked={compareFor(name)}
+                          disabled={busy}
+                          title={c.compare === undefined ? 'Store setting' : 'This run only'}
+                          onChange={(e) => patchCfg(name, { compare: e.target.checked })}
+                        />
+                      </td>
                       <td className="trp-left lgo-status-col"><StatusCell entry={entry} /></td>
                       <td onClick={(e) => e.stopPropagation()}>
                         {entry?.state === 'warning' ? (
@@ -762,7 +777,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
               ];
             })}
             {!loading && !visibleGroups.length && (
-              <tr><td colSpan={12} className="lgo-muted">No active OrderNMC stores.</td></tr>
+              <tr><td colSpan={13} className="lgo-muted">No active OrderNMC stores.</td></tr>
             )}
           </tbody>
         </table>
