@@ -479,15 +479,16 @@ export default function LegacyOrderGeneration({ session, hidden }) {
         confirmed_stale_order: Boolean(acknowledge),
         last_bill: String(c.lastBill || '').trim() || null,
         last_grn: String(c.lastGrn || '').trim() || null,
-        // Untouched = the store's saved Compare setting; ticked/unticked = this run only.
-        compare_today_previous: c.compare === undefined ? null : Boolean(c.compare),
+        // Regular = compare with today's earlier orders (the store's Compare
+        // setting); WH (warehouse order) = no compare.
+        compare_today_previous: c.orderType === 'WH' ? false : null,
       }, sessionRef.current);
       patchRun(name, { state: 'running' });
       const job = await watch(jobId, name);
-      // Next run needs today's fresh numbers and starts from the saved Compare
-      // setting again; a miss keeps them to correct.
+      // Next run needs today's fresh numbers and starts as Regular again; a
+      // miss keeps them to correct.
       if (job?.status === 'completed' && alive.current) {
-        setCfg((cur) => ({ ...cur, [name]: { ...cur[name], lastBill: '', lastGrn: '', compare: undefined } }));
+        setCfg((cur) => ({ ...cur, [name]: { ...cur[name], lastBill: '', lastGrn: '', orderType: '' } }));
       }
       return job;
     } catch (err) {
@@ -569,7 +570,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
   });
   const patchCfg = (name, patch) => setCfg((cur) => ({ ...cur, [name]: { ...cur[name], ...patch } }));
 
-  const compareFor = (name) => cfg[name]?.compare ?? Boolean(compareToday[name]);
+  const compareFor = (name) => cfg[name]?.orderType !== 'WH' && Boolean(compareToday[name]);
   const missingCheckpoint = (name) => !String(cfg[name]?.lastBill || '').trim() || !String(cfg[name]?.lastGrn || '').trim();
 
   const generate = (names) => {
@@ -579,7 +580,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
       setError(`Enter the last bill and last GRN (from the store's POS) for: ${missing.join(', ')}`);
       return;
     }
-    const list = names.map((n) => `${n}  (bill ${cfg[n].lastBill.trim()}, GRN ${cfg[n].lastGrn.trim()}, ${compareFor(n) ? 'compare with today\'s earlier order' : 'no compare'})`).join('\n');
+    const list = names.map((n) => `${n}  (bill ${cfg[n].lastBill.trim()}, GRN ${cfg[n].lastGrn.trim()}, ${cfg[n].orderType === 'WH' ? 'WH order, no compare' : `Regular${compareFor(n) ? ', compare with today\'s earlier orders' : ''}`})`).join('\n');
     // eslint-disable-next-line no-alert
     if (!window.confirm(`Generate a new order for ${names.length} store${names.length > 1 ? 's' : ''}?\n\n${list}\n\nEach store syncs first; the order is generated only if its last bill and last GRN are found after the sync.${ackWarnings ? '\nWarnings (stale order / pending assignment) are acknowledged for this batch.' : ''}`)) return;
     setError('');
@@ -662,7 +663,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
               <th className="trp-left">Current order</th>
               <th title="The store's last sale bill number, as on its POS (C01042645 or 42645)">Last bill</th>
               <th title="The store's last GRN number, as on its POS">Last GRN</th>
-              <th title="Compare this run with the store's earlier order from today. Starts from the store's Compare setting; untick for a run that shouldn't carry the earlier order's decisions, e.g. a warehouse order.">Compare</th>
+              <th title="Compare this run with the store's earlier order from today. Regular orders are compared with all of today's earlier orders (when the store's Compare setting is on); a WH (warehouse) order is not compared.">Order type</th>
               <th className="trp-left lgo-status-col">Status</th>
               <th aria-label="Action" />
             </tr>
@@ -754,14 +755,16 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                         />
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          aria-label={`${name} compare this run with today's earlier order`}
-                          checked={compareFor(name)}
+                        <select
+                          aria-label={`${name} order type`}
+                          value={c.orderType || 'REGULAR'}
                           disabled={busy}
-                          title={c.compare === undefined ? 'Store setting' : 'This run only'}
-                          onChange={(e) => patchCfg(name, { compare: e.target.checked })}
-                        />
+                          title={compareFor(name) ? "Compared with all of today's earlier orders" : 'Not compared'}
+                          onChange={(e) => patchCfg(name, { orderType: e.target.value === 'WH' ? 'WH' : '' })}
+                        >
+                          <option value="REGULAR">Regular</option>
+                          <option value="WH">WH</option>
+                        </select>
                       </td>
                       <td className="trp-left lgo-status-col"><StatusCell entry={entry} /></td>
                       <td onClick={(e) => e.stopPropagation()}>

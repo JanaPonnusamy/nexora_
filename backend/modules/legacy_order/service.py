@@ -474,19 +474,24 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
 
 
 def _compare_todays_previous(job_id, store_name):
-    """Compare the order just generated with the store's earlier order from
-    TODAY (VB CompareOrderManagement rules, repository.compare_previous_order).
-    Never compares against an older day. A failure is logged on the job but
-    never fails it -- the order itself is already generated."""
+    """Compare the order just generated with EVERY earlier order the store
+    generated TODAY (VB CompareOrderManagement rules, repository.
+    compare_previous_order), oldest first, so a product decided in several of
+    them keeps the newest decision. Never compares against an older day. A
+    failure is logged on the job but never fails it -- the order itself is
+    already generated. order_id in the result is the newest one compared."""
     try:
-        previous = repository.todays_previous_order_id(store_name)
-        if previous is None:
+        previous = repository.todays_previous_order_ids(store_name)
+        if not previous:
             _update(job_id, message="Compare skipped: no earlier order today.")
-            return {"order_id": None, "affected_rows": 0}
-        compared = repository.compare_previous_order(store_name, previous)
-        _update(job_id, message=f"Compared with today's previous order {previous} "
-                                f"({compared['affected_rows']} row updates).")
-        return compared
+            return {"order_id": None, "order_ids": [], "affected_rows": 0}
+        affected = 0
+        for order_id in previous:
+            affected += repository.compare_previous_order(store_name, order_id)["affected_rows"]
+        _update(job_id, message=f"Compared with today's earlier order{'s' if len(previous) > 1 else ''} "
+                                f"{', '.join(map(str, previous))} ({affected} row updates).")
+        return {"store_name": store_name, "order_id": previous[-1], "order_ids": previous,
+                "affected_rows": affected}
     except Exception as exc:
         logger.exception("compare with today's previous order failed for %s", store_name)
         _update(job_id, message=f"Compare with today's previous order failed: {exc}")

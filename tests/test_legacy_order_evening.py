@@ -79,21 +79,28 @@ def test_run_stores_runs_one_at_a_time_with_compare_and_warnings_acknowledged(mo
 def test_compare_hook_skips_without_an_earlier_order_today(monkeypatch):
     messages = []
     monkeypatch.setattr(service, "_update", lambda job_id, **f: messages.append(f.get("message")))
-    monkeypatch.setattr(service.repository, "todays_previous_order_id", lambda store: None)
+    monkeypatch.setattr(service.repository, "todays_previous_order_ids", lambda store: [])
     monkeypatch.setattr(service.repository, "compare_previous_order",
                         lambda *a: pytest.fail("must not compare against another day"))
-    assert service._compare_todays_previous("j", "NMC") == {"order_id": None, "affected_rows": 0}
+    assert service._compare_todays_previous("j", "NMC") == {"order_id": None, "order_ids": [], "affected_rows": 0}
     assert "no earlier order today" in messages[-1]
 
 
 def test_compare_hook_compares_and_never_raises(monkeypatch):
     messages = []
     monkeypatch.setattr(service, "_update", lambda job_id, **f: messages.append(f.get("message")))
-    monkeypatch.setattr(service.repository, "todays_previous_order_id", lambda store: 2026110401)
-    monkeypatch.setattr(service.repository, "compare_previous_order",
-                        lambda store, order_id: {"store_name": store, "order_id": order_id, "affected_rows": 42})
-    assert service._compare_todays_previous("j", "NMC")["affected_rows"] == 42
-    assert "2026110401" in messages[-1]
+    calls = []
+    monkeypatch.setattr(service.repository, "todays_previous_order_ids", lambda store: [2026110401, 2026110402])
+
+    def compare(store, order_id):
+        calls.append(order_id)
+        return {"store_name": store, "order_id": order_id, "affected_rows": 21}
+    monkeypatch.setattr(service.repository, "compare_previous_order", compare)
+    result = service._compare_todays_previous("j", "NMC")
+    # Every earlier order today, oldest first (the newest decision wins).
+    assert calls == [2026110401, 2026110402]
+    assert result["affected_rows"] == 42 and result["order_id"] == 2026110402
+    assert "2026110401, 2026110402" in messages[-1]
 
     def boom(*a):
         raise RuntimeError("deadlock")

@@ -2288,20 +2288,22 @@ def previous_orders(store_name):
         ]
 
 
-def todays_previous_order_id(store_name):
-    """OrderId of the most recent EARLIER order generated today for this store
-    (its OrderManagementBackup copy), excluding the current order; None when
-    the current order is the first one today -- an older day's order is never
-    returned, so "Compare today's previous order" can't compare across days."""
+def todays_previous_order_ids(store_name):
+    """OrderIds of every EARLIER order generated today for this store (their
+    OrderManagementBackup copies), oldest first, excluding the current order;
+    [] when the current order is the first one today. An older day's order is
+    never returned, so "Compare today's previous order" can't compare across
+    days. Owner ruling 2026-11-05: compare with ALL of today's earlier orders
+    (a later one may be an uncompared warehouse order)."""
     sql = (
-        "SELECT TOP 1 b.OrderId FROM OrderManagementBackup b "
+        "SELECT b.OrderId FROM OrderManagementBackup b "
         "WHERE b.StoreName = ? AND CAST(b.WantedDate AS date) = CAST(GETDATE() AS date) "
         "AND b.OrderId <> ISNULL((SELECT MAX(OrderId) FROM OrderManagement WHERE StoreName = ?), -1) "
-        "ORDER BY b.WantedDate DESC, b.OrderId DESC"
+        "GROUP BY b.OrderId ORDER BY MAX(b.WantedDate), b.OrderId"
     )
     with database.get_central_connection() as conn:
-        row = conn.cursor().execute(sql, store_name, store_name).fetchone()
-    return int(row[0]) if row else None
+        rows = conn.cursor().execute(sql, store_name, store_name).fetchall()
+    return [int(r[0]) for r in rows]
 
 
 def compare_previous_order(store_name, order_id):

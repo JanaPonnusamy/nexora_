@@ -648,11 +648,15 @@ export default function LegacyOrderPage() {
                       <label><span>Last GRN</span><input aria-label={`${store.store_name} last GRN`} placeholder="2742" inputMode="numeric" value={checkpoint.lastGrn}
                         onChange={(e) => patchCheckpoint(store.store_name, { lastGrn: e.target.value.replace(/\D/g, '') })} /></label>
                     </div>
-                    <label className="lo-op-compare" title="Compare this run with the store's earlier order from today. Starts from the store's Compare setting; untick for a run that shouldn't carry the earlier order's decisions, e.g. a warehouse order.">
-                      <input type="checkbox" aria-label={`${store.store_name} compare this run with today's earlier order`}
-                        checked={runCompare[store.store_name] ?? Boolean(compareToday[store.store_name])}
-                        onChange={(e) => { const on = e.target.checked; setRunCompare((current) => ({ ...current, [store.store_name]: on })) }} />
-                      <span>Compare with today's earlier order</span>
+                    <label className="lo-op-compare" title="Regular orders are compared with all of today's earlier orders (when the store's Compare setting is on); a WH (warehouse) order is not compared.">
+                      <span>Order type</span>
+                      {/* runCompare false = WH (no compare); unset = Regular (store setting) */}
+                      <select aria-label={`${store.store_name} order type`}
+                        value={runCompare[store.store_name] === false ? 'WH' : 'REGULAR'}
+                        onChange={(e) => { const wh = e.target.value === 'WH'; setRunCompare((current) => ({ ...current, [store.store_name]: wh ? false : undefined })) }}>
+                        <option value="REGULAR">Regular{compareToday[store.store_name] ? ' (compare)' : ''}</option>
+                        <option value="WH">WH (no compare)</option>
+                      </select>
                     </label>
                     <button
                       type="button"
