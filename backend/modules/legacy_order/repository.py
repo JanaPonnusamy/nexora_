@@ -3,6 +3,8 @@ import datetime
 import os
 import re
 
+import pyodbc
+
 from modules.legacy_order import database
 from modules.product_mapping import repository as product_mapping_repository
 
@@ -529,21 +531,43 @@ def _row_to_store(row):
         # 'AGENT' = no branch SQL; data arrives via a store agent into
         # NEXORA_PLATFORM.sync.* (see service.is_agent_synced_store).
         "connection_type": (getattr(row, "ConnectionType", None) or "").strip().upper(),
+        # Multi-tenant HOs (.32: Success + SMS) tag each row with its platform tenant.
+        "tenant_id": getattr(row, "tenant_id", None),
     }
 
 
 def list_stores(active_only=True):
-    """Branches configured in dbo.Stores -- the source DBs the legacy app synced."""
-    sql = (
-        "SELECT StoreCode, StoreName, ServerName, UserName, Password, [Database], "
-        "IsActive, LastSyncTime, LastSyncStatus, Ho_code, ConnectionType FROM Stores"
-    )
-    if active_only:
-        sql += " WHERE IsActive = 1"
-    sql += " ORDER BY StoreCode"
-
+    """Branches configured in dbo.Stores -- the source DBs the legacy app synced.
+    Each carries tenant_id/tenant_name when this OrderNMC has a tenant_id column."""
     with database.get_central_connection() as conn:
-        return [_row_to_store(r) for r in conn.cursor().execute(sql)]
+        cur = conn.cursor()
+        has_tenant = cur.execute("SELECT COL_LENGTH('dbo.Stores', 'tenant_id')").fetchone()[0] is not None
+        sql = (
+            "SELECT StoreCode, StoreName, ServerName, UserName, Password, [Database], "
+            "IsActive, LastSyncTime, LastSyncStatus, Ho_code, ConnectionType"
+            + (", CONVERT(varchar(40), tenant_id) AS tenant_id" if has_tenant else "")
+            + " FROM Stores"
+        )
+        if active_only:
+            sql += " WHERE IsActive = 1"
+        sql += " ORDER BY StoreCode"
+        stores = [_row_to_store(r) for r in cur.execute(sql)]
+    names = _tenant_names()
+    for store in stores:
+        store["tenant_name"] = names.get((store["tenant_id"] or "").upper())
+    return stores
+
+
+def _tenant_names():
+    """Platform tenant_id (upper) -> tenant_name; {} when the platform DB is unavailable."""
+    try:
+        with pyodbc.connect(database.platform_connection_string(), timeout=15) as conn:
+            rows = conn.cursor().execute(
+                "SELECT CONVERT(varchar(40), tenant_id), tenant_name FROM dbo.tenants"
+            ).fetchall()
+    except Exception:
+        return {}
+    return {r[0].upper(): r[1] for r in rows if r[0]}
 
 
 def get_store(store_name):

@@ -706,6 +706,29 @@
 .lo-dot-run { background: var(--bs-primary); animation: lo-pulse 1.2s ease-in-out infinite; }
 
 /* ----- store operation cards ----- */
+.lo-tenant-group + .lo-tenant-group {
+  margin-top: 1rem;
+}
+
+.lo-tenant-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lo-tenant-title span {
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
 .lo-store-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));

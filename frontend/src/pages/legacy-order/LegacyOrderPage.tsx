@@ -464,6 +464,17 @@ export default function LegacyOrderPage() {
       .finally(() => setReviewLoading(false))
   }
 
+  // Store cards grouped per tenant (multi-tenant HOs such as .32: Success + SMS).
+  const storeGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; name: string; stores: LegacyStore[] }>()
+    for (const store of stores) {
+      const key = store.tenant_id || 'none'
+      if (!groups.has(key)) groups.set(key, { key, name: store.tenant_name || 'Other', stores: [] })
+      groups.get(key)!.stores.push(store)
+    }
+    return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }, [stores])
+
   const sortedJobs = useMemo(() => Object.values(jobs).sort(
     (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
   ), [jobs])
@@ -555,8 +566,13 @@ export default function LegacyOrderPage() {
         <div className="lo-section-title">
           <div><h2>Store operations</h2><p className="lo-note">Process runs Sync → Order → Stock automatically. Defaults: 13 min days / 18 max days.</p></div>
         </div>
+        {storeGroups.map((group) => (
+        <div className="lo-tenant-group" key={group.key}>
+          {storeGroups.length > 1 && (
+            <h3 className="lo-tenant-title">{group.name}<span>{group.stores.length} store{group.stores.length === 1 ? '' : 's'}</span></h3>
+          )}
         <div className="lo-store-cards">
-          {stores.map((store) => {
+          {group.stores.map((store) => {
             const config = settings[store.store_name] ?? defaultSettings(orderDefaults, store.store_name)
             const checkpoint = checkpoints[store.store_name] ?? { lastBill: '', lastGrn: '' }
             const running = runningFor(store.store_name)
@@ -652,8 +668,10 @@ export default function LegacyOrderPage() {
               </article>
             )
           })}
-          {!stores.length && <div className="lo-empty">No active stores found.</div>}
         </div>
+        </div>
+        ))}
+        {!stores.length && <div className="lo-empty">No active stores found.</div>}
       </section>
 
       {infoStore && (

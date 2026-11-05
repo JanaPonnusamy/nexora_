@@ -8,6 +8,8 @@ export interface LegacyStore {
   is_active: boolean
   last_sync_time: string | null
   last_sync_status: string | null
+  tenant_id?: string | null
+  tenant_name?: string | null
 }
 
 export interface LegacyTable {
