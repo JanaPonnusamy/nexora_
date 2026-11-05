@@ -685,6 +685,15 @@ export const api = {
 
   // Per-store "Compare today's previous order" (saved in OrderNMC; read back
   // through legacyStoreEngine's compare_today_previous).
+  // The store's saved Compare mode: PREVIOUS_PENDING / TODAY / NONE / HO.
+  legacySetCompareMode(storeName, mode, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/compare-mode`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ mode })
+    });
+  },
+
   legacySetCompareToday(storeName, enabled, session) {
     return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/compare-today`, {
       method: 'PUT',

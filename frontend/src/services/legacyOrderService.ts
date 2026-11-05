@@ -34,6 +34,8 @@ import type {
 
 const BASE = '/api/legacy-order'
 
+export type CompareMode = 'PREVIOUS_PENDING' | 'TODAY' | 'NONE' | 'HO'
+
 export interface ReceivedNotOrdered {
   store_name: string
   since: string | null
@@ -84,13 +86,17 @@ export const legacyOrderService = {
   // Order engine per store: LEGACY (ported VB.NET SQL) or RULEBOOK
   // (Procurement rule book). Both write the same OrderNMC tables.
   getOrderEngine: (storeName: string) =>
-    api.get<{ store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number>; compare_today_previous?: boolean }>(
+    api.get<{ store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number>; compare_today_previous?: boolean; compare_mode?: CompareMode }>(
       `${BASE}/engine/${encodeURIComponent(storeName)}`),
   // Per-store "Compare today's previous order": every Order Process then
   // compares the new order with the store's earlier order from today.
   setCompareToday: (storeName: string, enabled: boolean) =>
     api.put<{ store_name: string; compare_today_previous: boolean }>(
       `${BASE}/engine/${encodeURIComponent(storeName)}/compare-today`, { enabled }),
+  // The store's saved Compare mode (owner ruling 2026-11-05).
+  setCompareMode: (storeName: string, mode: CompareMode) =>
+    api.put<{ store_name: string; compare_mode: CompareMode }>(
+      `${BASE}/engine/${encodeURIComponent(storeName)}/compare-mode`, { mode }),
   setOrderEngine: (storeName: string, engine: OrderEngine) =>
     api.put<{ store_name: string; engine: OrderEngine }>(`${BASE}/engine/${encodeURIComponent(storeName)}`, { engine }),
   // Dry run: legacy vs rule-book order as Excel; writes nothing.
@@ -107,8 +113,8 @@ export const legacyOrderService = {
     // The store's last sale bill / last GRN off its POS: the server syncs,
     // checks both reached OrderNMC, and only then generates the order.
     checkpoint?: { lastBill: string; lastGrn: string },
-    // Compare with today's earlier order for this run; undefined = the store's setting.
-    compareToday?: boolean,
+    // PREVIOUS_PENDING / TODAY / NONE / HO; undefined = the store's saved mode.
+    compareMode?: CompareMode,
   ) =>
     api.post<{ job_id: string }>(`${BASE}/order-process`, {
       store_name: storeName,
@@ -122,7 +128,7 @@ export const legacyOrderService = {
       confirmed_stale_order: confirmStaleOrder,
       last_bill: checkpoint?.lastBill.trim() || null,
       last_grn: checkpoint?.lastGrn.trim() || null,
-      compare_today_previous: compareToday ?? null,
+      compare_mode: compareMode ?? null,
     }),
 
   restorableOrderPreview: (storeName: string, orderId: number) =>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { legacyOrderService, type OrderEngine } from '../../services/legacyOrderService'
+import { legacyOrderService, type CompareMode, type OrderEngine } from '../../services/legacyOrderService'
 import { ApiError } from '../../services/apiClient'
 import type { LegacyDbHealth, LegacyDbRecovery, LegacyJob, LegacyStore, OrderMode, PreviousOrder, PreviousOrderSupplier, QtyCheckConfirmation, RestorableOrderPreview, SupplierComparisonProduct } from '../../types/legacyOrder'
 import './legacy-order.css'
@@ -9,6 +9,14 @@ import { useAuth } from '../../hooks/useAuth'
 import { isSuperAdmin } from '../label-export/labelExportAccess'
 
 const POLL_MS = 1500
+// Owner ruling 2026-11-05: one Compare mode per store.
+const COMPARE_MODES: CompareMode[] = ['PREVIOUS_PENDING', 'TODAY', 'NONE', 'HO']
+const COMPARE_MODE_LABEL: Record<CompareMode, string> = {
+  PREVIOUS_PENDING: 'Previous pending',
+  TODAY: "Previous today's orders",
+  NONE: 'No compare',
+  HO: 'HO order (no compare)',
+}
 // The internal "HO" branch whose own stock feeds every other store's
 // SupplierStock rows (Stock Update button). Matches dbo.Stores.StoreName.
 const HO_STORE_NAME = 'NMW'
@@ -73,13 +81,10 @@ export default function LegacyOrderPage() {
   const [infoOpenFor, setInfoOpenFor] = useState<string | null>(null)
   // Order engine per store (both kept): legacy SQL or the Procurement rule book.
   const [engines, setEngines] = useState<Record<string, OrderEngine>>({})
-  const [compareToday, setCompareToday] = useState<Record<string, boolean>>({})
   const [comparing, setComparing] = useState<string | null>(null)
   const [pushNote, setPushNote] = useState<Record<string, string>>({})
-  // Last bill / last GRN typed off each store's POS before Process.
-  const [checkpoints, setCheckpoints] = useState<Record<string, { lastBill: string; lastGrn: string }>>({})
-  // This run's Compare choice per store; unset = the store's saved setting.
-  const [runCompare, setRunCompare] = useState<Record<string, boolean | undefined>>({})
+  // Saved per-store Compare mode (owner ruling 2026-11-05).
+  const [compareMode, setCompareModeState] = useState<Record<string, CompareMode>>({})
   const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
   const [dbBusy, setDbBusy] = useState<'' | 'check' | 'recover' | 'repair'>('')
   const [recovery, setRecovery] = useState<LegacyDbRecovery | null>(null)
@@ -95,11 +100,11 @@ export default function LegacyOrderPage() {
         ])))
         setCompareStore((current) => current || (storeList[0]?.store_name ?? ''))
         void Promise.all(storeList.map((store) => legacyOrderService.getOrderEngine(store.store_name)
-          .then((r) => [store.store_name, r.engine, Boolean(r.compare_today_previous)] as const)
-          .catch(() => [store.store_name, 'LEGACY' as OrderEngine, false] as const)))
+          .then((r) => [store.store_name, r.engine, (r.compare_mode ?? (r.compare_today_previous ? 'TODAY' : 'NONE')) as CompareMode] as const)
+          .catch(() => [store.store_name, 'LEGACY' as OrderEngine, 'NONE' as CompareMode] as const)))
           .then((rows) => {
             setEngines(Object.fromEntries(rows.map(([name, engine]) => [name, engine])))
-            setCompareToday(Object.fromEntries(rows.map(([name, , compare]) => [name, compare])))
+            setCompareModeState(Object.fromEntries(rows.map(([name, , mode]) => [name, mode])))
           })
       }), [])
 
@@ -109,9 +114,10 @@ export default function LegacyOrderPage() {
       .catch((e: Error) => setError(e.message))
   }
 
-  const changeCompareToday = (storeName: string, enabled: boolean) => {
-    legacyOrderService.setCompareToday(storeName, enabled)
-      .then((r) => { setCompareToday((cur) => ({ ...cur, [storeName]: r.compare_today_previous })); setError(null) })
+  const changeCompareMode = (storeName: string, mode: CompareMode) => {
+    setCompareModeState((cur) => ({ ...cur, [storeName]: mode }))
+    legacyOrderService.setCompareMode(storeName, mode)
+      .then((r) => { setCompareModeState((cur) => ({ ...cur, [storeName]: r.compare_mode })); setError(null) })
       .catch((e: Error) => setError(e.message))
   }
 
@@ -191,11 +197,6 @@ export default function LegacyOrderPage() {
 
   const updateJob = useCallback((job: LegacyJob) => {
     setJobs((current) => ({ ...current, [job.job_id]: job }))
-    // The next order needs fresh numbers; a miss keeps them to correct.
-    if (job.kind === 'order' && job.status === 'completed') {
-      setCheckpoints((current) => (current[job.store_name] ? { ...current, [job.store_name]: { lastBill: '', lastGrn: '' } } : current))
-      setRunCompare((current) => (current[job.store_name] === undefined ? current : { ...current, [job.store_name]: undefined }))
-    }
     if (job.status !== 'running') {
       const poller = pollers.current.get(job.job_id)
       if (poller) window.clearInterval(poller)
@@ -285,7 +286,7 @@ export default function LegacyOrderPage() {
     setError(null)
     legacyOrderService.startOrderProcess(
       storeName, config.minDays, config.maxDays, config.mode, confirm, confirmStaleOrder, config.recencyDays,
-      checkpoints[storeName], runCompare[storeName],
+      undefined, compareMode[storeName],
     )
       .then(({ job_id }) => watch(job_id))
       .catch((e: Error) => {
@@ -367,12 +368,6 @@ export default function LegacyOrderPage() {
     }))
   }
 
-  const patchCheckpoint = (storeName: string, patch: Partial<{ lastBill: string; lastGrn: string }>) => {
-    setCheckpoints((current) => ({
-      ...current,
-      [storeName]: { ...(current[storeName] ?? { lastBill: '', lastGrn: '' }), ...patch },
-    }))
-  }
 
   useEffect(() => {
     if (!compareStore) return
@@ -574,7 +569,6 @@ export default function LegacyOrderPage() {
         <div className="lo-store-cards">
           {group.stores.map((store) => {
             const config = settings[store.store_name] ?? defaultSettings(orderDefaults, store.store_name)
-            const checkpoint = checkpoints[store.store_name] ?? { lastBill: '', lastGrn: '' }
             const running = runningFor(store.store_name)
             const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays || config.recencyDays <= 0
             const failed = (store.last_sync_status ?? '').toLowerCase() === 'failed'
@@ -587,7 +581,7 @@ export default function LegacyOrderPage() {
                   <span className={`lo-dot ${dotClass}`} />
                   <strong>{store.store_name}</strong>
                   {engines[store.store_name] === 'RULEBOOK' && <span className="lo-chip lo-chip-ok" title="Order Process uses the Procurement rule book">Rule book</span>}
-                  {compareToday[store.store_name] && <span className="lo-chip" title="Order Process compares the new order with the store's earlier order from today">Auto compare</span>}
+                  {compareMode[store.store_name] && compareMode[store.store_name] !== 'NONE' && <span className="lo-chip" title="Compare mode used by Order Process">{COMPARE_MODE_LABEL[compareMode[store.store_name]]}</span>}
                   {lastJob?.warning && (
                     <i className="bi bi-exclamation-triangle-fill lo-stale-warn" title={lastJob.warning} aria-label="Stale sale bill warning" />
                   )}
@@ -613,11 +607,6 @@ export default function LegacyOrderPage() {
                         <option value="RULEBOOK">Rule book</option>
                       </select>
                     </label>
-                    <label className="lo-op-check" title="After Order Process, compare the new order with this store's earlier order from today (skipped when there is none). The separate Compare button still works.">
-                      <input type="checkbox" aria-label={`${store.store_name} compare today's previous order`} checked={Boolean(compareToday[store.store_name])} disabled={Boolean(running)}
-                        onChange={(e) => changeCompareToday(store.store_name, e.target.checked)} />
-                      <span>Compare today's previous order</span>
-                    </label>
                     {invalid && <small className="lo-invalid">{config.recencyDays <= 0 ? 'Recency days must be positive' : 'Min must be ≤ max'}</small>}
                     <div className="lo-op-settings-actions">
                       <button type="button" className="lo-btn" onClick={() => { patchSettings(store.store_name, defaultSettings(orderDefaults, store.store_name)) }}>Reset default</button>
@@ -642,27 +631,18 @@ export default function LegacyOrderPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="lo-op-checkpoint" title="Read these off the store's POS. Process syncs first and generates the order only if both are found after the sync.">
-                      <label><span>Last bill</span><input aria-label={`${store.store_name} last bill`} placeholder="C01042645" value={checkpoint.lastBill}
-                        onChange={(e) => patchCheckpoint(store.store_name, { lastBill: e.target.value.replace(/\s/g, '').toUpperCase() })} /></label>
-                      <label><span>Last GRN</span><input aria-label={`${store.store_name} last GRN`} placeholder="2742" inputMode="numeric" value={checkpoint.lastGrn}
-                        onChange={(e) => patchCheckpoint(store.store_name, { lastGrn: e.target.value.replace(/\D/g, '') })} /></label>
-                    </div>
-                    <label className="lo-op-compare" title="Regular orders are compared with all of today's earlier orders (when the store's Compare setting is on); a WH (warehouse) order is not compared.">
-                      <span>Order type</span>
-                      {/* runCompare false = WH (no compare); unset = Regular (store setting) */}
-                      <select aria-label={`${store.store_name} order type`}
-                        value={runCompare[store.store_name] === false ? 'WH' : 'REGULAR'}
-                        onChange={(e) => { const wh = e.target.value === 'WH'; setRunCompare((current) => ({ ...current, [store.store_name]: wh ? false : undefined })) }}>
-                        <option value="REGULAR">Regular{compareToday[store.store_name] ? ' (compare)' : ''}</option>
-                        <option value="WH">WH (no compare)</option>
+                    <label className="lo-op-compare" title="How Order Process compares the new order. Saved for this store.">
+                      <span>Compare mode</span>
+                      <select aria-label={`${store.store_name} compare mode`} disabled={Boolean(running)}
+                        value={compareMode[store.store_name] ?? 'NONE'}
+                        onChange={(e) => changeCompareMode(store.store_name, e.target.value as CompareMode)}>
+                        {COMPARE_MODES.map((m) => <option key={m} value={m}>{COMPARE_MODE_LABEL[m]}</option>)}
                       </select>
                     </label>
                     <button
                       type="button"
                       className={`lo-btn lo-btn-primary lo-op-process${failed ? ' lo-op-retry' : ''}`}
-                      disabled={invalid || !checkpoint.lastBill || !checkpoint.lastGrn}
-                      title={!checkpoint.lastBill || !checkpoint.lastGrn ? 'Enter the last bill and last GRN first' : ''}
+                      disabled={invalid}
                       onClick={() => startProcess(store.store_name)}
                     >
                       <i className={`bi ${failed ? 'bi-arrow-clockwise' : 'bi-play-fill'}`} /> {failed ? 'Retry' : 'Process'}

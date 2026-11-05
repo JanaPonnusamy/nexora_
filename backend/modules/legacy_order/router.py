@@ -16,7 +16,7 @@ from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, evening_order, order_export, repository, rulebook_order, service, supplier_whatsapp, sync_engine
-from modules.legacy_order.schemas import PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def _header_value(value) -> str:
@@ -262,6 +262,7 @@ def start_order_process(
             engine=payload.engine,
             recency_days=payload.recency_days,
             compare_today_previous=payload.compare_today_previous,
+            compare_mode=payload.compare_mode,
             last_bill=payload.last_bill,
             last_grn=payload.last_grn,
         )
@@ -284,7 +285,9 @@ def get_order_engine(store_name: str):
     try:
         return {"store_name": store_name, "engine": rulebook_order.get_store_engine(store_name),
                 "engines": list(rulebook_order.ENGINES), "rulebook_params": rulebook_order.rule_params(store_name),
-                "compare_today_previous": rulebook_order.get_compare_today(store_name)}
+                "compare_today_previous": rulebook_order.get_compare_today(store_name),
+                "compare_mode": rulebook_order.get_compare_mode(store_name),
+                "compare_modes": list(rulebook_order.COMPARE_MODES)}
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -294,6 +297,18 @@ def set_order_engine(store_name: str, payload: OrderEngineRequest, current_user:
     """The store's default engine for Order Process (admin only)."""
     try:
         return rulebook_order.set_store_engine(store_name, payload.engine,
+                                               current_user.get("username") or current_user.get("sub"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/engine/{store_name}/compare-mode")
+def set_compare_mode(store_name: str, payload: CompareModeRequest, current_user: dict = Depends(require_admin)):
+    """The store's saved Compare mode for Order Process (admin only)."""
+    try:
+        return rulebook_order.set_compare_mode(store_name, payload.mode,
                                                current_user.get("username") or current_user.get("sub"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

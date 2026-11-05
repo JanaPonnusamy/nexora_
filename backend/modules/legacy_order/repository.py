@@ -2743,3 +2743,15 @@ def received_not_ordered(store_name, product_type="pharma"):
             "product_type": "Non Pharma" if r[10] == 0 else "Pharma",
         } for r in rows],
     }
+
+
+def latest_previous_order_id(store_name):
+    """The store's previous order (newest backup that isn't the current
+    order), any day -- what the original VB.NET compare used. None if none."""
+    with database.get_central_connection() as conn:
+        row = conn.cursor().execute(
+            "SELECT MAX(OrderId) FROM OrderManagementBackup WHERE StoreName = ? "
+            "AND OrderId <> ISNULL((SELECT MAX(OrderId) FROM OrderManagement WHERE StoreName = ?), -1)",
+            store_name, store_name,
+        ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None

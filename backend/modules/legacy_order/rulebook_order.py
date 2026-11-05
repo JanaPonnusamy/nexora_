@@ -76,6 +76,10 @@ IF COL_LENGTH('dbo.LegacyOrderEngine', 'CompareTodayPrevious') IS NULL
     ALTER TABLE dbo.LegacyOrderEngine
         ADD CompareTodayPrevious BIT NOT NULL
             CONSTRAINT DF_LegacyOrderEngine_CompareToday DEFAULT 0;
+-- Per-store Compare mode (owner ruling 2026-11-05); NULL = derive from
+-- CompareTodayPrevious (TODAY when on, NONE when off).
+IF COL_LENGTH('dbo.LegacyOrderEngine', 'CompareMode') IS NULL
+    ALTER TABLE dbo.LegacyOrderEngine ADD CompareMode VARCHAR(16) NULL;
 """
 
 
@@ -133,12 +137,54 @@ def set_compare_today(store_name, enabled, actor=None):
         cur.execute(
             "MERGE dbo.LegacyOrderEngine AS t USING (SELECT ? AS StoreName) AS s "
             "ON t.StoreName = s.StoreName "
-            "WHEN MATCHED THEN UPDATE SET CompareTodayPrevious = ?, UpdatedAt = SYSUTCDATETIME(), UpdatedBy = ? "
+            "WHEN MATCHED THEN UPDATE SET CompareTodayPrevious = ?, CompareMode = NULL, UpdatedAt = SYSUTCDATETIME(), UpdatedBy = ? "
             "WHEN NOT MATCHED THEN INSERT (StoreName, CompareTodayPrevious, UpdatedBy) VALUES (?, ?, ?);",
             store_name, 1 if enabled else 0, actor, store_name, 1 if enabled else 0, actor,
         )
         conn.commit()
     return {"store_name": store_name, "compare_today_previous": bool(enabled)}
+
+
+# Compare mode for Order Process (owner ruling 2026-11-05):
+#   PREVIOUS_PENDING  compare with the previous order (the original VB.NET compare)
+#   TODAY             compare with every earlier order of today
+#   NONE              no compare
+#   HO                an HO / warehouse order: no compare
+COMPARE_MODES = ("PREVIOUS_PENDING", "TODAY", "NONE", "HO")
+
+
+def get_compare_mode(store_name):
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        conn.commit()
+        row = cur.execute(
+            "SELECT CompareMode, CompareTodayPrevious FROM dbo.LegacyOrderEngine WHERE StoreName = ?",
+            store_name,
+        ).fetchone()
+    if row and row[0] in COMPARE_MODES:
+        return row[0]
+    return "TODAY" if row and row[1] else "NONE"
+
+
+def set_compare_mode(store_name, mode, actor=None):
+    mode = str(mode or "").upper()
+    if mode not in COMPARE_MODES:
+        raise ValueError(f"Compare mode must be one of {', '.join(COMPARE_MODES)}.")
+    compares = 1 if mode in ("PREVIOUS_PENDING", "TODAY") else 0
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        cur.execute(
+            "MERGE dbo.LegacyOrderEngine AS t USING (SELECT ? AS StoreName) AS s "
+            "ON t.StoreName = s.StoreName "
+            "WHEN MATCHED THEN UPDATE SET CompareMode = ?, CompareTodayPrevious = ?, "
+            "UpdatedAt = SYSUTCDATETIME(), UpdatedBy = ? "
+            "WHEN NOT MATCHED THEN INSERT (StoreName, CompareMode, CompareTodayPrevious, UpdatedBy) VALUES (?, ?, ?, ?);",
+            store_name, mode, compares, actor, store_name, mode, compares, actor,
+        )
+        conn.commit()
+    return {"store_name": store_name, "compare_mode": mode}
 
 
 # ---- parameters ------------------------------------------------------------

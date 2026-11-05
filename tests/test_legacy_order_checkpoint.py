@@ -144,7 +144,7 @@ def test_agent_order_generated_and_pushed_when_checkpoint_found(monkeypatch):
     assert final["result"]["checkpoint"]["ok"] is True and final["result"]["rows"] == 525
 
 
-@pytest.mark.parametrize("per_run, expected", [(None, True), (False, False), (True, True)])
+@pytest.mark.parametrize("per_run, expected", [(None, "TODAY"), (False, "NONE"), (True, "TODAY")])
 def test_per_run_compare_overrides_the_store_setting(monkeypatch, per_run, expected):
     """Store setting ON; a run can still say "no compare" (e.g. a warehouse order)."""
     from modules.legacy_order import rulebook_order
@@ -155,7 +155,7 @@ def test_per_run_compare_overrides_the_store_setting(monkeypatch, per_run, expec
     monkeypatch.setattr(service, "default_recency_days", lambda name: 15)
     monkeypatch.setattr(service.database, "platform_store_id", lambda name: "sid")
     monkeypatch.setattr(rulebook_order, "get_store_engine", lambda name: "LEGACY")
-    monkeypatch.setattr(rulebook_order, "get_compare_today", lambda name: True)
+    monkeypatch.setattr(rulebook_order, "get_compare_mode", lambda name: "TODAY")
     monkeypatch.setattr(service, "_running_job_kind", lambda name: None)
     monkeypatch.setattr(service, "_new_job", lambda kind, name, steps: "job-1")
 
@@ -168,7 +168,7 @@ def test_per_run_compare_overrides_the_store_setting(monkeypatch, per_run, expec
     monkeypatch.setattr(service.threading, "Thread", _Thread)
     service.start_order_process("SMF", compare_today_previous=per_run, last_bill="C1", last_grn="5")
     *_, compare_today, checkpoint = started[0]
-    assert compare_today is expected and checkpoint == ("C1", 5)
+    assert compare_today == expected and checkpoint == ("C1", 5)
 
 
 def test_pm_order_requires_both_numbers():
@@ -183,7 +183,7 @@ def test_pm_order_blocked_until_previous_day_order_finalized(monkeypatch):
         service.start_pm_order("NMC", "C1", "5", "REGULAR")
 
 
-@pytest.mark.parametrize("order_type, compare", [("REGULAR", None), ("WH", False)])
+@pytest.mark.parametrize("order_type, compare", [("REGULAR", None), ("WH", "HO")])
 def test_pm_order_type_sets_compare(monkeypatch, order_type, compare):
     seen = {}
     monkeypatch.setattr(service.repository, "previous_day_order_block", lambda store: None)
@@ -191,7 +191,7 @@ def test_pm_order_type_sets_compare(monkeypatch, order_type, compare):
     monkeypatch.setattr(service, "start_order_process", lambda store, **kw: seen.update(kw) or "job")
     assert service.start_pm_order("NMC", "C1", "5", order_type) == "job"
     # A finalized order from an earlier day is not a stale-order warning.
-    assert seen["compare_today_previous"] is compare and seen["confirmed_stale_order"] is True
+    assert seen["compare_mode"] == compare and seen["confirmed_stale_order"] is True
 
 
 def test_first_order_of_day_compares_with_previous_day(monkeypatch):
@@ -202,3 +202,12 @@ def test_first_order_of_day_compares_with_previous_day(monkeypatch):
     monkeypatch.setattr(service.repository, "compare_previous_order",
                         lambda store, oid: calls.append(oid) or {"affected_rows": 1})
     assert service._compare_todays_previous("j", "NMC")["order_ids"] == [11, 12] and calls == [11, 12]
+
+
+def test_compare_mode_wins_and_previous_pending_uses_the_previous_order(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "_update", lambda job_id, **f: None)
+    monkeypatch.setattr(service.repository, "latest_previous_order_id", lambda store: 7)
+    monkeypatch.setattr(service.repository, "compare_previous_order",
+                        lambda store, oid: calls.append(oid) or {"order_id": oid, "affected_rows": 3})
+    assert service._compare_for_mode("j", "NMC", "PREVIOUS_PENDING")["order_ids"] == [7] and calls == [7]

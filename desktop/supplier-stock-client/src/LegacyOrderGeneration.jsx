@@ -12,9 +12,10 @@
 // "warning"; Continue & Process re-sends with confirmed_stale_order, which
 // acknowledges both gates server-side.
 //
-// Before a manual run the operator types each store's last sale bill and last
-// GRN off its POS. The server syncs, checks both are in OrderNMC, and only then
-// generates the order (then pushes it to the store's remote OrderNMC, if any).
+// Each store has one saved Compare mode (owner ruling 2026-11-05): Previous
+// pending (the original VB.NET compare), Previous today's orders, No compare,
+// or HO order (no compare). A finished order is pushed to the store's remote
+// OrderNMC, if any.
 //
 // Settings (OrderAutomationSettings) is the one place for the automation the
 // HO backend runs on its own: the evening (second) order -- every chosen store
@@ -30,6 +31,15 @@ const UNMAPPED = '__unmapped__';
 const ENGINE_LABEL = { LEGACY: 'Legacy', RULEBOOK: 'Rule book' };
 const BUSY = new Set(['queued', 'starting', 'running']);
 const JOBS_REFRESH_MS = 20000;
+// One Compare mode per store, saved in OrderNMC (owner ruling 2026-11-05).
+const COMPARE_MODES = [
+  ['PREVIOUS_PENDING', 'Previous pending'],
+  ['TODAY', "Previous today's orders"],
+  ['NONE', 'No compare'],
+  ['HO', 'HO order (no compare)'],
+];
+const COMPARE_LABEL = Object.fromEntries(COMPARE_MODES);
+const compares = (mode) => mode === 'TODAY' || mode === 'PREVIOUS_PENDING';
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const codeKey = (value) => String(value || '').trim().toUpperCase();
@@ -162,12 +172,12 @@ function OrderAutomationSettings({ session, groups, compareToday, onClose, onSav
         // Every store ticked = null, so stores added later are included too.
         stores: all ? null : allNames.filter((n) => evening.has(n)),
       }, session);
-      const changed = allNames.filter((n) => Boolean(compare[n]) !== Boolean(compareToday[n]));
-      await Promise.all(changed.map((n) => api.legacySetCompareToday(n, Boolean(compare[n]), session)));
+      const changed = allNames.filter((n) => (compare[n] || 'NONE') !== (compareToday[n] || 'NONE'));
+      await Promise.all(changed.map((n) => api.legacySetCompareMode(n, compare[n] || 'NONE', session)));
       applySchedule(saved);
       setDirty(false);
       setNote('Saved.');
-      onSaved(Object.fromEntries(allNames.map((n) => [n, Boolean(compare[n])])), saved);
+      onSaved(Object.fromEntries(allNames.map((n) => [n, compare[n] || 'NONE'])), saved);
     } catch (err) {
       setError(err.message || 'Could not save the settings.');
     } finally {
@@ -193,7 +203,6 @@ function OrderAutomationSettings({ session, groups, compareToday, onClose, onSav
   };
 
   const allEvening = allNames.length > 0 && allNames.every((n) => evening.has(n));
-  const allCompare = allNames.length > 0 && allNames.every((n) => compare[n]);
 
   return (
     <div className="lgo-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -235,10 +244,10 @@ function OrderAutomationSettings({ session, groups, compareToday, onClose, onSav
                   </label>
                 </th>
                 <th>
-                  <label className="lgo-inline lgo-th-check" title="After every Order Process (manual or evening), compare the new order with the store's earlier order from today">
-                    <input type="checkbox" aria-label="Compare today's previous order for every store" checked={allCompare} onChange={(e) => toggleCompare(allNames, e.target.checked)} />
-                    Compare today's previous order
-                  </label>
+                  <select aria-label="Compare mode for every store" value="" onChange={(e) => { if (e.target.value) toggleCompare(allNames, e.target.value); }}>
+                    <option value="">Compare mode (set all…)</option>
+                    {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
                 </th>
               </tr>
             </thead>
@@ -249,7 +258,11 @@ function OrderAutomationSettings({ session, groups, compareToday, onClose, onSav
                   <tr key={st.store_name}>
                     <td className="trp-left"><strong>{st.store_name}</strong></td>
                     <td><input type="checkbox" aria-label={`Evening order ${st.store_name}`} checked={evening.has(st.store_name)} onChange={(e) => toggleEvening([st.store_name], e.target.checked)} /></td>
-                    <td><input type="checkbox" aria-label={`Compare today's previous order ${st.store_name}`} checked={Boolean(compare[st.store_name])} onChange={(e) => toggleCompare([st.store_name], e.target.checked)} /></td>
+                    <td>
+                      <select aria-label={`Compare mode ${st.store_name}`} value={compare[st.store_name] || 'NONE'} onChange={(e) => toggleCompare([st.store_name], e.target.value)}>
+                        {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </td>
                   </tr>
                 )),
               ])}
@@ -324,7 +337,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [queued, setQueued] = useState(0);
-  const [compareToday, setCompareToday] = useState({});
+  const [compareToday, setCompareToday] = useState({}); // store -> Compare mode
   const [schedule, setSchedule] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -332,6 +345,8 @@ export default function LegacyOrderGeneration({ session, hidden }) {
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const cfgRef = useRef(cfg);
+  const compareRef = useRef({});
+  compareRef.current = compareToday;
   cfgRef.current = cfg;
   const runRef = useRef(run);
   runRef.current = run;
@@ -434,8 +449,8 @@ export default function LegacyOrderGeneration({ session, hidden }) {
       const names = storeList.map((st) => st.store_name);
       names.forEach(loadHeader);
       Promise.all(names.map((n) => api.legacyStoreEngine(n, s)
-        .then((r) => [n, r.engine, Boolean(r.compare_today_previous)])
-        .catch(() => [n, 'LEGACY', false])))
+        .then((r) => [n, r.engine, r.compare_mode || (r.compare_today_previous ? 'TODAY' : 'NONE')])
+        .catch(() => [n, 'LEGACY', 'NONE'])))
         .then((rows) => {
           if (!alive.current) return;
           setEngines(Object.fromEntries(rows.map(([n, e]) => [n, e])));
@@ -477,19 +492,10 @@ export default function LegacyOrderGeneration({ session, hidden }) {
         recency_days: positiveInt(c.recencyDays),
         mode: 'local',
         confirmed_stale_order: Boolean(acknowledge),
-        last_bill: String(c.lastBill || '').trim() || null,
-        last_grn: String(c.lastGrn || '').trim() || null,
-        // Regular = compare with today's earlier orders (the store's Compare
-        // setting); WH (warehouse order) = no compare.
-        compare_today_previous: c.orderType === 'WH' ? false : null,
+        compare_mode: compareRef.current[name] || null,
       }, sessionRef.current);
       patchRun(name, { state: 'running' });
       const job = await watch(jobId, name);
-      // Next run needs today's fresh numbers and starts as Regular again; a
-      // miss keeps them to correct.
-      if (job?.status === 'completed' && alive.current) {
-        setCfg((cur) => ({ ...cur, [name]: { ...cur[name], lastBill: '', lastGrn: '', orderType: '' } }));
-      }
       return job;
     } catch (err) {
       const message = err.message || 'Could not start Order Process.';
@@ -571,19 +577,17 @@ export default function LegacyOrderGeneration({ session, hidden }) {
   });
   const patchCfg = (name, patch) => setCfg((cur) => ({ ...cur, [name]: { ...cur[name], ...patch } }));
 
-  const compareFor = (name) => cfg[name]?.orderType !== 'WH' && Boolean(compareToday[name]);
-  const missingCheckpoint = (name) => !String(cfg[name]?.lastBill || '').trim() || !String(cfg[name]?.lastGrn || '').trim();
+  const changeCompareMode = (name, mode) => {
+    setCompareToday((cur) => ({ ...cur, [name]: mode }));
+    api.legacySetCompareMode(name, mode, sessionRef.current)
+      .catch((err) => setError(err.message || 'Could not save the compare mode.'));
+  };
 
   const generate = (names) => {
     if (!names.length) return;
-    const missing = names.filter(missingCheckpoint);
-    if (missing.length) {
-      setError(`Enter the last bill and last GRN (from the store's POS) for: ${missing.join(', ')}`);
-      return;
-    }
-    const list = names.map((n) => `${n}  (bill ${cfg[n].lastBill.trim()}, GRN ${cfg[n].lastGrn.trim()}, ${cfg[n].orderType === 'WH' ? 'WH order, no compare' : `Regular${compareFor(n) ? ', compare with today\'s earlier orders' : ''}`})`).join('\n');
+    const list = names.map((n) => `${n}  (${COMPARE_LABEL[compareToday[n] || 'NONE']})`).join('\n');
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Generate a new order for ${names.length} store${names.length > 1 ? 's' : ''}?\n\n${list}\n\nEach store syncs first; the order is generated only if its last bill and last GRN are found after the sync.${ackWarnings ? '\nWarnings (stale order / pending assignment) are acknowledged for this batch.' : ''}`)) return;
+    if (!window.confirm(`Generate a new order for ${names.length} store${names.length > 1 ? 's' : ''}?\n\n${list}\n\nEach store runs Order Process (sync + order) on the HO backend.${ackWarnings ? '\nWarnings (stale order / pending assignment) are acknowledged for this batch.' : ''}`)) return;
     setError('');
     enqueue(names, ackWarnings);
   };
@@ -662,9 +666,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
               <th title="Max days of cover (blank = store/warehouse default)">Max</th>
               <th title="Only products sold in the last N days are ordered">Recency</th>
               <th className="trp-left">Current order</th>
-              <th title="The store's last sale bill number, as on its POS (C01042645 or 42645)">Last bill</th>
-              <th title="The store's last GRN number, as on its POS">Last GRN</th>
-              <th title="Compare this run with the store's earlier order from today. Regular orders are compared with all of today's earlier orders (when the store's Compare setting is on); a WH (warehouse) order is not compared.">Order type</th>
+              <th title="How Order Process compares the new order. Saved for the store.">Compare mode</th>
               <th className="trp-left lgo-status-col">Status</th>
               <th aria-label="Action" />
             </tr>
@@ -679,7 +681,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                   <td className="lgo-check-col">
                     <input type="checkbox" aria-label={`Select every store in ${g.name}`} checked={allOn} disabled={!idle.length} onChange={(e) => toggle(idle, e.target.checked)} />
                   </td>
-                  <td colSpan={12} className="trp-left">
+                  <td colSpan={10} className="trp-left">
                     {g.name} <span className="lgo-muted">· {g.stores.length} store{g.stores.length > 1 ? 's' : ''}</span>
                   </td>
                 </tr>,
@@ -698,7 +700,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                       </td>
                       <td className="trp-left lgo-store">
                         <strong>{name}</strong>
-                        {compareToday[name] && <span className="lgo-cmp" title="Compares with today's previous order after every Order Process">⇄</span>}
+                        {compares(compareToday[name]) && <span className="lgo-cmp" title={COMPARE_LABEL[compareToday[name]]}>⇄</span>}
                       </td>
                       <td className="trp-left">
                         {warehouse ? <span className="lgo-tag lgo-tag-wh">Warehouse</span> : agent ? <span className="lgo-tag lgo-tag-agent">Agent</span> : <span className="lgo-tag">LAN</span>}
@@ -733,38 +735,9 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                         ) : <span className="lgo-muted">—</span>}
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
-                        <input
-                          className="lgo-ref"
-                          aria-label={`${name} last bill`}
-                          value={c.lastBill ?? ''}
-                          disabled={busy}
-                          placeholder="Bill no."
-                          title={head?.last_sale_bill_no ? `Previous order stopped at bill ${head.last_sale_bill_no} (${fmtStamp(head.last_bill_datetime)})` : ''}
-                          onChange={(e) => patchCfg(name, { lastBill: e.target.value.replace(/\s/g, '').toUpperCase() })}
-                        />
-                      </td>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <input
-                          className="lgo-ref"
-                          inputMode="numeric"
-                          aria-label={`${name} last GRN`}
-                          value={c.lastGrn ?? ''}
-                          disabled={busy}
-                          placeholder="GRN no."
-                          title={head?.last_grn ? `Previous order stopped at GRN ${head.last_grn}` : ''}
-                          onChange={(e) => patchCfg(name, { lastGrn: e.target.value.replace(/\D/g, '') })}
-                        />
-                      </td>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <select
-                          aria-label={`${name} order type`}
-                          value={c.orderType || 'REGULAR'}
-                          disabled={busy}
-                          title={compareFor(name) ? "Compared with all of today's earlier orders" : 'Not compared'}
-                          onChange={(e) => patchCfg(name, { orderType: e.target.value === 'WH' ? 'WH' : '' })}
-                        >
-                          <option value="REGULAR">Regular</option>
-                          <option value="WH">WH</option>
+                        <select aria-label={`${name} compare mode`} value={compareToday[name] || 'NONE'} disabled={busy}
+                          onChange={(e) => changeCompareMode(name, e.target.value)}>
+                          {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
                       </td>
                       <td className="trp-left lgo-status-col"><StatusCell entry={entry} /></td>
@@ -781,7 +754,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
               ];
             })}
             {!loading && !visibleGroups.length && (
-              <tr><td colSpan={13} className="lgo-muted">No active OrderNMC stores.</td></tr>
+              <tr><td colSpan={11} className="lgo-muted">No active OrderNMC stores.</td></tr>
             )}
           </tbody>
         </table>

@@ -38,6 +38,9 @@ class OrderProcessRequest(BaseModel):
     # Compare with the store's earlier order from TODAY after generating;
     # None = the store's saved "Compare today's previous order" setting.
     compare_today_previous: Optional[bool] = None
+    # PREVIOUS_PENDING / TODAY / NONE / HO for this run; None = the store's
+    # saved Compare mode (rulebook_order.COMPARE_MODES). Wins over the flag above.
+    compare_mode: Optional[str] = None
     # The store's last sale bill (C01042645, or just 42645) and last GRN as
     # read off its POS. After the pre-order sync both must be in OrderNMC or
     # no order is generated; None = no check (service.start_order_process).
@@ -204,3 +207,7 @@ class PmOrderRequest(BaseModel):
     last_grn: Union[int, str]
     order_type: str = "REGULAR"  # REGULAR (compares) or WH (warehouse order, no compare)
     confirmed: bool = False  # acknowledge a same-day pending-assignment warning
+
+
+class CompareModeRequest(BaseModel):
+    mode: str  # PREVIOUS_PENDING / TODAY / NONE / HO

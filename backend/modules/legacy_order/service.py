@@ -172,7 +172,7 @@ def start_pm_order(store_name, last_bill, last_grn, order_type="REGULAR", confir
     earlier_day = latest is not None and str(latest)[:8] != datetime.date.today().strftime("%Y%m%d")
     return start_order_process(
         store_name, confirmed_stale_order=bool(confirmed or earlier_day),
-        compare_today_previous=False if order_type == "WH" else None,
+        compare_mode="HO" if order_type == "WH" else None,
         last_bill=last_bill, last_grn=last_grn,
     )
 
@@ -356,7 +356,8 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
                          confirmed=False,
                          confirmed_order_id=None, confirmed_count=None,
                          confirmed_stale_order=False, engine=None, recency_days=None,
-                         compare_today_previous=None, last_bill=None, last_grn=None):
+                         compare_today_previous=None, last_bill=None, last_grn=None,
+                         compare_mode=None):
     """recency_days: only products sold in the last N days are ordered (the
     store's Order settings); None = default_recency_days(store_name).
     last_bill/last_grn: the store's last sale bill and last GRN as the
@@ -389,13 +390,21 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     if engine not in rulebook_order.ENGINES:
         raise ValueError(f"Engine must be one of {', '.join(rulebook_order.ENGINES)}.")
     store["engine"] = engine
-    if compare_today_previous is None:
+    # Compare mode (rulebook_order.COMPARE_MODES): this run's choice, else the
+    # legacy on/off flag (on = TODAY), else the store's saved mode.
+    if compare_mode:
+        compare_mode = str(compare_mode).upper()
+        if compare_mode not in rulebook_order.COMPARE_MODES:
+            raise ValueError(f"Compare mode must be one of {', '.join(rulebook_order.COMPARE_MODES)}.")
+    elif compare_today_previous is not None:
+        compare_mode = "TODAY" if compare_today_previous else "NONE"
+    else:
         try:
-            compare_today_previous = rulebook_order.get_compare_today(store["store_name"])
+            compare_mode = rulebook_order.get_compare_mode(store["store_name"])
         except Exception:
-            logger.exception("could not read the compare-today setting for %s", store_name)
-            compare_today_previous = False
-    compare_today_previous = bool(compare_today_previous)
+            logger.exception("could not read the compare mode for %s", store_name)
+            compare_mode = "NONE"
+    compare_today_previous = compare_mode
 
     # Warehouse Min/Max default to the warehouse profile (not the retail 13/18).
     default_min = WAREHOUSE_MIN_DAYS if warehouse else DEFAULT_MIN_DAYS
@@ -511,6 +520,25 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     return job_id
 
 
+def _compare_for_mode(job_id, store_name, mode):
+    """PREVIOUS_PENDING: the original VB compare with the store's previous
+    order; TODAY: every earlier order of today (see below)."""
+    if mode != "PREVIOUS_PENDING":
+        return _compare_todays_previous(job_id, store_name)
+    try:
+        previous = repository.latest_previous_order_id(store_name)
+        if previous is None:
+            _update(job_id, message="Compare skipped: no previous order.")
+            return {"order_id": None, "order_ids": [], "affected_rows": 0}
+        compared = repository.compare_previous_order(store_name, previous)
+        _update(job_id, message=f"Compared with the previous order {previous} ({compared['affected_rows']} row updates).")
+        return {**compared, "order_ids": [previous]}
+    except Exception as exc:
+        logger.exception("compare with the previous order failed for %s", store_name)
+        _update(job_id, message=f"Compare with the previous order failed: {exc}")
+        return {"order_id": None, "order_ids": [], "affected_rows": 0, "error": str(exc)}
+
+
 def _compare_todays_previous(job_id, store_name):
     """Compare the order just generated with EVERY earlier order the store
     generated TODAY (VB CompareOrderManagement rules, repository.
@@ -620,8 +648,8 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
         )
         result["tables"] = tables
         result["checkpoint"] = check
-        if compare_today:
-            result["compare"] = _compare_todays_previous(job_id, store["store_name"])
+        if compare_today in ("TODAY", "PREVIOUS_PENDING"):
+            result["compare"] = _compare_for_mode(job_id, store["store_name"], compare_today)
         _update(
             job_id, status="completed", step=base_step + 3, result=result,
             warning=warning,
@@ -781,8 +809,8 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
         )
         result["tables"] = tables
         result["checkpoint"] = check
-        if compare_today:
-            result["compare"] = _compare_todays_previous(job_id, store["store_name"])
+        if compare_today in ("TODAY", "PREVIOUS_PENDING"):
+            result["compare"] = _compare_for_mode(job_id, store["store_name"], compare_today)
         _update(
             job_id, status="completed", step=base_step + 3, result=result,
             warning=warning,
