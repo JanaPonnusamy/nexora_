@@ -273,6 +273,27 @@
   font-size: 0.72rem;
 }
 
+.sx-storegrid__group {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.42rem 0.62rem 0.3rem;
+  border-bottom: 1px solid var(--sx-border);
+  background: var(--sx-surface-2);
+  color: var(--sx-text);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.sx-storegrid__group span {
+  color: var(--sx-muted);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .sx-storegrid__row:nth-child(even) {
   background: color-mix(in srgb, var(--sx-surface-2) 38%, transparent);
 }

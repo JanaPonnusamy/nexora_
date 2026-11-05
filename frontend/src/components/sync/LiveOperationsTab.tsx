@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { ControlCenter, LiveStore, SyncHistoryRow } from '../../types/sync'
 import { useAsyncData } from '../../hooks/useAsyncData'
 import { syncService } from '../../services/syncService'
@@ -164,13 +164,17 @@ export function LiveOperationsTab() {
           live: liveMap[store.store_id],
         }
       })
-      .sort((a, b) => {
-        const diff = storePriority(a) - storePriority(b)
-        if (diff !== 0) return diff
-        return a.tenant_name.localeCompare(b.tenant_name)
-          || (a.store_code || '').localeCompare(b.store_code || '')
-      })
+      .sort((a, b) => a.tenant_name.localeCompare(b.tenant_name)
+        || storePriority(a) - storePriority(b)
+        || (a.store_code || '').localeCompare(b.store_code || ''))
   )
+  // Grouped per tenant, like the Legacy Order console (stores are tenant-sorted above).
+  const tenantGroups: { name: string; stores: DashboardStore[] }[] = []
+  for (const store of stores) {
+    const last = tenantGroups[tenantGroups.length - 1]
+    if (last && last.name === store.tenant_name) last.stores.push(store)
+    else tenantGroups.push({ name: store.tenant_name, stores: [store] })
+  }
 
   const actionableStores = stores.filter((store) => store.tenant_id)
   const recentActivity = history.slice(0, 5)
@@ -276,7 +280,12 @@ export function LiveOperationsTab() {
               <div className="sx-storegrid__body">
                 {stores.length === 0 ? (
                   <div className="sx-storegrid__empty">No stores available.</div>
-                ) : stores.map((store) => (
+                ) : tenantGroups.map((group) => (
+                  <Fragment key={group.name}>
+                  {tenantGroups.length > 1 && (
+                    <div className="sx-storegrid__group">{group.name}<span>{group.stores.length} store{group.stores.length === 1 ? '' : 's'}</span></div>
+                  )}
+                  {group.stores.map((store) => (
                   <div className="sx-storegrid__row" key={store.store_id}>
                     <div className="sx-storegrid__store">
                       <span className="sx-storegrid__line">
@@ -315,6 +324,8 @@ export function LiveOperationsTab() {
                       />
                     </div>
                   </div>
+                  ))}
+                  </Fragment>
                 ))}
               </div>
             </div>
