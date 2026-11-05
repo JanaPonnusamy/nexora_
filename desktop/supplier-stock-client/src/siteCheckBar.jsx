@@ -25,7 +25,7 @@ const STOP_TEXT = {
 const loadFlag = (key, fallback) => { try { const v = localStorage.getItem(key); return v == null ? fallback : v !== 'false'; } catch { return fallback; } };
 const saveFlag = (key, value) => { try { localStorage.setItem(key, String(value)); } catch { /* per PC */ } };
 
-export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep }) {
+export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep, siteUrl }) {
   const [marks, setMarks] = useState({});
   const [running, setRunning] = useState(false);
   const [note, setNote] = useState('');
@@ -121,12 +121,28 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep }) 
     return done({ ...result, note: added.note || 'Added to the site’s cart' });
   }
 
+  // The panel may be showing another tab (e.g. a local site): go to the
+  // supplier's own portal first -- its saved login signs in by itself.
+  async function openSupplierSite() {
+    const web = webRef.current;
+    if (!siteUrl || !web) return;
+    const host = (u) => { try { return new URL(u).host; } catch { return ''; } };
+    if (host(web.url()) === host(siteUrl)) return;
+    web.openUrl(siteUrl);
+    for (let t = 0; t < 40; t += 1) {
+      await sleep(250);
+      if (web.ready() && !web.loading() && host(web.url()) === host(siteUrl)) break;
+    }
+    await sleep(1500); // auto sign-in
+  }
+
   async function start() {
     if (runRef.current) return;
     runRef.current = true;
     setRunning(true);
     setNote('');
     try {
+      await openSupplierSite();
       const list = live.current.rows;
       for (let i = 0; i < list.length; i += 1) {
         const row = list[i];

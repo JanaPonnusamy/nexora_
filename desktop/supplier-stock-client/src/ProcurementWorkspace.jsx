@@ -753,7 +753,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   // reads it from the supplier's OrderSuppliers row). null = no site set.
   const [sitePortal, setSitePortal] = useState(null);
   const site = useSiteCheck({
-    webRef, rows: siteChecking ? visible : [], qtyOf: valueOf, nameOf: (r) => pwCleanName(r.name),
+    webRef, rows: siteChecking ? visible : [], siteUrl: sitePortal?.url || '', qtyOf: valueOf, nameOf: (r) => pwCleanName(r.name),
     resetKey: `${store}|${supplier?.supplier_code || ''}|${siteChecking}|${orderHeader?.order_id ?? ''}`,
     // The product being checked is the current row (no focus taken).
     onStep: (row) => {
@@ -764,6 +764,18 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
     },
   });
   useEffect(() => { if (siteChecking) setWebOn(true); }, [siteChecking]);
+  // Checking on the site always shows the supplier's own portal, not
+  // whichever tab the panel was last on.
+  useEffect(() => {
+    if (!siteChecking || !sitePortal?.url) return undefined;
+    const t = setTimeout(() => {
+      const web = webRef.current;
+      if (!web) return;
+      const host = (u) => { try { return new URL(u).host; } catch { return ''; } };
+      if (host(web.url()) !== host(sitePortal.url)) web.openUrl(sitePortal.url);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [siteChecking, sitePortal?.url]);
   // Harvest the supplier's catalog -> SupplierStock (then Live Stock shows it).
   // orderAt = today's order's generation time (order_id is YYYYMMDDHHMMSS), so
   // the hook auto-harvests a supplier whose stock is older than this order.
