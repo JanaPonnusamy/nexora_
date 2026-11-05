@@ -40,6 +40,14 @@ _SQL_DIR = os.path.join(os.path.dirname(__file__), "sql")
 # Env-overridable to match service.WAREHOUSE_STORES if that set ever grows.
 _WAREHOUSE_STOCK_SOURCE = os.getenv("LEGACY_WAREHOUSE_STOCK_SOURCE", "NMW")
 
+# OrderId is a per-SECOND timestamp stamped by the order query, but
+# OrderHeaderDetails' primary key is OrderId alone (not StoreName+OrderId).
+# Two stores whose query ran in the same second (e.g. the evening order and a
+# manual queue overlapping) collided with a PK violation. Serialize the
+# write+stamp step across all stores and bump a clashing OrderId to the next
+# free second.
+_ORDER_WRITE_LOCK = threading.Lock()
+
 _DEADLOCK_SQLSTATE = "40001"
 _DEADLOCK_RETRIES = 3
 _DEADLOCK_BACKOFF_SECONDS = 2
@@ -459,6 +467,43 @@ def refresh_warehouse_stock(store, source_store_name, on_progress=None):
     return inserted, matched
 
 
+def _ensure_unique_order_id(columns, rows, store_name, report):
+    """Move this run's OrderId to the next free second if another store already
+    owns it in OrderHeaderDetails/OrderManagement. Call under _ORDER_WRITE_LOCK."""
+    if not rows:
+        return rows
+    pos = next((i for i, c in enumerate(columns) if c.lower() == "orderid"), None)
+    if pos is None or rows[0][pos] in (None, ""):
+        return rows
+    original = rows[0][pos]
+    order_id = int(original)
+    with _connect(database.central_connection_string(), timeout=30) as conn:
+        cur = conn.cursor()
+
+        def taken(oid):
+            return cur.execute(
+                "SELECT CASE WHEN EXISTS (SELECT 1 FROM OrderHeaderDetails WHERE OrderId = ? AND StoreName <> ?) "
+                "OR EXISTS (SELECT 1 FROM OrderManagement WHERE OrderId = ? AND StoreName <> ?) "
+                "THEN 1 ELSE 0 END",
+                oid, store_name, oid, store_name,
+            ).fetchone()[0]
+
+        stamp = datetime.datetime.strptime(str(order_id), "%Y%m%d%H%M%S")
+        while taken(order_id):
+            stamp += datetime.timedelta(seconds=1)
+            order_id = int(stamp.strftime("%Y%m%d%H%M%S"))
+    if order_id == int(original):
+        return rows
+    report(f"OrderId {original} already used by another store; using {order_id}.")
+    new_value = type(original)(order_id) if isinstance(original, (str, int)) else order_id
+    fixed = []
+    for r in rows:
+        r = list(r)
+        r[pos] = new_value
+        fixed.append(r)
+    return fixed
+
+
 def run_order_process(store, min_days, max_days, mode, on_progress=None,
                       is_warehouse=False, recency_days=10, is_agent_synced=False):
     """Port of ProcessOrder + the FetchOrderData worker branch.
@@ -537,14 +582,16 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
     # transaction purely to prevent a second concurrent Process run (or a
     # concurrent restore) for this store, not to re-validate any business
     # rule.
-    report("Backing up and rewriting OrderManagement...")
-    inserted = insert_data_into_destination(columns, rows, store["store_name"])
+    with _ORDER_WRITE_LOCK:
+        rows = _ensure_unique_order_id(columns, rows, store["store_name"], report)
+        report("Backing up and rewriting OrderManagement...")
+        inserted = insert_data_into_destination(columns, rows, store["store_name"])
 
-    report("Stamping OrderHeaderDetails...")
-    header = update_order_header_details(
-        source_cs, store["store_name"], min_days, max_days,
-        from_central=is_agent_synced,
-    )
+        report("Stamping OrderHeaderDetails...")
+        header = update_order_header_details(
+            source_cs, store["store_name"], min_days, max_days,
+            from_central=is_agent_synced,
+        )
 
     report(f"Order processing completed ({inserted} rows).")
     result = {"rows": inserted, "odata": odata, "header": header, "engine": engine}
