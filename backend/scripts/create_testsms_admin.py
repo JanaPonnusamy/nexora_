@@ -32,6 +32,8 @@ def _args():
     ap.add_argument("--role", default="TENANT_ADMIN")
     ap.add_argument("--stores", default="TESTSMA", help="comma-separated store codes")
     ap.add_argument("--tenant", default="SMS", help="tenant code (TESTSMS was renamed SMS on 2026-11-04)")
+    ap.add_argument("--no-activate", action="store_true",
+                    help="leave the tenant/store is_active flags as they are (e.g. a store not ready to sync)")
     return ap.parse_args()
 
 
@@ -51,9 +53,10 @@ def main():
     cur.execute("SELECT role_id FROM dbo.roles WHERE role_name=?", USER["role_name"])
     role_id = str(cur.fetchone()[0])
 
-    cur.execute("UPDATE dbo.tenants SET is_active=1, updated_at=GETDATE() WHERE tenant_id=?", tenant_id)
-    for store_id in store_ids:
-        cur.execute("UPDATE dbo.stores SET is_active=1, updated_at=GETDATE() WHERE store_id=?", store_id)
+    if not a.no_activate:
+        cur.execute("UPDATE dbo.tenants SET is_active=1, updated_at=GETDATE() WHERE tenant_id=?", tenant_id)
+        for store_id in store_ids:
+            cur.execute("UPDATE dbo.stores SET is_active=1, updated_at=GETDATE() WHERE store_id=?", store_id)
 
     password_hash = bcrypt.hashpw(USER["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     cur.execute("SELECT user_id FROM dbo.users WHERE username=?", USER["username"])
@@ -89,7 +92,8 @@ def main():
     conn.commit()
     conn.close()
     print(f"{action} {USER['username']} ({user_id})")
-    print(f"  {USER['role_name']} @ {', '.join(store_codes)} (tenant {a.tenant}); tenant + store(s) activated")
+    print(f"  {USER['role_name']} @ {', '.join(store_codes)} (tenant {a.tenant}); "
+          + ("is_active flags left as they were" if a.no_activate else "tenant + store(s) activated"))
     print(f"  password: {USER['password']}")
 
 
