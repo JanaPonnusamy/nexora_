@@ -2649,3 +2649,97 @@ def compare_previous_order_supplier(store_name, order_id, supplier_code):
         except Exception:
             conn.rollback()
             raise
+
+# --------------------------------------------------------------------------
+# PM order entry (owner rulings 2026-11-05): a purchase manager submits the
+# store's last bill + last GRN and starts Order Process for their own store,
+# but only after the previous day's order is finalized. The first order of a
+# day compares with that previous active day's orders. A report lists stock
+# received (supplier GRNs) for products the app never put on an order.
+# --------------------------------------------------------------------------
+
+def _previous_active_day(cur, store_name):
+    """Latest order date before today for this store, or None. Looks at the
+    backups (every replaced order's final state) AND the current order, which
+    is still the previous day's last order until today's first one replaces it."""
+    row = cur.execute(
+        "SELECT MAX(CAST(o.WantedDate AS date)) FROM (SELECT WantedDate, OrderId FROM OrderManagementBackup WHERE StoreName = ? UNION ALL SELECT WantedDate, OrderId FROM OrderManagement WHERE StoreName = ?) o "
+        "WHERE CAST(o.WantedDate AS date) < CAST(GETDATE() AS date)",
+        store_name, store_name,
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def previous_active_day_order_ids(store_name):
+    """OrderIds of every order generated on the store's previous active day,
+    oldest first ([] when there is none)."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        day = _previous_active_day(cur, store_name)
+        if day is None:
+            return []
+        rows = cur.execute(
+            "SELECT o.OrderId FROM (SELECT WantedDate, OrderId FROM OrderManagementBackup WHERE StoreName = ? UNION ALL SELECT WantedDate, OrderId FROM OrderManagement WHERE StoreName = ?) o "
+            "WHERE CAST(o.WantedDate AS date) = ? GROUP BY o.OrderId ORDER BY MAX(o.WantedDate), o.OrderId",
+            store_name, store_name, day,
+        ).fetchall()
+    return [int(r[0]) for r in rows]
+
+
+def previous_day_order_block(store_name):
+    """The store's latest order when it is from an earlier day and not
+    finalized (the PM must finish it first), else None."""
+    summary = order_workflow_summary(store_name)
+    order_id = summary.get("order_id")
+    if order_id is None or summary["status"] == "FINALIZED":
+        return None
+    if str(order_id)[:8] == datetime.date.today().strftime("%Y%m%d"):
+        return None
+    return summary
+
+
+_PRODUCT_TYPE_SQL = {"pharma": " AND ISNULL(pt.ProductType, 1) <> 0", "non_pharma": " AND pt.ProductType = 0", "all": ""}
+
+
+def received_not_ordered(store_name, product_type="pharma"):
+    """Supplier GRN lines (IV) received since the first order of the store's
+    previous active day whose product was on none of the app's orders since
+    then (current order + backups). Reads central OrderNMC, i.e. as of the
+    store's last sync."""
+    type_sql = _PRODUCT_TYPE_SQL.get(str(product_type or "pharma").lower())
+    if type_sql is None:
+        raise ValueError("Product type must be pharma, non_pharma or all.")
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        day = _previous_active_day(cur, store_name)
+        start = cur.execute(
+            "SELECT MIN(o.WantedDate) FROM (SELECT WantedDate, OrderId FROM OrderManagementBackup WHERE StoreName = ? UNION ALL SELECT WantedDate, OrderId FROM OrderManagement WHERE StoreName = ?) o WHERE CAST(o.WantedDate AS date) = ?",
+            store_name, store_name, day,
+        ).fetchone()[0] if day else None
+        if start is None:
+            start = datetime.datetime.combine(datetime.date.today(), datetime.time())
+        rows = cur.execute(
+            "SELECT pt.Grnnumber, pt.grndate, pt.suppliercode, pt.suppliername, pt.ProductCode, "
+            "p.ProductName, pt.stockreceived, pt.FreeQty, pt.purchaseprice, pt.mrp, pt.ProductType "
+            "FROM PurchaseTrans pt "
+            "OUTER APPLY (SELECT TOP 1 ProductName FROM Products pr "
+            "             WHERE pr.ProductCode = pt.ProductCode AND pr.StoreName = pt.StoreName) p "
+            "WHERE pt.StoreName = ? AND pt.InvoiceSeries = 'IV' AND pt.grndate >= CAST(? AS date)" + type_sql + " "
+            "AND NOT EXISTS (SELECT 1 FROM OrderManagement om WHERE om.StoreName = pt.StoreName AND om.ProductCode = pt.ProductCode) "
+            "AND NOT EXISTS (SELECT 1 FROM OrderManagementBackup b WHERE b.StoreName = pt.StoreName "
+            "                AND b.ProductCode = pt.ProductCode AND b.WantedDate >= ?) "
+            "ORDER BY pt.grndate DESC, pt.Grnnumber DESC, p.ProductName",
+            store_name, start, start,
+        ).fetchall()
+    return {
+        "store_name": store_name, "since": start.isoformat() if hasattr(start, "isoformat") else start,
+        "product_type": str(product_type or "pharma").lower(),
+        "rows": [{
+            "grn_no": r[0], "grn_date": r[1].isoformat() if r[1] else None,
+            "supplier_code": (r[2] or "").strip() or None, "supplier_name": r[3],
+            "product_code": int(r[4]) if r[4] is not None else None, "product_name": r[5],
+            "qty": float(r[6] or 0), "free_qty": float(r[7] or 0),
+            "purchase_price": float(r[8] or 0), "mrp": float(r[9] or 0),
+            "product_type": "Non Pharma" if r[10] == 0 else "Pharma",
+        } for r in rows],
+    }

@@ -32,6 +32,7 @@ import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme
 import SchemaSyncPage from './SchemaSyncPage.jsx';
 import LegacyOrderGeneration from './LegacyOrderGeneration.jsx';
 import SyncLive from './SyncLive.jsx';
+import PmOrderEntry from './PmOrderEntry.jsx';
 import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareButton, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
 import { NavMenu } from './navMenu.jsx';
 import TimeReport from './TimeReport.jsx';
@@ -57,6 +58,7 @@ const screens = [
   { id: 'stock_vertical', label: 'Stock (Vertical)', short: 'Vertical', group: 'stock', module: 'stock_availability' },
   { id: 'network_stock', label: 'Network Stock', short: 'Network', group: 'stock', module: 'stock_availability' },
   { id: 'order_workspace', label: 'Order Workspace', short: 'Order WS', group: 'purchase', module: 'order_workspace' },
+  { id: 'order_entry', label: 'Order Entry', short: 'Order Entry', hint: 'Last bill + GRN', group: 'purchase', module: 'order_entry' },
   { id: 'legacy_order', label: 'Legacy Order', short: 'Legacy Order', hint: 'All tenants', group: 'purchase', module: 'legacy_order' },
   { id: 'sync_live', label: 'Sync Live', short: 'Sync', hint: 'All tenants', group: 'tools', module: 'sync' },
   { id: 'analysis', label: 'Supplier Stock Analysis', short: 'Supplier Analysis', group: 'purchase', module: 'supplier_stock_analysis' },
@@ -423,7 +425,7 @@ function AppShell() {
     // else (e.g. salesman-only). The legacy-order API is store-scoped/authorised
     // server-side too; this keeps the nav honest.
     const orderWorkspaceAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
-    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'order_workspace');
+    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'order_workspace' && s.id !== 'order_entry');
     // Schema Sync runs live DDL against Production/HO - super admin only, no
     // per-user module grant can unlock it.
     if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'schema_sync');
@@ -448,7 +450,7 @@ function AppShell() {
     // ever seeded into dbo.role_module_access, which silently hid the tab
     // for any login whose modules list isn't empty (e.g. superadmin).
     const always = new Set(nmwBlocked ? ['settings', 'label_exporter'] : ['settings', 'nmw_sales', 'label_exporter']);
-    if (orderWorkspaceAllowed) always.add('order_workspace');
+    if (orderWorkspaceAllowed) { always.add('order_workspace'); always.add('order_entry'); }
     // Every store login may link and use its own store's WhatsApp.
     always.add('whatsapp');
     if (isSuperAdmin(session)) { always.add('schema_sync'); always.add('legacy_order'); always.add('sync_live'); }
@@ -698,6 +700,8 @@ function AppShell() {
           <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : activeScreen === 'whatsapp' ? (
           <StoreWhatsAppScreen outbox={storeOutbox} />
+        ) : activeScreen === 'order_entry' ? (
+          <PmOrderEntry session={session} onOpenWorkspace={() => setActiveScreen('order_workspace')} />
         ) : activeScreen === 'time_report' ? (
           <TimeReport session={session} />
         ) : activeScreen === 'order_workspace' || activeScreen === 'legacy_order' || activeScreen === 'sync_live' ? null : activeScreen === 'schema_sync' ? (

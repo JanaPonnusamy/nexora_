@@ -80,10 +80,12 @@ def test_compare_hook_skips_without_an_earlier_order_today(monkeypatch):
     messages = []
     monkeypatch.setattr(service, "_update", lambda job_id, **f: messages.append(f.get("message")))
     monkeypatch.setattr(service.repository, "todays_previous_order_ids", lambda store: [])
+    # ...and no previous active day either (the day's first order compares with it).
+    monkeypatch.setattr(service.repository, "previous_active_day_order_ids", lambda store: [])
     monkeypatch.setattr(service.repository, "compare_previous_order",
-                        lambda *a: pytest.fail("must not compare against another day"))
+                        lambda *a: pytest.fail("nothing to compare with"))
     assert service._compare_todays_previous("j", "NMC") == {"order_id": None, "order_ids": [], "affected_rows": 0}
-    assert "no earlier order today" in messages[-1]
+    assert "no earlier order" in messages[-1]
 
 
 def test_compare_hook_compares_and_never_raises(monkeypatch):

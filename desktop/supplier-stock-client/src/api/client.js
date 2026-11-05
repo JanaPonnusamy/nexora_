@@ -662,6 +662,27 @@ export const api = {
     });
   },
 
+  // PM Order Entry: latest order state, earlier-day block, latest job.
+  legacyOrderEntry(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/order-entry`, { session });
+  },
+
+  // PM: last bill + last GRN + order type -> Order Process for their store.
+  legacyPmStartOrder(storeName, payload, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/order-entry`, {
+      method: 'POST',
+      session,
+      timeoutMs: 120000,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  // Supplier GRN lines since the previous active day's first order for
+  // products the app never ordered. productType: pharma | non_pharma | all.
+  legacyReceivedNotOrdered(storeName, productType, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/received-not-ordered?product_type=${encodeURIComponent(productType)}`, { session });
+  },
+
   // Per-store "Compare today's previous order" (saved in OrderNMC; read back
   // through legacyStoreEngine's compare_today_previous).
   legacySetCompareToday(storeName, enabled, session) {

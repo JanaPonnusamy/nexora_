@@ -51,6 +51,7 @@ const ReportsPage = lazy(() => import('../pages/ReportsPage'))
 const ExpiryReportPage = lazy(() => import('../pages/expiry-report/ExpiryReportPage'))
 const ExpiryStockReportPage = lazy(() => import('../pages/expiry-stock/ExpiryStockReportPage'))
 const NonMovingReportPage = lazy(() => import('../pages/non-moving-report/NonMovingReportPage'))
+const ReceivedNotOrderedPage = lazy(() => import('../pages/received-not-ordered/ReceivedNotOrderedPage'))
 const SaleAnalysisPage = lazy(() => import('../pages/sale-analysis/SaleAnalysisPage'))
 const TimeReportPage = lazy(() => import('../pages/TimeReportPage'))
 const PassGenPage = lazy(() => import('../pages/pass-gen/PassGenPage'))
@@ -157,6 +158,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/expiry-report" element={<RequireCapability cap="REPORTS"><ExpiryReportPage /></RequireCapability>} />
         <Route path="/expiry-stock" element={<RequireCapability cap="REPORTS"><ExpiryStockReportPage /></RequireCapability>} />
         <Route path="/non-moving-report" element={<RequireCapability cap="INVENTORY"><NonMovingReportPage /></RequireCapability>} />
+        <Route path="/received-not-ordered" element={<RequireCapability cap="REPORTS"><ReceivedNotOrderedPage /></RequireCapability>} />
         <Route path="/sale-analysis" element={<RequireCapability cap="INVENTORY"><SaleAnalysisPage /></RequireCapability>} />
         <Route path="/time-report" element={<RequireCapability cap="TIME_REPORT"><TimeReportPage /></RequireCapability>} />
         <Route path="/pass-gen" element={<RequireCapability cap="PASS_GEN"><PassGenPage /></RequireCapability>} />

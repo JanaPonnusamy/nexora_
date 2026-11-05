@@ -197,3 +197,10 @@ class EmergencyRepairRequest(BaseModel):
     # Guard rail: the destructive REPAIR_ALLOW_DATA_LOSS path only runs when the
     # caller explicitly opts in. The UI sends this from a confirmation dialog.
     confirm: bool = False
+
+class PmOrderRequest(BaseModel):
+    # The store's last sale bill / last GRN off its POS (both required).
+    last_bill: str
+    last_grn: Union[int, str]
+    order_type: str = "REGULAR"  # REGULAR (compares) or WH (warehouse order, no compare)
+    confirmed: bool = False  # acknowledge a same-day pending-assignment warning

@@ -16,7 +16,7 @@ from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, evening_order, order_export, repository, rulebook_order, service, supplier_whatsapp, sync_engine
-from modules.legacy_order.schemas import AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order.schemas import PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def _header_value(value) -> str:
@@ -87,6 +87,7 @@ _STORE_WRITE_PATHS = (
 # procurement for PM users". Handlers use require_admin_or_store_pm.
 _PM_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/workflow/(finalize|reopen)$"),
+    re.compile(r"^/api/legacy-order/orders/[^/]+/order-entry$"),  # PM: last bill + GRN -> Order Process
 )
 
 
@@ -1031,5 +1032,47 @@ def qty_check_monthly_stats(store_name: str, product_code: int, mode: str = "loc
 def qty_check_order_history(store_name: str, product_code: int):
     try:
         return repository.qty_check_order_history(store_name, product_code)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+# ---- PM order entry + received-not-ordered report (owner rulings 2026-11-05) ----
+
+@router.get("/orders/{store_name}/order-entry")
+def pm_order_entry(store_name: str):
+    """What the PM Order Entry screen needs: the latest order's workflow state,
+    whether an earlier day's open order blocks a new one, and the store's
+    latest Order Process job."""
+    try:
+        summary = repository.order_workflow_summary(store_name)
+        block = repository.previous_day_order_block(store_name)
+        return {"store_name": store_name, "latest_order": summary,
+                "blocked": bool(block), "header": repository.order_header_summary(store_name),
+                "job": service.latest_job(store_name)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/order-entry", response_model=JobStarted)
+def pm_start_order(store_name: str, payload: PmOrderRequest,
+                   current_user: dict = Depends(require_admin_or_store_pm)):
+    try:
+        return JobStarted(job_id=service.start_pm_order(
+            store_name, payload.last_bill, payload.last_grn, payload.order_type, payload.confirmed))
+    except (service.PreviousOrderNotFinalized, service.QtyCheckConfirmationRequired,
+            service.StaleCurrentOrder) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except ValueError as exc:
+        status = 409 if "already running" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc))
+
+
+@router.get("/orders/{store_name}/received-not-ordered")
+def received_not_ordered(store_name: str, product_type: str = "pharma"):
+    try:
+        return repository.received_not_ordered(store_name, product_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -145,6 +145,44 @@ def get_job(job_id):
         return dict(job) if job else None
 
 
+class PreviousOrderNotFinalized(ValueError):
+    """The store's order from an earlier day is still open: the PM must
+    finish (review + finalize) it before a new order is generated."""
+
+
+def start_pm_order(store_name, last_bill, last_grn, order_type="REGULAR", confirmed=False):
+    """A purchase manager's Order Process for their own store (owner rulings
+    2026-11-05): last bill + last GRN are required, the previous day's order
+    must be finalized first, and a WH order is never compared."""
+    if not str(last_bill or "").strip() or not str(last_grn or "").strip():
+        raise ValueError("Enter the store's last bill and last GRN.")
+    order_type = str(order_type or "REGULAR").upper()
+    if order_type not in ("REGULAR", "WH"):
+        raise ValueError("Order type must be REGULAR or WH.")
+    block = repository.previous_day_order_block(store_name)
+    if block:
+        raise PreviousOrderNotFinalized(
+            f"Finish order #{block.get('order_no') or block['order_id']} from "
+            f"{str(block['order_id'])[6:8]}/{str(block['order_id'])[4:6]} first: "
+            f"{block['qty_pending']} quantity checks and {block['unassigned_lines']} supplier "
+            "assignments are pending. Review and Finalize it in the Order Workspace."
+        )
+    # A finalized earlier-day order is not a stale order to warn about.
+    latest = repository.order_workflow_summary(store_name).get("order_id")
+    earlier_day = latest is not None and str(latest)[:8] != datetime.date.today().strftime("%Y%m%d")
+    return start_order_process(
+        store_name, confirmed_stale_order=bool(confirmed or earlier_day),
+        compare_today_previous=False if order_type == "WH" else None,
+        last_bill=last_bill, last_grn=last_grn,
+    )
+
+
+def latest_job(store_name, kind="order"):
+    with _lock:
+        jobs = [j for j in _jobs.values() if j["store_name"] == store_name and j["kind"] == kind]
+        return dict(max(jobs, key=lambda j: j["started_at"])) if jobs else None
+
+
 def list_jobs(limit=20):
     with _lock:
         jobs = sorted(_jobs.values(), key=lambda j: j["started_at"], reverse=True)
@@ -477,18 +515,25 @@ def _compare_todays_previous(job_id, store_name):
     """Compare the order just generated with EVERY earlier order the store
     generated TODAY (VB CompareOrderManagement rules, repository.
     compare_previous_order), oldest first, so a product decided in several of
-    them keeps the newest decision. Never compares against an older day. A
+    them keeps the newest decision. The day's first order compares with the
+    previous active day's orders instead (their final, finalized state). A
     failure is logged on the job but never fails it -- the order itself is
     already generated. order_id in the result is the newest one compared."""
     try:
         previous = repository.todays_previous_order_ids(store_name)
+        label = "today's earlier order"
         if not previous:
-            _update(job_id, message="Compare skipped: no earlier order today.")
+            # First order of the day: compare with the previous active day's
+            # (finalized) orders -- owner ruling 2026-11-05.
+            previous = repository.previous_active_day_order_ids(store_name)
+            label = "the previous day's order"
+        if not previous:
+            _update(job_id, message="Compare skipped: no earlier order today or on the previous day.")
             return {"order_id": None, "order_ids": [], "affected_rows": 0}
         affected = 0
         for order_id in previous:
             affected += repository.compare_previous_order(store_name, order_id)["affected_rows"]
-        _update(job_id, message=f"Compared with today's earlier order{'s' if len(previous) > 1 else ''} "
+        _update(job_id, message=f"Compared with {label}{'s' if len(previous) > 1 else ''} "
                                 f"{', '.join(map(str, previous))} ({affected} row updates).")
         return {"store_name": store_name, "order_id": previous[-1], "order_ids": previous,
                 "affected_rows": affected}

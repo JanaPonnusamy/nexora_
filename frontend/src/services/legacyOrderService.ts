@@ -34,6 +34,17 @@ import type {
 
 const BASE = '/api/legacy-order'
 
+export interface ReceivedNotOrdered {
+  store_name: string
+  since: string | null
+  product_type: string
+  rows: Array<{
+    grn_no: number; grn_date: string | null; supplier_code: string | null; supplier_name: string | null
+    product_code: number; product_name: string | null; qty: number; free_qty: number
+    purchase_price: number; mrp: number; product_type: string
+  }>
+}
+
 export type OrderEngine = 'LEGACY' | 'RULEBOOK'
 
 export const legacyOrderService = {
@@ -41,6 +52,9 @@ export const legacyOrderService = {
     api.get<LegacyStore[]>(`${BASE}/stores?active_only=${activeOnly}`),
 
   listTables: () => api.get<LegacyTable[]>(`${BASE}/tables`),
+
+  receivedNotOrdered: (storeName: string, productType = 'pharma') =>
+    api.get<ReceivedNotOrdered>(`${BASE}/orders/${encodeURIComponent(storeName)}/received-not-ordered?product_type=${encodeURIComponent(productType)}`),
 
   defaults: () => api.get<{
     min_days: number; max_days: number

@@ -169,3 +169,36 @@ def test_per_run_compare_overrides_the_store_setting(monkeypatch, per_run, expec
     service.start_order_process("SMF", compare_today_previous=per_run, last_bill="C1", last_grn="5")
     *_, compare_today, checkpoint = started[0]
     assert compare_today is expected and checkpoint == ("C1", 5)
+
+
+def test_pm_order_requires_both_numbers():
+    with pytest.raises(ValueError):
+        service.start_pm_order("NMC", "C1", "", "REGULAR")
+
+
+def test_pm_order_blocked_until_previous_day_order_finalized(monkeypatch):
+    monkeypatch.setattr(service.repository, "previous_day_order_block",
+                        lambda store: {"order_id": 20261104183045, "order_no": 3, "qty_pending": 337, "unassigned_lines": 337})
+    with pytest.raises(service.PreviousOrderNotFinalized, match="#3 from 04/11"):
+        service.start_pm_order("NMC", "C1", "5", "REGULAR")
+
+
+@pytest.mark.parametrize("order_type, compare", [("REGULAR", None), ("WH", False)])
+def test_pm_order_type_sets_compare(monkeypatch, order_type, compare):
+    seen = {}
+    monkeypatch.setattr(service.repository, "previous_day_order_block", lambda store: None)
+    monkeypatch.setattr(service.repository, "order_workflow_summary", lambda store: {"order_id": 20261104183045})
+    monkeypatch.setattr(service, "start_order_process", lambda store, **kw: seen.update(kw) or "job")
+    assert service.start_pm_order("NMC", "C1", "5", order_type) == "job"
+    # A finalized order from an earlier day is not a stale-order warning.
+    assert seen["compare_today_previous"] is compare and seen["confirmed_stale_order"] is True
+
+
+def test_first_order_of_day_compares_with_previous_day(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "_update", lambda job_id, **f: None)
+    monkeypatch.setattr(service.repository, "todays_previous_order_ids", lambda store: [])
+    monkeypatch.setattr(service.repository, "previous_active_day_order_ids", lambda store: [11, 12])
+    monkeypatch.setattr(service.repository, "compare_previous_order",
+                        lambda store, oid: calls.append(oid) or {"affected_rows": 1})
+    assert service._compare_todays_previous("j", "NMC")["order_ids"] == [11, 12] and calls == [11, 12]

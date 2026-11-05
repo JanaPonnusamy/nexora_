@@ -9861,3 +9861,22 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .lgo-th-check { justify-content: center; color: var(--nx-text-soft); }
 .lgo-modal-foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--nx-rule); }
 .lgo-foot-msg { margin-right: auto; font-size: 12.5px; font-weight: 600; }
+
+/* PM Order Entry */
+.poe-screen { display: flex; flex-direction: column; gap: 12px; }
+.poe-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.poe-card { border: 1px solid var(--nx-border, #2a3240); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.poe-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.poe-card-head h3 { margin: 0; font-size: 0.95rem; }
+.poe-tools { margin-left: auto; display: flex; gap: 6px; }
+.poe-muted { color: var(--nx-text-muted, #8a94a6); font-size: 0.8rem; }
+.poe-meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.poe-meta div { display: contents; }
+.poe-meta dt { color: var(--nx-text-muted, #8a94a6); }
+.poe-meta dd { margin: 0; }
+.poe-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.poe-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; }
+.poe-inline-btn { margin-left: 8px; }
+.poe-warn { color: var(--nx-warn, #e0a400); }
+.poe-log { max-height: 140px; overflow: auto; font-size: 0.78rem; }
+.poe-tablewrap { max-height: 50vh; overflow: auto; }

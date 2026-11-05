@@ -25,6 +25,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Box Workspace', to: '/label-exporter/box-workspace', icon: 'bi-grid-3x3-gap', cap: 'INVENTORY' },
       { label: 'NMW Sales Report', to: '/nmw-sales-report', icon: 'bi-receipt', cap: 'INVENTORY' },
       { label: 'Non-Moving Report', to: '/non-moving-report', icon: 'bi-hourglass-bottom', cap: 'INVENTORY' },
+      { label: 'Received, Not Ordered', to: '/received-not-ordered', icon: 'bi-box-arrow-in-down', cap: 'REPORTS' },
       { label: 'Sale Analysis', to: '/sale-analysis', icon: 'bi-graph-up-arrow', cap: 'INVENTORY' },
       { label: 'Stock Integrity Check', to: '/stock-integrity', icon: 'bi-shield-check', cap: 'INVENTORY' },
     ],
