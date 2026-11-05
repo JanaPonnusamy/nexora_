@@ -68,7 +68,7 @@ def test_run_stores_runs_one_at_a_time_with_compare_and_warnings_acknowledged(mo
     summary = evening_order.run_stores(["NMS", "NMC", "NMV"], "schedule")
 
     assert [c[0] for c in calls] == ["NMS", "NMC", "NMV"]
-    assert all(c[1] == {"confirmed_stale_order": True, "compare_today_previous": True} for c in calls)
+    assert all(c[1] == {"confirmed_stale_order": True} for c in calls)
     by_store = {e["store_name"]: e for e in summary["stores"]}
     assert by_store["NMS"]["status"] == "completed" and by_store["NMS"]["compare"]["affected_rows"] == 3
     assert by_store["NMC"]["status"] == "failed" and by_store["NMC"]["error"] == "sync failed"

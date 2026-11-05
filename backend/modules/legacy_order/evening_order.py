@@ -236,9 +236,9 @@ def _wait_for_job(job_id):
 
 
 def run_stores(stores, trigger):
-    """Order Process + Compare-today for each store, one after another. Both
-    Order Process warnings are acknowledged (nobody is there to click them;
-    the compare carries the day's earlier decisions forward)."""
+    """Order Process for each store, one after another, with the store's saved
+    Compare mode (NONE = the plain .73-style order). Both Order Process
+    warnings are acknowledged (nobody is there to click them)."""
     from modules.legacy_order import service
 
     summary = {"trigger": trigger, "started_at": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -248,7 +248,7 @@ def run_stores(stores, trigger):
         summary["stores"].append(entry)
         _save_summary(summary, finished=False)
         try:
-            job_id = service.start_order_process(name, confirmed_stale_order=True, compare_today_previous=True)
+            job_id = service.start_order_process(name, confirmed_stale_order=True)
             entry["job_id"] = job_id
             job = _wait_for_job(job_id) or {}
             result = job.get("result") or {}
