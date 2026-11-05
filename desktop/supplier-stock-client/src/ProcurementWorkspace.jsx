@@ -753,7 +753,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   // reads it from the supplier's OrderSuppliers row). null = no site set.
   const [sitePortal, setSitePortal] = useState(null);
   const site = useSiteCheck({
-    webRef, rows: siteChecking ? visible : [], siteUrl: sitePortal?.url || '', qtyOf: valueOf, nameOf: (r) => pwCleanName(r.name),
+    webRef, rows: siteChecking ? visible : [], siteUrl: sitePortal?.url || '', supplierName: supplier ? pwCleanName(supplier.supplier_name) : '', qtyOf: valueOf, nameOf: (r) => pwCleanName(r.name),
     resetKey: `${store}|${supplier?.supplier_code || ''}|${siteChecking}|${orderHeader?.order_id ?? ''}`,
     // The product being checked is the current row (no focus taken).
     onStep: (row) => {

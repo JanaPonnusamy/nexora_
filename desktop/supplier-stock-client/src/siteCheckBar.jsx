@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   pageAdd, pageHighlight, pageOpenCart, pageResults, pageSearch, roAdd, roCart, roPick, roResults, roSearch,
   SITE_STATE_LABEL, siteBestMatch, siteCounts, siteDecide, siteInCart, siteKind, siteOffer, siteQuery, siteScript, siteTokens,
+  roEnter,
 } from './siteCheck.js';
 
 // By Supplier -> Website: checks the listed products on the supplier's site
@@ -25,7 +26,7 @@ const STOP_TEXT = {
 const loadFlag = (key, fallback) => { try { const v = localStorage.getItem(key); return v == null ? fallback : v !== 'false'; } catch { return fallback; } };
 const saveFlag = (key, value) => { try { localStorage.setItem(key, String(value)); } catch { /* per PC */ } };
 
-export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep, siteUrl }) {
+export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep, siteUrl, supplierName }) {
   const [marks, setMarks] = useState({});
   const [running, setRunning] = useState(false);
   const [note, setNote] = useState('');
@@ -61,7 +62,13 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep, si
     for (const query of [...new Set([siteQuery(name), siteTokens(name)[0]].filter(Boolean))]) {
       setStatus(`${tag}${name} — searching “${query}”…`);
       const before = await web.exec(siteScript(site.results)).catch(() => null);
-      const sent = await web.exec(siteScript(site.search, query, false)).catch(() => null);
+      let sent = await web.exec(siteScript(site.search, query, false)).catch(() => null);
+      // RetailOrders: on the distributor list (or elsewhere) -> pick this
+      // supplier's distributor, wait for its Product Search, retry once.
+      if (sent?.reason === 'pick-distributor' && supplierName) {
+        setStatus(`${tag}opening ${supplierName} on the site…`);
+        if (await enterDistributor(web)) sent = await web.exec(siteScript(site.search, query, false)).catch(() => null);
+      }
       if (!sent?.ok) return { stop: STOP_TEXT[sent?.reason] || 'No product search box found on this page of the site.' };
       let lastSig = '';
       let still = 0;
@@ -134,6 +141,25 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep, si
       if (web.ready() && !web.loading() && host(web.url()) === host(siteUrl)) break;
     }
     await sleep(1500); // auto sign-in
+  }
+
+  async function enterDistributor(web) {
+    const hashOf = () => { try { return new URL(web.url()).hash; } catch { return ''; } };
+    if (!/nav\/distributors/.test(hashOf())) {
+      await web.exec('location.hash = "#/nav/distributors"').catch(() => null);
+      await sleep(1500);
+    }
+    for (let t = 0; t < 10; t += 1) {
+      const r = await web.exec(siteScript(roEnter, supplierName)).catch(() => null);
+      if (r?.ok) break;
+      await sleep(500);
+    }
+    for (let t = 0; t < 40; t += 1) {
+      await sleep(250);
+      const ok = await web.exec('(() => { const b = document.getElementById("prodSearText"); return Boolean(b && b.getClientRects().length); })()').catch(() => false);
+      if (ok) return true;
+    }
+    return false;
   }
 
   async function start() {
