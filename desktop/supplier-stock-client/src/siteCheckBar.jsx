@@ -61,13 +61,13 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep }) 
     for (const query of [...new Set([siteQuery(name), siteTokens(name)[0]].filter(Boolean))]) {
       setStatus(`${tag}${name} — searching “${query}”…`);
       const before = await web.exec(siteScript(site.results)).catch(() => null);
-      const sent = await web.exec(siteScript(site.search, query, slow)).catch(() => null);
+      const sent = await web.exec(siteScript(site.search, query, false)).catch(() => null);
       if (!sent?.ok) return { stop: STOP_TEXT[sent?.reason] || 'No product search box found on this page of the site.' };
       let lastSig = '';
       let still = 0;
       // Quick mode polls faster and settles sooner (~0.6s unchanged).
       for (let t = 0; t < (slow ? 40 : 60); t += 1) {
-        await sleep(slow ? 250 : 150);
+        await sleep(150);
         if (web.loading()) continue;
         const res = await web.exec(siteScript(site.results)).catch(() => null);
         if (!res) continue;
@@ -76,13 +76,13 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep }) 
         if (best) break;
         still = res.sig === lastSig ? still + 1 : 0;
         lastSig = res.sig;
-        if (fresh && still >= (slow ? 6 : 4)) break;
+        if (fresh && still >= 3) break;
       }
       if (best) break;
     }
     if (best && slow) {
       await web.exec(siteScript(pageHighlight, best.row.n)).catch(() => null);
-      await sleep(900);
+      await sleep(400);
     }
     return { site, best, slow };
   }

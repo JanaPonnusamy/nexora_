@@ -268,6 +268,11 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   const [supplierMode, setSupplierMode] = useState('history');
   const [supplier, setSupplier] = useState(null);
   const siteMode = view === 'supplier' && supplierMode === 'site';
+  // "Check in site" on History / Live Stock / All products: the same website
+  // check over that view's rows, without switching to the Website view.
+  const [siteCheckOn, setSiteCheckOn] = useState(false);
+  useEffect(() => { setSiteCheckOn(false); }, [supplierMode, supplier?.supplier_code, store]);
+  const siteChecking = siteMode || (view === 'supplier' && siteCheckOn);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -748,8 +753,8 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   // reads it from the supplier's OrderSuppliers row). null = no site set.
   const [sitePortal, setSitePortal] = useState(null);
   const site = useSiteCheck({
-    webRef, rows: siteMode ? visible : [], qtyOf: valueOf, nameOf: (r) => pwCleanName(r.name),
-    resetKey: `${store}|${supplier?.supplier_code || ''}|${siteMode}|${orderHeader?.order_id ?? ''}`,
+    webRef, rows: siteChecking ? visible : [], qtyOf: valueOf, nameOf: (r) => pwCleanName(r.name),
+    resetKey: `${store}|${supplier?.supplier_code || ''}|${siteChecking}|${orderHeader?.order_id ?? ''}`,
     // The product being checked is the current row (no focus taken).
     onStep: (row) => {
       const i = visible.findIndex((r) => r.key === row.key);
@@ -758,7 +763,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       if (rowRefs.current[i]?.isConnected) revealRow(i); else virt.scrollToIndex(i, { align: 'center' });
     },
   });
-  useEffect(() => { if (siteMode) setWebOn(true); }, [siteMode]);
+  useEffect(() => { if (siteChecking) setWebOn(true); }, [siteChecking]);
   // Harvest the supplier's catalog -> SupplierStock (then Live Stock shows it).
   // orderAt = today's order's generation time (order_id is YYYYMMDDHHMMSS), so
   // the hook auto-harvests a supplier whose stock is older than this order.
@@ -1283,7 +1288,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       <span className="pw-state-wrap">
         {badge}
         {skipPicker}
-        {siteMode && supplier && row.status === 0 ? <SiteMark site={site} row={row} disabled={finalized} /> : supplierView && supplier && !finalized && (row.status === 1 ? (
+        {siteChecking && supplier && row.status === 0 ? <SiteMark site={site} row={row} disabled={finalized} /> : supplierView && supplier && !finalized && (row.status === 1 ? (
           <button type="button" className="pw-mini-btn pw-mini-btn--danger" disabled={assigningKey === row.key}
             title="Unassign — back to open for any supplier"
             onClick={(e) => { e.stopPropagation(); toggleAssign(row); }}>
@@ -1720,6 +1725,11 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
                   : key === 'site' ? 'Check every open, unassigned product on this supplier’s website' : undefined}
                 onClick={() => setSupplierMode(key)}>{label}</button>
             ))}
+            {supplierMode !== 'site' && supplier && (
+              <button type="button" className={siteCheckOn ? 'active' : undefined} aria-pressed={siteCheckOn}
+                title="Check these products on the supplier's website (opens the site on the right)"
+                onClick={() => setSiteCheckOn((v) => !v)}>🌐 Check in site</button>
+            )}
           </span>
         )}
         <span className="pw-search">
@@ -1784,7 +1794,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
         </span>
         </span>
       </div>
-      {siteMode && supplier && (
+      {siteChecking && supplier && (
         <>
           <SiteCheckBar site={site} total={visible.length} siteName={sitePortal?.url ? pwCleanName(supplier.supplier_name) : ''} supplierName={pwCleanName(supplier.supplier_name)}
             busy={siteAssigning || finalized} onConfirm={confirmSiteOrder}
