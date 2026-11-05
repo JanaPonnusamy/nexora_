@@ -2723,6 +2723,14 @@ def received_not_ordered(store_name, product_type="pharma"):
         ).fetchone()[0] if day else None
         if start is None:
             start = datetime.datetime.combine(datetime.date.today(), datetime.time())
+        # GRN dates carry no time, and a morning GRN is usually stock from the
+        # day before's (evening) order, so "ordered" looks back one more active
+        # day than the GRN window does.
+        ordered_since = cur.execute(
+            "SELECT MIN(o.WantedDate) FROM (SELECT WantedDate FROM OrderManagementBackup WHERE StoreName = ? UNION ALL SELECT WantedDate FROM OrderManagement WHERE StoreName = ?) o "
+            "WHERE CAST(o.WantedDate AS date) = (SELECT MAX(CAST(b.WantedDate AS date)) FROM OrderManagementBackup b WHERE b.StoreName = ? AND CAST(b.WantedDate AS date) < CAST(? AS date))",
+            store_name, store_name, store_name, start,
+        ).fetchone()[0] or start
         rows = cur.execute(
             "SELECT pt.Grnnumber, pt.grndate, pt.suppliercode, pt.suppliername, pt.ProductCode, "
             "p.ProductName, pt.stockreceived, pt.FreeQty, pt.purchaseprice, pt.mrp, pt.ProductType "
@@ -2734,7 +2742,7 @@ def received_not_ordered(store_name, product_type="pharma"):
             "AND NOT EXISTS (SELECT 1 FROM OrderManagementBackup b WHERE b.StoreName = pt.StoreName "
             "                AND b.ProductCode = pt.ProductCode AND b.WantedDate >= ?) "
             "ORDER BY pt.grndate DESC, pt.Grnnumber DESC, p.ProductName",
-            store_name, start, start,
+            store_name, start, ordered_since,
         ).fetchall()
     return {
         "store_name": store_name, "since": start.isoformat() if hasattr(start, "isoformat") else start,
