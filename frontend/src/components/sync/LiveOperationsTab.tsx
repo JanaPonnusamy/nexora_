@@ -167,12 +167,17 @@ export function LiveOperationsTab() {
       .sort((a, b) => {
         const diff = storePriority(a) - storePriority(b)
         if (diff !== 0) return diff
-        return (a.store_code || '').localeCompare(b.store_code || '')
+        return a.tenant_name.localeCompare(b.tenant_name)
+          || (a.store_code || '').localeCompare(b.store_code || '')
       })
   )
 
   const actionableStores = stores.filter((store) => store.tenant_id)
   const recentActivity = history.slice(0, 5)
+  const tenantOfStore = (storeId: string | null) => {
+    const tenantId = storeId ? storeTenant.get(storeId) : undefined
+    return (tenantId && tenantNames.get(tenantId)) || null
+  }
 
 
   /* ---- Actions ---- */
@@ -258,6 +263,7 @@ export function LiveOperationsTab() {
             <div className="sx-storegrid">
               <div className="sx-storegrid__head">
                 <span>Store</span>
+                <span>Tenant</span>
                 <span>Status</span>
                 <span>Current Table</span>
                 <span>Progress</span>
@@ -278,6 +284,7 @@ export function LiveOperationsTab() {
                         <span className="sx-storegrid__name" title={store.store_name}>{store.store_name}</span>
                       </span>
                     </div>
+                    <div className="sx-storegrid__tenant" title={store.tenant_name}>{store.tenant_name}</div>
                     <div>
                       <SyncStatusBadge status={storeStatus(store)} compact />
                     </div>
@@ -324,16 +331,22 @@ export function LiveOperationsTab() {
             <div className="sx-feed">
               {recentActivity.length === 0 ? (
                 <div className="sx-feed__empty">No activity yet.</div>
-              ) : recentActivity.map((row) => (
+              ) : recentActivity.map((row) => {
+                const tenant = tenantOfStore(row.store_id)
+                return (
                 <div className="sx-feed__row" key={row.sync_id}>
                   <div className="sx-feed__inline">
-                    <span className="sx-feed__title">{row.store_name ?? row.store_code ?? 'Store'}</span>
+                    <span className="sx-feed__title">
+                      {row.store_name ?? row.store_code ?? 'Store'}
+                      {tenant && <span className="sx-feed__tenant"> · {tenant}</span>}
+                    </span>
                     <span className={`sx-feed__status sx-feed__status--${activityTone(row.status)}`}>{activityAbbr(row.status)}</span>
                     <span className="sx-feed__op">{row.sync_mode === 'FULL' ? 'Full' : row.sync_mode === 'UPSERT' ? 'Upsert' : (row.sync_mode ?? '-')}</span>
                   </div>
                   <span className="sx-feed__time">{timeOnly(row.started_at)}</span>
                 </div>
-              ))}
+                )
+              })}
             </div>
           </SxCardBody>
         </SxCard>

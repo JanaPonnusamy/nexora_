@@ -245,7 +245,7 @@
 .sx-storegrid__head,
 .sx-storegrid__row {
   display: grid;
-  grid-template-columns: minmax(150px, 1.2fr) 100px minmax(150px, 1.2fr) minmax(130px, 1fr) 80px 110px minmax(130px, 1fr) minmax(100px, 0.8fr) 64px;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(70px, 0.6fr) 100px minmax(150px, 1.2fr) minmax(130px, 1fr) 80px 110px minmax(130px, 1fr) minmax(100px, 0.8fr) 64px;
   gap: 0.45rem;
   align-items: center;
 }
@@ -301,6 +301,7 @@
 }
 
 .sx-storegrid__name,
+.sx-storegrid__tenant,
 .sx-storegrid__table,
 .sx-storegrid__sync {
   color: var(--sx-muted);
@@ -500,6 +501,11 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.sx-feed__tenant {
+  color: var(--sx-muted);
+  font-weight: 500;
 }
 
 .sx-feed__op {
@@ -2162,7 +2168,7 @@
 
   .sx-storegrid__head,
   .sx-storegrid__row {
-    grid-template-columns: minmax(120px, 1.1fr) 96px minmax(130px, 1.1fr) minmax(110px, 1fr) 70px 100px minmax(120px, 1fr) minmax(90px, 0.8fr) 56px;
+    grid-template-columns: minmax(120px, 1.1fr) minmax(60px, 0.5fr) 96px minmax(130px, 1.1fr) minmax(110px, 1fr) 70px 100px minmax(120px, 1fr) minmax(90px, 0.8fr) 56px;
   }
 
   .sx-overview-grid {
