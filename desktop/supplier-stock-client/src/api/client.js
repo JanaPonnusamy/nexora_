@@ -450,8 +450,10 @@ export const api = {
       // a warm cache. That's right at the default 45s wall, so a slightly
       // busy moment tips it into a client-side timeout even though the query
       // would have finished. Not a query-design problem (verified directly
-      // against the DB); this just gives the cold case room to land.
-      timeoutMs: 90000
+      // against the DB); this just gives the cold case room to land. 180s
+      // also covers a backend still running the pre-f02dd04 query (~90s for
+      // a 3000-line supplier) until it is restarted.
+      timeoutMs: 180000
     });
   },
 
@@ -572,6 +574,32 @@ export const api = {
     });
   },
 
+  // Warehouse-zero-stock lines the branches are selling, with each branch's
+  // 1-month need. Kept warm server-side; only the very first call after a
+  // backend restart computes inline (slow on a cold DB), hence the long timeout.
+  getSupplierStoreNeed(supplierCode, session, filters = {}) {
+    return request(`/api/supplier-stock-analysis/store-need${toQuery({
+      tenant_id: filters.tenantId,
+      store_id: filters.storeId,
+      supplier_code: supplierCode
+    })}`, { session, timeoutMs: 240000 });
+  },
+
+  getTodaySupplierAssignments(session, filters = {}) {
+    return request(`/api/supplier-stock-analysis/assignments/today${toQuery({
+      tenant_id: filters.tenantId,
+      store_id: filters.storeId
+    })}`, { session });
+  },
+
+  saveSupplierAssignments(payload, session) {
+    return request('/api/supplier-stock-analysis/assignments', {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
   // NMW Sales Report (Bill-wise). store_id is passed only when the caller wants
   // to narrow to one store; a super admin omits it to see every store. The
   // server also enforces scoping (store users are locked to their own stores).
@@ -612,6 +640,128 @@ export const api = {
       method: 'POST',
       session,
       body: JSON.stringify({ tenant_id: tenantId, bills, status })
+    });
+  },
+
+  // ----- Procurement Workspace (Nexora decision engine) -----
+  // Same /api/procurement endpoints as the web Purchase Manager: GUID
+  // tenant/store/refresh context, suggestions from decision_rules.evaluate.
+  procurementRefreshes(tenantId, storeId, session) {
+    return request(`/api/procurement/vpl${toQuery({ tenant_id: tenantId, store_id: storeId, page_size: 200 })}`, { session })
+      .then((r) => r?.items || []);
+  },
+
+  procurementEnsureContext(tenantId, storeId, createdBy, session) {
+    return request(`/api/procurement/stores/${encodeURIComponent(storeId)}/ensure-context${toQuery({ tenant_id: tenantId })}`, {
+      method: 'POST',
+      session,
+      timeoutMs: 180000,
+      body: JSON.stringify({ created_by: createdBy || null })
+    });
+  },
+
+  // A refresh's whole VPL in one page (700-2000 rows); the grid filters locally.
+  procurementWorkspace(tenantId, refreshId, session) {
+    return request(`/api/procurement/refreshes/${encodeURIComponent(refreshId)}/workspace${toQuery({
+      tenant_id: tenantId, sort_by: 'product_name', sort_dir: 'asc', page: 1, page_size: 5000
+    })}`, { session, timeoutMs: 90000 });
+  },
+
+  // Last sale / last GRN date per product of a refresh (LSD / LPD columns).
+  // Separate from the grid load: it reads sync.ProductSaleInformation, which is
+  // slow on a cold SQL cache.
+  procurementLastActivity(tenantId, refreshId, session) {
+    return request(`/api/procurement/refreshes/${encodeURIComponent(refreshId)}/last-activity${toQuery({ tenant_id: tenantId })}`, { session, timeoutMs: 120000 })
+      .then((r) => r?.items || []);
+  },
+
+  // Abnormal / high bill sales of a refresh's products (rulebook
+  // PRR-SALE-ABNORMAL / PRR-SALE-WARNING), and the "do not consider in order"
+  // mark for one product on one bill (written to both order databases).
+  procurementAbnormalSales(tenantId, refreshId, session) {
+    return request(`/api/procurement/refreshes/${encodeURIComponent(refreshId)}/abnormal-sales${toQuery({ tenant_id: tenantId })}`, { session, timeoutMs: 120000 });
+  },
+
+  procurementSetDontConsider(tenantId, storeId, body, session) {
+    return request(`/api/procurement/stores/${encodeURIComponent(storeId)}/sales/dont-consider${toQuery({ tenant_id: tenantId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Suggestion panel for ANY store product: ranked suppliers (best /
+  // frequent / latest / live) and other stores' stock, non-moving first.
+  procurementStoreTrends(tenantId, storeId, productCode, session) {
+    return request(`/api/procurement/stores/${encodeURIComponent(storeId)}/products/${encodeURIComponent(productCode)}/store-trends${toQuery({ tenant_id: tenantId })}`, { session });
+  },
+
+  procurementProductSuggestions(tenantId, storeId, productCode, session) {
+    return request(`/api/procurement/stores/${encodeURIComponent(storeId)}/products/${encodeURIComponent(productCode)}/suggestions${toQuery({ tenant_id: tenantId })}`, { session });
+  },
+
+  procurementOrderItem(tenantId, orderItemId, session) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}${toQuery({ tenant_id: tenantId })}`, { session });
+  },
+
+  procurementSetFinalQty(tenantId, orderItemId, finalQty, reason, by, session) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}/final-qty${toQuery({ tenant_id: tenantId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ final_qty: finalQty, override_reason: reason || null, reviewed_by: by || null })
+    });
+  },
+
+  procurementRestoreSuggested(tenantId, orderItemId, by, session) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}/restore-suggested${toQuery({ tenant_id: tenantId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ reviewed_by: by || null })
+    });
+  },
+
+  procurementSkip(tenantId, orderItemId, reason, by, session) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}/skip${toQuery({ tenant_id: tenantId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ skip_reason: reason, reviewed_by: by || null })
+    });
+  },
+
+  // Un-skip / un-defer (the backend restore accepts both).
+  procurementRestore(tenantId, orderItemId, by, session) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}/restore${toQuery({ tenant_id: tenantId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ reviewed_by: by || null })
+    });
+  },
+
+  procurementDecision(tenantId, orderItemId, session) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}/decision${toQuery({ tenant_id: tenantId })}`, { session });
+  },
+
+  procurementSupplierQueue(tenantId, orderItemId, session, limit = 5) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}/supplier-queue${toQuery({ tenant_id: tenantId, limit })}`, { session });
+  },
+
+  procurementItemAssignments(tenantId, orderItemId, session) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}/assignments${toQuery({ tenant_id: tenantId })}`, { session })
+      .then((r) => r?.items || []);
+  },
+
+  procurementAssign(tenantId, orderItemId, supplierCode, qty, by, session) {
+    return request(`/api/procurement/order-items/${encodeURIComponent(orderItemId)}/assignments${toQuery({ tenant_id: tenantId })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ supplier_code: supplierCode, qty, created_by: by || null })
+    });
+  },
+
+  procurementRemoveAssignment(tenantId, assignmentId, by, session) {
+    return request(`/api/procurement/assignments/${encodeURIComponent(assignmentId)}${toQuery({ tenant_id: tenantId, deleted_by: by })}`, {
+      method: 'DELETE',
+      session
     });
   },
 
@@ -744,6 +894,16 @@ export const api = {
     return request(`/api/legacy-order/pending-order/${encodeURIComponent(storeName)}`, { session });
   },
 
+  // Skip a line with a platform skip mode (current_refresh |
+  // until_next_sales | until_next_demand) -- see repository.skip_product.
+  legacySkipProduct(storeName, productCode, mode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/skip`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ mode })
+    });
+  },
+
   legacyUpdateQtyCheck(storeName, productCode, orderQty, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}`, {
       method: 'PATCH',
@@ -796,6 +956,20 @@ export const api = {
     });
   },
 
+  // Abnormal / high bill sales of the store's open order, and the "do not
+  // consider in order" mark (OrderNMC + platform). Same rule as Procurement.
+  legacyAbnormalSales(storeName, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/abnormal-sales`, { session, timeoutMs: 120000 });
+  },
+
+  legacySetDontConsider(storeName, body, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/sales/dont-consider`, {
+      method: 'PATCH',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
   legacyOrderHistory(storeName, productCode, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/order-history`, { session });
   },
@@ -820,8 +994,10 @@ export const api = {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/sales-details${toQuery({ mode })}`, { session });
   },
 
-  legacyMonthlyStats(storeName, productCode, mode, session) {
-    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/monthly-stats${toQuery({ mode })}`, { session });
+  // months: calendar months back from (and including) the current one;
+  // omitted = the legacy 4-month window.
+  legacyMonthlyStats(storeName, productCode, mode, session, months) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${productCode}/monthly-stats${toQuery({ mode, months })}`, { session });
   },
 
   // Supplier assignment: supplier list, orderable rows per supplier (by purchase
@@ -841,6 +1017,12 @@ export const api = {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/all-open`, { session });
   },
 
+  // {product_code: [every supplier's live stock/offer/Disc% line]} for the
+  // store's open order -- the Procurement row's compare-suppliers card.
+  legacySupplierStockCompare(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/supplier-stock-compare`, { session });
+  },
+
   legacyAssignedOrders(storeName, supplierCode, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/assigned${toQuery({ supplier_code: supplierCode })}`, { session });
   },
@@ -850,6 +1032,27 @@ export const api = {
       method: 'POST',
       session,
       body: JSON.stringify({ supplier_code: supplierCode })
+    });
+  },
+
+  legacyUnassignAll(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/assigned/unassign-all`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ supplier_code: supplierCode })
+    });
+  },
+
+  // Bulk Assign · Best Margin: proposals, then assign (recomputed server-side).
+  legacyAutoAssignPreview(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/auto-assign`, { session });
+  },
+
+  legacyAutoAssign(storeName, productCodes, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/auto-assign`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ product_codes: productCodes })
     });
   },
 
@@ -875,6 +1078,48 @@ export const api = {
       method: 'POST',
       session,
       body: JSON.stringify({ supplier_code: supplierCode, product_codes: productCodes, kind })
+    });
+  },
+
+  // A supplier's own web-order portal (its URL + login), stored on the supplier
+  // row. When a store order selects a supplier and clicks Website, the client
+  // reads this and signs in. The password only ever comes back from
+  // legacySupplierPortalLogin (for the Stock Client's auto sign-in).
+  legacySupplierPortal(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/portal`, { session });
+  },
+
+  legacySupplierPortalLogin(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/portal/login`, { session, cache: 'no-store' });
+  },
+
+  // payload: { url, username, password, auto_submit, clear }. Blank password
+  // keeps the saved one; clear wipes the portal.
+  legacySaveSupplierPortal(storeName, supplierCode, payload, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/portal`, {
+      method: 'POST', session, body: JSON.stringify(payload)
+    });
+  },
+
+  // Supplier stock harvest + match: post the supplier's portal catalog (rows:
+  // [{ name, code, stock, mrp, ptr, discount, packing, scheme, free }]); the
+  // server stores it in SupplierStock and returns the match review by tier
+  // (matched / suggested / needs_mapping).
+  legacyHarvestSupplierStock(storeName, supplierCode, rows, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/harvest`, {
+      method: 'POST', session, body: JSON.stringify({ rows })
+    });
+  },
+
+  // The match review from the already-stored stock (no re-harvest).
+  legacySupplierHarvestReview(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/harvest`, { session });
+  },
+
+  // Confirm a suggestion / map an unmapped supplier product (blank product_code unmaps).
+  legacyConfirmSupplierMatch(storeName, supplierCode, payload, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/harvest/confirm`, {
+      method: 'POST', session, body: JSON.stringify(payload)
     });
   },
 
@@ -1122,7 +1367,8 @@ export const api = {
           ...(options.excelHeader ? { excel_header: true } : {}),
           ...(options.orgName ? { org_name: options.orgName } : {}),
           ...(options.billsDays ? { bills_days: options.billsDays } : {}),
-          ...(options.nameSuffix ? { name_suffix: options.nameSuffix } : {})
+          ...(options.nameSuffix ? { name_suffix: options.nameSuffix } : {}),
+          ...(options.remarks && Object.keys(options.remarks).length ? { remarks: options.remarks } : {})
         })
       });
     } catch {
@@ -1165,7 +1411,8 @@ export const api = {
           ...(options.columns ? { columns: options.columns } : {}),
           ...(options.fileFormat ? { file_format: options.fileFormat } : {}),
           ...(options.orderNo ? { order_no: options.orderNo } : {}),
-          ...(options.images ? { images: true } : {})
+          ...(options.images ? { images: true } : {}),
+          ...(options.remarks && Object.keys(options.remarks).length ? { remarks: options.remarks } : {})
         })
       });
     } catch {
@@ -1358,6 +1605,37 @@ export const api = {
     const blob = await response.blob();
     const match = /filename="?([^"]+)"?/.exec(response.headers.get('Content-Disposition') || '');
     return { blob, filename: match?.[1] || 'Rate_Analysis.xlsx' };
+  },
+
+  // ----- Non-Moving Stock analysis (read-only) -----
+  // section: 'own-store' | 'other-stores' | 'transfers' | 'dashboard' | 'product'.
+  // The first call for a tenant builds every store's snapshot (can take a
+  // minute or two on a cold server), so these get a long timeout.
+  nonMoving(section, params, session) {
+    return request(`/api/non-moving-analysis/${section}${toQuery(params)}`, { session, timeoutMs: 300000 });
+  },
+
+  async nonMovingExcel(section, params, session, body) {
+    const settings = loadSettings();
+    const path = body
+      ? `/api/non-moving-analysis/${section}`
+      : `/api/non-moving-analysis/${section}${toQuery({ ...params, format: 'xlsx' })}`;
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, path), body
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders(session) }, body: JSON.stringify(body) }
+        : { headers: authHeaders(session) });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const match = /filename="?([^"]+)"?/.exec(response.headers.get('Content-Disposition') || '');
+    return { blob, filename: match?.[1] || 'Non_Moving_Stock.xlsx' };
   }
 };
 
