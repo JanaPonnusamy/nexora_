@@ -8,7 +8,7 @@ import { StoreTrendsPanel } from './storeTrends.jsx';
 import { SupplierCompareBadge, SupplierCompareCard, useSupplierCompare } from './supplierCompare.jsx';
 import WebPanel from './webPanel.jsx';
 import { SiteCheckBar, SiteMark, useSiteCheck } from './siteCheckBar.jsx';
-import { MatchReview, useHarvest, useMatchReview } from './harvestReview.jsx';
+import { MatchReview, fmtDur, useHarvest, useMatchReview } from './harvestReview.jsx';
 import { OwBulkAssign } from './bulkAssign.jsx';
 import { roEnter, siteAvailable, siteCheckOne, siteKind, siteScript } from './siteCheck.js';
 import { WhatsAppSendDialog, storeWhatsAppAvailable } from './storeWhatsApp.jsx';
@@ -1787,13 +1787,15 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       {siteMode && supplier && (
         <>
           <SiteCheckBar site={site} total={visible.length} siteName={sitePortal?.url ? pwCleanName(supplier.supplier_name) : ''} supplierName={pwCleanName(supplier.supplier_name)}
-            busy={siteAssigning || finalized || harvestHook.busy} onConfirm={confirmSiteOrder}
+            busy={siteAssigning || finalized} onConfirm={confirmSiteOrder}
             extra={(
               <>
                 <button type="button" className="ow-btn ow-btn-sm" disabled={harvestHook.busy || !sitePortal?.url}
-                  title="Read the supplier's whole stock once into Live Stock"
+                  title={harvestHook.busy
+                    ? 'Reading the whole stock in the background — you can still Check products one by one below'
+                    : `Read the supplier's whole stock once into Live Stock${harvestHook.avgMs ? ` — usually about ${fmtDur(harvestHook.avgMs)}` : ''}`}
                   onClick={harvestHook.harvest}>
-                  {harvestHook.busy ? 'Reading stock…' : '↻ Harvest stock'}
+                  {harvestHook.busy ? 'Reading stock…' : `↻ Harvest stock${harvestHook.avgMs ? ` (~${fmtDur(harvestHook.avgMs)})` : ''}`}
                 </button>
                 <button type="button" className="ow-btn ow-btn-sm"
                   title="Map this supplier's products to the store's products"
@@ -1802,7 +1804,12 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
                 </button>
               </>
             )} />
-          {harvestHook.progress && <div className="ow-banner" role="status">{harvestHook.progress}</div>}
+          {harvestHook.progress && (
+            <div className="ow-banner" role="status">
+              {harvestHook.progress}
+              {harvestHook.busy && <span className="pw-sitebar-left"> — no need to wait: use “Check” on any product to order it now.</span>}
+            </div>
+          )}
           {harvestHook.error && <div className="ow-banner" role="alert">{harvestHook.error}</div>}
           {matchReview.error && <div className="ow-banner" role="alert">{matchReview.error}</div>}
           {showMapReview && (

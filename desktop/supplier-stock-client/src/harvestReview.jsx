@@ -5,6 +5,30 @@ import { harvestRow, roEnumerate, siteScript } from './siteCheck.js';
 const HARVEST_RETRIES = 3;     // owner: auto-retry N times, then keep old stock
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 
+// How long a harvest takes, averaged over recent runs on THIS PC (that is where
+// the catalog is read, so the timing is this PC's). Kept as a short rolling list
+// in localStorage; shown so the operator knows roughly how long to wait.
+const TIMING_KEY = 'nexora.desktop.harvestTimings';
+const TIMING_KEEP = 8;
+function readTimings() {
+  try { const v = JSON.parse(localStorage.getItem(TIMING_KEY) || '[]'); return Array.isArray(v) ? v.filter((n) => Number.isFinite(n) && n > 0) : []; }
+  catch { return []; }
+}
+function pushTiming(ms) {
+  try {
+    const next = [...readTimings(), Math.round(ms)].slice(-TIMING_KEEP);
+    localStorage.setItem(TIMING_KEY, JSON.stringify(next));
+    return next;
+  } catch { return readTimings(); }
+}
+function avgOf(list) { return list.length ? Math.round(list.reduce((a, b) => a + b, 0) / list.length) : 0; }
+// "~45s" / "~1m 20s" from milliseconds.
+export function fmtDur(ms) {
+  if (!ms || ms < 0) return '';
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
 // Three separate concerns, kept apart (owner 2026-11-05):
 //  * useHarvest  -- read the supplier's whole catalog from its open portal and
 //    write it to SupplierStock. Nothing else. Live Stock mode then shows it.
@@ -24,6 +48,8 @@ export function useHarvest({ webRef, store, supplierCode, session, orderAt }) {
   const [progress, setProgress] = useState('');
   const [result, setResult] = useState(null);   // { stored } | null
   const [error, setError] = useState('');
+  const [avgMs, setAvgMs] = useState(() => avgOf(readTimings()));   // rolling avg on this PC
+  const [lastMs, setLastMs] = useState(0);        // the most recent run's duration
   const autoTried = useRef('');                  // store|supplier we've auto-run for
 
   // One full-catalog read; throws on a broken/partial read so the caller retries.
@@ -47,11 +73,13 @@ export function useHarvest({ webRef, store, supplierCode, session, orderAt }) {
   const harvest = useCallback(async ({ silent = false } = {}) => {
     if (!store || !supplierCode || busy) return false;
     setError(''); setResult(null); setBusy(true);
+    const startedAt = Date.now();
+    const eta = avgMs ? ` (usually ~${fmtDur(avgMs)})` : '';
     try {
       let rows = null;
       for (let attempt = 1; attempt <= HARVEST_RETRIES; attempt += 1) {
         try {
-          if (!silent) setProgress(`Reading the supplier’s product list…${attempt > 1 ? ` (retry ${attempt - 1})` : ''}`);
+          if (!silent) setProgress(`Reading the supplier’s product list…${attempt > 1 ? ` (retry ${attempt - 1})` : eta}`);
           rows = await readCatalog();
           break;
         } catch (e) {
@@ -67,8 +95,11 @@ export function useHarvest({ webRef, store, supplierCode, session, orderAt }) {
       // Only now, with a COMPLETE read, post it (server swaps atomically).
       if (!silent) setProgress(`Saving ${rows.length} products to stock…`);
       const r = await api.legacyHarvestSupplierStock(store, supplierCode, rows, true, session);
+      const took = Date.now() - startedAt;
+      setLastMs(took);
+      setAvgMs(avgOf(pushTiming(took)));
       setResult(r);
-      setProgress(`Saved ${r.stored} products. Live Stock now shows this supplier’s stock.`);
+      setProgress(`Saved ${r.stored} products in ${fmtDur(took)}. Live Stock now shows this supplier’s stock.`);
       return true;
     } catch (e) {
       // A POST failure also keeps the old stock (the server rolled back).
@@ -102,7 +133,7 @@ export function useHarvest({ webRef, store, supplierCode, session, orderAt }) {
     return () => { cancelled = true; };
   }, [store, supplierCode, orderAt, session, harvest]);
 
-  return { busy, progress, result, error, harvest, setError };
+  return { busy, progress, result, error, harvest, setError, avgMs, lastMs };
 }
 
 // --- Map review: match SupplierStock -> store products, save confirmed maps ---
