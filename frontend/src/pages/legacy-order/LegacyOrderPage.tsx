@@ -459,6 +459,13 @@ export default function LegacyOrderPage() {
       .finally(() => setReviewLoading(false))
   }
 
+  // Picker label: display name, plus the tenant when two stores share it (.32: SMA).
+  const storeLabel = (store: LegacyStore) => {
+    const name = store.display_name || store.store_name
+    const shared = stores.some((s) => s !== store && (s.display_name || s.store_name) === name)
+    return shared && store.tenant_name ? `${name} · ${store.tenant_name}` : name
+  }
+
   // Store cards grouped per tenant (multi-tenant HOs such as .32: Success + SMS).
   const storeGroups = useMemo(() => {
     const groups = new Map<string, { key: string; name: string; stores: LegacyStore[] }>()
@@ -579,7 +586,7 @@ export default function LegacyOrderPage() {
               <article className="lo-op-card" key={store.store_name} data-state={cardState}>
                 <div className="lo-op-head">
                   <span className={`lo-dot ${dotClass}`} />
-                  <strong>{store.store_name}</strong>
+                  <strong>{store.display_name || store.store_name}</strong>
                   {engines[store.store_name] === 'RULEBOOK' && <span className="lo-chip lo-chip-ok" title="Order Process uses the Procurement rule book">Rule book</span>}
                   {compareMode[store.store_name] && compareMode[store.store_name] !== 'NONE' && <span className="lo-chip" title="Compare mode used by Order Process">{COMPARE_MODE_LABEL[compareMode[store.store_name]]}</span>}
                   {lastJob?.warning && (
@@ -714,14 +721,14 @@ export default function LegacyOrderPage() {
           <h2>Compare previous order</h2>
           <p className="lo-note">Uses the original VB.NET comparison rules. Recent two-day orders are shown first, with the latest five as fallback.</p>
           <div className="lo-compare-controls visually-hidden">
-            <label><span>Store</span><select value={compareStore} onChange={(e) => setCompareStore(e.target.value)}>{stores.map((store) => <option key={store.store_name}>{store.store_name}</option>)}</select></label>
+            <label><span>Store</span><select value={compareStore} onChange={(e) => setCompareStore(e.target.value)}>{stores.map((store) => <option key={store.store_name} value={store.store_name}>{storeLabel(store)}</option>)}</select></label>
             <label className="lo-grow"><span>Previous order</span><select value={selectedOrderId} onChange={(e) => setSelectedOrderId(e.target.value)}><option value="">Select order</option>{previousOrders.map((order) => <option key={order.order_id} value={order.order_id}>#{order.order_id} — {fmtDateTime(order.wanted_date)}</option>)}</select></label>
             <button type="button" className="lo-btn lo-btn-primary" disabled={!selectedOrderId || compareBusy || Boolean(runningFor(compareStore))} onClick={compare}>{compareBusy ? 'Comparing…' : 'Compare Order'}</button>
           </div>
           <div className="lo-modern-compare">
             <FilterBar compact className="lo-compare-toprow" ariaLabel="Previous order filters">
               <FilterSelect label="Store" ariaLabel="Store" value={compareStore} onChange={setCompareStore}>
-                {stores.map((store) => <option key={store.store_name}>{store.store_name}</option>)}
+                {stores.map((store) => <option key={store.store_name} value={store.store_name}>{storeLabel(store)}</option>)}
               </FilterSelect>
               <FilterSearch value={orderSearch} placeholder="Search order #" ariaLabel="Search previous orders" onChange={setOrderSearch} />
             </FilterBar>

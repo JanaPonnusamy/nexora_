@@ -93,6 +93,7 @@ function ReceivedNotOrdered({ session, store }) {
 
 export default function PmOrderEntry({ session, onOpenWorkspace }) {
   const [stores, setStores] = useState([]);
+  const [storeLabels, setStoreLabels] = useState({});
   const [store, setStore] = useState('');
   const [state, setState] = useState(null);
   const [lastBill, setLastBill] = useState('');
@@ -105,7 +106,10 @@ export default function PmOrderEntry({ session, onOpenWorkspace }) {
   useEffect(() => {
     api.legacyStores(session, true)
       .then((rows) => {
-        const list = (Array.isArray(rows) ? rows : []).map((r) => r.store_name);
+        const all = Array.isArray(rows) ? rows : [];
+        const list = all.map((r) => r.store_name);
+        // Display name (two tenants can share one, e.g. .32's SMA); the value stays store_name.
+        setStoreLabels(Object.fromEntries(all.map((r) => [r.store_name, r.display_name || r.store_name])));
         setStores(list);
         setStore((cur) => cur || list[0] || '');
       })
@@ -162,7 +166,7 @@ export default function PmOrderEntry({ session, onOpenWorkspace }) {
         </div>
         {stores.length > 1 && (
           <select aria-label="Store" value={store} onChange={(e) => setStore(e.target.value)}>
-            {stores.map((s) => <option key={s} value={s}>{s}</option>)}
+            {stores.map((s) => <option key={s} value={s}>{storeLabels[s] || s}</option>)}
           </select>
         )}
       </header>

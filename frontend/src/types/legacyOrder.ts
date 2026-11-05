@@ -10,6 +10,8 @@ export interface LegacyStore {
   last_sync_status: string | null
   tenant_id?: string | null
   tenant_name?: string | null
+  /** Name to show; two tenants can share it while store_name stays the unique key. */
+  display_name?: string | null
 }
 
 export interface LegacyTable {

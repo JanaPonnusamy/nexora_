@@ -256,7 +256,7 @@ function OrderAutomationSettings({ session, groups, compareToday, onClose, onSav
                 <tr key={`sg-${g.tid}`} className="lgo-group"><td colSpan={3}>{g.name}</td></tr>,
                 ...g.stores.map((st) => (
                   <tr key={st.store_name}>
-                    <td className="trp-left"><strong>{st.store_name}</strong></td>
+                    <td className="trp-left"><strong>{st.display_name || st.store_name}</strong></td>
                     <td><input type="checkbox" aria-label={`Evening order ${st.store_name}`} checked={evening.has(st.store_name)} onChange={(e) => toggleEvening([st.store_name], e.target.checked)} /></td>
                     <td>
                       <select aria-label={`Compare mode ${st.store_name}`} value={compare[st.store_name] || 'NONE'} onChange={(e) => toggleCompare([st.store_name], e.target.value)}>

@@ -217,6 +217,7 @@ def list_stores(active_only: bool = True, current_user: dict = Depends(get_curre
             "last_sync_status": s["last_sync_status"],
             "tenant_id": s.get("tenant_id"),
             "tenant_name": s.get("tenant_name"),
+            "display_name": s.get("display_name") or s["store_name"],
         }
         for s in stores
     ]

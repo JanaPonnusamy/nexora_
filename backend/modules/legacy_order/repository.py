@@ -533,6 +533,9 @@ def _row_to_store(row):
         "connection_type": (getattr(row, "ConnectionType", None) or "").strip().upper(),
         # Multi-tenant HOs (.32: Success + SMS) tag each row with its platform tenant.
         "tenant_id": getattr(row, "tenant_id", None),
+        # What screens show: two tenants can share a name (.32: Success SMA and the SMS
+        # group's SMA, StoreName TESTSMA) while StoreName stays the unique key.
+        "display_name": (getattr(row, "DisplayName", None) or "").strip() or row.StoreName,
     }
 
 
@@ -542,10 +545,12 @@ def list_stores(active_only=True):
     with database.get_central_connection() as conn:
         cur = conn.cursor()
         has_tenant = cur.execute("SELECT COL_LENGTH('dbo.Stores', 'tenant_id')").fetchone()[0] is not None
+        has_display = cur.execute("SELECT COL_LENGTH('dbo.Stores', 'DisplayName')").fetchone()[0] is not None
         sql = (
             "SELECT StoreCode, StoreName, ServerName, UserName, Password, [Database], "
             "IsActive, LastSyncTime, LastSyncStatus, Ho_code, ConnectionType"
             + (", CONVERT(varchar(40), tenant_id) AS tenant_id" if has_tenant else "")
+            + (", DisplayName" if has_display else "")
             + " FROM Stores"
         )
         if active_only:
