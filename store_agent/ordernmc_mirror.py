@@ -334,6 +334,78 @@ def run_cycle(client, conn, log):
         applied[batch["table"]] = applied.get(batch["table"], 0) + n
 
 
+PURGE_EVERY_SECONDS = 6 * 3600
+_last_purge = 0.0
+
+
+def purge_retention(conn, rules, log):
+    """Delete local rows older than the HO's retention window (batched, so the
+    SIMPLE-recovery log stays small). Runs at most every PURGE_EVERY_SECONDS."""
+    global _last_purge
+    if not rules or time.time() - _last_purge < PURGE_EVERY_SECONDS:
+        return
+    _last_purge = time.time()
+    cur = conn.cursor()
+    for rule in rules:
+        table, column, days = rule.get("table"), rule.get("column"), int(rule.get("days") or 0)
+        if not table or not column or days <= 0:
+            continue
+        cur.execute("SELECT COL_LENGTH(?, ?)", f"dbo.{table}", column)
+        if cur.fetchone()[0] is None:
+            continue
+        total = 0
+        while True:
+            cur.execute(f"DELETE TOP (20000) FROM [dbo].{q(table)} "
+                        f"WHERE {q(column)} < DATEADD(day, -{days}, CAST(GETDATE() AS date))")
+            n = cur.rowcount or 0
+            conn.commit()
+            total += n
+            if n < 20000:
+                break
+        if total:
+            log(f"[MIRROR] retention purged {total} {table} rows older than {days} days")
+
+
+# OrderManagement holds only each store's CURRENT order (owner, 2026-11-06):
+# older orders are moved into OrderManagementBackup for the remote user's compare.
+ROLL_OM_SQL = """
+SET NOCOUNT ON;
+IF OBJECT_ID('dbo.OrderManagement') IS NULL OR OBJECT_ID('dbo.OrderManagementBackup') IS NULL RETURN;
+DECLARE @cols nvarchar(max) = STUFF((
+    SELECT ',' + QUOTENAME(c.name) FROM sys.columns c
+    WHERE c.object_id = OBJECT_ID('dbo.OrderManagement') AND c.is_computed = 0
+      AND EXISTS (SELECT 1 FROM sys.columns b WHERE b.object_id = OBJECT_ID('dbo.OrderManagementBackup')
+                  AND b.name = c.name AND b.is_computed = 0 AND b.is_identity = 0)
+    FOR XML PATH('')), 1, 1, '');
+DECLARE @sql nvarchar(max) = N'
+;WITH cur AS (SELECT StoreName, MAX(OrderId) AS OrderId FROM dbo.OrderManagement GROUP BY StoreName),
+old AS (SELECT o.* FROM dbo.OrderManagement o JOIN cur ON cur.StoreName = o.StoreName WHERE o.OrderId < cur.OrderId)
+INSERT INTO dbo.OrderManagementBackup (' + @cols + N') SELECT ' + @cols + N' FROM old
+WHERE NOT EXISTS (SELECT 1 FROM dbo.OrderManagementBackup b WHERE b.StoreName = old.StoreName
+                  AND b.OrderId = old.OrderId AND b.ProductCode = old.ProductCode);
+DELETE o FROM dbo.OrderManagement o
+JOIN (SELECT StoreName, MAX(OrderId) AS OrderId FROM dbo.OrderManagement GROUP BY StoreName) cur
+  ON cur.StoreName = o.StoreName WHERE o.OrderId < cur.OrderId;
+SELECT @@ROWCOUNT;';
+EXEC sp_executesql @sql;
+"""
+
+
+def roll_order_management(conn, log):
+    cur = conn.cursor()
+    cur.execute(ROLL_OM_SQL)
+    moved = 0
+    while True:
+        if cur.description:
+            row = cur.fetchone()
+            moved = int(row[0] or 0) if row else 0
+        if not cur.nextset():
+            break
+    conn.commit()
+    if moved:
+        log(f"[MIRROR] moved {moved} older OrderManagement rows to OrderManagementBackup")
+
+
 def run_forever(device, log):
     client = MirrorClient(device)
     while True:
@@ -348,6 +420,11 @@ def run_forever(device, log):
                 applied = run_cycle(client, conn, log)
                 if applied:
                     log(f"[MIRROR] cycle applied {applied} in {int(time.time() - started)}s")
+                try:
+                    roll_order_management(conn, log)
+                    purge_retention(conn, cfg.get("retention"), log)
+                except Exception:
+                    log("[MIRROR] retention purge failed:\n" + _safe_tb())
         except Exception:
             log("[MIRROR] cycle failed:\n" + _safe_tb())
             sleep_s = ERROR_RETRY_SECONDS

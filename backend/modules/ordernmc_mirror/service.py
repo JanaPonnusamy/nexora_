@@ -44,6 +44,25 @@ FULL_PASS_HOURS = _int_env("ORDERNMC_MIRROR_FULL_PASS_HOURS", 24)
 # Without trustworthy write stats every table is re-verified this often instead
 # (a pass only SENDS changed rows, but it hashes every in-scope row).
 UNTRACKED_RESCAN_MINUTES = _int_env("ORDERNMC_MIRROR_UNTRACKED_RESCAN_MINUTES", 30)
+# Remote retention (owner, 2026-11-06): the remote OrderNMC is SQL Express (10 GB
+# cap), so transaction history older than 12 months is not sent and the agent purges rows past the window.
+# OrderManagementBackup keeps 90 days for the remote user's order compare.
+RETENTION = {
+    "ProductSaleInformation": ("TransactionDate", _int_env("ORDERNMC_MIRROR_PSI_KEEP_DAYS", 365)),
+    "SaleInformation": ("BillDate", _int_env("ORDERNMC_MIRROR_TRANS_KEEP_DAYS", 365)),
+    "PurchaseTrans": ("grndate", _int_env("ORDERNMC_MIRROR_TRANS_KEEP_DAYS", 365)),
+    "ProductTrans": ("MonthOfStatistics", _int_env("ORDERNMC_MIRROR_TRANS_KEEP_DAYS", 365)),
+    "OrderManagementBackup": ("Transactiondate", _int_env("ORDERNMC_MIRROR_OMB_KEEP_DAYS", 90)),
+}
+
+
+def _retention(table):
+    rule = RETENTION.get(table["name"])
+    if not rule or rule[1] <= 0:
+        return None
+    if rule[0] not in {c["name"] for c in table["columns"]}:
+        return None
+    return rule
 
 
 def _whitelist(target):
@@ -132,7 +151,7 @@ def _fetch_pk_page(conn, target_id, table_id, table, cursor, stores=(), renames=
     key_cols = [by_name[k] for k in table["key_columns"]]
     store_params = _store_params(table, stores)
     sql = pk_page_sql(table["name"], cols, key_cols, cursor is not None,
-                      table.get("store_column"), len(store_params))
+                      table.get("store_column"), len(store_params), _retention(table))
     params = [PAGE_ROWS] + store_params
     if cursor is not None:
         params += keyset_params(_decode_cursor(table, cursor))
@@ -161,7 +180,7 @@ def _fetch_heap_groups(conn, target_id, table_id, table, stores=(), renames=None
     store_params = _store_params(table, stores)
     cur = conn.cursor()
     cur.execute(heap_groups_sql(table["name"], cols, key_cols,
-                                table.get("store_column"), len(store_params)),
+                                table.get("store_column"), len(store_params), _retention(table)),
                 store_params + [HEAP_GROUPS, int(target_id), int(table_id)])
     names = [d[0] for d in cur.description]
     n = len(cols)
@@ -189,6 +208,7 @@ def agent_config(device_id):
         "target_id": target["target_id"],
         "source_name": target["source_name"],
         "interval_seconds": target["interval_seconds"],
+        "retention": [{"table": t, "column": c, "days": d} for t, (c, d) in RETENTION.items() if d > 0],
         "target": {
             "server_name": target["server_name"],
             "database_name": target["database_name"],

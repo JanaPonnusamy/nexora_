@@ -137,9 +137,18 @@ def store_filter(store_column: str | None, n_stores: int, alias: str = "t") -> s
     return f"{alias}.{q(store_column)} IN ({', '.join('?' * n_stores)})"
 
 
+def retention_filter(retention: tuple | None, alias: str = "t") -> str:
+    """``t.[date_col] >= <today - N days>`` for a table with a retention window
+    (old history is never sent to the remote), else ''. No bind params."""
+    if not retention:
+        return ""
+    column, days = retention
+    return f"{alias}.{q(column)} >= DATEADD(day, -{int(days)}, CAST(GETDATE() AS date))"
+
+
 def pk_page_sql(table: str, cols: list[dict], key_cols: list[dict],
                 has_cursor: bool, store_column: str | None = None,
-                n_stores: int = 0) -> str:
+                n_stores: int = 0, retention: tuple | None = None) -> str:
     """One keyset page of a PK table, filtered to rows whose hash differs from
     the target's ledger, plus the page's last row (rn = @n) so the caller can
     always advance the cursor.
@@ -149,7 +158,7 @@ def pk_page_sql(table: str, cols: list[dict], key_cols: list[dict],
     """
     select_cols = ", ".join(f"t.{q(c['name'])}" for c in cols)
     order = ", ".join(f"t.{q(c['name'])}" for c in key_cols)
-    preds = [store_filter(store_column, n_stores)]
+    preds = [store_filter(store_column, n_stores), retention_filter(retention)]
     if has_cursor:
         preds.append(keyset_where(key_cols))
     preds = [x for x in preds if x]
@@ -166,7 +175,8 @@ def pk_page_sql(table: str, cols: list[dict], key_cols: list[dict],
 
 
 def heap_groups_sql(table: str, cols: list[dict], key_cols: list[dict],
-                    store_column: str | None = None, n_stores: int = 0) -> str:
+                    store_column: str | None = None, n_stores: int = 0,
+                    retention: tuple | None = None) -> str:
     """Changed key-groups of a table without a primary key (full scan; such
     tables are small). A group = all source rows sharing the key; its hash is
     (sum of row hashes mod p, row count), so any edit/insert/removal inside a
@@ -175,8 +185,8 @@ def heap_groups_sql(table: str, cols: list[dict], key_cols: list[dict],
     Params: [store names], page_size, target_id, table_id.
     """
     select_cols = ", ".join(f"t.{q(c['name'])}" for c in cols)
-    sf = store_filter(store_column, n_stores)
-    where = f" WHERE {sf}" if sf else ""
+    preds = [x for x in (store_filter(store_column, n_stores), retention_filter(retention)) if x]
+    where = f" WHERE {' AND '.join(preds)}" if preds else ""
     return (
         f"WITH r AS (SELECT {select_cols}, {key_hash_expr(key_cols)} AS __ph, "
         f"{row_hash_expr(cols)} AS __rh FROM [dbo].{q(table)} AS t{where}), "
