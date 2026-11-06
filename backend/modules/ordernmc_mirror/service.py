@@ -15,6 +15,7 @@ Statuses returned by pull:
 from __future__ import annotations
 
 import datetime
+import logging
 import os
 import time
 
@@ -27,6 +28,9 @@ class MirrorError(Exception):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+_logger = logging.getLogger(__name__)
 
 
 def _int_env(name, default):
@@ -275,6 +279,64 @@ def pull(device_id):
             if time.monotonic() > deadline:
                 return {"status": "progress", "table": table["name"]}
         return {"status": "idle", "interval_seconds": target["interval_seconds"]}
+    finally:
+        conn.close()
+
+
+# Remote -> HO edits (owner, 2026-11-06): the remote user works the current
+# order in the remote OrderNMC; these OrderManagement columns flow back to HO
+# (remote wins). Only rows of an order HO still holds as current are updated,
+# so edits to an order already moved to backup are ignored.
+EDIT_KEYS = ("StoreName", "OrderId", "ProductCode")
+EDITABLE_COLUMNS = ("OrQty", "OrderQty", "OrgOrderQty", "OrSupplier", "OrSupplierCode",
+                    "Status", "QtyCheck", "Remarks", "WantedType")
+
+
+def agent_edit_spec(device_id):
+    target = _target_for_device(device_id)
+    if not target:
+        return {"enabled": False}
+    return {"enabled": True, "table": "OrderManagement",
+            "key_columns": list(EDIT_KEYS), "columns": list(EDITABLE_COLUMNS)}
+
+
+def apply_edits(device_id, rows):
+    """Write remote OrderManagement edits into HO's OrderManagement.
+    -> {"received", "updated", "ignored"}."""
+    target = _target_for_device(device_id)
+    if not target:
+        raise MirrorError(404, "No enabled OrderNMC mirror target for this device")
+    stores = {s.upper() for s in _stores(target)}
+    back = {remote.upper(): local for local, remote in _store_entries(target)}
+    conn = sources.connect(target["source_name"])
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sys.columns WHERE object_id = OBJECT_ID('dbo.OrderManagement')")
+        present = {r[0].lower(): r[0] for r in cur.fetchall()}
+        updated = ignored = 0
+        for row in rows:
+            store = str(row.get("StoreName") or "").strip()
+            store = back.get(store.upper(), store)
+            if not store or (stores and store.upper() not in stores):
+                ignored += 1
+                continue
+            cols = [present[c.lower()] for c in EDITABLE_COLUMNS if c in row and c.lower() in present]
+            if not cols or row.get("OrderId") is None or row.get("ProductCode") is None:
+                ignored += 1
+                continue
+            cur.execute(
+                f"UPDATE dbo.OrderManagement SET {', '.join(f'[{c}] = ?' for c in cols)} "
+                f"WHERE StoreName = ? AND OrderId = ? AND ProductCode = ?",
+                *[row[c] for c in cols], store, row["OrderId"], row["ProductCode"])
+            if cur.rowcount and cur.rowcount > 0:
+                updated += 1
+            else:
+                ignored += 1
+        conn.commit()
+        if updated:
+            _logger.info("ordernmc mirror: target %s applied %s remote OrderManagement edits",
+                         target["target_id"], updated)
+        return {"received": len(rows), "updated": updated, "ignored": ignored}
     finally:
         conn.close()
 

@@ -287,3 +287,51 @@ def test_push_for_store_only_targets_carrying_it(monkeypatch):
     monkeypatch.setattr(service.repo, "list_targets", lambda: targets)
     monkeypatch.setattr(service, "push", lambda tid, tables=None: {"target_id": tid})
     assert [p["target_id"] for p in service.push_for_store("smf")] == [1, 3]
+
+
+# ---- remote -> HO edits -----------------------------------------------------
+
+class _EditCursor:
+    def __init__(self):
+        self.updates, self.rowcount = [], 0
+
+    def execute(self, sql, *params):
+        if sql.startswith("UPDATE"):
+            self.updates.append((sql, params))
+            self.rowcount = 0 if params[-2] == 999 else 1  # order 999 = already moved to backup
+        self._rows = [("OrQty",), ("OrderQty",), ("Status",), ("Remarks",)]
+        return self
+
+    def fetchall(self):
+        return self._rows
+
+
+class _EditConn:
+    def __init__(self):
+        self.cur = _EditCursor()
+
+    def cursor(self):
+        return self.cur
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_apply_edits_maps_remote_store_and_ignores_out_of_scope(monkeypatch):
+    conn = _EditConn()
+    monkeypatch.setattr(service, "_target_for_device", lambda d: {
+        "target_id": 1, "source_name": "default", "stores": "SMG,TESTSMA=SMA"})
+    monkeypatch.setattr(service.sources, "connect", lambda name: conn)
+    out = service.apply_edits("dev", [
+        {"StoreName": "SMA", "OrderId": 1, "ProductCode": 5, "OrQty": 3, "Bogus": 1},
+        {"StoreName": "SMG", "OrderId": 999, "ProductCode": 5, "Status": 2},
+        {"StoreName": "XYZ", "OrderId": 1, "ProductCode": 5, "OrQty": 3},
+        {"StoreName": "SMG", "OrderId": 1, "ProductCode": 5},
+    ])
+    assert out == {"received": 4, "updated": 1, "ignored": 3}
+    sql, params = conn.cur.updates[0]
+    assert "[OrQty] = ?" in sql and "Bogus" not in sql
+    assert params == (3, "TESTSMA", 1, 5)  # remote SMA written back as this HO's TESTSMA

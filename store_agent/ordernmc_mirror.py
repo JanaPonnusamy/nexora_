@@ -102,6 +102,18 @@ class MirrorClient:
         resp.raise_for_status()
         return resp.json()
 
+    def edit_spec(self):
+        resp = self._request("GET", "/edits/spec")
+        if resp.status_code == 404:
+            return {"enabled": False}  # older HO without remote->HO edits
+        resp.raise_for_status()
+        return resp.json()
+
+    def send_edits(self, rows):
+        resp = self._request("POST", "/edits", json={"rows": rows})
+        resp.raise_for_status()
+        return resp.json()
+
     def ack(self, batch_id, ok=True, error=None):
         resp = self._request("POST", "/ack", json={"batch_id": batch_id, "ok": ok, "error": error})
         if resp.status_code == 409:
@@ -366,6 +378,98 @@ def purge_retention(conn, rules, log):
             log(f"[MIRROR] retention purged {total} {table} rows older than {days} days")
 
 
+# ---- remote -> HO edits ------------------------------------------------------
+# dbo.nexora_om_sent holds, per OrderManagement row, the hash of the editable
+# columns as last agreed with HO. A row whose hash differs was edited here and
+# is sent up (remote wins); after HO data is applied the hashes are re-seeded.
+
+SHADOW = "dbo.nexora_om_sent"
+
+
+def _shadow_sql(spec):
+    keys = spec["key_columns"]
+    key_sel = ", ".join(f"CAST(o.{q(k)} AS nvarchar(100)) AS {q('k_' + k)}" for k in keys)
+    return keys, key_sel
+
+
+def _editable_present(cur, spec):
+    cur.execute("SELECT name FROM sys.columns WHERE object_id = OBJECT_ID('dbo.OrderManagement')")
+    have = {r[0].lower(): r[0] for r in cur.fetchall()}
+    return [have[c.lower()] for c in spec["columns"] if c.lower() in have]
+
+
+def _hash_expr(cols):
+    parts = " + N'|' + ".join(f"ISNULL(CONVERT(nvarchar(400), o.{q(c)}, 2), N'~')" for c in cols)
+    return f"HASHBYTES('MD5', {parts})"
+
+
+def _ensure_shadow(cur):
+    cur.execute(f"IF OBJECT_ID('{SHADOW}') IS NULL CREATE TABLE {SHADOW} ("
+                "StoreName nvarchar(100) NOT NULL, OrderId nvarchar(100) NOT NULL, "
+                "ProductCode nvarchar(100) NOT NULL, h varbinary(16) NULL, "
+                "PRIMARY KEY (StoreName, OrderId, ProductCode))")
+
+
+def reseed_shadow(conn, spec):
+    """Record the current editable-column hash of every OrderManagement row as agreed."""
+    cur = conn.cursor()
+    _ensure_shadow(cur)
+    cols = _editable_present(cur, spec)
+    if not cols:
+        return
+    cur.execute(f"""
+        MERGE {SHADOW} AS s
+        USING (SELECT CAST(o.StoreName AS nvarchar(100)) sn, CAST(o.OrderId AS nvarchar(100)) oid,
+                      CAST(o.ProductCode AS nvarchar(100)) pc, MAX({_hash_expr(cols)}) h
+               FROM dbo.OrderManagement o GROUP BY o.StoreName, o.OrderId, o.ProductCode) AS x
+        ON s.StoreName = x.sn AND s.OrderId = x.oid AND s.ProductCode = x.pc
+        WHEN MATCHED AND (s.h <> x.h OR s.h IS NULL) THEN UPDATE SET h = x.h
+        WHEN NOT MATCHED BY TARGET THEN INSERT (StoreName, OrderId, ProductCode, h) VALUES (x.sn, x.oid, x.pc, x.h)
+        WHEN NOT MATCHED BY SOURCE THEN DELETE;""")
+    conn.commit()
+
+
+def _jsonable(v):
+    if isinstance(v, decimal.Decimal):
+        return float(v)
+    if isinstance(v, (datetime.datetime, datetime.date)):
+        return v.isoformat()
+    return v
+
+
+def upload_edits(client, conn, log):
+    """Send OrderManagement rows edited locally since the last agreed state."""
+    spec = client.edit_spec()
+    if not spec.get("enabled"):
+        return None
+    cur = conn.cursor()
+    _ensure_shadow(cur)
+    conn.commit()
+    cols = _editable_present(cur, spec)
+    if not cols:
+        return spec
+    sel = ", ".join(f"o.{q(c)}" for c in ["StoreName", "OrderId", "ProductCode"] + cols)
+    cur.execute(f"SELECT {sel}, {_hash_expr(cols)} AS __h FROM dbo.OrderManagement o "
+                f"JOIN {SHADOW} s ON s.StoreName = CAST(o.StoreName AS nvarchar(100)) "
+                "AND s.OrderId = CAST(o.OrderId AS nvarchar(100)) "
+                "AND s.ProductCode = CAST(o.ProductCode AS nvarchar(100)) "
+                f"WHERE s.h IS NULL OR s.h <> {_hash_expr(cols)}")
+    names = [d[0] for d in cur.description]
+    rows = [dict(zip(names, r)) for r in cur.fetchall()]
+    if not rows:
+        return spec
+    for i in range(0, len(rows), 2000):
+        chunk = rows[i:i + 2000]
+        payload = [{k: _jsonable(v) for k, v in r.items() if k != "__h"} for r in chunk]
+        result = client.send_edits(payload)
+        for r in chunk:
+            cur.execute(f"UPDATE {SHADOW} SET h = ? WHERE StoreName = ? AND OrderId = ? AND ProductCode = ?",
+                        r["__h"], str(r["StoreName"]), str(r["OrderId"]), str(r["ProductCode"]))
+        conn.commit()
+        log(f"[MIRROR] sent {len(chunk)} OrderManagement edits to HO: {result}")
+    return spec
+
+
 # OrderManagement holds only each store's CURRENT order (owner, 2026-11-06):
 # older orders are moved into OrderManagementBackup for the remote user's compare.
 ROLL_OM_SQL = """
@@ -417,11 +521,18 @@ def run_forever(device, log):
                 sleep_s = int(cfg.get("interval_seconds") or 900)
                 conn = open_target(cfg["target"])
                 started = time.time()
+                edit_spec = None
+                try:
+                    edit_spec = upload_edits(client, conn, log)
+                except Exception:
+                    log("[MIRROR] edit upload failed:\n" + _safe_tb())
                 applied = run_cycle(client, conn, log)
                 if applied:
                     log(f"[MIRROR] cycle applied {applied} in {int(time.time() - started)}s")
                 try:
                     roll_order_management(conn, log)
+                    if edit_spec and edit_spec.get("enabled"):
+                        reseed_shadow(conn, edit_spec)
                     purge_retention(conn, cfg.get("retention"), log)
                 except Exception:
                     log("[MIRROR] retention purge failed:\n" + _safe_tb())

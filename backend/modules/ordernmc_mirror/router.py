@@ -101,6 +101,20 @@ def agent_ack(body: AckRequest, device: dict = Depends(get_current_device)):
     return _call(service.ack, device["device_id"], body.batch_id, body.ok, body.error)
 
 
+class EditsRequest(BaseModel):
+    rows: list[dict] = Field(default_factory=list, max_length=20000)
+
+
+@agent_router.get("/edits/spec")
+def agent_edit_spec(device: dict = Depends(get_current_device)):
+    return _call(service.agent_edit_spec, device["device_id"])
+
+
+@agent_router.post("/edits")
+def agent_edits(body: EditsRequest, device: dict = Depends(get_current_device)):
+    return _call(service.apply_edits, device["device_id"], body.rows)
+
+
 # ---- admin ----------------------------------------------------------------
 
 @admin_router.get("/sources")
