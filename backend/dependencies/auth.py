@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import time
 
 from fastapi import Depends, HTTPException
@@ -13,6 +14,12 @@ from repositories.user_repository import UserRepository
 # every module, including ones added later with no role_module_access rows
 # seeded yet (see UserRepository.get_user_modules).
 FULL_ACCESS_ROLES = {"SUPER_ADMIN", "PLATFORM_OWNER"}
+
+# The seeded dev super-admin (desktop/supplier-stock-client's dev-mode
+# auto-login) must only ever work on the .80 build box. .32/.73 run the
+# frozen HO_Backend.exe (sys.frozen); the git checkout on .80 does not -- so
+# this blocks the account's token everywhere except .80 with no extra config.
+_DEV_ONLY_USERNAMES = {"devadmin"}
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -55,7 +62,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
     _enforce_active_session(claims)
+    _enforce_dev_only_account(claims)
     return claims
+
+
+def _enforce_dev_only_account(claims: dict) -> None:
+    if claims.get("username") in _DEV_ONLY_USERNAMES and getattr(sys, "frozen", False):
+        raise HTTPException(status_code=401, detail="This account is not valid on this server")
 
 
 def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict | None:
@@ -67,11 +80,13 @@ def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depend
     if not credentials:
         return None
     try:
-        return decode_access_token(credentials.credentials)
+        claims = decode_access_token(credentials.credentials)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+    _enforce_dev_only_account(claims)
+    return claims
 
 
 def has_full_access(user: dict) -> bool:
