@@ -450,6 +450,19 @@ def _start_legacy_auto_sync_on_startup():
         print("[LEGACY_AUTO_SYNC] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
+def _start_distribution_auto_on_startup():
+    # Keeps a warehouse's own stock (e.g. SHP for SMS, NMW for Nathan) feeding
+    # the other stores' procurement.supplier_stock on a timer instead of only
+    # on a manual 'Update Supplier Stock Only' click (no-op when unset). See
+    # modules/procurement/distribution_auto.py.
+    try:
+        from modules.procurement import distribution_auto
+        distribution_auto.start_background_loop()
+    except Exception:
+        import traceback
+        print("[DISTRIBUTION_AUTO] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
 def _start_legacy_evening_order_on_startup():
     # Evening (second) order at the time set in Legacy Order > Settings
     # (off until enabled there). See legacy_order/evening_order.py.
