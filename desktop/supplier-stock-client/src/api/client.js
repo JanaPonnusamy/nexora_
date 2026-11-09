@@ -545,6 +545,32 @@ export const api = {
     });
   },
 
+  bulkImportStores(tenantId, supplierCode, session) {
+    const settings = loadSettings();
+    return request(`/api/supplier-stock-analysis/excel/bulk-stores${toQuery({
+      tenant_id: tenantId || settings.tenantId,
+      supplier_code: supplierCode
+    })}`, { session });
+  },
+
+  importSupplierExcelBulk({ tenantId, supplierCode, mapping, storeIds, file, importedBy }, session) {
+    const settings = loadSettings();
+    const form = new FormData();
+    form.append('tenant_id', tenantId || settings.tenantId);
+    form.append('supplier_code', supplierCode);
+    form.append('mapping_json', JSON.stringify(mapping));
+    if (storeIds) form.append('store_ids_json', JSON.stringify(storeIds));
+    if (importedBy) form.append('imported_by', importedBy);
+    form.append('file', file);
+    // Replace + reinsert across every store can outlast the 45s default.
+    return request('/api/supplier-stock-analysis/excel/import-bulk', {
+      method: 'POST',
+      session,
+      body: form,
+      timeoutMs: 300000
+    });
+  },
+
   getNonMovingStock(storeId, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/reports/non-moving/highlights${toQuery({

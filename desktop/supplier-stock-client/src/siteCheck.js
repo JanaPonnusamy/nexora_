@@ -282,9 +282,13 @@ export function roResults() {
   const rows = leaf.map((r, i) => {
     r.setAttribute('data-nexora-row', String(i + 1));
     const whole = text(r);
-    // Name = text before "Stock :", trimmed of a trailing "(rate)" the site
-    // appends; stock = the number after "Stock :".
-    const name = (whole.split(STOCK)[0] || '').replace(/\s*\([\d.,]+\)\s*$/, '').trim();
+    // Name = text before "Stock :", also cut at an "Expiry :" marker some
+    // skins put between the name and Stock (e.g. "VOZET 5 Expiry : 06/28 |
+    // Stock : 13" -- without this the dangling "Expiry : 06/28 |" diluted
+    // the name's token match score below threshold, so a product the site
+    // genuinely has in stock showed as Not available), trimmed of a
+    // trailing "(rate)" the site appends; stock = the number after "Stock :".
+    const name = (whole.split(STOCK)[0] || '').split(/Expiry\s*:/i)[0].replace(/\s*\([\d.,]+\)\s*$/, '').trim();
     const stock = (whole.match(/Stock\s*:\s*([\d,]+)/i) || [])[1] || '';
     return { n: i + 1, name: name || whole, stock, info: whole.slice(0, 200) };
   });
@@ -353,17 +357,29 @@ export function siteInCart(lines, name) {
 // picks or adds. Returns [{ name, stock, info }] de-duplicated by name. The
 // prefixes cover the alphabet + digits; two-letter prefixes catch the long tail
 // a one-letter search truncates. `onProgress(done, total, found)` is optional.
-export async function roEnumerate(web, onProgress) {
+export async function roEnumerate(web, onProgress, supplierName) {
   const kind = siteKind(web.url());
   if (kind !== 'retailorders') return { ok: false, reason: 'not-retailorders', rows: [] };
   const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('');
   const seen = new Map();            // upper name -> row
   const prefixes = LETTERS.slice();  // start with single letters
   let done = 0;
+  let entered = false;
   for (let i = 0; i < prefixes.length; i += 1) {
     const q = prefixes[i];
     const before = await web.exec(siteScript(roResults)).catch(() => null);
-    const sent = await web.exec(siteScript(roSearch, q, false)).catch(() => null);
+    let sent = await web.exec(siteScript(roSearch, q, false)).catch(() => null);
+    // Not on the product-search page yet (dashboard / distributor list) --
+    // try the same auto-navigation the operator would do by hand, once, then
+    // retry this letter. Only reported as pick-distributor if that also fails.
+    if (!entered && (sent?.reason === 'pick-distributor')) {
+      entered = true;
+      const enter = await web.exec(siteScript(roEnter, supplierName || '')).catch(() => null);
+      if (enter?.ok) {
+        await new Promise((r) => { setTimeout(r, 400); });
+        sent = await web.exec(siteScript(roSearch, q, false)).catch(() => null);
+      }
+    }
     if (!sent?.ok) { if (sent?.reason === 'login' || sent?.reason === 'pick-distributor') return { ok: false, reason: sent.reason, rows: [] }; done += 1; continue; }
     let rows = [];
     let lastSig = '';
@@ -458,11 +474,16 @@ export function siteAvailable(state) {
   return state === 'cart' || state === 'partial' || state === 'check' || state === 'available';
 }
 
-// RetailOrders lands on the distributor list after login; the product search
-// is one distributor in. Click the distributor whose name matches the
-// supplier (same first word), to reach #/nav/.../prodadd. Run in the page.
+// RetailOrders can land on either a distributor list (product search is one
+// distributor in -- click the card matching the supplier) or a dashboard with
+// a plain "New Order" nav link straight to #/.../prodadd (no distributor
+// picking at all -- e.g. westernsalem.retailorders.in). Try both. Run in the
+// page.
 export function roEnter(supplierName) {
   if (/prodadd/.test(location.hash)) return { ok: true, already: true };
+  const newOrderLink = [...document.querySelectorAll('a')]
+    .find((a) => a.getClientRects().length && /new order/i.test(a.textContent || '') && /prodadd/.test(a.getAttribute('href') || ''));
+  if (newOrderLink) { newOrderLink.click(); return { ok: true, clicked: 'New Order' }; }
   if (!/nav\/distributors/.test(location.hash)) return { ok: false, reason: 'not-distributors' };
   const norm = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
   const want = norm(supplierName);

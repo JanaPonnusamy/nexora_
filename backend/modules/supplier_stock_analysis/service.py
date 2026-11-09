@@ -1,5 +1,7 @@
 """Business shaping for Supplier Stock Analysis."""
 
+import functools
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from time import monotonic
@@ -7,6 +9,7 @@ from time import monotonic
 from fastapi import HTTPException
 
 from dependencies.store_scope import assert_store_access
+from modules.legacy_order import database as legacy_database
 from modules.product_mapping import service as mapping_service
 from modules.supplier_stock_analysis import excel_import, repository
 
@@ -15,6 +18,35 @@ _CACHE_TTL_SECONDS = 90
 _resolution_cache = {}
 _stock_dashboard_cache = {}
 _details_dashboard_cache = {}
+
+
+def _tenant_scoped(fn):
+    """Every function here reads/writes the central legacy DB (OrderNMC on a
+    single-tenant HO, OrderSMS/OrderSuccess/... per tenant on a multi-tenant
+    one like .32) through repository.py -> legacy_order.database. That module
+    picks the database from a contextvar (set_active_tenant) that nothing in
+    this module used to set, so every call here silently fell back to the
+    single default (OrderNMC) regardless of which tenant's store was passed
+    in -- on .32, SMS-tenant Supplier Stock Analysis reads/writes were
+    actually hitting OrderNMC, not OrderSMS.
+
+    Scopes the call to this function's own ``tenant_id`` argument (positional
+    or keyword -- every public function here takes one), same mechanism
+    legacy_order/router.py's _scope_tenant dependency uses for its own
+    requests."""
+    sig = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        bound = sig.bind_partial(*args, **kwargs)
+        tenant_id = bound.arguments.get("tenant_id")
+        token = legacy_database.set_active_tenant(tenant_id)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            legacy_database.reset_active_tenant(token)
+
+    return wrapper
 
 
 def _cache_get(cache, key):
@@ -33,10 +65,12 @@ def _cache_set(cache, key, value):
     return value
 
 
+@_tenant_scoped
 def list_suppliers(tenant_id, store_id=None, search=""):
     return {"suppliers": repository.list_suppliers(tenant_id, store_id, search)}
 
 
+@_tenant_scoped
 def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", only_available=True):
     return {
         "items": repository.list_supplier_products(
@@ -45,14 +79,17 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
     }
 
 
+@_tenant_scoped
 def warehouse_stock_counts(tenant_id, store_id):
     return repository.warehouse_stock_counts(tenant_id, store_id)
 
 
+@_tenant_scoped
 def warehouse_stock_products(tenant_id, store_id, stock_filter, search="", limit=3000):
     return repository.warehouse_stock_products(tenant_id, store_id, stock_filter, search, limit)
 
 
+@_tenant_scoped
 def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_available=False):
     rows = repository.supplier_analysis_report(tenant_id, supplier_code, store_id, only_available)
     summary = {
@@ -73,10 +110,25 @@ def supplier_analysis_report(tenant_id, supplier_code, store_id=None, only_avail
 
 
 def match_for_supplier_stock(user, supplier_stock_id, tenant_id=None):
-    row = repository.supplier_stock_row(supplier_stock_id, tenant_id)
+    """Public entry point: resolves the row under the CALLER's tenant_id (may
+    be None), then re-scopes to the row's OWN tenant for everything else --
+    it is authoritative and may differ from an unspecified caller tenant."""
+    token = legacy_database.set_active_tenant(tenant_id)
+    try:
+        row = repository.supplier_stock_row(supplier_stock_id, tenant_id)
+    finally:
+        legacy_database.reset_active_tenant(token)
     if not row:
         raise HTTPException(status_code=404, detail="Supplier stock row not found")
     assert_store_access(user, row["tenant_id"], row.get("store_id"))
+    token = legacy_database.set_active_tenant(row["tenant_id"])
+    try:
+        return _match_for_supplier_stock_row(row)
+    finally:
+        legacy_database.reset_active_tenant(token)
+
+
+def _match_for_supplier_stock_row(row):
     product_code = row.get("product_code")
     match = None
     match_status = "unmatched"
@@ -189,15 +241,28 @@ def _build_store_resolution(tenant_id, source_store_id, product_code):
     return _cache_set(_resolution_cache, cache_key, (stores, pairs, unresolved))
 
 
+def _in_tenant(tenant_id, fn, *args, **kwargs):
+    """Run fn(*args, **kwargs) scoped to tenant_id. contextvars (set_active_tenant)
+    do NOT propagate into a ThreadPoolExecutor worker thread on their own, so
+    each call submitted to a pool must re-scope itself this way, or it
+    silently falls back to the default database."""
+    token = legacy_database.set_active_tenant(tenant_id)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        legacy_database.reset_active_tenant(token)
+
+
+@_tenant_scoped
 def product_dashboard(tenant_id, source_store_id, product_code, months=6):
     stores, pairs, unresolved = _build_store_resolution(tenant_id, source_store_id, product_code)
     pair_meta = {row["store_id"]: row for row in pairs}
     with ThreadPoolExecutor(max_workers=5) as pool:
-        stock_future = pool.submit(repository.all_store_stock, tenant_id, pairs)
-        movement_future = pool.submit(repository.monthly_movement_all_stores, tenant_id, pairs, months)
-        batches_future = pool.submit(repository.batches_all_stores, tenant_id, pairs)
-        purchases_future = pool.submit(repository.purchase_history_all_stores, tenant_id, pairs)
-        sales_future = pool.submit(repository.sales_history_all_stores, tenant_id, pairs)
+        stock_future = pool.submit(_in_tenant, tenant_id, repository.all_store_stock, tenant_id, pairs)
+        movement_future = pool.submit(_in_tenant, tenant_id, repository.monthly_movement_all_stores, tenant_id, pairs, months)
+        batches_future = pool.submit(_in_tenant, tenant_id, repository.batches_all_stores, tenant_id, pairs)
+        purchases_future = pool.submit(_in_tenant, tenant_id, repository.purchase_history_all_stores, tenant_id, pairs)
+        sales_future = pool.submit(_in_tenant, tenant_id, repository.sales_history_all_stores, tenant_id, pairs)
 
         stock = stock_future.result()
         movement = movement_future.result()
@@ -241,6 +306,7 @@ def product_dashboard(tenant_id, source_store_id, product_code, months=6):
     }
 
 
+@_tenant_scoped
 def supplier_stock_dashboard(user, supplier_stock_id, tenant_id=None, months=6):
     match = match_for_supplier_stock(user, supplier_stock_id, tenant_id)
     product_code = match.get("product_code")
@@ -304,10 +370,10 @@ def _details_only_dashboard(tenant_id, source_store_id, product_code, months=6):
         return cached
     _stores, pairs, _unresolved = _build_store_resolution(tenant_id, source_store_id, product_code)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        movement_future = pool.submit(repository.monthly_movement_all_stores, tenant_id, pairs, months)
-        batches_future = pool.submit(repository.batches_all_stores, tenant_id, pairs)
-        purchases_future = pool.submit(repository.purchase_history_all_stores, tenant_id, pairs)
-        sales_future = pool.submit(repository.sales_history_all_stores, tenant_id, pairs)
+        movement_future = pool.submit(_in_tenant, tenant_id, repository.monthly_movement_all_stores, tenant_id, pairs, months)
+        batches_future = pool.submit(_in_tenant, tenant_id, repository.batches_all_stores, tenant_id, pairs)
+        purchases_future = pool.submit(_in_tenant, tenant_id, repository.purchase_history_all_stores, tenant_id, pairs)
+        sales_future = pool.submit(_in_tenant, tenant_id, repository.sales_history_all_stores, tenant_id, pairs)
 
         movement = movement_future.result()
         batches = batches_future.result()
@@ -329,14 +395,20 @@ def supplier_stock_dashboard_stock(user, supplier_stock_id, tenant_id=None):
     product_code = match.get("product_code")
     dashboard = None
     if product_code:
-        dashboard = _stock_only_dashboard(
-            match["supplier_stock"]["tenant_id"],
-            match["supplier_stock"]["store_id"],
-            product_code,
-        )
+        row_tenant_id = match["supplier_stock"]["tenant_id"]
+        token = legacy_database.set_active_tenant(row_tenant_id)
+        try:
+            dashboard = _stock_only_dashboard(
+                row_tenant_id,
+                match["supplier_stock"]["store_id"],
+                product_code,
+            )
+        finally:
+            legacy_database.reset_active_tenant(token)
     return {**match, "dashboard": dashboard}
 
 
+@_tenant_scoped
 def supplier_stock_dashboard_details(tenant_id, source_store_id, product_code, months=6):
     return _details_only_dashboard(tenant_id, source_store_id, product_code, months)
 
@@ -347,6 +419,14 @@ def family_for_supplier_stock(user, supplier_stock_id, tenant_id=None):
     supports rendering one grid row per family member per store."""
     match = match_for_supplier_stock(user, supplier_stock_id, tenant_id)
     row = match["supplier_stock"]
+    token = legacy_database.set_active_tenant(row["tenant_id"])
+    try:
+        return _family_for_match(supplier_stock_id, match, row)
+    finally:
+        legacy_database.reset_active_tenant(token)
+
+
+def _family_for_match(supplier_stock_id, match, row):
     candidates = mapping_service.find_candidates(
         row["tenant_id"], row["store_id"], row.get("supplier_product_name"), limit=15
     )
@@ -427,7 +507,11 @@ def global_search(tenant_id, query, store_id=None, limit=50):
 
 
 def update_mapping(payload):
-    repository.upsert_mapping(payload)
+    token = legacy_database.set_active_tenant(payload.get("tenant_id"))
+    try:
+        repository.upsert_mapping(payload)
+    finally:
+        legacy_database.reset_active_tenant(token)
     tenant_id = payload["tenant_id"]
     store_id = payload["store_id"]
     source_keys = [key for key in _resolution_cache if key[0] == tenant_id and key[1] == store_id]
@@ -448,14 +532,27 @@ def update_mapping(payload):
     }
 
 
+@_tenant_scoped
 def preview_excel(file_bytes, tenant_id=None, store_id=None, supplier_code=None):
     return excel_import.preview(file_bytes, tenant_id, store_id, supplier_code)
 
 
+@_tenant_scoped
 def list_order_suppliers(tenant_id, store_id):
     return {"suppliers": repository.list_order_suppliers(tenant_id, store_id)}
 
 
+@_tenant_scoped
+def bulk_import_stores(tenant_id, supplier_code):
+    return {"stores": excel_import.bulk_import_stores(tenant_id, supplier_code)}
+
+
+@_tenant_scoped
+def import_excel_bulk(tenant_id, supplier_code, file_bytes, mapping, store_ids=None, imported_by=None):
+    return excel_import.import_file_bulk(tenant_id, supplier_code, file_bytes, mapping, store_ids, imported_by)
+
+
+@_tenant_scoped
 def import_excel(tenant_id, store_id, supplier_code, file_bytes, mapping, imported_by=None):
     return excel_import.import_file(
         tenant_id, store_id, supplier_code, file_bytes, mapping, imported_by

@@ -15468,16 +15468,48 @@ function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, st
   const [preview, setPreview] = useState(null);
   const [mapping, setMapping] = useState({});
   const [status, setStatus] = useState({ state: 'idle', message: 'Choose a supplier above and an Excel file to preview.' });
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkStores, setBulkStores] = useState(null);
+  const [bulkSelected, setBulkSelected] = useState(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
   const previewSupplier = String(supplierCode || '').trim();
 
+  // Bulk mode's store list depends only on supplier + tenant (every active
+  // store sharing this exact supplier code) -- load/refresh it whenever
+  // bulk mode is turned on or the supplier changes while it's on.
+  useEffect(() => {
+    if (!bulkMode || !previewSupplier) { setBulkStores(null); return undefined; }
+    let cancelled = false;
+    setBulkLoading(true);
+    api.bulkImportStores(tenantId, previewSupplier, session)
+      .then((result) => {
+        if (cancelled) return;
+        const stores = result.stores || [];
+        setBulkStores(stores);
+        setBulkSelected(new Set(stores.map((s) => s.store_id)));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setBulkStores([]);
+        setStatus({ state: 'error', message: error.message });
+      })
+      .finally(() => { if (!cancelled) setBulkLoading(false); });
+    return () => { cancelled = true; };
+  }, [bulkMode, previewSupplier, tenantId, session]);
+
   // (Re)preview whenever the file or supplier changes, so that supplier's
-  // saved column mapping is pre-filled.
+  // saved column mapping is pre-filled. In bulk mode there's no single
+  // storeId to scope the preview to -- the supplier's saved mapping (from
+  // any store) still pre-fills via supplierCode alone.
   useEffect(() => {
     if (!file) return undefined;
     let cancelled = false;
     setPreview(null);
     setStatus({ state: 'loading', message: 'Reading file...' });
-    api.previewSupplierExcel(file, session, previewSupplier ? { tenantId, storeId, supplierCode: previewSupplier } : {})
+    const scope = previewSupplier
+      ? (bulkMode ? { tenantId, supplierCode: previewSupplier } : { tenantId, storeId, supplierCode: previewSupplier })
+      : {};
+    api.previewSupplierExcel(file, session, scope)
       .then((result) => {
         if (cancelled) return;
         setPreview(result);
@@ -15494,14 +15526,27 @@ function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, st
       });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, previewSupplier, tenantId, storeId]);
+  }, [file, previewSupplier, tenantId, storeId, bulkMode]);
 
   function handleFile(event) {
     const picked = event.target.files?.[0];
     if (picked) setFile(picked);
   }
 
+  function toggleBulkStore(storeIdToToggle) {
+    setBulkSelected((current) => {
+      const next = new Set(current);
+      if (next.has(storeIdToToggle)) next.delete(storeIdToToggle);
+      else next.add(storeIdToToggle);
+      return next;
+    });
+  }
+
   async function runImport() {
+    if (bulkMode) {
+      await runBulkImport();
+      return;
+    }
     if (!file || !previewSupplier || !storeId) {
       setStatus({ state: 'error', message: 'Warehouse, supplier and a file are all required.' });
       return;
@@ -15532,6 +15577,36 @@ function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, st
     }
   }
 
+  async function runBulkImport() {
+    if (!file || !previewSupplier || !bulkSelected.size) {
+      setStatus({ state: 'error', message: 'Supplier, a file, and at least one store are all required.' });
+      return;
+    }
+    setStatus({ state: 'loading', message: `Importing ${preview?.row_count ?? ''} line(s) to ${bulkSelected.size} store(s)... please wait.` });
+    try {
+      const result = await api.importSupplierExcelBulk({
+        tenantId,
+        supplierCode: previewSupplier,
+        mapping,
+        storeIds: Array.from(bulkSelected),
+        file,
+        importedBy: session?.user?.username || session?.user?.name
+      }, session);
+      if (result.success === false) {
+        setStatus({ state: 'error', message: `Import failed - ${result.error || (result.missing || []).join(', ')}` });
+        return;
+      }
+      const stores = result.stores || [];
+      const totalResolved = stores.reduce((sum, s) => sum + (s.product_codes_resolved || 0), 0);
+      const message = `Import successful: ${preview?.row_count ?? '?'} file line(s) saved to ${stores.length} store(s)`
+        + ` (${stores.map((s) => s.store_code).join(', ')}); ${totalResolved} matched to products across all stores.`;
+      setStatus({ state: 'ok', message });
+      onImported(message);
+    } catch (error) {
+      setStatus({ state: 'error', message: `Import failed - ${error.message}` });
+    }
+  }
+
   return (
     <div className="table-wrap import-panel">
       <div className="form-grid">
@@ -15542,15 +15617,56 @@ function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, st
             readOnly
           />
         </label>
-        <label>
-          Warehouse
-          <input value={storeCode || 'Select a warehouse first'} readOnly />
-        </label>
+        {bulkMode ? (
+          <label>
+            Scope
+            <input value="All stores with this supplier code" readOnly />
+          </label>
+        ) : (
+          <label>
+            Warehouse
+            <input value={storeCode || 'Select a warehouse first'} readOnly />
+          </label>
+        )}
         <label>
           Excel / text file
           <input type="file" accept=".xlsx,.xls,.txt" onChange={handleFile} />
         </label>
+        <label className="import-bulk-toggle" title="Import this one file into every active store (not just the selected warehouse) that uses the same supplier code.">
+          <input type="checkbox" checked={bulkMode} onChange={(event) => setBulkMode(event.target.checked)} />
+          Apply to all stores with this supplier code
+        </label>
       </div>
+
+      {bulkMode && (
+        <div className="bulk-store-list">
+          {bulkLoading && <div className="status-line loading">Finding stores with supplier {previewSupplier}...</div>}
+          {!bulkLoading && bulkStores && bulkStores.length === 0 && (
+            <div className="status-line error">No active store has supplier code {previewSupplier}.</div>
+          )}
+          {!bulkLoading && bulkStores && bulkStores.length > 0 && (
+            <>
+              <div className="status-line idle">
+                {bulkSelected.size} of {bulkStores.length} store(s) selected -- uncheck any to exclude it from this import.
+              </div>
+              <ul className="bulk-store-checklist">
+                {bulkStores.map((store) => (
+                  <li key={store.store_id}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={bulkSelected.has(store.store_id)}
+                        onChange={() => toggleBulkStore(store.store_id)}
+                      />
+                      {store.store_code} - {store.store_name} ({store.supplier_name})
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
 
       {preview && (
         <div className="mapping-grid">
@@ -15576,10 +15692,10 @@ function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, st
         {/* Wait for the preview: importing before it lands sends an empty mapping. */}
         <button
           className="primary-button"
-          disabled={!file || !preview || !previewSupplier || status.state === 'loading'}
+          disabled={!file || !preview || !previewSupplier || status.state === 'loading' || (bulkMode ? !bulkSelected.size : !storeId)}
           onClick={runImport}
         >
-          Import to supplier stock
+          {bulkMode ? `Import to ${bulkSelected.size || 0} store(s)` : 'Import to supplier stock'}
         </button>
         <span className={`status ${status.state}`}>{status.message}</span>
       </div>

@@ -43,7 +43,7 @@ export function fmtDur(ms) {
 // breaks mid-way, retry up to N times; if all fail, the old stock is kept
 // untouched (we never post a partial list). Also auto-runs when the selected
 // supplier's stock is stale (older than today's order).
-export function useHarvest({ webRef, store, supplierCode, session, orderAt }) {
+export function useHarvest({ webRef, store, supplierCode, supplierName, session, orderAt }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [result, setResult] = useState(null);   // { stored } | null
@@ -56,7 +56,7 @@ export function useHarvest({ webRef, store, supplierCode, session, orderAt }) {
   const readCatalog = useCallback(async () => {
     const web = webRef.current;
     if (!web?.ready()) { const e = new Error('site-not-open'); e.soft = 'Open the supplier’s site first.'; throw e; }
-    const out = await web.exec(siteScript(roEnumerate)).catch(() => null);
+    const out = await web.exec(siteScript(roEnumerate, undefined, supplierName || '')).catch(() => null);
     if (!out) throw new Error('read-failed');       // exec died mid-way -> retry
     if (!out.ok) {
       const e = new Error(out.reason || 'read-failed');

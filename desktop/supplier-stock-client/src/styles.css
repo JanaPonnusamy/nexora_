@@ -4776,6 +4776,43 @@ th {
   font-size: 13px;
 }
 
+.import-bulk-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  align-self: end;
+}
+
+.bulk-store-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 8px;
+  background: var(--nx-surface-sunk);
+}
+
+.bulk-store-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.bulk-store-checklist li label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
 /* Req 4: store overview cards - one row, all stores, no scrolling. */
 .store-overview-row {
   display: flex;

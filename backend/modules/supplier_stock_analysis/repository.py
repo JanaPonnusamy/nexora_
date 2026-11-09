@@ -8,7 +8,6 @@ NEXORA_PLATFORM. Both databases live on the same SQL Server instance, so the
 OrderNMC rows are joined in cross-database.
 """
 
-import os
 import re
 
 from config.database import get_connection
@@ -17,9 +16,13 @@ from modules.procurement._dbutil import rows_to_dicts
 
 
 def _ordernmc():
-    name = os.getenv("LEGACY_DB_DATABASE", "OrderNMC")
+    # The CURRENTLY ACTIVE tenant's central database (OrderNMC on a
+    # single-tenant HO, OrderSMS/OrderSuccess/... on a multi-tenant one like
+    # .32) -- see legacy_database.set_active_tenant, which service.py's
+    # @_tenant_scoped decorator sets for every call into this module.
+    name = legacy_database.active_database_name()
     if not re.fullmatch(r"[A-Za-z0-9_]+", name):
-        raise RuntimeError(f"Invalid LEGACY_DB_DATABASE: {name!r}")
+        raise RuntimeError(f"Invalid legacy database name: {name!r}")
     return f"[{name}]"
 
 
@@ -1229,6 +1232,93 @@ def replace_supplier_stock(tenant_id, store_id, supplier_code, rows, imported_by
         ).fetchone()[0]
         conn.commit()
     return {"imported": len(rows), "product_codes_resolved": resolved, "store_code": store_code}
+
+
+def list_stores_with_supplier_code(tenant_id, supplier_code):
+    """Every active store in tenant_id whose OrderSuppliers list has this
+    exact supplier code, for the bulk Excel import ("one file -> every store
+    that buys from this supplier"). Stores sharing one central database (all
+    SMS-tenant stores on .32, say) typically share the same supplier code for
+    the same real-world supplier -- this does NOT fuzzy-match by name, so a
+    store using a different code for the same supplier is correctly skipped
+    (surfaced to the operator, not silently guessed)."""
+    supplier_code = str(supplier_code).strip()
+    stores = _fetch(
+        "SELECT CAST(store_id AS VARCHAR(36)) AS store_id, store_code, store_name "
+        "FROM dbo.stores WHERE tenant_id = ? AND ISNULL(is_active, 1) = 1",
+        (tenant_id,),
+    )
+    if not stores or not supplier_code:
+        return []
+    by_code = {s["store_code"]: s for s in stores if s.get("store_code")}
+    with legacy_database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT RTRIM(StoreName) AS store_code, RTRIM(ISNULL(Suppliername, '')) AS supplier_name "
+            "FROM OrderSuppliers WHERE suppliercode = ? AND ISNULL(IsActive, 1) = 1",
+            (supplier_code,),
+        )
+        matches = {str(r.store_code).strip(): r.supplier_name for r in cur.fetchall()}
+    result = []
+    for store_code, store in by_code.items():
+        if store_code in matches:
+            result.append({**store, "supplier_name": matches[store_code]})
+    return result
+
+
+def replace_supplier_stock_bulk(tenant_id, supplier_code, rows, store_codes, imported_by=None):
+    """Same REPLACE as replace_supplier_stock, for every store_code in one
+    pass -- all stores on a tenant's central database (OrderNMC/OrderSMS/...)
+    share one connection, so this is one DELETE+INSERT per store on a single
+    connection rather than N separate round trips."""
+    supplier_code = str(supplier_code).strip()
+    results = {}
+    with legacy_database.get_central_connection() as conn:
+        cur = conn.cursor()
+        for store_code in store_codes:
+            existing_racks = {
+                str(r.supplierproductcode): r.Rack
+                for r in cur.execute(
+                    "SELECT supplierproductcode, Rack FROM SupplierStock "
+                    "WHERE storename = ? AND suppliercode = ?",
+                    (store_code, supplier_code),
+                ).fetchall()
+                if r.Rack
+            }
+            cur.execute(
+                "DELETE FROM SupplierStock WHERE storename = ? AND suppliercode = ?",
+                (store_code, supplier_code),
+            )
+            if rows:
+                cur.fast_executemany = True
+                cur.executemany(
+                    "INSERT INTO SupplierStock "
+                    "(suppliercode, supplierproductcode, supplierproductname, mrp, ptr, "
+                    "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)",
+                    [
+                        (
+                            supplier_code, _text(r["supplier_product_code"]),
+                            _text(r.get("supplier_product_name")),
+                            _money(r.get("mrp")), _money(r.get("ptr")),
+                            r.get("available_stock") or 0, _text(r.get("discount")),
+                            _text(r.get("packing")), store_code,
+                            r.get("scheme") or 0, r.get("free") or 0, r.get("minimum_qty"),
+                            _text(r.get("rack")) or existing_racks.get(_text(r["supplier_product_code"])),
+                        )
+                        for r in rows
+                    ],
+                )
+            resolved = cur.execute(
+                "SELECT COUNT(1) FROM SupplierStock ss "
+                "JOIN SupplierProductMatch spm ON spm.StoreName = ss.storename "
+                " AND spm.SupplierCode = ss.suppliercode AND spm.SupplierProductCode = ss.supplierproductcode "
+                "WHERE ss.storename = ? AND ss.suppliercode = ?",
+                (store_code, supplier_code),
+            ).fetchone()[0]
+            results[store_code] = {"imported": len(rows), "product_codes_resolved": resolved}
+        conn.commit()
+    return results
 
 
 def saved_excel_mapping(tenant_id, store_id, supplier_code):

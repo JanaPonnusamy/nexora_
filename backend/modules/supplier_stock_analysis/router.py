@@ -227,3 +227,37 @@ async def excel_import(
     return service.import_excel(
         tenant_id, store_id, supplier_code, data, mapping, imported_by
     )
+
+
+@router.get("/excel/bulk-stores")
+def excel_bulk_stores(
+    tenant_id: str,
+    supplier_code: str,
+    current_user: dict = Depends(require_admin_role),
+):
+    """Confirm list for bulk import: every active store in tenant_id whose
+    OrderSuppliers list carries this exact supplier code."""
+    _assert_scope(current_user, tenant_id)
+    return service.bulk_import_stores(tenant_id, supplier_code)
+
+
+@router.post("/excel/import-bulk")
+async def excel_import_bulk(
+    tenant_id: str = Form(...),
+    supplier_code: str = Form(...),
+    mapping_json: str = Form(...),
+    store_ids_json: Optional[str] = Form(None),
+    imported_by: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_admin_role),
+):
+    """One file -> every active store in tenant_id with this exact supplier
+    code (or just store_ids_json, when the operator deselected some from the
+    /excel/bulk-stores confirm list)."""
+    _assert_scope(current_user, tenant_id)
+    data = await file.read()
+    mapping = json.loads(mapping_json)
+    store_ids = json.loads(store_ids_json) if store_ids_json else None
+    return service.import_excel_bulk(
+        tenant_id, supplier_code, data, mapping, store_ids, imported_by
+    )

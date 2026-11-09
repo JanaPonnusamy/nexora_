@@ -254,12 +254,14 @@ def preview(file_bytes, tenant_id=None, store_id=None, supplier_code=None):
     }
 
 
-def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, imported_by=None):
-    # mapping: {excel_header: target}. Invert to {target: excel_header}.
+def _parse_rows(file_bytes, mapping):
+    """Shared by import_file / import_file_bulk: mapping {excel_header: target}
+    -> deduped, normalized rows ready for repository.replace_supplier_stock*.
+    Returns (rows, missing_targets); rows is [] when missing_targets is non-empty."""
     reverse = {target: source for source, target in (mapping or {}).items() if target}
     missing = [t["value"] for t in TARGETS if t["mandatory"] and t["value"] not in reverse]
     if missing:
-        return {"success": False, "error": "Missing required mapping", "missing": missing}
+        return [], missing
 
     sheet_name, matrix = _read_matrix(file_bytes)
     hi = _detect_header_row(matrix, [h.lower() for h in (mapping or {}).keys()])
@@ -315,9 +317,16 @@ def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, importe
             "transaction_date": g(ci_txn),
             "rack": (str(g(ci_rack)).strip() if g(ci_rack) is not None else None),
         }
+    return list(merged.values()), []
+
+
+def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, imported_by=None):
+    rows, missing = _parse_rows(file_bytes, mapping)
+    if missing:
+        return {"success": False, "error": "Missing required mapping", "missing": missing}
 
     result = repository.replace_supplier_stock(
-        tenant_id, store_id, supplier_code, list(merged.values()), imported_by or "desktop-import"
+        tenant_id, store_id, supplier_code, rows, imported_by or "desktop-import"
     )
     repository.save_excel_mapping(
         tenant_id, store_id, supplier_code,
@@ -325,3 +334,52 @@ def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, importe
          if target in _LEGACY_COLUMN},
     )
     return {"success": True, **result}
+
+
+def bulk_import_stores(tenant_id, supplier_code):
+    """Every active store in tenant_id whose OrderSuppliers carries this exact
+    supplier code -- the confirm list shown before a bulk import commits."""
+    return repository.list_stores_with_supplier_code(tenant_id, supplier_code)
+
+
+def import_file_bulk(tenant_id, supplier_code, file_bytes, mapping, store_ids=None, imported_by=None):
+    """Same REPLACE as import_file, written to every active store in
+    tenant_id that has this exact supplier code (or just store_ids, when the
+    operator deselected some from the confirm list) -- one parse, one
+    mapping save (keyed by supplier_code, not per-store), many stores."""
+    rows, missing = _parse_rows(file_bytes, mapping)
+    if missing:
+        return {"success": False, "error": "Missing required mapping", "missing": missing}
+
+    stores = repository.list_stores_with_supplier_code(tenant_id, supplier_code)
+    if store_ids is not None:
+        wanted = {str(s) for s in store_ids}
+        stores = [s for s in stores if s["store_id"] in wanted]
+    if not stores:
+        return {"success": False, "error": "No matching store found for this supplier code."}
+
+    store_codes = [s["store_code"] for s in stores]
+    results = repository.replace_supplier_stock_bulk(
+        tenant_id, supplier_code, rows, store_codes, imported_by or "desktop-import"
+    )
+    # Saved mapping is keyed by (tenant, store, supplier) -- persist it once per
+    # store so each store's next single-store import still prefills correctly.
+    legacy_columns = {
+        source: _LEGACY_COLUMN[target] for source, target in (mapping or {}).items()
+        if target in _LEGACY_COLUMN
+    }
+    for store in stores:
+        repository.save_excel_mapping(tenant_id, store["store_id"], supplier_code, legacy_columns)
+
+    return {
+        "success": True,
+        "stores": [
+            {
+                "store_id": store["store_id"],
+                "store_code": store["store_code"],
+                "store_name": store.get("store_name"),
+                **results.get(store["store_code"], {"imported": 0, "product_codes_resolved": 0}),
+            }
+            for store in stores
+        ],
+    }

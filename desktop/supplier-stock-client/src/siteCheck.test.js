@@ -21,6 +21,12 @@ test('match needs the same brand and never another strength', () => {
   assert.equal(siteMatchScore("XEPAN 40MG TAB 10'S", 'XEPAN 40MG TAB'), 1);
   assert.equal(siteMatchScore("BECOSULES CAP 20'S", 'BECOSULES CAPSULE'), 1);
   assert.equal(siteMatchScore("DOLO 650MG TAB 15'S", 'DOLO 650 SUSPENSION 60ML'), 0);
+  // A row name roResults failed to trim down to just the product (a
+  // dangling "Expiry : 06/28 |" some site skins put before "Stock :") used
+  // to dilute the token-overlap score below SITE_MATCH_MIN even for an
+  // exact brand+strength match -- 2026-11-09, westernsalem.retailorders.in
+  // VOZET 5MG showed "Not available" despite stock 13 on the site.
+  assert.equal(siteMatchScore('VOZET 5MG', 'VOZET 5'), 1);
 });
 
 test('best match picks the closest row above the bar', () => {

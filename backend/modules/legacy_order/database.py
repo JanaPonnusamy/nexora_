@@ -307,6 +307,15 @@ def _database_name():
     return os.getenv("LEGACY_DB_DATABASE", "OrderNMC")
 
 
+def active_database_name():
+    """Public wrapper for _database_name() -- the central legacy database
+    (OrderNMC/OrderSMS/...) the CURRENTLY ACTIVE tenant (see set_active_tenant)
+    resolves to. For another module (e.g. supplier_stock_analysis) that builds
+    its own cross-database SQL referencing this database by name, rather than
+    going through get_central_connection()."""
+    return _database_name()
+
+
 def _master_connection_string(server, username, password):
     return (
         f"DRIVER={{{_driver()}}};"
