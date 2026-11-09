@@ -241,7 +241,17 @@ class TargetApplier:
                 else:
                     cur.execute(_replace_delete_sql(table, keys))
                     col_list = ", ".join(q(n) for n in names)
-                    cur.execute(f"INSERT INTO [dbo].{q(table)} ({col_list}) SELECT {col_list} FROM {STAGE}")
+                    # HO's heap-group query can occasionally emit the same source
+                    # row twice in one batch (self-joined CTE, no PK to dedupe
+                    # against) -- keep one row per key so a repeat never collides
+                    # with the copy this same INSERT just wrote.
+                    partition = ", ".join(q(k) for k in keys)
+                    cur.execute(
+                        f"INSERT INTO [dbo].{q(table)} ({col_list}) "
+                        f"SELECT {col_list} FROM (SELECT {col_list}, "
+                        f"ROW_NUMBER() OVER (PARTITION BY {partition} ORDER BY (SELECT 0)) AS __rn "
+                        f"FROM {STAGE}) AS d WHERE d.__rn = 1"
+                    )
             finally:
                 if identity:
                     cur.execute(f"SET IDENTITY_INSERT [dbo].{q(table)} OFF")

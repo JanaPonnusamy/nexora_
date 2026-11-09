@@ -160,7 +160,11 @@ def _workflow_counts(cur, store_name, order_id):
         SELECT COUNT(*) AS TotalLines,
                -- Or Qty 0 lines are "no need" (counted as closed below) and are
                -- not listed on the Qty Check grid, so they never block Finalize.
-               SUM(CASE WHEN Status = 0 AND QtyCheck = 0 AND OrderQty > 0 THEN 1 ELSE 0 END) AS QtyPending,
+               -- ISNULL guards rows from before Qtycheck was stamped on insert
+               -- (NULL = 0 is NULL, not TRUE, in SQL Server) -- without it an
+               -- un-reviewed row with a NULL flag silently never counted as
+               -- pending.
+               SUM(CASE WHEN Status = 0 AND ISNULL(QtyCheck, 0) = 0 AND OrderQty > 0 THEN 1 ELSE 0 END) AS QtyPending,
                SUM(CASE WHEN Status = 0 AND QtyCheck = 1 THEN 1 ELSE 0 END) AS QtyReviewed,
                SUM(CASE WHEN Status = 1 AND OrderQty > 0 THEN 1 ELSE 0 END) AS AssignedLines,
                SUM(CASE WHEN Status = 0 AND OrderQty > 0 THEN 1 ELSE 0 END) AS UnassignedLines,
@@ -351,7 +355,7 @@ def order_workflow_summary(store_name):
         order_id = _latest_order_id(cur, store_name)
         if order_id is None:
             return {
-                "store_name": store_name, "order_id": None, "status": "DRAFT",
+                "store_name": store_name, "order_id": None, "order_no": None, "status": "DRAFT",
                 "ready": False, "total_lines": 0, "qty_pending": 0,
                 "qty_reviewed": 0, "assigned_lines": 0, "unassigned_lines": 0,
                 "closed_lines": 0, "assigned_qty": 0, "assigned_value": 0.0,
@@ -375,8 +379,16 @@ def order_workflow_summary(store_name):
             status = "READY"
         else:
             status = "DRAFT"
+        # OrderNo (short per-day sequence 1, 2, 3...) is what the clients name
+        # the export subfolder after; without it they fell back to OrderId.
+        header = cur.execute(
+            "SELECT TOP 1 OrderNo FROM OrderHeaderDetails WHERE StoreName = ? AND OrderId = ? "
+            "ORDER BY OrderDateTime DESC",
+            store_name, order_id,
+        ).fetchone()
         return {
-            "store_name": store_name, "order_id": order_id, "status": status,
+            "store_name": store_name, "order_id": order_id,
+            "order_no": header.OrderNo if header else None, "status": status,
             "ready": ready, **counts,
             "updated_at": state.UpdatedAt if state else None,
             "updated_by": state.UpdatedBy if state else None,
@@ -1075,6 +1087,16 @@ _LAST_OFFER_PATTERN_APPLY = (
 )
 
 
+def _last_offer_sql(last_offer):
+    """(extra select columns, OUTER APPLY) adding the purchase-history last
+    offer to a grid read -- the Procurement grid's offer remark needs it in
+    every view, not only Qty Check / Pending. Off by default so the export's
+    own row reads (order_export) skip the extra PurchaseTrans work."""
+    if not last_offer:
+        return "", ""
+    return ", lastoffer.LastOfferBaseQty, lastoffer.LastOfferFreeQty", f"{_LAST_OFFER_PATTERN_APPLY} "
+
+
 def _supplier_codes(supplier_code):
     """A picked supplier's code may be a UNIFIED set -- OrderSuppliers.
     UnifiedSupplierCODE comma-joins several real SupplierCodes (e.g. NMG's
@@ -1115,7 +1137,7 @@ def _supplier_stock_apply(codes, apply_kind, in_stock_only):
     )
 
 
-def orders_by_supplier(store_name, supplier_code, mode):
+def orders_by_supplier(store_name, supplier_code, mode, last_offer=False):
     """mode='history' ports LoadDataForSupplier -- legacy's "Auto Pur UpDate"
     process (products this supplier has historically supplied); mode='stock'
     ports LoadDataForSupplierStock (products matched to the supplier's live
@@ -1149,6 +1171,7 @@ def orders_by_supplier(store_name, supplier_code, mode):
     codes = _supplier_codes(supplier_code)
     if not codes:
         return []
+    offer_cols, offer_apply = _last_offer_sql(last_offer)
     if mode == "stock":
         sql = (
             "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.TotalStock, "
@@ -1157,9 +1180,10 @@ def orders_by_supplier(store_name, supplier_code, mode):
             "om.MaxQty, om.Status, om.Qtycheck, "
             "SS.Stock AS S_Stock, SS.discound AS Discount, SS.MINQTY AS MinQty, "
             "SS.sch AS Sch, SS.free AS Free, SS.SupplierProductName, "
-            "SS.SupplierProductCode, ISNULL(SS.Rack, '') AS Rack, om.IsOffer "
+            f"SS.SupplierProductCode, ISNULL(SS.Rack, '') AS Rack, om.IsOffer{offer_cols} "
             "FROM OrderManagement om "
             + _supplier_stock_apply(codes, "CROSS APPLY", in_stock_only=True)
+            + offer_apply
             + "WHERE om.storename = ? AND om.status = 0 AND om.orderqty > 0 "
             "ORDER BY om.ProductName"
         )
@@ -1191,8 +1215,9 @@ def orders_by_supplier(store_name, supplier_code, mode):
         # seekable.
         placeholders = _in_list(codes)
         sql = (
-            f"SELECT {_WORKSPACE_COLS}, om.IsOffer "
+            f"SELECT {_WORKSPACE_COLS}, om.IsOffer{offer_cols} "
             "FROM OrderManagement om "
+            f"{offer_apply}"
             "WHERE om.Status = 0 AND om.OrderQty > 0 "
             "AND om.ProductTypeName IN ('Pharma', 'Non Pharma') AND om.StoreName = ? "
             "AND EXISTS (SELECT 1 FROM PurchaseTrans pt WITH (NOLOCK) "
@@ -1219,7 +1244,7 @@ def orders_by_supplier(store_name, supplier_code, mode):
     return result
 
 
-def all_open_orderables(store_name):
+def all_open_orderables(store_name, last_offer=False):
     """Every still-open, orderable product (status=0, orderqty>0, Pharma/Non
     Pharma) regardless of any supplier's purchase history or live stock.
 
@@ -1234,9 +1259,11 @@ def all_open_orderables(store_name):
 
     See qty_check_rows for why backfill_is_offer runs first."""
     backfill_is_offer(store_name)
+    offer_cols, offer_apply = _last_offer_sql(last_offer)
     sql = (
-        f"SELECT {_WORKSPACE_COLS}, om.IsOffer "
+        f"SELECT {_WORKSPACE_COLS}, om.IsOffer{offer_cols} "
         "FROM OrderManagement om "
+        f"{offer_apply}"
         "WHERE om.Status = 0 AND om.OrderQty > 0 "
         "AND om.ProductTypeName IN ('Pharma', 'Non Pharma') AND om.StoreName = ? "
         "ORDER BY om.ProductTypeName, om.ProductName"
@@ -1245,6 +1272,61 @@ def all_open_orderables(store_name):
         cur = conn.cursor().execute(sql, store_name)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def supplier_stock_compare(store_name):
+    """Every supplier's live SupplierStock line for the store's open order
+    lines (orderqty>0, open or assigned) -- the Procurement row card that
+    compares stock / offer / discount across suppliers before placing a
+    product with one (owner 2026-10-26: a higher-discount supplier ordered
+    second may have no stock, so the product ends up out of stock).
+
+    One line per (product, real SupplierCode): the best-stocked match, same
+    pick as _supplier_stock_apply. Out-of-stock lines are kept -- "the better
+    supplier has none" is the point of the comparison."""
+    sql = (
+        "SELECT x.ProductCode, x.SupplierCode, x.SupplierProductName, x.Stock, x.Discount, "
+        "x.Sch, x.Free, x.MinQty, x.MRP, x.PTR, x.Rack, x.TransactionDate, "
+        "(SELECT TOP 1 os.SupplierNAME FROM OrderSuppliers os "
+        "  WHERE os.suppliercode = x.SupplierCode AND os.storename = ?) AS SupplierName "
+        "FROM ("
+        "  SELECT CAST(om.ProductCode AS INT) AS ProductCode, SS.SupplierCode, SS.SupplierProductName, "
+        "  SS.Stock, SS.discound AS Discount, SS.sch AS Sch, SS.free AS Free, SS.MINQTY AS MinQty, "
+        "  SS.mrp AS MRP, SS.ptr AS PTR, ISNULL(SS.Rack, '') AS Rack, SS.transactiondate AS TransactionDate, "
+        "  ROW_NUMBER() OVER (PARTITION BY om.ProductCode, SS.SupplierCode ORDER BY SS.Stock DESC) AS rn "
+        "  FROM OrderManagement om "
+        "  JOIN SupplierProductMatch SPM ON SPM.ProductCode = om.ProductCode AND SPM.StoreName = om.StoreName "
+        "  JOIN SupplierStock SS ON SS.SupplierProductCode = SPM.SupplierProductCode "
+        "    AND SS.SupplierCode = SPM.SupplierCode AND SS.storename = om.StoreName "
+        "  WHERE om.StoreName = ? AND om.OrderQty > 0 AND om.Status IN (0, 1)"
+        ") x WHERE x.rn = 1"
+    )
+    with database.get_central_connection() as conn:
+        cur = conn.cursor().execute(sql, store_name, store_name)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+    by_product = {}
+    for r in rows:
+        # discound is VARCHAR in the legacy table ("10", "12.5", blank).
+        try:
+            disc = float(str(r["Discount"] or "0").strip() or 0)
+        except ValueError:
+            disc = 0.0
+        by_product.setdefault(str(r["ProductCode"]), []).append({
+            "supplier_code": str(r["SupplierCode"] or "").strip(),
+            "supplier_name": (r["SupplierName"] or "").strip() or None,
+            "supplier_product_name": (r["SupplierProductName"] or "").strip() or None,
+            "stock": float(r["Stock"] or 0),
+            "discount": disc,
+            "sch": int(r["Sch"] or 0),
+            "free": int(r["Free"] or 0),
+            "min_qty": int(r["MinQty"] or 0) or None,
+            "mrp": float(r["MRP"]) if r["MRP"] is not None else None,
+            "ptr": float(r["PTR"]) if r["PTR"] is not None else None,
+            "rack": (r["Rack"] or "").strip() or None,
+            "updated_at": r["TransactionDate"].isoformat() if r["TransactionDate"] else None,
+        })
+    return by_product
 
 
 def orders_by_supplier_export_count(store_name, supplier_code):
@@ -1268,16 +1350,18 @@ def orders_by_supplier_export_count(store_name, supplier_code):
         return int(row[0]) if row and row[0] is not None else 0
 
 
-def assigned_orders(store_name, supplier_code):
+def assigned_orders(store_name, supplier_code, last_offer=False):
     """Port of Form1.FetchSupplierOrderDetails -- rows already assigned to this
     supplier (status=1). See qty_check_rows for why backfill_is_offer runs
     first."""
     backfill_is_offer(store_name)
     assigned = _assigned_code_values(supplier_code)
+    offer_cols, offer_apply = _last_offer_sql(last_offer)
     sql = (
         "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.SaleUnit, om.MRP, om.OrSupplier, "
-        "om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck "
+        f"om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck{offer_cols} "
         "FROM OrderManagement om "
+        f"{offer_apply}"
         "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
         f"AND om.orsuppliercode IN ({_in_list(assigned)}) "
         "ORDER BY om.ProductName"
@@ -1288,7 +1372,7 @@ def assigned_orders(store_name, supplier_code):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def all_assigned_orders(store_name):
+def all_assigned_orders(store_name, last_offer=False):
     """Every assigned row (status=1, orderqty>0) for the store across ALL
     suppliers at once -- the "All Suppliers" view of Supplier Order Details,
     for reviewing the whole day's orders in one grid instead of switching
@@ -1299,10 +1383,12 @@ def all_assigned_orders(store_name):
 
     See qty_check_rows for why backfill_is_offer runs first."""
     backfill_is_offer(store_name)
+    offer_cols, offer_apply = _last_offer_sql(last_offer)
     sql = (
         "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.SaleUnit, om.MRP, om.OrSupplier, "
-        "om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck "
+        f"om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck{offer_cols} "
         "FROM OrderManagement om "
+        f"{offer_apply}"
         "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
         "ORDER BY om.OrSupplier, om.ProductName"
     )
@@ -1349,34 +1435,57 @@ def remove_unavailable_from_supplier(store_name, supplier_code, actor=None):
     product codes actually removed."""
     rows = assigned_orders_with_supplier_stock(store_name, supplier_code)
     unavailable = [r for r in rows if not r.get("SupplierStock") or float(r["SupplierStock"]) <= 0]
-    if not unavailable:
+    return _unassign_from_supplier(
+        store_name, supplier_code, [r["ProductCode"] for r in unavailable],
+        "SUPPLIER_UNASSIGNED_STOCKOUT", actor,
+    )
+
+
+def unassign_all_from_supplier(store_name, supplier_code, actor=None):
+    """Supplier Orders "Unassign all": drop EVERY line currently assigned to
+    this supplier (the same rows assigned_orders lists) back to open, exactly
+    as remove_unavailable_from_supplier does for the stock-out subset."""
+    rows = assigned_orders(store_name, supplier_code)
+    return _unassign_from_supplier(
+        store_name, supplier_code, [r["ProductCode"] for r in rows],
+        "SUPPLIER_UNASSIGNED_BULK", actor,
+    )
+
+
+def _unassign_from_supplier(store_name, supplier_code, product_codes, audit_action, actor=None):
+    """Set-based status 1 -> 0 for the given product codes still assigned to
+    supplier_code (status=0, OrSupplier/OrSupplierCode=NULL, qtycheck=1 so
+    the lines don't re-enter Qty Check), with one line audit per product.
+    Chunked to stay under SQL Server's 2100-parameter cap. Returns the codes."""
+    if not product_codes:
         return []
-    product_codes = [r["ProductCode"] for r in unavailable]
+    assigned = _assigned_code_values(supplier_code)
     with database.get_central_connection() as conn:
         cur = conn.cursor()
         _ensure_workflow_schema(cur)
-        placeholders = ",".join("?" for _ in product_codes)
-        assigned = _assigned_code_values(supplier_code)
-        order_ids = cur.execute(
-            f"SELECT ProductCode, OrderId FROM ordermanagement "
-            f"WHERE storename = ? AND productcode IN ({placeholders})",
-            store_name, *product_codes,
-        ).fetchall()
-        order_id_by_code = {row.ProductCode: row.OrderId for row in order_ids}
-        cur.execute(
-            f"UPDATE ordermanagement SET orqty = NULL, orsupplier = NULL, "
-            f"orsuppliercode = NULL, status = 0, qtycheck = 1 "
-            f"WHERE storename = ? AND status = 1 AND orsuppliercode IN ({_in_list(assigned)}) "
-            f"AND productcode IN ({placeholders})",
-            store_name, *assigned, *product_codes,
-        )
-        for code in product_codes:
-            order_id = order_id_by_code.get(code)
-            if order_id is not None:
-                _record_line_audit(
-                    cur, store_name, int(order_id), code, "SUPPLIER_UNASSIGNED_STOCKOUT",
-                    supplier_code, None, actor,
-                )
+        for start in range(0, len(product_codes), 500):
+            chunk = product_codes[start:start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            order_ids = cur.execute(
+                f"SELECT ProductCode, OrderId FROM ordermanagement "
+                f"WHERE storename = ? AND productcode IN ({placeholders})",
+                store_name, *chunk,
+            ).fetchall()
+            order_id_by_code = {row.ProductCode: row.OrderId for row in order_ids}
+            cur.execute(
+                f"UPDATE ordermanagement SET orqty = NULL, orsupplier = NULL, "
+                f"orsuppliercode = NULL, status = 0, qtycheck = 1 "
+                f"WHERE storename = ? AND status = 1 AND orsuppliercode IN ({_in_list(assigned)}) "
+                f"AND productcode IN ({placeholders})",
+                store_name, *assigned, *chunk,
+            )
+            for code in chunk:
+                order_id = order_id_by_code.get(code)
+                if order_id is not None:
+                    _record_line_audit(
+                        cur, store_name, int(order_id), code, audit_action,
+                        supplier_code, None, actor,
+                    )
         conn.commit()
     return product_codes
 
@@ -1672,7 +1781,7 @@ def qty_check_rows(store_name):
         "lastoffer.LastOfferBaseQty, lastoffer.LastOfferFreeQty "
         "FROM ordermanagement om "
         f"{_LAST_OFFER_PATTERN_APPLY} "
-        "WHERE om.qtycheck = 0 AND om.status = 0 AND om.orderqty > 0 AND om.storename = ? "
+        "WHERE ISNULL(om.qtycheck, 0) = 0 AND om.status = 0 AND om.orderqty > 0 AND om.storename = ? "
         "ORDER BY om.productname"
     )
     with database.get_central_connection() as conn:
@@ -1762,7 +1871,7 @@ def reset_pending_qty_check(store_name, actor=None):
             return {"assigned_marked": 0, "remaining_reset": 0}
         assigned_marked = cur.execute(
             "UPDATE ordermanagement SET qtycheck = 1 "
-            "WHERE storename = ? AND orderid = ? AND status = 1 AND qtycheck = 0",
+            "WHERE storename = ? AND orderid = ? AND status = 1 AND ISNULL(qtycheck, 0) = 0",
             store_name, order_id,
         ).rowcount
         remaining_reset = cur.execute(
@@ -2120,7 +2229,7 @@ def _clean_qty(value):
     return int(f) if f == int(f) else round(f, 3)
 
 
-def qty_check_monthly_stats(store, product_code, mode):
+def qty_check_monthly_stats(store, product_code, mode, months=None):
     """Port of RetrieveDataForChartAsync -- the "Monthly Statistics" chart source,
     enriched with the return breakdown the legacy WinForms chart never surfaced.
 
@@ -2161,8 +2270,11 @@ def qty_check_monthly_stats(store, product_code, mode):
     is_local = mode != "remote"
     pt_store = " AND pt.StoreName = ?" if is_local else ""
     ps_store = " AND ps.StoreName = ?" if is_local else ""
-    # Same window + ascending ordering as the legacy query: last ~3 month starts.
-    boundary = "DATEADD(MONTH, DATEDIFF(MONTH, 0, GETDATE()) - 3, 0)"
+    # Same window + ascending ordering as the legacy query: the current month
+    # and the 3 before it. `months` (Procurement's Monthly Trend) widens it to
+    # that many calendar months, current included.
+    back = 3 if months is None else max(0, int(months) - 1)
+    boundary = f"DATEADD(MONTH, DATEDIFF(MONTH, 0, GETDATE()) - {back}, 0)"
 
     stats_sql = (
         "SELECT CONVERT(VARCHAR(7), pt.MonthOfStatistics, 120) AS ym, "
@@ -2654,6 +2766,7 @@ def compare_previous_order_supplier(store_name, order_id, supplier_code):
         except Exception:
             conn.rollback()
             raise
+
 
 # --------------------------------------------------------------------------
 # PM order entry (owner rulings 2026-11-05): a purchase manager submits the

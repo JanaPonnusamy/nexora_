@@ -210,6 +210,9 @@ def _stub_refresh_pipeline(monkeypatch, calls):
     monkeypatch.setattr(refresh_repo, "set_status", lambda *a: None)
     monkeypatch.setattr(refresh_repo, "get_vpl",
                          lambda t, r: {"snapshot_status": "Current"})
+    # Never let a failure path reach the real repository (shared database).
+    monkeypatch.setattr(refresh_repo, "abandon_refresh",
+                         lambda *a, **k: calls.append(("abandon_refresh", a, k)))
 
 
 def test_create_refresh_history_off_by_default(monkeypatch):
@@ -331,11 +334,11 @@ def test_create_refresh_history_failure_rolls_back_before_clearing(monkeypatch):
         def commit(self):
             self.committed = True
 
-    conn_holder = {}
+    conns = []
 
     def _get_conn():
-        conn_holder["conn"] = _TrackingConn()
-        return conn_holder["conn"]
+        conns.append(_TrackingConn())
+        return conns[-1]
 
     monkeypatch.setattr(orch, "get_connection", _get_conn)
     monkeypatch.setattr(
@@ -351,14 +354,21 @@ def test_create_refresh_history_failure_rolls_back_before_clearing(monkeypatch):
         raise _Boom("forced failure")
 
     monkeypatch.setattr(vpl_history_repository, "write_history_batch", _write)
+    archived = []
+    monkeypatch.setattr(refresh_repo, "set_status", lambda *a: archived.append(a))
 
     with pytest.raises(_Boom):
         orch.create_refresh("T1", "C1", {"min_days": 10, "max_days": 20, "created_by": "U1"})
 
     assert "clear_working_items" not in calls
     assert "generate_working_items" not in calls
-    assert conn_holder["conn"].rolled_back is True
-    assert conn_holder["conn"].committed is False
+    assert archived == []
+    assert len(conns) == 1
+    assert conns[0].rolled_back is True
+    assert conns[0].committed is False
+    # The published-but-empty Refresh is abandoned and the cycle repointed.
+    assert ("abandon_refresh", ("T1", "C1", "R_NEW", "R_PREV"),
+            {"clear_idempotency_key": False}) in calls
 
 
 def test_create_refresh_history_retry_is_idempotent_on_unique_violation(monkeypatch):
@@ -385,6 +395,191 @@ def test_create_refresh_history_retry_is_idempotent_on_unique_violation(monkeypa
 
     orch.create_refresh("T1", "C1", {"min_days": 10, "max_days": 20, "created_by": "U1"})
     assert calls == ["clear_working_items", "generate_working_items"]
+
+
+def _abandon_calls(calls):
+    return [c for c in calls if isinstance(c, tuple) and c[0] == "abandon_refresh"]
+
+
+def test_create_refresh_engine_failure_abandons_refresh(monkeypatch):
+    """generate_vpl failing after the header committed must abandon that
+    header (cycle stays on R_PREV), not leave it for a retry to pick up."""
+    calls = []
+    monkeypatch.delenv("PROCUREMENT_VPL_HISTORY", raising=False)
+    monkeypatch.delenv("PROCUREMENT_REFRESH_IDEMPOTENCY", raising=False)
+    _stub_refresh_pipeline(monkeypatch, calls)
+    monkeypatch.setattr(orch, "get_connection",
+                        lambda: (_ for _ in ()).throw(AssertionError("stage 3 must not run")))
+
+    class _Boom(Exception):
+        pass
+
+    def _engine(t, r):
+        raise _Boom("engine failed")
+
+    monkeypatch.setattr(decision_service, "generate_vpl", _engine)
+
+    with pytest.raises(_Boom):
+        orch.create_refresh("T1", "C1", {"min_days": 10, "max_days": 20, "created_by": "U1"})
+
+    assert _abandon_calls(calls) == [
+        ("abandon_refresh", ("T1", "C1", "R_NEW", "R_PREV"), {"clear_idempotency_key": False}),
+    ]
+
+
+def test_create_refresh_working_item_failure_abandons_and_keeps_previous(monkeypatch):
+    """A failure while building working items rolls back that transaction,
+    abandons the published Refresh, and does not archive R_PREV."""
+    calls = []
+    monkeypatch.delenv("PROCUREMENT_VPL_HISTORY", raising=False)
+    _stub_refresh_pipeline(monkeypatch, calls)
+
+    class _TrackingConn(_FakeConn):
+        rolled_back = committed = closed = False
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def commit(self):
+            self.committed = True
+
+        def close(self):
+            self.closed = True
+
+    conns = []
+    monkeypatch.setattr(orch, "get_connection",
+                        lambda: conns.append(_TrackingConn()) or conns[-1])
+
+    class _Boom(Exception):
+        pass
+
+    def _gen(*a, **k):
+        raise _Boom("working items failed")
+
+    monkeypatch.setattr(items_repo, "generate_working_items", _gen)
+    archived = []
+    monkeypatch.setattr(refresh_repo, "set_status", lambda *a: archived.append(a))
+
+    with pytest.raises(_Boom):
+        orch.create_refresh("T1", "C1", {"min_days": 10, "max_days": 20, "created_by": "U1"})
+
+    assert len(conns) == 1
+    assert conns[0].rolled_back and not conns[0].committed and conns[0].closed
+    assert archived == []
+    assert len(_abandon_calls(calls)) == 1
+
+
+def test_create_refresh_failure_clears_idempotency_key_when_enabled(monkeypatch):
+    """With idempotency on, the abandoned row's key is cleared so the retry
+    with the same key builds a new Refresh instead of returning the empty one."""
+    calls = []
+    monkeypatch.setenv("PROCUREMENT_REFRESH_IDEMPOTENCY", "1")
+    _stub_refresh_pipeline(monkeypatch, calls)
+    monkeypatch.setattr(refresh_repo, "find_by_idempotency_key", lambda *a, **k: None)
+
+    def _engine(t, r):
+        raise RuntimeError("engine failed")
+
+    monkeypatch.setattr(decision_service, "generate_vpl", _engine)
+
+    with pytest.raises(RuntimeError):
+        orch.create_refresh("T1", "C1", {
+            "min_days": 10, "max_days": 20, "created_by": "U1", "idempotency_key": "K1",
+        })
+
+    assert _abandon_calls(calls) == [
+        ("abandon_refresh", ("T1", "C1", "R_NEW", "R_PREV"), {"clear_idempotency_key": True}),
+    ]
+
+
+def test_create_refresh_abandon_failure_does_not_mask_original_error(monkeypatch):
+    calls = []
+    _stub_refresh_pipeline(monkeypatch, calls)
+
+    class _Boom(Exception):
+        pass
+
+    def _engine(t, r):
+        raise _Boom("engine failed")
+
+    def _abandon(*a, **k):
+        raise RuntimeError("compensation failed")
+
+    monkeypatch.setattr(decision_service, "generate_vpl", _engine)
+    monkeypatch.setattr(refresh_repo, "abandon_refresh", _abandon)
+
+    with pytest.raises(_Boom):
+        orch.create_refresh("T1", "C1", {"min_days": 10, "max_days": 20, "created_by": "U1"})
+
+
+def test_create_refresh_success_does_not_abandon(monkeypatch):
+    calls = []
+    monkeypatch.delenv("PROCUREMENT_VPL_HISTORY", raising=False)
+    _stub_refresh_pipeline(monkeypatch, calls)
+    monkeypatch.setattr(orch, "get_connection", lambda: _FakeConn())
+    orch.create_refresh("T1", "C1", {"min_days": 10, "max_days": 20, "created_by": "U1"})
+    assert _abandon_calls(calls) == []
+
+
+class _SqlCursor:
+    def __init__(self, fail_on=None):
+        self.calls = []
+        self.fail_on = fail_on
+
+    def execute(self, sql, params):
+        self.calls.append((" ".join(sql.split()), params))
+        if self.fail_on and self.fail_on in sql:
+            raise RuntimeError("forced")
+
+
+class _SqlConn:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.committed = self.rolled_back = self.closed = False
+
+    def cursor(self):
+        return self._cursor
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        self.closed = True
+
+
+def test_abandon_refresh_sql_is_scoped_and_conditional(monkeypatch):
+    cur = _SqlCursor()
+    conn = _SqlConn(cur)
+    monkeypatch.setattr(refresh_repo, "get_connection", lambda: conn)
+
+    refresh_repo.abandon_refresh("T1", "C1", "R_NEW", "R_PREV")
+
+    (del_sql, del_params), (cyc_sql, cyc_params) = cur.calls
+    assert "SET is_deleted = 1" in del_sql and "idempotency_key" not in del_sql
+    assert "tenant_id = ?" in del_sql and del_params == ("R_NEW", "T1")
+    # Only repoints a cycle that still points at the abandoned Refresh.
+    assert "AND active_refresh_id = ?" in cyc_sql
+    assert cyc_params == ("R_PREV", "C1", "T1", "R_NEW")
+    assert conn.committed and not conn.rolled_back and conn.closed
+
+
+def test_abandon_refresh_clears_key_only_when_asked(monkeypatch):
+    cur = _SqlCursor()
+    monkeypatch.setattr(refresh_repo, "get_connection", lambda: _SqlConn(cur))
+    refresh_repo.abandon_refresh("T1", "C1", "R_NEW", None, clear_idempotency_key=True)
+    assert "idempotency_key = NULL" in cur.calls[0][0]
+
+
+def test_abandon_refresh_rolls_back_both_updates_on_failure(monkeypatch):
+    cur = _SqlCursor(fail_on="procurement_cycles")
+    conn = _SqlConn(cur)
+    monkeypatch.setattr(refresh_repo, "get_connection", lambda: conn)
+    with pytest.raises(RuntimeError):
+        refresh_repo.abandon_refresh("T1", "C1", "R_NEW", "R_PREV")
+    assert conn.rolled_back and not conn.committed and conn.closed
 
 
 def test_create_refresh_validates_parameters(monkeypatch):

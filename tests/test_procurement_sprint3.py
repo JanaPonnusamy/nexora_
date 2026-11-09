@@ -241,43 +241,35 @@ def _stub_reconcile_repo(monkeypatch, receipts=None, assignments=None,
 
 
 def test_submit_grn_success_commits_grn_and_reconcile_on_one_connection(monkeypatch):
-    """Successful submission: store_last_grn and the full reconcile walk run
-    on the SAME connection, with exactly one commit — proves the fix, not
-    just that both steps ran."""
+    """Successful submission: every connection created is recorded, and the
+    GRN update plus the receipt read share that one connection and one commit.
+
+    A single overwritten holder is not enough: a second get_connection() would
+    replace it and the assertions would look at the wrong object.
+    """
     monkeypatch.setattr(reconciliation_repository, "get_refresh",
                         lambda t, r: {"refresh_id": r, "cycle_id": "C1", "store_id": "S1"})
-    conn_holder = {}
-
-    def _get_conn():
-        conn_holder["conn"] = _TrackingConn()
-        return conn_holder["conn"]
-
-    monkeypatch.setattr(reconciliation_service, "get_connection", _get_conn)
-
-    grn_calls = []
+    conns = _conn_factory(monkeypatch)
+    grn_conns = []
+    receipt_conns = []
     monkeypatch.setattr(
         reconciliation_repository, "store_last_grn",
-        lambda c, t, r, g: grn_calls.append((c, t, r, g)) or 1,
+        lambda c, t, r, g: grn_conns.append(c) or 1,
     )
-    reconcile_conns = []
-    real_reconcile = reconciliation_service.reconcile
-
-    def _tracking_reconcile(*a, **k):
-        reconcile_conns.append(k.get("conn"))
-        return real_reconcile(*a, **k)
-
-    monkeypatch.setattr(reconciliation_service, "reconcile", _tracking_reconcile)
-    _stub_reconcile_repo(monkeypatch)
+    monkeypatch.setattr(
+        reconciliation_repository, "read_purchase_receipts",
+        lambda c, *a: receipt_conns.append(c) or [],
+    )
+    monkeypatch.setattr(reconciliation_repository, "exported_assignments", lambda *a: [])
+    monkeypatch.setattr(reconciliation_repository, "order_items_for_refresh", lambda *a: [])
 
     out = reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
 
     assert out["last_grn_number"] == "4567"
-    conn = conn_holder["conn"]
-    # store_last_grn ran on the same connection reconcile was given.
-    assert grn_calls[0][0] is conn
-    assert reconcile_conns[0] is conn
-    # Exactly one commit, no rollback, closed exactly once — a single shared
-    # transaction, not two separate ones.
+    assert len(conns) == 1
+    conn = conns[0]
+    assert grn_conns == [conn]
+    assert receipt_conns == [conn]
     assert conn.committed is True
     assert conn.rolled_back is False
     assert conn.closed is True
@@ -392,6 +384,7 @@ def test_submit_grn_failure_in_assignment_loop_rolls_back_grn_and_prior_assignme
     assert apply_conn_seen == [grn_conn, grn_conn]
     assert grn_conn.rolled_back is True
     assert grn_conn.committed is False
+    assert grn_conn.closed is True
 
 
 def test_submit_grn_failure_in_item_rollup_rolls_back_grn_and_assignment_writes(monkeypatch):
@@ -452,6 +445,7 @@ def test_submit_grn_failure_in_item_rollup_rolls_back_grn_and_assignment_writes(
     assert apply_conn_seen == [grn_conn]
     assert grn_conn.rolled_back is True
     assert grn_conn.committed is False
+    assert grn_conn.closed is True
 
 
 def test_submit_grn_retry_after_failure_succeeds_on_shared_connection(monkeypatch):
@@ -500,14 +494,18 @@ def test_submit_grn_retry_after_failure_succeeds_on_shared_connection(monkeypatc
 
     with pytest.raises(_Boom):
         reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
+    assert len(conns) == 1
     assert conns[0].rolled_back is True
     assert conns[0].committed is False
+    assert conns[0].closed is True
 
     out = reconciliation_service.submit_grn("T1", "R1", "4567", "U1")
     assert out["assignments_matched"] == 1
     assert out["items_completed"] == 1
+    assert len(conns) == 2
     assert conns[1].committed is True
     assert conns[1].rolled_back is False
+    assert conns[1].closed is True
     # Each attempt used its own connection — the retry did not reuse or
     # depend on the failed attempt's connection object.
     assert conns[0] is not conns[1]
@@ -559,13 +557,61 @@ def test_close_cycle_reconcile_still_opens_its_own_connection_per_refresh(monkey
 
     monkeypatch.setattr(orchestration_service, "StoreRepository", lambda: _StoreOK())
 
-    orchestration_service.close_cycle("T1", "C1", "U1", force=True)
+    out = orchestration_service.close_cycle("T1", "C1", "U1", force=True)
 
     # One connection per refresh in the cycle (two refreshes -> two
     # connections), each independently committed — unchanged isolation.
     assert len(conns_opened) == 2
     assert all(c.committed for c in conns_opened)
     assert all(not c.rolled_back for c in conns_opened)
+    assert out["reconcile_failures"] == []
+
+
+def _pre_fix_submit_grn(tenant_id, refresh_id, last_grn_number, submitted_by):
+    """The two-transaction shape the shared-connection tests must reject.
+
+    Commits the GRN number on its own connection, then lets reconcile open
+    another. Not used by production.
+    """
+    if not last_grn_number or not str(last_grn_number).strip():
+        raise HTTPException(status_code=400, detail="last_grn_number is required")
+    refresh = reconciliation_repository.get_refresh(tenant_id, refresh_id)
+    if not refresh:
+        raise HTTPException(status_code=404, detail="Refresh not found")
+    conn = reconciliation_service.get_connection()
+    try:
+        reconciliation_repository.store_last_grn(
+            conn, tenant_id, refresh_id, str(last_grn_number).strip(),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    summary = reconciliation_service.reconcile(
+        tenant_id, refresh_id, refresh.get("store_id"), last_grn_number,
+    )
+    return {
+        "refresh_id": str(refresh_id),
+        "last_grn_number": str(last_grn_number).strip(),
+        **summary,
+    }
+
+
+def test_pre_fix_split_transaction_fails_shared_connection_assertions(monkeypatch):
+    """Mutation: the repaired tests must fail when submit_grn commits the GRN
+    number before reconciliation opens a second connection."""
+    original = reconciliation_service.submit_grn
+    reconciliation_service.submit_grn = _pre_fix_submit_grn
+    try:
+        with pytest.raises(AssertionError):
+            test_submit_grn_success_commits_grn_and_reconcile_on_one_connection(monkeypatch)
+        monkeypatch.undo()
+        with pytest.raises(AssertionError):
+            test_submit_grn_reconcile_failure_rolls_back_grn_update_too(monkeypatch)
+    finally:
+        reconciliation_service.submit_grn = original
 
 
 # ==========================================================================
@@ -592,22 +638,31 @@ def test_pending_carry_forward(monkeypatch):
 
 
 def test_manual_add_validations(monkeypatch):
-    monkeypatch.setattr(pending_repository, "product_already_in_refresh",
-                        lambda t, r, p: True)
-    with pytest.raises(HTTPException) as ei:
-        pending_service.add_manual("T1", "R1", "C1", "S1", "PARA", "Para", 5, "U1")
-    assert ei.value.status_code == 409
+    inserted = []
+    monkeypatch.setattr(pending_repository, "add_manual_item",
+                        lambda *a: inserted.append(a) or "NEW-OI")
 
-    monkeypatch.setattr(pending_repository, "product_already_in_refresh",
-                        lambda t, r, p: False)
+    # A product already working in the refresh is returned, not inserted
+    # again (idempotent double-submit, see add_manual).
+    monkeypatch.setattr(pending_repository, "get_item_by_product",
+                        lambda t, r, p: {"order_item_id": "OLD-OI", "is_manual": False})
+    out = pending_service.add_manual("T1", "R1", "C1", "S1", "PARA", "Para", 5, "U1")
+    assert out == {"order_item_id": "OLD-OI", "product_code": "PARA",
+                   "is_manual": False, "already_exists": True}
+    assert inserted == []
+
+    monkeypatch.setattr(pending_repository, "get_item_by_product", lambda t, r, p: None)
     with pytest.raises(HTTPException) as ei:
         pending_service.add_manual("T1", "R1", "C1", "S1", "PARA", "Para", 0, "U1")
     assert ei.value.status_code == 400
+    with pytest.raises(HTTPException) as ei:
+        pending_service.add_manual("T1", "R1", "C1", "S1", " ", "Para", 5, "U1")
+    assert ei.value.status_code == 400
+    assert inserted == []
 
-    monkeypatch.setattr(pending_repository, "add_manual_item",
-                        lambda *a: "NEW-OI")
     out = pending_service.add_manual("T1", "R1", "C1", "S1", "PARA", "Para", 5, "U1")
     assert out["order_item_id"] == "NEW-OI" and out["is_manual"] is True
+    assert len(inserted) == 1
 
 
 # ==========================================================================
@@ -645,34 +700,54 @@ def test_carry_forward_noop_without_previous():
 
 def test_close_cycle_blocked_when_generating(monkeypatch):
     monkeypatch.setattr(cycle_repo, "get_cycle",
-                        lambda t, c: {"cycle_id": c, "status": "ACTIVE"})
-    monkeypatch.setattr(cycle_repo, "refreshing_in_progress", lambda t, c: True)
+                        lambda t, c: {"cycle_id": c, "status": "ACTIVE", "store_id": "S1"})
+    monkeypatch.setattr(cycle_repo, "cycle_close_blockers",
+                        lambda t, c: {"active_refreshes": True})
     with pytest.raises(HTTPException) as ei:
-        orchestration_service.close_cycle("T1", "C1", "G9", "B9", "U1")
+        orchestration_service.close_cycle("T1", "C1", "U1")
     assert ei.value.status_code == 409
 
 
 def test_close_cycle_ok(monkeypatch):
-    state = {"status": "ACTIVE"}
+    closed = {}
     monkeypatch.setattr(cycle_repo, "get_cycle",
-                        lambda t, c: {"cycle_id": c, **state})
-    monkeypatch.setattr(cycle_repo, "refreshing_in_progress", lambda t, c: False)
+                        lambda t, c: {"cycle_id": c, "status": "ACTIVE", "store_id": "S1"})
+    monkeypatch.setattr(cycle_repo, "cycle_close_blockers",
+                        lambda t, c: {"active_refreshes": False})
+    monkeypatch.setattr(cycle_repo, "refresh_ids_for_cycle", lambda t, c: [])
+    monkeypatch.setattr(cycle_repo, "pending_item_count", lambda t, c: 0)
+    monkeypatch.setattr(orchestration_service, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        orchestration_service, "exclusion_repo",
+        type("E", (), {"record_exclusions_from_replies": staticmethod(lambda *a: 0)}),
+    )
+    monkeypatch.setattr(
+        orchestration_service, "platform_repo",
+        type("P", (), {
+            "read_last_grn": staticmethod(lambda *a: "G9"),
+            "read_last_sale_bill": staticmethod(lambda *a: "B9"),
+        }),
+    )
 
     def _close(t, c, g, b, by):
-        state["status"] = "Closed"
-        state["end_grn_number"] = g
+        closed["grn"] = g
+        closed["bill"] = b
         return 1
 
     monkeypatch.setattr(cycle_repo, "close_cycle", _close)
-    out = orchestration_service.close_cycle("T1", "C1", "G9", "B9", "U1")
-    assert out["status"] == "Closed" and out["end_grn_number"] == "G9"
+    monkeypatch.setattr(cycle_repo, "create_cycle", lambda data: {"cycle_id": "C2", **data})
+    monkeypatch.setattr(orchestration_service, "StoreRepository", lambda: type("S", (), {"get_by_id": lambda self, sid: ("row",)})())
+    out = orchestration_service.close_cycle("T1", "C1", "U1")
+    assert out["status"] == "closed"
+    assert closed["grn"] == "G9" and closed["bill"] == "B9"
+    assert out["reconcile_failures"] == []
 
 
 def test_close_cycle_already_closed(monkeypatch):
     monkeypatch.setattr(cycle_repo, "get_cycle",
                         lambda t, c: {"cycle_id": c, "status": "Closed"})
     with pytest.raises(HTTPException) as ei:
-        orchestration_service.close_cycle("T1", "C1", None, None, "U1")
+        orchestration_service.close_cycle("T1", "C1", "U1")
     assert ei.value.status_code == 409
 
 
@@ -731,17 +806,34 @@ def test_end_to_end_post_export(monkeypatch):
         _FakeConn(), "T1", "R1", {"refresh_id": "R2", "cycle_id": "C1", "store_id": "S1"}, "U1"
     ) == 1
 
-    # close cycle (ACTIVE at validation, Closed after)
-    cstate = {"status": "ACTIVE", "end_grn_number": None}
     monkeypatch.setattr(cycle_repo, "get_cycle",
-                        lambda t, c: {"cycle_id": c, **cstate})
-    monkeypatch.setattr(cycle_repo, "refreshing_in_progress", lambda t, c: False)
-
-    def _close(t, c, g, b, by):
-        cstate["status"] = "Closed"
-        cstate["end_grn_number"] = g
-        return 1
-
-    monkeypatch.setattr(cycle_repo, "close_cycle", _close)
-    closed = orchestration_service.close_cycle("T1", "C1", "4600", "88300", "U1")
-    assert closed["status"] == "Closed" and closed["end_grn_number"] == "4600"
+                        lambda t, c: {"cycle_id": c, "status": "ACTIVE", "store_id": "S1"})
+    monkeypatch.setattr(cycle_repo, "cycle_close_blockers",
+                        lambda t, c: {"active_refreshes": False})
+    monkeypatch.setattr(cycle_repo, "refresh_ids_for_cycle", lambda t, c: [])
+    monkeypatch.setattr(cycle_repo, "pending_item_count", lambda t, c: 0)
+    monkeypatch.setattr(orchestration_service, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        orchestration_service, "exclusion_repo",
+        type("E", (), {"record_exclusions_from_replies": staticmethod(lambda *a: 0)}),
+    )
+    monkeypatch.setattr(
+        orchestration_service, "platform_repo",
+        type("P", (), {
+            "read_last_grn": staticmethod(lambda *a: "4600"),
+            "read_last_sale_bill": staticmethod(lambda *a: "88300"),
+        }),
+    )
+    stamped = {}
+    monkeypatch.setattr(
+        cycle_repo, "close_cycle",
+        lambda t, c, g, b, by: stamped.update({"grn": g, "bill": b}) or 1,
+    )
+    monkeypatch.setattr(cycle_repo, "create_cycle", lambda data: {"cycle_id": "C2", **data})
+    monkeypatch.setattr(
+        orchestration_service, "StoreRepository",
+        lambda: type("S", (), {"get_by_id": lambda self, sid: ("row",)})(),
+    )
+    closed = orchestration_service.close_cycle("T1", "C1", "U1")
+    assert closed["status"] == "closed"
+    assert stamped["grn"] == "4600" and stamped["bill"] == "88300"

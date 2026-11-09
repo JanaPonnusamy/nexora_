@@ -13,15 +13,23 @@ from modules.procurement._dbutil import (
 
 
 def read_last_grn(tenant_id, store_id):
-    """Latest GRN number synced for the store (sync.PurchaseTrans)."""
+    """Latest purchase GRN for the store.
+
+    Same selection as legacy UpdateOrderHeaderDetails: the newest
+    InvoiceSeries 'IV' row by GRN date, not MAX(GRNNumber). GRN numbers are
+    not a safe store-wide sequence. Scoped by tenant_id and store_id.
+    Returns None when that store has no IV receipt.
+    """
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT CAST(MAX(pt.Grnnumber) AS VARCHAR(50))
+            SELECT TOP 1 CAST(pt.GRNNumber AS VARCHAR(50))
             FROM sync.PurchaseTrans pt
             WHERE pt.tenant_id = ? AND pt.store_id = ?
+              AND pt.InvoiceSeries = 'IV'
+            ORDER BY pt.GRNDate DESC
             """,
             (tenant_id, store_id),
         )
@@ -32,16 +40,22 @@ def read_last_grn(tenant_id, store_id):
 
 
 def read_last_sale_bill(tenant_id, store_id):
-    """Latest sale bill number synced for the store (sync.ProductSaleInformation)."""
+    """Latest cash sale bill for the store.
+
+    Same selection as legacy UpdateOrderHeaderDetails: newest ProductSaleInformation
+    row whose BNumber starts with 'C', ordered by transaction date then bill
+    number. Scoped by tenant_id and store_id. Returns None when none exists.
+    """
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT CAST(MAX(psi.BillNumber) AS VARCHAR(50))
+            SELECT TOP 1 CAST(psi.Bnumber AS VARCHAR(50))
             FROM sync.ProductSaleInformation psi
             WHERE psi.tenant_id = ? AND psi.store_id = ?
-              AND ISNULL(psi.TransactionValidity, 0) = 0
+              AND psi.Bnumber LIKE 'C%'
+            ORDER BY psi.TransactionDate DESC, psi.Bnumber DESC
             """,
             (tenant_id, store_id),
         )

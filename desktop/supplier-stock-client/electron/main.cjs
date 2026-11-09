@@ -8,6 +8,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const { app, BrowserWindow, shell, ipcMain, nativeTheme, Menu, dialog } = require('electron');
 const storeWhatsApp = require('./whatsapp.cjs');
+const webPanel = require('./webPanel.cjs');
 // electron-updater's `autoUpdater` export is a lazy getter that constructs an
 // NsisUpdater the first time it's touched -- requiring it (and destructuring
 // autoUpdater out of it) at module load time can hang/throw before app is
@@ -96,6 +97,76 @@ ipcMain.handle('session:write', (_event, name, data) => {
 // structure every time, like the legacy VB.NET app did).
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// Device Controller enrollment. The installer sets up the SYSTEM-level
+// NexoraDeviceController service; it cannot register itself with HO (it has
+// no login), so after a user signs in here we register the controller's
+// PUBLIC key with HO using that user's session and drop the resulting
+// device_id in the controller's inbox. The controller only adopts it after
+// HO accepts a challenge signed with its own private key.
+// --------------------------------------------------------------------------
+const CONTROLLER_DIR = path.join(process.env.ProgramData || 'C:\\ProgramData', 'Nexora', 'DeviceController');
+const { enrollmentPlan } = require('./enrollmentGuard.cjs');
+
+function postJson(urlString, body, token) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlString);
+    const lib = url.protocol === 'https:' ? require('node:https') : http;
+    const payload = JSON.stringify(body);
+    const req = lib.request(url, {
+      method: 'POST',
+      timeout: 20000,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        Authorization: `Bearer ${token}`
+      }
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+        try { resolve(JSON.parse(data)); } catch { reject(new Error('invalid JSON from HO')); }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
+ipcMain.handle('controller:enroll', async (_event, { apiBaseUrl, token }) => {
+  try {
+    const signedOut = enrollmentPlan({ apiBaseUrl, token });
+    if (signedOut.action === 'skip') return { ok: signedOut.ok, reason: signedOut.reason };
+    const publicKey = fs.readFileSync(path.join(CONTROLLER_DIR, 'device_public_key.pem'), 'utf8');
+    const fingerprint = fs.readFileSync(path.join(CONTROLLER_DIR, 'device_fingerprint.txt'), 'utf8').trim();
+    const base = String(apiBaseUrl).replace(/\/+$/, '');
+    const markerFile = path.join(app.getPath('userData'), 'device-controller-enrolled.json');
+    const marker = `${base}|${fingerprint}|${publicKey.length}|${publicKey.slice(-40)}`;
+    let storedMarker = '';
+    try { storedMarker = fs.readFileSync(markerFile, 'utf8'); } catch { /* not enrolled from this profile yet */ }
+    const plan = enrollmentPlan({ apiBaseUrl, token, storedMarker, nextMarker: marker });
+    if (plan.action === 'skip') return { ok: true, skipped: true };
+    const result = await postJson(`${base}/api/auth/device/register`, {
+      device_fingerprint: fingerprint,
+      public_key: publicKey,
+      key_algo: 'ED25519',
+      machine_name: require('node:os').hostname(),
+      app_type: 'device_controller',
+      app_version: app.getVersion()
+    }, token);
+    fs.mkdirSync(path.join(CONTROLLER_DIR, 'inbox'), { recursive: true });
+    fs.writeFileSync(path.join(CONTROLLER_DIR, 'inbox', 'enrollment.json'),
+      JSON.stringify({ device_id: result.device_id, ho_urls: [base] }), 'utf8');
+    fs.writeFileSync(markerFile, marker, 'utf8');
+    return { ok: true, device_id: result.device_id };
+  } catch (error) {
+    // Controller not installed on this PC, or HO unreachable: never block the app.
+    return { ok: false, reason: error.message };
+  }
+});
+
 // Writes base64 `content` to `absolutePath`, creating any missing parent
 // folders (date/order-no subfolders) along the way. Returns the final path
 // actually written, or throws so the renderer can show a real error instead
@@ -170,9 +241,13 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // Procurement's Web panel (supplier portals). Every <webview> is
+      // locked down in webPanel.attach (no preload/Node, sandboxed, http(s)).
+      webviewTag: true
     }
   });
+  webPanel.attach(win);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     // window.open('', '_blank') (label-queue print sheet) resolves to
@@ -240,6 +315,7 @@ app.whenReady().then(() => {
   // clipped the last store row. DevTools stays reachable via F12/Ctrl+Shift+I.
   Menu.setApplicationMenu(null);
   storeWhatsApp.init();
+  webPanel.init();
   createWindow();
   initAutoUpdates();
 

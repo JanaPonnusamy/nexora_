@@ -27,7 +27,10 @@ function todayKey() {
 // backend (e.g. the one actively being tested) without touching Settings or
 // leaving a stray override in the built/installed app, which never reads
 // import.meta.env.DEV as true.
-const DEV_API_BASE_URL = import.meta.env.DEV ? (import.meta.env.VITE_DEV_API_BASE_URL || '') : '';
+// Vite defines import.meta.env. Plain Node (node --test) does not, so a missing
+// env means "no dev override" — the same result as a production build.
+const viteEnv = import.meta.env ?? {};
+const DEV_API_BASE_URL = viteEnv.DEV ? (viteEnv.VITE_DEV_API_BASE_URL || '') : '';
 
 export function loadSettings() {
   try {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { pageResults, siteBestMatch, siteCounts, siteDecide, siteInCart, siteKind, siteMatchScore, siteOffer, siteQuery, siteScript, siteStock, siteTokens } from './siteCheck.js';
+import { harvestRow, pageResults, siteBestByCode, siteBestMatch, siteCounts, siteDecide, siteInCart, siteKind, siteMatchScore, siteOffer, siteQuery, siteScript, siteStock, siteTokens } from './siteCheck.js';
 
 test('product names reduce to brand, strength and the rest', () => {
   assert.deepEqual(siteTokens("DOLO 650MG TAB 15'S"), ['DOLO', '650']);
@@ -84,4 +84,19 @@ test('a product already in the cart is recognised by its site name', () => {
   assert.equal(siteInCart(lines, 'PANCIRA 40MG TAB'), false);
   assert.equal(siteInCart(null, 'SYSPAN'), false);
   assert.equal(siteInCart(lines, ''), false);
+});
+
+test('a code search is trusted only on exactly one result', () => {
+  assert.equal(siteBestByCode([{ n: 1, name: 'DOLO 650 TABLET' }]).row.n, 1);
+  assert.equal(siteBestByCode([{ n: 1, name: 'DOLO 650' }, { n: 2, name: 'DOLO 650 SUSP' }]), null);
+  assert.equal(siteBestByCode([]), null);
+  assert.equal(siteBestByCode(null), null);
+});
+
+test('harvest row keeps a product code when the site shows one', () => {
+  const withCode = harvestRow({ name: 'DOLO 650', info: 'DOLO 650 Code: AB123 Stock : 40 (72.19)' });
+  assert.equal(withCode.code, 'AB123');
+  assert.equal(withCode.ptr, 72.19);
+  const noCode = harvestRow({ name: 'DOLO 650', info: 'DOLO 650 Stock : 40' });
+  assert.equal(noCode.code, '');
 });

@@ -48,9 +48,12 @@ def _supplier(supplier_code):
 
 def _num(value):
     try:
-        return float(str(value).replace(",", "").strip())
+        n = float(str(value).replace(",", "").strip())
     except (TypeError, ValueError):
         return None
+    # A scraped "Available"/garbled figure can come through as inf/NaN; neither
+    # fits the decimal/float columns, so treat it as unknown rather than 500.
+    return n if n == n and abs(n) != float("inf") else None
 
 
 def _int(value):
@@ -59,7 +62,10 @@ def _int(value):
 
 
 def _prepare(store, supplier_code, rows):
-    """Clean + shape the posted rows into SupplierStock tuples. Skips blanks."""
+    """Clean + shape the posted rows into SupplierStock tuples. Skips blanks.
+    Every varchar column here is 50 chars wide (dbo.SupplierStock) -- truncate
+    to that, not a guessed wider limit, or a long real product/scheme name
+    overflows the column and the whole harvest 500s mid-insert."""
     today = _dt.date.today()
     prepared = []
     for r in rows:
@@ -67,16 +73,16 @@ def _prepare(store, supplier_code, rows):
         if not name:
             continue
         prepared.append((
-            supplier_code,
-            str(r.get("code") or "").strip()[:100] or None,
-            name[:200],
+            supplier_code[:50],
+            str(r.get("code") or "").strip()[:50] or None,
+            name[:50],
             _num(r.get("mrp")),
             _num(r.get("ptr")),
             _int(r.get("stock")) or 0,
             _num(r.get("discount")),
-            str(r.get("packing") or "").strip()[:100] or None,
-            store,
-            str(r.get("scheme") or "").strip()[:100] or None,
+            str(r.get("packing") or "").strip()[:50] or None,
+            store[:50],
+            str(r.get("scheme") or "").strip()[:50] or None,
             _int(r.get("free")) or 0,
             today,
         ))

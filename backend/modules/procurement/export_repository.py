@@ -122,10 +122,13 @@ def mark_exported(conn, tenant_id, assignment_id, batch_no, split_no, uid, expor
             exported_at = GETDATE(), exported_by = ?,
             updated_by = ?, updated_at = GETDATE()
         WHERE tenant_id = ? AND assignment_id = ? AND is_deleted = 0
+          AND assignment_status = 'draft'
         """,
         (batch_no, split_no, uid, exported_by, exported_by,
          tenant_id, assignment_id),
     )
+    # 0 when a concurrent export already took this line: the caller must
+    # not report it as exported in its own batch.
     return cursor.rowcount
 
 

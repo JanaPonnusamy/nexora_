@@ -46,10 +46,17 @@ def export_refresh(tenant_id, refresh_id, exported_by, assignment_ids=None, supp
 
         exported = 0
         for row in rows:
-            repo.mark_exported(
+            # The read above takes no lock. A concurrent export of the same
+            # lines waits on this UPDATE's row lock, then matches 0 rows
+            # (status is no longer draft): abort instead of exporting twice.
+            if repo.mark_exported(
                 conn, tenant_id, row["assignment_id"], batch_no,
                 split_of[row["supplier_code"]], uuid.uuid4().hex, exported_by,
-            )
+            ) != 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Some assignments were already exported by another request. Reload and try again.",
+                )
             exported += 1
         conn.commit()
     except HTTPException:

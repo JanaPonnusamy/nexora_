@@ -151,10 +151,51 @@ def _int(value, default=None):
         return default
 
 
+# Fixed-width PRODUCT.TXT layout used by the legacy VB6 stock loader
+# (Command3_Click): Mid$(ln, start, len), 1-based, converted to 0-based slices.
+_TXT_FIELD_SLICES = [
+    (0, 6),     # supplier product code
+    (7, 32),    # product name
+    (33, 40),   # pack
+    (41, 66),   # manufacturer
+    (67, 77),   # MRP
+    (78, 87),   # qty
+    (88, 97),   # free
+    (98, 107),  # stock
+]
+_TXT_HEADERS = [
+    "Supplier Product Code", "Supplier Product Name", "Packing", "Manufacturer",
+    "MRP", "Scheme", "Free", "Stock",
+]
+
+
+def _is_fixed_width_txt(file_bytes):
+    """PRODUCT.TXT isn't an Excel file -- xlrd/openpyxl magic bytes won't match
+    (PK.. for xlsx, 0xD0CF11E0 for xls); everything else is treated as the
+    legacy semicolon-delimited fixed-width export."""
+    head = file_bytes[:8]
+    return not (head.startswith(b"PK") or head.startswith(b"\xd0\xcf\x11\xe0"))
+
+
+def _read_txt_matrix(file_bytes):
+    text = file_bytes.decode("utf-8", errors="replace")
+    matrix = [_TXT_HEADERS]
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        row = [line[a:b].strip() or None for a, b in _TXT_FIELD_SLICES]
+        matrix.append(row)
+    return "PRODUCT.TXT", matrix
+
+
 def _read_matrix(file_bytes):
-    """Read an .xls/.xlsx upload into (sheet_name, list-of-lists) with no header
-    assumption. pandas selects xlrd/openpyxl from the file's own magic bytes, so
-    both formats work without a filename."""
+    """Read an .xls/.xlsx/.txt upload into (sheet_name, list-of-lists) with no
+    header assumption. pandas selects xlrd/openpyxl from the file's own magic
+    bytes for Excel; a fixed-width PRODUCT.TXT export is parsed by column
+    position (see _TXT_FIELD_SLICES) and given a synthetic header row so it
+    flows through the same preview/mapping/import path as Excel uploads."""
+    if _is_fixed_width_txt(file_bytes):
+        return _read_txt_matrix(file_bytes)
     xls = pd.ExcelFile(BytesIO(file_bytes))
     sheet_name = xls.sheet_names[0] if xls.sheet_names else ""
     raw = xls.parse(0, header=None, dtype=object)

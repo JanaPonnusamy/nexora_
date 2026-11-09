@@ -181,3 +181,12 @@ class SupplierExportSettingsUpdate(BaseModel):
     order_qty_header: str = Field("Order Qty", max_length=40)
     sort_by: str = Field("product_name", pattern="^(product_name|sub_location|unit_description)$")
     export_folder_path: Optional[str] = Field(None, max_length=500)
+
+
+# --- Abnormal bill-sale review (PRR-SALE-ABNORMAL / PRR-SALE-WARNING) -----
+
+class DontConsiderUpdate(BaseModel):
+    product_code: str = Field(..., min_length=1, max_length=100)
+    bill_no: str = Field(..., min_length=1, max_length=100)
+    bill_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    dont_consider: bool

@@ -338,6 +338,11 @@ class _FakeConn:
 def test_engine_is_bulk_and_no_n_plus_1(monkeypatch):
     from modules.procurement import decision_service, decision_repository
 
+    # This fixture is the Nexora PARA-500 engine case. Refresh generation now
+    # defaults to the legacy local order query; this test still covers the
+    # rollback profile's bulk write.
+    monkeypatch.setenv("PROCUREMENT_GENERATION_PROFILE", "nexora")
+
     calls = {"load_source": 0, "bulk_insert": 0, "insert_rows": 0}
 
     refresh = {

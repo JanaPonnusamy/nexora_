@@ -3843,3 +3843,47 @@ Presented as a table (migration, dependencies, objects, risk, verify script, rol
 **Release-gate changes:** Gate 1 (auth) unaffected. Gates 4/5/6 (rare-mover, concurrency/idempotency, VPL persistence) upgrade from "mocked-only, NOT VERIFIED under real DB contention" to real-SQL-Server-verified for the specific scenarios tested (schema correctness, confirmation persistence, concurrent-transaction serialization, concurrent unique-index race, forced-failure atomicity) — still not full end-to-end production verification (no live app server, no real JWT, no real HTTP layer involved in this pass; the repository/service functions were called directly in-process against the real DB).
 
 **Isolated test verdict: PASSED.** All 23 real-database scenarios requested by the task passed (after one test-design correction, not a code defect). Two real, previously-undetected rollback-script defects were found and fixed as a direct result of this being a genuine SQL Server execution rather than a mock — concrete evidence that this class of verification catches real gaps mocked tests structurally cannot.
+
+## Release gate revision — 2026-10-25
+
+The 2026-10-21 gate above is historical. This revision adds the legacy-quantity requirement from the 2026-10-25 owner instruction. It does not re-run the isolated SQL Server scenarios, and it does not mark the system production-ready.
+
+| Stage | Status | Note |
+|---|---|---|
+| Login → store → cycle → assign → export → GRN → close | **NOT RE-VERIFIED** | Prior mocked and one-off SQL Server notes still apply. Flags for rare-mover, refresh idempotency, and VPL history remain default-off until their migrations are applied on the target database. |
+| Refresh → VPL → working order, local quantity | **PARTIAL** | Default `generate_vpl` profile is `legacy_local`. Golden cases and a mocked refresh write are in `tests/test_legacy_order_parity.py`. Not executed on SQL Server. |
+| Remote order generation | **PARTIAL** | Formula tested. Not the live refresh path. |
+| Warehouse order generation | **PARTIAL** | Formula tested on identical aggregates. Demand/recency differences are in `order_warehouse.sql` only. Not the live refresh path. |
+| Order workspace UI | **PARTIAL** | S.No width and five-digit order qty cap edited in the desktop client. Not exercised in a browser. Cross-branch 180-day non-moving warning was not found in the order workspace. |
+| GRN submit transaction | **PARTIAL** | One connection for GRN update + reconcile. Mutation test rejects the old two-connection shape. Mocked only. |
+| Last GRN / last sale bill | **PARTIAL** | Reads match legacy IV-by-date and C-series bill ordering, tenant/store scoped. No approval or group-dispatch source exists. |
+| Close cycle reconcile failures | **PARTIAL** | Per-refresh isolation kept. Failures are returned on `reconcile_failures`. Mocked only. |
+
+Detail for the 2026-10-25 GRN pass is in `AUTONOMOUS_WORK_CONTROL.md`.
+
+Detail and the exact pytest count are in `AUTONOMOUS_WORK_CONTROL.md` under "2026-10-25 — legacy order-quantity profile".
+
+## Release gate revision — 2026-10-25 (Claude, end-to-end stages)
+
+Supersedes the stage table in the revision above for the stages listed. Unit and mutation evidence only unless stated. No SQL Server, browser, or HTTP run in this pass. Detail: `AUTONOMOUS_WORK_CONTROL.md`, "2026-10-25 — Claude: GRN re-verification…".
+
+| Stage | Status | Evidence / gap |
+|---|---|---|
+| Login | NOT VERIFIED | STOCK_VIEWER change read: `is_full_access` only skips the single-session check, no wider grant. No login run. |
+| Store | PARTIAL | Tenant enforced (`assert_tenant_access` + `tenant_id` in every procurement query). No store lock within a tenant; owner ruling needed. |
+| Cycle | NOT VERIFIED | No new evidence this pass. |
+| Refresh | PARTIAL | Failure after the header now abandons the Refresh and restores the cycle pointer. 8 tests, 4 mutants killed. Not SQL Server. |
+| VPL | PARTIAL | `legacy_local` default. 200k-case differential agrees with Phase 0 except NULL `LastReceivedDate`, where the SQL text backs the parity module. Remote/warehouse not wired. VPL History flag-off/on, rollback and duplicate-batch tests pass; 0030 NOT APPLIED. |
+| Workspace | NOT VERIFIED | No browser pass. |
+| Supplier Queue | NOT VERIFIED | — |
+| Supplier Products | NOT VERIFIED | — |
+| Assign | PARTIAL | D4 lock unit tests; real SQL Server serialization from the 2026-10-21 isolated pass. 3 stale tests repaired. |
+| Export | PARTIAL | Concurrent double export fixed (draft guard + 409). Unit only. No real export run. |
+| Receive / Pending | PARTIAL | Manual-add idempotency test repaired. Unit only. |
+| GRN / Reconciliation | **FAIL** | Transaction: one connection, rollback, close, mutation-proven. Correctness defects open: no receipt lower bound (old receipts count as received), TI transfers not excluded, `supplier_bill_no` holds the series code. Owner rule needed. |
+| PM Approval | BLOCKED | Not implemented; no requirements or source evidence for states/approver. |
+| Approved Group Dispatch | BLOCKED | No order→group recipient mapping exists. Nothing sent. |
+| Close Cycle | PARTIAL | Per-refresh reconcile isolation kept; `reconcile_failures` returned. Unit only. |
+| Stock client Order Workspace UI | PARTIAL | New settings card wired and built into 0.1.49 installer. Not installed or exercised. |
+
+Not production-ready: GRN/Reconciliation FAIL, two BLOCKED stages, and no SQL Server end-to-end run.

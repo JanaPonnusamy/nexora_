@@ -39,8 +39,10 @@ from modules.procurement.pm_schemas import (
     ExportDocumentRequest, ShelfSortRequest, ShelfClassifyRequest, ShelfCategorySave,
     SupplierReplyImportRequest,
     GrnSubmit, PendingAdjust, ManualAdd, PendingBulk, SupplierSettingsUpdate,
-    SupplierExportSettingsUpdate,
+    SupplierExportSettingsUpdate, DontConsiderUpdate,
 )
+from modules.procurement import abnormal_sales_service
+from modules.procurement import suggestion_service
 
 router = APIRouter(tags=["Procurement Purchase Manager"])
 
@@ -123,6 +125,74 @@ def network_opportunities(
     return network_movement_service.list_network_opportunities(
         tenant_id, refresh.get("store_id"), refresh_id, page, page_size,
     )
+
+
+@router.get("/refreshes/{refresh_id}/last-activity")
+def last_activity(
+    refresh_id: str,
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(require_procurement_workspace),
+):
+    """Last sale date and last GRN date per product in the refresh — the
+    desktop Procurement Workspace's LSD / LPD days columns. Loaded separately
+    from the grid because it reads sync.ProductSaleInformation."""
+    assert_tenant_access(current_user, tenant_id)
+    return workspace_service.get_last_activity_dates(tenant_id, refresh_id)
+
+
+@router.get("/refreshes/{refresh_id}/abnormal-sales")
+def abnormal_sales(
+    refresh_id: str,
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(require_procurement_workspace),
+):
+    """Products of the refresh with abnormal / high bill sales (rulebook
+    PRR-SALE-ABNORMAL / PRR-SALE-WARNING) and the flagged bills."""
+    assert_tenant_access(current_user, tenant_id)
+    return abnormal_sales_service.platform_abnormal_sales(tenant_id, refresh_id)
+
+
+@router.put("/stores/{store_id}/sales/dont-consider")
+def set_sale_dont_consider(
+    store_id: str,
+    payload: DontConsiderUpdate,
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(require_procurement_workspace),
+):
+    """Mark / unmark one product's lines on one bill "do not consider in
+    order" -- written to the platform and the legacy order database."""
+    assert_tenant_access(current_user, tenant_id)
+    return abnormal_sales_service.set_dont_consider(
+        store_id=store_id, tenant_id=tenant_id, product_code=payload.product_code,
+        bill_no=payload.bill_no, bill_date=payload.bill_date, dont_consider=payload.dont_consider,
+    )
+
+
+@router.get("/stores/{store_id}/products/{product_code}/suggestions")
+def product_suggestions(
+    store_id: str,
+    product_code: str,
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(require_procurement_workspace),
+):
+    """Suggestion panel for any store product: ranked suppliers (best /
+    frequent / latest / live stock) and other stores' stock of the same
+    product, non-moving first. Read-only; not tied to a refresh."""
+    assert_tenant_access(current_user, tenant_id)
+    return suggestion_service.product_suggestions(tenant_id, store_id, product_code)
+
+
+@router.get("/stores/{store_id}/products/{product_code}/store-trends")
+def product_store_trends(
+    store_id: str,
+    product_code: str,
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(require_procurement_workspace),
+):
+    """Last 3 months' in / out / stock of this product at every store (this
+    store plus each mapped store) -- the Procurement "All stores" mini charts."""
+    assert_tenant_access(current_user, tenant_id)
+    return suggestion_service.store_trends(tenant_id, store_id, product_code)
 
 
 @router.get("/order-items/{order_item_id}")

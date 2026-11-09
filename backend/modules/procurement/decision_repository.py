@@ -85,6 +85,10 @@ def load_source(conn, tenant_id, store_id, params):
         return []
     rolling_days = params.rolling_days or 90
     cutoff = date.today() - timedelta(days=rolling_days)
+    # Legacy order_*.sql always windows demand at 90 days and divides by 90,
+    # independent of the Nexora refresh rolling_days parameter.
+    legacy_cutoff = date.today() - timedelta(days=90)
+    legacy_recency_days = int(getattr(params, "recency_days", None) or 15)
 
     cursor = conn.cursor()
     cursor.execute(
@@ -143,6 +147,54 @@ def load_source(conn, tenant_id, store_id, params):
             FROM sync.PurchaseTrans
             WHERE tenant_id = ? AND store_id = ?
             GROUP BY ProductCode
+        ),
+        -- Legacy order_local.sql SalesQuantity: 90-day retail lines, quantity > 0,
+        -- transactionvalidity = 0 (NULL is not valid), DontConsiderInOrder = 0
+        -- (NULL is not "consider"), active product. Frequency is COUNT(DISTINCT ID).
+        leg_sales AS (
+            SELECT psi.ID, psi.ProductCode, psi.Quantity AS qty
+            FROM sync.ProductSaleInformation psi
+            INNER JOIN sync.Products lp
+                ON lp.tenant_id = psi.tenant_id
+               AND lp.store_id = psi.store_id
+               AND lp.ProductCode = psi.ProductCode
+               AND lp.isActive = 1
+            WHERE psi.tenant_id = ? AND psi.store_id = ?
+              AND psi.TransactionDate >= ?
+              AND psi.Quantity > 0
+              AND psi.SeriesTransID = 1
+              AND psi.TransactionValidity = 0
+              AND psi.DontConsiderInOrder = 0
+        ),
+        leg_agg AS (
+            SELECT ProductCode,
+                   SUM(qty) AS window_qty,
+                   COUNT(DISTINCT ID) AS line_frequency
+            FROM leg_sales
+            GROUP BY ProductCode
+        ),
+        -- order_local.sql MaxSalesQty: no quantity > 0 and no DontConsider filter.
+        leg_max AS (
+            SELECT psi.ProductCode, MAX(psi.Quantity) AS max_line_qty
+            FROM sync.ProductSaleInformation psi
+            WHERE psi.tenant_id = ? AND psi.store_id = ?
+              AND psi.SeriesTransID = 1
+              AND psi.TransactionValidity = 0
+              AND psi.TransactionDate >= ?
+            GROUP BY psi.ProductCode
+        ),
+        -- order_local.sql recency watermark: ProductTrans rows whose LastBillDate
+        -- is inside the recency window. LastGrnDate is the MAX on those rows only.
+        -- A NULL LastGrnDate fails the SQL comparison and drops the product.
+        leg_wm AS (
+            SELECT pt.ProductCode,
+                   MAX(pt.LastBillDate) AS last_sale_date,
+                   MAX(pt.LastGrnDate) AS last_received_date
+            FROM sync.ProductTrans pt
+            WHERE pt.tenant_id = ? AND pt.store_id = ?
+              AND pt.LastBillDate >= DATEADD(day, 0 - ?, GETDATE())
+              AND pt.LastBillDate IS NOT NULL
+            GROUP BY pt.ProductCode
         )
         SELECT
             NEWID()                              AS product_id,
@@ -160,7 +212,13 @@ def load_source(conn, tenant_id, store_id, params):
             CAST(ISNULL(ml.max_line_sale_qty, 0) AS DECIMAL(18,3)) AS max_line_sale_qty,
             CAST(ISNULL(agg.billing_frequency, 0) AS INT)          AS billing_frequency,
             CAST({_store_stock_expr("p")} AS DECIMAL(18,3)) AS current_stock,
-            CAST(ISNULL(p.SaleUnit, 0) AS DECIMAL(18,3))    AS sale_unit,
+            CAST(p.SaleUnit AS DECIMAL(18,3))           AS sale_unit,
+            CAST(p.TotalStock AS DECIMAL(18,3))         AS total_stock,
+            CAST(ISNULL(leg_agg.window_qty, 0) AS DECIMAL(18,3)) AS legacy_window_sales_qty,
+            CAST(ISNULL(leg_agg.line_frequency, 0) AS INT)       AS legacy_line_frequency,
+            CAST(leg_max.max_line_qty AS DECIMAL(18,3))          AS legacy_max_line_qty,
+            leg_wm.last_sale_date               AS legacy_last_sale_date,
+            leg_wm.last_received_date           AS legacy_last_received_date,
             ls.last_sale_date                    AS last_sale_date,
             grn.last_received_date               AS last_received_date
         FROM sync.Products p
@@ -170,11 +228,18 @@ def load_source(conn, tenant_id, store_id, params):
         LEFT JOIN ml  ON ml.ProductCode  = p.ProductCode
         LEFT JOIN ls  ON ls.ProductCode  = p.ProductCode
         LEFT JOIN grn ON grn.ProductCode = p.ProductCode
+        LEFT JOIN leg_agg ON leg_agg.ProductCode = p.ProductCode
+        LEFT JOIN leg_max ON leg_max.ProductCode = p.ProductCode
+        LEFT JOIN leg_wm  ON leg_wm.ProductCode  = p.ProductCode
         WHERE p.tenant_id = ? AND p.store_id = ?
           AND ISNULL(p.isActive, 1) = 1
         """,
         (tenant_id, store_id, cutoff, tenant_id, store_id,
-         tenant_id, store_id, tenant_id, store_id),
+         tenant_id, store_id,
+         tenant_id, store_id, legacy_cutoff,
+         tenant_id, store_id, legacy_cutoff,
+         tenant_id, store_id, legacy_recency_days,
+         tenant_id, store_id),
     )
     if not cursor.description:
         return []

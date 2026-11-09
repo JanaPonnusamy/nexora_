@@ -32,6 +32,19 @@ HEAP_KEYS = {
     "ordermanagementbackup": ["StoreName", "OrderId", "ProductCode"],
     "ordermanagementho": ["StoreName", "OrderId", "ProductCode"],
     "suppliers": ["suppliercode", "StoreName"],
+    # No PK on HO (dbo.SupplierProductMatch), but the remote copy has one on
+    # (SupplierCode, SupplierProductCode, StoreName) -- owner 2026-11-09. Without
+    # this, the replace path's "key" fell back to EVERY column (catalog.py
+    # below), so its key never matched a row whose SyncDateTime/UserName/etc.
+    # differ from HO's current value; the DELETE then deleted nothing and the
+    # INSERT collided with the remote's real PK, erroring every cycle and
+    # aborting that whole batch (symptom: Order Process ran but nothing new
+    # ever reached the remote, because this table's failure blocked the batch).
+    "supplierproductmatch": ["SupplierCode", "SupplierProductCode", "StoreName"],
+    # Same latent gap, found while auditing for it: remote also has a PK here
+    # (suppliercode, supplierproductcode, storename) that HO's heap table
+    # lacks.
+    "supplierstock": ["suppliercode", "supplierproductcode", "storename"],
 }
 
 

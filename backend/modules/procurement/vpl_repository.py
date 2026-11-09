@@ -290,6 +290,45 @@ def delete_vpl(tenant_id, refresh_id):
         conn.close()
 
 
+def abandon_refresh(tenant_id, cycle_id, refresh_id, restore_refresh_id,
+                    clear_idempotency_key=False):
+    """Undo a create_refresh that failed after its header was committed.
+
+    Soft-deletes the half-built Refresh and points the Cycle back at
+    `restore_refresh_id`, in one transaction. The Cycle is only repointed if
+    it still points at the abandoned Refresh. The idempotency key is cleared
+    only when asked: the column exists only once 0029 is applied, and its
+    unique index ignores is_deleted, so a kept key would block the retry.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        key_sql = ", idempotency_key = NULL" if clear_idempotency_key else ""
+        cursor.execute(
+            f"""
+            UPDATE procurement.procurement_refreshes
+            SET is_deleted = 1, deleted_at = GETDATE(){key_sql}
+            WHERE refresh_id = ? AND tenant_id = ? AND is_deleted = 0
+            """,
+            (refresh_id, tenant_id),
+        )
+        cursor.execute(
+            """
+            UPDATE procurement.procurement_cycles
+            SET active_refresh_id = ?, updated_at = GETDATE()
+            WHERE cycle_id = ? AND tenant_id = ? AND is_deleted = 0
+              AND active_refresh_id = ?
+            """,
+            (restore_refresh_id, cycle_id, tenant_id, refresh_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ==========================================================================
 # Virtual Products (detail)
 # ==========================================================================

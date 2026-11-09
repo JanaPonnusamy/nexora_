@@ -30,12 +30,25 @@ import {
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 import SchemaSyncPage from './SchemaSyncPage.jsx';
+import ProcurementWorkspace from './ProcurementWorkspace.jsx';
+import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareButton, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
+import { AbnormalMark, AbnormalSalesStrip, useAbnormalSales } from './abnormalSales.jsx';
+import { OwBulkAssign } from './bulkAssign.jsx';
+import { TrendBars, TrendTip, fmtMonthLabel as fmtOwMonthLabel, trendMax } from './trendChart.jsx';
+import { NavMenu } from './navMenu.jsx';
+import TimeReport from './TimeReport.jsx';
+import RateAnalysis from './RateAnalysis.jsx';
+import NonMovingStock from './NonMovingStock.jsx';
 import LegacyOrderGeneration from './LegacyOrderGeneration.jsx';
 import SyncLive from './SyncLive.jsx';
 import PmOrderEntry from './PmOrderEntry.jsx';
-import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareButton, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
-import { NavMenu } from './navMenu.jsx';
-import TimeReport from './TimeReport.jsx';
+import {
+  OW_PANEL_DEFS,
+  owLineFromRow,
+  owLineNote,
+  owNormalizeLayout,
+  owWorkspaceSummary,
+} from './orderWorkspaceView.js';
 
 // Dev-only login bypass: when running under `vite` (npm run dev) with
 // credentials set in .env.development.local, the app auto-signs-in as that
@@ -57,11 +70,14 @@ const screens = [
   { id: 'stock', label: 'Stock Availability', short: 'Availability', group: 'stock', module: 'stock_availability' },
   { id: 'stock_vertical', label: 'Stock (Vertical)', short: 'Vertical', group: 'stock', module: 'stock_availability' },
   { id: 'network_stock', label: 'Network Stock', short: 'Network', group: 'stock', module: 'stock_availability' },
+  { id: 'procurement_workspace', label: 'Procurement', group: 'purchase', module: 'procurement' },
   { id: 'order_workspace', label: 'Order Workspace', short: 'Order WS', group: 'purchase', module: 'order_workspace' },
   { id: 'order_entry', label: 'Order Entry', short: 'Order Entry', hint: 'Last bill + GRN', group: 'purchase', module: 'order_entry' },
   { id: 'legacy_order', label: 'Legacy Order', short: 'Legacy Order', hint: 'All tenants', group: 'purchase', module: 'legacy_order' },
   { id: 'sync_live', label: 'Sync Live', short: 'Sync', hint: 'All tenants', group: 'tools', module: 'sync' },
   { id: 'analysis', label: 'Supplier Stock Analysis', short: 'Supplier Analysis', group: 'purchase', module: 'supplier_stock_analysis' },
+  { id: 'rate_analysis', label: 'Rate Analysis', short: 'Rates', group: 'purchase', module: 'rate_analysis' },
+  { id: 'non_moving', label: 'Non-Moving Stock', short: 'Non-Moving', group: 'purchase', module: 'non_moving' },
   { id: 'nmw_sales', label: 'NMW Sales Report', short: 'NMW Sales', group: 'reports', module: 'nmw_sales_report' },
   { id: 'time_report', label: 'Time Report', short: 'Time', group: 'reports', module: 'time_report' },
   { id: 'label_exporter', label: 'Label Exporter', short: 'Labels', group: 'tools', module: 'label_exporter' },
@@ -346,6 +362,11 @@ function AppShell() {
   useEffect(() => {
     if (activeScreen === 'order_workspace') setOrderWorkspaceVisited(true);
   }, [activeScreen]);
+  // Procurement Workspace: same keep-mounted-after-first-visit behaviour.
+  const [procurementVisited, setProcurementVisited] = useState(false);
+  useEffect(() => {
+    if (activeScreen === 'procurement_workspace') setProcurementVisited(true);
+  }, [activeScreen]);
   // Legacy Order: kept mounted too, so a running generation queue keeps
   // going (and keeps polling its jobs) while the operator uses other screens.
   const [legacyOrderVisited, setLegacyOrderVisited] = useState(false);
@@ -425,7 +446,13 @@ function AppShell() {
     // else (e.g. salesman-only). The legacy-order API is store-scoped/authorised
     // server-side too; this keeps the nav honest.
     const orderWorkspaceAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
-    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'order_workspace' && s.id !== 'order_entry');
+    // Rate Analysis exposes every store's purchase rates: same audience as the
+    // Order Workspace (server side also 403s non purchase/admin logins).
+    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'order_workspace' && s.id !== 'procurement_workspace' && s.id !== 'rate_analysis' && s.id !== 'order_entry');
+    // Non-Moving Stock: super admins (every store) and purchase managers
+    // (their own store only - scoped server side). Owner rulings 2026-11-01/02.
+    const nonMovingAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
+    if (!nonMovingAllowed) base = base.filter((s) => s.id !== 'non_moving');
     // Schema Sync runs live DDL against Production/HO - super admin only, no
     // per-user module grant can unlock it.
     if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'schema_sync');
@@ -450,10 +477,11 @@ function AppShell() {
     // ever seeded into dbo.role_module_access, which silently hid the tab
     // for any login whose modules list isn't empty (e.g. superadmin).
     const always = new Set(nmwBlocked ? ['settings', 'label_exporter'] : ['settings', 'nmw_sales', 'label_exporter']);
-    if (orderWorkspaceAllowed) { always.add('order_workspace'); always.add('order_entry'); }
+    if (orderWorkspaceAllowed) { always.add('order_workspace'); always.add('procurement_workspace'); always.add('rate_analysis'); always.add('order_entry'); }
     // Every store login may link and use its own store's WhatsApp.
     always.add('whatsapp');
     if (isSuperAdmin(session)) { always.add('schema_sync'); always.add('legacy_order'); always.add('sync_live'); }
+    if (nonMovingAllowed) always.add('non_moving');
     if (timeReportAllowed) always.add('time_report');
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
   }, [session]);
@@ -484,6 +512,19 @@ function AppShell() {
       setActiveScreen(DEV_SCREEN);
     }
   }, [session, navItems]);
+
+  // Enroll this PC's Device Controller with HO whenever a session is active --
+  // a fresh sign-in AND a session restored at startup. Running only on sign-in
+  // left PCs that upgraded while staying signed in (e.g. .32 on 0.1.47) never
+  // enrolled. No-op if the controller isn't installed or this profile already
+  // enrolled it (marker in main.cjs). Never blocks the app.
+  const sessionToken = session?.token || session?.accessToken || session?.access_token;
+  useEffect(() => {
+    if (!sessionToken || !settings.apiBaseUrl) return;
+    window.nexoraDesktop?.enrollController?.(settings.apiBaseUrl, sessionToken)
+      .then((r) => { if (r && !r.ok) console.info('[controller] enrollment skipped:', r.reason); })
+      .catch(() => {});
+  }, [sessionToken, settings.apiBaseUrl]);
 
   useEffect(() => {
     const storeName = session?.user?.roles?.[0]?.store_name || settings.storeName;
@@ -614,18 +655,19 @@ function AppShell() {
   return (
     <div className="app-shell">
       <header className="menubar">
-        <div className="brand-block">
+        <div className="brand-block" title={`Supplier Stock Client v${__APP_VERSION__}`}>
           <img src={axythicLogo} alt="Axythic" className="brand-logo" />
           <div>
-            <h1>Axythic</h1>
-            <p>Supplier Stock Client <span className="app-version">v{__APP_VERSION__}</span></p>
+            <h1>Axythic <span className="app-version">v{__APP_VERSION__}</span></h1>
+            {/* Last sync lives under the brand (not in menubar-right): at
+                1366x768 the right-side chip collided with the nav tabs. */}
+            <LastSyncBadge tenantId={runtimeSettings?.tenantId || session?.user?.tenant_id || ''} />
           </div>
         </div>
 
         <NavMenu items={navItems} activeScreen={activeScreen} onSelect={setActiveScreen} />
 
         <div className="menubar-right">
-          <LastSyncBadge tenantId={runtimeSettings?.tenantId || session?.user?.tenant_id || ''} />
           <ThemeToggle
             resolvedTheme={resolvedTheme}
             onCycle={cycleTheme}
@@ -700,11 +742,15 @@ function AppShell() {
           <NmwSalesReport session={session} settings={runtimeSettings} />
         ) : activeScreen === 'whatsapp' ? (
           <StoreWhatsAppScreen outbox={storeOutbox} />
-        ) : activeScreen === 'order_entry' ? (
-          <PmOrderEntry session={session} onOpenWorkspace={() => setActiveScreen('order_workspace')} />
         ) : activeScreen === 'time_report' ? (
           <TimeReport session={session} />
-        ) : activeScreen === 'order_workspace' || activeScreen === 'legacy_order' || activeScreen === 'sync_live' ? null : activeScreen === 'schema_sync' ? (
+        ) : activeScreen === 'rate_analysis' ? (
+          <RateAnalysis session={session} settings={runtimeSettings} />
+        ) : activeScreen === 'order_entry' ? (
+          <PmOrderEntry session={session} onOpenWorkspace={() => setActiveScreen('order_workspace')} />
+        ) : activeScreen === 'non_moving' ? (
+          <NonMovingStock session={session} settings={runtimeSettings} ui={PROCUREMENT_UI} />
+        ) : activeScreen === 'order_workspace' || activeScreen === 'procurement_workspace' || activeScreen === 'legacy_order' || activeScreen === 'sync_live' ? null : activeScreen === 'schema_sync' ? (
           <SchemaSyncPage session={session} />
         ) : (
           <StockAvailability
@@ -723,6 +769,14 @@ function AppShell() {
             filters) survives switching to another screen and back. */}
         {session && orderWorkspaceVisited && (
           <OrderWorkspace session={session} settings={runtimeSettings} hidden={activeScreen !== 'order_workspace'} />
+        )}
+        {session && procurementVisited && (
+          <ProcurementWorkspace
+            session={session}
+            settings={runtimeSettings}
+            hidden={activeScreen !== 'procurement_workspace'}
+            ui={PROCUREMENT_UI}
+          />
         )}
         {session && activeScreen === 'sync_live' && isSuperAdmin(session) && (
           <SyncLive session={session} hidden={false} />
@@ -751,7 +805,20 @@ function formatSyncTimeGlobal(ts) {
   try { return formatStamp12(ts); } catch { return 'unknown'; }
 }
 
-// App-wide "last sync" chip shown in the top bar on EVERY screen. Reads the
+// Compact form for the top bar (no year/seconds) so the brand block stays
+// narrow and the nav tabs keep their room at 1366px; the tooltip keeps the
+// full stamp.
+function formatSyncTimeShort(ts) {
+  if (!ts) return 'never';
+  try {
+    return new Date(ts).toLocaleString('en-GB', {
+      day: '2-digit', month: '2-digit',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    }).replace(/\b([ap])m\b/gi, (s) => s.toUpperCase());
+  } catch { return 'unknown'; }
+}
+
+// App-wide "last sync" line shown under the brand on EVERY screen. Reads the
 // newest permanent product-index cache timestamp for the active tenant
 // (lib/productIndexCache.getLastSync) and refreshes every 60s, so the operator
 // always sees how fresh the local data is regardless of which screen they're on.
@@ -768,13 +835,13 @@ function LastSyncBadge({ tenantId }) {
     return () => { cancelled = true; clearInterval(timer); window.removeEventListener('nexora:synced', load); };
   }, [tenantId]);
   return (
-    <div
-      className={`last-sync-badge ${ts ? '' : 'is-never'}`}
+    <p
+      className={`last-sync-line ${ts ? '' : 'is-never'}`}
       title={ts ? `Local cache last synced ${formatSyncTimeGlobal(ts)}` : 'No local cache yet'}
     >
       <span className="last-sync-dot" aria-hidden="true" />
-      <span className="last-sync-text">Last sync <strong>{formatSyncTimeGlobal(ts)}</strong></span>
-    </div>
+      <span className="last-sync-text">Last sync <strong>{formatSyncTimeShort(ts)}</strong></span>
+    </p>
   );
 }
 
@@ -3160,7 +3227,7 @@ function nmwExportRows(bill, lineItems, purchaseEntry) {
 // Each grid (Qty Review, Review All) has its own column list; users can hide,
 // reorder and resize columns via a modern settings card, persisted per grid.
 const OW_QTY_COLUMNS = [
-  { key: 'sno', label: 'S.No', width: 20, align: 'right', locked: true },
+  { key: 'sno', label: 'S.No', width: 56, align: 'right', locked: true },
   { key: 'name', label: 'Product Name', width: 160, locked: true },
   { key: 'offer', label: '🎁', width: 22, align: 'right' },
   // 84px fit only the qty input itself (54px) -- the diff-arrow slot next to
@@ -3171,7 +3238,7 @@ const OW_QTY_COLUMNS = [
   // columns were switched to tight px widths (see owColgroupPct) the spill
   // became a visible black/empty bar bleeding into Stock. 116px actually
   // contains input+gap+diff-slot.
-  { key: 'qtycheckstatus', label: 'Qty Check', width: 76 },
+  { key: 'qtycheckstatus', label: 'QCheck', width: 58 },
   { key: 'orqty', label: 'Or Qty', width: 116, align: 'right', locked: true },
   { key: 'stock', label: 'Stock', width: 54, align: 'right' },
   { key: 'pack', label: 'Pack', width: 46, align: 'right' },
@@ -3184,7 +3251,7 @@ const OW_QTY_COLUMNS = [
   { key: 'wanted', label: 'Wanted', width: 116 }
 ];
 const OW_REVIEW_COLUMNS = [
-  { key: 'sno', label: 'S.No', width: 20, align: 'right', locked: true },
+  { key: 'sno', label: 'S.No', width: 56, align: 'right', locked: true },
   { key: 'name', label: 'Product Name', width: 140, locked: true },
   { key: 'offer', label: '🎁', width: 22, align: 'right' },
   // 84px fit only the qty input itself (54px) -- the diff-arrow slot next to
@@ -3195,7 +3262,7 @@ const OW_REVIEW_COLUMNS = [
   // columns were switched to tight px widths (see owColgroupPct) the spill
   // became a visible black/empty bar bleeding into Stock. 116px actually
   // contains input+gap+diff-slot.
-  { key: 'qtycheckstatus', label: 'Qty Check', width: 76 },
+  { key: 'qtycheckstatus', label: 'QCheck', width: 58 },
   { key: 'orqty', label: 'Or Qty', width: 116, align: 'right', locked: true },
   { key: 'stock', label: 'Stock', width: 54, align: 'right' },
   { key: 'pack', label: 'Pack', width: 46, align: 'right' },
@@ -3215,7 +3282,7 @@ const OW_REVIEW_COLUMNS = [
 // slot and rendered on top of the Or Qty input next to it).
 const OW_SHARED_SPINE = OW_QTY_COLUMNS.filter((c) => ['sno', 'name', 'offer', 'orqty', 'stock', 'pack', 'desc', 'slsqty', 'mrp'].includes(c.key));
 const OW_WANTED_COL = { key: 'wanted', label: 'Wanted', width: 116 };
-const OW_PENDING_COLUMNS = [...OW_SHARED_SPINE, { key: 'qtycheckstatus', label: 'Qty Check', width: 76 }, { key: 'maxqty', label: 'Max Qty', width: 56 }, OW_WANTED_COL];
+const OW_PENDING_COLUMNS = [...OW_SHARED_SPINE, { key: 'qtycheckstatus', label: 'QCheck', width: 58 }, { key: 'maxqty', label: 'Max Qty', width: 56 }, OW_WANTED_COL];
 const OW_SUPPLIER_STOCK_EXTRA = [
   { key: 'sstock', label: 'S.Stock', width: 44, align: 'right' },
   { key: 'disc', label: 'Disc', width: 44, align: 'right' },
@@ -3238,7 +3305,7 @@ const OW_CHECK_COL = { key: 'check', label: '✓', width: 22, align: 'right' };
 // ✓ column already reads (see owQtyCheckStatus) -- there is no separate
 // persisted "result" to check, so this is a second view of the identical
 // authoritative value, not a new data source.
-const OW_QTYCHECK_STATUS_COL = { key: 'qtycheckstatus', label: 'Qty Check', width: 76 };
+const OW_QTYCHECK_STATUS_COL = { key: 'qtycheckstatus', label: 'QCheck', width: 58 };
 // Authoritative Qty Check status -- STRICTLY server-persisted (repository.
 // update_qty_check sets OrderManagement.Qtycheck=1 only on a genuine saved
 // commit; see that function's docstring). Deliberately does NOT fold in
@@ -3484,40 +3551,13 @@ function resolveOwColumns(base, cfg) {
 // per PC (localStorage), same as the column settings.
 // The four detail panels can each be shown/hidden, docked in the side column
 // or the strip under the grid, and reordered.
-const OW_PANEL_DEFS = [
-  { key: 'trend', label: 'Monthly Trend' },
-  { key: 'purchase', label: 'Purchase / GRN' },
-  { key: 'sales', label: 'Bill / Sales' },
-  { key: 'history', label: 'Previous Decisions' },
-];
-const OW_PANELS_DEFAULT = [
-  { key: 'trend', dock: 'side', hidden: false },
-  { key: 'purchase', dock: 'side', hidden: false },
-  { key: 'sales', dock: 'side', hidden: false },
-  { key: 'history', dock: 'bottom', hidden: false },
-];
-const OW_LAYOUT_DEFAULT = {
-  rowSize: 'normal', sidePosition: 'right', sideHidden: false, sideWidth: 'normal', bottomHeight: 'normal',
-  panels: OW_PANELS_DEFAULT,
-};
 const OW_LAYOUT_OPTIONS = [
   { key: 'rowSize', label: 'Row height', options: [['compact', 'Compact'], ['normal', 'Normal'], ['large', 'Large']] },
+  { key: 'rowWeight', label: 'Row font', options: [['normal', 'Normal'], ['bold', 'Bold']] },
   { key: 'sideWidth', label: 'Side panel width', options: [['narrow', 'Narrow'], ['normal', 'Normal'], ['wide', 'Wide']] },
   { key: 'bottomHeight', label: 'Bottom panel height', options: [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']] },
+  { key: 'qtyCheckStyle', label: 'Qty check', options: [['tick', 'Tick'], ['text', 'Text']] },
 ];
-// Saved settings -> a complete layout: unknown keys dropped, any panel the
-// saved list lacks (older build) appended with its default dock.
-function owNormalizeLayout(saved) {
-  const merged = { ...OW_LAYOUT_DEFAULT, ...(saved || {}) };
-  const known = new Set(OW_PANEL_DEFS.map((p) => p.key));
-  const panels = (Array.isArray(merged.panels) ? merged.panels : [])
-    .filter((p) => p && known.has(p.key))
-    .map((p) => ({ key: p.key, dock: p.dock === 'bottom' ? 'bottom' : 'side', hidden: Boolean(p.hidden) }));
-  OW_PANELS_DEFAULT.forEach((d) => { if (!panels.some((p) => p.key === d.key)) panels.push({ ...d }); });
-  if (merged.sidePosition !== 'left') merged.sidePosition = 'right';
-  return { ...merged, panels };
-}
-
 function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth, onReset, onClose, layout, onLayout }) {
   const setPanel = (key, patch) => onLayout({ panels: layout.panels.map((p) => (p.key === key ? { ...p, ...patch } : p)) });
   const movePanel = (idx, dir) => {
@@ -3528,12 +3568,17 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
   };
   const ref = useRef(null);
   const [pos, setPos] = useState(null);
+  // Wide two-pane card (columns | layout) sized to fit the viewport without
+  // scrolling; centred on the gear button and clamped inside the window.
   useLayoutEffect(() => {
     const a = anchorRef.current;
     if (!a) return;
     const r = a.getBoundingClientRect();
-    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
-  }, [anchorRef]);
+    const vw = window.innerWidth;
+    const width = Math.min(onLayout ? 1000 : 620, vw - 32);
+    const left = Math.min(Math.max(16, r.left + r.width / 2 - width / 2), vw - width - 16);
+    setPos({ top: r.bottom + 8, left, width });
+  }, [anchorRef, onLayout]);
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target) && !anchorRef.current?.contains(e.target)) onClose(); }
     function onEsc(e) { if (e.key === 'Escape') onClose(); }
@@ -3543,92 +3588,100 @@ function OwGridSettings({ title, anchorRef, base, cfg, onToggle, onMove, onWidth
   }, [onClose, anchorRef]);
   if (!pos) return null;
   const byKey = new Map(base.map((c) => [c.key, c]));
-  const orderKeys = orderOwKeys(base, cfg);
-  return createPortal(
-    <div className="grid-settings-panel" ref={ref} role="dialog" aria-label={`${title} column settings`} style={{ position: 'fixed', top: pos.top, right: pos.right }}>
-      <div className="grid-settings-panel__head">
-        <strong>{title} · Columns</strong>
-        <span>Show / hide, reorder &amp; resize{onLayout ? ' · Layout below' : ''}</span>
-        <button type="button" className="grid-settings-panel__reset-all" onClick={onReset} title={onLayout ? 'Reset this grid\'s columns and the whole layout' : 'Reset columns'}>Reset to Default</button>
-      </div>
-      <div className="grid-settings-panel__body">
-        <ul className="grid-settings-panel__cols">
-          {orderKeys.map((key, idx, arr) => {
-            const col = byKey.get(key);
-            if (!col) return null;
-            const visible = !(cfg?.hidden && cfg.hidden[key]);
-            const width = cfg?.widths ? cfg.widths[key] : undefined;
-            return (
-              <li className={`grid-settings-panel__col ${visible ? '' : 'is-off'}`} key={key}>
-                <input type="checkbox" checked={visible} disabled={col.locked} onChange={() => onToggle(key)} title="Show this column" />
-                <span className="grid-settings-panel__colname" title={col.label}>{col.label}</span>
-                {col.locked && <i className="grid-settings-panel__lock" title="Always visible">🔒</i>}
-                <span className="grid-settings-panel__movebtns">
-                  <button type="button" className="grid-settings-panel__movebtn" disabled={idx === 0} title="Move up" onClick={() => onMove(key, -1)}>▲</button>
-                  <button type="button" className="grid-settings-panel__movebtn" disabled={idx === arr.length - 1} title="Move down" onClick={() => onMove(key, 1)}>▼</button>
-                </span>
-                <input className="grid-settings-panel__width" type="number" min="30" max="400" step="2" value={width ?? ''} placeholder={String(col.width)} onChange={(e) => onWidth(key, e.target.value)} title="Width in px (blank = default)" aria-label={`${col.label} column width`} />
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-      {onLayout && (
-        <div className="grid-settings-panel__section">
-          <div className="grid-settings-panel__title">Side panel</div>
-          <div className="grid-settings-panel__chips">
-            {[['right', 'Right'], ['left', 'Left']].map(([value, label]) => (
-              <button key={value} type="button"
-                className={`grid-settings-panel__chip${!layout.sideHidden && layout.sidePosition === value ? ' is-on' : ''}`}
-                onClick={() => onLayout({ sidePosition: value, sideHidden: false })}>{label}</button>
-            ))}
-            <button type="button" className={`grid-settings-panel__chip${layout.sideHidden ? ' is-on' : ''}`}
-              onClick={() => onLayout({ sideHidden: true })}>Hidden</button>
-          </div>
-        </div>
-      )}
-      {onLayout && OW_LAYOUT_OPTIONS.map((group) => (
-        <div className="grid-settings-panel__section" key={group.key}>
-          <div className="grid-settings-panel__title">{group.label}</div>
-          <div className="grid-settings-panel__chips">
-            {group.options.map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                className={`grid-settings-panel__chip${layout[group.key] === value ? ' is-on' : ''}`}
-                disabled={group.key === 'sideWidth' && layout.sideHidden}
-                onClick={() => onLayout({ [group.key]: value })}
-              >{label}</button>
-            ))}
-          </div>
-        </div>
+  const orderKeys = orderOwKeys(base, cfg).filter((key) => byKey.has(key));
+  const shown = orderKeys.filter((key) => !(cfg?.hidden && cfg.hidden[key])).length;
+  const seg = (options, isOn, onPick, disabled) => (
+    <div className="ow-settings__seg" role="group">
+      {options.map(([value, label]) => (
+        <button key={value} type="button" className={`ow-settings__seg-btn${isOn(value) ? ' is-on' : ''}`}
+          disabled={disabled} onClick={() => onPick(value)}>{label}</button>
       ))}
-      {onLayout && (
-        <div className="grid-settings-panel__section">
-          <div className="grid-settings-panel__title">Detail panels — show, dock &amp; order</div>
-          <ul className="grid-settings-panel__cols ow-panel-cfg">
-            {layout.panels.map((p, idx, arr) => {
-              const def = OW_PANEL_DEFS.find((d) => d.key === p.key);
+    </div>
+  );
+  return createPortal(
+    <div className={`grid-settings-panel ow-settings${onLayout ? '' : ' ow-settings--cols-only'}`} ref={ref} role="dialog"
+      aria-label={`${title} grid settings`}
+      style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, maxHeight: `calc(100vh - ${pos.top + 12}px)` }}>
+      <header className="ow-settings__head">
+        <div className="ow-settings__heading">
+          <strong>{title}</strong>
+          <span>Grid settings · columns{onLayout ? ' & layout' : ''}</span>
+        </div>
+        <button type="button" className="ow-settings__reset" onClick={onReset}
+          title={onLayout ? 'Reset this grid\'s columns and the whole layout' : 'Reset columns'}>↺ Reset to default</button>
+        <button type="button" className="ow-settings__close" onClick={onClose} aria-label="Close settings" title="Close (Esc)">✕</button>
+      </header>
+      <div className="ow-settings__body">
+        <section className="ow-settings__pane">
+          <div className="ow-settings__pane-head">
+            <span className="ow-settings__pane-title">Columns</span>
+            <span className="ow-settings__pane-hint">{shown} of {orderKeys.length} shown · width px, blank = default</span>
+          </div>
+          <ul className="ow-settings__cols">
+            {orderKeys.map((key, idx, arr) => {
+              const col = byKey.get(key);
+              const visible = !(cfg?.hidden && cfg.hidden[key]);
+              const width = cfg?.widths ? cfg.widths[key] : undefined;
               return (
-                <li className={`grid-settings-panel__col ${p.hidden ? 'is-off' : ''}`} key={p.key}>
-                  <input type="checkbox" checked={!p.hidden} onChange={() => setPanel(p.key, { hidden: !p.hidden })} title="Show this panel" />
-                  <span className="grid-settings-panel__colname" title={def?.label}>{def?.label}</span>
-                  <span className="grid-settings-panel__chips ow-dock-chips">
-                    {[['side', 'Side'], ['bottom', 'Bottom']].map(([dock, label]) => (
-                      <button key={dock} type="button" className={`grid-settings-panel__chip${p.dock === dock ? ' is-on' : ''}`}
-                        onClick={() => setPanel(p.key, { dock })}>{label}</button>
-                    ))}
+                <li className={`ow-settings__col${visible ? '' : ' is-off'}${col.locked ? ' is-locked' : ''}`} key={key}>
+                  <label className="ow-settings__col-name" title={col.locked ? `${col.label} (always visible)` : col.label}>
+                    <input type="checkbox" checked={visible} disabled={col.locked} onChange={() => onToggle(key)} />
+                    <span>{col.label}</span>
+                    {col.locked && <i className="ow-settings__lock" aria-hidden="true">🔒</i>}
+                  </label>
+                  <span className="ow-settings__move">
+                    <button type="button" disabled={idx === 0} title="Move up" onClick={() => onMove(key, -1)}>▲</button>
+                    <button type="button" disabled={idx === arr.length - 1} title="Move down" onClick={() => onMove(key, 1)}>▼</button>
                   </span>
-                  <span className="grid-settings-panel__movebtns">
-                    <button type="button" className="grid-settings-panel__movebtn" disabled={idx === 0} title="Move up" onClick={() => movePanel(idx, -1)}>▲</button>
-                    <button type="button" className="grid-settings-panel__movebtn" disabled={idx === arr.length - 1} title="Move down" onClick={() => movePanel(idx, 1)}>▼</button>
-                  </span>
+                  <input className="ow-settings__width" type="number" min="30" max="400" step="2" value={width ?? ''}
+                    placeholder={String(col.width)} onChange={(e) => onWidth(key, e.target.value)}
+                    title="Width in px (blank = default)" aria-label={`${col.label} column width`} />
                 </li>
               );
             })}
           </ul>
-        </div>
-      )}
+        </section>
+        {onLayout && (
+          <section className="ow-settings__pane ow-settings__pane--layout">
+            <div className="ow-settings__pane-head"><span className="ow-settings__pane-title">Layout</span></div>
+            <div className="ow-settings__opts">
+              <div className="ow-settings__opt">
+                <span>Side panel</span>
+                {seg([['right', 'Right'], ['left', 'Left'], ['hidden', 'Hidden']],
+                  (v) => (v === 'hidden' ? layout.sideHidden : !layout.sideHidden && layout.sidePosition === v),
+                  (v) => onLayout(v === 'hidden' ? { sideHidden: true } : { sidePosition: v, sideHidden: false }))}
+              </div>
+              {OW_LAYOUT_OPTIONS.map((group) => (
+                <div className="ow-settings__opt" key={group.key}>
+                  <span>{group.label}</span>
+                  {seg(group.options, (v) => layout[group.key] === v, (v) => onLayout({ [group.key]: v }),
+                    group.key === 'sideWidth' && layout.sideHidden)}
+                </div>
+              ))}
+            </div>
+            <div className="ow-settings__pane-head"><span className="ow-settings__pane-title">Detail panels</span>
+              <span className="ow-settings__pane-hint">show, dock &amp; order</span></div>
+            <ul className="ow-settings__panels">
+              {layout.panels.map((p, idx, arr) => {
+                const def = OW_PANEL_DEFS.find((d) => d.key === p.key);
+                return (
+                  <li className={`ow-settings__col${p.hidden ? ' is-off' : ''}`} key={p.key}>
+                    <label className="ow-settings__col-name" title={def?.label}>
+                      <input type="checkbox" checked={!p.hidden} onChange={() => setPanel(p.key, { hidden: !p.hidden })} />
+                      <span>{def?.label}</span>
+                    </label>
+                    {seg([['side', 'Side'], ['bottom', 'Bottom']], (v) => p.dock === v, (v) => setPanel(p.key, { dock: v }))}
+                    <span className="ow-settings__move">
+                      <button type="button" disabled={idx === 0} title="Move up" onClick={() => movePanel(idx, -1)}>▲</button>
+                      <button type="button" disabled={idx === arr.length - 1} title="Move down" onClick={() => movePanel(idx, 1)}>▼</button>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+      </div>
     </div>,
     document.body
   );
@@ -3816,7 +3869,7 @@ function OwExportCard({
 
         <div className="ow-export-field ow-export-path">
           <span>Save to</span>
-          <code className="ow-export-path-val" title={exportSettings.basePath}>{exportSettings.basePath}\Export\ddmmyyyy\order no\</code>
+          <code className="ow-export-path-val" title={exportSettings.basePath}>{exportSettings.basePath}\ddmmyyyy\order no\</code>
           <button
             type="button"
             className="ow-btn ow-btn-sm"
@@ -3917,11 +3970,20 @@ function OwExportCard({
 // `supplier`/history (those are different queries in the real source).
 const OW_PROCESS_OPTIONS = [
   { key: 'qty_check', label: 'Qty Check', view: 'qty' },
-  { key: 'pending_order', label: 'Pending Order', view: 'pending' },
+  // Reviewed lines -> best-margin supplier over the last 5 supplies, else the
+  // most frequent supplier (owner rule 2026-10-25; see bulkAssign.jsx).
+  { key: 'bulk_assign', label: 'Bulk Assign · Best Margin', view: 'bulkassign' },
+  // Pending Order = reviewed lines with Or Qty > 0; Or Qty 0 is a rejected
+  // line, listed under Rejected (owner ruling 2026-10-25). Same loader.
+  { key: 'pending_order', label: 'Pending Order', view: 'pending', pendingScope: 'order' },
+  { key: 'rejected', label: 'Rejected', view: 'pending', pendingScope: 'rejected' },
   { key: 'auto_pur_update', label: 'Auto Pur UpDate', view: 'supplier', supplierMode: 'history' },
   { key: 'order_based_supplier_stock', label: 'Order Based Supplier Stock', view: 'supplier', supplierMode: 'stock' },
   { key: 'supplier_order_details', label: 'Supplier Order Details', view: 'assigned' },
 ];
+// Qty Check limited to abnormal-sale products; listed under Qty Check in the
+// Process dropdown only while the store has abnormal sales.
+const OW_ABNORMAL_PROCESS_KEY = 'qty_check_abnormal';
 
 function OrderWorkspace({ session, settings, hidden }) {
   void settings;
@@ -3931,6 +3993,7 @@ function OrderWorkspace({ session, settings, hidden }) {
     try { return localStorage.getItem('nexora.desktop.owStore') || ''; } catch { return ''; }
   });
   const [view, setView] = useState('qty'); // 'qty' | 'pending' | 'review' | 'supplier' | 'assigned'
+  const [pendingScope, setPendingScope] = useState('order'); // pending view: 'order' (Or Qty > 0) | 'rejected' (Or Qty 0)
   const [qtyRows, setQtyRows] = useState([]);
   // Rows committed (Enter/Escape/blur) THIS session, kept visible but marked
   // reviewed instead of vanishing -- they drop off for real only on the next
@@ -4090,6 +4153,11 @@ function OrderWorkspace({ session, settings, hidden }) {
   });
   // Purchase / sales row clicked in a detail panel -> whole invoice / bill card.
   const [owRecord, setOwRecord] = useState(null);
+  const [lineCollapsed, setLineCollapsed] = useState(false);
+  const [infoCode, setInfoCode] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [linePrices, setLinePrices] = useState(null);
+  useEffect(() => { setLinePrices(null); }, [selectedCode, store]);
   useEffect(() => {
     try { localStorage.setItem('nexora.desktop.owLayout', JSON.stringify(owLayout)); } catch { /* best effort */ }
   }, [owLayout]);
@@ -4190,7 +4258,7 @@ function OrderWorkspace({ session, settings, hidden }) {
   useEffect(() => {
     if (!store) return undefined;
     let cancelled = false;
-    setLoading(true); setError(''); setEdits({}); setSelectedCode(null); setStatusOverride({}); setRemovedCodes(new Set()); setQtyCheckedHere(new Set());
+    setLoading(true); setError(''); setEdits({}); setSelectedCode(null); setInfoCode(null); setLinePrices(null); setStatusOverride({}); setRemovedCodes(new Set()); setQtyCheckedHere(new Set());
     // Clear the PREVIOUS view/store's grid rows synchronously, in the same
     // tick as the state change that triggered this effect -- otherwise the
     // old store/process/supplier's rows stay fully rendered (and editable)
@@ -4203,7 +4271,7 @@ function OrderWorkspace({ session, settings, hidden }) {
     // redundant re-renders of grids that aren't even visible right now).
     if (view === 'qty') setQtyRows([]);
     else if (view === 'pending') setPendingRows([]);
-    else if (view === 'review' || view === 'supplier') setRows([]);
+    else if (view === 'review' || view === 'supplier' || view === 'bulkassign') setRows([]);
     else setAssigned([]);
     const done = () => { if (!cancelled) setLoading(false); };
     // Selects row 0 once the grid's data lands, same as VB.NET's
@@ -4265,6 +4333,8 @@ function OrderWorkspace({ session, settings, hidden }) {
         })
         .catch((e) => { if (!cancelled) setError(e.message); })
         .finally(done);
+    } else if (view === 'bulkassign') {
+      done(); // OwBulkAssign loads its own proposals.
     } else { // assigned
       if (!supplier) { setAssigned([]); done(); return () => { cancelled = true; }; }
       api.legacyAssignedOrders(store, supplier.supplier_code, session)
@@ -4281,11 +4351,13 @@ function OrderWorkspace({ session, settings, hidden }) {
   }, [store, view, session, supplier, supplierMode, loadAll, reloadTick]);
 
   useEffect(() => {
-    if (!store || selectedCode == null) { setHistory([]); return undefined; }
+    if (!store || selectedCode == null) { setHistory([]); setHistoryLoading(false); return undefined; }
     let cancelled = false;
+    setHistoryLoading(true);
     api.legacyOrderHistory(store, selectedCode, session)
       .then((r) => { if (!cancelled) setHistory(asArray(r)); })
-      .catch(() => { if (!cancelled) setHistory([]); });
+      .catch(() => { if (!cancelled) setHistory([]); })
+      .finally(() => { if (!cancelled) setHistoryLoading(false); });
     return () => { cancelled = true; };
   }, [store, selectedCode, session]);
 
@@ -4309,7 +4381,30 @@ function OrderWorkspace({ session, settings, hidden }) {
 
   const finalized = workflow?.status === 'FINALIZED';
   const term = search.trim().toLowerCase();
-  const match = (name, code) => !term || String(name || '').toLowerCase().includes(term) || String(code).includes(term);
+  // Abnormal bill sales of this store's open order (rulebook PRR-SALE-
+  // ABNORMAL / PRR-SALE-WARNING). On the first load of a store with abnormal
+  // sales the grids open filtered to those products for PM review.
+  const abnormal = useAbnormalSales({
+    enabled: Boolean(store),
+    key: `${store}|${reloadTick}`,
+    load: () => api.legacyAbnormalSales(store, session),
+    save: (productCode, bill, value) => api.legacySetDontConsider(store, {
+      product_code: String(productCode), bill_no: bill.bill_no, bill_date: bill.bill_date, dont_consider: value,
+    }, session),
+  });
+  const [abnormalOnly, setAbnormalOnly] = useState(false);
+  const abnormalOpenedFor = useRef('');
+  useEffect(() => { setAbnormalOnly(false); }, [store]);
+  // The abnormal list is a Qty Check process option ("Qty Check · Abnormal
+  // sales" in the Process dropdown), so any other process clears it.
+  useEffect(() => { if (view !== 'qty') setAbnormalOnly(false); }, [view]);
+  useEffect(() => {
+    if (!store || abnormal.loading || abnormalOpenedFor.current === store) return;
+    if (abnormal.items.length || abnormal.error) abnormalOpenedFor.current = store;
+    if (abnormal.abnormalCount > 0 && view === 'qty') setAbnormalOnly(true);
+  }, [store, abnormal.loading, abnormal.items.length, abnormal.abnormalCount, abnormal.error, view]);
+  const match = (name, code) => (!abnormalOnly || Boolean(abnormal.byCode[String(code)]))
+    && (!term || String(name || '').toLowerCase().includes(term) || String(code).includes(term));
   const matchWanted = (wanted) => wantedFilter === 'All' || (wanted ?? '—') === wantedFilter;
 
   // Per-column header filters (request: "allow user to filter view" directly
@@ -4378,18 +4473,19 @@ function OrderWorkspace({ session, settings, hidden }) {
 
   const filteredQty = useMemo(() => qtyRows.filter((r) => (
     match(r.productname, r.productcode) && (productType === 'All' || r.producttypename === productType) && matchWanted(r.wantedtype) && matchColumnFilters('qty', r)
-  )), [qtyRows, term, productType, wantedFilter, columnFilters.qty]);
+  )), [qtyRows, term, abnormalOnly, abnormal.byCode, productType, wantedFilter, columnFilters.qty]);
   const filteredRows = useMemo(() => rows.filter((r) => (
     !removedCodes.has(r.ProductCode)
     && match(r.ProductName, r.ProductCode) && (productType === 'All' || r.ProductTypeName === productType) && matchWanted(r.WantedType)
     && matchColumnFilters(view === 'supplier' ? 'supplier' : 'review', r)
-  )), [rows, term, productType, removedCodes, wantedFilter, view, columnFilters.supplier, columnFilters.review]);
+  )), [rows, term, abnormalOnly, abnormal.byCode, productType, removedCodes, wantedFilter, view, columnFilters.supplier, columnFilters.review]);
   // Filtered client-side like every other grid -- pendingRows is fetched
   // once per store/view (Pharma + Non Pharma, matching VB.NET's "All") and
   // never re-fetched just because the product-type filter changed.
   const filteredPending = useMemo(() => pendingRows.filter((r) => (
-    match(r.productname, r.productcode) && (productType === 'All' || r.producttypename === productType) && matchWanted(r.wantedtype) && matchColumnFilters('pending', r)
-  )), [pendingRows, term, productType, wantedFilter, columnFilters.pending]);
+    (pendingScope === 'rejected' ? !(Number(r.orderqty) > 0) : Number(r.orderqty) > 0)
+    && match(r.productname, r.productcode) && (productType === 'All' || r.producttypename === productType) && matchWanted(r.wantedtype) && matchColumnFilters('pending', r)
+  )), [pendingRows, pendingScope, term, abnormalOnly, abnormal.byCode, productType, wantedFilter, columnFilters.pending]);
   // Distinct Wanted values actually present in whichever grid is active --
   // a dropdown of real values, not a hardcoded guess at the legacy DB's
   // fixed-string set, so it stays correct if that set ever changes.
@@ -4591,7 +4687,7 @@ function OrderWorkspace({ session, settings, hidden }) {
   const statusOf = (row) => statusOverride[row.ProductCode] ?? row.Status;
   const filteredAssigned = useMemo(() => assigned.filter((r) => (
     match(r.ProductName, r.ProductCode) && (productType === 'All' || r.ProductTypeName === productType) && matchColumnFilters('assigned', r)
-  )), [assigned, term, productType, columnFilters.assigned]);
+  )), [assigned, term, abnormalOnly, abnormal.byCode, productType, columnFilters.assigned]);
 
   // By Supplier "Load all products" can be 1000s of open rows rendered as a
   // plain <table>.map() -- same freeze-on-any-unrelated-state-change problem
@@ -4740,7 +4836,7 @@ function OrderWorkspace({ session, settings, hidden }) {
       const ext = ['csv', 'xlsx'].includes(exportSettings.fileFormat) ? exportSettings.fileFormat : 'xls';
       // Legacy VB: <supplier> <store name>   <ddMMyyyy> (3 spaces before the date).
       const filename = `${owSafeFileName(`${supplier.supplier_name} ${store}   ${dateFolder}`)}.${ext}`;
-      const folderParts = [exportSettings.basePath, 'Export', dateFolder, owSafePathSegment(orderNo)];
+      const folderParts = [exportSettings.basePath, dateFolder, owSafePathSegment(orderNo)];
       if (exportSettings.supplierWise) folderParts.push(owSafePathSegment(supplier.supplier_name));
       const written = [];
       const savedTo = await owSaveExport(blob, backendFilename, filename, folderParts.join('\\'), written);
@@ -4777,7 +4873,7 @@ function OrderWorkspace({ session, settings, hidden }) {
       );
       const ext = ['csv', 'xlsx'].includes(exportSettings.fileFormat) ? exportSettings.fileFormat : 'xls';
       const filename = `Pending ${dateFolder} ${owSafePathSegment(orderNo)}.${ext}`;
-      const folderParts = [exportSettings.basePath, 'Export', dateFolder, owSafePathSegment(orderNo)];
+      const folderParts = [exportSettings.basePath, dateFolder, owSafePathSegment(orderNo)];
       const written = [];
       const savedTo = await owSaveExport(blob, backendFilename, filename, folderParts.join('\\'), written);
       setLastExport(written.length ? {
@@ -4818,20 +4914,54 @@ function OrderWorkspace({ session, settings, hidden }) {
       : view === 'assigned' ? filteredAssigned.length
         : filteredRows.length;
 
-  // Selected-product identity for the intelligence sidebar (from whichever grid
-  // the selection currently lives in).
-  const selected = useMemo(() => {
+  // The line panel reads only the loader that is on screen. A previous
+  // store's or process's rows must not fill in a product that this grid
+  // has already cleared.
+  const activeLineRow = useMemo(() => {
     if (selectedCode == null) return null;
-    const q = qtyRows.find((r) => r.productcode === selectedCode);
-    if (q) return { name: owCleanName(q.productname), stock: q.totalstock, pack: q.saleunit, mrp: q.mrp };
-    const p = pendingRows.find((r) => r.productcode === selectedCode);
-    if (p) return { name: owCleanName(p.productname), stock: p.totalstock, pack: p.saleunit, mrp: p.mrp };
-    const o = rows.find((r) => r.ProductCode === selectedCode);
-    if (o) return { name: owCleanName(o.ProductName), stock: o.TotalStock, pack: o.SaleUnit, mrp: o.MRP };
-    const a = assigned.find((r) => r.ProductCode === selectedCode);
-    if (a) return { name: owCleanName(a.ProductName), stock: a.TotalStock, pack: a.SaleUnit, mrp: a.MRP };
-    return { name: `#${selectedCode}` };
-  }, [selectedCode, qtyRows, pendingRows, rows, assigned]);
+    if (view === 'qty') return qtyRows.find((r) => r.productcode === selectedCode) || null;
+    if (view === 'pending') return pendingRows.find((r) => r.productcode === selectedCode) || null;
+    if (view === 'assigned') return assigned.find((r) => r.ProductCode === selectedCode) || null;
+    return rows.find((r) => r.ProductCode === selectedCode) || null;
+  }, [view, selectedCode, qtyRows, pendingRows, rows, assigned]);
+  const line = useMemo(() => {
+    if (!activeLineRow) return null;
+    const lower = view === 'qty' || view === 'pending';
+    const code = lower ? activeLineRow.productcode : activeLineRow.ProductCode;
+    return owLineFromRow(view, activeLineRow, {
+      edit: edits[code],
+      reviewed: reviewedCodes.has(code),
+      qtyChecked: qtyCheckedHere.has(code),
+      assignedStatus: lower ? null : (statusOverride[code] ?? activeLineRow.Status),
+      supplierName: supplier?.supplier_name || null,
+      stockMode: isStockMode,
+    });
+  }, [view, activeLineRow, edits, reviewedCodes, qtyCheckedHere, statusOverride, supplier, isStockMode]);
+  const summary = useMemo(() => {
+    const lower = view === 'qty' || view === 'pending';
+    const listed = view === 'qty' ? filteredQty : view === 'pending' ? filteredPending : view === 'assigned' ? filteredAssigned : filteredRows;
+    return owWorkspaceSummary({
+      loading,
+      rows: listed,
+      qtyOf: (row) => {
+        const code = lower ? row.productcode : row.ProductCode;
+        const edited = edits[code];
+        if (edited != null && edited !== '') return edited;
+        return lower ? row.orderqty : row.OrderQty;
+      },
+      originalOf: (row) => (lower ? row.orgorderqty : row.OrgOrderQty),
+      offerOf: (row) => Boolean(row.IsOffer),
+      qtyCheckedOf: (row) => {
+        if (view === 'qty') return reviewedCodes.has(row.productcode) ? 'checked' : 'pending';
+        if (view === 'pending') return 'checked';
+        const raw = row.Qtycheck;
+        const local = qtyCheckedHere.has(row.ProductCode);
+        if (raw === null || raw === undefined) return local ? 'checked' : 'unknown';
+        return (Number(raw) === 1 || local) ? 'checked' : 'pending';
+      },
+      workflow,
+    });
+  }, [view, loading, filteredQty, filteredPending, filteredAssigned, filteredRows, edits, reviewedCodes, qtyCheckedHere, workflow]);
 
   // Close the settings card when switching grids (each grid has its own config).
   useEffect(() => { setSettingsFor(null); }, [view]);
@@ -4840,6 +4970,30 @@ function OrderWorkspace({ session, settings, hidden }) {
   // One settings button per grid now (not just Qty Check/Review All) -- see
   // OW_GRID_SETTINGS_META for the {title, base} each view's ⚙ button opens.
   const gridId = view;
+  const openProductInfo = (code) => { setSelectedCode(code); setInfoCode(code); };
+  // Previous Decisions panel shown in the layout -> no info button; hidden ->
+  // the button opens the same history as a card.
+  const historyPanelShown = owLayout.panels.some((p) => p.key === 'history' && !p.hidden);
+  // Qty Check status: a tick (✓ checked / – pending) by default; the grid
+  // settings' "Qty check: Text" shows the word badge instead.
+  const owQtyCheckCell = (status) => (owLayout.qtyCheckStyle === 'text'
+    ? <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>
+    : <span className={`ow-qtycheck-mark ow-qtycheck-mark--${status}`} title={OW_QTYCHECK_STATUS_LABEL[status]}>{status === 'checked' ? '✓' : status === 'pending' ? '–' : '?'}</span>);
+  const productNameCell = (raw, code) => (
+    <span className="ow-name-wrap">
+      <span className="ow-cellname" title={raw}>{owCleanName(raw)}</span>
+      <AbnormalMark info={abnormal.byCode[String(code)]} />
+      {!historyPanelShown && <button
+        type="button"
+        className="ow-row-info"
+        title="Line details and previous orders"
+        aria-label={`Details for ${owCleanName(raw) || code}`}
+        onClick={(e) => { e.stopPropagation(); openProductInfo(code); }}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 10h2v7h-2v-7Zm0-3h2v2h-2V7Zm1-5a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16Z" /></svg>
+      </button>}
+    </span>
+  );
   const qtyCols = resolveOwColumns(OW_QTY_COLUMNS, owColCfg.qty);
   const reviewCols = resolveOwColumns(OW_REVIEW_COLUMNS, owColCfg.review);
   const pendingCols = resolveOwColumns(OW_PENDING_COLUMNS, owColCfg.pending);
@@ -4848,31 +5002,25 @@ function OrderWorkspace({ session, settings, hidden }) {
   function renderQtyCell(col, row, index, reviewed) {
     switch (col.key) {
       case 'sno': return index + 1;
-      case 'name': return <span className="ow-cellname" title={row.productname}>{owCleanName(row.productname)}</span>;
+      case 'name': return productNameCell(row.productname, row.productcode);
       case 'qtycheckstatus': {
         const status = reviewed ? 'checked' : 'pending';
-        return <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>;
+        return owQtyCheckCell(status);
       }
       case 'offer': return row.IsOffer ? <span title="Has had a free-qty offer in purchase history">🎁</span> : null;
       case 'orqty': {
         const value = edits[row.productcode] ?? row.orderqty;
-        // A not-yet-reviewed row's orderqty already differs from the engine's
-        // orgorderqty (stock/pending-order netting), which is NOT a user
-        // change -- so its baseline is the loaded orderqty, and the chip
-        // appears only once the user edits it. Reviewed rows keep the
-        // orgorderqty baseline so a committed change stays visible.
-        const diffBase = reviewed ? (row.orgorderqty ?? row.orderqty) : row.orderqty;
+        const org = row.orgorderqty;
+        const tone = owQtyDiffTone(org, value);
         return (
           <span className="ow-qty-cell">
-            <input ref={(el) => { qtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.productname} order quantity`}
+            <input ref={(el) => { qtyRefs.current[index] = el; }} className={`ow-qty${tone ? ` ow-qty-${tone}` : ''}`} type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.productname} order quantity`}
               value={value} disabled={savingCode === row.productcode || finalized}
               onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.productcode); e.target.select(); }}
               onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: owWholeQty(e.target.value) }))}
               onKeyDown={(e) => onQtyKey(e, row, index)} />
             <span className="ow-qty-diff-slot">
-              {Number(value) !== Number(diffBase) && (
-                <OwQtyDiffArrow from={diffBase} to={value} />
-              )}
+              {tone && <OwQtyDiffArrow from={org} to={value} />}
             </span>
           </span>
         );
@@ -4892,23 +5040,24 @@ function OrderWorkspace({ session, settings, hidden }) {
   function renderPendingCell(col, row, index) {
     switch (col.key) {
       case 'sno': return index + 1;
-      case 'name': return <span className="ow-cellname" title={row.productname}>{owCleanName(row.productname)}</span>;
+      case 'name': return productNameCell(row.productname, row.productcode);
       case 'qtycheckstatus': {
         const status = 'checked';
-        return <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>;
+        return owQtyCheckCell(status);
       }
       case 'offer': return row.IsOffer ? <span title="Has had a free-qty offer in purchase history">🎁</span> : null;
       case 'orqty': {
         const value = edits[row.productcode] ?? row.orderqty;
+        const tone = owQtyDiffTone(row.orgorderqty, value);
         return (
           <span className="ow-qty-cell">
-            <input ref={(el) => { pendingQtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.productname} order quantity`}
+            <input ref={(el) => { pendingQtyRefs.current[index] = el; }} className={`ow-qty${tone ? ` ow-qty-${tone}` : ''}`} type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.productname} order quantity`}
               value={value} disabled={savingCode === row.productcode || finalized}
               onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.productcode); e.target.select(); }}
               onChange={(e) => setEdits((cur) => ({ ...cur, [row.productcode]: owWholeQty(e.target.value) }))}
               onKeyDown={(e) => onPendingQtyKey(e, row, index)} />
             <span className="ow-qty-diff-slot">
-              {Number(value) !== Number(row.orgorderqty ?? row.orderqty) && <OwQtyDiffArrow from={row.orgorderqty ?? row.orderqty} to={value} />}
+              {tone && <OwQtyDiffArrow from={row.orgorderqty} to={value} />}
             </span>
           </span>
         );
@@ -4926,18 +5075,18 @@ function OrderWorkspace({ session, settings, hidden }) {
   function renderReviewCell(col, row, index) {
     switch (col.key) {
       case 'sno': return index + 1;
-      case 'name': return <span className="ow-cellname" title={row.ProductName}>{owCleanName(row.ProductName)}</span>;
+      case 'name': return productNameCell(row.ProductName, row.ProductCode);
       case 'qtycheckstatus': {
         const status = owQtyCheckStatus(row);
-        return <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>;
+        return owQtyCheckCell(status);
       }
       case 'offer': return row.IsOffer ? <span title="Has had a free-qty offer in purchase history">🎁</span> : null;
       case 'orqty': {
         const value = edits[row.ProductCode] ?? row.OrderQty;
-        const base = row.OrgOrderQty ?? row.OrderQty;
+        const tone = owQtyDiffTone(row.OrgOrderQty, value);
         return (
           <span className="ow-qty-cell">
-            <input ref={(el) => { reviewQtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
+            <input ref={(el) => { reviewQtyRefs.current[index] = el; }} className={`ow-qty${tone ? ` ow-qty-${tone}` : ''}`} type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
               value={value} disabled={savingCode === row.ProductCode || finalized}
               onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
               onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
@@ -4950,7 +5099,7 @@ function OrderWorkspace({ session, settings, hidden }) {
                 owHandleRowArrowKeys(e, reviewQtyRefs, index);
               }} />
             <span className="ow-qty-diff-slot">
-              {Number(value) !== Number(base) && <OwQtyDiffArrow from={base} to={value} />}
+              {tone && <OwQtyDiffArrow from={row.OrgOrderQty} to={value} />}
             </span>
           </span>
         );
@@ -4967,16 +5116,18 @@ function OrderWorkspace({ session, settings, hidden }) {
   function renderSupplierCell(col, row, index, isAssigned, reviewed, value) {
     switch (col.key) {
       case 'sno': return index + 1;
-      case 'name': return <span className="ow-cellname" title={row.ProductName}>{owCleanName(row.ProductName)}</span>;
+      case 'name': return productNameCell(row.ProductName, row.ProductCode);
       case 'offer': return row.IsOffer ? <span title="Has had a free-qty offer in purchase history">🎁</span> : null;
       case 'check': return reviewed && <span className="ow-reviewed-check" title="Already qty-checked">✓</span>;
       case 'qtycheckstatus': {
         const status = owQtyCheckStatus(row);
-        return <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>;
+        return owQtyCheckCell(status);
       }
-      case 'orqty': return (
+      case 'orqty': {
+        const tone = (reviewed || Number(value) !== Number(row.OrderQty)) ? owQtyDiffTone(row.OrgOrderQty, value) : '';
+        return (
         <span className="ow-qty-cell">
-          <input ref={(el) => { supplierQtyRefs.current[index] = el; }} className="ow-qty" type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
+          <input ref={(el) => { supplierQtyRefs.current[index] = el; }} className={`ow-qty${tone ? ` ow-qty-${tone}` : ''}`} type="number" min={0} step={1} inputMode="numeric" aria-label={`${row.ProductName} order quantity`}
             value={value} disabled={savingCode === row.ProductCode || isAssigned || finalized}
             onClick={(e) => e.stopPropagation()} onFocus={(e) => { setSelectedCode(row.ProductCode); e.target.select(); }}
             onChange={(e) => setEdits((cur) => ({ ...cur, [row.ProductCode]: owWholeQty(e.target.value) }))}
@@ -5011,16 +5162,11 @@ function OrderWorkspace({ session, settings, hidden }) {
               }
             }} />
           <span className="ow-qty-diff-slot">
-            {/* Only flag a change the operator made: a row that is qty-checked
-                (✓) or edited in this session. An untouched row's OrderQty is
-                already below OrgOrderQty (earlier-order qty subtracted by the
-                Auto Pur UpDate process) and must not look edited. */}
-            {(reviewed || Number(value) !== Number(row.OrderQty)) && Number(value) !== Number(row.OrgOrderQty ?? row.OrderQty) && (
-              <OwQtyDiffArrow from={row.OrgOrderQty ?? row.OrderQty} to={value} />
-            )}
+            {tone && <OwQtyDiffArrow from={row.OrgOrderQty} to={value} />}
           </span>
         </span>
-      );
+        );
+      }
       case 'stock': return <span className={Number(row.TotalStock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.TotalStock)}</span>;
       case 'pack': return fmtOwQty(row.SaleUnit);
       case 'desc': return row.UnitDescription;
@@ -5051,7 +5197,7 @@ function OrderWorkspace({ session, settings, hidden }) {
   function renderAssignedCell(col, row, index) {
     switch (col.key) {
       case 'sno': return index + 1;
-      case 'name': return <span className="ow-cellname" title={row.ProductName}>{owCleanName(row.ProductName)}</span>;
+      case 'name': return productNameCell(row.ProductName, row.ProductCode);
       case 'offer': return row.IsOffer ? <span title="Has had a free-qty offer in purchase history">🎁</span> : null;
       case 'orqty': return fmtOwQty(row.OrderQty);
       case 'stock': return <span className={Number(row.TotalStock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(row.TotalStock)}</span>;
@@ -5062,7 +5208,7 @@ function OrderWorkspace({ session, settings, hidden }) {
       case 'wanted': return row.WantedType ?? '—';
       case 'qtycheckstatus': {
         const status = owQtyCheckStatus(row);
-        return <span className={`ow-qtycheck-badge ow-qtycheck-${status}`}>{OW_QTYCHECK_STATUS_LABEL[status]}</span>;
+        return owQtyCheckCell(status);
       }
       case 'remarks': return row.Remarks ?? '—';
       case 'action': return (
@@ -5079,10 +5225,6 @@ function OrderWorkspace({ session, settings, hidden }) {
     <section className="ow-panel ow-panel--history">
       <div className="ow-panel-title">Previous Decisions{selectedCode != null && history.length > 0 && <span className="ow-panel-count">Last {Math.min(history.length, 25)}</span>}</div>
       <div className="ow-panel-scroll">
-        {/* Product Name dropped -- every row here is the SAME currently-selected
-            product (the sidebar title above already names it), so repeating it
-            on every line was pure wasted width. Remaining 8 columns take the
-            freed share instead of leaving dead space. */}
         <table className="ow-intel-table ow-fixed">
           <colgroup>
             <col style={{ width: '11%' }} /><col style={{ width: '11%' }} /><col style={{ width: '11%' }} /><col style={{ width: '13%' }} /><col style={{ width: '24%' }} /><col style={{ width: '14%' }} /><col style={{ width: '9%' }} /><col style={{ width: '7%' }} />
@@ -5092,7 +5234,7 @@ function OrderWorkspace({ session, settings, hidden }) {
             {history.map((row, i) => (
               <tr key={i}><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwQty(row.saleunit)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td>{row.remarks ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
             ))}
-            {!history.length && <tr><td colSpan={8} className="ow-empty">{selectedCode == null ? 'Select a product to see its previous-order history.' : 'No previous-order history for this product.'}</td></tr>}
+            {!history.length && <tr><td colSpan={8} className="ow-empty">{selectedCode == null ? 'Select a product to see its previous-order history.' : historyLoading ? 'Loading…' : 'No previous-order history for this product.'}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -5105,27 +5247,44 @@ function OrderWorkspace({ session, settings, hidden }) {
   // One OrderIntelligence per panel: each fetches through the shared
   // owIntelCache, so splitting panels across docks costs no extra requests
   // and a detail fetch never re-renders the big grid.
-  const renderOwPanel = (p) => (p.key === 'history'
-    ? <Fragment key="history">{owHistorySection}</Fragment>
-    : (
-      <OrderIntelligence
-        key={p.key}
-        sections={[p.key]}
-        store={store}
-        productCode={selectedCode}
-        visibleCodes={owVisibleCodes}
-        mode="local"
-        session={session}
-        onError={setError}
-        onPurchaseSelect={(row) => setOwRecord({ kind: 'purchase', row, productCode: selectedCode })}
-        onSalesSelect={(row) => setOwRecord({ kind: 'sales', row, productCode: selectedCode })}
-      />
-    ));
+  const priceSourceKey = owVisiblePanels.some((p) => p.key === 'purchase') ? 'purchase' : owVisiblePanels[0]?.key;
+  const renderOwPanel = (p) => (p.key === 'history' ? <Fragment key="history">{owHistorySection}</Fragment> : (
+    <OrderIntelligence
+      key={p.key}
+      sections={[p.key]}
+      store={store}
+      productCode={selectedCode}
+      visibleCodes={owVisibleCodes}
+      mode="local"
+      session={session}
+      onError={setError}
+      onLatest={p.key === priceSourceKey ? (info) => {
+        if (info == null || String(info.code) !== String(selectedCode)) return;
+        setLinePrices((cur) => (cur && cur.code === info.code && cur.cost === info.cost && cur.ptr === info.ptr && cur.discount === info.discount && cur.grnDate === info.grnDate && cur.supplier === info.supplier && cur.lastSaleDate === info.lastSaleDate && cur.freeQty === info.freeQty && cur.receivedQty === info.receivedQty ? cur : info));
+      } : undefined}
+      onPurchaseSelect={(row) => setOwRecord({ kind: 'purchase', row, productCode: selectedCode })}
+      onSalesSelect={(row) => setOwRecord({ kind: 'sales', row, productCode: selectedCode })}
+    />
+  ));
+
+  const processOption = (view === 'supplier'
+    ? OW_PROCESS_OPTIONS.find((p) => p.view === 'supplier' && p.supplierMode === supplierMode)
+    : OW_PROCESS_OPTIONS.find((p) => p.view === view && (p.pendingScope || 'order') === (view === 'pending' ? pendingScope : 'order'))) || OW_PROCESS_OPTIONS[0];
+  const lineNote = owLineNote(line, view, { finalized });
+  let orderContext = 'Loading order…';
+  if (!store) orderContext = 'No store';
+  else if (orderHeaderError) orderContext = 'Order info unavailable';
+  else if (orderHeader && orderHeader.order_id == null) orderContext = 'No active order';
+  else if (orderHeader) orderContext = `Order #${orderHeader.order_no ?? orderHeader.order_id}`;
+  const orderUpdated = orderHeader && orderHeader.updated_at ? fmtOwDateTime(orderHeader.updated_at) : '';
 
   return (
-    <section className={`screen-panel ow-screen ow-rows-${owLayout.rowSize}${hidden ? ' ow-screen-hidden' : ''}`}>
-      <div className="ow-toolbar">
-        <h2 className="ow-title">Order Workspace</h2>
+    <section className={`screen-panel ow-screen ow-proc ow-rows-${owLayout.rowSize} ow-weight-${owLayout.rowWeight}${hidden ? ' ow-screen-hidden' : ''}`}>
+      <div className="ow-toolbar ow-command">
+        <div className="ow-identity">
+          <span className="ow-kicker">Nexora Procurement</span>
+          <h2 className="ow-title">Order Workspace</h2>
+        </div>
         <label className="ow-field">
           <span>Store</span>
           <select className="ow-store-select" value={store} onChange={(e) => setStore(e.target.value)}>
@@ -5139,20 +5298,32 @@ function OrderWorkspace({ session, settings, hidden }) {
           <select
             className="ow-process-select"
             aria-label="Process"
-            value={
+            value={view === 'qty' && abnormalOnly ? OW_ABNORMAL_PROCESS_KEY : (
               (view === 'supplier'
                 ? OW_PROCESS_OPTIONS.find((p) => p.view === 'supplier' && p.supplierMode === supplierMode)
-                : OW_PROCESS_OPTIONS.find((p) => p.view === view)
+                : OW_PROCESS_OPTIONS.find((p) => p.view === view && (p.pendingScope || 'order') === (view === 'pending' ? pendingScope : 'order'))
               )?.key || 'qty_check'
-            }
+            )}
             onChange={(e) => {
+              if (e.target.value === OW_ABNORMAL_PROCESS_KEY) { setView('qty'); setAbnormalOnly(true); return; }
               const opt = OW_PROCESS_OPTIONS.find((p) => p.key === e.target.value);
               if (!opt) return;
+              setAbnormalOnly(false);
               setView(opt.view);
               if (opt.supplierMode) setSupplierMode(opt.supplierMode);
+              if (opt.view === 'pending') setPendingScope(opt.pendingScope || 'order');
             }}
           >
-            {OW_PROCESS_OPTIONS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+            {OW_PROCESS_OPTIONS.map((p) => (
+              <Fragment key={p.key}>
+                <option value={p.key}>{p.label}</option>
+                {p.key === 'qty_check' && (abnormal.items.length > 0 || abnormal.loading || abnormalOnly) && (
+                  <option value={OW_ABNORMAL_PROCESS_KEY}>
+                    {`⚠ Qty Check · Abnormal sales (${abnormal.loading ? '…' : abnormal.abnormalCount})`}
+                  </option>
+                )}
+              </Fragment>
+            ))}
           </select>
         </label>
         {(view === 'supplier' || view === 'assigned') && (
@@ -5200,6 +5371,21 @@ function OrderWorkspace({ session, settings, hidden }) {
             </select>
           </label>
         )}
+        <input
+          className="ow-search"
+          type="search"
+          placeholder="Search product or code"
+          aria-label="Search products"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <span className="ow-context" title={orderUpdated ? `Order data updated ${orderUpdated}` : undefined}>
+          {orderContext}{orderUpdated ? ` · ${orderUpdated}` : ''}
+        </span>
+        <span className="ow-command-actions">
+        <button type="button" className="ow-btn" disabled={!store || loading} title="Reload this store from the server" onClick={() => { setReloadTick((t) => t + 1); loadWorkflow(); }}>
+          {loading ? 'Loading…' : 'Reload'}
+        </button>
         {(view === 'qty' || view === 'review' || view === 'pending' || view === 'supplier' || view === 'assigned') && (
           <button type="button" ref={settingsBtnRef} className="ow-icon-btn" title="Grid column settings" aria-label="Grid column settings" aria-expanded={Boolean(settingsFor)} onClick={() => setSettingsFor((v) => (v ? null : gridId))}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d={OW_GEAR_PATH} /></svg>
@@ -5218,8 +5404,34 @@ function OrderWorkspace({ session, settings, hidden }) {
         {(view === 'supplier' || view === 'assigned') && (
           <button type="button" ref={exportBtnRef} className="ow-btn" disabled={!supplier} title={supplier ? 'Export order to Excel' : 'Pick a supplier first'} aria-expanded={exportOpen} onClick={() => setExportOpen((v) => !v)}>⬇ Export</button>
         )}
-        {view === 'pending' && (
+        {view === 'pending' && pendingScope !== 'rejected' && (
           <button type="button" ref={exportBtnRef} className="ow-btn" title="Export pending (reviewed, not yet assigned) products to Excel" aria-expanded={exportOpen} onClick={() => setExportOpen((v) => !v)}>⬇ Export</button>
+        )}
+        </span>
+      </div>
+      <div className="ow-summary" aria-live="polite">
+        <span className="ow-summary-mode">{processOption.label}</span>
+        {view === 'bulkassign' ? (
+          <span className="ow-summary-loading">Best margin over the last 5 supplies · not received → most frequent supplier</span>
+        ) : summary.loading ? (
+          <span className="ow-summary-loading">Loading {processOption.label}…</span>
+        ) : (
+          <>
+            <div className="ow-stat"><span>Products</span><b>{summary.products}</b></div>
+            {summary.originalQty != null && (
+              <div className="ow-stat" title="Sum of original quantities on the rows now listed"><span>Original qty</span><b>{fmtOwQty(summary.originalQty)}</b></div>
+            )}
+            <div className="ow-stat" title="Sum of final quantities on the rows now listed, including unsaved edits"><span>Final qty</span><b>{summary.finalQty == null ? '—' : fmtOwQty(summary.finalQty)}</b></div>
+            {summary.qtyCheckKnown != null && (
+              <div className="ow-stat" title="Qty Check saved on the rows now listed"><span>Qty Check</span><b>{summary.qtyCheckChecked}/{summary.qtyCheckKnown}</b></div>
+            )}
+            {summary.pendingLines != null && <div className="ow-stat" title="From the order workflow for this store"><span>Pending</span><b>{fmtOwQty(summary.pendingLines)}</b></div>}
+            {summary.assignedLines != null && <div className="ow-stat" title="From the order workflow for this store"><span>Assigned</span><b>{fmtOwQty(summary.assignedLines)}</b></div>}
+            {summary.openLines != null && <div className="ow-stat" title="From the order workflow for this store"><span>Open</span><b>{fmtOwQty(summary.openLines)}</b></div>}
+            <div className="ow-stat"><span>Offers</span><b>{summary.offers}</b></div>
+            <div className="ow-stat" title="Final quantity 0 means do not order"><span>Qty 0</span><b>{summary.zeroQty}</b></div>
+            {summary.status && <span className={`ow-chip ${finalized || workflow?.ready ? 'ow-chip-ok' : 'ow-chip-run'}`}>{summary.status.replace(/_/g, ' ')}</span>}
+          </>
         )}
       </div>
       {exportOpen && view === 'pending' && (
@@ -5328,16 +5540,8 @@ function OrderWorkspace({ session, settings, hidden }) {
               {view === 'assigned' && <><kbd>↕</kbd> Navigate</>}
               {view === 'review' && <><kbd>↕</kbd> Navigate</>}
             </span>
-            {workflow && <span className="ow-status-sep" aria-hidden="true">•</span>}
-            {workflow && <span className={`ow-chip ${finalized || workflow.ready ? 'ow-chip-ok' : 'ow-chip-run'}`}>{String(workflow.status || '').replace(/_/g, ' ')}</span>}
-            {workflow && <span className="ow-status-sep" aria-hidden="true">•</span>}
-            {workflow && (
-              <span className="ow-metrics">
-                Pending <strong>{workflow.qty_pending ?? 0}</strong> · Assigned <strong>{workflow.assigned_lines ?? 0}</strong> · Open <strong>{workflow.unassigned_lines ?? 0}</strong>
-              </span>
-            )}
             <span className="ow-status-sep" aria-hidden="true">•</span>
-            <span className="ow-count">{activeCount} products</span>
+            <span className="ow-count">{summary.loading ? 'Loading…' : `${activeCount} shown`}</span>
             <button type="button" className="ow-btn ow-btn-sm ow-details-toggle"
               aria-pressed={!owLayout.sideHidden}
               title={owLayout.sideHidden ? 'Show the side detail panel' : 'Hide the side detail panel to widen the grid'}
@@ -5345,8 +5549,33 @@ function OrderWorkspace({ session, settings, hidden }) {
               {owLayout.sideHidden ? 'Show details' : 'Hide details'}
             </button>
           </div>
+          {selectedCode != null && abnormal.byCode[String(selectedCode)] && (
+            <AbnormalSalesStrip
+              info={abnormal.byCode[String(selectedCode)]}
+              productName={line?.name}
+              multipliers={{ abnormal: abnormal.abnormal, warning: abnormal.warning }}
+              busy={abnormal.busy}
+              readOnly={finalized}
+              onToggle={abnormal.toggle}
+            />
+          )}
           <div className="ow-grid" ref={owGridScrollRef}>
-        {view === 'qty' ? (
+        {view === 'bulkassign' ? (
+          <OwBulkAssign
+            store={store}
+            session={session}
+            finalized={finalized}
+            reloadKey={reloadTick}
+            selectedCode={selectedCode}
+            onSelect={setSelectedCode}
+            onError={setError}
+            onAssigned={(res) => {
+              setBanner(`Assigned ${res.assigned} product(s) to ${res.suppliers} supplier(s) by best margin.`);
+              setReloadTick((t) => t + 1);
+              loadWorkflow();
+            }}
+          />
+        ) : view === 'qty' ? (
           <table className="ow-cfg">
             <colgroup>{owColgroupPct(qtyCols)}</colgroup>
             <thead>
@@ -5607,16 +5836,23 @@ function OrderWorkspace({ session, settings, hidden }) {
 
         {owSideShown && (
         <aside className="ow-side">
-          <div className="ow-side-head">
-            {selected ? (
-              <>
-                <strong className="ow-side-name" title={selected.name}>{selected.name}</strong>
-                <span className="ow-side-meta">Stock <b className={Number(selected.stock) === 0 ? 'ow-stock-zero' : undefined}>{fmtOwQty(selected.stock)}</b></span>
-                <span className="ow-side-meta">Pack <b>{fmtOwQty(selected.pack)}</b></span>
-                <span className="ow-side-meta">MRP <b>{fmtOwMoney(selected.mrp)}</b></span>
-              </>
-            ) : <span className="ow-side-hint">Select a product to see its trend, purchase &amp; sales.</span>}
-          </div>
+          <OwLineContext
+            line={line}
+            prices={linePrices}
+            note={lineNote}
+            collapsed={lineCollapsed}
+            onToggleCollapse={() => setLineCollapsed((v) => !v)}
+            assignAction={view === 'supplier' && activeLineRow ? (
+              <button
+                type="button"
+                className={`ow-btn ow-btn-sm ${line?.assignment === 'assigned' ? 'ow-btn-danger' : 'ow-btn-primary'}`}
+                disabled={!supplier || assigningCode === activeLineRow.ProductCode || finalized}
+                onClick={() => toggleAssign(activeLineRow)}
+              >
+                {assigningCode === activeLineRow.ProductCode ? '…' : (line?.assignment === 'assigned' ? 'Unassign' : 'Assign')}
+              </button>
+            ) : null}
+          />
           <div className="ow-side-panels">{owSidePanels.map(renderOwPanel)}</div>
         </aside>
         )}
@@ -5629,6 +5865,16 @@ function OrderWorkspace({ session, settings, hidden }) {
           productCode={owRecord.productCode}
           session={session}
           onClose={() => setOwRecord(null)}
+        />
+      )}
+      {!historyPanelShown && infoCode != null && line && String(line.code) === String(infoCode) && (
+        <OwProductInfoCard
+          line={line}
+          prices={linePrices}
+          note={lineNote}
+          history={history}
+          historyLoading={historyLoading}
+          onClose={() => setInfoCode(null)}
         />
       )}
 
@@ -5807,6 +6053,24 @@ function fmtOwDate(value) {
   const parts = raw.split('-');
   return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : raw;
 }
+// Calendar day in local time. Today and yesterday are named so a same-week
+// GRN or sale is not just another short date.
+function owWhen(value) {
+  if (!value) return null;
+  const raw = String(value).slice(0, 10);
+  const parts = raw.split('-');
+  if (parts.length !== 3) return { text: raw, when: '' };
+  const then = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  if (Number.isNaN(then.getTime())) return { text: raw, when: '' };
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((today.getTime() - then.getTime()) / 86400000);
+  const short = `${parts[2]}/${parts[1]}/${parts[0].slice(2)}`;
+  const day = `${parts[0]}-${parts[1]}-${parts[2]}`;
+  if (diff === 0) return { text: `Today · ${short}`, when: 'today', day };
+  if (diff === 1) return { text: `Yesterday · ${short}`, when: 'yesterday', day };
+  return { text: short, when: '', day };
+}
 // Same date part as fmtOwDate, plus HH:MM -- for footer order/GRN timestamps
 // where the time matters (date alone can't distinguish same-day reorders).
 function fmtOwDateTime(value) {
@@ -5827,7 +6091,10 @@ function fmtOwDaysAgo(value) {
 // Whole-number-only quantity input: no decimals, empty clears to 0.
 function owWholeQty(raw) {
   const n = Math.trunc(Number(raw));
-  return Number.isFinite(n) && n >= 0 ? n : 0;
+  // 0 stays valid: Backspace / "don't want" commits a zero. Positive entries
+  // are whole packs and stop at five digits.
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(n, 99999);
 }
 // True when a Backspace keypress has nothing left to delete -- the field is
 // already empty, or the whole value is selected (so this keystroke would
@@ -5844,6 +6111,172 @@ function owIsClearKeypress(e) {
 // never sent back to the server.
 function owCleanName(name) {
   return String(name ?? '').replace(/\s+/g, ' ').trim();
+}
+
+const OW_QTYCHECK_WORD = { checked: 'Checked', pending: 'Pending', unknown: 'Unknown' };
+
+// Selected-line context for the Order Workspace side column. Shows only the
+// fields on `line`. It does not approve a quantity or apply a recommendation.
+function owFact(label, value, tone) {
+  if (value == null || value === '') return null;
+  return { label, value, tone };
+}
+
+function OwLineFacts({ line, prices, note }) {
+  const pricesMatch = prices && String(prices.code) === String(line.code) ? prices : null;
+  const qtyFacts = [
+    owFact('Original', line.originalQty == null ? null : fmtOwQty(line.originalQty)),
+    owFact('Final', line.finalQty == null ? null : fmtOwQty(line.finalQty), owQtyDiffTone(line.originalQty, line.finalQty) || undefined),
+    owFact('Stock', line.stock == null ? null : fmtOwQty(line.stock), Number(line.stock) === 0 ? 'zero' : undefined),
+    owFact('90d sales', line.salesQty == null ? null : fmtOwQty(line.salesQty), 'sales'),
+    owFact('Max', line.maxQty == null ? null : fmtOwQty(line.maxQty)),
+    owFact('Supplier stock', line.supplierStock == null ? null : fmtOwQty(line.supplierStock)),
+  ].filter(Boolean);
+  const priceFacts = [
+    owFact('Cost', pricesMatch ? fmtOwMoney(pricesMatch.cost) : '—'),
+    owFact('PTR', pricesMatch ? fmtOwMoney(pricesMatch.ptr) : '—'),
+    owFact('MRP', line.mrp == null ? (pricesMatch ? fmtOwMoney(pricesMatch.purchaseMrp) : '—') : fmtOwMoney(line.mrp)),
+    owFact('Discount', pricesMatch && pricesMatch.discount != null && pricesMatch.discount !== '' ? fmtOwPct(pricesMatch.discount) : '—'),
+    owFact('Received', pricesMatch ? fmtOwQty(pricesMatch.receivedQty) : '—'),
+    owFact('Free', pricesMatch ? fmtOwQty(pricesMatch.freeQty) : '—'),
+  ].filter(Boolean);
+  const status = [
+    line.qtyCheck ? (OW_QTYCHECK_WORD[line.qtyCheck] || line.qtyCheck) : null,
+    line.offer ? 'Offer' : null,
+    line.assignment === 'assigned' ? 'Assigned' : (line.assignment === 'open' ? 'Open' : null),
+    line.wanted || null,
+    line.finalQty === 0 ? 'Not ordering' : null,
+  ].filter(Boolean);
+  const saleDate = line.lastSaleDate || pricesMatch?.lastSaleDate || null;
+  const grnDate = pricesMatch?.grnDate || null;
+  const received = line.lastReceivedDate || null;
+  const saleWhen = owWhen(saleDate);
+  const grnWhen = owWhen(grnDate);
+  const receivedWhen = owWhen(received);
+  const sameReceipt = Boolean(grnWhen?.day && receivedWhen?.day && grnWhen.day === receivedWhen.day);
+  const movement = [];
+  if (saleWhen) movement.push({ key: 'sale', label: 'Last sale', when: saleWhen });
+  if (grnWhen) movement.push({ key: 'grn', label: 'Last GRN', when: grnWhen });
+  if (receivedWhen && !sameReceipt) movement.push({ key: 'received', label: 'Last received', when: receivedWhen });
+  if (pricesMatch?.supplier) movement.push({ key: 'supplier', text: pricesMatch.supplier });
+  return (
+    <>
+      {status.length > 0 && <p className="ow-line-status">{status.join(' · ')}</p>}
+      <div className="ow-line-split">
+        {qtyFacts.length > 0 && (
+          <dl className="ow-facts">
+            {qtyFacts.map((fact) => (
+              <div key={fact.label} className={fact.tone === 'sales' ? 'is-sales' : undefined}>
+                <dt>{fact.label}</dt>
+                <dd className={fact.tone === 'zero' ? 'is-zero' : fact.tone === 'up' || fact.tone === 'down' ? `is-${fact.tone}` : undefined}>
+                  {fact.value}
+                  {(fact.tone === 'up' || fact.tone === 'down') && fact.label === 'Final' && (
+                    <OwQtyDiffArrow from={line.originalQty} to={line.finalQty} />
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <dl className="ow-facts ow-facts-price">
+          {priceFacts.map((fact) => (
+            <div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>
+          ))}
+        </dl>
+      </div>
+      {movement.length > 0 && (
+        <p className="ow-line-meta ow-line-move">
+          {movement.map((bit) => (bit.when ? (
+            <span key={bit.key} className={`ow-move ow-move-${bit.key}`}>{bit.label} <b className={bit.when.when ? `ow-when ow-when-${bit.when.when}` : undefined}>{bit.when.text}</b></span>
+          ) : (
+            <span key={bit.key}>{bit.text}</span>
+          )))}
+        </p>
+      )}
+      {line.supplierName && <p className="ow-line-meta">Order supplier {line.supplierName}</p>}
+      {line.remarks && <p className="ow-line-meta">Remarks {line.remarks}</p>}
+      {note && <p className="ow-line-note">{note}</p>}
+    </>
+  );
+}
+
+function OwLineContext({ line, prices, note, collapsed, onToggleCollapse, assignAction }) {
+  if (!line) {
+    return (
+      <div className="ow-line">
+        <div className="ow-line-empty">Select a product. Stock, quantities, cost, PTR, and MRP show here.</div>
+      </div>
+    );
+  }
+  return (
+    <section className={`ow-line${Number(line.stock) === 0 ? ' is-nostock' : ''}`} aria-label="Selected product">
+      <div className="ow-line-top">
+        <div className="ow-line-id">
+          <strong className="ow-line-name" title={line.name}>{line.name}</strong>
+          <span className="ow-line-sub">
+            {line.code != null && <span>#{line.code}</span>}
+            {line.unit && <span>{line.unit}</span>}
+            {line.pack != null && <span>Pack {fmtOwQty(line.pack)}</span>}
+          </span>
+        </div>
+        <button type="button" className="ow-btn ow-btn-sm ow-line-toggle" aria-expanded={!collapsed} onClick={onToggleCollapse}>
+          {collapsed ? 'Show' : 'Hide'}
+        </button>
+      </div>
+      {!collapsed && (
+        <>
+          <OwLineFacts line={line} prices={prices} note={note} />
+          {assignAction}
+        </>
+      )}
+    </section>
+  );
+}
+
+function OwProductInfoCard({ line, prices, note, history, historyLoading, onClose }) {
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      event.preventDefault();
+      onClose();
+    }
+    window.addEventListener('keydown', closeOnEscape, true);
+    return () => window.removeEventListener('keydown', closeOnEscape, true);
+  }, [onClose]);
+  const rows = Array.isArray(history) ? history.slice(0, 25) : [];
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="purchase-detail-card ow-doc-card ow-product-info" role="dialog" aria-modal="true" aria-labelledby="ow-product-info-title" onClick={(e) => e.stopPropagation()}>
+        <div className="purchase-detail-header">
+          <div className="purchase-detail-heading">
+            <div>
+              <span className="purchase-detail-eyebrow">#{line.code ?? '—'}{line.unit ? ` · ${line.unit}` : ''}{line.pack != null ? ` · Pack ${fmtOwQty(line.pack)}` : ''}</span>
+              <strong id="ow-product-info-title" title={line.name}>{line.name}</strong>
+            </div>
+          </div>
+          <button type="button" className="purchase-detail-close" onClick={onClose} aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.4 6 4.6 4.6L16.6 6 18 7.4 13.4 12l4.6 4.6-1.4 1.4-4.6-4.6L7.4 18 6 16.6l4.6-4.6L6 7.4 7.4 6Z" /></svg>
+          </button>
+        </div>
+        <div className="purchase-detail-body">
+          <OwLineFacts line={line} prices={prices} note={note} />
+          <div className="ow-panel-title">Previous orders{rows.length > 0 && <span className="ow-panel-count">Last {rows.length}</span>}</div>
+          <div className="ow-doc-lines">
+            <table className="ow-intel-table">
+              <thead><tr><th className="ow-num">Or Qty</th><th className="ow-num">Org Order</th><th className="ow-num">Pack</th><th className="ow-num">MRP</th><th>Remarks</th><th>Wanted Date</th><th>Wanted</th><th>Or Supplier</th></tr></thead>
+              <tbody>
+                {rows.map((row, i) => (
+                  <tr key={i}><td className="ow-num">{fmtOwQty(row.Orqty)}</td><td className="ow-num">{fmtOwQty(row.OrgOrderQty)}</td><td className="ow-num">{fmtOwQty(row.saleunit)}</td><td className="ow-num">{fmtOwMoney(row.MRP)}</td><td>{row.remarks ?? '—'}</td><td>{fmtOwDate(row.Wanteddate)}</td><td>{row.WantedType ?? '—'}</td><td>{row.Orsupplier ?? '—'}</td></tr>
+                ))}
+                {!rows.length && <tr><td colSpan={8} className="ow-empty">{historyLoading ? 'Loading previous orders…' : 'No previous orders for this product.'}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 // Shared row-navigation for every Order Workspace product grid (Qty Review,
 // Review All, By Supplier): ArrowUp/ArrowDown must never step the OR QTY
@@ -5892,12 +6325,21 @@ function owHandleRowArrowKeys(e, refs, index) {
 // decrease, a flat dash (no arrow) for no change. `from` is the row's
 // originally-loaded orderqty, `to` is whatever's currently showing (edited
 // or not).
-function OwQtyDiffArrow({ from, to }) {
+// One comparison for the quantity and its arrow: above the original is up
+// and green, below it is down and red. Zero is not a color by itself.
+function owQtyDiffTone(from, to) {
+  if (from == null || from === '' || to == null || to === '') return '';
   const diff = Number(to) - Number(from);
-  if (diff === 0) return <span className="ow-qty-diff ow-qty-diff-flat" aria-label="unchanged">—</span>;
-  const up = diff > 0;
+  if (!Number.isFinite(diff) || diff === 0) return '';
+  return diff > 0 ? 'up' : 'down';
+}
+function OwQtyDiffArrow({ from, to }) {
+  const tone = owQtyDiffTone(from, to);
+  if (!tone) return <span className="ow-qty-diff ow-qty-diff-flat" aria-label="unchanged">—</span>;
+  const up = tone === 'up';
+  const diff = Number(to) - Number(from);
   return (
-    <span className={`ow-qty-diff ${up ? 'ow-qty-diff-up' : 'ow-qty-diff-down'}`} aria-label={`${up ? 'increased' : 'decreased'} by ${Math.abs(diff)}`}>
+    <span className={`ow-qty-diff ow-qty-diff-${tone}`} aria-label={`${up ? 'increased' : 'decreased'} by ${Math.abs(diff)}`}>
       {up ? '▲' : '▼'} {fmtOwSigned(diff)}
     </span>
   );
@@ -5913,12 +6355,6 @@ function fmtOwSigned(value) {
   return n > 0 ? `+${body}` : n < 0 ? `-${body}` : '0';
 }
 // "2026-08" -> "Aug 2026" for the chart's month axis.
-function fmtOwMonthLabel(ym) {
-  const [y, m] = String(ym || '').split('-');
-  const i = Number(m) - 1;
-  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return i >= 0 && i < 12 ? `${names[i]} ${y}` : (ym || '—');
-}
 // Landing cost % = margin between PTR (selling-in price) and Cost (net landed
 // cost, already inclusive of the synced offer/product-discount/scheme), i.e.
 // how much PTR sits above Cost.
@@ -6099,10 +6535,51 @@ function OwDocumentCard({ kind, store, row, productCode, session, onClose }) {
   );
 }
 
-function OrderIntelligence({ store, productCode, visibleCodes, product, mode, session, onError, sections = ['trend', 'purchase', 'sales'], onPurchaseSelect, onSalesSelect }) {
+// Order Workspace building blocks the Procurement Workspace reuses (passed in
+// as a prop so ProcurementWorkspace.jsx never imports App.jsx back).
+const PROCUREMENT_UI = {
+  IntelPanel: OrderIntelligence,
+  DocumentCard: OwDocumentCard,
+  ExportCard: OwExportCard,
+  SupplierPicker: OwSupplierPicker,
+  exportKit: {
+    columnDefs: OW_EXPORT_COLUMN_DEFS,
+    defaults: owDefaultExportSettings,
+    read: readOwExportSettings,
+    write: writeOwExportSettings,
+    dateFolder: owExportDateFolder,
+    save: owSaveExport,
+    safeFileName: owSafeFileName,
+    safePathSegment: owSafePathSegment,
+  },
+};
+
+function owLatestByDate(rows, field) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  return rows.reduce((best, row) => {
+    const stamp = Date.parse(row?.[field] || '');
+    const bestStamp = Date.parse(best?.[field] || '');
+    if (Number.isFinite(stamp) && (!Number.isFinite(bestStamp) || stamp > bestStamp)) return row;
+    return best;
+  });
+}
+
+function owMoneyOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+// trendFit {fetch, min, max} (Procurement): fetch `fetch` calendar months and
+// draw the latest `min` that have data, or up to `max` when the chart is wide
+// enough. Omitted (Order Workspace) = the legacy 4-month window, all drawn.
+function OrderIntelligence({ store, productCode, visibleCodes, product, mode, session, onError, sections = ['trend', 'purchase', 'sales'], onPurchaseSelect, onSalesSelect, onLatest, trendFit }) {
   const [purchase, setPurchase] = useState([]);
   const [sales, setSales] = useState([]);
   const [monthly, setMonthly] = useState([]);
+  const [trendShown, setTrendShown] = useState(0);
+  const trendMonths = trendFit?.fetch;
+  const intelKey = (code) => `${store}|${mode}|${code}${trendMonths ? `|m${trendMonths}` : ''}`;
   const [loading, setLoading] = useState(false);
 
   // Arrow-key row navigation can fire a selectedCode change every ~30-50ms
@@ -6127,25 +6604,30 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
   // never grows unbounded or serves another store's data.
   const fetchDetails = useCallback((code) => {
     if (!store || code == null) return Promise.resolve({ purchase: [], sales: [], monthly: [] });
-    const key = `${store}|${mode}|${code}`;
+    const key = intelKey(code);
     const hit = owIntelCacheGet(key);
     if (hit) return hit;
     const p = Promise.all([
       api.legacyPurchaseDetails(store, code, mode, session).catch(() => []),
       api.legacySalesDetails(store, code, mode, session).catch(() => []),
-      api.legacyMonthlyStats(store, code, mode, session).catch(() => [])
+      api.legacyMonthlyStats(store, code, mode, session, trendMonths).catch(() => [])
     ]).then(([pp, ss, mm]) => ({ purchase: asArray(pp), sales: asArray(ss), monthly: asArray(mm) }))
       .catch(() => { owIntelCache.delete(key); return { purchase: [], sales: [], monthly: [] }; });
     owIntelCacheSet(key, p);
     return p;
   }, [store, mode, session]);
 
+  const [pricedCode, setPricedCode] = useState(null);
+  const onLatestRef = useRef(onLatest);
+  onLatestRef.current = onLatest;
+
   useEffect(() => {
-    if (!store || settledCode == null) { setPurchase([]); setSales([]); setMonthly([]); return undefined; }
+    if (!store || settledCode == null) { setPurchase([]); setSales([]); setMonthly([]); setPricedCode(null); return undefined; }
     let cancelled = false;
+    setPricedCode(null);
     // Only show the spinner for a genuine fetch; a cached/prefetched row
     // resolves on the same tick and shouldn't flash "loading".
-    const cached = Boolean(owIntelCacheGet(`${store}|${mode}|${settledCode}`));
+    const cached = Boolean(owIntelCacheGet(intelKey(settledCode)));
     if (!cached) setLoading(true);
     fetchDetails(settledCode)
       .then((data) => {
@@ -6153,6 +6635,7 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
         setPurchase(data.purchase);
         setSales(data.sales);
         setMonthly(data.monthly);
+        setPricedCode(settledCode);
       })
       .catch((e) => { if (!cancelled) onError?.(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -6170,17 +6653,36 @@ function OrderIntelligence({ store, productCode, visibleCodes, product, mode, se
     [...ahead, ...behind].forEach((code) => { if (code != null) fetchDetails(code); });
   }, [store, settledCode, mode, session, visibleCodes, fetchDetails]);
 
+  useEffect(() => {
+    const publish = onLatestRef.current;
+    if (!publish || pricedCode == null || String(pricedCode) !== String(settledCode)) return;
+    const latest = owLatestByDate(purchase, 'GRNDate');
+    const sale = owLatestByDate(sales, 'Bill_Time');
+    publish({
+      code: pricedCode,
+      cost: latest ? owMoneyOrNull(latest.ItemCost) : null,
+      ptr: latest ? owMoneyOrNull(latest.PTR) : null,
+      purchaseMrp: latest ? owMoneyOrNull(latest.MRP) : null,
+      discount: latest && latest.DIS != null && latest.DIS !== '' ? latest.DIS : null,
+      supplier: latest?.SupplierName || null,
+      grnDate: latest?.GRNDate || null,
+      freeQty: latest ? owMoneyOrNull(latest.FreeQty) : null,
+      receivedQty: latest ? owMoneyOrNull(latest.RStock) : null,
+      lastSaleDate: sale?.Bill_Time || null,
+    });
+  }, [purchase, sales, pricedCode, settledCode]);
+
   const empty = productCode == null;
 
   const sectionMap = {
     trend: (
       <section className="ow-panel ow-panel--chart" key="trend">
         <div className="ow-panel-title">
-          Monthly Trend<span className="ow-panel-subtitle">Stock movement — last {monthly.length || 4} months</span>
+          Monthly Trend<span className="ow-panel-subtitle">Stock movement — last {(trendFit ? trendShown : monthly.length) || 4} months</span>
           {loading && <span className="ow-intel-loading">…</span>}
         </div>
         <div className="ow-panel-body">
-          {empty ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={monthly} loading={loading} />}
+          {empty ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={monthly} loading={loading} fit={trendFit} onShown={setTrendShown} />}
         </div>
       </section>
     ),
@@ -6254,18 +6756,36 @@ const OW_TREND_SERIES = [
   { key: 'stock', label: 'Stock', cls: 'stock' },
 ];
 
-function OwTrendChart({ rows, loading }) {
+// A month group needs ~66px (three 15px bars + labels) plus the plot's 10px
+// gap; `fit` {min, max} picks how many of the latest rows fit the width.
+const OW_TREND_GROUP_PX = 76;
+
+function OwTrendChart({ rows: allRows, loading, fit, onShown }) {
   const [hover, setHover] = useState(null); // { row, rect }
+  const [width, setWidth] = useState(0);
+  const rootRef = useRef(null);
+  const hasRows = allRows.length > 0;
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!fit || !el) return undefined;
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    ro.observe(el);
+    setWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, [fit, hasRows]);
+  const count = fit ? Math.max(fit.min, Math.min(fit.max, Math.floor((width - 10) / OW_TREND_GROUP_PX))) : allRows.length;
+  const rows = fit ? allRows.slice(-count) : allRows;
+  useEffect(() => { onShown?.(rows.length); }, [rows.length, onShown]);
   if (!rows.length) return <div className="ow-empty">{loading ? 'Loading…' : 'No monthly statistics.'}</div>;
 
-  const maxLevel = Math.max(1, ...rows.flatMap((r) => OW_TREND_SERIES.map((s) => Number(r[s.key]) || 0)));
+  const maxLevel = trendMax(rows, OW_TREND_SERIES);
   const maxAdj = Math.max(1, ...rows.map((r) => Math.abs(Number(r.adjustment) || 0)));
 
   const showTip = (e, row) => setHover({ row, rect: e.currentTarget.getBoundingClientRect() });
   const hideTip = () => setHover(null);
 
   return (
-    <div className="ow-chart">
+    <div className="ow-chart" ref={rootRef}>
       <div className="ow-chart-plot">
         {rows.map((row, i) => {
           const adj = Number(row.adjustment) || 0;
@@ -6280,22 +6800,7 @@ function OwTrendChart({ rows, loading }) {
               onBlur={hideTip}
               tabIndex={0}
             >
-              <div className="ow-chart-bars">
-                {OW_TREND_SERIES.map((s) => {
-                  const v = Number(row[s.key]) || 0;
-                  const isZero = v === 0;
-                  const pct = isZero ? 0 : Math.max(4, (v / maxLevel) * 100);
-                  return (
-                    <div
-                      key={s.key}
-                      className={`ow-chart-bar ow-chart-bar--${s.cls}${isZero ? ' is-zero' : ''}`}
-                      style={{ height: isZero ? '3px' : `${pct}%` }}
-                    >
-                      <span className="ow-chart-val">{fmtOwQty(v)}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <TrendBars series={OW_TREND_SERIES} row={row} max={maxLevel} fmt={fmtOwQty} />
               <div className="ow-chart-adjlane">
                 <div className="ow-chart-adjtrack-pos">
                   {adj > 0 && (
@@ -6334,18 +6839,12 @@ function OwTrendChart({ rows, loading }) {
   );
 }
 
-// Rich floating tooltip for one month -- portaled to document.body (same
-// convention as OwGridSettings/OwExportCard) so it is never clipped by the
-// side panel's overflow:hidden ancestors. Purely presentational: every value
-// it shows already comes from qty_check_monthly_stats' response, computed
-// once on the backend.
+// Rich floating tooltip for one month (TrendTip: portaled to document.body).
+// Purely presentational: every value it shows already comes from
+// qty_check_monthly_stats' response, computed once on the backend.
 function OwChartTooltip({ row, anchorRect }) {
-  if (!anchorRect) return null;
-  const width = 224;
-  const left = Math.min(Math.max(anchorRect.left + anchorRect.width / 2, width / 2 + 8), window.innerWidth - width / 2 - 8);
-  const top = anchorRect.top - 8;
-  return createPortal(
-    <div className="ow-chart-tip" role="tooltip" style={{ position: 'fixed', top, left, width }}>
+  return (
+    <TrendTip anchorRect={anchorRect}>
       <div className="ow-chart-tip-month">{fmtOwMonthLabel(row.month)}</div>
       <div className="ow-chart-tip-section ow-chart-tip-section--in">
         <div className="ow-chart-tip-head">IN</div>
@@ -6370,8 +6869,7 @@ function OwChartTooltip({ row, anchorRect }) {
         <div className="ow-chart-tip-row ow-chart-tip-single"><b>{fmtOwSigned(row.adjustment)}</b></div>
         <div className="ow-chart-tip-note">includes expiry returns</div>
       </div>
-    </div>,
-    document.body
+    </TrendTip>
   );
 }
 
@@ -11872,6 +12370,22 @@ const STOCK_STATUS_FILTERS = [
   { value: 'zero_all_zero', label: 'Mine=0 + All=0' }
 ];
 
+// Extra NMW-Stock option: warehouse stock 0 + supplier has stock + branches
+// selling it, with each branch's 1-month need (backend store_need.py).
+const STORE_NEED_FILTER = 'store_need';
+
+function supplierStockStatusMatch(row, filter) {
+  if (filter === 'all') return true;
+  if (!row.has_mapping) return false;
+  const own = Number(row.own_store_stock) || 0;
+  const others = Number(row.other_store_has_stock) > 0;
+  if (filter === 'zero') return own <= 0;
+  if (filter === 'positive') return own > 0;
+  if (filter === 'zero_other_positive') return own <= 0 && others;
+  if (filter === 'zero_all_zero') return own <= 0 && !others;
+  return true;
+}
+
 const WAREHOUSE_ROW_PREFIX = 'wh:';
 function isWarehouseRowId(id) {
   return typeof id === 'string' && id.startsWith(WAREHOUSE_ROW_PREFIX);
@@ -12070,7 +12584,13 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     const handle = setTimeout(() => setWarehouseSearchDebounced(productSearch.trim()), 300);
     return () => clearTimeout(handle);
   }, [productSearch]);
-  const isWarehouseStockMode = stockStatusFilter !== 'all';
+  // 'store_need' stays supplier-scoped (it narrows the selected supplier's
+  // lines), so it is not one of the warehouse-catalogue modes.
+  const storeNeedOn = stockStatusFilter === STORE_NEED_FILTER;
+  // With a supplier picked, the NMW-Stock options narrow THAT supplier's lines
+  // (client-side, see supplierStockStatusMatch); the whole-warehouse catalogue
+  // mode (30k+ rows) is only for browsing with no supplier selected.
+  const isWarehouseStockMode = stockStatusFilter !== 'all' && !storeNeedOn && !selectedSupplier;
   const warehouseItemsQuery = useQuery({
     queryKey: ['warehouse-stock-products', warehouseTenantId, scopeStoreId, stockStatusFilter, warehouseSearchDebounced],
     queryFn: ({ signal }) => api.getWarehouseStockProducts(
@@ -12122,8 +12642,86 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   const [remarkDrafts, setRemarkDrafts] = useState({});
   const [activeGridCell, setActiveGridCell] = useState('row');
   const [exportStatus, setExportStatus] = useState({ state: 'idle', message: '' });
+  // "Disc >= N%" narrowing of the supplier list; remembered per viewer.
+  const [minDisc, setMinDisc] = useState(() => {
+    try { return localStorage.getItem('supplierAnalysis.minDisc') || ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('supplierAnalysis.minDisc', minDisc); } catch { /* best effort */ }
+  }, [minDisc]);
   const qtyRefs = useRef({});
   const rowRefs = useRef({});
+
+  const storeNeedQuery = useQuery({
+    queryKey: ['supplier-store-need', warehouseTenantId, scopeStoreId, selectedSupplier],
+    queryFn: () => api.getSupplierStoreNeed(selectedSupplier, session, { tenantId: warehouseTenantId, storeId: scopeStoreId }),
+    enabled: storeNeedOn && Boolean(scopeStoreId && selectedSupplier),
+    staleTime: 5 * 60 * 1000
+  });
+  const storeNeedById = useMemo(
+    () => new Map(asArray(storeNeedQuery.data?.rows).map((row) => [row.supplier_stock_id, row])),
+    [storeNeedQuery.data]
+  );
+  // The filter keeps lines where at least one store is a FAST mover (6+ bills / 90d).
+  const fastNeedCount = useMemo(
+    () => asArray(storeNeedQuery.data?.rows).filter((row) => row.movement === 'Fast').length,
+    [storeNeedQuery.data]
+  );
+  // Today's qty assignments across ALL suppliers of this warehouse, so a
+  // product already being ordered from one supplier is flagged under the
+  // others. Server-side (not localStorage) so every PC/user sees it.
+  const assignmentsKey = ['supplier-assignments-today', warehouseTenantId, scopeStoreId];
+  const assignmentsQuery = useQuery({
+    queryKey: assignmentsKey,
+    queryFn: () => api.getTodaySupplierAssignments(session, { tenantId: warehouseTenantId, storeId: scopeStoreId }),
+    enabled: Boolean(scopeStoreId),
+    refetchInterval: 60000
+  });
+  const assignmentsByProduct = useMemo(() => {
+    const map = new Map();
+    asArray(assignmentsQuery.data?.items).forEach((item) => {
+      const key = String(item.product_code);
+      map.set(key, [...(map.get(key) || []), item]);
+    });
+    return map;
+  }, [assignmentsQuery.data]);
+  const supplierNameByCode = useMemo(
+    () => new Map(suppliers.map((s) => [String(s.supplier_code), s.supplier_name || s.supplier_code])),
+    [suppliers]
+  );
+  function assignedElsewhere(row) {
+    if (!row?.product_code) return [];
+    return (assignmentsByProduct.get(String(row.product_code)) || [])
+      .filter((item) => String(item.supplier_code) !== String(selectedSupplier));
+  }
+  const assignTimersRef = useRef({});
+
+  async function saveAssignments(entries) {
+    const items = entries
+      .filter(({ row }) => row?.product_code)
+      .map(({ row, qty }) => ({
+        product_code: String(row.product_code),
+        qty: qty || '',
+        supplier_stock_id: row.supplier_stock_id,
+        supplier_product_name: row.supplier_product_name || '',
+        remarks: remarkDrafts[row.supplier_stock_id] || ''
+      }));
+    if (!items.length || !scopeStoreId || !selectedSupplier) return;
+    try {
+      await api.saveSupplierAssignments({
+        tenant_id: warehouseTenantId, store_id: scopeStoreId, supplier_code: selectedSupplier, items
+      }, session);
+      queryClient.invalidateQueries({ queryKey: assignmentsKey });
+    } catch (error) {
+      setExportStatus({ state: 'error', message: `Could not save assignment: ${error.message}` });
+    }
+  }
+
+  function queueAssignmentSave(row, qty) {
+    if (!row?.product_code) return;
+    clearTimeout(assignTimersRef.current[row.supplier_stock_id]);
+    assignTimersRef.current[row.supplier_stock_id] = setTimeout(() => saveAssignments([{ row, qty }]), 700);
+  }
 
   const isWarehouseSelection = isWarehouseRowId(selectedStockId);
   const selectedWarehouseProductCode = isWarehouseSelection ? selectedStockId.slice(WAREHOUSE_ROW_PREFIX.length) : null;
@@ -12450,19 +13048,35 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
 
   const warehouseStockFilterLabel = selectedWarehouse?.store_code ? `${selectedWarehouse.store_code} Stock` : 'Warehouse Stock';
 
-  // Supplier-scoped list (existing behavior, fully unchanged) - only shown
-  // while stockStatusFilter === 'all'.
+  // Supplier-scoped list. stockStatusFilter also applies here (warehouse
+  // own_store_stock / other_store_has_stock come with each supplier row);
+  // unmapped lines have no known warehouse stock, so they never match a
+  // stock-status option.
+  const supplierStockOnlyRows = useMemo(() => mappingFilteredProducts.filter((row) => (
+    !(onlyAvailable && mappingFilter !== 'not_mapped') || Number(row.available_stock) > 0
+  )), [mappingFilteredProducts, onlyAvailable, mappingFilter]);
+
+  const supplierStockStatusCounts = useMemo(() => {
+    const counts = { all: supplierStockOnlyRows.length, zero: 0, positive: 0, zero_other_positive: 0, zero_all_zero: 0 };
+    supplierStockOnlyRows.forEach((row) => {
+      STOCK_STATUS_FILTERS.forEach(({ value }) => {
+        if (value !== 'all' && supplierStockStatusMatch(row, value)) counts[value] += 1;
+      });
+    });
+    return counts;
+  }, [supplierStockOnlyRows]);
+
   const supplierVisibleProducts = useMemo(() => {
     const term = productSearch.trim().toLowerCase();
-    return mappingFilteredProducts.filter((row) => {
-      const shouldApplyStockOnly = onlyAvailable && mappingFilter !== 'not_mapped';
-      if (shouldApplyStockOnly && !(Number(row.available_stock) > 0)) return false;
+    const statusFilter = storeNeedOn ? 'all' : stockStatusFilter;
+    return supplierStockOnlyRows.filter((row) => {
+      if (!supplierStockStatusMatch(row, statusFilter)) return false;
       if (!term) return true;
       return String(row.supplier_product_name || '').toLowerCase().includes(term)
         || String(row.supplier_product_code || '').toLowerCase().includes(term)
         || String(row.product_code || '').toLowerCase().includes(term);
     });
-  }, [mappingFilteredProducts, productSearch, onlyAvailable]);
+  }, [supplierStockOnlyRows, productSearch, stockStatusFilter, storeNeedOn]);
 
   // Always the true store-wide totals (server aggregates over the WHOLE
   // active catalogue of scopeStoreId), never derived from the supplier list -
@@ -12475,7 +13089,19 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
     [warehouseItemsQuery.data],
   );
 
-  const visibleProducts = isWarehouseStockMode ? warehouseVisibleProducts : supplierVisibleProducts;
+  // Store Need: only this supplier's lines with branch demand, busiest first.
+  const storeNeedProducts = useMemo(() => {
+    const minDiscValue = Number(minDisc) || 0;
+    const rows = minDiscValue > 0
+      ? supplierVisibleProducts.filter((row) => (parseFloat(row.discount) || 0) >= minDiscValue)
+      : supplierVisibleProducts;
+    if (!storeNeedOn) return rows;
+    return rows
+      .filter((row) => storeNeedById.get(row.supplier_stock_id)?.movement === 'Fast')
+      .sort((a, b) => storeNeedById.get(b.supplier_stock_id).bills_90d - storeNeedById.get(a.supplier_stock_id).bills_90d);
+  }, [storeNeedOn, supplierVisibleProducts, storeNeedById, minDisc]);
+
+  const visibleProducts = isWarehouseStockMode ? warehouseVisibleProducts : storeNeedProducts;
 
   // The backend caps rows returned per filter+search combo (same TOP-N
   // convention the supplier list already uses) - total_matching tells us
@@ -12907,7 +13533,31 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }
 
   function updateOrderQty(stockId, value) {
-    setOrderDrafts((prev) => ({ ...prev, [stockId]: sanitizeOrderQty(value) }));
+    const qty = sanitizeOrderQty(value);
+    setOrderDrafts((prev) => ({ ...prev, [stockId]: qty }));
+    queueAssignmentSave(products.find((row) => row.supplier_stock_id === stockId), qty);
+  }
+
+  // Store Need: put each empty row's total branch need (capped at the
+  // supplier's stock) into Order Qty - skipping rows already ordered here or
+  // assigned to another supplier today.
+  function fillStoreNeedQty() {
+    const next = { ...orderDrafts };
+    const entries = [];
+    visibleProducts.forEach((row) => {
+      const need = storeNeedById.get(row.supplier_stock_id);
+      if (!need || parseOrderQty(next[row.supplier_stock_id]) > 0 || assignedElsewhere(row).length) return;
+      const available = Math.floor(Number(row.available_stock) || 0);
+      const qty = String(available > 0 ? Math.min(need.total_need, available) : need.total_need);
+      next[row.supplier_stock_id] = qty;
+      entries.push({ row, qty });
+    });
+    setOrderDrafts(next);
+    saveAssignments(entries);
+    setExportStatus({
+      state: 'ok',
+      message: `Filled ${entries.length} row(s) with store need. Rows already filled or assigned to another supplier today were left alone.`
+    });
   }
 
   function focusGridCell(stockId, cell) {
@@ -12935,6 +13585,9 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   }
 
   function handleProductRowKeyDown(event, row) {
+    // Keys typed in the row's Order Qty box bubble up here too; that box does
+    // its own Up/Down/Enter (to the next qty box), so only handle the row itself.
+    if (event.target !== event.currentTarget) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       moveGridSelection(row.supplier_stock_id, 1, 'row');
@@ -13441,7 +14094,9 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
             <option key={filter.value} value={filter.value}>{filter.label}</option>
           ))}
         </select>
-        <label className="tenant-filter toolbar-stock-status-filter" title={`Stock status across all of ${warehouseStockFilterLabel.replace(' Stock', '')}'s products, independent of the selected supplier`}>
+        <label className="tenant-filter toolbar-stock-status-filter" title={selectedSupplier
+          ? `${warehouseStockFilterLabel} of the selected supplier's mapped lines (e.g. Stock = 0: ${warehouseStockFilterLabel.replace(' Stock', '')} has none, supplier has it)`
+          : `Stock status across all of ${warehouseStockFilterLabel.replace(' Stock', '')}'s products (pick a supplier to narrow to its lines)`}>
           {warehouseStockFilterLabel}
           <select
             className="toolbar-supplier-select toolbar-mapping-filter"
@@ -13451,9 +14106,12 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
           >
             {STOCK_STATUS_FILTERS.map((filter) => (
               <option key={filter.value} value={filter.value}>
-                {filter.label} ({stockStatusCounts[filter.value] ?? 0})
+                {filter.label} ({(selectedSupplier ? supplierStockStatusCounts : stockStatusCounts)[filter.value] ?? 0})
               </option>
             ))}
+            <option value={STORE_NEED_FILTER} disabled={!selectedSupplier}>
+              NMW=0 + Supplier Stock + Store Fast Moving{storeNeedQuery.data ? ` (${fastNeedCount})` : ''}
+            </option>
           </select>
         </label>
         <label className="similar-search-slider" title="When no saved mapping is found, search stores using the first N characters of the product name.">
@@ -13486,7 +14144,13 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
           tenantId={selectedWarehouse?.tenant_id}
           storeId={scopeStoreId}
           storeCode={selectedWarehouse?.store_code}
-          onImported={() => { loadSuppliers(supplierSearch); if (selectedSupplier) loadProducts(selectedSupplier); }}
+          onImported={(message) => {
+            // Close the panel once imported; the result stays visible on the main screen.
+            setImportOpen(false);
+            setExportStatus({ state: 'ok', message });
+            loadSuppliers(supplierSearch);
+            if (selectedSupplier) loadProducts(selectedSupplier);
+          }}
         />
       )}
 
@@ -13517,7 +14181,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
           </aside>
         )}
 
-        <div className={`product-list-panel-v2 ${!showSupplierPanel ? 'expanded' : ''}`}>
+        <div className={`product-list-panel-v2 ${!showSupplierPanel ? 'expanded' : ''} ${storeNeedOn ? 'store-need-wide' : ''}`}>
           {!showSupplierPanel && selectedSupplier && (
             <button type="button" className="change-supplier-btn" onClick={() => setShowSupplierPanel(true)}>
               &larr; Change Supplier
@@ -13529,10 +14193,37 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
             <div className="procurement-grid-toolbar">
               <span className="procurement-grid-count">{visibleProducts.length} row(s)</span>
               {!isWarehouseStockMode && (
+                <label className="procurement-min-disc" title="Show only lines with supplier discount at or above this %">
+                  Disc ≥
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={minDisc}
+                    placeholder="0"
+                    onChange={(event) => setMinDisc(event.target.value.replace(/[^0-9.]/g, '').slice(0, 5))}
+                  />
+                  %
+                </label>
+              )}
+              {storeNeedOn && storeNeedById.size > 0 && (
+                <button type="button" className="secondary-button procurement-export-btn" onClick={fillStoreNeedQty}
+                  title="Put each row's total store need (capped at supplier stock) into empty Order Qty boxes">
+                  Fill Qty = Store Need
+                </button>
+              )}
+              {!isWarehouseStockMode && (
                 <button type="button" className="secondary-button procurement-export-btn" onClick={exportOrderedRows}>
                   Export Ordered Rows
                 </button>
               )}
+            </div>
+          )}
+          {storeNeedOn && selectedSupplier && (storeNeedQuery.isLoading || storeNeedQuery.isError) && (
+            <div className={`status-line ${storeNeedQuery.isError ? 'error' : 'loading'}`}>
+              {storeNeedQuery.isError
+                ? `Store need failed: ${storeNeedQuery.error?.message || 'unknown error'}`
+                : 'Loading store need... (first load reads 90 days of branch sales, up to ~30s)'}
             </div>
           )}
           {!isWarehouseStockMode && selectedSupplier && exportStatus.message && <div className={`status-line ${exportStatus.state}`}>{exportStatus.message}</div>}
@@ -13543,9 +14234,11 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
                 <thead>
                   <tr>
                     <th>Product</th>
-                    <th className="num-col">Stock</th>
-                    <th>Offer</th>
-                    <th>Order Qty</th>
+                    <th className="num-col col-stock">Stock</th>
+                    <th className="num-col col-disc" title="Supplier discount %">Disc</th>
+                    <th className="col-offer" title="Supplier scheme (buy + free)">Offer</th>
+                    {storeNeedOn && <th className="col-need" title="1-month need per branch, in packs (90-day sales / 3 - branch stock)">Store Need</th>}
+                    <th className="col-qty">Order Qty</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -13557,10 +14250,14 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
                       nomatch: 'No match found anywhere',
                       unmatched: 'Unmapped'
                     }[dotState];
-                    const offer = offerBadge(row);
+                    const disc = Number(row.discount || 0);
+                    const scheme = Number(row.scheme || 0) > 0 && Number(row.free || 0) > 0 ? `${Number(row.scheme)}+${Number(row.free)}` : '';
+                    const offerTip = offerTooltipLines(row).map(([label, value]) => `${label}: ${value}`).join('\n');
                     const qty = orderDrafts[row.supplier_stock_id] ?? '';
                     const edited = parseOrderQty(qty) > 0;
                     const isSelected = row.supplier_stock_id === selectedStockId;
+                    const need = storeNeedOn ? storeNeedById.get(row.supplier_stock_id) : null;
+                    const elsewhere = assignedElsewhere(row);
                     return (
                       <tr
                         key={row.supplier_stock_id}
@@ -13578,19 +14275,44 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
                             <div className="procurement-product-text">
                               <strong title={row.supplier_product_name || undefined}>{row.supplier_product_name || 'Unnamed product'}</strong>
                               <span>{row.supplier_product_code || row.product_code || '-'}</span>
+                              {elsewhere.length > 0 && (
+                                <span className="assigned-elsewhere" title={elsewhere.map((a) => `${supplierNameByCode.get(String(a.supplier_code)) || a.supplier_code}: ${a.qty}${a.assigned_by ? ` (by ${a.assigned_by})` : ''}`).join('\n')}>
+                                  Already assigned today: {elsewhere.map((a) => `${supplierNameByCode.get(String(a.supplier_code)) || a.supplier_code} × ${a.qty}`).join(', ')}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </td>
                         <td className="num-col">{formatQty(row.available_stock)}</td>
-                        <td>
-                          {offer ? (
-                            <span className="procurement-offer-badge" title={offerTooltipLines(row).map(([label, value]) => `${label}: ${value}`).join('\n')}>
-                              {offer}
-                            </span>
+                        <td className="num-col procurement-disc" title={offerTip || undefined}>
+                          {disc > 0 ? `${disc}%` : <span className="procurement-empty">-</span>}
+                        </td>
+                        <td title={offerTip || undefined}>
+                          {scheme ? (
+                            <span className="procurement-offer-badge">{scheme}</span>
                           ) : (
                             <span className="procurement-empty">-</span>
                           )}
                         </td>
+                        {storeNeedOn && (
+                          <td
+                            className="store-need-cell"
+                            title={need ? Object.entries(need.stores).map(([code, n]) => (
+                              `${code}: need ${n.need_packs} pack(s) | stock ${formatQty(n.store_stock)} | sold ${formatQty(n.sold_90d)} in ~3 months | ${n.bills_90d} bills | last sale ${n.last_sale || '-'} | ${n.movement}`
+                            )).join('\n') : undefined}
+                          >
+                            {need ? (
+                              <>
+                                <strong>{need.total_need}</strong>
+                                <span className="store-need-chips">
+                                  {Object.entries(need.stores).map(([code, n]) => (
+                                    <span key={code} className={`store-need-chip ${n.movement === 'Fast' ? 'fast' : ''}`}>{code} {n.need_packs}</span>
+                                  ))}
+                                </span>
+                              </>
+                            ) : <span className="procurement-empty">-</span>}
+                          </td>
+                        )}
                         <td>
                           <input
                             ref={(node) => { qtyRefs.current[row.supplier_stock_id] = node; }}
@@ -14800,13 +15522,11 @@ function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, st
       }
       // File lines minus imported = duplicate codes merged + blank/total rows dropped.
       const dropped = Math.max((preview?.row_count || 0) - result.imported, 0);
-      setStatus({
-        state: 'ok',
-        message: `Import successful: ${result.imported} product(s) saved to ${result.store_code || storeCode} supplier stock`
-          + ` from ${preview?.row_count ?? '?'} file line(s)${dropped ? ` (${dropped} duplicate/blank/total line(s) merged or skipped)` : ''};`
-          + ` ${result.product_codes_resolved} matched to products.`
-      });
-      onImported();
+      const message = `Import successful: ${result.imported} product(s) saved to ${result.store_code || storeCode} supplier stock`
+        + ` from ${preview?.row_count ?? '?'} file line(s)${dropped ? ` (${dropped} duplicate/blank/total line(s) merged or skipped)` : ''};`
+        + ` ${result.product_codes_resolved} matched to products.`;
+      setStatus({ state: 'ok', message });
+      onImported(message);
     } catch (error) {
       setStatus({ state: 'error', message: `Import failed - ${error.message}` });
     }
@@ -14827,8 +15547,8 @@ function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, st
           <input value={storeCode || 'Select a warehouse first'} readOnly />
         </label>
         <label>
-          Excel file
-          <input type="file" accept=".xlsx,.xls" onChange={handleFile} />
+          Excel / text file
+          <input type="file" accept=".xlsx,.xls,.txt" onChange={handleFile} />
         </label>
       </div>
 

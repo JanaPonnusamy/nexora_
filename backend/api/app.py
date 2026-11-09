@@ -161,6 +161,7 @@ from modules.audit.middleware import AuditFailureMiddleware
 from modules.audit.repository import ensure_schema as ensure_audit_schema
 from modules.mobile_bff.router import router as mobile_bff_router
 from modules.mobile_bff.repository import ensure_schema as ensure_mobile_bff_schema
+from repositories.tenant_repository import TenantRepository
 from modules.ho_ops.router import router as ho_ops_router
 from modules.bootstrap.router import (
     router as bootstrap_router,
@@ -183,6 +184,11 @@ except Exception:
 
 try:
     ensure_mobile_bff_schema()
+except Exception:
+    pass
+
+try:
+    TenantRepository().ensure_schema()
 except Exception:
     pass
 

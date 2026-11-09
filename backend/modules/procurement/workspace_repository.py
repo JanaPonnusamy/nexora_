@@ -271,6 +271,43 @@ def get_summary(tenant_id, refresh_id, filters):
         conn.close()
 
 
+def get_last_activity_dates(tenant_id, refresh_id):
+    """Last valid retail sale date and last GRN date for every product in one
+    refresh — the desktop Procurement Workspace's LSD / LPD (days) columns.
+
+    Same sources and filters as decision_repository's `ls` and `grn` CTEs (the
+    dates the Decision Engine's recency / sold-since-GRN gates read), but only
+    for this refresh's product codes. Read-only; kept out of list_items so the
+    grid query never waits on sync.ProductSaleInformation.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            WITH codes AS (
+                SELECT DISTINCT oi.store_id, TRY_CAST(oi.product_code AS INT) AS code
+                FROM procurement.procurement_order_items oi
+                WHERE oi.tenant_id = ? AND oi.refresh_id = ? AND oi.is_deleted = 0
+            )
+            SELECT CAST(c.code AS VARCHAR(100)) AS product_code,
+                (SELECT MAX(psi.TransactionDate) FROM sync.ProductSaleInformation psi
+                  WHERE psi.tenant_id = ? AND psi.store_id = c.store_id AND psi.ProductCode = c.code
+                    AND ISNULL(psi.TransactionValidity, 0) = 0 AND psi.SeriesTransID = 1
+                ) AS last_sale_date,
+                (SELECT MAX(pt.grndate) FROM sync.PurchaseTrans pt
+                  WHERE pt.tenant_id = ? AND pt.store_id = c.store_id AND pt.ProductCode = c.code
+                ) AS last_received_date
+            FROM codes c
+            WHERE c.code IS NOT NULL
+            """,
+            (tenant_id, _as_uid(refresh_id), tenant_id, tenant_id),
+        )
+        return [_stringify(r) for r in _rows_to_dicts(cursor)]
+    finally:
+        conn.close()
+
+
 # --------------------------------------------------------------------------
 # Review edits — Final Quantity, Skip, Restore
 # --------------------------------------------------------------------------

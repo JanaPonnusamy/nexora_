@@ -105,6 +105,9 @@ def _patch_assign(monkeypatch, item, dup=False, already=0):
                         lambda *a, **k: None)
     monkeypatch.setattr(assignment_repository, "duplicate_active_exists",
                         lambda *a, **k: dup)
+    # One product, one supplier: no other live assignment on this item.
+    monkeypatch.setattr(assignment_repository, "any_active_assignment",
+                        lambda *a, **k: None)
     monkeypatch.setattr(assignment_repository, "active_assigned_total",
                         lambda *a, **k: already)
     monkeypatch.setattr(assignment_repository, "insert_assignment",
@@ -161,6 +164,8 @@ def test_bulk_assign_reports_mixed(monkeypatch):
                         lambda *a, **k: None)
     monkeypatch.setattr(assignment_repository, "duplicate_active_exists",
                         lambda *a, **k: False)
+    monkeypatch.setattr(assignment_repository, "any_active_assignment",
+                        lambda *a, **k: None)
     monkeypatch.setattr(assignment_repository, "active_assigned_total",
                         lambda c, t, o, **k: items[o].get("assigned_qty", 0))
     monkeypatch.setattr(assignment_repository, "insert_assignment", lambda *a, **k: "A")
@@ -242,3 +247,58 @@ def test_export_stamps_batch_and_splits_per_supplier(monkeypatch):
     split_by_supplier = {"SUP1": marked[0][2], "SUP2": marked[1][2]}
     assert marked[2][2] == split_by_supplier["SUP1"]      # SUP1 shares its split
     assert split_by_supplier["SUP1"] != split_by_supplier["SUP2"]
+
+
+def test_export_aborts_when_a_concurrent_export_took_a_line(monkeypatch):
+    """Second of two concurrent exports: its UPDATE matches 0 rows for a line
+    the first already exported. It must 409 and roll back, not commit a
+    second batch for the same lines."""
+    class _TrackingConn(_FakeConn):
+        committed = rolled_back = closed = False
+
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def close(self):
+            self.closed = True
+
+    conns = []
+    monkeypatch.setattr(export_service, "get_connection",
+                        lambda: conns.append(_TrackingConn()) or conns[-1])
+    rows = [
+        {"assignment_id": "A1", "order_item_id": "OI1", "supplier_code": "SUP1", "assigned_qty": 10},
+        {"assignment_id": "A2", "order_item_id": "OI2", "supplier_code": "SUP1", "assigned_qty": 5},
+    ]
+    monkeypatch.setattr(export_repository, "exportable_assignments", lambda *a, **k: rows)
+    monkeypatch.setattr(export_repository, "mark_exported",
+                        lambda conn, t, aid, *a: 0 if aid == "A2" else 1)
+
+    with pytest.raises(HTTPException) as ei:
+        export_service.export_refresh("T1", "R1", "U1")
+    assert ei.value.status_code == 409
+    assert len(conns) == 1
+    assert conns[0].rolled_back and not conns[0].committed and conns[0].closed
+
+
+def test_mark_exported_only_updates_a_draft_line():
+    class _Cursor:
+        rowcount = 0
+
+        def execute(self, sql, params):
+            self.sql = " ".join(sql.split())
+            self.params = params
+
+    class _Conn:
+        def __init__(self):
+            self.c = _Cursor()
+
+        def cursor(self):
+            return self.c
+
+    conn = _Conn()
+    assert export_repository.mark_exported(conn, "T1", "A1", "EXP-1", 1, "u", None) == 0
+    assert "AND assignment_status = 'draft'" in conn.c.sql
+    assert conn.c.params[-2:] == ("T1", "A1")

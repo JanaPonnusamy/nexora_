@@ -99,6 +99,17 @@ def _tier(decision):
     return "needs_mapping"
 
 
+def known_codes(store_name, supplier_code):
+    """ProductCode -> SupplierProductCode for this supplier's already-confirmed
+    matches (the reverse of _known_pairs). Lets the Website/Auto-Assign flow
+    search the supplier's site by ITS product code instead of typing the store's
+    product name, whenever that code is already known."""
+    store, supplier = _store(store_name), _supplier(supplier_code)
+    with database.get_central_connection() as conn:
+        pairs = _known_pairs(conn, store, supplier)
+    return {"codes": {product_code: sup_code for sup_code, product_code in pairs}}
+
+
 def review(store_name, supplier_code):
     """Match the supplier's harvested stock to the store's products, by tier."""
     store, supplier = _store(store_name), _supplier(supplier_code)

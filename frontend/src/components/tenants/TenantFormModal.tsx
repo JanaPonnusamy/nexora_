@@ -15,6 +15,7 @@ const EMPTY_FORM: TenantInput = {
   tenant_abbreviation: '',
   tenant_name: '',
   db_name: '',
+  legacy_db_name: '',
 }
 
 export function TenantFormModal({ mode, tenant, onClose, onSaved }: TenantFormModalProps) {
@@ -25,6 +26,7 @@ export function TenantFormModal({ mode, tenant, onClose, onSaved }: TenantFormMo
           tenant_abbreviation: tenant.tenant_abbreviation,
           tenant_name: tenant.tenant_name,
           db_name: tenant.db_name,
+          legacy_db_name: tenant.legacy_db_name ?? '',
         }
       : EMPTY_FORM,
   )
@@ -132,6 +134,22 @@ export function TenantFormModal({ mode, tenant, onClose, onSaved }: TenantFormMo
                     onChange={updateField('db_name')}
                   />
                   <div className="invalid-feedback">Database name is required.</div>
+                </div>
+                <div>
+                  <label htmlFor="tenant-legacy-db" className="form-label">
+                    Legacy Order Database <span className="text-muted">(optional)</span>
+                  </label>
+                  <input
+                    id="tenant-legacy-db"
+                    className="form-control"
+                    placeholder="e.g. OrderSMS — blank uses the server default"
+                    value={form.legacy_db_name}
+                    onChange={updateField('legacy_db_name')}
+                  />
+                  <div className="form-text">
+                    Central Order Workspace / Legacy Order database (OrderNMC, OrderSMS, …) for this
+                    tenant's stores, on a multi-tenant HO. Leave blank to keep the server's default.
+                  </div>
                 </div>
               </div>
               <div className="modal-footer">

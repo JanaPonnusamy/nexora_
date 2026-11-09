@@ -1121,6 +1121,12 @@ export const api = {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/match-review`, { session });
   },
 
+  // ProductCode -> this supplier's own product code, for already-confirmed
+  // matches -- lets Website/Auto-Assign search the supplier's site by code.
+  legacySupplierMatchCodes(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/match-codes`, { session });
+  },
+
   // Save a chosen mapping to SupplierProductMatch (blank product_code unmaps).
   legacyConfirmSupplierMatch(storeName, supplierCode, payload, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/suppliers/${encodeURIComponent(supplierCode)}/match-review/confirm`, {

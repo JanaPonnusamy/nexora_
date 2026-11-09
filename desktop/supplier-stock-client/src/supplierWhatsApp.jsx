@@ -127,12 +127,12 @@ export function SupplierWhatsAppDialog({ store, supplier, contact, session, onCl
 }
 
 // columnsFor(): the export column keys the workspace uses (null = legacy fixed).
-export function useSupplierWhatsApp({ store, session, exportKit, exportSettings, columnsFor, orderNo, onBanner, onError }) {
+export function useSupplierWhatsApp({ store, session, exportKit, exportSettings, columnsFor, remarksFor, orderNo, onBanner, onError }) {
   const [contacts, setContacts] = useState({});
   const queue = useRef(Promise.resolve());
   const [busy, setBusy] = useState('');
   const latest = useRef({});
-  latest.current = { exportSettings, columnsFor, orderNo, onBanner, onError };
+  latest.current = { exportSettings, columnsFor, remarksFor, orderNo, onBanner, onError };
 
   const reload = useCallback(() => {
     if (!store) { setContacts({}); return; }
@@ -145,7 +145,7 @@ export function useSupplierWhatsApp({ store, session, exportKit, exportSettings,
   const sendOrder = useCallback(async (supplierCode, kind) => {
     const contact = contacts[String(supplierCode)];
     if (!contact?.targets?.length || !storeWhatsAppAvailable()) return;
-    const { exportSettings: settings, columnsFor: cols, orderNo: order, onBanner: banner } = latest.current;
+    const { exportSettings: settings, columnsFor: cols, remarksFor, orderNo: order, onBanner: banner } = latest.current;
     const st = await api.legacyWhatsAppStatus(store, supplierCode, session);
     if (kind === 'batch' && st.unsent_codes.length < contact.batch_size) return;
     if (kind === 'final' && !st.assigned_count) return;
@@ -164,9 +164,10 @@ export function useSupplierWhatsApp({ store, session, exportKit, exportSettings,
       excelHeader: readExcelHeader(),
       billsDays: contact.bill_days,
       nameSuffix: suffix,
+      remarks: remarksFor ? remarksFor() : undefined,
     });
     const written = [];
-    const folder = [settings.basePath, 'Export', dateFolder, exportKit.safePathSegment(orderPart), 'WhatsApp', exportKit.safePathSegment(name)].join('\\');
+    const folder = [settings.basePath, dateFolder, exportKit.safePathSegment(orderPart), 'WhatsApp', exportKit.safePathSegment(name)].join('\\');
     const ext = ['csv', 'xlsx'].includes(settings.fileFormat) ? settings.fileFormat : 'xls';
     await exportKit.save(blob, filename, `${exportKit.safeFileName(`${name} ${store} ${suffix}`)}.${ext}`, folder, written);
     const isImage = (p) => /\.png$/i.test(p);

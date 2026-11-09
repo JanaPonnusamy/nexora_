@@ -162,6 +162,8 @@ def _cell_spec(label, header=False):
         spec.update(bold=True, fill=_VB_LIGHT_YELLOW, align="center")
     elif label == "OrderQty":
         spec.update(bold=True, fill=_VB_LIGHT_GREEN, align="center")
+    elif label == "Remarks":
+        spec.update(bold=True, align="center")
     elif label == "SaleUnit":
         spec.update(color=_VB_GRAY, align="center")
     elif label == "MRP":
@@ -584,10 +586,12 @@ def _render_images(headers, table, base_name, per_image=_PRODUCTS_PER_IMAGE, tit
 # SaleUnit, MRP, ProductCode, Discount, Category, SubLocation[, Rack].
 # --------------------------------------------------------------------------
 
-def _layout_fixed(rows, has_rack):
+def _layout_fixed(rows, has_rack, with_remarks=False):
     headers = ["S.No.", "ProductName", "OrderQty", "SaleUnit", "MRP", "ProductCode", "Discount", "Category", "SubLocation"]
     if has_rack:
         headers.append("Rack")
+    if with_remarks:
+        headers.insert(3, "Remarks")
     table = []
     for i, row in enumerate(rows, start=1):
         values = [
@@ -597,6 +601,8 @@ def _layout_fixed(rows, has_rack):
         ]
         if has_rack:
             values.append(row.get("Rack") or "")
+        if with_remarks:
+            values.insert(3, row.get("ExportRemark") or "")
         table.append(values)
     return headers, table
 
@@ -620,8 +626,37 @@ _EXPORT_COLUMN_MAP = {
     "category": ("Category", lambda r: r.get("Category") or ""),
     "sub_location": ("SubLocation", lambda r: r.get("SubLocation") or ""),
     "rack": ("Rack", lambda r: r.get("Rack") or ""),
+    "remarks": ("Remarks", lambda r: r.get("ExportRemark") or ""),
 }
 _EXPORT_REQUIRED_COLUMNS = ("product_code", "product_name", "order_qty")
+
+# Export remark (owner 2026-11-04): a short per-product note from the
+# Procurement grid -- the offer the final qty matches ("9+1") or what the
+# operator typed ("12%"). Export-only, never stored in OrderNMC: the request
+# carries {product_code: text}. The Remarks column sits right after OrderQty
+# and only appears when at least one exported row has a remark.
+_EXPORT_REMARK_MAX = 10
+
+
+def _apply_export_remarks(rows, remarks):
+    """Stamp each row's ExportRemark from the request map. True when any of
+    these rows got one."""
+    wanted = {}
+    for code, text in (remarks or {}).items():
+        text = " ".join(str(text or "").split())[:_EXPORT_REMARK_MAX]
+        if text:
+            wanted[_format_product_code(code)] = text
+    found = False
+    for row in rows:
+        row["ExportRemark"] = wanted.get(_format_product_code(row.get("ProductCode")), "")
+        found = found or bool(row["ExportRemark"])
+    return found
+
+
+def _with_remarks_column(keys):
+    keys = [k for k in keys if k != "remarks"]
+    at = keys.index("order_qty") + 1 if "order_qty" in keys else len(keys)
+    return keys[:at] + ["remarks"] + keys[at:]
 
 
 def _resolve_columns(columns):
@@ -644,13 +679,15 @@ def _layout_generic(rows, keys, column_map):
 # Category, SubLocation, Rack -- header spellings copied verbatim because the
 # supplier-side consumers of these sheets were built against the VB output.
 # Used for the custom .xls export.
-_VB_COLUMN_ORDER = ("product_name", "order_qty", "sale_unit", "mrp", "product_code",
+_VB_COLUMN_ORDER = ("product_name", "order_qty", "remarks", "sale_unit", "mrp", "product_code",
                     "discount", "category", "sub_location", "rack")
 _VB_HEADER = {"product_code": "Productcode", "discount": "Discound"}
 
 
-def _layout_custom_vb(rows, columns):
+def _layout_custom_vb(rows, columns, with_remarks=False):
     chosen = set(_resolve_columns(columns))
+    if with_remarks:
+        chosen.add("remarks")
     keys = [k for k in _VB_COLUMN_ORDER if k in chosen]
     headers = ["S.No."] + [_VB_HEADER.get(k, _EXPORT_COLUMN_MAP[k][0]) for k in keys]
     table = [[i] + [_EXPORT_COLUMN_MAP[k][1](row) for k in keys] for i, row in enumerate(rows, start=1)]
@@ -679,6 +716,7 @@ _PENDING_COLUMN_MAP = {
     "sls_qty": ("SlsQty", lambda r: r.get("SLSQty") or 0),
     "max_qty": ("MaxQty", lambda r: r.get("MaxSaleQty") or 0),
     "wanted": ("Wanted", lambda r: r.get("WantedType") or ""),
+    "remarks": ("Remarks", lambda r: r.get("ExportRemark") or ""),
 }
 _PENDING_REQUIRED_COLUMNS = ("product_code", "product_name", "order_qty")
 
@@ -746,11 +784,12 @@ def _package(base_name, ext, chunks, layout, images, decor=None):
     return buf.getvalue(), f"{base_name}.zip", ZIP_MEDIA_TYPE
 
 
-def export_pending_order(store_name, split_size, columns=None, file_format="xlsx", order_no=None, images=False):
+def export_pending_order(store_name, split_size, columns=None, file_format="xlsx", order_no=None, images=False, remarks=None):
     rows = [_normalize_pending_row(r) for r in repository.pending_order_rows(store_name)]
     rows = [r for r in rows if (r.get("OrderQty") or 0) > 0]
     if not rows:
         raise NoExportableRows("No pending products with a positive order quantity to export.")
+    with_remarks = _apply_export_remarks(rows, remarks)
 
     rows.sort(key=lambda r: r.get("ProductName") or "")
     pending_count = len(rows)
@@ -772,6 +811,8 @@ def export_pending_order(store_name, split_size, columns=None, file_format="xlsx
         chunks = [rows]
 
     keys = _resolve_pending_columns(columns)
+    if with_remarks:
+        keys = _with_remarks_column(keys)
     ext = file_format if file_format in ("xlsx", "xls", "csv") else "xls"
 
     try:
@@ -787,7 +828,7 @@ def export_pending_order(store_name, split_size, columns=None, file_format="xlsx
     return ExportResult(content, filename, media_type, pending_count, "Pending")
 
 
-def export_order(store_name, supplier_code, supplier_name, mode, split_size, actor, columns=None, file_format="xlsx", order_no=None, product_codes=None, all_products=False, images=False, only_codes=None, decor=None, name_suffix=None):
+def export_order(store_name, supplier_code, supplier_name, mode, split_size, actor, columns=None, file_format="xlsx", order_no=None, product_codes=None, all_products=False, images=False, only_codes=None, decor=None, name_suffix=None, remarks=None):
     """Resolve the rows to export -> build Excel -> return.
 
     Two entry shapes, both from the Order Workspace:
@@ -836,6 +877,7 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
     rows = [r for r in rows if (r.get("OrderQty") or 0) > 0]
     if not rows:
         raise NoExportableRows("No assigned products with a positive order quantity to export for this supplier.")
+    with_remarks = _apply_export_remarks(rows, remarks)
 
     has_rack = mode == "stock"
     for r in rows:
@@ -879,11 +921,14 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
 
     ext = file_format if file_format in ("xlsx", "xls", "csv") else "xls"
     if columns is None:
-        layout = lambda chunk: _layout_fixed(chunk, has_rack)
+        layout = lambda chunk: _layout_fixed(chunk, has_rack, with_remarks)
     elif ext == "xls":
-        layout = lambda chunk: _layout_custom_vb(chunk, columns)
+        layout = lambda chunk: _layout_custom_vb(chunk, columns, with_remarks)
     else:
-        layout = lambda chunk: _layout_generic(chunk, _resolve_columns(columns), _EXPORT_COLUMN_MAP)
+        keys = _resolve_columns(columns)
+        if with_remarks:
+            keys = _with_remarks_column(keys)
+        layout = lambda chunk: _layout_generic(chunk, keys, _EXPORT_COLUMN_MAP)
 
     try:
         content, filename, media_type = _package(base_name, ext, chunks, layout, images, decor)

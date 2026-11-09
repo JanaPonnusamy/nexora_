@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 # still alive (heart-beating within this many minutes). A crashed/closed client
 # stops the heart-beat, so its session goes stale after the lease and no longer
 # blocks a fresh login - preventing a permanent lockout.
+_MULTI_SESSION_ROLES = {"STOCK_VIEWER"}
 _SESSION_LEASE_MINUTES = int(os.getenv("UNINEX_SESSION_LEASE_MINUTES", "5"))
 _SETUP_USERNAME = os.getenv("UNINEX_SETUP_USERNAME", "setupdeploy")
 _SETUP_PASSWORD = os.getenv("UNINEX_SETUP_PASSWORD", "")
@@ -71,6 +72,10 @@ def login(req: LoginRequest, request: Request):
     is_full_access = bool(user.get("is_platform_user")) or any(
         r in FULL_ACCESS_ROLES for r in role_names
     )
+    # Shared view-only logins (e.g. NMC1, STOCK_VIEWER) may also be open on
+    # several systems at once.
+    if any(r in _MULTI_SESSION_ROLES for r in role_names):
+        is_full_access = True
 
     # Single active session: block this login if the user is already signed in
     # (and still active) on another system.

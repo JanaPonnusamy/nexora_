@@ -222,9 +222,30 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
         raise
     refresh_id = refresh["refresh_id"]
 
+    # The header (1) and the VPL + cycle pointer (2) commit on their own
+    # connections before the working items (3). If 2 or 3 fails, the cycle
+    # would keep pointing at a Refresh with no working items: the next refresh
+    # would then carry forward and archive that empty one instead of the real
+    # previous Refresh, and an idempotent retry would return it as a success.
+    def _abandon():
+        try:
+            refresh_repo.abandon_refresh(
+                tenant_id, cycle_id, refresh_id, previous_refresh_id,
+                clear_idempotency_key=bool(idempotency_key),
+            )
+        except Exception:
+            logger.exception(
+                "Abandon after failed refresh failed tenant=%s cycle=%s refresh=%s",
+                tenant_id, cycle_id, refresh_id,
+            )
+
     # 2) Run the completed Decision Engine (persists VPL, publishes Refresh,
     #    points the Cycle at it). Business rules are NOT duplicated here.
-    engine = decision_service.generate_vpl(tenant_id, refresh_id)
+    try:
+        engine = decision_service.generate_vpl(tenant_id, refresh_id)
+    except Exception:
+        _abandon()
+        raise
 
     # 3) Generate Working Order Items from the VPL (suggested_qty > 0), bulk,
     #    then carry forward the previous Refresh's pending (Module 4).
@@ -234,9 +255,10 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
     # is NOT APPLIED — running this unconditionally would 500 every refresh
     # against the live, unmigrated schema. When on, the PREVIOUS refresh's
     # working items + assignments are snapshotted into history in the SAME
-    # transaction that deletes them via clear_working_items below, so a
-    # rollback here leaves neither a partial history batch nor a deleted
-    # working set — both-or-neither. Only writes a batch when there is a
+    # transaction that builds the new refresh's working items below
+    # (clear_working_items only clears the NEW refresh's own rows; the
+    # previous refresh's items are kept), so a rollback leaves neither a
+    # history batch nor a half-built working set. Only writes a batch when there is a
     # previous refresh with items to snapshot (first refresh in a cycle has
     # nothing to archive).
     history_enabled = os.environ.get("PROCUREMENT_VPL_HISTORY") == "1"
@@ -287,6 +309,7 @@ def create_refresh(tenant_id: str, cycle_id: str, payload: dict):
         conn.commit()
     except Exception:
         conn.rollback()
+        _abandon()
         raise
     finally:
         conn.close()
@@ -442,6 +465,10 @@ def close_cycle(tenant_id, cycle_id, closed_by, force=False):
         )
 
     # 2. Reconcile each Refresh against the latest synced receipts.
+    # One refresh's failure does not roll back the others (each reconcile owns
+    # its connection). The failure is returned, not logged and forgotten, so a
+    # closed cycle is not reported as fully reconciled.
+    reconcile_failures = []
     for refresh_id in cycle_repo.refresh_ids_for_cycle(tenant_id, cycle_id):
         try:
             reconciliation_service.reconcile(tenant_id, refresh_id, store_id)
@@ -450,6 +477,7 @@ def close_cycle(tenant_id, cycle_id, closed_by, force=False):
                 "Reconcile failed on close tenant=%s cycle=%s refresh=%s",
                 tenant_id, cycle_id, refresh_id,
             )
+            reconcile_failures.append(str(refresh_id))
 
     # 3. Pending confirmation gate.
     pending_count = cycle_repo.pending_item_count(tenant_id, cycle_id)
@@ -517,6 +545,7 @@ def close_cycle(tenant_id, cycle_id, closed_by, force=False):
         "cycle": cycle_repo.get_cycle(tenant_id, cycle_id),
         "new_cycle": new_cycle,
         "pending_cleared": cleared,
+        "reconcile_failures": reconcile_failures,
         "end_grn_number": end_grn,
         "end_sale_bill_number": end_bill,
     }

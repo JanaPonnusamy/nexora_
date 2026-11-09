@@ -21,6 +21,47 @@ from modules.procurement import (  # noqa: E402
 )
 
 
+def test_last_grn_and_sale_bill_follow_the_legacy_header_queries(monkeypatch):
+    """Legacy UpdateOrderHeaderDetails: newest IV receipt by GRN date, newest
+    C-series bill by transaction date. Not MAX(number)."""
+    from modules.procurement import platform_source_repository as src
+
+    class _Cur:
+        def __init__(self):
+            self.sql = None
+            self.params = None
+
+        def execute(self, sql, params):
+            self.sql = sql
+            self.params = params
+
+        def fetchone(self):
+            return ("4567",)
+
+    cur = _Cur()
+
+    class _Conn:
+        def cursor(self):
+            return cur
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(src, "get_connection", lambda: _Conn())
+    assert src.read_last_grn("T1", "S1") == "4567"
+    assert "TOP 1" in cur.sql
+    assert "InvoiceSeries = 'IV'" in cur.sql
+    assert "ORDER BY pt.GRNDate DESC" in cur.sql
+    assert "MAX(" not in cur.sql
+    assert cur.params == ("T1", "S1")
+
+    assert src.read_last_sale_bill("T1", "S1") == "4567"
+    assert "Bnumber LIKE 'C%'" in cur.sql
+    assert "ORDER BY psi.TransactionDate DESC, psi.Bnumber DESC" in cur.sql
+    assert "MAX(" not in cur.sql
+    assert cur.params == ("T1", "S1")
+
+
 def test_pipeline_requires_store():
     with pytest.raises(HTTPException) as ei:
         pipeline_service.run("T1", "", 90, 13, 18, "U1")

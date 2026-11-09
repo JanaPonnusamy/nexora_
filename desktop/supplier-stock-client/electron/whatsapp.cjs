@@ -268,6 +268,12 @@ const SEND_BUTTON = [
   "//span[@data-icon='send']",
   "//span[starts-with(@data-icon,'wds-ic-send')]"
 ];
+// Present ONLY while the attachment preview is open (never the chat box).
+const PREVIEW_OPEN = [
+  "//*[self::button or @role='button'][starts-with(@aria-label,'Send ')][contains(@aria-label,'selected')]",
+  "//div[@data-testid='media-caption-input-container']",
+  "//div[@aria-label='Add a caption'][@contenteditable='true']"
+];
 const STARTUP_DIALOG_BUTTONS = [
   "//div[@role='dialog']//*[self::button or @role='button'][normalize-space()='Continue' or normalize-space()='OK' or normalize-space()='Got it' or normalize-space()='Okay']",
   "//div[@role='dialog']//*[@aria-label='Close']"
@@ -406,21 +412,32 @@ async function attachFallback(filePath, media = false) {
 
 // filePath: one path, or several image paths sent together as ONE message.
 async function sendFile(filePath, caption, media = false) {
-  await clickFirst(ATTACH, 15000, 'attach button');
-  await sleep(400);
-  try {
-    if (media) await chooseFile(filePath, ATTACH_MEDIA, '"Photos & videos" attach option');
-    else await chooseFile(filePath);
-  } catch {
-    await attachFallback(filePath, media);
+  // Done only once WhatsApp's attachment PREVIEW is open -- otherwise the
+  // caption could go out alone as a text with no files.
+  const tries = [
+    ...(media ? [() => chooseFile(filePath, ATTACH_MEDIA, '"Photos & videos" attach option')] : []),
+    () => chooseFile(filePath),
+    () => attachFallback(filePath, media)
+  ];
+  let opened = false;
+  for (const attempt of tries) {
+    try {
+      await clickFirst(ATTACH, 15000, 'attach button');
+      await sleep(400);
+      await attempt();
+      if (await locate(PREVIEW_OPEN, 15000)) { opened = true; break; }
+    } catch { /* next way of attaching */ }
+    await press('Escape');
+    await sleep(500);
   }
-  const send = await locate(SEND_BUTTON, 30000);
-  if (!send) throw new Error('WhatsApp attachment preview did not open.');
+  if (!opened) throw new Error('WhatsApp did not open the attachment preview -- nothing was sent.');
+  const send = await locate([PREVIEW_OPEN[0], ...SEND_BUTTON], 10000);
+  if (!send) throw new Error('WhatsApp attachment preview has no Send button.');
   if (caption) {
     await clickFirst(PREVIEW_CAPTION, 5000, 'caption box').catch(() => {});
     await typeText(caption);
   }
-  await clickAt(await locate(SEND_BUTTON, 5000) || send);
+  await clickAt(await locate([PREVIEW_OPEN[0], ...SEND_BUTTON], 5000) || send);
   // The preview closes once WhatsApp has taken the file.
   const end = Date.now() + 20000;
   while (Date.now() < end) {

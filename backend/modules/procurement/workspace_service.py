@@ -80,6 +80,11 @@ def get_item(tenant_id, order_item_id):
     return _require_item(tenant_id, order_item_id)
 
 
+def get_last_activity_dates(tenant_id, refresh_id):
+    """Per-product last sale / last GRN dates for one refresh (read-only)."""
+    return {"items": repo.get_last_activity_dates(tenant_id, refresh_id)}
+
+
 # Business rules evaluated by the Decision Engine (PR-BR ids), for explainability.
 _RULES_APPLIED = [
     "PR-BR-001 Rolling Sales Window", "PR-BR-002 Average Daily Sales",

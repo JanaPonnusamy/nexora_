@@ -185,7 +185,14 @@ def insert_data_into_destination(columns, rows, store_name):
 
     dest_cols = [dest for _, dest in COLUMN_MAP]
     picks = [index[src.lower()] for src, _ in COLUMN_MAP]
-    payload = [tuple(r[i] for i in picks) for r in rows]
+    # Qtycheck has no source column (the order query never selects it) and the
+    # legacy table has no DEFAULT on it, so a bare INSERT left it NULL. Every
+    # count/filter downstream tests "QtyCheck = 0" for an unreviewed line, and
+    # NULL = 0 is NULL (not TRUE) in SQL Server, so fresh rows silently never
+    # matched -- Order Process looked like it skipped straight to Supplier
+    # Assignment. Stamp it explicitly so every new row starts unreviewed.
+    dest_cols = dest_cols + ["Qtycheck"]
+    payload = [tuple(r[i] for i in picks) + (0,) for r in rows]
     order_id_pos = dest_cols.index("OrderId")
     new_order_ids = {row[order_id_pos] for row in payload}
     # Skip-rule columns/table must exist BEFORE the transaction below: their

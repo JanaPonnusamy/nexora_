@@ -21,6 +21,7 @@ def _serialize(r):
         "tenant_name": r[3],
         "db_name": r[4],
         "is_active": bool(r[5]),
+        "legacy_db_name": r[6] if len(r) > 6 else None,
     }
 
 @router.get("")
@@ -44,7 +45,7 @@ def get_tenant(tenant_id: str):
 @router.post("", status_code=201)
 def create_tenant(body: TenantRequest, request: Request, current_user: dict = Depends(get_current_user)):
     new_id = TenantService().create(
-        body.tenant_code, body.tenant_abbreviation, body.tenant_name, body.db_name
+        body.tenant_code, body.tenant_abbreviation, body.tenant_name, body.db_name, body.legacy_db_name
     )
     r = TenantService().get_by_id(str(new_id))
     serialized = _serialize(r)
@@ -70,14 +71,14 @@ def update_tenant(tenant_id: str, body: TenantRequest, request: Request, current
     before = _serialize(existing)
 
     TenantService().update(
-        tenant_id, body.tenant_code, body.tenant_abbreviation, body.tenant_name, body.db_name
+        tenant_id, body.tenant_code, body.tenant_abbreviation, body.tenant_name, body.db_name, body.legacy_db_name
     )
     r = TenantService().get_by_id(tenant_id)
     after = _serialize(r)
 
     changed_fields, diff_details = compute_mutation_diff(
         before,
-        {"tenant_code": body.tenant_code, "tenant_abbreviation": body.tenant_abbreviation, "tenant_name": body.tenant_name, "db_name": body.db_name},
+        {"tenant_code": body.tenant_code, "tenant_abbreviation": body.tenant_abbreviation, "tenant_name": body.tenant_name, "db_name": body.db_name, "legacy_db_name": body.legacy_db_name},
     )
     changed_str = ", ".join(changed_fields) if changed_fields else "no field changes"
 

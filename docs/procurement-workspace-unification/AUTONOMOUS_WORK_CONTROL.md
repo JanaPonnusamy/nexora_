@@ -713,3 +713,80 @@ OrderNMC reach from code, not from a new connection: `legacy_order/database.py` 
   3. Should a GRN/reconciliation audit table be added (schema change, separate from this fix)?
 
   **Status: implemented and tested at the unit level, self-reviewed only — needs independent re-verification, and ideally a real-SQL-Server pass, before closure.** Stopping for review per the task's explicit instruction.
+
+## 2026-10-25 — legacy order-quantity profile (refresh generation)
+
+Owner instruction this session: VPL suggested quantities and the resulting ordered products follow the legacy order SQL, ahead of the earlier Profile T / `decision_rules.evaluate` target where they disagree. `decision_rules.evaluate` is unchanged and remains the rollback (`PROCUREMENT_GENERATION_PROFILE=nexora`). Default profile is `legacy_local`. `backend/.env` was not edited.
+
+Wired path is **local only** (`order_local.sql` + Additional Row zeroing). Remote and warehouse are pure-function comparisons plus SQL-text checks. They are not selected by `create_refresh`, because storing a generation mode needs a column this task is not allowed to migrate.
+
+Stock term on that path is `sync.Products.TotalStock`. Recency watermark is `sync.ProductTrans.LastBillDate` / `LastGrnDate` inside the recency window (a NULL `LastGrnDate` excludes the row; that is the SQL comparison, not a guess). Line frequency is `COUNT(DISTINCT ID)`. Spike is `MAX(Quantity)` of one sale line. Pending, in-transit, reserved, and supplier-pending quantities are not in the three order queries and are not subtracted. Additional Row is written to the VPL at suggested quantity 0 and is not a working order line (`suggested_qty > 0`).
+
+| Gate | Status | Evidence this session | Level |
+|---|---|---|---|
+| Legacy local quantity | **PARTIAL** | `tests/test_legacy_order_parity.py` golden cases; `generate_vpl` mock writes 1 pack for the day-spike fixture where `evaluate` does not | Unit / SQL-text. Not SQL Server |
+| Remote quantity | **PARTIAL** | Same file: SaleUnit 0 aborts; boundary-day spike differs when the caller passes the `>` aggregate | Unit / SQL-text. Not wired, not SQL Server |
+| Warehouse quantity | **PARTIAL** | Pack math matches local on the same aggregates. SQL adds Transfer-Out, recency+10 watermark, default 32/35/30 | Unit / SQL-text. Not wired, not SQL Server |
+| Refresh atomicity, idempotency, tenant isolation, GRN | **NOT RE-VERIFIED** | No new test run of those suites. Prior entries stand | — |
+| Order workspace UI | **PARTIAL** | S.No default width 20px → 48px. Order qty capped at 5 digits in `owWholeQty` (0 still allowed for the existing don't-order commit) | Source edit. No browser pass |
+
+`decision_rules.py` diff is empty. Pre-existing `test_procurement_decision_engine.py` failures still fail on `evaluate`: `test_excluded_missing_grn_watermark`, `test_spike_floor_included_binding`. The bulk-write test now sets the nexora rollback profile so it still asserts the PARA-500 engine.
+
+Command (cwd `E:\Nexora`):
+
+```
+backend\.venv\Scripts\python.exe -m pytest tests/test_legacy_order_parity.py tests/test_procurement_formula_compare.py tests/test_procurement_decision_engine.py tests/test_procurement_orchestration.py tests/test_quantity_profile_t.py -q --tb=line
+→ 72 passed, 2 failed
+```
+
+The 2 failures are the two named above. No migration applied. No database write. Unrelated device-controller files were not edited. Desktop `App.jsx` already had uncommitted layout work; this pass only changed the two S.No widths and `owWholeQty`.
+
+## 2026-10-25 — GRN transaction tests, last GRN/bill, close_cycle
+
+`submit_grn` already commits the GRN update and reconciliation on one connection. The success test previously kept only the last connection in a single holder. It now records every `get_connection()` result and requires length 1. `test_pre_fix_split_transaction_fails_shared_connection_assertions` installs the old two-connection `submit_grn` and expects `AssertionError` from the success test and the reconcile-failure test. That mutation test passed in the run below.
+
+`read_purchase_receipts` already resolves `last_grn` to `MAX(GRNDate)` for that GRN number (tenant + store) and filters `GRNDate <=` that date. An unknown number falls back to an unbounded read. That is the 2026-10-23 owner rule in the function docstring, not a new invention. Direct `GRNNumber` comparison is not used.
+
+`read_last_grn` / `read_last_sale_bill` no longer use `MAX(number)`. They follow `order_process.update_order_header_details`: newest `InvoiceSeries = 'IV'` by `GRNDate`, and newest `Bnumber LIKE 'C%'` by `TransactionDate`. Still tenant/store scoped. No PM approval, rejection, or group dispatch exists on `OrderHeaderDetails` or in the procurement module. None was added.
+
+`close_cycle` still reconciles each refresh on its own connection and still continues after one failure. The response now includes `reconcile_failures` (refresh ids). It does not pretend those refreshes reconciled.
+
+```
+backend\.venv\Scripts\python.exe -m pytest tests/test_procurement_sprint3.py tests/test_procurement_pipeline.py -q --tb=line
+→ 32 passed, 1 failed
+```
+
+The failure is pre-existing `test_manual_add_validations` (`pending_repository.product_already_in_refresh` is absent). Exit code 1. Mocked connections only. Not SQL Server. No message sent. Migrations not applied.
+
+## 2026-10-25 — Claude: GRN re-verification, refresh abandon, export race, stock client 0.1.49
+
+Scope claimed and finished in this entry (shared files, edited after reading the full call path): `orchestration_service.create_refresh`, new `vpl_repository.abandon_refresh`, `export_repository.mark_exported`, `export_service.export_refresh`, and tests in `test_procurement_orchestration.py`, `test_procurement_pm_workflow.py`, `test_procurement_sprint3.py`. Desktop: version bump only (`package.json` 0.1.48 → 0.1.49). No migration applied, no DB connection opened, no message sent, nothing committed, deployed or published.
+
+**GRN transaction fix — independently re-verified.** Source mutation (scratch copy exec'd into the module, repo file untouched) against the 5 `submit_grn` tests: original 5 passed; reconcile-on-own-connection 5 failed; commit-before-reconcile 4 failed; no-rollback 4 failed; no-close 5 failed; swallowed-error 4 failed. Every mutant killed.
+
+**Fixed — half-built Refresh after a failure.** `create_refresh` commits the header, then `generate_vpl` commits the VPL and repoints `procurement_cycles.active_refresh_id`, then working items commit separately. A failure in step 2 or 3 left the cycle pointing at a Refresh with no working items: the next refresh carried forward and archived that empty one, not the real previous one, and with `PROCUREMENT_REFRESH_IDEMPOTENCY=1` a retry returned it as a success. Now any failure after the header runs `abandon_refresh` (one transaction: soft-delete the new Refresh, clear its idempotency key only when idempotency is on, repoint the cycle only if it still points at the abandoned id). A compensation failure is logged and the original error is raised. 8 new tests; mutation: removing either abandon call, never clearing the key, or dropping the conditional repoint each fail at least one test.
+
+**Fixed — double export.** `exportable_assignments` reads without a lock and `mark_exported` did not re-check status or rowcount, so two concurrent exports of one Refresh both succeeded and the second re-stamped the first batch. `mark_exported` now requires `assignment_status = 'draft'`; `export_refresh` raises 409 and rolls back when a line updates 0 rows. Unit-tested only; not run under real SQL Server contention.
+
+**Test repairs (no assertion weakened).** `test_assign_exceeds_final_rejected`, `test_assign_single_ok`, `test_bulk_assign_reports_mixed` failed at HEAD because the one-supplier check `any_active_assignment` was never stubbed. `test_manual_add_validations` asserted a 409 that `add_manual` deliberately replaced with an idempotent return; it now asserts that contract and that no insert happens. Comment in `create_refresh` corrected: `clear_working_items` clears the new Refresh's rows; the previous Refresh's items are kept.
+
+**Legacy parity — differential check.** 200,000 identical inputs through Phase 0 `procurement_formula_compare.legacy_order_local` and `legacy_order_parity.buyer_result(mode="local")`: they differ only when `LastReceivedDate` is NULL (5,783 cases; Phase 0 orders, parity excludes). `order_local.sql` compares `ps.lastsaledate >= ps.LastReceivedDate`, which is UNKNOWN for NULL, so the parity module matches the SQL and the Phase 0 harness is wrong on that edge (test-only file, CURSOR-owned, not edited). Remote/warehouse remain pure-function only and are not on the live refresh path.
+
+**Open findings, not changed (need owner rule or SQL Server):**
+1. `read_purchase_receipts` has no lower bound. Every receipt of that product+supplier since the store's first sync, up to the Last GRN date, counts toward this cycle's assignment, so a product bought from the same supplier last month reads as already received. `order_process.update_order_header_details` says LastGRN is the watermark that tells reconciliation where the order stopped, which points to a lower bound, but the legacy reconciliation (ValidationResponse) is not in this repo. Owner to confirm the lower bound: the refresh's `snapshot_grn_number`, the cycle's `start_grn_number`, or the export time, and whether it is `>` or `>=`.
+2. Reconciliation does not exclude `InvoiceSeries = 'TI'` (internal transfer). TI `SupplierCode` shares the supplier-code namespace, so a transfer can count as a supplier receipt. Owner to confirm the filter (`'IV'` only, or exclude `'TI'`) and how warehouse-assigned lines reconcile.
+3. `supplier_bill_no` is written as `MAX(InvoiceSeries)`, the series code (`IV`/`TI`), not a bill number. `sync.PurchaseTrans` carries no supplier invoice number; only `sync.Suppliertrans.Lastbill` (per supplier per month) exists.
+4. Procurement routes check tenant only. A store-level login can act on another store's Refresh in the same tenant. `store_scope.py` leaves store locks to each screen; procurement has none. Owner ruling needed.
+5. PM approval and approved-group dispatch: no approval state, approver identity, or order→group mapping exists. The only group mapping is `dbo.stores.w_group_name` for NMW stock distribution. Not built.
+6. `create_refresh` reads previous assignments through `assignment_repository.list_by_refresh` on its own connection, outside the history transaction. Low risk; noted.
+
+**Stock client "new UI" wiring.** Uncommitted Order Workspace grid-settings card: all 24 `ow-settings*` / `ow-weight-bold` / `is-locked` classes exist in `styles.css`; `rowWeight` merges through `owNormalizeLayout` (old saved layouts default to normal); `enrollController` is bridged preload → `controller:enroll` in `main.cjs`. `vite build` to a scratch dir: exit 0. The 0.1.48 installer (2026-10-24 21:05) predates the `styles.css` (21:21) and `App.jsx` (2026-10-25 10:02) edits. Built `release/Axythic-Supplier-Stock-Setup-0.1.49.exe` (exit 0); its unpacked bundle contains `ow-settings__seg`, `rowWeight`, the 99999 cap, `enrollController`, and `resources/controller/NexoraDeviceController.exe`. Not installed, not published, not exercised in a window.
+
+Commands (cwd `E:\Nexora`):
+
+```
+backend\.venv\Scripts\python.exe -m pytest tests/test_procurement*.py tests/test_vpl*.py tests/test_legacy_order_parity.py tests/test_quantity_profile_t.py -q --tb=line
+→ 249 passed, 2 failed (exit 1)
+```
+
+The 2 failures are the pre-existing `evaluate` cases `test_excluded_missing_grn_watermark` and `test_spike_floor_included_binding` (`decision_rules.py` is do-not-edit).

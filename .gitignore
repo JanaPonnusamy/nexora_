@@ -118,3 +118,7 @@ backend/config/stock_release_signing_key.pem
 
 # HO backend update bundles (built artifacts, never commit)
 backend/ho_backend_releases/
+
+# Device Controller HO command-signing PRIVATE key (public .pub.pem stays tracked).
+backend/config/device_controller_command_key.pem
+backend/device_controller_releases/

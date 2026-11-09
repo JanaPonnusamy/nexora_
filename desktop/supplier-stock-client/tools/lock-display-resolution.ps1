@@ -1,27 +1,27 @@
 <#
-    Lock the Windows display resolution on a store PC.
+    Set the Windows display resolution on a store PC (run by the installer).
 
-    What it does:
+    What it does (default):
       1. Sets the display to its HIGHEST available resolution.
-      2. Hides the "Screen Resolution" / Display settings page (NoDispCPL policy)
-         so the day-to-day user can't change it back.
+      2. Makes sure Display settings stay ENABLED: removes the NoDispCPL policy
+         that older installers set, so PCs locked by a previous version are
+         unlocked on upgrade (owner ruling 2026-10-24: do not lock).
 
     Runs both elevated and non-elevated:
-      - Not elevated (e.g. run by the app installer): sets the resolution and
-        locks the CURRENT user (HKCU). The machine-wide lock (HKLM) is skipped.
-      - Elevated (admin): also applies the machine-wide lock for all users.
+      - Not elevated: sets the resolution and clears the CURRENT user (HKCU).
+      - Elevated (admin, e.g. the perMachine installer): also clears HKLM.
 
     Manual usage:
         powershell -ExecutionPolicy Bypass -File lock-display-resolution.ps1
-    Revert:
+    Old behaviour (hide Display settings) is still available on request:
+        powershell -ExecutionPolicy Bypass -File lock-display-resolution.ps1 -Lock
+    Unlock only (no resolution change):
         powershell -ExecutionPolicy Bypass -File lock-display-resolution.ps1 -Unlock
 
     Notes:
-      - A local administrator can still undo this; it stops ordinary users.
-      - Log off/on (or reboot) after running for the policy to take effect.
-      - Tested pattern for Windows 7/8/10; try it on ONE PC first.
+      - Log off/on (or reboot) for a policy change to take effect.
 #>
-param([switch]$Unlock)
+param([switch]$Unlock, [switch]$Lock)
 
 $ErrorActionPreference = 'Stop'
 
@@ -49,8 +49,22 @@ function Set-DispPolicy([int]$value) {
     }
 }
 
+# Remove the policy value entirely (cleaner than NoDispCPL=0).
+function Clear-DispPolicy {
+    foreach ($k in $policyKeys) {
+        try {
+            if ((Test-Path $k) -and ($null -ne (Get-ItemProperty -Path $k -Name 'NoDispCPL' -ErrorAction SilentlyContinue))) {
+                Remove-ItemProperty -Path $k -Name 'NoDispCPL' -Force
+                Write-Host ("  {0} NoDispCPL removed" -f $k)
+            }
+        } catch {
+            Write-Host ("  (skipped {0}: {1})" -f $k, $_.Exception.Message)
+        }
+    }
+}
+
 if ($Unlock) {
-    Set-DispPolicy 0
+    Clear-DispPolicy
     Write-Host 'UNLOCKED: users can change the display resolution again. Log off/on to apply.'
     return
 }
@@ -103,6 +117,11 @@ if ($null -ne $best) {
     Write-Host 'Could not enumerate display modes; resolution left unchanged.'
 }
 
-# --- 2) Lock the Display settings page -------------------------------------
-Set-DispPolicy 1
-Write-Host 'LOCKED: Screen Resolution / Display settings hidden (NoDispCPL=1). Log off/on (or reboot) to apply.'
+# --- 2) Display settings page: enabled by default, hidden only with -Lock --
+if ($Lock) {
+    Set-DispPolicy 1
+    Write-Host 'LOCKED: Screen Resolution / Display settings hidden (NoDispCPL=1). Log off/on (or reboot) to apply.'
+} else {
+    Clear-DispPolicy
+    Write-Host 'Display settings enabled (NoDispCPL cleared).'
+}

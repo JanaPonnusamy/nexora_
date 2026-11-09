@@ -41,5 +41,22 @@ contextBridge.exposeInMainWorld('nexoraDesktop', {
     // { query?, filter?: 'all'|'groups'|'contacts', refresh? } -> { chats: [{ name, kind }], error? }
     chats: (opts) => ipcRenderer.invoke('wa:chats', opts),
     readFiles: (paths) => ipcRenderer.invoke('wa:readFiles', paths)
-  }
+  },
+  // Procurement's Web panel (electron/webPanel.cjs): per-store portal
+  // sessions + saved logins (the password goes in, never comes back out) +
+  // Chrome bookmarks import.
+  web: {
+    partitionFor: (store) => {
+      const code = String(store || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+      return code ? `persist:web-panel-${code}` : 'persist:web-panel';
+    },
+    logins: (store) => ipcRenderer.invoke('web:logins', { store }),
+    saveLogin: (payload) => ipcRenderer.invoke('web:saveLogin', payload),
+    clearLogin: (store, url) => ipcRenderer.invoke('web:clearLogin', { store, url }),
+  syncLogins: (store, items, fresh) => ipcRenderer.invoke('web:syncLogins', { store, items, fresh }),
+    chromeBookmarks: () => ipcRenderer.invoke('web:chromeBookmarks'),
+    openExternal: (url) => ipcRenderer.invoke('web:openExternal', { url })
+  },
+  // Register this PC's Device Controller with HO using the signed-in session.
+  enrollController: (apiBaseUrl, token) => ipcRenderer.invoke('controller:enroll', { apiBaseUrl, token })
 });

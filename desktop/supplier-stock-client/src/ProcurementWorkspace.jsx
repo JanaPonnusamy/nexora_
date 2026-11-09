@@ -752,8 +752,23 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   // The selected supplier's own web-order portal (fed by the WebPanel, which
   // reads it from the supplier's OrderSuppliers row). null = no site set.
   const [sitePortal, setSitePortal] = useState(null);
+  // ProductCode -> this supplier's own product code, from SupplierProductMatch
+  // (owner 2026-11-07): search the site by code when it's already known.
+  const [siteCodes, setSiteCodes] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    if (!store || !supplier?.supplier_code) { setSiteCodes({}); return undefined; }
+    (async () => {
+      try {
+        const r = await api.legacySupplierMatchCodes(store, supplier.supplier_code, session);
+        if (!cancelled) setSiteCodes(r?.codes || {});
+      } catch { if (!cancelled) setSiteCodes({}); }
+    })();
+    return () => { cancelled = true; };
+  }, [store, supplier?.supplier_code, session]);
   const site = useSiteCheck({
     webRef, rows: siteChecking ? visible : [], siteUrl: sitePortal?.url || '', supplierName: supplier ? pwCleanName(supplier.supplier_name) : '', qtyOf: valueOf, nameOf: (r) => pwCleanName(r.name),
+    codeOf: (r) => siteCodes[r.product_code || r.code] || '',
     resetKey: `${store}|${supplier?.supplier_code || ''}|${siteChecking}|${orderHeader?.order_id ?? ''}`,
     // The product being checked is the current row (no focus taken).
     onStep: (row) => {
@@ -817,10 +832,14 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   // and reads stock, never adds to a cart or places an order.
   async function assignWithStockCheck(pickedRows) {
     const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
-    const groups = new Map();           // supplier_code -> { portal, name, items }
+    const groups = new Map();           // supplier_code -> { portal, name, items, codes }
     const historyOnly = [];             // supplier has no portal site
     // Each supplier's web-order site comes from its own OrderSuppliers row.
     const portalCache = new Map();
+    // Known SupplierProductCode per product, from SupplierProductMatch (owner
+    // 2026-11-07): search the supplier's site by ITS code when we already know
+    // it, instead of typing the product name -- see siteCheckOne.
+    const codesCache = new Map();
     for (const r of pickedRows) {
       let portal = portalCache.get(r.supplier_code);
       if (portal === undefined) {
@@ -829,7 +848,13 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
         portalCache.set(r.supplier_code, portal);
       }
       if (!portal || !portal.url) { historyOnly.push(r); continue; }
-      const g = groups.get(r.supplier_code) || { portal, name: pwCleanName(r.supplier_name), items: [] };
+      let codes = codesCache.get(r.supplier_code);
+      if (codes === undefined) {
+        try { codes = (await api.legacySupplierMatchCodes(store, r.supplier_code, session))?.codes || {}; }
+        catch { codes = {}; }
+        codesCache.set(r.supplier_code, codes);
+      }
+      const g = groups.get(r.supplier_code) || { portal, name: pwCleanName(r.supplier_name), items: [], codes };
       g.items.push(r);
       groups.set(r.supplier_code, g);
     }
@@ -863,7 +888,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
         const r = g.items[i];
         setBanner(`Auto Assign · ${g.name}: checking stock ${i + 1}/${g.items.length} — ${pwCleanName(r.product_name)}…`);
         let res = null;
-        try { res = await siteCheckOne(web, pwCleanName(r.product_name), Number(r.order_qty) || 0); } catch { res = null; }
+        try { res = await siteCheckOne(web, pwCleanName(r.product_name), Number(r.order_qty) || 0, g.codes?.[r.product_code]); } catch { res = null; }
         if (res && res.state === 'blocked') { report.unchecked += 1; continue; }
         if (res && siteAvailable(res.state)) { toAssign.push(r.product_code); avail += 1; } else { report.out += 1; }
       }

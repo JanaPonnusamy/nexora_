@@ -161,6 +161,11 @@ class ExportOrderRequest(BaseModel):
     org_name: str | None = None
     bills_days: int = 0
     name_suffix: str | None = None  # e.g. "Batch 2" / "Complete"
+    # Export-only remark per product, {product_code: text} -- the Procurement
+    # grid's "Exp. Remark" (the offer the final qty matches, "9+1", or a short
+    # note like "12%"). Never stored in OrderNMC; it only adds a Remarks column
+    # after OrderQty when at least one exported row has one.
+    remarks: dict[str, str] | None = None
 
 
 class SupplierWhatsAppTarget(BaseModel):
@@ -185,6 +190,46 @@ class SupplierWhatsAppSentRequest(BaseModel):
     kind: str = "batch"  # 'batch' | 'final'
 
 
+class SupplierPortalRequest(BaseModel):
+    """A supplier's own web-order portal (its URL + login), saved on the
+    supplier row. Blank url clears the portal; blank password keeps the saved
+    one; clear wipes the whole portal."""
+    url: str | None = None
+    username: str | None = None
+    password: str | None = None  # blank keeps the saved one; never echoed back
+    auto_submit: bool = True
+    clear: bool = False
+
+
+class SupplierStockRow(BaseModel):
+    """One product read off a supplier's portal catalog."""
+    name: str
+    code: str | None = None
+    stock: Union[int, float, str, None] = None
+    mrp: Union[float, str, None] = None
+    ptr: Union[float, str, None] = None
+    discount: Union[float, str, None] = None
+    packing: str | None = None
+    scheme: str | None = None
+    free: Union[int, str, None] = None
+
+
+class SupplierHarvestRequest(BaseModel):
+    """The Stock Client posts a supplier's harvested catalog. complete must be
+    True -- the client only posts after reading the WHOLE catalog, so a broken
+    mid-way read never reaches the server and never wipes the existing stock."""
+    rows: list[SupplierStockRow] = []
+    complete: bool = True
+
+
+class SupplierMatchConfirmRequest(BaseModel):
+    """Confirm a suggested match or map an unmapped supplier product. Blank
+    product_code unmaps it."""
+    supplier_product_code: str | None = None
+    supplier_product_name: str | None = None
+    product_code: str | None = None
+
+
 class ExportPendingOrderRequest(BaseModel):
     # No supplier_code/supplier_name -- the Pending grid (qtycheck=1,
     # status=0) has no supplier yet by definition; export here is read-only,
@@ -194,12 +239,14 @@ class ExportPendingOrderRequest(BaseModel):
     file_format: str = "xls"  # owner default (2026-10-22): 'xls'
     order_no: str | None = None
     images: bool = False  # see ExportOrderRequest.images
+    remarks: dict[str, str] | None = None  # see ExportOrderRequest.remarks
 
 
 class EmergencyRepairRequest(BaseModel):
     # Guard rail: the destructive REPAIR_ALLOW_DATA_LOSS path only runs when the
     # caller explicitly opts in. The UI sends this from a confirmation dialog.
     confirm: bool = False
+
 
 class PmOrderRequest(BaseModel):
     # The store's last sale bill / last GRN off its POS (both required).

@@ -192,6 +192,16 @@ export function siteDecide(qty, best) {
   return { state: 'cart', note: '' };
 }
 
+// A code search is trusted on ONE result: unlike a name search (which can
+// return several similar products), the supplier's own product code is
+// specific, so whatever single row comes back is the product -- no
+// brand/strength scoring needed. More than one row means the code search
+// fell back to a name-ish match (or the code collided) -- not trusted.
+export function siteBestByCode(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.length === 1 ? { row: list[0], score: 1 } : null;
+}
+
 export const SITE_STATE_LABEL = { searching: 'Searching…', cart: 'In cart', available: 'Available', none: 'Not available', partial: 'Short stock', check: 'Check' };
 
 // Counts for the bar; anything not decided yet is 'left'. 'available' = in
@@ -384,13 +394,17 @@ export async function roEnumerate(web, onProgress) {
 }
 
 // Parse the fields the harvest stores from a result row's full text (packing,
-// rate, MRP, scheme). Best-effort -- name + stock are the reliable parts.
+// rate, MRP, scheme, code). Best-effort -- name + stock are the reliable parts;
+// a product code is stored when the site happens to show one (e.g. "Code:
+// 12345" / "Item Code : AB12"), else left blank -- SupplierStock.code is
+// nullable and the match-review's fuzzy path still covers an unmapped product.
 export function harvestRow(row) {
   const info = String(row.info || '');
   const rate = (info.match(/\(([\d.,]+)\)/) || [])[1];
   const mrp = (info.match(/₹\s*([\d.,]+)/) || [])[1];
   const pack = (info.match(/\b(\d+\s*['’]?\s*S)\b/i) || [])[1];
-  return { name: row.name, stock: row.stock, ptr: rate ? Number(String(rate).replace(/,/g, '')) : null, mrp: mrp ? Number(String(mrp).replace(/,/g, '')) : null, packing: pack || '' };
+  const code = (info.match(/\b(?:item\s*)?code\s*[:#]\s*([A-Z0-9][\w-]{0,30})/i) || [])[1];
+  return { name: row.name, code: code || '', stock: row.stock, ptr: rate ? Number(String(rate).replace(/,/g, '')) : null, mrp: mrp ? Number(String(mrp).replace(/,/g, '')) : null, packing: pack || '' };
 }
 
 // ---- stock-checked auto-assign (read-only availability) ----
@@ -398,12 +412,24 @@ export function harvestRow(row) {
 // (read-only): search brand+strength then brand, match, decide. `web` is the
 // WebPanel ref ({ exec, loading, url }). Used to gate Auto Assign by live
 // stock on the supplier's own site.
-export async function siteCheckOne(web, name, qty) {
+//
+// `supplierCode` (optional): this supplier's OWN product code for the item,
+// already known from SupplierProductMatch (owner 2026-11-07 -- "we already
+// have exact mapping ... accept supplier productcode instead of typing
+// productname"). Tried FIRST and trusted on a single result (siteBestByCode);
+// a code search that returns nothing crisp falls back to the existing
+// name-token search below, so an unrecognized/miskeyed code never blocks the
+// product -- it's just slower, same as before.
+export async function siteCheckOne(web, name, qty, supplierCode) {
   const kind = siteKind(web.url());
   const search = kind === 'retailorders' ? roSearch : pageSearch;
   const results = kind === 'retailorders' ? roResults : pageResults;
   let best = null;
-  for (const q of [...new Set([siteQuery(name), siteTokens(name)[0]].filter(Boolean))]) {
+  const queries = [];
+  if (supplierCode) queries.push({ q: String(supplierCode).trim(), byCode: true });
+  for (const q of [...new Set([siteQuery(name), siteTokens(name)[0]].filter(Boolean))]) queries.push({ q, byCode: false });
+  for (const { q, byCode } of queries) {
+    if (!q) continue;
     const before = await web.exec(siteScript(results)).catch(() => null);
     const sent = await web.exec(siteScript(search, q, false)).catch(() => null);
     if (!sent?.ok) return { state: 'blocked', reason: sent?.reason, stock: '', match: '', offer: '' };
@@ -415,7 +441,7 @@ export async function siteCheckOne(web, name, qty) {
       const res = await web.exec(siteScript(results)).catch(() => null);
       if (!res) continue;
       const fresh = res.sig !== before?.sig;
-      best = fresh ? siteBestMatch(name, res.rows) : null;
+      best = fresh ? (byCode ? siteBestByCode(res.rows) : siteBestMatch(name, res.rows)) : null;
       if (best) break;
       still = res.sig === lastSig ? still + 1 : 0;
       lastSig = res.sig;

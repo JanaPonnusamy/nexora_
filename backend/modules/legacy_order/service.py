@@ -199,6 +199,15 @@ def _running_job_kind(store_name):
 
 
 def _resolve_store(store_name):
+    # Not request-scoped (called from the auto-sync/evening-order background
+    # loops as well as HTTP handlers already scoped by router._scope_tenant),
+    # so the tenant must be resolved here too -- from the platform DB, which
+    # needs no legacy-DB connection to answer. A no-op when _scope_tenant
+    # already set it (per-request resolution wins; database.set_active_tenant
+    # just gets called again with the same value).
+    tenant_id = database.platform_tenant_id_by_store_name(store_name)
+    if tenant_id:
+        database.set_active_tenant(tenant_id)
     store = repository.get_store(store_name)
     if not store:
         raise ValueError(f"Store '{store_name}' is not configured in OrderNMC.Stores.")
@@ -243,7 +252,8 @@ def start_sync(store_name, tables=None, live_device_sync=True):
             )
         job_id = _new_job("sync", store_name, len(plan) + 1)
         threading.Thread(
-            target=_run_agent_sync, args=(job_id, store, store_id, plan, live_device_sync),
+            target=database.tenant_scoped(store, _run_agent_sync),
+            args=(job_id, store, store_id, plan, live_device_sync),
             daemon=True,
         ).start()
         return job_id
@@ -254,7 +264,7 @@ def start_sync(store_name, tables=None, live_device_sync=True):
 
     job_id = _new_job("sync", store_name, len(plan))
     threading.Thread(
-        target=_run_sync, args=(job_id, store, plan), daemon=True
+        target=database.tenant_scoped(store, _run_sync), args=(job_id, store, plan), daemon=True
     ).start()
     return job_id
 
@@ -452,7 +462,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
         plan = list(sync_engine.TABLE_PLAN)
         job_id = _new_job("order", store_name, len(plan) + 4)
         threading.Thread(
-            target=_run_agent_sync_then_order,
+            target=database.tenant_scoped(store, _run_agent_sync_then_order),
             args=(job_id, store, store_id, plan, min_days, max_days, mode,
                   warehouse, recency_days, compare_today_previous, checkpoint),
             daemon=True,
@@ -512,7 +522,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     plan = list(sync_engine.TABLE_PLAN)
     job_id = _new_job("order", store_name, len(plan) + 3)
     threading.Thread(
-        target=_run_sync_then_order,
+        target=database.tenant_scoped(store, _run_sync_then_order),
         args=(job_id, store, plan, min_days, max_days, mode, warehouse, recency_days,
               compare_today_previous, checkpoint),
         daemon=True,
@@ -851,7 +861,7 @@ def start_stock_update(store_name, source_store_name="NMW"):
 
     job_id = _new_job("stock", store_name, 2)
     threading.Thread(
-        target=_run_stock_update, args=(job_id, store, source_store), daemon=True
+        target=database.tenant_scoped(store, _run_stock_update), args=(job_id, store, source_store), daemon=True
     ).start()
     return job_id
 

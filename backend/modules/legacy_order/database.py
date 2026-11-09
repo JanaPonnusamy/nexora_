@@ -16,6 +16,7 @@ overrides:
 Branch credentials are not configuration at all -- they are read per store from
 OrderNMC's own dbo.Stores table, which is where the VB app kept them.
 """
+import contextvars
 import logging
 import os
 import re
@@ -48,12 +49,70 @@ def _driver():
     return _env("LEGACY_DB_DRIVER", "DB_DRIVER", _DEFAULT_DRIVER)
 
 
+# Multi-tenant HOs (.32: Success + SMS) keep one database PER TENANT on the
+# same SQL Server instance -- no more single shared OrderNMC there. Mapped via
+# LEGACY_DB_DATABASE_BY_TENANT="tenant_id=dbname;tenant_id=dbname", same
+# pattern as ordernmc_mirror's ORDERNMC_MIRROR_SOURCES. A single-tenant HO
+# (.73/.80) sets nothing here and keeps using LEGACY_DB_DATABASE/OrderNMC.
+_active_tenant_id: contextvars.ContextVar = contextvars.ContextVar(
+    "legacy_order_active_tenant_id", default=None
+)
+
+
+def _tenant_database_map():
+    raw = os.getenv("LEGACY_DB_DATABASE_BY_TENANT", "")
+    mapping = {}
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        tenant_id, dbname = part.split("=", 1)
+        tenant_id = tenant_id.strip().upper()
+        dbname = dbname.strip()
+        if tenant_id and dbname:
+            mapping[tenant_id] = dbname
+    return mapping
+
+
+def set_active_tenant(tenant_id):
+    """Scope every central-DB connection made on this thread/task to the given
+    tenant's database (per LEGACY_DB_DATABASE_BY_TENANT). None restores the
+    LEGACY_DB_DATABASE/OrderNMC default. Returns a contextvars.Token to reset
+    with ``reset_active_tenant``."""
+    return _active_tenant_id.set((tenant_id or "").upper() or None)
+
+
+def reset_active_tenant(token):
+    _active_tenant_id.reset(token)
+
+
+def tenant_scoped(store, fn):
+    """Wrap a background-thread target so it runs with store['tenant_id']
+    active. contextvars do NOT cross a raw threading.Thread boundary (unlike
+    asyncio tasks), so every ``threading.Thread(target=...)`` spawned for a
+    specific store must go through this, or it silently falls back to
+    LEGACY_DB_DATABASE/OrderNMC regardless of which tenant the store belongs
+    to."""
+    tenant_id = (store or {}).get("tenant_id")
+
+    def _run(*args, **kwargs):
+        token = set_active_tenant(tenant_id)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            reset_active_tenant(token)
+
+    return _run
+
+
 def central_connection_string():
-    """Connection string for the central OrderNMC database."""
+    """Connection string for the central OrderNMC/OrderSMS/OrderSuccess
+    database -- whichever the active tenant (see set_active_tenant) maps to,
+    falling back to LEGACY_DB_DATABASE/OrderNMC when no mapping applies."""
     server = _env("LEGACY_DB_SERVER", "DB_SERVER")
     username = _env("LEGACY_DB_USERNAME", "DB_USERNAME")
     password = _env("LEGACY_DB_PASSWORD", "DB_PASSWORD")
-    database = os.getenv("LEGACY_DB_DATABASE", "OrderNMC")
+    database = _database_name()
 
     missing = [
         name
@@ -139,6 +198,23 @@ def platform_store_id(store_code):
     return rows[0][0] if len(rows) == 1 else None
 
 
+def platform_tenant_id_by_store_name(store_name):
+    """tenant_id (upper, or None) for an OrderNMC/OrderSMS/OrderSuccess
+    StoreName, resolved from NEXORA_PLATFORM.dbo.stores.store_code -- the same
+    GUID the legacy DB's own tenant_id column carries, but reachable WITHOUT
+    already knowing which legacy database to connect to. Used to pick that
+    database in the first place (see set_active_tenant)."""
+    if not store_name:
+        return None
+    with pyodbc.connect(platform_connection_string(), timeout=15) as conn:
+        rows = conn.cursor().execute(
+            "SELECT DISTINCT CONVERT(varchar(40), tenant_id) FROM dbo.stores "
+            "WHERE store_code = ? AND tenant_id IS NOT NULL",
+            store_name,
+        ).fetchall()
+    return (rows[0][0] or "").upper() if len(rows) == 1 and rows[0][0] else None
+
+
 def central_store_tenant(store_name):
     """tenant_id of the central OrderNMC dbo.Stores row, or None (no row, or an
     OrderNMC without the tenant_id column)."""
@@ -187,7 +263,47 @@ def _server_and_creds():
     )
 
 
+# tenant_id -> (legacy_db_name, fetched_at monotonic). Short TTL: this is on
+# the hot path of every central-DB connection, but an admin changing the
+# Tenants screen's "Legacy Order Database" field should take effect within a
+# few seconds, not require a backend restart.
+_tenant_legacy_db_cache: dict = {}
+_TENANT_LEGACY_DB_CACHE_TTL_SECONDS = 30
+
+
+def _tenant_legacy_db_name(tenant_id):
+    """dbo.tenants.legacy_db_name for tenant_id, or None (column NULL / no
+    row / platform DB unreachable). Set from the Tenants admin screen; takes
+    priority over LEGACY_DB_DATABASE_BY_TENANT (see _database_name)."""
+    import time
+
+    cached = _tenant_legacy_db_cache.get(tenant_id)
+    if cached and time.monotonic() - cached[1] < _TENANT_LEGACY_DB_CACHE_TTL_SECONDS:
+        return cached[0]
+    try:
+        with pyodbc.connect(platform_connection_string(), timeout=5) as conn:
+            row = conn.cursor().execute(
+                "SELECT legacy_db_name FROM dbo.tenants WHERE tenant_id = ?",
+                tenant_id,
+            ).fetchone()
+        value = (row[0] or "").strip() if row and row[0] else None
+    except Exception:
+        # Platform DB hiccup must not break the legacy console -- fall back to
+        # the env var / default below, same as "no override configured".
+        return cached[0] if cached else None
+    _tenant_legacy_db_cache[tenant_id] = (value, time.monotonic())
+    return value
+
+
 def _database_name():
+    tenant_id = _active_tenant_id.get()
+    if tenant_id:
+        from_tenants_table = _tenant_legacy_db_name(tenant_id)
+        if from_tenants_table:
+            return from_tenants_table
+        mapped = _tenant_database_map().get(tenant_id)
+        if mapped:
+            return mapped
     return os.getenv("LEGACY_DB_DATABASE", "OrderNMC")
 
 

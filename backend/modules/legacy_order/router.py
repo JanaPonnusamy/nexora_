@@ -10,13 +10,16 @@ tenant-scoped like the rest of the API.
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+
+from modules.procurement import abnormal_sales_service
+from modules.procurement.pm_schemas import DontConsiderUpdate
 
 from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
-from modules.legacy_order import database, evening_order, order_export, repository, rulebook_order, service, supplier_whatsapp, sync_engine
-from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order import database, evening_order, order_export, repository, rulebook_order, service, supplier_match_review, supplier_portal, supplier_stock_harvest, supplier_whatsapp, sync_engine
+from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierPortalRequest, SupplierHarvestRequest, SupplierMatchConfirmRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def _header_value(value) -> str:
@@ -79,6 +82,7 @@ _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/auto-assign$"),  # POST bulk assign (best margin)
     re.compile(r"^/api/legacy-order/orders/[^/]+/whatsapp/(contacts|sent)$"),  # POST supplier WhatsApp contacts / sent log
     re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+$"),      # PATCH qty-check review
+    re.compile(r"^/api/legacy-order/qty-check/[^/]+/sales/dont-consider$"),  # PATCH abnormal-sale review
     re.compile(r"^/api/legacy-order/qty-check/[^/]+/\d+/skip$"),  # POST skip (Procurement Esc)
 )
 
@@ -88,6 +92,9 @@ _STORE_WRITE_PATHS = (
 _PM_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/workflow/(finalize|reopen)$"),
     re.compile(r"^/api/legacy-order/orders/[^/]+/order-entry$"),  # PM: last bill + GRN -> Order Process
+    re.compile(r"^/api/legacy-order/orders/[^/]+/suppliers/[^/]+/portal$"),  # a supplier's web-order portal (URL + login)
+    re.compile(r"^/api/legacy-order/orders/[^/]+/suppliers/[^/]+/harvest$"),  # harvest supplier stock -> SupplierStock
+    re.compile(r"^/api/legacy-order/orders/[^/]+/suppliers/[^/]+/match-review/confirm$"),  # map supplier product
 )
 
 
@@ -162,7 +169,30 @@ def require_admin_or_store_pm(store_name: str, current_user: dict = Depends(get_
     raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
 
 
-router = APIRouter(prefix="/api/legacy-order", tags=["Legacy Order"], dependencies=[Depends(require_order_console_access)])
+def _scope_tenant(request: Request, current_user: dict = Depends(get_current_user)):
+    """Multi-tenant HOs (.32: Success + SMS) keep OrderNMC/OrderSMS/OrderSuccess
+    as SEPARATE databases now; every request must pick the right one before any
+    repository call connects. A store-scoped path resolves the store's own
+    tenant from the platform DB (works for any caller, admin or not, and is
+    authoritative even for an admin managing a store outside their own tenant).
+    A store-agnostic path (GET /stores, DB health...) falls back to the
+    caller's own tenant_id -- None for a platform admin, which keeps today's
+    single-default-database behaviour on HOs that have no tenant split."""
+    store_name = request.path_params.get("store_name")
+    tenant_id = database.platform_tenant_id_by_store_name(store_name) if store_name else None
+    if not tenant_id:
+        tenant_id = current_user.get("tenant_id")
+    token = database.set_active_tenant(tenant_id)
+    try:
+        yield
+    finally:
+        database.reset_active_tenant(token)
+
+
+router = APIRouter(
+    prefix="/api/legacy-order", tags=["Legacy Order"],
+    dependencies=[Depends(require_order_console_access), Depends(_scope_tenant)],
+)
 
 
 # ---- Legacy DB health & recovery (RECOVERY_PENDING / single-user / repair) ----
@@ -540,7 +570,7 @@ def orders_by_supplier(store_name: str, supplier_code: str, mode: str = "history
     """Orderable rows for a supplier -- mode='history' (purchase history) or
     mode='stock' (live SupplierStock match, with stock/rack columns)."""
     try:
-        return repository.orders_by_supplier(store_name, supplier_code, mode)
+        return repository.orders_by_supplier(store_name, supplier_code, mode, last_offer=True)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -551,7 +581,17 @@ def all_open_orderables(store_name: str):
     supplier match -- the By Supplier grid's "Load all products" toggle. The
     operator assigns/exports these to whichever supplier is picked."""
     try:
-        return repository.all_open_orderables(store_name)
+        return repository.all_open_orderables(store_name, last_offer=True)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/supplier-stock-compare")
+def supplier_stock_compare(store_name: str):
+    """{product_code: [every supplier's live stock/offer/discount line]} for
+    the store's open order -- the Procurement row's compare-suppliers card."""
+    try:
+        return repository.supplier_stock_compare(store_name)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -572,7 +612,7 @@ def orders_by_supplier_export_count(store_name: str, supplier_code: str):
 def assigned_orders(store_name: str, supplier_code: str):
     """Rows already assigned to a supplier (status=1)."""
     try:
-        return repository.assigned_orders(store_name, supplier_code)
+        return repository.assigned_orders(store_name, supplier_code, last_offer=True)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -582,7 +622,7 @@ def all_assigned_orders(store_name: str):
     """Every assigned row for the store across ALL suppliers at once --
     Supplier Order Details' "All Suppliers" view."""
     try:
-        return repository.all_assigned_orders(store_name)
+        return repository.all_assigned_orders(store_name, last_offer=True)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -598,6 +638,24 @@ def remove_unavailable_from_supplier(
     pick them up. See repository.remove_unavailable_from_supplier."""
     try:
         removed = repository.remove_unavailable_from_supplier(
+            store_name, payload.supplier_code,
+            current_user.get("username") or current_user.get("sub"),
+        )
+        return {"removed_product_codes": removed, "removed_count": len(removed)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/assigned/unassign-all")
+def unassign_all_from_supplier(
+    store_name: str, payload: SupplierCodeRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Bulk-drop EVERY currently-Assigned line for this supplier back to open
+    (status=0, qtycheck=1, no supplier). See
+    repository.unassign_all_from_supplier."""
+    try:
+        removed = repository.unassign_all_from_supplier(
             store_name, payload.supplier_code,
             current_user.get("username") or current_user.get("sub"),
         )
@@ -623,10 +681,12 @@ def auto_assign_apply(
 ):
     """Assign the best-margin proposals (recomputed server-side)."""
     try:
-        return repository.auto_assign_apply(
+        result = repository.auto_assign_apply(
             store_name, payload.product_codes,
             current_user.get("username") or current_user.get("sub"),
         )
+        service._push_to_mirrors(store_name)  # supplier assignments changed: remote gets it on its next pull
+        return result
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -644,6 +704,7 @@ def assign_supplier(
         )
         if result is None:
             raise HTTPException(status_code=404, detail="Order row not found")
+        service._push_to_mirrors(store_name)  # supplier assignment changed: remote gets it on its next pull
         return result
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -722,6 +783,119 @@ def mark_supplier_whatsapp_sent(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+# ---- Supplier web-order portal (per supplier, on the supplier row) ---------
+# Each supplier has its OWN ordering site + login (supplier_portal.py). When a
+# store order selects a supplier and clicks Website, the client reads the
+# supplier's URL/login and signs in. Only /portal/login returns the password.
+
+def _portal_call(fn, *args):
+    try:
+        return fn(*args)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/suppliers/{supplier_code}/portal")
+def get_supplier_portal(store_name: str, supplier_code: str, current_user: dict = Depends(get_current_user)):
+    """The supplier's web-order portal (URL + whether a login is set) -- never
+    the password. enabled=True when a URL is configured, which is what turns the
+    Website option on for this supplier."""
+    admin = has_unrestricted_scope(current_user)
+    return {
+        "portal": _portal_call(supplier_portal.get_portal, store_name, supplier_code),
+        "can_edit": admin or (_is_purchase_manager(current_user) and _user_owns_store(current_user, store_name)),
+    }
+
+
+@router.get("/orders/{store_name}/suppliers/{supplier_code}/portal/login")
+def get_supplier_portal_login(
+    store_name: str, supplier_code: str, response: Response,
+    _user: dict = Depends(require_admin_or_store_pm),
+):
+    """The supplier's portal login WITH its password -- only for the Stock
+    Client's auto sign-in, which keeps it encrypted on the PC. Never logged."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"login": _portal_call(supplier_portal.get_login, store_name, supplier_code)}
+
+
+@router.post("/orders/{store_name}/suppliers/{supplier_code}/portal")
+def save_supplier_portal(
+    store_name: str, supplier_code: str, payload: SupplierPortalRequest,
+    current_user: dict = Depends(require_admin_or_store_pm),
+):
+    """Set or clear the supplier's portal URL + login (password encrypted)."""
+    result = {"portal": _portal_call(
+        supplier_portal.save_portal, store_name, supplier_code, payload.url, payload.username,
+        payload.password, payload.auto_submit, payload.clear,
+        current_user.get("username") or current_user.get("sub"))}
+    service._push_to_mirrors(store_name)  # OrderSuppliers changed: remote gets it on its next pull
+    return result
+
+
+# ---- Supplier stock harvest + match (two separate concerns) -----------------
+# HARVEST (supplier_stock_harvest.py): the Stock Client reads a supplier's portal
+# catalog headlessly and posts it; we only write it to dbo.SupplierStock. The
+# existing Live Stock mode then shows it in the grid (joined via
+# SupplierProductMatch) with no new compare code.
+# MAP REVIEW (supplier_match_review.py): a separate "Map supplier products" panel
+# matches the harvested stock to the store's products and writes confirmed maps
+# to SupplierProductMatch, so products not mapped yet become visible in Live
+# Stock.
+
+@router.post("/orders/{store_name}/suppliers/{supplier_code}/harvest")
+def harvest_supplier_stock(
+    store_name: str, supplier_code: str, payload: SupplierHarvestRequest,
+    current_user: dict = Depends(require_admin_or_store_pm),
+):
+    """Store the posted catalog in SupplierStock (write-only, all-or-nothing)."""
+    return _portal_call(
+        supplier_stock_harvest.harvest, store_name, supplier_code,
+        [r.model_dump() for r in payload.rows], payload.complete,
+        current_user.get("username") or current_user.get("sub"))
+
+
+@router.get("/orders/{store_name}/suppliers/{supplier_code}/harvest")
+def supplier_harvest_status(
+    store_name: str, supplier_code: str, _user: dict = Depends(require_admin_or_store_pm),
+):
+    """When this supplier's SupplierStock was last harvested, and how many rows."""
+    return _portal_call(supplier_stock_harvest.last_harvest, store_name, supplier_code)
+
+
+@router.get("/orders/{store_name}/suppliers/{supplier_code}/match-review")
+def supplier_match_review_get(
+    store_name: str, supplier_code: str, _user: dict = Depends(require_admin_or_store_pm),
+):
+    """Match the harvested stock to the store's products, by tier."""
+    return _portal_call(supplier_match_review.review, store_name, supplier_code)
+
+
+@router.get("/orders/{store_name}/suppliers/{supplier_code}/match-codes")
+def supplier_match_codes(
+    store_name: str, supplier_code: str, _user: dict = Depends(require_admin_or_store_pm),
+):
+    """ProductCode -> this supplier's own product code, for every already-confirmed
+    match -- lets the Website/Auto-Assign flow search the supplier's site by code
+    instead of typing the product name."""
+    return _portal_call(supplier_match_review.known_codes, store_name, supplier_code)
+
+
+@router.post("/orders/{store_name}/suppliers/{supplier_code}/match-review/confirm")
+def supplier_match_confirm(
+    store_name: str, supplier_code: str, payload: SupplierMatchConfirmRequest,
+    current_user: dict = Depends(require_admin_or_store_pm),
+):
+    """Save the chosen mapping to SupplierProductMatch (blank unmaps)."""
+    return _portal_call(
+        supplier_match_review.confirm, store_name, supplier_code,
+        payload.supplier_product_code, payload.supplier_product_name, payload.product_code,
+        current_user.get("username") or current_user.get("sub"))
+
+
 @router.post("/orders/{store_name}/export")
 def export_order(
     store_name: str, payload: ExportOrderRequest,
@@ -746,7 +920,7 @@ def export_order(
             columns=payload.columns, file_format=payload.file_format, order_no=payload.order_no,
             product_codes=payload.product_codes, all_products=payload.all_products,
             images=payload.images, only_codes=payload.only_codes, name_suffix=payload.name_suffix,
-            decor=_export_decor(store_name, payload),
+            decor=_export_decor(store_name, payload), remarks=payload.remarks,
         )
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -781,7 +955,7 @@ def export_pending_order(
         result = order_export.export_pending_order(
             store_name, payload.split_size,
             columns=payload.columns, file_format=payload.file_format, order_no=payload.order_no,
-            images=payload.images,
+            images=payload.images, remarks=payload.remarks,
         )
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -918,6 +1092,26 @@ def reset_pending_qty_check(store_name: str, current_user: dict = Depends(requir
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+# ---- Abnormal bill sales (rulebook PRR-SALE-ABNORMAL / PRR-SALE-WARNING):
+# the open order's products with bulk bills, for PM review, and the
+# "do not consider in order" mark (written to OrderNMC and the platform). ----
+
+@router.get("/qty-check/{store_name}/abnormal-sales")
+def abnormal_sales(store_name: str):
+    try:
+        return abnormal_sales_service.legacy_abnormal_sales(store_name)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.patch("/qty-check/{store_name}/sales/dont-consider")
+def set_sale_dont_consider(store_name: str, payload: DontConsiderUpdate):
+    return abnormal_sales_service.set_dont_consider(
+        store_code=store_name, product_code=payload.product_code,
+        bill_no=payload.bill_no, bill_date=payload.bill_date, dont_consider=payload.dont_consider,
+    )
+
+
 # ---- Pending Order screen (port of Form1's "Pending Order" process:
 # reviewed lines, qtycheck = 1, not yet assigned to a supplier, status = 0) ----
 
@@ -1034,12 +1228,13 @@ def qty_check_sales_details(store_name: str, product_code: int, mode: str = "loc
 
 
 @router.get("/qty-check/{store_name}/{product_code}/monthly-stats")
-def qty_check_monthly_stats(store_name: str, product_code: int, mode: str = "local"):
+def qty_check_monthly_stats(store_name: str, product_code: int, mode: str = "local",
+                            months: Optional[int] = Query(None, ge=1, le=24)):
     try:
         store = repository.get_store(store_name)
         if not store:
             raise HTTPException(status_code=404, detail="Store not found")
-        return repository.qty_check_monthly_stats(store, product_code, mode)
+        return repository.qty_check_monthly_stats(store, product_code, mode, months)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -1050,6 +1245,7 @@ def qty_check_order_history(store_name: str, product_code: int):
         return repository.qty_check_order_history(store_name, product_code)
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
 
 # ---- PM order entry + received-not-ordered report (owner rulings 2026-11-05) ----
 

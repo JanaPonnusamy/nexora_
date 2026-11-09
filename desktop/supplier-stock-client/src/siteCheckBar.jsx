@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   pageAdd, pageHighlight, pageOpenCart, pageResults, pageSearch, roAdd, roCart, roPick, roResults, roSearch,
-  SITE_STATE_LABEL, siteBestMatch, siteCounts, siteDecide, siteInCart, siteKind, siteOffer, siteQuery, siteScript, siteTokens,
+  SITE_STATE_LABEL, siteBestByCode, siteBestMatch, siteCounts, siteDecide, siteInCart, siteKind, siteOffer, siteQuery, siteScript, siteTokens,
   roEnter,
 } from './siteCheck.js';
 
@@ -26,7 +26,7 @@ const STOP_TEXT = {
 const loadFlag = (key, fallback) => { try { const v = localStorage.getItem(key); return v == null ? fallback : v !== 'false'; } catch { return fallback; } };
 const saveFlag = (key, value) => { try { localStorage.setItem(key, String(value)); } catch { /* per PC */ } };
 
-export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep, siteUrl, supplierName }) {
+export function useSiteCheck({ webRef, rows, qtyOf, nameOf, codeOf, resetKey, onStep, siteUrl, supplierName }) {
   const [marks, setMarks] = useState({});
   const [running, setRunning] = useState(false);
   const [note, setNote] = useState('');
@@ -48,18 +48,25 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep, si
     return next;
   }), []);
 
-  // Search one product: brand + strength first, then the brand alone (some
-  // sites find "EMCLOBAL" but nothing for "EMCLOBAL CREAM"). Each search
-  // waits for a matching result, or the results to settle without one
-  // (~1.5s unchanged), or ~10s.
+  // Search one product: by its known supplier product code first (owner
+  // 2026-11-07 -- SupplierProductMatch already has the exact mapping, so
+  // search by code instead of typing the name when we have it), then brand +
+  // strength, then the brand alone (some sites find "EMCLOBAL" but nothing
+  // for "EMCLOBAL CREAM"). Each search waits for a matching result, or the
+  // results to settle without one (~1.5s unchanged), or ~10s.
   async function search(row, tag) {
     const web = webRef.current;
     if (!web?.ready()) return { stop: 'Open the supplier’s site on the right first (🌐 Sites).' };
     const site = ADAPTERS[siteKind(web.url())];
     const slow = live.current.watch;
     const name = nameOf(row);
+    const code = codeOf ? codeOf(row) : '';
     let best = null;
-    for (const query of [...new Set([siteQuery(name), siteTokens(name)[0]].filter(Boolean))]) {
+    const queries = [];
+    if (code) queries.push({ query: String(code).trim(), byCode: true });
+    for (const query of [...new Set([siteQuery(name), siteTokens(name)[0]].filter(Boolean))]) queries.push({ query, byCode: false });
+    for (const { query, byCode } of queries) {
+      if (!query) continue;
       setStatus(`${tag}${name} — searching “${query}”…`);
       const before = await web.exec(siteScript(site.results)).catch(() => null);
       let sent = await web.exec(siteScript(site.search, query, false)).catch(() => null);
@@ -79,7 +86,7 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, resetKey, onStep, si
         const res = await web.exec(siteScript(site.results)).catch(() => null);
         if (!res) continue;
         const fresh = res.sig !== before?.sig;
-        best = fresh ? siteBestMatch(name, res.rows) : null;
+        best = fresh ? (byCode ? siteBestByCode(res.rows) : siteBestMatch(name, res.rows)) : null;
         if (best) break;
         still = res.sig === lastSig ? still + 1 : 0;
         lastSig = res.sig;

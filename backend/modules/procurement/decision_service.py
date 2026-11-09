@@ -4,20 +4,25 @@ Turns a Refresh into an immutable, explainable Virtual Product List:
 
     Stage 0  Validate Refresh + load parameters   (PR-BR-016)
     Stage 1  Load source dataset (one bulk read)   (PR-BR-001/012/014 inputs)
-    Stage 2-9 Run business rules in Python          (decision_rules.evaluate)
+    Stage 2-9 Quantity from the legacy local order query
+              (legacy_order_parity), unless PROCUREMENT_GENERATION_PROFILE=nexora
     Stage 5  Bulk insert the VPL snapshot           (single executemany)
     Stage 6  Publish Refresh + point Cycle at it
 
 Everything after Stage 0 runs inside one transaction so a Refresh is either
-fully generated or not at all. Business rules are pure Python (decision_rules);
-this layer only orchestrates and persists.
+fully generated or not at all. The default quantity profile is the legacy
+local order query (TotalStock, line frequency, single-line spike, Additional
+Row zeroed). decision_rules.evaluate remains available as an explicit rollback.
 """
+
+from dataclasses import replace
 
 from fastapi import HTTPException
 
 from config.database import get_connection
 from modules.procurement import decision_repository as repo
 from modules.procurement import decision_rules as rules
+from modules.procurement import legacy_order_parity as legacy_parity
 
 # Fields produced by decision_rules.evaluate that map 1:1 to VPL columns.
 _OUTPUT_FIELDS = (
@@ -85,6 +90,11 @@ def generate_vpl(tenant_id, refresh_id):
             status_code=409, detail="Archived Refresh cannot be generated"
         )
     params = _load_parameters(refresh)
+    profile = legacy_parity.generation_profile()
+    if profile != legacy_parity.PROFILE_NEXORA:
+        # Match the recency the legacy order job binds, not the Nexora engine's
+        # historical default of 10.
+        params = replace(params, recency_days=legacy_parity.bound_recency_days())
 
     conn = get_connection()
     try:
@@ -93,16 +103,16 @@ def generate_vpl(tenant_id, refresh_id):
         # Stage 1 — load the source dataset once (no N+1).
         source = repo.load_source(conn, tenant_id, refresh.get("store_id"), params)
 
-        # Stages 2-9 — evaluate every product, but the Virtual Product List is
-        # the PROCUREMENT list, not a catalogue copy: persist ONLY products the
-        # candidate filter includes (PR-BR-004: AvgDailySales > 0 AND
-        # DaysCover < MinDays, and FinalRequiredQty > 0). Products that do not
-        # need procurement (not selling, adequately covered, inactive, flagged,
-        # zero-required) are evaluated for the counts but never written to the VPL.
+        # Persist products the legacy order list would contain: main lines and
+        # Additional Row (buyer quantity 0). The Nexora rollback profile still
+        # persists only decision_rules INCLUDE rows.
         rows, evaluated = [], 0
         for src in source:
             evaluated += 1
-            out = rules.evaluate(src, params)
+            if profile == legacy_parity.PROFILE_NEXORA:
+                out = rules.evaluate(src, params)
+            else:
+                out = legacy_parity.evaluate_for_vpl(src, params, mode="local")
             if out["procurement_action"] == rules.ACTION_INCLUDE:
                 rows.append(_to_insert_row(tenant_id, refresh, src, out))
 
@@ -134,6 +144,8 @@ def generate_vpl(tenant_id, refresh_id):
             "rolling_days": params.rolling_days,
             "min_days": params.min_days,
             "max_days": params.max_days,
+            "recency_days": params.recency_days,
+            "generation_profile": profile,
             "movement_fast_cut": params.movement_fast_cut,
             "movement_medium_cut": params.movement_medium_cut,
             "stock_low_cut": params.stock_low_cut,

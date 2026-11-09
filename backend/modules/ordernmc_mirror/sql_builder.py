@@ -182,6 +182,14 @@ def heap_groups_sql(table: str, cols: list[dict], key_cols: list[dict],
     (sum of row hashes mod p, row count), so any edit/insert/removal inside a
     group changes it. Returns every row of the first @n changed groups.
 
+    ``r`` is read with a snapshot-locking hint and referenced twice (once to
+    hash groups, once to re-fetch their rows) -- without it, a row written
+    between those two reads of a live, lock-free heap table can appear in one
+    reference but not the other, and group hashes then disagree with what
+    gets sent, so a page can contain the same source row more than once (the
+    agent then collides inserting its own duplicate -- 2026-11-09, SMS
+    ProductTrans).
+
     Params: [store names], page_size, target_id, table_id.
     """
     select_cols = ", ".join(f"t.{q(c['name'])}" for c in cols)
@@ -189,7 +197,7 @@ def heap_groups_sql(table: str, cols: list[dict], key_cols: list[dict],
     where = f" WHERE {' AND '.join(preds)}" if preds else ""
     return (
         f"WITH r AS (SELECT {select_cols}, {key_hash_expr(key_cols)} AS __ph, "
-        f"{row_hash_expr(cols)} AS __rh FROM [dbo].{q(table)} AS t{where}), "
+        f"{row_hash_expr(cols)} AS __rh FROM [dbo].{q(table)} AS t WITH (HOLDLOCK, ROWLOCK){where}), "
         f"g AS (SELECT __ph, CAST(CAST(CAST(SUM(CAST(CAST(SUBSTRING(__rh, 1, 4) AS int) AS bigint)) "
         f"% 2147483647 AS int) AS binary(4)) + CAST(CAST(COUNT_BIG(*) AS int) AS binary(4)) AS binary(8)) AS __grh "
         f"FROM r GROUP BY __ph), "

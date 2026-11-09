@@ -215,7 +215,10 @@ def _save_summary(summary, finished):
 
 
 def target_stores(configured):
-    """Active OrderNMC stores, limited to the configured list (None = all)."""
+    """Active stores, limited to the configured list (None = all active stores
+    of whichever tenant the active context already points at -- see
+    router._scope_tenant / service._resolve_store; there's no single
+    multi-tenant store list so an unscoped call only ever sees one tenant)."""
     active = [s["store_name"] for s in repository.list_stores(True)]
     if configured is None:
         return active

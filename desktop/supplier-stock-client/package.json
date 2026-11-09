@@ -1,6 +1,6 @@
 {
   "name": "nexora-supplier-stock-client",
-  "version": "0.1.46",
+  "version": "0.1.67",
   "private": true,
   "description": "Axythic supplier stock desktop client scaffold",
   "main": "electron/main.cjs",
@@ -36,6 +36,10 @@
       {
         "from": "tools",
         "to": "tools"
+      },
+      {
+        "from": "../../dist/NexoraDeviceController.exe",
+        "to": "controller/NexoraDeviceController.exe"
       }
     ],
     "publish": [
