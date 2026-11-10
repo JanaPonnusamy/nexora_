@@ -1218,7 +1218,11 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       const dateFolder = exportKit.dateFolder();
       const orderNo = orderNoFor(dateFolder);
       const columns = exportKit.columnDefs.filter((c) => c.required || exportSettings.columns[c.key]).map((c) => PW_EXPORT_KEY_MAP[c.key]);
-      const productCodes = view === 'supplier' ? visible.map((r) => r.key) : undefined;
+      const productCodes = view === 'supplier'
+        ? (supplierMode === 'site'
+          ? visible.filter((r) => ['cart', 'available'].includes(site.marks[r.key]?.state)).map((r) => r.key)
+          : visible.map((r) => r.key))
+        : undefined;
       const { blob, filename: backendFilename, exportedCount } = await api.legacyExportOrder(
         store, supplier.supplier_code, supplier.supplier_name, mode, Number(splitCount) || 0, session,
         { columns, fileFormat: exportSettings.fileFormat, orderNo, productCodes, allProducts, images: exportSettings.images, remarks: exportRemarks() },

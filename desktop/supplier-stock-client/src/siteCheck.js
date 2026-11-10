@@ -15,9 +15,19 @@ export async function pageSearch(text, slow) {
   const hay = (el) => `${el.type} ${el.name} ${el.id} ${el.placeholder} ${el.getAttribute('aria-label') || ''} ${el.className}`.toLowerCase();
   const score = (el) => (el.type === 'search' ? 4 : 0) + (/search|find|product|item|medicine|drug|keyword/.test(hay(el)) ? 3 : 0)
     - (/user|login|pass|mail|phone|mobile|otp|qty|quantity|date/.test(hay(el)) ? 8 : 0);
-  const boxes = [...document.querySelectorAll('input')]
+  let boxes = [...document.querySelectorAll('input')]
     .filter((el) => /^(search|text|)$/i.test(el.getAttribute('type') || '') && visible(el))
     .map((el) => [el, score(el)]).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]);
+  // Older ASP-style admin sites (e.g. Aosta BackBone) often give their one
+  // text box no name/placeholder/aria-label at all, so the keyword score
+  // above never lifts it above 0. Fall back to the single visible, unscored
+  // text/search input on the page -- if there's exactly one, it's the search
+  // box (a page with several unlabeled inputs stays genuinely ambiguous).
+  if (!boxes.length) {
+    const bare = [...document.querySelectorAll('input')]
+      .filter((el) => /^(search|text|)$/i.test(el.getAttribute('type') || '') && visible(el) && score(el) === 0);
+    if (bare.length === 1) boxes = [[bare[0], 0]];
+  }
   if (!boxes.length) return { ok: false, reason: [...document.querySelectorAll('input[type=password]')].some(visible) ? 'login' : 'no-search' };
   const box = boxes[0][0];
   box.focus();
@@ -132,10 +142,22 @@ export function siteForm(name) {
 // 0..1. Same brand (first word) required; a different strength (first
 // number) or dosage form is never the same product: DOLO 650 is not
 // DOLO 1000, XEPAN 40 TAB is not XEPAN 40 INJ.
+// Same brand as the first token(s): plain equality, or one side fuses the
+// brand with its next token where the other keeps them separate -- a
+// supplier catalog listing "BRITORVA F 10" as "BRITORVAF 10" (brand+suffix
+// run together) must still match "BRITORVA F 10" from our side.
+function sameBrand(a, b) {
+  if (!a.length || !b.length) return false;
+  if (a[0] === b[0]) return true;
+  if (a.length > 1 && a[0] + a[1] === b[0]) return true;
+  if (b.length > 1 && b[0] + b[1] === a[0]) return true;
+  return false;
+}
+
 export function siteMatchScore(ours, theirs) {
   const a = siteTokens(ours);
   const b = siteTokens(theirs);
-  if (!a.length || !b.length || a[0] !== b[0]) return 0;
+  if (!sameBrand(a, b)) return 0;
   const formA = siteForm(ours);
   const formB = siteForm(theirs);
   if (formA && formB && formA !== formB) return 0;

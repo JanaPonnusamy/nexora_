@@ -124,7 +124,11 @@ export function useSiteCheck({ webRef, rows, qtyOf, nameOf, codeOf, resetKey, on
     const cartBefore = site.cart ? await web.exec(siteScript(site.cart)).catch(() => null) : null;
     if (siteInCart(cartBefore, best.row.name)) return done({ ...result, note: 'Already in the site’s cart — not added again' });
     if (!live.current.addToCart) return done({ ...result, state: 'available', note: 'In stock on the site; not put in its cart' });
-    if (site.pick && !picked?.ok) return done({ ...result, state: 'check', note: 'Found, but the site did not take the pick' });
+    // picked.ok only means Packing/Offers got auto-filled -- some site skins
+    // never populate those fields even though the row click registered, so a
+    // failed pick no longer blocks adding; the cart-membership check below
+    // (and roAdd's own qty box + ADD TO CART click) is what actually verifies
+    // the add, so trying it is strictly more informative than stopping here.
     setStatus(`${tag}${nameOf(row)} → ${seen} → adding ${qtyOf(row)} to the cart…`);
     const added = await web.exec(siteScript(site.add, best.row.n, qtyOf(row), slow)).catch(() => null);
     if (!added?.ok) return done({ ...result, state: 'check', note: 'Found, but the app could not add it to the cart' });
