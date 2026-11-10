@@ -169,7 +169,7 @@ def require_admin_or_store_pm(store_name: str, current_user: dict = Depends(get_
     raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
 
 
-def _scope_tenant(request: Request, current_user: dict = Depends(get_current_user)):
+async def _scope_tenant(request: Request, current_user: dict = Depends(get_current_user)):
     """Multi-tenant HOs (.32: Success + SMS) keep OrderNMC/OrderSMS/OrderSuccess
     as SEPARATE databases now; every request must pick the right one before any
     repository call connects. A store-scoped path resolves the store's own
@@ -177,7 +177,19 @@ def _scope_tenant(request: Request, current_user: dict = Depends(get_current_use
     authoritative even for an admin managing a store outside their own tenant).
     A store-agnostic path (GET /stores, DB health...) falls back to the
     caller's own tenant_id -- None for a platform admin, which keeps today's
-    single-default-database behaviour on HOs that have no tenant split."""
+    single-default-database behaviour on HOs that have no tenant split.
+
+    MUST be async: a sync generator dependency gets its "enter" half (before
+    yield) and "exit" half (after yield) each dispatched independently to
+    FastAPI's dependency threadpool (anyio.to_thread.run_sync via
+    contextmanager_in_threadpool), which can land them in two DIFFERENT
+    contextvars Contexts. reset_active_tenant's Token was then "created in a
+    different Context" -- a ValueError raised from the finally block, which
+    masks whatever the route handler actually raised (e.g. a clean,
+    handled NoExportableRows comes back as an opaque 500 instead of its
+    intended 400) and, with log_config=None on the HO exe host, left zero
+    trace anywhere. An async generator runs straight on the event loop in one
+    Task/Context, so set/reset always pair correctly."""
     store_name = request.path_params.get("store_name")
     tenant_id = database.platform_tenant_id_by_store_name(store_name) if store_name else None
     if not tenant_id:
