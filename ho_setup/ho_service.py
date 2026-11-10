@@ -123,10 +123,22 @@ class HoBackendService(win32serviceutil.ServiceFramework):
             print("BACKEND CRASH:\n" + traceback.format_exc())
 
     def _serve(self):
+        import logging
+
         import uvicorn
 
         from api.app import app  # imported after env + sys.path are prepared
 
+        # log_config=None leaves uvicorn's loggers with no handler at all, so
+        # every per-request unhandled-exception traceback (which uvicorn
+        # itself logs via logging.getLogger("uvicorn.error")) is silently
+        # discarded instead of reaching backend.log -- the request still
+        # 500s, but with zero trace anywhere a request failure could be
+        # debugged from. Attach a basic handler to root instead of passing
+        # uvicorn's own dictConfig (which wants to open its own stream
+        # separate from the stdout/stderr _redirect_logs already repointed
+        # at backend.log).
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
         host = os.environ.get("UNINEX_HOST", DEFAULT_HOST)
         port = int(os.environ.get("UNINEX_PORT", DEFAULT_PORT))
         config = uvicorn.Config(app, host=host, port=port, log_config=None)
