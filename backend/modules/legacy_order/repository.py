@@ -1417,14 +1417,28 @@ def orders_by_supplier_export_count(store_name, supplier_code):
 def assigned_orders(store_name, supplier_code, last_offer=False):
     """Port of Form1.FetchSupplierOrderDetails -- rows already assigned to this
     supplier (status=1). See qty_check_rows for why backfill_is_offer runs
-    first."""
+    first.
+
+    SupplierProductCode comes from SupplierProductMatch (the Live Stock
+    supplier-match saved at assign time) and SupplierProductName from
+    SupplierStock via that same code (owner-confirmed 2026-11-10: the match
+    already exists, so export's optional "Supplier Code"/"Supplier Name"
+    columns should show it, not require a second lookup) -- LEFT JOINs since
+    a row assigned without ever having matched supplier stock (e.g. a manual
+    assign with no Live Stock match) must still export, just without those
+    two columns filled in."""
     backfill_is_offer(store_name)
     assigned = _assigned_code_values(supplier_code)
     offer_cols, offer_apply = _last_offer_sql(last_offer)
     sql = (
         "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.SaleUnit, om.MRP, om.OrSupplier, "
-        f"om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck{offer_cols} "
+        f"om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck, "
+        f"SPM.SupplierProductCode, SS.SupplierProductName{offer_cols} "
         "FROM OrderManagement om "
+        "LEFT JOIN SupplierProductMatch SPM ON SPM.ProductCode = om.ProductCode "
+        "  AND SPM.StoreName = om.StoreName AND SPM.SupplierCode = om.OrSupplierCode "
+        "LEFT JOIN SupplierStock SS ON SS.SupplierProductCode = SPM.SupplierProductCode "
+        "  AND SS.SupplierCode = SPM.SupplierCode AND SS.StoreName = om.StoreName "
         f"{offer_apply}"
         "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
         f"AND om.orsuppliercode IN ({_in_list(assigned)}) "

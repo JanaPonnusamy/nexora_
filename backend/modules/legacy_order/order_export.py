@@ -627,6 +627,8 @@ _EXPORT_COLUMN_MAP = {
     "sub_location": ("SubLocation", lambda r: r.get("SubLocation") or ""),
     "rack": ("Rack", lambda r: r.get("Rack") or ""),
     "remarks": ("Remarks", lambda r: r.get("ExportRemark") or ""),
+    "supplier_product_code": ("Supplier Code", lambda r: r.get("SupplierProductCode") or ""),
+    "supplier_product_name": ("Supplier Name", lambda r: r.get("SupplierProductName") or ""),
 }
 _EXPORT_REQUIRED_COLUMNS = ("product_code", "product_name", "order_qty")
 
@@ -680,7 +682,8 @@ def _layout_generic(rows, keys, column_map):
 # supplier-side consumers of these sheets were built against the VB output.
 # Used for the custom .xls export.
 _VB_COLUMN_ORDER = ("product_name", "order_qty", "remarks", "sale_unit", "mrp", "product_code",
-                    "discount", "category", "sub_location", "rack")
+                    "discount", "category", "sub_location", "rack",
+                    "supplier_product_code", "supplier_product_name")
 _VB_HEADER = {"product_code": "Productcode", "discount": "Discound"}
 
 

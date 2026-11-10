@@ -4783,7 +4783,8 @@ function OrderWorkspace({ session, settings, hidden }) {
   const OW_EXPORT_KEY_MAP = {
     productCode: 'product_code', productName: 'product_name', orderQty: 'order_qty',
     saleUnit: 'sale_unit', mrp: 'mrp', discount: 'discount', category: 'category',
-    subLocation: 'sub_location', rack: 'rack'
+    subLocation: 'sub_location', rack: 'rack',
+    supplierProductCode: 'supplier_product_code', supplierProductName: 'supplier_product_name'
   };
   const selectedExportColumns = OW_EXPORT_COLUMN_DEFS
     .filter((c) => c.required || exportSettings.columns[c.key])
@@ -5935,7 +5936,9 @@ const OW_EXPORT_COLUMN_DEFS = [
   { key: 'discount', label: 'Discount', required: false },
   { key: 'category', label: 'Category', required: false },
   { key: 'subLocation', label: 'Sub Location', required: false },
-  { key: 'rack', label: 'Rack', required: false }
+  { key: 'rack', label: 'Rack', required: false },
+  { key: 'supplierProductCode', label: 'Supplier Code', required: false },
+  { key: 'supplierProductName', label: 'Supplier Name', required: false }
 ];
 function owDefaultExportSettings() {
   const columns = {};
