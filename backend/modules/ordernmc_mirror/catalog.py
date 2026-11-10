@@ -57,6 +57,17 @@ HEAP_KEYS = {
     "batches": ["ProductCode", "BatchCode", "StoreName"],
     "saleinformation": ["BillDate", "BNumber", "StoreName"],
     "productsaleinformation": ["ID", "StoreName"],
+    # ProductTrans hit the identical symptom right after the three fixes above
+    # went live -- it also has no PK on HO (despite the HOLDLOCK/ROWLOCK read
+    # fix from 2026-11-09, which only dedupes rows read within one pass, not
+    # the every-column key that let a changed row dodge the DELETE). Auditing
+    # the rest of this target's heap tables for the same gap turned up three
+    # more with a real remote PK and no entry here.
+    "producttrans": ["ProductCode", "StoreName", "MonthOfStatistics"],
+    "purchasetrans": ["ID", "StoreName"],
+    "salesrep": ["Salesmancode", "StoreName"],
+    "supplierexcelmapping": ["SupplierCode", "StoreName", "ColumnName"],
+    "orderheaderdetails": ["OrderId"],
 }
 
 
