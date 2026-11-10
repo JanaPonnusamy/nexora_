@@ -67,3 +67,14 @@ def backend_release_latest(_: dict = Depends(require_super_admin)):
 def backend_release_download(version: str, _: dict = Depends(require_super_admin)):
     path, file_name = service.backend_release_path(version)
     return FileResponse(path, filename=file_name, media_type="application/zip")
+
+
+# ---- one-off ops file transfer (temporary, remove after use) --------------
+# 2026-11-10: moving a manual OrderSMS backup off this node to DELL-DESKTOP,
+# the only open inbound port between the two is this node's HO API, so this
+# reuses it rather than opening a new port. Remove once the transfer is done.
+
+@router.get("/ops-file/{file_name}")
+def ops_file_download(file_name: str, _: dict = Depends(require_super_admin)):
+    path = service.ops_file_path(file_name)
+    return FileResponse(path, filename=file_name, media_type="application/octet-stream")

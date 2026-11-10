@@ -162,6 +162,22 @@ def backend_release_path(version: str):
     return path, meta["file_name"]
 
 
+# ---- one-off ops file transfer (temporary, remove after use) --------------
+
+OPS_FILE_DIR = Path(os.environ.get("HO_OPS_FILE_DIR", r"E:\SQLData\Backup"))
+
+
+def ops_file_path(file_name: str) -> Path:
+    from fastapi import HTTPException
+
+    if "/" in file_name or "\\" in file_name or ".." in file_name:
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    path = OPS_FILE_DIR / file_name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return path
+
+
 # ---- self-update ----------------------------------------------------------
 
 def start_self_update(source_url: str | None = None, auth_header: str | None = None) -> dict:
