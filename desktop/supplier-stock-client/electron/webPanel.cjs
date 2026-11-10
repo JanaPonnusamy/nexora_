@@ -186,6 +186,19 @@ function attach(win) {
       : { action: 'deny' }));
     contents.on('did-finish-load', () => autoLogin(contents, store));
     contents.on('did-navigate-in-page', (_e, _url, isMainFrame) => { if (isMainFrame) autoLogin(contents, store); });
+    // Native window.alert/confirm/prompt block the renderer's whole event
+    // loop until a human clicks the OS dialog -- but the Website check drives
+    // this webview headlessly via executeJavaScript, so a portal site popping
+    // one (e.g. Aosta BackBone's "Products available in Cart!") freezes every
+    // later script call silently, looking like "search box not found" with
+    // no error. Override them to no-ops as early as possible on every
+    // (including same-page) navigation, before the site's own scripts run.
+    const suppressDialogs = `(() => {
+      window.alert = () => undefined;
+      window.confirm = () => true;
+      window.prompt = () => null;
+    })();`;
+    contents.on('dom-ready', () => { contents.executeJavaScript(suppressDialogs).catch(() => {}); });
   });
 }
 
