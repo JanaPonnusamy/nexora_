@@ -10,12 +10,22 @@
 
 // Type the product into the site's search box and submit it ('slow' types
 // it letter by letter, to watch). 'login' = the site shows its sign-in page.
+// Some admin apps (e.g. Aosta BackBone's order-entry screen) render their
+// form inside an iframe, where plain document.querySelectorAll from the top
+// frame finds nothing even though the field is visibly on screen -- so this
+// also looks in same-origin iframes' documents (cross-origin ones throw on
+// .contentDocument and are silently skipped; can't be searched anyway).
 export async function pageSearch(text, slow) {
   const visible = (el) => el.getClientRects().length > 0 && !el.disabled && getComputedStyle(el).visibility !== 'hidden';
   const hay = (el) => `${el.type} ${el.name} ${el.id} ${el.placeholder} ${el.getAttribute('aria-label') || ''} ${el.className}`.toLowerCase();
   const score = (el) => (el.type === 'search' ? 4 : 0) + (/search|find|product|item|medicine|drug|keyword/.test(hay(el)) ? 3 : 0)
     - (/user|login|pass|mail|phone|mobile|otp|qty|quantity|date/.test(hay(el)) ? 8 : 0);
-  let boxes = [...document.querySelectorAll('input')]
+  const docs = [document];
+  for (const f of document.querySelectorAll('iframe, frame')) {
+    try { if (f.contentDocument) docs.push(f.contentDocument); } catch { /* cross-origin */ }
+  }
+  const inputs = docs.flatMap((d) => [...d.querySelectorAll('input')]);
+  let boxes = inputs
     .filter((el) => /^(search|text|)$/i.test(el.getAttribute('type') || '') && visible(el))
     .map((el) => [el, score(el)]).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]);
   // Older ASP-style admin sites (e.g. Aosta BackBone) often give their one
@@ -24,11 +34,14 @@ export async function pageSearch(text, slow) {
   // text/search input on the page -- if there's exactly one, it's the search
   // box (a page with several unlabeled inputs stays genuinely ambiguous).
   if (!boxes.length) {
-    const bare = [...document.querySelectorAll('input')]
+    const bare = inputs
       .filter((el) => /^(search|text|)$/i.test(el.getAttribute('type') || '') && visible(el) && score(el) === 0);
     if (bare.length === 1) boxes = [[bare[0], 0]];
   }
-  if (!boxes.length) return { ok: false, reason: [...document.querySelectorAll('input[type=password]')].some(visible) ? 'login' : 'no-search' };
+  if (!boxes.length) {
+    const pw = docs.flatMap((d) => [...d.querySelectorAll('input[type=password]')]);
+    return { ok: false, reason: pw.some(visible) ? 'login' : 'no-search' };
+  }
   const box = boxes[0][0];
   box.focus();
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -60,8 +73,12 @@ export async function pageSearch(text, slow) {
 export function pageResults() {
   const visible = (el) => el.getClientRects().length > 0;
   const text = (el) => String((el && (el.innerText || el.textContent)) || '').replace(/\s+/g, ' ').trim();
+  const docs = [document];
+  for (const f of document.querySelectorAll('iframe, frame')) {
+    try { if (f.contentDocument) docs.push(f.contentDocument); } catch { /* cross-origin */ }
+  }
   const rows = [];
-  for (const table of document.querySelectorAll('table')) {
+  for (const table of docs.flatMap((d) => [...d.querySelectorAll('table')])) {
     if (!visible(table)) continue;
     const all = [...table.rows];
     const head = (table.tHead && table.tHead.rows[0]) || all.find((tr) => tr.querySelector('th')) || all[0];
@@ -84,7 +101,12 @@ export function pageResults() {
 // Add / Cart button.
 export function pageAdd(n, qty) {
   const visible = (el) => el.getClientRects().length > 0 && !el.disabled;
-  const tr = document.querySelector(`[data-nexora-row="${n}"]`);
+  const docs = [document];
+  for (const f of document.querySelectorAll('iframe, frame')) {
+    try { if (f.contentDocument) docs.push(f.contentDocument); } catch { /* cross-origin */ }
+  }
+  let tr = null;
+  for (const d of docs) { tr = d.querySelector(`[data-nexora-row="${n}"]`); if (tr) break; }
   if (!tr) return { ok: false, reason: 'gone' };
   const box = [...tr.querySelectorAll('input')].find((el) => /^(number|text|tel|)$/i.test(el.getAttribute('type') || '') && visible(el));
   if (box) {
