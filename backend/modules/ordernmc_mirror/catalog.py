@@ -45,6 +45,18 @@ HEAP_KEYS = {
     # (suppliercode, supplierproductcode, storename) that HO's heap table
     # lacks.
     "supplierstock": ["suppliercode", "supplierproductcode", "storename"],
+    # Same gap again (2026-11-10, DELL-DESKTOP full repush): Batches/
+    # SaleInformation/ProductSaleInformation have no PK on HO either, so their
+    # replace-path key fell back to EVERY column -- any row whose volatile
+    # columns (Stock, LastSaleDate, SyncDateTime, ...) changed since the
+    # remote's copy was written meant the DELETE matched nothing and the
+    # INSERT then collided with the remote's real PK (Batches:
+    # ProductCode+BatchCode+StoreName, SaleInformation: BillDate+BNumber+
+    # StoreName, ProductSaleInformation: ID+StoreName), erroring that whole
+    # batch under live write load on a store PC.
+    "batches": ["ProductCode", "BatchCode", "StoreName"],
+    "saleinformation": ["BillDate", "BNumber", "StoreName"],
+    "productsaleinformation": ["ID", "StoreName"],
 }
 
 
