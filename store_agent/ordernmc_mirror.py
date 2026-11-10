@@ -300,6 +300,14 @@ def _input_size(col):
         return (pyodbc.SQL_DECIMAL, 19, 4)
     if t == "smallmoney":
         return (pyodbc.SQL_DECIMAL, 10, 4)
+    if t in ("varbinary", "binary", "image"):
+        # Same first-row-decides-the-type gap as above: a column that's NULL
+        # in row 1 of a batch (e.g. OrderSuppliers.PortalPasswordEnc, blank
+        # for almost every supplier) makes pyodbc infer a non-binary bind for
+        # the whole column, so a later real value triggers "Implicit
+        # conversion from data type varchar to varbinary(max) is not allowed"
+        # on the MERGE's comparison (2026-11-10, SMS OrderSuppliers).
+        return (pyodbc.SQL_VARBINARY, 8000, 0)
     return None
 
 
