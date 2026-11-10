@@ -456,7 +456,15 @@ def refresh_warehouse_stock(store, source_store_name, on_progress=None):
         report(f"{source_store_name} is not configured in OrderNMC.Stores; skipping stock refresh.")
         return 0, 0
     report(f"Reading stock from {source_store_name}...")
-    rows = repository.branch_stock(source_store)
+    # Agent-synced source (e.g. SHP) has no direct-SQL branch connection HO
+    # can reach -- its own stock arrives via the agent into NEXORA_PLATFORM.
+    # sync.* and is already copied into this tenant's central Products/
+    # Batches/PurchaseTrans by the regular per-store sync, so read that
+    # instead of trying (and failing) a branch connection to its POS PC.
+    if (source_store.get("connection_type") or "").upper() == "AGENT":
+        rows = repository.central_branch_stock(source_store["store_name"])
+    else:
+        rows = repository.branch_stock(source_store)
     report(f"Read {len(rows)} products. Updating {store['store_name']}'s supplier stock...")
     # suppliercode is THIS store's own code for the source ("HO") supplier
     # (dbo.Stores.Ho_code), not the source store's name -- NMS/NMA file it

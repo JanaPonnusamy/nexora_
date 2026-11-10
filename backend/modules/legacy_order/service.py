@@ -855,9 +855,13 @@ def start_stock_update(store_name, source_store_name="NMW"):
             f"A {running} job is already running for '{store_name}'. Wait for it to finish."
         )
 
-    ok, error = repository.test_branch_connection(source_store)
-    if not ok:
-        raise ConnectionError(f"Failed to connect to source store '{source_store_name}': {error}")
+    # Agent-synced source (e.g. SHP) has no direct-SQL branch connection HO
+    # can reach -- its stock is read from the central sync copy instead (see
+    # order_process.refresh_warehouse_stock), so there is nothing to pre-flight.
+    if (source_store.get("connection_type") or "").upper() != "AGENT":
+        ok, error = repository.test_branch_connection(source_store)
+        if not ok:
+            raise ConnectionError(f"Failed to connect to source store '{source_store_name}': {error}")
 
     job_id = _new_job("stock", store_name, 2)
     threading.Thread(

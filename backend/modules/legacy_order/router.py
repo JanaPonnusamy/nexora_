@@ -458,6 +458,8 @@ def start_stock_update(payload: StockUpdateRequest):
     except ValueError as exc:
         status = 409 if "already running" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/jobs")

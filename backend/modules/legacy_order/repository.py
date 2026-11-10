@@ -825,6 +825,70 @@ def branch_stock(store):
         conn.close()
 
 
+_MASTER_STOCK_SQL_CENTRAL = """
+WITH LatestPT AS (
+    SELECT
+        pt.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY pt.ProductCode
+            ORDER BY pt.ID DESC
+        ) AS rn
+    FROM PurchaseTrans pt
+    WHERE pt.StoreName = ?
+),
+TotalStockPerProduct AS (
+    SELECT
+        b.ProductCode,
+        SUM(b.Stock) AS TotalStock
+    FROM Batches b
+    WHERE b.StoreName = ?
+    GROUP BY b.ProductCode
+)
+SELECT
+    p.ProductCode,
+    p.ProductName,
+    p.SubLocation,
+    tsp.TotalStock AS stock,
+    ROUND(
+        CASE
+            WHEN pt.PurchasePrice > 0
+            THEN ((pt.PurchasePrice - pt.ItemCost) * 100.0 / pt.PurchasePrice)
+            ELSE 0
+        END,
+        2
+    ) AS ProductDiscPercent
+FROM Products p
+INNER JOIN TotalStockPerProduct tsp
+    ON tsp.ProductCode = p.ProductCode
+LEFT JOIN LatestPT pt
+    ON pt.ProductCode = p.ProductCode
+   AND pt.rn = 1
+WHERE p.StoreName = ?
+ORDER BY p.ProductName
+"""
+
+
+def central_branch_stock(store_name):
+    """Same shape as branch_stock(), but reads the already-synced central
+    copy (Products/Batches/PurchaseTrans, StoreName-scoped) instead of
+    connecting to the branch DB directly -- for an agent-synced warehouse
+    source (e.g. SHP) that has no direct-SQL branch connection HO can reach,
+    only its platform sync.* copy (see service.is_agent_synced_store)."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_MASTER_STOCK_SQL_CENTRAL, (store_name, store_name, store_name))
+        return [
+            {
+                "code": r.ProductCode,
+                "name": r.ProductName,
+                "stock": float(r.stock or 0),
+                "disc_percent": float(r.ProductDiscPercent or 0),
+                "rack": (r.SubLocation or "").strip() or None,
+            }
+            for r in cur.fetchall()
+        ]
+
+
 def replace_supplier_stock(target_store_name, supplier_code, rows):
     """REPLACE this supplier's rows for one branch in the central
     OrderNMC.SupplierStock table -- the same table/shape the legacy Excel
