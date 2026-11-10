@@ -351,10 +351,17 @@ export async function roPick(n) {
 }
 
 // Quantity + ADD TO CART for the picked product. The form clears itself
-// once the cart takes it.
+// once the cart takes it. RetailOrders skins vary the field id and button
+// text -- Siva Murugan's is #productQty + "ADD TO CART", Geetha Pharma's
+// (geethapharmaslm) is a differently-id'd "Quant" box + an "ADD PRODUCT"
+// button -- so both are found by role/label instead of a fixed id/text.
 export async function roAdd(n, qty, slow) {
-  const box = document.getElementById('productQty');
-  const button = [...document.querySelectorAll('button')].find((b) => /ADD TO CART/i.test(b.innerText || ''));
+  const visible = (el) => el.getClientRects().length > 0 && !el.disabled;
+  const label = (el) => `${el.innerText || el.value || el.placeholder || ''} ${el.title || ''} ${el.getAttribute('aria-label') || ''} ${el.name || ''} ${el.id || ''}`.toLowerCase();
+  const box = document.getElementById('productQty')
+    || [...document.querySelectorAll('input')].find((el) => visible(el) && /^(number|text|tel|)$/i.test(el.getAttribute('type') || '') && /quant|qty/.test(label(el)));
+  const button = [...document.querySelectorAll('button, a, input[type=button], input[type=submit]')]
+    .find((b) => visible(b) && /add to cart|add product|^add$/i.test(label(b)));
   if (!box || !button) return { ok: false, reason: 'no-add' };
   box.focus();
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(qty));
@@ -383,10 +390,29 @@ export async function roAdd(n, qty, slow) {
   return { ok: true, cleared: !box.value && !(packing && packing.value) };
 }
 
-// The lines already in the cart (the grid under the form, #selgridRow_N),
-// upper-cased -- so a second run never adds a product twice.
+// The lines already in the cart, upper-cased -- so a second run never adds
+// a product twice. Siva Murugan's skin tags cart rows [id^="selgridRow_"];
+// Geetha Pharma's (geethapharmaslm) plain "New Order" items table has no
+// such id, so fall back to the rows of a table whose header names
+// Product/Qty/Rate columns (the same shape siteResults looks for).
 export function roCart() {
-  return [...document.querySelectorAll('[id^="selgridRow_"]')].map((r) => String(r.innerText || '').replace(/\s+/g, ' ').trim().toUpperCase());
+  const tagged = [...document.querySelectorAll('[id^="selgridRow_"]')];
+  if (tagged.length) return tagged.map((r) => String(r.innerText || '').replace(/\s+/g, ' ').trim().toUpperCase());
+  const text = (el) => String((el && (el.innerText || el.textContent)) || '').replace(/\s+/g, ' ').trim();
+  const lines = [];
+  for (const table of document.querySelectorAll('table')) {
+    if (!table.getClientRects().length) continue;
+    const all = [...table.rows];
+    const head = (table.tHead && table.tHead.rows[0]) || all.find((tr) => tr.querySelector('th')) || all[0];
+    if (!head) continue;
+    const heads = [...head.cells].map((c) => text(c).toLowerCase());
+    if (!heads.some((h) => /product|item|description/.test(h)) || !heads.some((h) => /qty|quantity/.test(h))) continue;
+    for (const tr of all) {
+      if (tr === head || !tr.getClientRects().length || tr.querySelector('th')) continue;
+      lines.push(text(tr).toUpperCase());
+    }
+  }
+  return lines;
 }
 
 // Is the site's product (its result name) among the cart lines?
