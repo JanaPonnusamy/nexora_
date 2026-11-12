@@ -10,10 +10,10 @@ The tenant's existing PURCHASE_MANAGER role (0AE06EC0-59C9-4B6F-BB88-9559842564C
 on the live .32 platform DB) already grants almost this set, plus
 PROCUREMENT_INTELLIGENCE (the cross-store network engine, not requested) -
 and editing that shared role would also change every other PM login tenant-
-wide. So this provisions a dedicated SMS_PM role instead, exactly mirroring
-the create_product_mapping_user.py idiom:
+wide. So this provisions a dedicated SMS_PURCHASE_MANAGER role instead,
+exactly mirroring the create_product_mapping_user.py idiom:
 
-  1. Ensure an SMS_PM role exists.
+  1. Ensure an SMS_PURCHASE_MANAGER role exists.
   2. Grant it role_module_access on exactly PROCUREMENT (view/create/edit/
      export, no delete), stock_availability (view only) and
      supplier_stock_analysis (view/create/edit/export, no delete) - matching
@@ -21,14 +21,21 @@ the create_product_mapping_user.py idiom:
      with ZERO role_module_access rows is treated as full access by the
      frontend (frontend/src/types/access.ts resolveAccess: caps.size===0 ->
      PERMISSIVE), so all three grants are mandatory, not optional.
-  3. Create (or reset) the "SMS" user under tenant SMS and attach SMS_PM at
-     every store in that tenant (SMF/SMG/SHP/SMA) - Procurement and Supplier
-     Stock Analysis are store-scoped screens, so every store needs the grant
-     for the store picker to work.
+  3. Create (or reset) the "SMS" user under tenant SMS and attach
+     SMS_PURCHASE_MANAGER at every store in that tenant (SMF/SMG/SHP/SMA) -
+     Procurement and Supplier Stock Analysis are store-scoped screens, so
+     every store needs the grant for the store picker to work.
 
-For username "SMS" to allow more than one concurrent session, add "SMS_PM" to
-_MULTI_SESSION_ROLES in backend/controllers/auth_controller.py (done alongside
-this script, not here - that's a code change, not a data change).
+The role name must contain "purchase" (case-insensitive): the desktop
+Supplier Stock Client's nav gating (canViewPurchaseDetails in App.jsx) shows
+the Procurement/Rate Analysis/Non-Moving tabs only to logins whose role name
+substring-matches "purchase" - a module grant alone does not surface them.
+The original name "SMS_PM" silently failed this check; renamed 2026-11-12.
+
+For username "SMS" to allow more than one concurrent session, add
+"SMS_PURCHASE_MANAGER" to _MULTI_SESSION_ROLES in
+backend/controllers/auth_controller.py (done alongside this script, not
+here - that's a code change, not a data change).
 
 Usage:
     python scripts/create_sms_pm_user.py [username] [password]
@@ -50,7 +57,7 @@ TENANT_ID = "2D5ED813-881C-4CCA-803D-9FC78A15B85A"
 DEFAULT_USERNAME = "SMS"
 DEFAULT_PASSWORD = "Admin@123"
 
-ROLE_NAME = "SMS_PM"
+ROLE_NAME = "SMS_PURCHASE_MANAGER"
 ROLE_DESCRIPTION = "SMS tenant - Procurement, Stock Availability and Supplier Stock Analysis only"
 
 # module_code -> (can_view, can_create, can_edit, can_delete, can_export)
