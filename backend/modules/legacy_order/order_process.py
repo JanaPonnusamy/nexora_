@@ -35,10 +35,33 @@ logger = logging.getLogger(__name__)
 
 _SQL_DIR = os.path.join(os.path.dirname(__file__), "sql")
 
-# NMW is the only source legacy_order refreshes warehouse-stock from today
-# (see repository.replace_supplier_stock / sync_supplier_product_match_from_mapping).
-# Env-overridable to match service.WAREHOUSE_STORES if that set ever grows.
+# NMW is the Nathan-tenant source; a multi-tenant HO (.32: Success + SMS) has
+# its own per-tenant warehouse (e.g. SHP for SMS) living in a DIFFERENT central
+# database (OrderSMS, not OrderNMC -- see database.LEGACY_DB_DATABASE_BY_TENANT),
+# so a single global source name can only ever be right for one tenant at a
+# time. LEGACY_WAREHOUSE_STOCK_SOURCE_BY_TENANT overrides it per tenant_id,
+# same "tenant_id=value;tenant_id=value" syntax as LEGACY_DB_DATABASE_BY_TENANT;
+# a tenant with no entry falls back to LEGACY_WAREHOUSE_STOCK_SOURCE/NMW.
 _WAREHOUSE_STOCK_SOURCE = os.getenv("LEGACY_WAREHOUSE_STOCK_SOURCE", "NMW")
+
+
+def _warehouse_stock_source_map():
+    raw = os.getenv("LEGACY_WAREHOUSE_STOCK_SOURCE_BY_TENANT", "")
+    mapping = {}
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        tenant_id, source = part.split("=", 1)
+        tenant_id, source = tenant_id.strip().upper(), source.strip()
+        if tenant_id and source:
+            mapping[tenant_id] = source
+    return mapping
+
+
+def _warehouse_stock_source_for(store):
+    tenant_id = (store.get("tenant_id") or "").upper()
+    return _warehouse_stock_source_map().get(tenant_id) or _WAREHOUSE_STOCK_SOURCE
 
 # OrderId is a per-SECOND timestamp stamped by the order query, but
 # OrderHeaderDetails' primary key is OrderId alone (not StoreName+OrderId).
@@ -565,12 +588,13 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
         query_cs = source_cs if mode == "remote" else database.central_connection_string()
         mode_label = mode
 
-    if not is_warehouse and store["store_name"] != _WAREHOUSE_STOCK_SOURCE and store["ho_code"]:
+    warehouse_stock_source = _warehouse_stock_source_for(store)
+    if not is_warehouse and store["store_name"] != warehouse_stock_source and store["ho_code"]:
         try:
-            refresh_warehouse_stock(store, _WAREHOUSE_STOCK_SOURCE, report)
+            refresh_warehouse_stock(store, warehouse_stock_source, report)
         except Exception as exc:
             logger.exception("warehouse stock refresh failed for %s", store["store_name"])
-            report(f"{_WAREHOUSE_STOCK_SOURCE} stock refresh failed (continuing order generation): {exc}")
+            report(f"{warehouse_stock_source} stock refresh failed (continuing order generation): {exc}")
 
     # Engine: LEGACY = the ported VB.NET SQL above; RULEBOOK = the Procurement
     # rule book (rulebook_order.py). Both write through the same backup ->
