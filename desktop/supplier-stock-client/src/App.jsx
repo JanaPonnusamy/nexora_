@@ -59,6 +59,14 @@ import {
   orderOwKeys,
   resolveOwColumns,
 } from './OwSharedControls.jsx';
+import {
+  fmtOwDate,
+  fmtOwMoney,
+  fmtOwPct,
+  fmtOwQty,
+  fmtOwSigned,
+  owLandingPct,
+} from './OwFormatters.js';
 
 // Dev-only login bypass: when running under `vite` (npm run dev) with
 // credentials set in .env.development.local, the app auto-signs-in as that
@@ -5648,22 +5656,8 @@ function owSafePathSegment(name) {
 
 // Order Workspace formatters: full grouped numbers (no 1.3k abbreviation),
 // 2-dp money, dd/mm/yy dates; em dash for blanks.
-function fmtOwQty(value) {
-  if (value === null || value === undefined || value === '') return '—';
-  const n = Number(value);
-  return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—';
-}
-function fmtOwMoney(value) {
-  if (value === null || value === undefined || value === '') return '—';
-  const n = Number(value);
-  return Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
-}
-function fmtOwDate(value) {
-  if (!value) return '—';
-  const raw = String(value).slice(0, 10);
-  const parts = raw.split('-');
-  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : raw;
-}
+// fmtOwQty/fmtOwMoney/fmtOwDate moved to ./OwFormatters.js (app-wide, also
+// used by Label Exporter and Procurement rendering, not OW-exclusive).
 // Calendar day in local time. Today and yesterday are named so a same-week
 // GRN or sale is not just another short date.
 function owWhen(value) {
@@ -5955,25 +5949,8 @@ function OwQtyDiffArrow({ from, to }) {
     </span>
   );
 }
-function fmtOwPct(value) {
-  if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '—';
-  return `${Number(value).toFixed(2)}%`;
-}
-// Explicit sign for Adjustment (never collapse -3 to 3, always show +5 not 5).
-function fmtOwSigned(value) {
-  const n = Number(value) || 0;
-  const body = Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return n > 0 ? `+${body}` : n < 0 ? `-${body}` : '0';
-}
+// fmtOwPct/fmtOwSigned/owLandingPct moved to ./OwFormatters.js (app-wide).
 // "2026-08" -> "Aug 2026" for the chart's month axis.
-// Landing cost % = margin between PTR (selling-in price) and Cost (net landed
-// cost, already inclusive of the synced offer/product-discount/scheme), i.e.
-// how much PTR sits above Cost.
-function owLandingPct(ptr, cost) {
-  const p = Number(ptr); const c = Number(cost);
-  if (!Number.isFinite(p) || !Number.isFinite(c) || p <= 0) return null;
-  return ((p - c) / p) * 100;
-}
 function owDownloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
