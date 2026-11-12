@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Workspace review (Modules 2-3) ---------------------------------------
@@ -185,9 +185,26 @@ class SupplierExportSettingsUpdate(BaseModel):
 
 # --- Tenant-wide desktop export defaults (superadmin-locked format/columns) -
 
+# Mirrors the desktop app's OW_EXPORT_COLUMN_DEFS (App.jsx) -- the single
+# canonical set of export column keys shared by Order Workspace and
+# Procurement's exportKit. Keep in sync if a column is added/renamed there.
+_VALID_EXPORT_COLUMNS = {
+    "productCode", "productName", "orderQty", "saleUnit", "mrp", "discount",
+    "category", "subLocation", "rack", "supplierProductCode", "supplierProductName",
+}
+
+
 class TenantExportDefaultsUpdate(BaseModel):
     file_format: str = Field("xls", pattern="^(xls|xlsx|csv)$")
     columns: List[str] = Field(default_factory=list)
+
+    @field_validator("columns")
+    @classmethod
+    def _columns_must_be_known_keys(cls, value):
+        unknown = [c for c in value if c not in _VALID_EXPORT_COLUMNS]
+        if unknown:
+            raise ValueError(f"unknown export column key(s): {', '.join(unknown)}")
+        return value
 
 
 # --- Abnormal bill-sale review (PRR-SALE-ABNORMAL / PRR-SALE-WARNING) -----
