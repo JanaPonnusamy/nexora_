@@ -15,6 +15,6 @@ EXE_NAME = "NexoraSetup.exe"
 KNOWN_HO_URLS = (
     ("http://122.252.246.181:8444", "Success / SMS HO - internet"),
     ("http://192.168.10.32:8000", "Success / SMS HO - LAN"),
-    ("http://122.252.246.181:8443", "Main HO - internet"),
+    ("http://122.252.246.181:8445", "Main HO - internet"),
     ("http://192.168.10.73:8000", "Main HO - LAN"),
 )
