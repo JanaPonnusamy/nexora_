@@ -18,6 +18,15 @@ import { SupplierWhatsAppDialog, useSupplierWhatsApp } from './supplierWhatsApp.
 // data, or 5 when the detail column is wide enough.
 const PW_TREND_FIT = { fetch: 6, min: 4, max: 5 };
 
+// Mirrors App.jsx's isSuperAdmin (this file never imports App.jsx back, see
+// PROCUREMENT_UI comment) -- used only to lock the export card's file
+// type/columns to the tenant's superadmin-set defaults for every other role.
+function pwIsSuperAdmin(session) {
+  const roles = session?.user?.roles || [];
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase().replace(/[^a-z]/g, ''));
+  return roleNames.some((name) => name.includes('superadmin') || name.includes('platformowner'));
+}
+
 // Procurement -- ONE workspace (owner ruling 2026-10-25): the Order
 // Workspace's model (legacy OrderNMC order via /api/legacy-order, its
 // processes Qty Check -> Pending Order / Rejected -> By Supplier -> Supplier
@@ -357,6 +366,8 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   const [exportSettings, setExportSettings] = useState(exportKit.defaults);
   const [exportOpen, setExportOpen] = useState(false);
   const [splitCount, setSplitCount] = useState(0);
+  const [exportDefaults, setExportDefaults] = useState(null);
+  const canEditExportLock = pwIsSuperAdmin(session);
   const [exporting, setExporting] = useState(false);
   const [removingUnavailable, setRemovingUnavailable] = useState(false);
   const [lastExport, setLastExport] = useState(null);
@@ -386,6 +397,27 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       setExportSettings(loaded);
     });
   }, [exportKit]);
+  useEffect(() => {
+    if (!tenantId) return;
+    let live = true;
+    api.procurementExportDefaults(tenantId, session)
+      .then((d) => { if (live) setExportDefaults(d?.locked ? d : null); })
+      .catch(() => { if (live) setExportDefaults(null); });
+    return () => { live = false; };
+  }, [tenantId, session]);
+  // A non-super-admin with tenant defaults set is locked to them: force the
+  // file type/columns onto exportSettings (rows-per-file stays untouched).
+  useEffect(() => {
+    if (!exportDefaults || canEditExportLock) return;
+    setExportSettings((cur) => {
+      const columns = { ...cur.columns };
+      exportKit.columnDefs.forEach((c) => { columns[c.key] = exportDefaults.columns.includes(c.key); });
+      const next = { ...cur, fileFormat: exportDefaults.file_format, columns };
+      exportKit.write(next);
+      return next;
+    });
+  }, [exportDefaults, canEditExportLock, exportKit]);
+  const exportLocked = Boolean(exportDefaults) && !canEditExportLock;
   const updateExportSettings = (patch) => setExportSettings((cur) => {
     const next = { ...cur, ...patch };
     exportKit.write(next);
@@ -1746,6 +1778,49 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
                   <input type="checkbox" checked={compareOn && compareCardOn} disabled={!compareOn} onChange={(e) => setCompareCardOn(e.target.checked)} /> Show other-supplier stock card
                 </label>
               </div>
+              {canEditExportLock && (
+                <div className="pw-settings-pane">
+                  <span className="pw-section-label">Export lock <small>(applies to every non-super-admin login in this tenant)</small></span>
+                  <label className="ow-export-field">
+                    <span>File type</span>
+                    <select value={exportSettings.fileFormat} onChange={(e) => updateExportSettings({ fileFormat: e.target.value })} aria-label="Locked export file format">
+                      <option value="xls">Excel 97-2003 (.xls)</option>
+                      <option value="xlsx">Excel (.xlsx)</option>
+                      <option value="csv">CSV (.csv)</option>
+                    </select>
+                  </label>
+                  <div className="ow-export-columns">
+                    <div className="ow-export-columns-grid">
+                      {exportKit.columnDefs.map((col) => (
+                        <label key={col.key} className="ow-export-check ow-export-col-check">
+                          <input
+                            type="checkbox"
+                            checked={col.required || exportSettings.columns[col.key]}
+                            disabled={col.required}
+                            onChange={(e) => updateExportSettings({ columns: { ...exportSettings.columns, [col.key]: e.target.checked } })}
+                          />
+                          <span>{col.label}{col.required && ' *'}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="ow-btn ow-btn-sm"
+                    onClick={() => {
+                      const columns = exportKit.columnDefs.filter((c) => c.required || exportSettings.columns[c.key]).map((c) => c.key);
+                      api.procurementSaveExportDefaults(tenantId, { file_format: exportSettings.fileFormat, columns }, session)
+                        .then(() => setExportDefaults({ file_format: exportSettings.fileFormat, columns, locked: true }))
+                        .catch(() => { /* best-effort — the local export settings are already saved */ });
+                    }}
+                  >
+                    Save as tenant default
+                  </button>
+                  {exportDefaults && (
+                    <span className="pw-settings-hint">Locked for other logins: {exportDefaults.file_format.toUpperCase()}, {exportDefaults.columns.length} optional column(s).</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1879,6 +1954,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
           exportSettings={exportSettings} onUpdateExportSettings={updateExportSettings}
           headline="Read-only — no supplier assignment. Downloads every pending (reviewed, not yet assigned) product."
           showColumns={false} showSupplierWise={false}
+          locked={exportLocked} lockedHint="File type and columns are set by your super admin."
         />
       )}
       {exportOpen && process.key !== 'pending' && (
@@ -1887,6 +1963,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
           scopeLabel={view === 'assigned' ? `${supplier?.supplier_name || 'selected supplier'} (assigned)` : `${supplier?.supplier_name || 'selected supplier'}`}
           onExport={runExport} onClose={() => setExportOpen(false)}
           exportSettings={exportSettings} onUpdateExportSettings={updateExportSettings}
+          locked={exportLocked} lockedHint="File type and columns are set by your super admin."
         />
       )}
       {bulkOpen && (

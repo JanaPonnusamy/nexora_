@@ -15,7 +15,12 @@ const defaultSettings = {
   // app polls /config by this id until HO approves and assigns the store.
   clientId: '',
   similarSearchChars: 6,
-  themePreference: 'light'
+  themePreference: 'light',
+  // Default GET timeout for api/client.js requests, in seconds. Exposed in
+  // Settings so a store whose link to the HO is slow/flaky can raise it
+  // without waiting on an app rebuild - see client.js's FAST_RETRY_TIMEOUT_MS
+  // for why a dead connection still fails fast regardless of this value.
+  requestTimeoutSec: 120
 };
 
 function todayKey() {

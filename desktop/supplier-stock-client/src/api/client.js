@@ -14,6 +14,15 @@ function authHeaders(session) {
 const TRANSIENT_STATUS = new Set([408, 425, 429, 502, 503, 504]);
 const RETRY_DELAYS_MS = [350, 1000];
 
+// A connection the HO/port-forward silently drops (half-closed CLOSE_WAIT
+// socket) never surfaces as an error to fetch() - Chromium just keeps
+// waiting on it, so a GET sat behind one of these stalled for the full
+// `timeoutMs` every time instead of failing fast onto a fresh connection.
+// A short first-attempt deadline turns that into a quick, invisible retry;
+// only the LAST attempt gets the full timeout, so a genuinely slow (not
+// dead) request still has its full budget to complete.
+const FAST_RETRY_TIMEOUT_MS = 8000;
+
 function delay(ms, signal) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, ms);
@@ -45,16 +54,23 @@ function detailToMessage(data) {
 async function request(path, options = {}) {
   const settings = loadSettings();
   const session = options.session;
-  const timeoutMs = options.timeoutMs ?? 45000;
+  const timeoutMs = options.timeoutMs ?? (Number(settings.requestTimeoutSec) || 120) * 1000;
   const method = String(options.method || 'GET').toUpperCase();
   const retries = options.transientRetries ?? (method === 'GET' ? RETRY_DELAYS_MS.length : 0);
   const { session: _session, timeoutMs: _timeoutMs, transientRetries: _transientRetries, ...fetchOptions } = options;
   let response;
+  const loadStart = Date.now();
+  logRequest('start', { method, path });
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const isLastAttempt = attempt === retries;
+    // Give every attempt but the last a short deadline so a dead/stalled
+    // connection fails fast onto a retry instead of burning the whole
+    // timeout on a socket that will never respond - see FAST_RETRY_TIMEOUT_MS.
+    const attemptTimeoutMs = isLastAttempt ? timeoutMs : Math.min(FAST_RETRY_TIMEOUT_MS, timeoutMs);
     const controller = new AbortController();
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, attemptTimeoutMs);
     const onCallerAbort = () => controller.abort();
     if (options.signal) {
       if (options.signal.aborted) controller.abort();
@@ -74,10 +90,20 @@ async function request(path, options = {}) {
       if (!TRANSIENT_STATUS.has(response.status) || attempt === retries) break;
       // Drain the body so Chromium can reuse the keep-alive connection.
       await response.arrayBuffer().catch(() => {});
+      logRequest('retry-status', { method, path, attempt, status: response.status, elapsedMs: Date.now() - loadStart });
     } catch (err) {
       if (options.signal?.aborted) throw err;
-      if (timedOut) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
-      if (attempt === retries) throw err;
+      if (timedOut && isLastAttempt) {
+        logRequest('timeout', { method, path, attempt, elapsedMs: Date.now() - loadStart });
+        throw new Error(`Request timed out after ${Math.round(attemptTimeoutMs / 1000)}s`);
+      }
+      if (!timedOut && isLastAttempt) {
+        logRequest('error', { method, path, attempt, elapsedMs: Date.now() - loadStart, message: err?.message });
+        throw err;
+      }
+      // A fast-attempt timeout (dead connection) or any other network error
+      // on a non-final attempt falls through to the retry delay below.
+      logRequest('retry-conn', { method, path, attempt, timedOut, elapsedMs: Date.now() - loadStart, message: err?.message });
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener('abort', onCallerAbort);
@@ -90,6 +116,7 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const message = detailToMessage(data) || `Request failed with ${response.status}`;
+    logRequest('http-error', { method, path, status: response.status, elapsedMs: Date.now() - loadStart, message });
     // A 401 here means the stored token is missing/expired/invalid for a
     // request that did carry a session - the UI would otherwise sit showing
     // "Request failed with 401" on every panel forever with no way out. Let
@@ -100,7 +127,26 @@ async function request(path, options = {}) {
     throw new Error(message);
   }
 
+  logRequest('done', { method, path, status: response.status, elapsedMs: Date.now() - loadStart });
   return data;
+}
+
+// Every request's timing/outcome, so a slow or dropped-connection load can be
+// diagnosed from the renderer console (and DevTools' persisted console log)
+// without reproducing it live - see the CloseWait investigation this was
+// added for (supplier-stock-analysis 45s timeouts that were actually a
+// ~6s server-side connection drop the HTTP client wasn't detecting).
+function logRequest(event, detail) {
+  const line = `[api:${event}] ${detail.method} ${detail.path}` +
+    (detail.elapsedMs != null ? ` ${detail.elapsedMs}ms` : '') +
+    (detail.attempt != null ? ` attempt=${detail.attempt}` : '') +
+    (detail.status != null ? ` status=${detail.status}` : '') +
+    (detail.message ? ` - ${detail.message}` : '');
+  if (event === 'timeout' || event === 'error' || event === 'http-error') {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
 }
 
 function safeJson(text) {
@@ -788,6 +834,21 @@ export const api = {
     return request(`/api/procurement/assignments/${encodeURIComponent(assignmentId)}${toQuery({ tenant_id: tenantId, deleted_by: by })}`, {
       method: 'DELETE',
       session
+    });
+  },
+
+  // Tenant-wide export defaults a super admin sets (file format + columns)
+  // for the Procurement export card. A restricted role reads these and the
+  // UI locks those two fields to them; "rows per file" stays free for all.
+  procurementExportDefaults(tenantId, session) {
+    return request(`/api/procurement/export-defaults${toQuery({ tenant_id: tenantId })}`, { session });
+  },
+
+  procurementSaveExportDefaults(tenantId, body, session) {
+    return request(`/api/procurement/export-defaults${toQuery({ tenant_id: tenantId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(body)
     });
   },
 

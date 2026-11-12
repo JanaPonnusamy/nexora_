@@ -891,6 +891,7 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
   const [adminUnlocked, setAdminUnlocked] = useState(!requireAdminGate);
   const [adminForm, setAdminForm] = useState({ username: '', password: '' });
   const [adminStatus, setAdminStatus] = useState({ state: 'idle', message: '' });
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [adminSession, setAdminSession] = useState(null);
   const effectiveSession = session || adminSession;
   const [hoRoutes, setHoRoutes] = useState([]);
@@ -942,7 +943,22 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
           </label>
           <label>
             Admin password
-            <input type="password" value={adminForm.password} onChange={(event) => setAdminForm({ ...adminForm, password: event.target.value })} />
+            <span className="login-pw-field">
+              <input
+                type={showAdminPassword ? 'text' : 'password'}
+                value={adminForm.password}
+                onChange={(event) => setAdminForm({ ...adminForm, password: event.target.value })}
+              />
+              <button
+                type="button"
+                className="login-pw-toggle"
+                aria-label={showAdminPassword ? 'Hide password' : 'Show password'}
+                title={showAdminPassword ? 'Hide password' : 'Show password'}
+                onClick={() => setShowAdminPassword((v) => !v)}
+              >
+                {showAdminPassword ? '🙈' : '👁'}
+              </button>
+            </span>
           </label>
           <button className="primary-button" type="submit">Unlock configuration</button>
           {adminStatus.message && <span className={`status ${adminStatus.state}`}>{adminStatus.message}</span>}
@@ -1235,6 +1251,16 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
           Bootstrap URL
           <input value={draft.bootstrapUrl} onChange={(event) => setDraft({ ...draft, bootstrapUrl: event.target.value })} placeholder="Optional discovery URL" />
         </label>
+        <label title="How long a slow screen (e.g. Supplier Live Stock) waits for the HO before showing a timeout error. Raise this if your store's link to the HO is slow; a dropped connection still fails and retries fast regardless of this value.">
+          Request timeout (seconds)
+          <input
+            type="number"
+            min="15"
+            max="600"
+            value={draft.requestTimeoutSec}
+            onChange={(event) => setDraft({ ...draft, requestTimeoutSec: Math.min(600, Math.max(15, Number(event.target.value) || 120)) })}
+          />
+        </label>
       </div>
 
       <div className="settings-section">
@@ -1510,6 +1536,7 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
 function LoginScreen({ onLogin, onOpenSettings }) {
   const [form, setForm] = useState({ username: '', password: '' });
   const [status, setStatus] = useState({ state: 'idle', message: '' });
+  const [showPassword, setShowPassword] = useState(false);
 
   async function submit(event) {
     event.preventDefault();
@@ -1537,7 +1564,22 @@ function LoginScreen({ onLogin, onOpenSettings }) {
         </label>
         <label>
           Password
-          <input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+          <span className="login-pw-field">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={form.password}
+              onChange={(event) => setForm({ ...form, password: event.target.value })}
+            />
+            <button
+              type="button"
+              className="login-pw-toggle"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              title={showPassword ? 'Hide password' : 'Show password'}
+              onClick={() => setShowPassword((v) => !v)}
+            >
+              {showPassword ? '🙈' : '👁'}
+            </button>
+          </span>
         </label>
         <button className="primary-button" type="submit">Sign in</button>
         <button className="link-button" type="button" onClick={onOpenSettings}>API settings</button>
@@ -3846,6 +3888,10 @@ function OwExportCard({
   // preserve the existing By Supplier/Assigned behavior exactly.
   headline = 'Assigns every ordered row to this supplier, then downloads',
   showColumns = true, showSupplierWise = true,
+  // Procurement-only (never passed by OW): when a super admin has set tenant
+  // export defaults and the signed-in role isn't a super admin, file type and
+  // columns are locked to those defaults -- "rows per file" stays editable.
+  locked = false, lockedHint = null,
 }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -3886,7 +3932,12 @@ function OwExportCard({
 
         <label className="ow-export-field">
           <span>File type</span>
-          <select value={exportSettings.fileFormat} onChange={(e) => onUpdateExportSettings({ fileFormat: e.target.value })} aria-label="Export file format">
+          <select
+            value={exportSettings.fileFormat}
+            disabled={locked}
+            onChange={(e) => onUpdateExportSettings({ fileFormat: e.target.value })}
+            aria-label="Export file format"
+          >
             <option value="xls">Excel 97-2003 (.xls)</option>
             <option value="xlsx">Excel (.xlsx)</option>
             <option value="csv">CSV (.csv)</option>
@@ -3931,13 +3982,14 @@ function OwExportCard({
                   <input
                     type="checkbox"
                     checked={col.required || exportSettings.columns[col.key]}
-                    disabled={col.required}
+                    disabled={col.required || locked}
                     onChange={(e) => onUpdateExportSettings({ columns: { ...exportSettings.columns, [col.key]: e.target.checked } })}
                   />
                   <span>{col.label}{col.required && ' *'}</span>
                 </label>
               ))}
             </div>
+            {locked && lockedHint && <p className="ow-export-hint">{lockedHint}</p>}
             <p className="ow-export-hint">* Product Code, Product Name and Order Qty are always included.</p>
           </div>
         )}

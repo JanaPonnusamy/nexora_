@@ -183,6 +183,13 @@ class SupplierExportSettingsUpdate(BaseModel):
     export_folder_path: Optional[str] = Field(None, max_length=500)
 
 
+# --- Tenant-wide desktop export defaults (superadmin-locked format/columns) -
+
+class TenantExportDefaultsUpdate(BaseModel):
+    file_format: str = Field("xls", pattern="^(xls|xlsx|csv)$")
+    columns: List[str] = Field(default_factory=list)
+
+
 # --- Abnormal bill-sale review (PRR-SALE-ABNORMAL / PRR-SALE-WARNING) -----
 
 class DontConsiderUpdate(BaseModel):
