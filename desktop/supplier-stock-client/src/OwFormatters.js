@@ -4,6 +4,19 @@
 // used by Order Workspace, the Label Exporter screen and the Procurement
 // rendering region. No behavior changed in the move.
 
+// Normalizes a variety of API response shapes (bare array, {items:[]},
+// {suppliers:[]}, {data:[]}) to a plain array. Used throughout App.jsx
+// (102 call sites) and by the OwDocumentCard cluster -- kept here (rather
+// than left in App.jsx) so a module that only needs this doesn't have to
+// import back from App.jsx, which would be circular.
+export function asArray(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.suppliers)) return value.suppliers;
+  if (Array.isArray(value?.data)) return value.data;
+  return [];
+}
+
 export function fmtOwQty(value) {
   if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
