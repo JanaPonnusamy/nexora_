@@ -188,6 +188,17 @@ function isStockAndLabelViewer(session) {
   return roleNames.every((name) => name.includes('stockviewer') || name.includes('labelreview'));
 }
 
+// The shared SMS tenant login (role SMS_PURCHASE_MANAGER, username "SMS"):
+// owner ruling 2026-11-12 - exactly six screens, nothing else (no Order
+// Workspace/Legacy Order/Rate Analysis/Non-Moving/etc. that the generic
+// "any role name containing 'purchase'" fan-out below would otherwise add).
+function isSmsPurchaseManagerOnly(session) {
+  const roles = session?.user?.roles || [];
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase().replace(/[^a-z]/g, ''));
+  if (!roleNames.length) return false;
+  return roleNames.every((name) => name.includes('smspurchasemanager'));
+}
+
 // Mirrors backend dependencies.store_scope.is_supplier_analysis_blocked:
 // Supplier Stock Analysis is admin-tier only - a login whose roles are ALL
 // purchase-manager and/or salesman must not see the tab at all.
@@ -434,6 +445,10 @@ function AppShell() {
     }
     if (isStockAndLabelViewer(session)) {
       return screens.filter((s) => ['stock_vertical', 'nmw_sales', 'label_exporter'].includes(s.id));
+    }
+    if (isSmsPurchaseManagerOnly(session)) {
+      const smsIds = ['stock_vertical', 'procurement_workspace', 'analysis', 'order_entry', 'settings', 'whatsapp'];
+      return screens.filter((s) => smsIds.includes(s.id) && (s.id !== 'whatsapp' || storeWhatsAppAvailable()));
     }
     const modules = userModules(session?.user);
     // Supplier Stock Analysis is admin-tier only - a purchase-manager-only or
