@@ -589,11 +589,15 @@ def _tenant_names():
 
 def get_store(store_name):
     with database.get_central_connection() as conn:
-        row = conn.cursor().execute(
+        cur = conn.cursor()
+        has_tenant = cur.execute("SELECT COL_LENGTH('dbo.Stores', 'tenant_id')").fetchone()[0] is not None
+        sql = (
             "SELECT StoreCode, StoreName, ServerName, UserName, Password, [Database], "
-            "IsActive, LastSyncTime, LastSyncStatus, Ho_code, ConnectionType FROM Stores WHERE StoreName = ?",
-            store_name,
-        ).fetchone()
+            "IsActive, LastSyncTime, LastSyncStatus, Ho_code, ConnectionType"
+            + (", CONVERT(varchar(40), tenant_id) AS tenant_id" if has_tenant else "")
+            + " FROM Stores WHERE StoreName = ?"
+        )
+        row = cur.execute(sql, store_name).fetchone()
     return _row_to_store(row) if row else None
 
 
