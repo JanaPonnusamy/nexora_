@@ -63,6 +63,7 @@ const PlatformShellPreviewPage = lazy(() => import('../pages/PlatformShellPrevie
 const DocumentExtractionReviewPage = lazy(() => import('../pages/document-extraction/ReviewPage'))
 const DocumentExtractionHistoryPage = lazy(() => import('../pages/document-extraction/HistoryPage'))
 const LoginPage = lazy(() => import('../pages/LoginPage'))
+const QuickStockPage = lazy(() => import('../pages/quick-stock/QuickStockPage'))
 
 /** Sends the user to their role's landing page (Purchase Managers open directly
  *  into the Purchase Manager workspace). */
@@ -75,6 +76,10 @@ export const appRouter = createBrowserRouter(
   createRoutesFromElements(
     <>
       <Route path="/login" element={<LoginPage />} />
+      {/* Quick Stock: lightweight, passcode-only lookup (no full Nexora
+          login) — a top-level route outside AppShell/ProtectedRoute so it
+          opens directly, same as the legacy desktop Stock Enquiry tool. */}
+      <Route path="/quick-stock" element={<QuickStockPage />} />
       {/* Desktop Platform shell preview — a separate top-level route (not
           nested under AppShell) so the new shell can be built and compared
           side-by-side without touching the existing app. Owner-directed: the

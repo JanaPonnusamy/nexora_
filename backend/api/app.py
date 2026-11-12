@@ -77,6 +77,9 @@ from modules.licensing.router import (
 from modules.stock_availability.router import (
     router as stock_availability_router
 )
+from modules.quick_stock.router import (
+    router as quick_stock_router
+)
 from modules.stock_check_report.router import (
     router as stock_check_report_router
 )
@@ -296,6 +299,10 @@ _PUBLIC_AGENT_PATTERNS = (
     # HO node <-> HO node package mirror: no user session; authenticated by the
     # shared NEXORA_PACKAGE_PEER_KEY header inside the route (403 without it).
     re.compile(r'^/api/device-controller/peer/.+$'),
+    # Quick Stock: deliberately no login (kiosk-style, opens and searches
+    # instantly on any store PC). Authenticated by its own shared-passcode
+    # header (x-quick-stock-pin) inside each route, not a JWT.
+    re.compile(r'^/api/quick-stock/.+$'),
 )
 
 def _is_public_agent_call(request: Request) -> bool:
@@ -383,6 +390,7 @@ app.include_router(sync_agent_router)
 app.include_router(sync_shared_table_router)
 app.include_router(file_transfer_admin_router)
 app.include_router(stock_availability_router)
+app.include_router(quick_stock_router)
 app.include_router(stock_check_report_router)
 app.include_router(label_exporter_router)
 app.include_router(nmw_sales_report_router)
