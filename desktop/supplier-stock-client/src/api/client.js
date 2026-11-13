@@ -301,6 +301,20 @@ export const api = {
     });
   },
 
+  // --- Dashboard (Phase 6G) --------------------------------------------
+  procurementDashboard(tenantId, fromMonth, toMonth, session) {
+    return request(`/api/procurement/reports/dashboard${toQuery({ tenant_id: tenantId, from_month: fromMonth, to_month: toMonth })}`, { session });
+  },
+  nonMovingTotals(tenantId, storeId, session) {
+    return request(`/api/reports/non-moving/totals${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+  syncLiveStatus(session) {
+    return request('/api/sync/live', { session });
+  },
+  recentActivity(pageSize, session) {
+    return request(`/api/audit-logs${toQuery({ page: 1, page_size: pageSize })}`, { session });
+  },
+
   requestActivation(payload, session) {
     return request('/api/desktop-client/activate/request', {
       method: 'POST',

@@ -11575,3 +11575,63 @@ button.pw-site-chip:disabled { cursor: default; }
   margin: 0;
   font-size: 17px;
 }
+
+/* Dashboard (Phase 6G) */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+}
+.dashboard-tile {
+  padding: 18px 20px;
+}
+.dashboard-tile h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dashboard-planned-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--nx-text-muted);
+  background: var(--nx-surface-sunk);
+  border: 1px solid var(--nx-rule);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.dashboard-kpi-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.dashboard-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dashboard-kpi span {
+  font-size: 11px;
+  color: var(--nx-text-muted);
+}
+.dashboard-kpi strong {
+  font-size: 20px;
+  color: var(--nx-text);
+}
+.dashboard-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.dashboard-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--nx-rule);
+}
+.dashboard-list li:last-child {
+  border-bottom: none;
+}

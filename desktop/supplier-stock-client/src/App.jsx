@@ -31,6 +31,7 @@ import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme
 import SchemaSyncPage from './SchemaSyncPage.jsx';
 import UserManagementScreen from './UserManagementScreen.jsx';
 import RoleManagementScreen from './RoleManagementScreen.jsx';
+import DashboardScreen from './DashboardScreen.jsx';
 import ProcurementWorkspace from './ProcurementWorkspace.jsx';
 import OrderWorkspace from './OrderWorkspace.jsx';
 import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareButton, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
@@ -96,6 +97,7 @@ const DEV_STORE = import.meta.env.DEV ? (import.meta.env.VITE_DEV_STORE || '') :
 // `group` places each screen in the grouped menubar (navMenu.jsx NAV_GROUPS);
 // `short` is the name shown on the group button while that screen is open.
 const screens = [
+  { id: 'nexora_dashboard', label: 'Dashboard', group: 'stock', module: 'dashboard' },
   { id: 'stock', label: 'Stock Availability', short: 'Availability', group: 'stock', module: 'stock_availability' },
   { id: 'stock_vertical', label: 'Stock (Vertical)', short: 'Vertical', group: 'stock', module: 'stock_availability' },
   { id: 'network_stock', label: 'Network Stock', short: 'Network', group: 'stock', module: 'stock_availability' },
@@ -521,7 +523,7 @@ function AppShell() {
     // depend on a per-user module grant either - no 'label_exporter' row was
     // ever seeded into dbo.role_module_access, which silently hid the tab
     // for any login whose modules list isn't empty (e.g. superadmin).
-    const always = new Set(nmwBlocked ? ['settings', 'label_exporter'] : ['settings', 'nmw_sales', 'label_exporter']);
+    const always = new Set(nmwBlocked ? ['settings', 'label_exporter', 'nexora_dashboard'] : ['settings', 'nmw_sales', 'label_exporter', 'nexora_dashboard']);
     if (orderWorkspaceAllowed) { always.add('order_workspace'); always.add('procurement_workspace'); always.add('rate_analysis'); always.add('order_entry'); }
     // Every store login may link and use its own store's WhatsApp.
     always.add('whatsapp');
@@ -816,6 +818,8 @@ function AppShell() {
           isSuperAdmin(session) ? <UserManagementScreen session={session} /> : null
         ) : activeScreen === 'role_management' ? (
           isSuperAdmin(session) ? <RoleManagementScreen session={session} /> : null
+        ) : activeScreen === 'nexora_dashboard' ? (
+          <DashboardScreen session={session} settings={runtimeSettings} isSuperAdminUser={isSuperAdmin(session)} />
         ) : (
           <StockAvailability
             session={session}

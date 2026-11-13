@@ -16,7 +16,7 @@ export const ERP_SECTIONS = [
     key: 'dashboard',
     label: 'Dashboard',
     icon: 'dashboard',
-    screens: ['dashboard'],
+    screens: ['nexora_dashboard'],
   },
   {
     key: 'masters',
