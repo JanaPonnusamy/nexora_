@@ -1597,10 +1597,105 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
   );
 }
 
+// Phase 6F: Forgot Password. Two steps, both reachable from the login
+// screen with no account-existence signal ever shown either way (the
+// backend's generic response is deliberately echoed verbatim, not
+// reinterpreted into a more specific-sounding message here).
+function ForgotPasswordRequestStep({ onHaveCode, onBack }) {
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState({ state: 'idle', message: '' });
+
+  async function submit(event) {
+    event.preventDefault();
+    setStatus({ state: 'loading', message: 'Sending…' });
+    try {
+      const response = await api.requestPasswordReset(email);
+      setStatus({ state: 'ok', message: response.message });
+    } catch (error) {
+      setStatus({ state: 'error', message: error.message });
+    }
+  }
+
+  return (
+    <form className="login-card" onSubmit={submit}>
+      <label>
+        Email address
+        <input
+          type="email"
+          autoFocus
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+        />
+      </label>
+      <button className="primary-button" type="submit">Send reset link</button>
+      <button className="link-button" type="button" onClick={onHaveCode}>I already have a reset code</button>
+      <button className="link-button" type="button" onClick={onBack}>Back to sign in</button>
+      {status.message && <span className={`status ${status.state === 'ok' ? 'ok' : status.state}`}>{status.message}</span>}
+    </form>
+  );
+}
+
+function ForgotPasswordConfirmStep({ onDone, onBack }) {
+  const [form, setForm] = useState({ token: '', newPassword: '', confirmPassword: '' });
+  const [status, setStatus] = useState({ state: 'idle', message: '' });
+
+  async function submit(event) {
+    event.preventDefault();
+    if (form.newPassword !== form.confirmPassword) {
+      setStatus({ state: 'error', message: 'Passwords do not match.' });
+      return;
+    }
+    setStatus({ state: 'loading', message: 'Updating password…' });
+    try {
+      const response = await api.confirmPasswordReset(form.token.trim(), form.newPassword);
+      setStatus({ state: 'ok', message: response.message });
+      setTimeout(onDone, 1500);
+    } catch (error) {
+      setStatus({ state: 'error', message: error.message });
+    }
+  }
+
+  return (
+    <form className="login-card" onSubmit={submit}>
+      <label>
+        Reset code
+        <input
+          autoFocus
+          value={form.token}
+          onChange={(e) => setForm({ ...form, token: e.target.value })}
+          placeholder="Paste the code from your email"
+        />
+      </label>
+      <label>
+        New password
+        <input
+          type="password"
+          value={form.newPassword}
+          onChange={(e) => setForm({ ...form, newPassword: e.target.value })}
+        />
+      </label>
+      <label>
+        Confirm new password
+        <input
+          type="password"
+          value={form.confirmPassword}
+          onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
+        />
+      </label>
+      <button className="primary-button" type="submit">Reset password</button>
+      <button className="link-button" type="button" onClick={onBack}>Back to sign in</button>
+      {status.message && <span className={`status ${status.state === 'ok' ? 'ok' : status.state}`}>{status.message}</span>}
+    </form>
+  );
+}
+
 function LoginScreen({ onLogin, onOpenSettings }) {
   const [form, setForm] = useState({ username: '', password: '' });
   const [status, setStatus] = useState({ state: 'idle', message: '' });
   const [showPassword, setShowPassword] = useState(false);
+  // 'login' | 'forgot-request' | 'forgot-confirm'
+  const [view, setView] = useState('login');
 
   async function submit(event) {
     event.preventDefault();
@@ -1621,6 +1716,17 @@ function LoginScreen({ onLogin, onOpenSettings }) {
         <h2>Intelligent Pharmaceutical Workspace</h2>
         <p>Use your NEXORA MEDIQ credentials to open stock availability and supplier analysis modules.</p>
       </div>
+      {view === 'forgot-request' ? (
+        <ForgotPasswordRequestStep
+          onHaveCode={() => setView('forgot-confirm')}
+          onBack={() => setView('login')}
+        />
+      ) : view === 'forgot-confirm' ? (
+        <ForgotPasswordConfirmStep
+          onDone={() => setView('login')}
+          onBack={() => setView('login')}
+        />
+      ) : (
       <form className="login-card" onSubmit={submit}>
         <label>
           Username
@@ -1646,9 +1752,11 @@ function LoginScreen({ onLogin, onOpenSettings }) {
           </span>
         </label>
         <button className="primary-button" type="submit">Sign in</button>
+        <button className="link-button" type="button" onClick={() => setView('forgot-request')}>Forgot password?</button>
         <button className="link-button" type="button" onClick={onOpenSettings}>API settings</button>
         {status.message && <span className={`status ${status.state}`}>{status.message}</span>}
       </form>
+      )}
     </section>
   );
 }

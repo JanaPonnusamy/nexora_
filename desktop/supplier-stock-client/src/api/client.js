@@ -289,6 +289,18 @@ export const api = {
     });
   },
 
+  // --- Forgot Password (Phase 6F) -- no session, these run before login ----
+  requestPasswordReset(email) {
+    return request('/api/auth/password-reset/request', {
+      method: 'POST', body: JSON.stringify({ email }),
+    });
+  },
+  confirmPasswordReset(token, newPassword) {
+    return request('/api/auth/password-reset/confirm', {
+      method: 'POST', body: JSON.stringify({ token, new_password: newPassword }),
+    });
+  },
+
   requestActivation(payload, session) {
     return request('/api/desktop-client/activate/request', {
       method: 'POST',
