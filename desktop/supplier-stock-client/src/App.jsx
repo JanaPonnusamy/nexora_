@@ -29,6 +29,8 @@ import {
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 import SchemaSyncPage from './SchemaSyncPage.jsx';
+import UserManagementScreen from './UserManagementScreen.jsx';
+import RoleManagementScreen from './RoleManagementScreen.jsx';
 import ProcurementWorkspace from './ProcurementWorkspace.jsx';
 import OrderWorkspace from './OrderWorkspace.jsx';
 import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareButton, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
@@ -110,6 +112,8 @@ const screens = [
   { id: 'label_exporter', label: 'Label Exporter', short: 'Labels', group: 'tools', module: 'label_exporter' },
   { id: 'whatsapp', label: 'WhatsApp', group: 'tools', module: 'whatsapp' },
   { id: 'schema_sync', label: 'Schema Sync', group: 'tools', module: 'schema_sync' },
+  { id: 'user_management', label: 'User Management', short: 'Users', group: 'system', module: 'user_management' },
+  { id: 'role_management', label: 'Role Management', short: 'Roles', group: 'system', module: 'role_management' },
   { id: 'settings', label: 'Settings', group: 'system', module: 'settings' }
 ];
 
@@ -497,6 +501,11 @@ function AppShell() {
     if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'legacy_order');
     // Sync Live shows and syncs every tenant's stores - super admin only.
     if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'sync_live');
+    // User/Role Management (Phase 6C/6D): every mutation these screens call
+    // is gated server-side by require_super_admin regardless of what the
+    // nav shows (35c6018) - the nav gate here just keeps the UI honest, per
+    // Phase 6 S6 rule 4, not a substitute for that server-side check.
+    if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'user_management' && s.id !== 'role_management');
     // Time Report (COSEC staff attendance): super admins, or a TIME_REPORT
     // module grant -- never implied by an empty module list.
     const timeReportAllowed = isSuperAdmin(session) || modules.some((m) => String(m).toLowerCase() === 'time_report');
@@ -516,7 +525,10 @@ function AppShell() {
     if (orderWorkspaceAllowed) { always.add('order_workspace'); always.add('procurement_workspace'); always.add('rate_analysis'); always.add('order_entry'); }
     // Every store login may link and use its own store's WhatsApp.
     always.add('whatsapp');
-    if (isSuperAdmin(session)) { always.add('schema_sync'); always.add('legacy_order'); always.add('sync_live'); }
+    if (isSuperAdmin(session)) {
+      always.add('schema_sync'); always.add('legacy_order'); always.add('sync_live');
+      always.add('user_management'); always.add('role_management');
+    }
     if (nonMovingAllowed) always.add('non_moving');
     if (timeReportAllowed) always.add('time_report');
     return base.filter((screen) => always.has(screen.id) || modules.includes(screen.module) || modules.includes(screen.id));
@@ -800,6 +812,10 @@ function AppShell() {
           <NonMovingStock session={session} settings={runtimeSettings} ui={PROCUREMENT_UI} />
         ) : activeScreen === 'order_workspace' || activeScreen === 'procurement_workspace' || activeScreen === 'legacy_order' || activeScreen === 'sync_live' ? null : activeScreen === 'schema_sync' ? (
           <SchemaSyncPage session={session} />
+        ) : activeScreen === 'user_management' ? (
+          isSuperAdmin(session) ? <UserManagementScreen session={session} /> : null
+        ) : activeScreen === 'role_management' ? (
+          isSuperAdmin(session) ? <RoleManagementScreen session={session} /> : null
         ) : (
           <StockAvailability
             session={session}

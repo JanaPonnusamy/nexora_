@@ -22,7 +22,7 @@ export const ERP_SECTIONS = [
     key: 'masters',
     label: 'Masters',
     icon: 'masters',
-    screens: ['user_management', 'role_management', 'permission_management'],
+    screens: ['user_management', 'role_management'],
   },
   {
     key: 'procurement',

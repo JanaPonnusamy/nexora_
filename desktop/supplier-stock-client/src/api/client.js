@@ -236,6 +236,59 @@ export const api = {
     ));
   },
 
+  // --- Masters: User Management (Phase 6C) ---------------------------------
+  listUsers(params = {}, session) {
+    return request(`/api/users${toQuery(params)}`, { session });
+  },
+  getUser(userId, session) {
+    return request(`/api/users/${userId}`, { session });
+  },
+  createUser(payload, session) {
+    return request('/api/users', { method: 'POST', session, body: JSON.stringify(payload) });
+  },
+  updateUser(userId, payload, session) {
+    return request(`/api/users/${userId}`, { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+  setUserStatus(userId, isActive, session) {
+    return request(`/api/users/${userId}/status`, {
+      method: 'PATCH', session, body: JSON.stringify({ is_active: isActive }),
+    });
+  },
+  getUserRoles(userId, session) {
+    return request(`/api/user-roles/user/${userId}`, { session });
+  },
+
+  // --- Masters: Role and Permission Management (Phase 6D) -------------------
+  listRoles(params = {}, session) {
+    return request(`/api/roles${toQuery(params)}`, { session });
+  },
+  getRole(roleId, session) {
+    return request(`/api/roles/${roleId}`, { session });
+  },
+  createRole(payload, session) {
+    return request('/api/roles', { method: 'POST', session, body: JSON.stringify(payload) });
+  },
+  updateRole(roleId, payload, session) {
+    return request(`/api/roles/${roleId}`, { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+  setRoleStatus(roleId, isActive, session) {
+    return request(`/api/roles/${roleId}/status`, {
+      method: 'PATCH', session, body: JSON.stringify({ is_active: isActive }),
+    });
+  },
+  getRolePermissions(roleId, session) {
+    return request(`/api/role-module-access/role/${roleId}`, { session });
+  },
+  getPermissionMatrix(session) {
+    return request('/api/role-module-access/matrix', { session });
+  },
+  setRolePermissions(roleId, moduleId, flags, session) {
+    return request('/api/role-module-access', {
+      method: 'PUT', session,
+      body: JSON.stringify({ role_id: roleId, module_id: moduleId, ...flags }),
+    });
+  },
+
   requestActivation(payload, session) {
     return request('/api/desktop-client/activate/request', {
       method: 'POST',
