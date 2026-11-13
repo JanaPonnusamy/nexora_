@@ -22,6 +22,7 @@ mimetypes.add_type('font/woff', '.woff')
 mimetypes.add_type('font/woff2', '.woff2')
 
 from controllers.auth_controller import router as auth_router
+from controllers.password_reset_controller import router as password_reset_router
 from controllers.tenant_controller import router as tenant_router
 from controllers.store_controller import router as store_router
 from controllers.role_controller import router as role_router
@@ -226,6 +227,14 @@ _cors_regex_compiled = re.compile(_cors_regex)
 _PUBLIC_API_PATHS = {
     '/api/auth/login',
     '/api/auth/setup-login',
+    # Forgot Password: a locked-out user has no JWT yet, by definition.
+    # Both endpoints are self-contained-safe without auth -- /request never
+    # reveals account existence and is rate-limited server-side; /confirm
+    # requires possession of a cryptographically random, single-use,
+    # short-lived token mailed only to the account's own registered
+    # address (see modules/password_reset/service.py).
+    '/api/auth/password-reset/request',
+    '/api/auth/password-reset/confirm',
     # HO discovery: a store agent / desktop client calls this BEFORE it has any
     # credential, precisely to learn where HO currently lives. Returns only
     # public routing info (URLs + ordering), no secrets.
@@ -369,6 +378,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(password_reset_router)
 app.include_router(audit_router)
 app.include_router(tenant_router)
 app.include_router(store_router)
