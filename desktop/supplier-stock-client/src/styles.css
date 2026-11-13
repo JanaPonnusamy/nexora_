@@ -9827,7 +9827,7 @@ body.lbl-col-resizing, body.lbl-col-resizing * { cursor: col-resize !important; 
 .sv-screen { display: flex; flex-direction: column; min-height: 0; height: 100%; max-width: none; gap: 6px; }
 /* Compact toolbar (owner request: reclaim the search-box height for the data). */
 .sv-toolbar {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
   padding: 4px 8px; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
   background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
 }

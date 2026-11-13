@@ -30,7 +30,6 @@ export const ERP_SECTIONS = [
     icon: 'procurement',
     screens: [
       'procurement_workspace',
-      'order_workspace',
       'order_entry',
       'legacy_order',
       'analysis',
@@ -41,7 +40,7 @@ export const ERP_SECTIONS = [
     key: 'inventory',
     label: 'Inventory',
     icon: 'inventory',
-    screens: ['stock', 'stock_vertical', 'network_stock', 'non_moving', 'nmw_sales'],
+    screens: ['stock_vertical', 'non_moving', 'nmw_sales'],
   },
   {
     key: 'sales_reports',

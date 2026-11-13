@@ -3,7 +3,7 @@
 // the POS and pick the order type (Regular compares with earlier orders, WH
 // does not). The server syncs, checks both numbers reached OrderNMC, then
 // generates the order. An order left open from an earlier day must be
-// reviewed and Finalized in the Order Workspace first.
+// reviewed and Finalized in Procurement first.
 //
 // Below it: stock received on supplier GRNs since the previous active day's
 // first order for products the app never put on an order.
@@ -187,8 +187,8 @@ export default function PmOrderEntry({ session, onOpenWorkspace }) {
           ) : <p className="poe-muted">No order yet.</p>}
           {state?.blocked && (
             <div className="status-line error">
-              This order is from an earlier day and is not finalized. Review the pending products and Finalize it in the Order Workspace before generating today's order.
-              {onOpenWorkspace && <button type="button" className="secondary-button poe-inline-btn" onClick={onOpenWorkspace}>Open Order Workspace</button>}
+              This order is from an earlier day and is not finalized. Review the pending products and Finalize it in Procurement before generating today's order.
+              {onOpenWorkspace && <button type="button" className="secondary-button poe-inline-btn" onClick={onOpenWorkspace}>Open Procurement</button>}
             </div>
           )}
         </section>

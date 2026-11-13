@@ -33,7 +33,6 @@ import UserManagementScreen from './UserManagementScreen.jsx';
 import RoleManagementScreen from './RoleManagementScreen.jsx';
 import DashboardScreen from './DashboardScreen.jsx';
 import ProcurementWorkspace from './ProcurementWorkspace.jsx';
-import OrderWorkspace from './OrderWorkspace.jsx';
 import { StoreWhatsAppScreen, WhatsAppSendDialog, WhatsAppShareButton, WhatsAppShareHost, offerWhatsAppShare, setWhatsAppSession, storeWhatsAppAvailable, useStoreWhatsAppOutbox } from './storeWhatsApp.jsx';
 import { AbnormalMark, AbnormalSalesStrip, useAbnormalSales } from './abnormalSales.jsx';
 import { OwBulkAssign } from './bulkAssign.jsx';
@@ -98,11 +97,8 @@ const DEV_STORE = import.meta.env.DEV ? (import.meta.env.VITE_DEV_STORE || '') :
 // `short` is the name shown on the group button while that screen is open.
 const screens = [
   { id: 'nexora_dashboard', label: 'Dashboard', group: 'stock', module: 'dashboard' },
-  { id: 'stock', label: 'Stock Availability', short: 'Availability', group: 'stock', module: 'stock_availability' },
-  { id: 'stock_vertical', label: 'Stock (Vertical)', short: 'Vertical', group: 'stock', module: 'stock_availability' },
-  { id: 'network_stock', label: 'Network Stock', short: 'Network', group: 'stock', module: 'stock_availability' },
+  { id: 'stock_vertical', label: 'Stock Enquiry', short: 'Stock', group: 'stock', module: 'stock_availability' },
   { id: 'procurement_workspace', label: 'Procurement', group: 'purchase', module: 'procurement' },
-  { id: 'order_workspace', label: 'Order Workspace', short: 'Order WS', group: 'purchase', module: 'order_workspace' },
   { id: 'order_entry', label: 'Order Entry', short: 'Order Entry', hint: 'Last bill + GRN', group: 'purchase', module: 'order_entry' },
   { id: 'legacy_order', label: 'Legacy Order', short: 'Legacy Order', hint: 'All tenants', group: 'purchase', module: 'legacy_order' },
   { id: 'sync_live', label: 'Sync Live', short: 'Sync', hint: 'All tenants', group: 'tools', module: 'sync' },
@@ -185,7 +181,7 @@ function isLabelReviewOnly(session) {
   return roleNames.every((name) => name.includes('labelreview') || name.includes('reviewonly'));
 }
 
-// A stock-viewer login (role STOCK_VIEWER): sees ONLY Stock (Vertical) and the
+// A stock-viewer login (role STOCK_VIEWER): sees ONLY Stock Enquiry and the
 // NMW bills (NMW Sales Report, already store-scoped server-side) -- no Settings
 // (the HO address is set from the login screen, before signing in).
 function isStockViewerOnly(session) {
@@ -196,7 +192,7 @@ function isStockViewerOnly(session) {
 }
 
 // A combined stock + label login (roles STOCK_VIEWER + LABEL_REVIEW, e.g. NMA1):
-// sees Stock (Vertical), the NMW bills and the Label Exporter -- nothing else.
+// sees Stock Enquiry, the NMW bills and the Label Exporter -- nothing else.
 // Assign/clear inside the Label Exporter stay super-admin only.
 function isStockAndLabelViewer(session) {
   const roles = session?.user?.roles || [];
@@ -390,17 +386,8 @@ function AppShell() {
   const [settings, setSettings] = useState(loadSettings);
   const [session, setSession] = useState(loadSession);
   const [activeScreen, setActiveScreen] = useState('stock_vertical');
-  // Order Workspace is kept mounted (CSS-hidden, not removed) once first
-  // visited, instead of unmounting like every other screen in the ternary
-  // below — so switching away to check another screen and back resumes
-  // exactly where the operator stopped (loaded rows, selected row, scroll,
-  // filters) instead of reloading from scratch. Mounting is still deferred
-  // until the first visit so it never fetches data nobody asked for.
-  const [orderWorkspaceVisited, setOrderWorkspaceVisited] = useState(false);
-  useEffect(() => {
-    if (activeScreen === 'order_workspace') setOrderWorkspaceVisited(true);
-  }, [activeScreen]);
-  // Procurement Workspace: same keep-mounted-after-first-visit behaviour.
+  // Procurement Workspace: kept mounted after the first visit so a switch
+  // away and back keeps the in-progress order.
   const [procurementVisited, setProcurementVisited] = useState(false);
   useEffect(() => {
     if (activeScreen === 'procurement_workspace') setProcurementVisited(true);
@@ -483,14 +470,11 @@ function AppShell() {
     // modules/nmw_sales_report/service.py _assert_can_view_details).
     const nmwBlocked = isSalesmanOnly(session);
     if (nmwBlocked) base = base.filter((s) => s.id !== 'nmw_sales');
-    // Order Workspace (VB-style ordering console) is a Purchase-Manager tool:
-    // visible to super admins and purchase-manager logins, hidden from everyone
-    // else (e.g. salesman-only). The legacy-order API is store-scoped/authorised
-    // server-side too; this keeps the nav honest.
+    // Procurement, Order Entry, and Rate Analysis are purchase-manager tools:
+    // visible to super admins and purchase-manager logins. The APIs also
+    // enforce that server-side; this only keeps the nav honest.
     const orderWorkspaceAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
-    // Rate Analysis exposes every store's purchase rates: same audience as the
-    // Order Workspace (server side also 403s non purchase/admin logins).
-    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'order_workspace' && s.id !== 'procurement_workspace' && s.id !== 'rate_analysis' && s.id !== 'order_entry');
+    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'procurement_workspace' && s.id !== 'rate_analysis' && s.id !== 'order_entry');
     // Non-Moving Stock: super admins (every store) and purchase managers
     // (their own store only - scoped server side). Owner rulings 2026-11-01/02.
     const nonMovingAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
@@ -516,7 +500,7 @@ function AppShell() {
     // 'settings' is always available; 'nmw_sales' is too unless blocked above.
     // The NMW Sales Report is scoped server-side (store users see only their
     // own approved bills), so it never depends on a per-user module grant.
-    // Order Workspace, when allowed above, is likewise always available (no
+    // Procurement, when allowed above, is likewise always available (no
     // per-user module grant needed). Label Exporter is the same story: any
     // store user can review (Y/N + remarks); only sublocation-assign/export
     // inside the screen are further gated by isSuperAdmin, so it doesn't
@@ -524,7 +508,7 @@ function AppShell() {
     // ever seeded into dbo.role_module_access, which silently hid the tab
     // for any login whose modules list isn't empty (e.g. superadmin).
     const always = new Set(nmwBlocked ? ['settings', 'label_exporter', 'nexora_dashboard'] : ['settings', 'nmw_sales', 'label_exporter', 'nexora_dashboard']);
-    if (orderWorkspaceAllowed) { always.add('order_workspace'); always.add('procurement_workspace'); always.add('rate_analysis'); always.add('order_entry'); }
+    if (orderWorkspaceAllowed) { always.add('procurement_workspace'); always.add('rate_analysis'); always.add('order_entry'); }
     // Every store login may link and use its own store's WhatsApp.
     always.add('whatsapp');
     if (isSuperAdmin(session)) {
@@ -605,9 +589,9 @@ function AppShell() {
     });
     setSettings(nextSettings);
     setSession(savedSession);
-    // Always land on Stock (Vertical) / Store Comparison after login (owner
-    // request). The navItems effect falls back to the first accessible screen
-    // for any login without stock access (e.g. label-review-only).
+    // Always land on Stock Enquiry after login. The navItems effect falls
+    // back to the first accessible screen for any login without stock access
+    // (e.g. label-review-only).
     setActiveScreen('stock_vertical');
   }
 
@@ -784,13 +768,6 @@ function AppShell() {
           )
         ) : activeScreen === 'stock_vertical' ? (
           <StockVerticalView session={session} settings={runtimeSettings} />
-        ) : activeScreen === 'network_stock' ? (
-          <NetworkStockView
-            session={session}
-            settings={runtimeSettings}
-            tenants={tenants}
-            onTenantChange={(tenantId) => persistSettings({ ...settings, tenantId })}
-          />
         ) : activeScreen === 'analysis' ? (
           <SupplierStockAnalysis
             session={session}
@@ -809,10 +786,10 @@ function AppShell() {
         ) : activeScreen === 'rate_analysis' ? (
           <RateAnalysis session={session} settings={runtimeSettings} />
         ) : activeScreen === 'order_entry' ? (
-          <PmOrderEntry session={session} onOpenWorkspace={() => setActiveScreen('order_workspace')} />
+          <PmOrderEntry session={session} onOpenWorkspace={() => setActiveScreen('procurement_workspace')} />
         ) : activeScreen === 'non_moving' ? (
           <NonMovingStock session={session} settings={runtimeSettings} ui={PROCUREMENT_UI} />
-        ) : activeScreen === 'order_workspace' || activeScreen === 'procurement_workspace' || activeScreen === 'legacy_order' || activeScreen === 'sync_live' ? null : activeScreen === 'schema_sync' ? (
+        ) : activeScreen === 'procurement_workspace' || activeScreen === 'legacy_order' || activeScreen === 'sync_live' ? null : activeScreen === 'schema_sync' ? (
           <SchemaSyncPage session={session} />
         ) : activeScreen === 'user_management' ? (
           isSuperAdmin(session) ? <UserManagementScreen session={session} /> : null
@@ -821,13 +798,7 @@ function AppShell() {
         ) : activeScreen === 'nexora_dashboard' ? (
           <DashboardScreen session={session} settings={runtimeSettings} isSuperAdminUser={isSuperAdmin(session)} />
         ) : (
-          <StockAvailability
-            session={session}
-            settings={runtimeSettings}
-            onOpenSettings={() => setActiveScreen('settings')}
-            tenants={tenants}
-            onTenantChange={(tenantId) => persistSettings({ ...settings, tenantId })}
-          />
+          <StockVerticalView session={session} settings={runtimeSettings} />
         )}
         {/* Rendered once (first visit) and never unmounted again — see
             orderWorkspaceVisited above. CSS-hidden (not wrapped — stays a
@@ -835,9 +806,6 @@ function AppShell() {
             `.workspace:has(> .ow-screen)`) rather than removed from the tree,
             so all of its state (loaded rows, selected row, scroll position,
             filters) survives switching to another screen and back. */}
-        {session && orderWorkspaceVisited && (
-          <OrderWorkspace session={session} settings={runtimeSettings} hidden={activeScreen !== 'order_workspace'} />
-        )}
         {session && procurementVisited && (
           <ProcurementWorkspace
             session={session}
@@ -1632,7 +1600,7 @@ function ForgotPasswordRequestStep({ onHaveCode, onBack }) {
           placeholder="you@example.com"
         />
       </label>
-      <button className="primary-button" type="submit">Send reset link</button>
+      <button className="primary-button" type="submit">Send reset code</button>
       <button className="link-button" type="button" onClick={onHaveCode}>I already have a reset code</button>
       <button className="link-button" type="button" onClick={onBack}>Back to sign in</button>
       {status.message && <span className={`status ${status.state === 'ok' ? 'ok' : status.state}`}>{status.message}</span>}
@@ -1765,1596 +1733,6 @@ function LoginScreen({ onLogin, onOpenSettings }) {
   );
 }
 
-function StockAvailability({ session, settings, onOpenSettings, tenants = [], onTenantChange }) {
-  const [query, setQuery] = useState('');
-  const [onlyStock, setOnlyStock] = useState(false);
-  // Seed from the last successful store list so the NMW/store panels render
-  // immediately on launch instead of sitting on placeholders while
-  // api.listStores is in flight - listStores below still runs and replaces
-  // this with the fresh list right after.
-  const [allStores, setAllStores] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexora.desktop.storesCache') || '[]'); } catch { return []; }
-  });
-  const [searchStores, setSearchStores] = useState([]);
-  const [storeDetails, setStoreDetails] = useState({});
-  // Two-color product-selection state, kept separate from storeDetails (which
-  // is about what CORE DATA is loaded, not what color a row renders):
-  //   sourceStoreId/sourceProductCode - the product the user actually clicked
-  //     (GREEN). Set the instant a row is clicked, before the sync API call.
-  //   synchronized[storeId] - { productCode, matchType, score } for every
-  //     OTHER store's auto-resolved equivalent (BLUE). The source store is
-  //     never a key here. Replaced wholesale on every new click - never
-  //     merged with the previous click's map - so a store with no match in
-  //     the new response has no stale blue row left over from an old one.
-  const [selectionState, setSelectionState] = useState(emptySelectionState);
-  const [selectedStoreId, setSelectedStoreId] = useState(session?.user?.roles?.[0]?.store_id || '');
-  const [hasSearched, setHasSearched] = useState(false);
-  const [status, setStatus] = useState({ state: 'idle', message: 'Type product name to search.' });
-  // Permanent-cache / offline state: `offline` flips true when a search falls
-  // back to the local product index; `lastSync` is the newest cache timestamp,
-  // shown as "Last sync: <time>" so the operator knows how fresh the offline
-  // data is. See lib/productIndexCache.js.
-  const [offline, setOffline] = useState(false);
-  const [lastSync, setLastSync] = useState(null);
-  const [purchaseDetail, setPurchaseDetail] = useState(null);
-  const [billDetail, setBillDetail] = useState(null);
-  const [batchDetail, setBatchDetail] = useState(null);
-
-  async function openBatchDetail(store, productCode, batchNo) {
-    if (!store || !productCode || !batchNo) return;
-    setBatchDetail({ store, batchNo, loading: true, row: null });
-    try {
-      const row = await api.getBatchDetail(store.store_id, productCode, batchNo, session, { tenantId: settings?.tenantId });
-      setBatchDetail({ store, batchNo, loading: false, row });
-    } catch {
-      setBatchDetail({ store, batchNo, loading: false, row: null, error: true });
-    }
-  }
-  const [nonMovingProducts, setNonMovingProducts] = useState([]);
-  const [nonMovingLoading, setNonMovingLoading] = useState(true);
-  const [nonMovingIndex, setNonMovingIndex] = useState(0);
-  const [nonMovingStoreFilter, setNonMovingStoreFilter] = useState('');
-  const [nonMovingTotals, setNonMovingTotals] = useState([]);
-  // NM/Expiry valuation figures are blurred until unlocked with the password
-  // (req: hide stock value from the shop floor). Session-only — re-locks on reload.
-  const [nmValuesUnlocked, setNmValuesUnlocked] = useState(false);
-  const [isAutoQuery, setIsAutoQuery] = useState(false);
-  const [visibleSections, setVisibleSections] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('nexora.desktop.stockSections') || 'null');
-      return saved && typeof saved === 'object' ? { ...DEFAULT_STOCK_SECTIONS, ...saved } : DEFAULT_STOCK_SECTIONS;
-    } catch {
-      return DEFAULT_STOCK_SECTIONS;
-    }
-  });
-  const [visibleFields, setVisibleFields] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('nexora.desktop.stockFields') || 'null');
-      if (!saved || typeof saved !== 'object') return DEFAULT_STOCK_FIELDS;
-      return Object.fromEntries(Object.entries(DEFAULT_STOCK_FIELDS).map(([category, defaults]) => [
-        category,
-        { ...defaults, ...(saved[category] || {}) }
-      ]));
-    } catch {
-      return DEFAULT_STOCK_FIELDS;
-    }
-  });
-  const [columnOrder, setColumnOrder] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexora.desktop.stockColumnOrder') || '{}') || {}; }
-    catch { return {}; }
-  });
-  const [columnWidths, setColumnWidths] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexora.desktop.stockColumnWidths') || '{}') || {}; }
-    catch { return {}; }
-  });
-  const [gridDensity, setGridDensity] = useState(() => {
-    try { return localStorage.getItem('nexora.desktop.stockDensity') || DEFAULT_GRID_DENSITY; }
-    catch { return DEFAULT_GRID_DENSITY; }
-  });
-  const [gridSettingsOpen, setGridSettingsOpen] = useState(false);
-  const gridSettingsBtnRef = useRef(null);
-  const searchInputRef = useRef(null);
-  // Viewport-first grid sizing (req "FINAL GRID LAYOUT FIX"): the store grid is
-  // NOT a natural-height stack that overflows the viewport. It measures the
-  // real available body height and derives how many COMPLETE product rows each
-  // store block can show (never fewer than 4, more when the window is taller),
-  // publishing that as --stock-visible-rows. The CSS then makes every store
-  // block a fixed height = chrome + rows × --stock-row-h, so a block can only
-  // ever end on a whole-row boundary — no half rows, no clipped store.
-  const storeGridRef = useRef(null);
-
-  const tenantStores = useMemo(() => {
-    const tenantId = settings?.tenantId;
-    if (!tenantId) return allStores;
-    return allStores.filter((store) => String(store?.tenant_id || '') === String(tenantId));
-  }, [allStores, settings?.tenantId]);
-
-  useEffect(() => {
-    try { localStorage.setItem('nexora.desktop.stockSections', JSON.stringify(visibleSections)); } catch { /* best effort */ }
-  }, [visibleSections]);
-
-  useEffect(() => {
-    try { localStorage.setItem('nexora.desktop.stockFields', JSON.stringify(visibleFields)); } catch { /* best effort */ }
-  }, [visibleFields]);
-
-  useEffect(() => {
-    try { localStorage.setItem('nexora.desktop.stockColumnOrder', JSON.stringify(columnOrder)); } catch { /* best effort */ }
-  }, [columnOrder]);
-
-  useEffect(() => {
-    try { localStorage.setItem('nexora.desktop.stockColumnWidths', JSON.stringify(columnWidths)); } catch { /* best effort */ }
-  }, [columnWidths]);
-
-  useEffect(() => {
-    try { localStorage.setItem('nexora.desktop.stockDensity', gridDensity); } catch { /* best effort */ }
-  }, [gridDensity]);
-
-  // Column-width priority (req §7): Product and Sales Trend are the two
-  // columns a buyer reads continuously, so they get comparable flex weight -
-  // Product must never lose the width race to the chart. Batches/Purchase/
-  // Billing keep compact fixed sub-columns internally (see *_COL_WIDTHS)
-  // with only one flexible text field (Supplier / Bill No) each, so their
-  // track weight stays modest.
-  // Section track widths. Billing carries the most sub-columns (Qty/Dis%/Date/
-  // Bill No/MRP/Amount), so it gets the widest min + a healthy fr share; the
-  // Sales Trend sparkline and Purchase columns give up a little width for it so
-  // Amount is never clipped at the right edge at 1366 (req §10). The header and
-  // every store body read this same variable, so boundaries always align (§9).
-  // Auto-fit: below the width where every section's minimum fits (~1280px of
-  // grid), drop the right-hand sections -- Sales Trend first, then Billing,
-  // Purchase, Batches -- so the Product column gets the space and the grid
-  // never scrolls horizontally (e.g. 1056x768). The saved toggles are left
-  // untouched; this only affects what is shown at the current width.
-  const workbenchRef = useRef(null);
-  const [gridWidth, setGridWidth] = useState(0);
-  useLayoutEffect(() => {
-    const el = workbenchRef.current;
-    if (!el) return undefined;
-    const measure = () => setGridWidth(el.clientWidth);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const SECTION_MIN = { trend: 214, batches: 228, purchase: 280, billing: 300 };
-  const PRODUCT_MIN = 34 + 300; // select + a comfortably wide Product column
-  const effectiveSections = { ...visibleSections };
-  if (gridWidth > 0) {
-    const shown = () => PRODUCT_MIN + Object.keys(SECTION_MIN).reduce((w, k) => w + (effectiveSections[k] ? SECTION_MIN[k] : 0), 0);
-    for (const key of ['trend', 'billing', 'purchase', 'batches']) {
-      if (shown() <= gridWidth - 24) break;
-      effectiveSections[key] = false;
-    }
-  }
-  const stockGridColumns = [
-    '34px',
-    'minmax(220px, 1.3fr)',
-    effectiveSections.trend && 'minmax(214px, 1.15fr)',
-    effectiveSections.batches && 'minmax(228px, .9fr)',
-    effectiveSections.purchase && 'minmax(280px, 1.15fr)',
-    effectiveSections.billing && 'minmax(300px, 1.3fr)'
-  ].filter(Boolean).join(' ');
-
-  function toggleStockSection(section) {
-    setVisibleSections((current) => ({ ...current, [section]: !current[section] }));
-  }
-
-  function toggleStockField(category, field) {
-    setVisibleFields((current) => {
-      const group = current[category];
-      const enabledCount = Object.values(group).filter(Boolean).length;
-      if (group[field] && enabledCount === 1) return current;
-      return { ...current, [category]: { ...group, [field]: !group[field] } };
-    });
-  }
-
-  // Move a column one slot left (-1) or right (+1) within its group.
-  function moveStockColumn(group, key, dir) {
-    setColumnOrder((current) => {
-      const keys = orderedGroupKeys(group, current);
-      const i = keys.indexOf(key);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= keys.length) return current;
-      const next = keys.slice();
-      [next[i], next[j]] = [next[j], next[i]];
-      return { ...current, [group]: next };
-    });
-  }
-
-  // Set a column's pixel width; passing null/0/'' clears the override so the
-  // column returns to its default width (flex columns become stretchy again).
-  function setStockColumnWidth(group, key, width) {
-    setColumnWidths((current) => {
-      const groupWidths = { ...(current[group] || {}) };
-      const n = Number(width);
-      if (!width || !Number.isFinite(n) || n <= 0) delete groupWidths[key];
-      else groupWidths[key] = Math.round(n);
-      return { ...current, [group]: groupWidths };
-    });
-  }
-
-  // Restore a group's columns to their default order + widths + visibility.
-  function resetStockColumns(group) {
-    setColumnOrder((current) => { const n = { ...current }; delete n[group]; return n; });
-    setColumnWidths((current) => { const n = { ...current }; delete n[group]; return n; });
-    setVisibleFields((current) => ({ ...current, [group]: { ...DEFAULT_STOCK_FIELDS[group] } }));
-  }
-
-  // Restore every group + section visibility + density to factory defaults in
-  // one action (Grid settings panel's "Reset all").
-  function resetAllStockColumns() {
-    setColumnOrder({});
-    setColumnWidths({});
-    setVisibleFields(DEFAULT_STOCK_FIELDS);
-    setVisibleSections(DEFAULT_STOCK_SECTIONS);
-    setGridDensity(DEFAULT_GRID_DENSITY);
-  }
-
-  const loginStoreId = session?.user?.roles?.[0]?.store_id || loadSettings().storeId;
-  const visibility = historyVisibility(session);
-  const canViewPurchase = visibility !== 'NONE';
-  const hideSupplierColumn = isSalesmanOnly(session);
-  const searchIdRef = useRef(0);
-  // In-memory caches: instant re-render for anything already fetched this session.
-  // searchCacheRef: normalized query -> stores[] from the search API.
-  // detailCacheRef: "storeId:productCode" -> fully loaded store detail (incl. bill items).
-  const searchCacheRef = useRef(new Map());
-  const detailCacheRef = useRef(new Map());
-  const coreLimitRef = useRef(makeConcurrencyLimiter(4));
-  // Offline search index: storeId -> in-memory product list (loaded lazily from
-  // the permanent IndexedDB cache the first time an offline search runs, then
-  // reused so subsequent offline keystrokes filter in memory instantly).
-  // Invalidated whenever a background re-seed refreshes the cache.
-  const offlineIndexRef = useRef(new Map());
-  // Cross-store product-selection sync: lets a superseded sync response (an
-  // older click's result arriving after a newer click) be dropped instead of
-  // clobbering fresher selections. The sync path below calls loadStoreCore /
-  // setStoreDetails directly for target stores — never handleProductSelect —
-  // so it structurally cannot re-trigger itself; no recursion guard needed.
-  const syncTicketRef = useRef(0);
-
-  useEffect(() => {
-    api.listStores(session).then((rows) => {
-      const items = asArray(rows);
-      setAllStores(items);
-      try { localStorage.setItem('nexora.desktop.storesCache', JSON.stringify(items)); } catch { /* best effort */ }
-    }).catch(() => {});
-  }, [session]);
-
-  // Show the last cache timestamp as soon as the screen mounts (before any
-  // refresh), so an offline launch still reports how fresh the data is.
-  useEffect(() => {
-    let cancelled = false;
-    getLastSync(settings?.tenantId).then((ts) => { if (!cancelled) setLastSync(ts); });
-    return () => { cancelled = true; };
-  }, [settings?.tenantId]);
-
-  // Seed + keep fresh the PERMANENT local product index (code/name/unit/stock)
-  // in the background: enables instant offline search and background stock
-  // updates without ever blocking the UI. Re-runs on a slow interval; a full
-  // re-seed also refreshes cached stock. Fail-soft: a fetch error just leaves
-  // the last-known cache in place.
-  useEffect(() => {
-    const tenantId = settings?.tenantId;
-    if (!tenantId || !session) return undefined;
-    let cancelled = false;
-
-    async function refreshIndex() {
-      try {
-        const resp = await api.getProductIndex(session, { tenantId });
-        if (cancelled) return;
-        for (const store of asArray(resp?.stores)) {
-          await syncStoreIndex(tenantId, store.store_id,
-            { store_code: store.store_code, store_name: store.store_name },
-            asArray(store.products));
-        }
-        if (!cancelled) {
-          offlineIndexRef.current.clear(); // cache changed - drop stale in-memory scopes
-          setLastSync(Date.now());
-          setOffline(false);
-        }
-      } catch {
-        // Offline / HO down: keep serving the existing cache.
-      }
-    }
-
-    refreshIndex();
-    // Background stock refresh: re-pull the compact index periodically so cached
-    // stock stays current. 10 min is light on a low-spec box + the DB server.
-    const timer = setInterval(refreshIndex, 15 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [session, settings?.tenantId]);
-
-  useEffect(() => {
-    // Guard on settings.tenantId too: for a platform user (e.g. super admin) it
-    // resolves asynchronously (device has no configured tenant of its own), and
-    // this effect only depends on [allStores] - without the guard+dependency it
-    // would fire once with tenant_id missing (422 on every store) and never
-    // retry once the tenant actually resolves.
-    let cancelled = false;
-    if (!settings?.tenantId) return undefined;
-    if (!tenantStores.length) {
-      setNonMovingProducts([]);
-      setNonMovingLoading(false);
-      return undefined;
-    }
-    setNonMovingLoading(true);
-    // Non-moving rule (req): not sold >= 90 days AND last GRN older than 10 days.
-    Promise.all(tenantStores.map((store) => api.getNonMovingStock(store.store_id, session, { tenantId: settings.tenantId, dwellDays: 90, minPurAge: 10, limit: 50 })
-      .then((result) => asArray(result?.rows)
-        .map((row) => ({ ...row, __storeId: store.store_id, __storeName: store.store_name || store.store_code, __storeCode: store.store_code })))
-      .catch(() => [])))
-      .then((lists) => {
-        if (cancelled) return;
-        const merged = lists.flat();
-        merged.sort((a, b) => {
-          const valueA = nonMovingCost(a);
-          const valueB = nonMovingCost(b);
-          return valueB - valueA;
-        });
-        setNonMovingProducts(merged);
-        setNonMovingLoading(false);
-      });
-    // Store-level valuation totals (cost+tax) for the NM bar summary strip.
-    Promise.all(tenantStores.map((store) => api.getNonMovingTotals(store.store_id, session, { tenantId: settings.tenantId, salesAge: 90, grnAge: 10 })
-      .then((totals) => ({ ...totals, __storeId: store.store_id, __storeName: store.store_name || store.store_code, __storeCode: store.store_code }))
-      .catch(() => null)))
-      .then((rows) => {
-        if (cancelled) return;
-        setNonMovingTotals(rows.filter(Boolean));
-      });
-    return () => { cancelled = true; };
-  }, [tenantStores, settings?.tenantId, session]);
-
-  useEffect(() => {
-    setNonMovingStoreFilter('');
-    setNonMovingIndex(0);
-    setNonMovingProducts([]);
-    setNonMovingTotals([]);
-    searchIdRef.current += 1;
-    setSearchStores([]);
-    setStoreDetails({});
-  }, [settings?.tenantId]);
-
-  const filteredNonMoving = useMemo(() => {
-    const tenantStoreIds = new Set(tenantStores.map((store) => String(store.store_id)));
-    const scopedRows = nonMovingProducts.filter((row) => tenantStoreIds.has(String(row.__storeId)));
-    return nonMovingStoreFilter
-      ? scopedRows.filter((row) => String(row.__storeId) === String(nonMovingStoreFilter))
-      : scopedRows;
-  }, [nonMovingProducts, nonMovingStoreFilter, tenantStores]);
-
-  const groupedNonMoving = useMemo(
-    () => groupNonMovingProducts(filteredNonMoving),
-    [filteredNonMoving]
-  );
-
-  // Per-store valuation totals scoped to the tenant (+ the active store filter),
-  // feeding the NM bar's "value + tax / NM% / Ex%" summary strip.
-  const scopedNonMovingTotals = useMemo(() => {
-    const tenantStoreIds = new Set(tenantStores.map((store) => String(store.store_id)));
-    const rows = nonMovingTotals.filter((row) => tenantStoreIds.has(String(row.__storeId)));
-    return nonMovingStoreFilter
-      ? rows.filter((row) => String(row.__storeId) === String(nonMovingStoreFilter))
-      : rows;
-  }, [nonMovingTotals, nonMovingStoreFilter, tenantStores]);
-
-  // Switching the store filter can leave the carousel pointing past the end
-  // of the (now shorter) filtered list — snap back to the first item.
-  useEffect(() => { setNonMovingIndex(0); }, [nonMovingStoreFilter]);
-
-  useEffect(() => {
-    if (groupedNonMoving.length < 2) return;
-    const timer = setInterval(() => {
-      setNonMovingIndex((index) => (index + 1) % groupedNonMoving.length);
-    }, 6000);
-    return () => clearInterval(timer);
-  }, [groupedNonMoving]);
-
-  function nonMovingStep(delta) {
-    if (!groupedNonMoving.length) return;
-    setNonMovingIndex((index) => (index + delta + groupedNonMoving.length) % groupedNonMoving.length);
-  }
-
-  useEffect(() => {
-    if (isAutoQuery && searchInputRef.current) {
-      searchInputRef.current.focus();
-      searchInputRef.current.select();
-    }
-  }, [isAutoQuery]);
-
-  useEffect(() => {
-    const value = query.trim().replace(/\s+/g, ' ');
-    if (value.length < 2) {
-      searchIdRef.current += 1;
-      setSearchStores([]);
-      setStoreDetails({});
-      setHasSearched(false);
-      setStatus({ state: 'idle', message: 'Type at least 2 characters to search.' });
-      return;
-    }
-    // Cached term: render instantly on every keystroke, no debounce needed.
-    if (searchCacheRef.current.has(`${settings?.tenantId || ''}|${onlyStock ? '1' : '0'}|${value.toLowerCase()}`)) {
-      runSearch(value);
-      return;
-    }
-    const timer = setTimeout(() => runSearch(value), 150);
-    return () => clearTimeout(timer);
-  }, [query, onlyStock, settings?.tenantId]);
-
-  async function loadStoreCore(storeId, product) {
-    const cacheKey = `${storeId}:${product.product_code}`;
-    const cached = detailCacheRef.current.get(cacheKey);
-    if (isStockCoreFresh(cached)) return cached;
-
-    // Single round trip per store (batches+purchases+sales+movement combined
-    // server-side) instead of 4 separate HTTP/SP calls — cuts store load time.
-    // months:4 so the trend chart can show 4 months (see MonthlyMovementChart).
-    const result = await coreLimitRef.current(() => api.getStockCore(storeId, product.product_code, session, { months: 4 }));
-    const core = {
-      product,
-      batches: asArray(result?.batches),
-      purchases: asArray(result?.purchases),
-      sales: asArray(result?.sales),
-      movement: asArray(result?.movement),
-      billItems: [],
-      fetchedAt: Date.now()
-    };
-    // Only cache successful, non-empty fetches — a transient failure or an
-    // empty result (e.g. SP not deployed yet) must not poison future searches.
-    if (core.batches.length || core.purchases.length || core.sales.length || core.movement.length) {
-      detailCacheRef.current.set(cacheKey, core);
-    }
-    return core;
-  }
-
-  function primeStoreCoreCache(items, productsByStore) {
-    const seeded = {};
-    asArray(items).forEach((item) => {
-      const product = productsByStore.get(item.store_id);
-      if (!product) return;
-      const core = {
-        product,
-        batches: asArray(item?.batches),
-        purchases: asArray(item?.purchases),
-        sales: asArray(item?.sales),
-        movement: asArray(item?.movement),
-        billItems: asArray(item?.billItems),
-        activeBillNo: item?.activeBillNo || null,
-        fetchedAt: Date.now()
-      };
-      const cacheKey = `${item.store_id}:${product.product_code}`;
-      if (core.batches.length || core.purchases.length || core.sales.length || core.movement.length || core.billItems.length) {
-        detailCacheRef.current.set(cacheKey, core);
-      }
-      seeded[item.store_id] = core;
-    });
-    return seeded;
-  }
-
-  function formatSyncTime(ts) {
-    if (!ts) return 'never';
-    try { return formatStamp12(ts); } catch { return 'unknown'; }
-  }
-
-  // Build the same per-store result shape runSearch expects, but entirely from
-  // the permanent local index - used when HO is unreachable so the operator
-  // still sees product names + last-known stock. Scopes are loaded once into
-  // offlineIndexRef then filtered in memory (instant on subsequent keystrokes).
-  async function buildOfflineStores(value) {
-    const tenantId = settings?.tenantId;
-    const out = [];
-    for (const store of tenantStores) {
-      let list = offlineIndexRef.current.get(store.store_id);
-      if (!list) {
-        list = await loadScope(tenantId, store.store_id);
-        offlineIndexRef.current.set(store.store_id, list);
-      }
-      const matches = filterProducts(list, value, 50);
-      if (matches.length) {
-        out.push({
-          store_id: store.store_id,
-          store_code: store.store_code,
-          store_name: store.store_name,
-          products: matches.map((p) => ({
-            product_code: p.product_code,
-            product_name: p.product_name,
-            sale_unit: p.unit,
-            stock: p.stock,
-            mrp: null,
-            batch_no: null,
-          })),
-        });
-      }
-    }
-    return out;
-  }
-
-  async function runSearch(value) {
-    if (!value || value.length < 2) {
-      searchIdRef.current += 1;
-      setHasSearched(false);
-      setStatus({ state: 'idle', message: 'Type at least 2 characters to search.' });
-      return;
-    }
-    const searchId = ++searchIdRef.current;
-    setHasSearched(true);
-    const startedAt = performance.now();
-    const cacheKey = `${settings?.tenantId || ''}|${onlyStock ? '1' : '0'}|${value.toLowerCase()}`;
-    const cachedStores = searchCacheRef.current.get(cacheKey);
-
-    try {
-      let stores;
-      if (cachedStores) {
-        stores = cachedStores; // instant: skip the network round trip entirely
-      } else {
-        setStatus({ state: 'loading', message: 'Searching products...' });
-        let response;
-        try {
-          response = await api.searchStockProducts(value, session, { onlyStock });
-          if (offline) setOffline(false);
-        } catch (netErr) {
-          // OFFLINE / HO unreachable: serve the permanent local index so the
-          // operator still gets product names + last-known stock.
-          if (searchIdRef.current !== searchId) return;
-          const offlineStores = await buildOfflineStores(value);
-          if (searchIdRef.current !== searchId) return;
-          setOffline(true);
-          const ts = await getLastSync(settings?.tenantId);
-          setLastSync(ts);
-          setSearchStores(offlineStores);
-          setStoreDetails({}); // detail panels need HO; unavailable offline
-          const oTotal = offlineStores.reduce((s, st) => s + (st.products || []).length, 0);
-          setStatus({
-            state: oTotal ? 'ok' : 'idle',
-            message: oTotal
-              ? `Offline — ${oTotal} cached match(es). Last sync ${formatSyncTime(ts)}.`
-              : `Offline — no cached match. Last sync ${formatSyncTime(ts)}.`,
-          });
-          return;
-        }
-        if (searchIdRef.current !== searchId) return; // superseded by a newer search
-        stores = asArray(response?.stores);
-        searchCacheRef.current.set(cacheKey, stores);
-      }
-
-      setSearchStores(stores);
-      const total = stores.reduce((sum, store) => sum + (store.products || []).length, 0);
-
-      const storesWithProduct = stores.filter((store) => (store.products || [])[0]);
-      if (!storesWithProduct.length) {
-        setStoreDetails({});
-        setStatus({ state: 'ok', message: total ? `${total} product match(es) found.` : 'No products matched in any store.' });
-        return;
-      }
-
-      // Seed instantly from cache (if present) so already-seen products render
-      // with zero delay, then only fetch what's actually missing.
-      const seeded = {};
-      const toFetch = [];
-      storesWithProduct.forEach((store) => {
-        const product = store.products[0];
-        const cached = detailCacheRef.current.get(`${store.store_id}:${product.product_code}`);
-        if (isStockCoreFresh(cached)) seeded[store.store_id] = cached;
-        else toFetch.push(store);
-      });
-      setStoreDetails(seeded);
-
-      if (!toFetch.length) {
-        const elapsedMs = Math.round(performance.now() - startedAt);
-        setStatus({ state: 'ok', message: `${total} product match(es) found. All stores loaded in ${elapsedMs}ms (cached).` });
-        return;
-      }
-
-      setStatus({ state: 'loading', message: `${total} product match(es) found. Loading ${toFetch.length} store(s)...` });
-
-      const productsByStore = new Map(toFetch.map((store) => [store.store_id, store.products[0]]));
-      try {
-        const bulk = await api.getStockCoreBulk(
-          toFetch.map((store) => ({
-            store_id: store.store_id,
-            product_code: store.products[0].product_code,
-          })),
-          session,
-          { months: 4 }
-        );
-        if (searchIdRef.current !== searchId) return;
-        const resolved = primeStoreCoreCache(bulk?.items, productsByStore);
-        const misses = {};
-        toFetch.forEach((store) => {
-          if (!resolved[store.store_id]) misses[store.store_id] = null;
-        });
-        setStoreDetails((prev) => ({ ...prev, ...resolved, ...misses }));
-        const elapsedMs = Math.round(performance.now() - startedAt);
-        setStatus({ state: 'ok', message: `${total} product match(es) found. All stores loaded in ${elapsedMs}ms.` });
-      } catch (bulkError) {
-        // Fallback to the original per-store path if the bulk endpoint is not
-        // deployed yet or one request fails unexpectedly.
-        let settled = 0;
-        toFetch.forEach((store) => {
-          const product = store.products[0];
-          loadStoreCore(store.store_id, product)
-            .then((core) => {
-              if (searchIdRef.current !== searchId) return;
-              setStoreDetails((prev) => ({ ...prev, [store.store_id]: core }));
-            })
-            .catch(() => {
-              if (searchIdRef.current !== searchId) return;
-              setStoreDetails((prev) => ({ ...prev, [store.store_id]: null }));
-            })
-            .finally(() => {
-              settled += 1;
-              if (settled === toFetch.length && searchIdRef.current === searchId) {
-                const elapsedMs = Math.round(performance.now() - startedAt);
-                setStatus({ state: 'ok', message: `${total} product match(es) found. All stores loaded in ${elapsedMs}ms.` });
-              }
-            });
-        });
-      }
-    } catch (error) {
-      if (searchIdRef.current !== searchId) return;
-      setSearchStores([]);
-      setStoreDetails({});
-      setStatus({ state: 'error', message: error.message });
-    }
-  }
-
-  // Every row click - in ANY store, whether that row was previously unselected,
-  // green, or blue - is a brand-new USER SOURCE SELECTION. It always becomes
-  // the new GREEN, and the entire cross-store synchronization is recalculated
-  // from it; there is no special-casing based on what the row's color was
-  // before the click.
-  function handleProductSelect(storeId, product) {
-    const searchId = searchIdRef.current;
-
-    // Set GREEN and clear every previous BLUE synchronized selection
-    // immediately - before the network call - so the click feels instant and
-    // no store can show a stale blue row from the previous source product.
-    setSelectionState(selectionStateForClick(storeId, product.product_code));
-
-    loadStoreCore(storeId, product)
-      .then((core) => {
-        if (searchIdRef.current !== searchId) return;
-        setStoreDetails((prev) => ({ ...prev, [storeId]: core }));
-      })
-      .catch(() => {});
-
-    syncCrossStoreSelection(storeId, product, searchId);
-  }
-
-  // For a product picked in one store, resolve its equivalent in every OTHER
-  // store currently on screen (see api.syncStockSelection / the matching
-  // hierarchy documented in backend stock_availability/service.py) and mark
-  // each one BLUE. Best-effort: the clicked store's own GREEN selection
-  // above already applied regardless of what happens here, and a store with
-  // no reliable match simply gets no blue row.
-  async function syncCrossStoreSelection(sourceStoreId, product, searchId) {
-    if (!product?.product_code) return;
-    const targetStoreIds = searchStores
-      .map((store) => store.store_id)
-      .filter((storeId) => storeId && storeId !== sourceStoreId);
-    if (!targetStoreIds.length) return;
-
-    const ticket = ++syncTicketRef.current;
-    let response;
-    try {
-      response = await api.syncStockSelection(
-        sourceStoreId,
-        product.product_code,
-        product.product_name,
-        targetStoreIds,
-        session,
-        { tenantId: settings?.tenantId }
-      );
-    } catch {
-      return; // cross-store sync is best-effort; the GREEN source selection above already applied
-    }
-    // A newer click (new ticket, or a whole new search) supersedes this
-    // response outright - never let an older click's result apply.
-    if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
-
-    const matches = asArray(response?.results).filter((r) => r.product && r.match_type !== 'NO_MATCH');
-
-    // Build the BLUE map fresh from THIS response only - never merge into the
-    // previous synchronized map, so a store with no match here has no stale
-    // blue row left over from the prior source product. Extra guard beyond
-    // the ticket check: only applies if the CURRENT selection state still
-    // corresponds to this exact click (same source store+product), so a
-    // stale response can never overwrite a newer source selection even in a
-    // race the ticket alone didn't catch.
-    const freshSynchronized = buildSynchronizedMap(response?.results);
-    setSelectionState((current) => applySyncResult(current, sourceStoreId, product.product_code, freshSynchronized));
-
-    await Promise.all(matches.map(async (match) => {
-      // Prefer the row already present in that store's own search results
-      // (carries stock/unit/etc. for display); fall back to the matcher's
-      // bare product identity when the match came from outside the current
-      // search filter (e.g. a SupplierProductMatch pair with a different name).
-      const knownRow = (searchProductsByStore.get(match.store_id) || [])
-        .find((row) => row.product_code === match.product.product_code);
-      const targetProduct = knownRow || {
-        product_code: match.product.product_code,
-        product_name: match.product.product_name,
-        mrp: match.product.mrp
-      };
-      try {
-        const core = await loadStoreCore(match.store_id, targetProduct);
-        if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
-        setStoreDetails((prev) => ({ ...prev, [match.store_id]: core }));
-      } catch {
-        // leave that store's previously loaded detail rather than clearing it on a transient fetch failure
-      }
-    }));
-  }
-
-  // Per-store selection descriptor for the two-color model - see
-  // selectionFor() in state/productSelection.js for the (unit-tested) rule.
-  const selectionFor = (storeId) => selectionForStore(selectionState, storeId);
-
-  const searchProductsByStore = new Map(searchStores.map((store) => [store.store_id, store.products || []]));
-  // allStores can still be loading when a search already resolved (its request
-  // fired independently and can win the race) - fall back to the stores the
-  // search itself returned so rows render immediately instead of showing
-  // "no matching products" against placeholder store IDs the search can't match.
-  const visibleStoresUnfiltered = allStores.length
-    ? allStores
-    : searchStores.length
-      ? searchStores
-      // The warehouse (NMW) row must exist in this placeholder set too, or
-      // the whole NMW panel briefly vanishes during the initial store-list
-      // load (isWarehouseStore finds nothing to pin until allStores resolves).
-      : Array.from({ length: 5 }, (_, index) => (
-        index === 0
-          ? { store_id: 'pending-nmw', store_code: 'NMW', store_name: 'Loading warehouse...' }
-          : { store_id: 'pending-' + index, store_name: 'Loading store...' }
-      ));
-  // A super admin's store list spans every tenant (the API only narrows this
-  // to one tenant for non-broad roles) - without this filter their screen mixed
-  // every tenant's branches into one grid. tenants.length > 1 is true only for
-  // a broad login, since the API already locks everyone else to their own
-  // tenant, so this filter is a no-op for regular store/purchase/salesman users.
-  const visibleStores = allStores.length && settings?.tenantId
-    ? tenantStores
-    : visibleStoresUnfiltered;
-  const stores = orderStores(visibleStores, loginStoreId, settings?.storeOrder || []);
-  const warehouseStore = stores.find(isWarehouseStore);
-  const otherStores = stores.filter((store) => !isWarehouseStore(store));
-
-  // Fit-to-viewport row model. Every store shows EXACTLY 4 product rows
-  // (--stock-visible-rows is fixed); what flexes is the ROW HEIGHT, derived
-  // from the measured grid height so that N store blocks always fill the
-  // available space without the grid scrolling. This inverts the old model
-  // (which fixed the row height and varied the row count / scrolled): with a
-  // variable store count (data-driven, N = grid.childElementCount) a fixed
-  // block height overflowed once 5+ stores rendered on a short viewport. Now
-  // the block height is avail/N, so 5 stores fit as cleanly as 4. The row
-  // height is clamped to a readable band; only if even the floor can't fit
-  // (extremely short window) does the grid's own overflow act as a graceful
-  // fallback. CHROME/GAP mirror the CSS (--stock-block-chrome + grid gap).
-  useLayoutEffect(() => {
-    const grid = storeGridRef.current;
-    if (!grid) return undefined;
-    const ROWS = 4;        // fixed: exactly 4 complete product rows per store
-    const CHROME = 16;     // --stock-block-chrome (border + row-cell padding)
-    const GAP = 2;         // .store-row-grid gap (compact)
-    const PAD = 4;         // grid bottom padding + rounding headroom
-    const MIN_RH = 15;     // readable floor for a data row
-    const MAX_RH = 22;     // don't over-stretch rows on tall monitors
-    const recompute = () => {
-      const n = grid.childElementCount || 1;
-      const avail = grid.clientHeight - PAD;
-      if (avail <= 0) return;
-      const perStore = (avail - (n - 1) * GAP) / n;
-      let rowH = (perStore - CHROME) / ROWS;
-      if (!Number.isFinite(rowH)) rowH = MIN_RH;
-      rowH = Math.max(MIN_RH, Math.min(MAX_RH, rowH));
-      grid.style.setProperty('--stock-visible-rows', String(ROWS));
-      grid.style.setProperty('--stock-row-h', `${rowH}px`);
-      // Reserve the exact vertical-scrollbar gutter on the header so its column
-      // boundaries never drift from the body by the scrollbar's width.
-      const shell = grid.parentElement;
-      if (shell) shell.style.setProperty('--stock-scrollbar-w', `${grid.offsetWidth - grid.clientWidth}px`);
-    };
-    recompute();
-    const ro = new ResizeObserver(recompute);
-    ro.observe(grid);
-    return () => ro.disconnect();
-  }, [otherStores.length, visibleSections, gridDensity, columnWidths, columnOrder]);
-
-  return (
-    <section ref={workbenchRef} className={`store-workbench density-${gridDensity}`} style={{ '--stock-grid-columns': stockGridColumns }}>
-      <div className="global-search-row">
-        <div className="stock-search-field">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.7 19.3-4.2-4.2a7.5 7.5 0 1 0-1.4 1.4l4.2 4.2 1.4-1.4ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
-          <input
-            ref={searchInputRef}
-            autoFocus
-            aria-label="Search by product or batch"
-            className={isAutoQuery ? 'auto-query' : ''}
-            value={query}
-            onChange={(event) => { setIsAutoQuery(false); setQuery(event.target.value); }}
-            onKeyDown={(event) => { if (event.key === 'Enter') runSearch(query.trim().replace(/\s+/g, ' ')); }}
-            placeholder="Search product or batch number"
-          />
-        </div>
-        <label className="stock-only-filter">
-          <input type="checkbox" checked={onlyStock} onChange={(event) => setOnlyStock(event.target.checked)} />
-          <span>In-stock only</span>
-        </label>
-        {tenants.length > 1 && (
-          <TenantFilterPicker tenants={tenants} tenantId={settings?.tenantId || ''} onTenantChange={onTenantChange} />
-        )}
-        <div className={`stock-search-status status-line ${status.state}`} title={status.message}>
-          <span className="stock-search-status-dot" aria-hidden="true" />
-          <span>{status.message}</span>
-        </div>
-        {(offline || lastSync) && (
-          <div
-            className="stock-sync-badge"
-            title={lastSync ? `Cached data as of ${formatSyncTime(lastSync)}` : 'No cached data yet'}
-            style={{ fontSize: '0.78rem', color: offline ? '#b00020' : '#6b7280', whiteSpace: 'nowrap' }}
-          >
-            {offline ? '● Offline — cached' : '● Online'} · Last sync {formatSyncTime(lastSync)}
-          </div>
-        )}
-        <div className="current-store-badge">
-          <button type="button" className="store-order-button" onClick={onOpenSettings} title="Manage store display order">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10v2H4V6Zm0 5h7v2H4v-2Zm0 5h4v2H4v-2Zm14.6-6.4L21 12l-2.4 2.4-1.4-1.4.7-.7H13v-2h4.9l-.7-.7 1.4-1.4Z" /></svg>
-            <span>Store order</span>
-          </button>
-          <button
-            type="button"
-            ref={gridSettingsBtnRef}
-            className="store-order-button grid-settings-button"
-            onClick={() => setGridSettingsOpen((open) => !open)}
-            aria-expanded={gridSettingsOpen}
-            title="Configure grid columns"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a8 8 0 0 0-1.7-1L15 3.5h-4L10.7 6A8 8 0 0 0 9 7L6.6 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4L9 17a8 8 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM13 18.5h-2l-.3-2-1-.4-1.9.8-1-1.7 1.6-1.3-.2-1v-1.8l.2-1-1.6-1.3 1-1.7 1.9.8 1-.4.3-2h2l.3 2 1 .4 1.9-.8 1 1.7-1.6 1.3.2 1v1.8l-.2 1 1.6 1.3-1 1.7-1.9-.8-1 .4-.3 2ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z" /></svg>
-            <span>Grid columns</span>
-          </button>
-          {gridSettingsOpen && (
-            <GridSettingsPanel
-              anchorRef={gridSettingsBtnRef}
-              sections={visibleSections}
-              fields={visibleFields}
-              columnOrder={columnOrder}
-              columnWidths={columnWidths}
-              density={gridDensity}
-              onToggleSection={toggleStockSection}
-              onToggleField={toggleStockField}
-              onMoveColumn={moveStockColumn}
-              onColumnWidth={setStockColumnWidth}
-              onResetColumns={resetStockColumns}
-              onResetAll={resetAllStockColumns}
-              onDensityChange={setGridDensity}
-              onClose={() => setGridSettingsOpen(false)}
-            />
-          )}
-        </div>
-      </div>
-
-      <div className="top-summary-row">
-        {warehouseStore && (
-          <div className="store-row-workspace no-side-search warehouse-only top-summary-nmw">
-            <section className="store-row-grid">
-              <StoreDataRow
-                key={warehouseStore.store_id || warehouseStore.store_code}
-                store={warehouseStore}
-                colorIndex={stores.indexOf(warehouseStore)}
-                hasSearched={hasSearched}
-                searchProducts={searchProductsByStore.get(warehouseStore.store_id) || []}
-                detail={storeDetails[warehouseStore.store_id]}
-                selection={selectionFor(warehouseStore.store_id)}
-                onProductSelect={(product) => handleProductSelect(warehouseStore.store_id, product)}
-                onSaleSelect={(store, row) => setBillDetail({ store, sale: row })}
-                onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store: warehouseStore, row }) : undefined}
-                onOpenBatch={openBatchDetail}
-                hideSupplierColumn={hideSupplierColumn}
-                visibility={visibility}
-                restrictWarehouse
-                visibleFields={visibleFields}
-                columnOrder={columnOrder}
-                columnWidths={columnWidths}
-                selected={selectedStoreId === warehouseStore.store_id}
-                onSelect={() => setSelectedStoreId(warehouseStore.store_id)}
-              />
-            </section>
-          </div>
-        )}
-
-        <NonMovingHighlightCard
-          nonMovingGroups={groupedNonMoving}
-          nonMovingTotals={scopedNonMovingTotals}
-          nonMovingLoading={nonMovingLoading}
-          nonMovingIndex={nonMovingIndex}
-          onPrev={() => nonMovingStep(-1)}
-          onNext={() => nonMovingStep(1)}
-          onSearch={(productName) => {
-            if (!productName) return;
-            setIsAutoQuery(false);
-            setQuery(productName);
-          }}
-          allStores={tenantStores}
-          storeFilter={nonMovingStoreFilter}
-          onStoreFilterChange={setNonMovingStoreFilter}
-          valuesUnlocked={nmValuesUnlocked}
-          onUnlockValues={() => setNmValuesUnlocked(true)}
-          onLockValues={() => setNmValuesUnlocked(false)}
-        />
-      </div>
-
-      <div className="store-row-workspace no-side-search">
-        {/* Header/body split (not a CSS-grid row anymore): the header used to
-            be the first item of the SAME grid that auto-sizes the data rows,
-            pinned via position:sticky. Under space pressure (more rows than
-            fit) Chromium's grid track-sizing did not reliably respect the
-            header track's declared minimum once a sticky item was involved -
-            verified via CDP (offsetTop/offsetHeight showed the next row
-            starting before the header's own box ended, independent of
-            scroll), so no minmax() floor value could fix it for good. Taking
-            the header out of the grid entirely removes that whole class of
-            bug: it's a plain flex-fixed sibling above a separately
-            scrollable grid, so it can never overlap a row no matter how
-            tall/short the available space is. */}
-        <div className="store-row-grid-shell">
-          <StoreColumnHeaders
-            hideSupplierColumn={hideSupplierColumn}
-            visibleSections={effectiveSections}
-            visibleFields={visibleFields}
-            columnOrder={columnOrder}
-            columnWidths={columnWidths}
-          />
-          <section className="store-row-grid" ref={storeGridRef}>
-            {otherStores.length === 0 && (
-              <div className="empty-state">No stores to show yet.</div>
-            )}
-            {otherStores.map((store, index) => (
-              <StoreDataRow
-                key={store.store_id || store.store_code}
-                store={store}
-                colorIndex={stores.indexOf(store)}
-                hasSearched={hasSearched}
-                searchProducts={searchProductsByStore.get(store.store_id) || []}
-                detail={storeDetails[store.store_id]}
-                selection={selectionFor(store.store_id)}
-                onProductSelect={(product) => handleProductSelect(store.store_id, product)}
-                onSaleSelect={(s, row) => setBillDetail({ store: s, sale: row })}
-                onPurchaseSelect={canViewPurchase ? (row) => setPurchaseDetail({ store, row }) : undefined}
-                onOpenBatch={openBatchDetail}
-                hideSupplierColumn={hideSupplierColumn}
-                visibility={visibility}
-                restrictWarehouse={false}
-                visibleSections={effectiveSections}
-                visibleFields={visibleFields}
-                columnOrder={columnOrder}
-                columnWidths={columnWidths}
-                selected={selectedStoreId === store.store_id}
-                onSelect={() => setSelectedStoreId(store.store_id)}
-              />
-            ))}
-          </section>
-        </div>
-      </div>
-
-      <ProductStatusLegend />
-
-      {purchaseDetail && (
-        <PurchaseDetailCard detail={purchaseDetail} onClose={() => setPurchaseDetail(null)} visibility={visibility} />
-      )}
-      {billDetail && (
-        <BillDetailCard detail={billDetail} session={session} visibility={visibility} onClose={() => setBillDetail(null)} />
-      )}
-      {batchDetail && (
-        <BatchDetailCard detail={batchDetail} visibility={visibility} onClose={() => setBatchDetail(null)} />
-      )}
-    </section>
-  );
-}
-
-// A separate, simpler "all stores side by side" network-stock comparison
-// screen (additive to StockAvailability, not a replacement for it — req: keep
-// the existing Stock Availability screen exactly as-is). Reuses the same API
-// layer, row/detail components and selection helpers as StockAvailability;
-// it just drops that screen's NMW/non-moving carousel and grid-column
-// customization panel for a denser, uniform store-card grid.
-function NetworkStockView({ session, settings, tenants = [], onTenantChange }) {
-  // 'product' = search by product name; 'batch' = search by batch no / MRP /
-  // product name — mirrors the web Stock Availability screen's two tabs
-  // (frontend/src/pages/stock/StockAvailabilityPage.tsx) exactly, including
-  // its field set per mode.
-  const [mode, setMode] = useState('product');
-  const [productQuery, setProductQuery] = useState('');
-  const [onlyStock, setOnlyStock] = useState(false);
-  const [batchNo, setBatchNo] = useState('');
-  const [mrp, setMrp] = useState('');
-  const [batchProduct, setBatchProduct] = useState('');
-  const [allStores, setAllStores] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexora.desktop.storesCache') || '[]'); } catch { return []; }
-  });
-  const [searchStores, setSearchStores] = useState([]);
-  const [storeDetails, setStoreDetails] = useState({});
-  const [selectionState, setSelectionState] = useState(emptySelectionState);
-  const [selectedStoreId, setSelectedStoreId] = useState(session?.user?.roles?.[0]?.store_id || '');
-  const [hasSearched, setHasSearched] = useState(false);
-  const [status, setStatus] = useState({ state: 'idle', message: 'Type at least 2 characters to search.' });
-  const [purchaseDetail, setPurchaseDetail] = useState(null);
-  const [billDetail, setBillDetail] = useState(null);
-  const [batchDetail, setBatchDetail] = useState(null);
-  const searchInputRef = useRef(null);
-
-  async function openBatchDetail(store, productCode, batchNo) {
-    if (!store || !productCode || !batchNo) return;
-    setBatchDetail({ store, batchNo, loading: true, row: null });
-    try {
-      const row = await api.getBatchDetail(store.store_id, productCode, batchNo, session, { tenantId: settings?.tenantId });
-      setBatchDetail({ store, batchNo, loading: false, row });
-    } catch {
-      setBatchDetail({ store, batchNo, loading: false, row: null, error: true });
-    }
-  }
-
-  const loginStoreId = session?.user?.roles?.[0]?.store_id || loadSettings().storeId;
-  const visibility = historyVisibility(session);
-  const canViewPurchase = visibility !== 'NONE';
-  const hideSupplierColumn = isSalesmanOnly(session);
-  const searchIdRef = useRef(0);
-  const searchCacheRef = useRef(new Map());
-  const detailCacheRef = useRef(new Map());
-  const coreLimitRef = useRef(makeConcurrencyLimiter(4));
-  const syncTicketRef = useRef(0);
-
-  const tenantStores = useMemo(() => {
-    const tenantId = settings?.tenantId;
-    if (!tenantId) return allStores;
-    return allStores.filter((store) => String(store?.tenant_id || '') === String(tenantId));
-  }, [allStores, settings?.tenantId]);
-
-  useEffect(() => {
-    api.listStores(session).then((rows) => {
-      const items = asArray(rows);
-      setAllStores(items);
-      try { localStorage.setItem('nexora.desktop.storesCache', JSON.stringify(items)); } catch { /* best effort */ }
-    }).catch(() => {});
-  }, [session]);
-
-  useEffect(() => {
-    searchIdRef.current += 1;
-    setSearchStores([]);
-    setStoreDetails({});
-  }, [settings?.tenantId]);
-
-  const trimmedProductQuery = productQuery.trim().replace(/\s+/g, ' ');
-  const trimmedBatchNo = batchNo.trim();
-  const trimmedMrp = mrp.trim();
-  const trimmedBatchProduct = batchProduct.trim().replace(/\s+/g, ' ');
-  // Search-mode switch resets the OTHER mode's fields' effect from firing
-  // stale requests, and the cache key below folds every relevant field in so
-  // a mode switch never serves a wrong-mode cached result.
-  useEffect(() => {
-    const hasProductTerm = mode === 'product' && trimmedProductQuery.length >= 2;
-    const hasBatchTerm = mode === 'batch' && (trimmedBatchNo || trimmedMrp || trimmedBatchProduct);
-    if (!hasProductTerm && !hasBatchTerm) {
-      searchIdRef.current += 1;
-      setSearchStores([]);
-      setStoreDetails({});
-      setHasSearched(false);
-      setStatus({ state: 'idle', message: mode === 'product' ? 'Type at least 2 characters to search.' : 'Enter a batch number, MRP or product name.' });
-      return;
-    }
-    const cacheKey = mode === 'product'
-      ? `p|${settings?.tenantId || ''}|${onlyStock ? '1' : '0'}|${trimmedProductQuery.toLowerCase()}`
-      : `b|${settings?.tenantId || ''}|${trimmedBatchNo.toLowerCase()}|${trimmedMrp.toLowerCase()}|${trimmedBatchProduct.toLowerCase()}`;
-    if (searchCacheRef.current.has(cacheKey)) {
-      runSearch(cacheKey);
-      return;
-    }
-    const timer = setTimeout(() => runSearch(cacheKey), 150);
-    return () => clearTimeout(timer);
-  }, [mode, trimmedProductQuery, onlyStock, trimmedBatchNo, trimmedMrp, trimmedBatchProduct, settings?.tenantId]);
-
-  async function loadStoreCore(storeId, product) {
-    const cacheKey = `${storeId}:${product.product_code}`;
-    const cached = detailCacheRef.current.get(cacheKey);
-    if (isStockCoreFresh(cached)) return cached;
-    const result = await coreLimitRef.current(() => api.getStockCore(storeId, product.product_code, session, { months: 4 }));
-    const core = {
-      product,
-      batches: asArray(result?.batches),
-      purchases: asArray(result?.purchases),
-      sales: asArray(result?.sales),
-      movement: asArray(result?.movement),
-      billItems: [],
-      fetchedAt: Date.now()
-    };
-    if (core.batches.length || core.purchases.length || core.sales.length || core.movement.length) {
-      detailCacheRef.current.set(cacheKey, core);
-    }
-    return core;
-  }
-
-  function primeStoreCoreCache(items, productsByStore) {
-    const seeded = {};
-    asArray(items).forEach((item) => {
-      const product = productsByStore.get(item.store_id);
-      if (!product) return;
-      const core = {
-        product,
-        batches: asArray(item?.batches),
-        purchases: asArray(item?.purchases),
-        sales: asArray(item?.sales),
-        movement: asArray(item?.movement),
-        billItems: asArray(item?.billItems),
-        activeBillNo: item?.activeBillNo || null,
-        fetchedAt: Date.now()
-      };
-      const cacheKey = `${item.store_id}:${product.product_code}`;
-      if (core.batches.length || core.purchases.length || core.sales.length || core.movement.length || core.billItems.length) {
-        detailCacheRef.current.set(cacheKey, core);
-      }
-      seeded[item.store_id] = core;
-    });
-    return seeded;
-  }
-
-  async function runSearch(cacheKey) {
-    const searchId = ++searchIdRef.current;
-    setHasSearched(true);
-    const startedAt = performance.now();
-    const cachedStores = searchCacheRef.current.get(cacheKey);
-
-    try {
-      let stores;
-      if (cachedStores) {
-        stores = cachedStores;
-      } else {
-        setStatus({ state: 'loading', message: 'Searching...' });
-        const response = mode === 'product'
-          ? await api.searchStockProducts(trimmedProductQuery, session, { onlyStock })
-          : await api.searchStockBatches({ batch: trimmedBatchNo, mrp: trimmedMrp, product: trimmedBatchProduct }, session, { tenantId: settings?.tenantId });
-        if (searchIdRef.current !== searchId) return;
-        stores = asArray(response?.stores);
-        searchCacheRef.current.set(cacheKey, stores);
-      }
-
-      setSearchStores(stores);
-      const total = stores.reduce((sum, store) => sum + (store.products || []).length, 0);
-
-      const storesWithProduct = stores.filter((store) => (store.products || [])[0]);
-      if (!storesWithProduct.length) {
-        setStoreDetails({});
-        setStatus({ state: 'ok', message: total ? `${total} products found` : 'No products matched in any store.' });
-        return;
-      }
-
-      const seeded = {};
-      const toFetch = [];
-      storesWithProduct.forEach((store) => {
-        const product = store.products[0];
-        const cached = detailCacheRef.current.get(`${store.store_id}:${product.product_code}`);
-        if (isStockCoreFresh(cached)) seeded[store.store_id] = cached;
-        else toFetch.push(store);
-      });
-      setStoreDetails(seeded);
-
-      if (!toFetch.length) {
-        const elapsedMs = Math.round(performance.now() - startedAt);
-        setStatus({ state: 'ok', message: `${total} products found · All stores loaded in ${elapsedMs}ms (cached)` });
-        return;
-      }
-
-      setStatus({ state: 'loading', message: `${total} products found · Loading ${toFetch.length} store(s)...` });
-
-      const productsByStore = new Map(toFetch.map((store) => [store.store_id, store.products[0]]));
-      try {
-        const bulk = await api.getStockCoreBulk(
-          toFetch.map((store) => ({ store_id: store.store_id, product_code: store.products[0].product_code })),
-          session,
-          { months: 4 }
-        );
-        if (searchIdRef.current !== searchId) return;
-        const resolved = primeStoreCoreCache(bulk?.items, productsByStore);
-        const misses = {};
-        toFetch.forEach((store) => {
-          if (!resolved[store.store_id]) misses[store.store_id] = null;
-        });
-        setStoreDetails((prev) => ({ ...prev, ...resolved, ...misses }));
-        const elapsedMs = Math.round(performance.now() - startedAt);
-        setStatus({ state: 'ok', message: `${total} products found · All stores loaded in ${elapsedMs}ms` });
-      } catch (bulkError) {
-        let settled = 0;
-        toFetch.forEach((store) => {
-          const product = store.products[0];
-          loadStoreCore(store.store_id, product)
-            .then((core) => {
-              if (searchIdRef.current !== searchId) return;
-              setStoreDetails((prev) => ({ ...prev, [store.store_id]: core }));
-            })
-            .catch(() => {
-              if (searchIdRef.current !== searchId) return;
-              setStoreDetails((prev) => ({ ...prev, [store.store_id]: null }));
-            })
-            .finally(() => {
-              settled += 1;
-              if (settled === toFetch.length && searchIdRef.current === searchId) {
-                const elapsedMs = Math.round(performance.now() - startedAt);
-                setStatus({ state: 'ok', message: `${total} products found · All stores loaded in ${elapsedMs}ms` });
-              }
-            });
-        });
-      }
-    } catch (error) {
-      if (searchIdRef.current !== searchId) return;
-      setSearchStores([]);
-      setStoreDetails({});
-      setStatus({ state: 'error', message: error.message });
-    }
-  }
-
-  function handleProductSelect(storeId, product) {
-    const searchId = searchIdRef.current;
-    setSelectionState(selectionStateForClick(storeId, product.product_code));
-
-    // Every branch in this tenant shares the same product catalogue, so the
-    // reliable way to select "the same product" in every other store is a
-    // direct product_code match against what's already loaded from the
-    // search results — instant, no network round trip. This runs BEFORE the
-    // slower fuzzy cross-store matcher below (which only fills in any store
-    // where this exact code didn't come back in the search results).
-    const exactResults = [];
-    const exactStoreIds = new Set();
-    searchStores.forEach((store) => {
-      if (store.store_id === storeId) return;
-      const match = (store.products || []).find((p) => p.product_code === product.product_code);
-      if (match) {
-        exactResults.push({
-          store_id: store.store_id,
-          product: { product_code: match.product_code, product_name: match.product_name, mrp: match.mrp },
-          match_type: 'EXACT_PRODUCT_CODE',
-          score: 100
-        });
-        exactStoreIds.add(store.store_id);
-      }
-    });
-    if (exactResults.length) {
-      const exactSynchronized = buildSynchronizedMap(exactResults);
-      setSelectionState((current) => applySyncResult(current, storeId, product.product_code, exactSynchronized));
-      exactResults.forEach((match) => {
-        loadStoreCore(match.store_id, match.product)
-          .then((core) => {
-            if (searchIdRef.current !== searchId) return;
-            setStoreDetails((prev) => ({ ...prev, [match.store_id]: core }));
-          })
-          .catch(() => {});
-      });
-    }
-
-    loadStoreCore(storeId, product)
-      .then((core) => {
-        if (searchIdRef.current !== searchId) return;
-        setStoreDetails((prev) => ({ ...prev, [storeId]: core }));
-      })
-      .catch(() => {});
-    syncCrossStoreSelection(storeId, product, searchId, exactStoreIds, exactResults);
-  }
-
-  async function syncCrossStoreSelection(sourceStoreId, product, searchId, exactStoreIds = new Set(), exactResults = []) {
-    if (!product?.product_code) return;
-    const targetStoreIds = searchStores
-      .map((store) => store.store_id)
-      .filter((storeId) => storeId && storeId !== sourceStoreId && !exactStoreIds.has(storeId));
-    if (!targetStoreIds.length) return; // every other store already resolved by an exact product_code match
-
-    const ticket = ++syncTicketRef.current;
-    let response;
-    try {
-      response = await api.syncStockSelection(
-        sourceStoreId,
-        product.product_code,
-        product.product_name,
-        targetStoreIds,
-        session,
-        { tenantId: settings?.tenantId }
-      );
-    } catch {
-      return;
-    }
-    if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
-
-    const matches = asArray(response?.results).filter((r) => r.product && r.match_type !== 'NO_MATCH');
-    // Recombine with the exact matches resolved synchronously above — applySyncResult
-    // replaces `synchronized` wholesale, so the fuzzy response alone would otherwise
-    // wipe out the exact-match stores' blue highlight.
-    const freshSynchronized = buildSynchronizedMap([...exactResults, ...asArray(response?.results)]);
-    setSelectionState((current) => applySyncResult(current, sourceStoreId, product.product_code, freshSynchronized));
-
-    await Promise.all(matches.map(async (match) => {
-      const knownRow = (searchProductsByStore.get(match.store_id) || [])
-        .find((row) => row.product_code === match.product.product_code);
-      const targetProduct = knownRow || {
-        product_code: match.product.product_code,
-        product_name: match.product.product_name,
-        mrp: match.product.mrp
-      };
-      try {
-        const core = await loadStoreCore(match.store_id, targetProduct);
-        if (ticket !== syncTicketRef.current || searchIdRef.current !== searchId) return;
-        setStoreDetails((prev) => ({ ...prev, [match.store_id]: core }));
-      } catch {
-        // leave that store's previously loaded detail rather than clearing it on a transient fetch failure
-      }
-    }));
-  }
-
-  const selectionFor = (storeId) => selectionForStore(selectionState, storeId);
-  const searchProductsByStore = new Map(searchStores.map((store) => [store.store_id, store.products || []]));
-  const visibleStoresUnfiltered = allStores.length ? allStores : searchStores;
-  const visibleStores = allStores.length && settings?.tenantId ? tenantStores : visibleStoresUnfiltered;
-  const stores = orderStores(visibleStores, loginStoreId, settings?.storeOrder || []);
-  const selectedStore = stores.find((store) => store.store_id === selectedStoreId) || null;
-  const selectedDetail = selectedStoreId ? storeDetails[selectedStoreId] : undefined;
-
-  // Header stat strip — Branches | Products | With stock | Total stock,
-  // named/ordered exactly like the web Stock Availability screen's KPI row,
-  // computed live from the current search result (no invented figures).
-  const networkStats = useMemo(() => {
-    let productRows = 0;
-    let withStock = 0;
-    let totalStock = 0;
-    searchStores.forEach((store) => {
-      (store.products || []).forEach((product) => {
-        productRows += 1;
-        const qty = Number(product.stock) || 0;
-        if (qty > 0) withStock += 1;
-        totalStock += qty;
-      });
-    });
-    return { branches: stores.length, products: productRows, withStock, totalStock };
-  }, [searchStores, stores.length]);
-
-  const selectedProductName = selectedDetail?.product?.product_name;
-
-  return (
-    <div className="network-stock-screen">
-      <header className="ns-head">
-        <div>
-          <h2>Network Stock</h2>
-          <p>Live stock across every branch, side by side.</p>
-        </div>
-        <div className="ns-head__right">
-          <div className="ns-kpis" aria-label="Search summary">
-            <span className="ns-kpi"><strong>{networkStats.branches}</strong><i>Branches</i></span>
-            <span className="ns-kpi ns-kpi--accent"><strong>{networkStats.products}</strong><i>Products</i></span>
-            <span className="ns-kpi ns-kpi--ok"><strong>{networkStats.withStock}</strong><i>With stock</i></span>
-            <span className="ns-kpi"><strong>{networkStats.totalStock}</strong><i>Total stock</i></span>
-          </div>
-          {tenants.length > 1 && (
-            <TenantFilterPicker tenants={tenants} tenantId={settings?.tenantId || ''} onTenantChange={onTenantChange} />
-          )}
-        </div>
-      </header>
-
-      <div className="ns-search">
-        <div className="ns-search__tabs" role="tablist" aria-label="Search mode">
-          <button type="button" role="tab" aria-selected={mode === 'product'} className={`ns-search__tab${mode === 'product' ? ' ns-search__tab--active' : ''}`} onClick={() => setMode('product')}>Product</button>
-          <button type="button" role="tab" aria-selected={mode === 'batch'} className={`ns-search__tab${mode === 'batch' ? ' ns-search__tab--active' : ''}`} onClick={() => setMode('batch')}>Batch / MRP</button>
-        </div>
-        <div className="ns-search__fields">
-          {mode === 'product' ? (
-            <>
-              <div className="stock-search-field ns-field--grow">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.7 19.3-4.2-4.2a7.5 7.5 0 1 0-1.4 1.4l4.2 4.2 1.4-1.4ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
-                <input
-                  ref={searchInputRef}
-                  autoFocus
-                  aria-label="Search product name"
-                  value={productQuery}
-                  onChange={(event) => setProductQuery(event.target.value)}
-                  placeholder="Search product name"
-                />
-              </div>
-              <label className="stock-only-filter">
-                <input type="checkbox" checked={onlyStock} onChange={(event) => setOnlyStock(event.target.checked)} />
-                <span>In-stock only</span>
-              </label>
-            </>
-          ) : (
-            <>
-              <div className="stock-search-field">
-                <input aria-label="Batch number" value={batchNo} onChange={(event) => setBatchNo(event.target.value)} placeholder="Batch number" />
-              </div>
-              <div className="stock-search-field">
-                <input aria-label="MRP" value={mrp} onChange={(event) => setMrp(event.target.value)} placeholder="MRP" />
-              </div>
-              <div className="stock-search-field ns-field--grow">
-                <input aria-label="Product name" value={batchProduct} onChange={(event) => setBatchProduct(event.target.value)} placeholder="Product name" />
-              </div>
-            </>
-          )}
-          <div className={`stock-search-status status-line ${status.state}`} title={status.message}>
-            <span className="stock-search-status-dot" aria-hidden="true" />
-            <span>{status.message}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* STORE STOCK - fully independent section (own container, background,
-          heading), sized by its own fixed 7-row cards (see .ns-branch in
-          styles.css). It does NOT flex-grow; whatever height it doesn't use
-          is never reclaimed by it, and it never shrinks Product Details
-          below - purely a cross-store comparison view, no batch/sales/
-          purchase data lives in here. */}
-      <section className="ns-store-section">
-        <div className="ns-section-head">Store Stock</div>
-        <div className="ns-branches-section">
-          {!hasSearched && <div className="ns-branches-head">Search a product or batch to view branch stock</div>}
-
-          {stores.length === 0 ? (
-            <div className="empty-state">No branches to show yet.</div>
-          ) : (
-            <div className="ns-branches">
-              {stores.map((store) => {
-                const selection = selectionFor(store.store_id);
-                return (
-                  <div key={store.store_id || store.store_code} className={`ns-branch ${selectedStoreId === store.store_id ? 'ns-branch--active' : ''}`}>
-                    <div className="ns-branch__head">
-                      <strong>{store.store_code || '—'}</strong>
-                      <span>{store.store_name || ''}</span>
-                    </div>
-                    <GridRow
-                      cols={NS_BRANCH_PRODUCT_GRID}
-                      cells={['Product', 'Unit', 'Stock']}
-                      tag="span"
-                      className="ns-branch__cols-row"
-                    />
-                    <StoreProductGrid
-                      products={searchProductsByStore.get(store.store_id) || []}
-                      hasSearched={hasSearched}
-                      sourceProductCode={selection?.sourceProductCode ?? null}
-                      syncProductCode={selection?.syncProductCode ?? null}
-                      onProductSelect={(product) => { setSelectedStoreId(store.store_id); handleProductSelect(store.store_id, product); }}
-                      columnWidths={{ product: NS_BRANCH_COL_WIDTHS }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* PRODUCT DETAILS - fully independent section (own container,
-          background, heading), takes whatever height Store Stock above
-          didn't use (flex:1 1 auto in CSS). Changing the store grid's height
-          never resizes this, and vice versa. Selected-product summary,
-          batches, sales, purchases and the chart live ONLY here. */}
-      <section className="ns-product-section">
-        <div className="ns-section-head">Product Details</div>
-        <div className="ns-detail">
-          {selectedStore && selectedDetail ? (
-            <div className="ns-detail__context">
-              <strong>{selectedProductName || 'Selected product'}</strong>
-              <span className="ns-detail__context-store">{selectedStore.store_name || selectedStore.store_code}</span>
-              {selectedDetail.product?.mrp != null && <span>MRP {formatMoney(selectedDetail.product.mrp)}</span>}
-              {selectedDetail.product?.stock != null && <span>Stock <b className="ns-detail__context-stock">{formatQty(selectedDetail.product.stock)}</b></span>}
-              {(selectedDetail.product?.sale_unit || selectedDetail.product?.unitdescription) && (
-                <span>Unit {selectedDetail.product.sale_unit || selectedDetail.product.unitdescription}</span>
-              )}
-              {/* Newest row of the already-loaded Recent Sales/Purchase Details
-                  lists below - no extra API call, just reads row [0] of data
-                  that's already fetched for those two panels. */}
-              <span>Last Sale {selectedDetail.sales?.[0]?.date ? formatDate(selectedDetail.sales[0].date) : '—'}</span>
-              <span>Last Purchase {selectedDetail.purchases?.[0]?.date ? formatDate(selectedDetail.purchases[0].date) : '—'}</span>
-            </div>
-          ) : null}
-          <div className="ns-detail__grid">
-            <div className="ns-area ns-area--batch">
-              <div className="ns-card__head">
-                <span>Batch Details</span>
-                {selectedDetail?.batches?.length ? <em>{selectedDetail.batches.length}</em> : null}
-              </div>
-              {selectedStore && selectedDetail ? (
-                (selectedDetail.batches || []).length ? (
-                  <>
-                    <GridRow cols="56px 34px 46px 42px 42px" cells={['Exp', 'Stk', 'MRP', 'P.Age', 'S.Age']} tag="span" className="ns-batch-head-row" />
-                    <BatchTable
-                      rows={selectedDetail.batches || []}
-                      pending={false}
-                      visibleFields={DEFAULT_STOCK_FIELDS.batches}
-                      columnOrder={{}}
-                      columnWidths={{}}
-                      onBatchSelect={selectedDetail.product?.product_code ? (batchNoVal) => openBatchDetail(selectedStore, selectedDetail.product.product_code, batchNoVal) : undefined}
-                    />
-                  </>
-                ) : <div className="ns-card__waiting">No batches found.</div>
-              ) : (
-                <div className="ns-card__waiting">Batch rows appear once a product is selected.</div>
-              )}
-            </div>
-
-            <div className="ns-area ns-area--sales">
-              <div className="ns-card__head">
-                <span>Recent Sales</span>
-                {selectedDetail?.sales?.length ? <em>{Math.min(selectedDetail.sales.length, 20)}</em> : null}
-              </div>
-              {selectedStore && selectedDetail ? (
-                (selectedDetail.sales || []).length ? (
-                  <table className="ns-mini-table">
-                    <thead><tr><th>Date</th><th>Bill No</th><th>Customer</th><th className="num-col">Qty</th></tr></thead>
-                    <tbody>
-                      {(selectedDetail.sales || []).slice(0, 20).map((row, index) => (
-                        <tr key={index} onClick={() => setBillDetail({ store: selectedStore, sale: row })}>
-                          <td>{formatDate(row.date)}</td>
-                          <td>{row.bill_no || '-'}</td>
-                          <td>{row.customer || '-'}</td>
-                          <td className="num-col">{formatQty(row.qty)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : <div className="ns-card__waiting">No recent sales found.</div>
-              ) : (
-                <div className="ns-card__waiting">Sales history appears after a product is opened.</div>
-              )}
-            </div>
-
-            <div className="ns-area ns-area--purchase">
-              <div className="ns-card__head">
-                <span>Purchase Details</span>
-                {selectedDetail?.purchases?.length ? <em>{Math.min(selectedDetail.purchases.length, 20)}</em> : null}
-              </div>
-              {selectedStore && selectedDetail ? (
-                (selectedDetail.purchases || []).length ? (
-                  <table className="ns-mini-table">
-                    <thead><tr><th>Date</th><th>Supplier</th><th className="num-col">Qty</th><th className="num-col">Rate</th></tr></thead>
-                    <tbody>
-                      {(selectedDetail.purchases || []).slice(0, 20).map((row, index) => (
-                        <tr key={index} onClick={canViewPurchase ? () => setPurchaseDetail({ store: selectedStore, row }) : undefined}>
-                          <td>{formatDate(row.date)}</td>
-                          <td>{visibility === 'FULL' ? (row.supplier || '-') : abbreviateSupplierName(row.supplier)}</td>
-                          <td className="num-col">{formatQty(row.qty)}</td>
-                          <td className="num-col">{formatMoney(row.rate ?? row.ptr)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : <div className="ns-card__waiting">No recent purchases found.</div>
-              ) : (
-                <div className="ns-card__waiting">Purchase history appears after a product is opened.</div>
-              )}
-            </div>
-
-            <div className="ns-area ns-area--chart">
-              <div className="ns-card__head">
-                <span>Monthly Movement</span>
-                <ProductStatusLegend salesTrendOnly />
-              </div>
-              {selectedStore && selectedDetail ? (
-                <MonthlyMovementChart rows={selectedDetail.movement || []} purchases={selectedDetail.purchases || []} sales={selectedDetail.sales || []} visibleFields={DEFAULT_STOCK_FIELDS.trend} maxBarWidth={14} />
-              ) : (
-                <div className="ns-card__waiting">Monthly movement appears once a product is loaded.</div>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {purchaseDetail && (
-        <PurchaseDetailCard detail={purchaseDetail} onClose={() => setPurchaseDetail(null)} visibility={visibility} />
-      )}
-      {billDetail && (
-        <BillDetailCard detail={billDetail} session={session} visibility={visibility} onClose={() => setBillDetail(null)} />
-      )}
-      {batchDetail && (
-        <BatchDetailCard detail={batchDetail} visibility={visibility} onClose={() => setBatchDetail(null)} />
-      )}
-    </div>
-  );
-}
-
-// A fixed 2-day starting default: day-before-yesterday through yesterday
-// (still user-editable via the date pickers, unlike the earlier fixed-only
-// version — the daily approval queue starts here but can be widened).
 function nmwDefaultDateRange() {
   const fmt = (offsetDays) => {
     const d = new Date();
@@ -11690,6 +10068,10 @@ function StockVerticalView({ session, settings }) {
   const nativeStoreId = session?.user?.roles?.[0]?.store_id || '';
   const superAdmin = isSuperAdmin(session);
   const [query, setQuery] = useState('');
+  const [searchMode, setSearchMode] = useState('product');
+  const [batchNo, setBatchNo] = useState('');
+  const [batchMrp, setBatchMrp] = useState('');
+  const [batchProduct, setBatchProduct] = useState('');
   const [onlyStock, setOnlyStock] = useState(false);
   const [stores, setStores] = useState([]);
   // storeId -> loaded core ({product,batches,purchases,sales,movement}) for the
@@ -11819,23 +10201,34 @@ function StockVerticalView({ session, settings }) {
     return out;
   }
 
-  async function runSearch(value) {
+  async function runSearch(value, batchQuery = null) {
     const searchId = ++searchIdRef.current;
-    setStatus({ state: 'loading', message: 'Searching products…' });
+    setStatus({ state: 'loading', message: batchQuery ? 'Searching batches…' : 'Searching products…' });
     let all;
     try {
       // '*' is the user-facing wildcard; the backend LIKE uses '%'. Translate so
       // "*karma" becomes a contains-search (ProductName LIKE '%karma%'). A literal
       // '%' the user types still works too.
       const likeTerm = value.replace(/\*/g, '%');
-      const response = await api.searchStockProducts(likeTerm, session, { onlyStock });
+      const response = batchQuery
+        ? await api.searchStockBatches(batchQuery, session, { tenantId })
+        : await api.searchStockProducts(likeTerm, session, { onlyStock });
       if (searchIdRef.current !== searchId) return;
       if (offline) setOffline(false);
       all = asArray(response?.stores);
     } catch (netErr) {
       // OFFLINE / HO unreachable: serve the permanent local index so the
       // operator still gets product names + last-known stock from cache.
+      // Batch/MRP search has no local index, so it stays an error.
       if (searchIdRef.current !== searchId) return;
+      if (batchQuery) {
+        setStores([]);
+        setStoreDetails({});
+        setSelectionState(emptySelectionState());
+        setOffline(false);
+        setStatus({ state: 'error', message: netErr?.message || 'Batch search needs the server.' });
+        return;
+      }
       const offlineStores = await buildOfflineStores(value);
       if (searchIdRef.current !== searchId) return;
       setOffline(true);
@@ -11988,17 +10381,30 @@ function StockVerticalView({ session, settings }) {
   const selectionFor = (storeId) => selectionForStore(selectionState, storeId);
 
   useEffect(() => {
+    if (searchMode === 'batch') {
+      const batch = batchNo.trim();
+      const mrp = batchMrp.trim();
+      const product = batchProduct.trim().replace(/\s+/g, ' ');
+      if (!batch && !mrp && !product) {
+        searchIdRef.current += 1;
+        setStores([]); setStoreDetails({}); setSelectionState(emptySelectionState());
+        setStatus({ state: 'idle', message: 'Enter a batch number, MRP, or product name.' });
+        return undefined;
+      }
+      const timer = setTimeout(() => runSearch('', { batch, mrp, product }), 200);
+      return () => clearTimeout(timer);
+    }
     const value = query.trim().replace(/\s+/g, ' ');
     if (value.length < 2) {
       searchIdRef.current += 1;
       setStores([]); setStoreDetails({}); setSelectionState(emptySelectionState());
       setStatus({ state: 'idle', message: 'Type at least 2 characters to search.' });
-      return;
+      return undefined;
     }
     const timer = setTimeout(() => runSearch(value), 200);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, onlyStock, tenantId]);
+  }, [query, onlyStock, tenantId, searchMode, batchNo, batchMrp, batchProduct]);
 
   // Stores that matched, in backend order but with the device's OWN (native)
   // store pushed to the very end (owner ruling 2026-10-03).
@@ -12036,21 +10442,35 @@ function StockVerticalView({ session, settings }) {
 
   return (
     <section className="screen-panel sv-screen">
-      <ScreenHeader title="Store Comparison" subtitle="Stores across the top, information down the side — compare product, trend, batch, purchase & sales side by side." />
+      <ScreenHeader title="Stock Enquiry" subtitle="Stores across the top, information down the side — compare product, trend, batch, purchase and sales side by side." />
       <div className="sv-toolbar">
-        <input
-          className="sv-search"
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search name or code — use * as wildcard (e.g. *karma)"
-          aria-label="Search products"
-          autoFocus
-        />
-        <label className="sv-check" title="Only stores where the product has stock">
-          <input type="checkbox" checked={onlyStock} onChange={(event) => setOnlyStock(event.target.checked)} />
-          <span>In-stock only</span>
-        </label>
+        <div className="ns-search__tabs" role="tablist" aria-label="Search mode">
+          <button type="button" role="tab" aria-selected={searchMode === 'product'} className={`ns-search__tab${searchMode === 'product' ? ' ns-search__tab--active' : ''}`} onClick={() => setSearchMode('product')}>Product</button>
+          <button type="button" role="tab" aria-selected={searchMode === 'batch'} className={`ns-search__tab${searchMode === 'batch' ? ' ns-search__tab--active' : ''}`} onClick={() => setSearchMode('batch')}>Batch / MRP</button>
+        </div>
+        {searchMode === 'product' ? (
+          <input
+            className="sv-search"
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name or code — use * as wildcard (e.g. *karma)"
+            aria-label="Search products"
+            autoFocus
+          />
+        ) : (
+          <>
+            <input className="sv-search" aria-label="Batch number" value={batchNo} onChange={(event) => setBatchNo(event.target.value)} placeholder="Batch number" autoFocus />
+            <input className="sv-search" aria-label="MRP" value={batchMrp} onChange={(event) => setBatchMrp(event.target.value)} placeholder="MRP" />
+            <input className="sv-search" aria-label="Product name" value={batchProduct} onChange={(event) => setBatchProduct(event.target.value)} placeholder="Product name" />
+          </>
+        )}
+        {searchMode === 'product' && (
+          <label className="sv-check" title="Only stores where the product has stock">
+            <input type="checkbox" checked={onlyStock} onChange={(event) => setOnlyStock(event.target.checked)} />
+            <span>In-stock only</span>
+          </label>
+        )}
         {offline && (
           <span
             className="sv-offline"
