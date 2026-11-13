@@ -1,9 +1,11 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
+from dependencies.auth import get_current_user
+from dependencies.store_scope import assert_tenant_access
 from modules.procurement.reports.excel_exporter import ExcelExporter
 from modules.procurement.reports.report_service import ReportService
 
@@ -23,7 +25,9 @@ def dashboard(
     from_month: str = Query(...),
     to_month: str = Query(...),
     source: str = Query("NEXORA"),
+    current_user: dict = Depends(get_current_user),
 ):
+    assert_tenant_access(current_user, tenant_id)
     return report_service.dashboard(tenant_id, from_month, to_month, source)
 
 
@@ -34,7 +38,9 @@ def store_analysis(
     from_month: Optional[str] = Query(None),
     to_month: Optional[str] = Query(None),
     source: str = Query("NEXORA"),
+    current_user: dict = Depends(get_current_user),
 ):
+    assert_tenant_access(current_user, tenant_id)
     if not from_month or not to_month:
         now = datetime.now()
         to_month = f"{now.year}-{str(now.month).zfill(2)}"
@@ -48,7 +54,9 @@ def compare(
     month_a: str = Query(...),
     month_b: str = Query(...),
     source: str = Query("NEXORA"),
+    current_user: dict = Depends(get_current_user),
 ):
+    assert_tenant_access(current_user, tenant_id)
     return report_service.compare(tenant_id, month_a, month_b, source)
 
 
@@ -58,7 +66,9 @@ def compare_excel(
     month_a: str = Query(...),
     month_b: str = Query(...),
     source: str = Query("NEXORA"),
+    current_user: dict = Depends(get_current_user),
 ):
+    assert_tenant_access(current_user, tenant_id)
     payload = report_service.compare(tenant_id, month_a, month_b, source)
     rows = list(payload["stores"])
     if payload.get("summary"):
@@ -84,7 +94,9 @@ def dashboard_excel(
     from_month: str = Query(...),
     to_month: str = Query(...),
     source: str = Query("NEXORA"),
+    current_user: dict = Depends(get_current_user),
 ):
+    assert_tenant_access(current_user, tenant_id)
     payload = report_service.dashboard(tenant_id, from_month, to_month, source)
     content = ExcelExporter.build_workbook(payload["stores"], "Store Summary")
     filename = f"All_Store_Summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -102,7 +114,9 @@ def store_analysis_excel(
     from_month: str = Query(...),
     to_month: str = Query(...),
     source: str = Query("NEXORA"),
+    current_user: dict = Depends(get_current_user),
 ):
+    assert_tenant_access(current_user, tenant_id)
     payload = report_service.store_analysis(tenant_id, store_id, from_month, to_month, source)
     content = ExcelExporter.build_workbook(payload["rows"], "Monthly Analysis")
     filename = (
