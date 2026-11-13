@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from services.role_service import RoleService
 from dtos.role_request import RoleRequest, RoleStatusRequest
-from dependencies.auth import get_current_user
+from dependencies.store_scope import require_super_admin
 from modules.audit.writer import record_audit
 from modules.audit.diff import compute_mutation_diff
 from modules.audit.context import AuditContext
@@ -12,7 +12,7 @@ from modules.audit.context import AuditContext
 router = APIRouter(prefix="/api/roles", tags=["Roles"])
 
 @router.post("/seed")
-def seed_roles(request: Request, current_user: dict = Depends(get_current_user)):
+def seed_roles(request: Request, current_user: dict = Depends(require_super_admin)):
     count = RoleService().seed_roles()
     record_audit(
         ctx=AuditContext.from_request(request, user=current_user),
@@ -25,18 +25,18 @@ def seed_roles(request: Request, current_user: dict = Depends(get_current_user))
     return {"status":"success","roles_created":count}
 
 @router.get("")
-def get_roles(search: str | None = None, status: str | None = None):
+def get_roles(search: str | None = None, status: str | None = None, current_user: dict = Depends(require_super_admin)):
     return RoleService().get_all(search, status)
 
 @router.get("/{role_id}")
-def get_role(role_id:str):
+def get_role(role_id:str, current_user: dict = Depends(require_super_admin)):
     r = RoleService().get_by_id(role_id)
     if not r:
         raise HTTPException(status_code=404, detail="Role Not Found")
     return r
 
 @router.post("", status_code=201)
-def create_role(body: RoleRequest, request: Request, current_user: dict = Depends(get_current_user)):
+def create_role(body: RoleRequest, request: Request, current_user: dict = Depends(require_super_admin)):
     role_name = body.role_name.strip()
     if not role_name:
         raise HTTPException(status_code=400, detail="Role name is required")
@@ -58,7 +58,7 @@ def create_role(body: RoleRequest, request: Request, current_user: dict = Depend
     return res
 
 @router.put("/{role_id}")
-def update_role(role_id:str, body: RoleRequest, request: Request, current_user: dict = Depends(get_current_user)):
+def update_role(role_id:str, body: RoleRequest, request: Request, current_user: dict = Depends(require_super_admin)):
     role_name = body.role_name.strip()
     if not role_name:
         raise HTTPException(status_code=400, detail="Role name is required")
@@ -90,10 +90,17 @@ def update_role(role_id:str, body: RoleRequest, request: Request, current_user: 
     return res
 
 @router.patch("/{role_id}/status")
-def set_role_status(role_id:str, body: RoleStatusRequest, request: Request, current_user: dict = Depends(get_current_user)):
+def set_role_status(role_id:str, body: RoleStatusRequest, request: Request, current_user: dict = Depends(require_super_admin)):
     existing = RoleService().get_by_id(role_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Role Not Found")
+    if not body.is_active and RoleService().is_superadmin_tier_role(role_id):
+        remaining = RoleService().remaining_superadmins_if_role_deactivated(role_id)
+        if remaining < 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot deactivate this role: it would leave no active super admin.",
+            )
     RoleService().set_active(role_id, body.is_active)
     res = RoleService().get_by_id(role_id)
 

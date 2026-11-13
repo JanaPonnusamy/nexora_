@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from services.user_service import UserService
+from services.role_service import RoleService
 from dtos.user_request import UserRequest, UserStatusRequest
 from dependencies.auth import get_current_user
+from dependencies.store_scope import require_super_admin, has_unrestricted_scope
 from modules.audit.writer import record_audit
 from modules.audit.diff import compute_mutation_diff
 from modules.audit.context import AuditContext
@@ -50,19 +52,28 @@ def get_users(
     store_id: str | None = None,
     role_id: str | None = None,
     status: str | None = None,
+    current_user: dict = Depends(get_current_user),
 ):
+    # Non-super-admin/platform callers are locked to their own tenant
+    # regardless of what tenant_id they pass (or omit) - this endpoint used
+    # to return every tenant's users to any authenticated login.
+    if not has_unrestricted_scope(current_user):
+        tenant_id = current_user.get("tenant_id")
     rows = UserService().get_all(search, tenant_id, store_id, role_id, status)
     return [_serialize_list(r) for r in rows]
 
 @router.get("/{user_id}")
-def get_user(user_id: str):
+def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     r = UserService().get_by_id(user_id)
     if not r:
         raise HTTPException(status_code=404, detail="User Not Found")
-    return _serialize_detail(r)
+    detail = _serialize_detail(r)
+    if not has_unrestricted_scope(current_user) and detail["tenant_id"] != current_user.get("tenant_id"):
+        raise HTTPException(status_code=403, detail="You do not have access to this user.")
+    return detail
 
 @router.post("", status_code=201)
-def create_user(body: UserRequest, request: Request, current_user: dict = Depends(get_current_user)):
+def create_user(body: UserRequest, request: Request, current_user: dict = Depends(require_super_admin)):
     username = body.username.strip()
     full_name = body.full_name.strip()
     if not username:
@@ -90,7 +101,7 @@ def create_user(body: UserRequest, request: Request, current_user: dict = Depend
     return _serialize_detail(r)
 
 @router.put("/{user_id}")
-def update_user(user_id: str, body: UserRequest, request: Request, current_user: dict = Depends(get_current_user)):
+def update_user(user_id: str, body: UserRequest, request: Request, current_user: dict = Depends(require_super_admin)):
     username = body.username.strip()
     full_name = body.full_name.strip()
     if not username:
@@ -128,11 +139,18 @@ def update_user(user_id: str, body: UserRequest, request: Request, current_user:
     return after_snapshot
 
 @router.patch("/{user_id}/status")
-def set_user_status(user_id: str, body: UserStatusRequest, request: Request, current_user: dict = Depends(get_current_user)):
+def set_user_status(user_id: str, body: UserStatusRequest, request: Request, current_user: dict = Depends(require_super_admin)):
     existing_row = UserService().get_by_id(user_id)
     if not existing_row:
         raise HTTPException(status_code=404, detail="User Not Found")
     before = _serialize_detail(existing_row)
+    if not body.is_active:
+        remaining = RoleService().remaining_superadmins_if_user_deactivated(user_id)
+        if remaining < 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot deactivate this user: it would leave no active super admin.",
+            )
     UserService().set_active(user_id, body.is_active)
     r = UserService().get_by_id(user_id)
 
@@ -151,11 +169,13 @@ def set_user_status(user_id: str, body: UserStatusRequest, request: Request, cur
     return _serialize_detail(r)
 
 @relations_router.get("/api/tenants/{tenant_id}/users")
-def get_users_by_tenant(tenant_id: str):
+def get_users_by_tenant(tenant_id: str, current_user: dict = Depends(get_current_user)):
+    if not has_unrestricted_scope(current_user) and str(current_user.get("tenant_id") or "") != str(tenant_id):
+        raise HTTPException(status_code=403, detail="You do not have access to this tenant.")
     rows = UserService().get_all(tenant_id=tenant_id)
     return [_serialize_list(r) for r in rows]
 
 @relations_router.get("/api/stores/{store_id}/users")
-def get_users_by_store(store_id: str):
+def get_users_by_store(store_id: str, current_user: dict = Depends(require_super_admin)):
     rows = UserService().get_all(store_id=store_id)
     return [_serialize_list(r) for r in rows]

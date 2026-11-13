@@ -141,3 +141,34 @@ class RoleRepository:
         conn.commit()
         conn.close()
         return affected
+
+    def count_active_superadmin_assignments(self, exclude_role_id=None, exclude_user_id=None):
+        """Active users currently holding an active SUPER_ADMIN/PLATFORM_OWNER
+        role, optionally excluding one role (used to ask "how many would
+        remain if THIS role were deactivated") or one user (used to ask "how
+        many would remain if THIS user were deactivated"). Backs the
+        last-superadmin protection in role_controller/user_controller."""
+        conn = get_connection()
+        cur = conn.cursor()
+        conditions = []
+        params = []
+        if exclude_role_id:
+            conditions.append("r.role_id <> ?")
+            params.append(exclude_role_id)
+        if exclude_user_id:
+            conditions.append("u.user_id <> ?")
+            params.append(exclude_user_id)
+        where_extra = ("AND " + " AND ".join(conditions)) if conditions else ""
+        cur.execute(f"""
+        SELECT COUNT(DISTINCT usr.user_id)
+        FROM dbo.user_store_roles usr
+        JOIN dbo.roles r ON r.role_id = usr.role_id
+        JOIN dbo.users u ON u.user_id = usr.user_id
+        WHERE r.role_name IN ('SUPER_ADMIN', 'PLATFORM_OWNER')
+          AND r.is_active = 1
+          AND u.is_active = 1
+          {where_extra}
+        """, params)
+        count = cur.fetchone()[0]
+        conn.close()
+        return int(count or 0)
