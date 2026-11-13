@@ -63,6 +63,38 @@ export function healColOrder(base, cfg, rescueKeys) {
   return changed ? { ...cfg, order } : cfg;
 }
 
+// EXACT-pixel colgroup + a trailing filler <col> (no width). With
+// table-layout:fixed the fixed columns render at their literal px and the
+// filler absorbs any leftover width -- so slack never inflates a real column
+// (spec 5-7: leave empty space / use a filler, never expand Product).
+// fitWidth (the grid's visible width): on a smaller window, when the columns
+// add up to more than that, shrink to fit instead of pushing the right-hand
+// columns (LPD/LSD/Review) off-screen -- the ellipsized Product column gives up
+// width first (down to 140px), then every column scales down proportionally.
+// Used by the Label Exporter screen (resolveOwColumns/owColgroupPct above
+// are the percentage-weighted variant Order Workspace itself uses).
+export function owColgroupExact(cols, fitWidth = 0) {
+  const widths = cols.map((c) => Number(c.width) || 0);
+  const total = widths.reduce((a, b) => a + b, 0);
+  if (fitWidth > 0 && total > fitWidth) {
+    let excess = total - fitWidth;
+    const grow = cols.findIndex((c) => (c.thClass || '').includes('ow-grow'));
+    if (grow >= 0) {
+      const give = Math.min(excess, Math.max(0, widths[grow] - 140));
+      widths[grow] -= give;
+      excess -= give;
+    }
+    if (excess > 0) {
+      const scale = fitWidth / (fitWidth + excess); // fitWidth + excess = current total
+      for (let i = 0; i < widths.length; i += 1) widths[i] = Math.max(28, Math.floor(widths[i] * scale));
+    }
+  }
+  return [
+    ...cols.map((c, i) => <col key={c.key} style={{ width: `${widths[i]}px` }} />),
+    <col key="__filler" />,
+  ];
+}
+
 // Visible, ordered columns with any user width override applied.
 export function resolveOwColumns(base, cfg) {
   const byKey = new Map(base.map((c) => [c.key, c]));
