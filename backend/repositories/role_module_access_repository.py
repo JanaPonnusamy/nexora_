@@ -130,3 +130,36 @@ class RoleModuleAccessRepository:
         conn.commit()
         conn.close()
         return affected
+
+    def set_permissions(self, role_id, module_id, can_view, can_create, can_edit, can_delete, can_export):
+        """Set the exact action-level flags for one role<->module pair,
+        creating the row if it doesn't exist yet. Unlike assign() (which only
+        ever turns on can_view), this is what a real permission-matrix editor
+        needs: a role with can_view=1/can_create=1 but can_delete=0 is a
+        normal, expected state, not just on/off module visibility."""
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM dbo.role_module_access WHERE role_id = ? AND module_id = ?",
+            role_id, module_id
+        )
+        exists = cur.fetchone()[0] > 0
+        flags = (1 if can_view else 0, 1 if can_create else 0, 1 if can_edit else 0,
+                 1 if can_delete else 0, 1 if can_export else 0)
+        if exists:
+            cur.execute(
+                """UPDATE dbo.role_module_access
+                   SET can_view = ?, can_create = ?, can_edit = ?, can_delete = ?, can_export = ?,
+                       is_active = 1
+                   WHERE role_id = ? AND module_id = ?""",
+                *flags, role_id, module_id
+            )
+        else:
+            cur.execute(
+                """INSERT INTO dbo.role_module_access
+                   (role_id, module_id, can_view, can_create, can_edit, can_delete, can_export, is_active)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
+                role_id, module_id, *flags
+            )
+        conn.commit()
+        conn.close()
