@@ -11378,3 +11378,167 @@ button.pw-site-chip:disabled { cursor: default; }
 .pw-bulk-no { color: var(--nx-danger-ink, #b91c1c); border-color: currentColor; }
 .pw-icon-act--ok { color: var(--nx-success-ink, #15803d); }
 .pw-icon-act--no { color: var(--nx-danger-ink, #b91c1c); }
+
+/* ERP navigation shell (Phase 6B). .workspace itself is left completely
+   unstyled here -- every existing per-screen .workspace:has(> .xxx-screen)
+   padding/sizing override keeps working unchanged; only what WRAPS it
+   changes, from a single auto/1fr row to a two-column grid with the
+   sidebar as the extra column. */
+.app-shell-with-sidebar {
+  grid-template-columns: auto 1fr;
+  grid-template-rows: var(--ui-nav-height) 1fr;
+}
+.app-shell-with-sidebar .menubar {
+  grid-column: 1 / -1;
+}
+.app-shell-with-sidebar .erp-sidebar {
+  grid-row: 2;
+}
+.app-shell-with-sidebar .workspace {
+  grid-row: 2;
+  min-width: 0;
+}
+
+.erp-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 236px;
+  flex: 0 0 auto;
+  overflow-y: auto;
+  border-right: 1px solid var(--nx-rule);
+  background: var(--nx-surface);
+  transition: width 0.15s ease;
+}
+.erp-sidebar-collapsed {
+  width: 56px;
+}
+
+.erp-sidebar-collapse-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 8px 0 4px 8px;
+  border: 1px solid var(--nx-rule);
+  border-radius: 6px;
+  background: var(--nx-surface-raised);
+  color: var(--nx-text-soft);
+}
+.erp-sidebar-collapse-toggle:hover {
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
+}
+.erp-sidebar-collapse-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.erp-sidebar-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px 10px;
+}
+
+.erp-nav-section-button,
+.erp-nav-submenu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nx-text-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.erp-nav-section-button:hover,
+.erp-nav-submenu button:hover {
+  background: var(--nx-surface-hover);
+  color: var(--nx-text);
+}
+.erp-nav-section-button.active,
+.erp-nav-submenu button.active {
+  background: var(--nx-accent-sunk);
+  color: var(--nx-accent-ink);
+  font-weight: 700;
+}
+
+.erp-nav-icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.erp-nav-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.erp-sidebar-collapsed .erp-nav-label,
+.erp-sidebar-collapsed .erp-nav-hint {
+  display: none;
+}
+
+.erp-nav-caret {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--nx-text-muted);
+  transition: transform 0.15s ease;
+}
+.erp-nav-caret.open {
+  transform: rotate(180deg);
+}
+
+.erp-nav-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 14px;
+  margin-bottom: 2px;
+}
+.erp-nav-submenu button {
+  padding-left: 18px;
+  font-weight: 500;
+}
+.erp-nav-submenu button .erp-nav-label {
+  font-size: 12px;
+}
+
+.erp-nav-hint {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--nx-text-muted);
+  background: var(--nx-surface-sunk);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.erp-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -14px 0 14px;
+  font-size: 11.5px;
+  color: var(--nx-text-muted);
+}
+.erp-breadcrumb-section {
+  font-weight: 600;
+}
+.erp-breadcrumb-sep {
+  opacity: 0.6;
+}
+.erp-breadcrumb-current {
+  color: var(--nx-text-soft);
+  font-weight: 650;
+}

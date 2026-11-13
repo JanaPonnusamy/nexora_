@@ -36,19 +36,14 @@ import { AbnormalMark, AbnormalSalesStrip, useAbnormalSales } from './abnormalSa
 import { OwBulkAssign } from './bulkAssign.jsx';
 import { TrendBars, TrendTip, fmtMonthLabel as fmtOwMonthLabel, trendMax } from './trendChart.jsx';
 import { NavMenu } from './navMenu.jsx';
+import { ErpSidebar } from './ErpSidebar.jsx';
+import { ErpBreadcrumb } from './ErpBreadcrumb.jsx';
 import TimeReport from './TimeReport.jsx';
 import RateAnalysis from './RateAnalysis.jsx';
 import NonMovingStock from './NonMovingStock.jsx';
 import LegacyOrderGeneration from './LegacyOrderGeneration.jsx';
 import SyncLive from './SyncLive.jsx';
 import PmOrderEntry from './PmOrderEntry.jsx';
-import {
-  OW_PANEL_DEFS,
-  owLineFromRow,
-  owLineNote,
-  owNormalizeLayout,
-  owWorkspaceSummary,
-} from './orderWorkspaceView.js';
 import {
   OW_EXPORT_COLUMN_DEFS,
   OW_GEAR_PATH,
@@ -693,8 +688,15 @@ function AppShell() {
     }).catch(() => {});
   }, [session, settings.tenantId, effectiveStoreId]);
 
+  // The ERP sidebar (Phase 6B) is the primary nav once signed in with a
+  // real nav to show; NavMenu's flat top strip remains the nav before
+  // sign-in (settings-only, a single-item strip isn't worth a sidebar) and
+  // is kept, unused by the sidebar, so nothing else referencing it changes.
+  const activeNavItem = navItems.find((item) => item.id === activeScreen) || null;
+  const showErpSidebar = Boolean(session) && navItems.length > 1;
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell${showErpSidebar ? ' app-shell-with-sidebar' : ''}`}>
       <header className="menubar">
         <div className="brand-block" title={`NEXORA MEDIQ v${__APP_VERSION__}`}>
           <img src={nexoraMediqMark} alt="NEXORA MEDIQ" className="brand-logo" />
@@ -706,7 +708,7 @@ function AppShell() {
           </div>
         </div>
 
-        <NavMenu items={navItems} activeScreen={activeScreen} onSelect={setActiveScreen} />
+        {!showErpSidebar && <NavMenu items={navItems} activeScreen={activeScreen} onSelect={setActiveScreen} />}
 
         <div className="menubar-right">
           <ThemeToggle
@@ -739,7 +741,12 @@ function AppShell() {
         </div>
       </header>
 
+      {showErpSidebar && (
+        <ErpSidebar items={navItems} activeScreen={activeScreen} onSelect={setActiveScreen} />
+      )}
+
       <main className="workspace">
+        {showErpSidebar && <ErpBreadcrumb activeItem={activeNavItem} />}
         {activeScreen === 'settings' ? (
           // Settings/API settings must be reachable BEFORE sign-in: a fresh
           // store PC has to enter its API base URL here before login can even
