@@ -5,7 +5,9 @@ password update + session revocation.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import pytest
 
@@ -223,15 +225,147 @@ def test_confirm_reset_single_use_second_attempt_with_same_token_fails(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# Email delivery stub honesty
+# Email delivery: unconfigured stays honest; configured uses STARTTLS
 # ---------------------------------------------------------------------------
 
-def test_send_reset_email_stub_returns_false_not_a_fake_success():
-    """This is the explicit requirement from the Phase 6 authorization:
-    if email infrastructure doesn't exist, the code must not pretend
-    delivery works."""
+_SMTP_ENV_KEYS = (
+    "NEXORA_PASSWORD_RESET_SMTP_HOST",
+    "NEXORA_PASSWORD_RESET_SMTP_PORT",
+    "NEXORA_PASSWORD_RESET_SMTP_USERNAME",
+    "NEXORA_PASSWORD_RESET_SMTP_FROM",
+    "NEXORA_PASSWORD_RESET_SMTP_PASSWORD",
+    "NEXORA_PASSWORD_RESET_SMTP_PASSWORD_ENV",
+    "NEXORA_PASSWORD_RESET_SMTP_TIMEOUT",
+)
+
+
+def _clear_smtp_env(monkeypatch):
+    for key in _SMTP_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_send_reset_email_unconfigured_returns_false_and_does_not_connect(monkeypatch):
+    """Missing SMTP settings must not pretend delivery worked, and must
+    not open a socket."""
+    _clear_smtp_env(monkeypatch)
+
+    def refuse_connect(*args, **kwargs):
+        raise AssertionError("SMTP must not be contacted when unconfigured")
+
+    monkeypatch.setattr(service.smtplib, "SMTP", refuse_connect)
+
     result = service.send_reset_email("someone@example.com", "someone", "raw-token-value")
     assert result is False
+
+
+def test_send_reset_email_partial_config_returns_false(monkeypatch):
+    _clear_smtp_env(monkeypatch)
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_USERNAME", "noreply@example.com")
+
+    def refuse_connect(*args, **kwargs):
+        raise AssertionError("SMTP must not be contacted without a password")
+
+    monkeypatch.setattr(service.smtplib, "SMTP", refuse_connect)
+    assert service.send_reset_email("someone@example.com", "someone", "raw-token-value") is False
+
+
+def test_send_reset_email_bad_port_returns_false(monkeypatch):
+    _clear_smtp_env(monkeypatch)
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_PORT", "not-a-port")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_USERNAME", "noreply@example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_PASSWORD", "s3cret-value")
+
+    def refuse_connect(*args, **kwargs):
+        raise AssertionError("SMTP must not be contacted with a bad port")
+
+    monkeypatch.setattr(service.smtplib, "SMTP", refuse_connect)
+    assert service.send_reset_email("someone@example.com", "someone", "raw-token-value") is False
+
+
+def test_send_reset_email_sends_paste_code_over_starttls(monkeypatch, caplog):
+    _clear_smtp_env(monkeypatch)
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_PORT", "587")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_USERNAME", "noreply@example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_FROM", "NEXORA MEDIQ <noreply@example.com>")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_PASSWORD", "s3cret-value")
+
+    smtp = mock.MagicMock()
+    smtp.__enter__.return_value = smtp
+    smtp.__exit__.return_value = False
+    constructor = mock.Mock(return_value=smtp)
+    monkeypatch.setattr(service.smtplib, "SMTP", constructor)
+
+    token = "raw-token-value-not-for-logs"
+    with caplog.at_level(logging.DEBUG):
+        assert service.send_reset_email("someone@example.com", "someone", token) is True
+
+    constructor.assert_called_once_with("smtp.example.com", 587, timeout=20)
+    smtp.starttls.assert_called_once_with()
+    smtp.login.assert_called_once_with("noreply@example.com", "s3cret-value")
+    sent = smtp.send_message.call_args.args[0]
+    assert sent["To"] == "someone@example.com"
+    assert sent["From"] == "NEXORA MEDIQ <noreply@example.com>"
+    assert sent["Subject"] == "NEXORA MEDIQ password reset code"
+    body = sent.get_content()
+    assert token in body
+    assert "I already have a reset code" in body
+    assert "s3cret-value" not in body
+    assert token not in caplog.text
+    assert "s3cret-value" not in caplog.text
+
+
+def test_send_reset_email_reads_password_from_named_env(monkeypatch):
+    _clear_smtp_env(monkeypatch)
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_USERNAME", "noreply@example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_PASSWORD_ENV", "NEXORA_TEST_RESET_SECRET")
+    monkeypatch.setenv("NEXORA_TEST_RESET_SECRET", "indirect-secret")
+
+    smtp = mock.MagicMock()
+    smtp.__enter__.return_value = smtp
+    smtp.__exit__.return_value = False
+    monkeypatch.setattr(service.smtplib, "SMTP", mock.Mock(return_value=smtp))
+
+    assert service.send_reset_email("someone@example.com", "someone", "raw-token-value") is True
+    smtp.login.assert_called_once_with("noreply@example.com", "indirect-secret")
+
+
+def test_send_reset_email_smtp_failure_returns_false(monkeypatch, caplog):
+    _clear_smtp_env(monkeypatch)
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_USERNAME", "noreply@example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_PASSWORD", "s3cret-value")
+
+    smtp = mock.MagicMock()
+    smtp.__enter__.return_value = smtp
+    smtp.__exit__.return_value = False
+    smtp.login.side_effect = service.smtplib.SMTPAuthenticationError(535, b"nope")
+    monkeypatch.setattr(service.smtplib, "SMTP", mock.Mock(return_value=smtp))
+
+    token = "raw-token-value-not-for-logs"
+    with caplog.at_level(logging.DEBUG):
+        assert service.send_reset_email("someone@example.com", "someone", token) is False
+
+    smtp.send_message.assert_not_called()
+    assert "SMTPAuthenticationError" in caplog.text
+    assert token not in caplog.text
+    assert "s3cret-value" not in caplog.text
+
+
+def test_send_reset_email_rejects_header_injection(monkeypatch):
+    _clear_smtp_env(monkeypatch)
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_USERNAME", "noreply@example.com")
+    monkeypatch.setenv("NEXORA_PASSWORD_RESET_SMTP_PASSWORD", "s3cret-value")
+
+    def refuse_connect(*args, **kwargs):
+        raise AssertionError("SMTP must not be contacted for an unsafe address")
+
+    monkeypatch.setattr(service.smtplib, "SMTP", refuse_connect)
+    assert service.send_reset_email("a@b.com\nBcc: victim@evil.test", "someone", "raw-token-value") is False
 
 
 # ---------------------------------------------------------------------------

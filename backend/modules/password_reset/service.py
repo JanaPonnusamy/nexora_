@@ -28,19 +28,23 @@ Phase 6 authorization's S7:
     dependencies.auth._enforce_active_session (the same mechanism behind
     this app's existing single-active-session feature).
 
-Email delivery: see send_reset_email() below. No general-purpose
-transactional email sender exists in this codebase today (doc 28A S3.5) --
-this is deliberately a clearly-labeled stub, not a silent no-op pretending
-to work, per the authorization's explicit instruction not to pretend
-email delivery works when the infrastructure for it doesn't exist yet.
+Email delivery: see send_reset_email() below. Delivery uses stdlib
+SMTP + STARTTLS when NEXORA_PASSWORD_RESET_SMTP_* is configured. When
+those variables are absent, the function returns False and does not
+claim a send happened. The desktop app has no URL bar, so the message
+carries the raw reset code for the user to paste (Phase 6F owner
+decision), not a clickable link.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import secrets
+import smtplib
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 
 import bcrypt
 
@@ -54,7 +58,7 @@ RATE_LIMIT_WINDOW_MINUTES = 60
 MAX_REQUESTS_PER_WINDOW = 3
 
 GENERIC_REQUEST_RESULT = {
-    "message": "If an account exists for that email address, a password reset link has been sent."
+    "message": "If an account exists for that email address, a password reset code has been sent."
 }
 
 
@@ -75,30 +79,116 @@ def validate_password_strength(password: str) -> str | None:
     return None
 
 
-def send_reset_email(email: str, username: str, raw_token: str) -> bool:
-    """STUB: no transactional email sender exists in this codebase yet
-    (doc 28A S3.5 -- the only SMTP code is modules/sync's tightly-coupled
-    store<->HO sync-package transport, not reusable for a user-facing
-    email). This function deliberately does not send anything and
-    returns False, so request_reset() can tell the caller plainly that
-    delivery did not happen, rather than claiming success.
+# Own mailbox, separate from the store<->HO sync transport
+# (modules/sync/file_transfer_transport/email.py). The secret itself is
+# never named in code as a value: NEXORA_PASSWORD_RESET_SMTP_PASSWORD
+# holds it, or NEXORA_PASSWORD_RESET_SMTP_PASSWORD_ENV names a different
+# variable that holds it.
+_SMTP_HOST = "NEXORA_PASSWORD_RESET_SMTP_HOST"
+_SMTP_PORT = "NEXORA_PASSWORD_RESET_SMTP_PORT"
+_SMTP_USERNAME = "NEXORA_PASSWORD_RESET_SMTP_USERNAME"
+_SMTP_FROM = "NEXORA_PASSWORD_RESET_SMTP_FROM"
+_SMTP_PASSWORD = "NEXORA_PASSWORD_RESET_SMTP_PASSWORD"
+_SMTP_PASSWORD_ENV = "NEXORA_PASSWORD_RESET_SMTP_PASSWORD_ENV"
+_SMTP_TIMEOUT = "NEXORA_PASSWORD_RESET_SMTP_TIMEOUT"
 
-    To wire real delivery: implement SMTP send here (stdlib smtplib +
-    STARTTLS, following the pattern in
-    modules/sync/file_transfer_transport/email.py's _send(), with its own
-    host/port/from-address/credentials read from environment variables --
-    never hardcoded) and return True on confirmed send. The raw_token
-    argument is already exactly what the email body's reset link needs
-    (`https://<app-host>/reset-password?token=<raw_token>`); nothing else
-    about request_reset()'s security properties needs to change for a
-    real sender to be plugged in here.
+
+def _email_suffix(email: str) -> str:
+    return email[-12:] if email else "?"
+
+
+def _header_safe(value: str) -> bool:
+    return bool(value) and "\r" not in value and "\n" not in value
+
+
+def _smtp_settings() -> dict | None:
+    """None means delivery is not configured. A partial set is treated
+    the same as a missing set: do not attempt a connection."""
+    host = (os.getenv(_SMTP_HOST) or "").strip()
+    username = (os.getenv(_SMTP_USERNAME) or "").strip()
+    password_env = (os.getenv(_SMTP_PASSWORD_ENV) or _SMTP_PASSWORD).strip()
+    password = os.environ.get(password_env) or ""
+    from_addr = (os.getenv(_SMTP_FROM) or username).strip()
+    if not all(_header_safe(part) for part in (host, username, from_addr)):
+        return None
+    if not password:
+        return None
+    try:
+        port = int((os.getenv(_SMTP_PORT) or "587").strip())
+    except ValueError:
+        return None
+    if port < 1 or port > 65535:
+        return None
+    try:
+        timeout = float((os.getenv(_SMTP_TIMEOUT) or "20").strip())
+    except ValueError:
+        timeout = 20.0
+    if timeout <= 0:
+        timeout = 20.0
+    return {
+        "host": host,
+        "port": port,
+        "username": username,
+        "password": password,
+        "from_addr": from_addr,
+        "timeout": timeout,
+    }
+
+
+def send_reset_email(email: str, username: str, raw_token: str) -> bool:
+    """Send the reset code over authenticated SMTP (STARTTLS).
+
+    Returns True only after smtplib reports the message was accepted.
+    Returns False when SMTP is not configured, the address is unsafe to
+    put in a header, or the server rejects the message. The raw token
+    and the SMTP password are never written to the log.
+
+    This mailbox is independent of the store<->HO file-transfer SMTP
+    settings. Host, port, username, From, and the password come from
+    environment variables only.
     """
-    logger.info(
-        "password_reset: email delivery not configured (stub) -- "
-        "reset requested for a user whose email ends in %s",
-        email[-12:] if email else "?",
+    suffix = _email_suffix(email)
+    settings = _smtp_settings()
+    if settings is None:
+        logger.info(
+            "password_reset: email delivery not configured -- "
+            "reset requested for a user whose email ends in %s",
+            suffix,
+        )
+        return False
+    if not _header_safe((email or "").strip()):
+        logger.info("password_reset: refused an address that is not safe to place in a mail header")
+        return False
+
+    message = EmailMessage()
+    message["From"] = settings["from_addr"]
+    message["To"] = email.strip()
+    message["Subject"] = "NEXORA MEDIQ password reset code"
+    message.set_content(
+        "A password reset was requested for your NEXORA MEDIQ account "
+        f"({username}).\n\n"
+        "Open NEXORA MEDIQ, choose Forgot password, then "
+        "\"I already have a reset code\", and paste this code:\n\n"
+        f"{raw_token}\n\n"
+        f"The code expires in {RESET_TOKEN_EXPIRE_MINUTES} minutes and "
+        "can be used once. If you did not request this, ignore this email.\n"
     )
-    return False
+
+    try:
+        with smtplib.SMTP(settings["host"], settings["port"], timeout=settings["timeout"]) as smtp:
+            smtp.starttls()
+            smtp.login(settings["username"], settings["password"])
+            smtp.send_message(message)
+    except Exception as exc:
+        logger.warning(
+            "password_reset: SMTP send failed (%s) for an address ending in %s",
+            type(exc).__name__,
+            suffix,
+        )
+        return False
+
+    logger.info("password_reset: reset code sent for an address ending in %s", suffix)
+    return True
 
 
 def request_reset(email: str, request_ip: str | None = None) -> dict:
@@ -153,7 +243,7 @@ def confirm_reset(raw_token: str, new_password: str) -> tuple[bool, str | None, 
     token_hash = _hash_token(raw_token or "")
     row = repository.get_valid_token(token_hash)
     if not row:
-        return False, "This reset link is invalid or has expired. Please request a new one.", None
+        return False, "This reset code is invalid or has expired. Please request a new one.", None
 
     token_id, user_id, _expires_at, _used_at = row[0], str(row[1]), row[2], row[3]
 
