@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 88" fill="none">
+  <defs>
+    <linearGradient id="nmBase" x1="8" y1="8" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="nmPulse" x1="16" y1="20" x2="72" y2="68" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="55%" stop-color="#0d9488"/>
+      <stop offset="100%" stop-color="#0891b2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mark: rounded hexagonal cross (pharma + workspace grid), navy base with a cyan/teal pulse line -->
+  <g>
+    <path d="M44 6 L74 23 V61 L44 78 L14 61 V23 Z" fill="url(#nmBase)"/>
+    <path d="M44 6 L74 23 V61 L44 78 L14 61 V23 Z" fill="none" stroke="#0d9488" stroke-opacity="0.35" stroke-width="1.5"/>
+    <!-- vertical bar of the pharmaceutical cross -->
+    <rect x="39" y="26" width="10" height="36" rx="2.5" fill="#f8fafc"/>
+    <!-- horizontal bar -->
+    <rect x="26" y="39" width="36" height="10" rx="2.5" fill="#f8fafc"/>
+    <!-- pulse/heartbeat accent cutting across the lower-right facet -->
+    <path d="M20 58 L30 58 L35 48 L41 64 L46 54 L52 58 L60 58"
+          fill="none" stroke="url(#nmPulse)" stroke-width="3.2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="94" y="40" font-family="'Segoe UI', Arial, sans-serif" font-size="27" font-weight="700" letter-spacing="0.5" fill="#0f172a">NEXORA</text>
+  <text x="94" y="64" font-family="'Segoe UI', Arial, sans-serif" font-size="27" font-weight="700" letter-spacing="1.5" fill="#0d9488">MEDIQ</text>
+</svg>

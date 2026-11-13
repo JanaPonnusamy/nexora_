@@ -1,6 +1,6 @@
 import { Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import axythicLogo from './assets/axythic-logo-mark.png';
+import nexoraMediqMark from './assets/nexora-mediq-mark.svg';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from './api/client.js';
@@ -569,7 +569,7 @@ function AppShell() {
 
   useEffect(() => {
     const storeName = session?.user?.roles?.[0]?.store_name || settings.storeName;
-    document.title = storeName ? `Axythic Supplier Stock · ${storeName}` : 'Axythic Supplier Stock';
+    document.title = storeName ? `NEXORA MEDIQ · ${storeName}` : 'NEXORA MEDIQ';
   }, [session, settings.storeName]);
 
   function persistSettings(next) {
@@ -696,10 +696,10 @@ function AppShell() {
   return (
     <div className="app-shell">
       <header className="menubar">
-        <div className="brand-block" title={`Supplier Stock Client v${__APP_VERSION__}`}>
-          <img src={axythicLogo} alt="Axythic" className="brand-logo" />
+        <div className="brand-block" title={`NEXORA MEDIQ v${__APP_VERSION__}`}>
+          <img src={nexoraMediqMark} alt="NEXORA MEDIQ" className="brand-logo" />
           <div>
-            <h1>Axythic <span className="app-version">v{__APP_VERSION__}</span></h1>
+            <h1>NEXORA MEDIQ <span className="app-version">v{__APP_VERSION__}</span></h1>
             {/* Last sync lives under the brand (not in menubar-right): at
                 1366x768 the right-side chip collided with the nav tabs. */}
             <LastSyncBadge tenantId={runtimeSettings?.tenantId || session?.user?.tenant_id || ''} />
@@ -1267,7 +1267,7 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
 
   return (
     <section className="screen-panel">
-      <ScreenHeader title="Settings" subtitle="Choose how this desktop client reaches the Axythic API." />
+      <ScreenHeader title="Settings" subtitle="Choose how this desktop client reaches the NEXORA MEDIQ API." />
       <div className="form-grid">
         <label>
           Server mode
@@ -1594,9 +1594,9 @@ function LoginScreen({ onLogin, onOpenSettings }) {
   return (
     <section className="login-layout">
       <div className="login-copy">
-        <span className="eyebrow">Axythic desktop</span>
-        <h2>Supplier stock workbench</h2>
-        <p>Use your Axythic credentials to open stock availability and supplier analysis modules.</p>
+        <span className="eyebrow">NEXORA MEDIQ</span>
+        <h2>Intelligent Pharmaceutical Workspace</h2>
+        <p>Use your NEXORA MEDIQ credentials to open stock availability and supplier analysis modules.</p>
       </div>
       <form className="login-card" onSubmit={submit}>
         <label>

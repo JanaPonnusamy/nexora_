@@ -235,7 +235,7 @@ async function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     center: true,
-    title: 'Axythic Supplier Stock',
+    title: 'NEXORA MEDIQ',
     backgroundColor: '#f5f7fb',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

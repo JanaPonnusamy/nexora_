@@ -2,7 +2,7 @@
   "name": "nexora-supplier-stock-client",
   "version": "0.1.71",
   "private": true,
-  "description": "Axythic supplier stock desktop client scaffold",
+  "description": "NEXORA MEDIQ — Intelligent Pharmaceutical Workspace desktop client",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "electron .",
-    "dist": "vite build && electron-builder --win --config.artifactName=\"Axythic-Supplier-Stock-Setup-${version}.${ext}\""
+    "dist": "vite build && electron-builder --win --config.artifactName=\"NEXORA-MEDIQ-Setup-${version}.${ext}\""
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
@@ -23,7 +23,7 @@
   },
   "build": {
     "appId": "com.nexora.desktop.stock",
-    "productName": "Axythic Supplier Stock",
+    "productName": "NEXORA MEDIQ",
     "directories": {
       "output": "release"
     },
