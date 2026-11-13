@@ -760,6 +760,10 @@ class StockClientApp(App):
         exe = self.exe()
         return "running" if exe and host.is_running(exe) else "stopped"
 
+    def is_running(self):
+        exe = self.exe()
+        return bool(exe and host.is_running(exe))
+
     def version(self):
         exe = self.exe()
         if not exe:
