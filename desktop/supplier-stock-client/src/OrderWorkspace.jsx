@@ -33,7 +33,12 @@ import {
   readOwExportSettings,
   writeOwExportSettings,
 } from './OwExportKit.js';
-import { owNormalizeLayout } from './orderWorkspaceView.js';
+import {
+  owLineFromRow,
+  owLineNote,
+  owNormalizeLayout,
+  owWorkspaceSummary,
+} from './orderWorkspaceView.js';
 
 // Order Workspace component, extracted from App.jsx (NEXORA MEDIQ Phase 4
 // structural refactor, see docs/NEXORA_MEDIQ_AUDIT/22_PHASE4_ORDER_WORKSPACE_EXTRACTION_REPORT.md

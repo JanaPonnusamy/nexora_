@@ -269,6 +269,15 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   });
   const [platformStores, setPlatformStores] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  // Declared here (not nearer its other use further down) because an
+  // earlier useEffect's dependency array already references tenantId --
+  // dependency arrays are evaluated during render, so the const had to be
+  // readable before that point or it throws a temporal-dead-zone
+  // ReferenceError the moment this screen renders (found 2026-11-13 via
+  // live ERP-sidebar click-through testing; no existing test renders this
+  // component, so it had never been exercised before).
+  const platformStore = platformStores.find((s) => String(s.store_code || '').toUpperCase() === String(store).toUpperCase()) || null;
+  const tenantId = platformStore?.tenant_id || settings?.tenantId || session?.user?.tenant_id || '';
 
   // ---- process / data ----
   const [processKey, setProcessKey] = useState('qty');
@@ -443,8 +452,6 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       .catch((e) => setError(e.message));
     api.listStores(session).then((list) => setPlatformStores(pwAsArray(list))).catch(() => setPlatformStores([]));
   }, [session]);
-  const platformStore = platformStores.find((s) => String(s.store_code || '').toUpperCase() === String(store).toUpperCase()) || null;
-  const tenantId = platformStore?.tenant_id || settings?.tenantId || session?.user?.tenant_id || '';
 
   // The store's legacy supplier list: the By Supplier picker AND the card ->
   // UnifiedSupplierCODE resolution.
