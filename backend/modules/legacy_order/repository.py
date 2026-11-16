@@ -1002,6 +1002,20 @@ def sync_supplier_product_match_from_mapping(store_name, supplier_code, source_s
             [(store_name, supplier_code, product_code, supplier_product_code)
              for product_code, supplier_product_code in matches],
         )
+        # replace_supplier_stock ran BEFORE this (see start_stock_update),
+        # so it stamped SupplierStock.StoreProductCode from whatever
+        # SupplierProductMatch held at that point -- never these matches,
+        # which exist for the first time only now. Stamp them here too, or
+        # the Supplier Stock Analysis live-stock read (which no longer
+        # joins SupplierProductMatch at all) would show NMW-bridged rows as
+        # permanently unmapped.
+        cur.fast_executemany = True
+        cur.executemany(
+            "UPDATE SupplierStock SET StoreProductCode = ? "
+            "WHERE storename = ? AND suppliercode = ? AND supplierproductcode = ?",
+            [(product_code, store_name, supplier_code, supplier_product_code)
+             for product_code, supplier_product_code in matches],
+        )
         conn.commit()
     return len(matches)
 
