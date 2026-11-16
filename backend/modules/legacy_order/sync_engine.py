@@ -478,10 +478,14 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name,
 
         # Batches is a full-replace snapshot: the branch only sends rows with
         # Stock > 0, so anything the MERGE does not touch must first be zeroed
-        # or sold-out batches would keep their last-known stock forever.
+        # or sold-out batches would keep their last-known stock forever. Most
+        # rows are already 0 from a prior cycle -- "AND Stock > 0" keeps this
+        # an update of only the rows that actually change, not a full-table
+        # write every sync (confirmed stalling the shared SQL Server for
+        # minutes under concurrent load).
         if dest_table.lower() == "batches":
             dest_cur.execute(
-                "UPDATE Batches SET Stock = 0 WHERE StoreName = ?", store_name
+                "UPDATE Batches SET Stock = 0 WHERE StoreName = ? AND Stock > 0", store_name
             )
             dest_conn.commit()
 

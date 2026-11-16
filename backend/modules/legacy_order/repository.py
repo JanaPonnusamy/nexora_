@@ -948,6 +948,19 @@ def replace_supplier_stock(target_store_name, supplier_code, rows):
         return len(rows)
 
 
+def supplier_stock_count(store_name, supplier_code):
+    """Raw row count in central SupplierStock for one store/supplier --
+    the plain "how many records does this store have" check, independent of
+    any order/product_mapping join (unlike orders_by_supplier/export_count,
+    which only count rows eligible against the current open order)."""
+    with database.get_central_connection() as conn:
+        row = conn.cursor().execute(
+            "SELECT COUNT(*) FROM SupplierStock WHERE storename = ? AND suppliercode = ?",
+            (store_name, supplier_code),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
 def sync_supplier_product_match_from_mapping(store_name, supplier_code, source_store_code, rows):
     """Bridge this store's ProductCode to the source store's SupplierProductCode
     via dbo.product_mapping (NEVER raw ProductCode equality -- the two stores'
@@ -1218,15 +1231,28 @@ def _supplier_stock_apply(codes, apply_kind, in_stock_only):
     """Live-stock match for a (possibly unified) supplier: the best-stocked
     SupplierStock line across ALL member codes, one row per product -- a
     plain JOIN on several codes would duplicate a product every member
-    carries. Params: the member codes, in order."""
+    carries. Params: the member codes, in order.
+
+    Matches directly on SupplierStock.StoreProductCode (cached at import/sync
+    time -- see sync_supplier_product_match_from_mapping and
+    replace_supplier_stock) instead of joining SupplierProductMatch per row.
+    This CROSS APPLY runs once per OrderManagement row, so the old
+    SupplierProductMatch JOIN was a correlated subquery re-run for every open
+    order line on every "By Supplier" load -- the dominant cost behind the
+    15min+ stalls on NMS/292, NMA/ST_2, NMA/94 (owner report 2026-11-16).
+
+    SS.StoreProductCode is VARCHAR but om.ProductCode is FLOAT; the cast is
+    applied to om.ProductCode (the small per-apply side), not
+    SS.StoreProductCode, so IX_SupplierStock_Store_Supplier on
+    (storename, suppliercode) stays usable and the comparison doesn't force a
+    per-row conversion of every SupplierStock row."""
     return (
         f"{apply_kind} (SELECT TOP 1 SS.Stock, SS.discound, SS.MINQTY, SS.sch, SS.free, "
         "  SS.SupplierProductName, SS.SupplierProductCode, SS.Rack "
-        "  FROM SupplierProductMatch SPM "
-        "  JOIN SupplierStock SS ON SS.SupplierProductCode = SPM.SupplierProductCode "
-        "    AND SS.SupplierCode = SPM.SupplierCode AND SS.storename = om.StoreName "
-        "  WHERE SPM.ProductCode = om.ProductCode AND SPM.StoreName = om.StoreName "
-        f"    AND SPM.SupplierCode IN ({_in_list(codes)})"
+        "  FROM SupplierStock SS "
+        "  WHERE SS.StoreProductCode = CAST(CAST(om.ProductCode AS BIGINT) AS VARCHAR(50)) "
+        "    AND SS.storename = om.StoreName "
+        f"    AND SS.SupplierCode IN ({_in_list(codes)})"
         + (" AND SS.Stock > 0" if in_stock_only else "")
         + "  ORDER BY SS.Stock DESC) SS "
     )
@@ -1391,9 +1417,8 @@ def supplier_stock_compare(store_name):
         "  SS.mrp AS MRP, SS.ptr AS PTR, ISNULL(SS.Rack, '') AS Rack, SS.transactiondate AS TransactionDate, "
         "  ROW_NUMBER() OVER (PARTITION BY om.ProductCode, SS.SupplierCode ORDER BY SS.Stock DESC) AS rn "
         "  FROM OrderManagement om "
-        "  JOIN SupplierProductMatch SPM ON SPM.ProductCode = om.ProductCode AND SPM.StoreName = om.StoreName "
-        "  JOIN SupplierStock SS ON SS.SupplierProductCode = SPM.SupplierProductCode "
-        "    AND SS.SupplierCode = SPM.SupplierCode AND SS.storename = om.StoreName "
+        "  JOIN SupplierStock SS ON SS.StoreProductCode = CAST(CAST(om.ProductCode AS BIGINT) AS VARCHAR(50)) "
+        "    AND SS.storename = om.StoreName "
         "  WHERE om.StoreName = ? AND om.OrderQty > 0 AND om.Status IN (0, 1)"
         ") x WHERE x.rn = 1"
     )
