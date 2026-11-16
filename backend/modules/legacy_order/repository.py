@@ -6,6 +6,7 @@ import re
 import pyodbc
 
 from modules.legacy_order import database
+from modules.procurement.product_identity import collapse_lines
 from modules.product_mapping import repository as product_mapping_repository
 
 
@@ -897,7 +898,10 @@ def replace_supplier_stock(target_store_name, supplier_code, rows):
     """REPLACE this supplier's rows for one branch in the central
     OrderNMC.SupplierStock table -- the same table/shape the legacy Excel
     import wrote, storename-scoped, so the branch's own order screen sees it
-    exactly like any other supplier upload."""
+    exactly like any other supplier upload. StoreProductCode is stamped from
+    SupplierProductMatch here too, so the Supplier Stock Analysis live-stock
+    read (supplier_stock_analysis._supplier_stock_source) never needs that
+    join -- see backend/modules/legacy_order/sql/0012_supplier_stock_storeproductcode.sql."""
     with database.get_central_connection() as conn:
         cur = conn.cursor()
         # This replace is a delete+reinsert, so a row's previous Rack would
@@ -913,6 +917,14 @@ def replace_supplier_stock(target_store_name, supplier_code, rows):
             ).fetchall()
             if r.Rack
         }
+        match_map = {
+            str(r.SupplierProductCode): r.ProductCode
+            for r in cur.execute(
+                "SELECT SupplierProductCode, ProductCode FROM SupplierProductMatch "
+                "WHERE StoreName = ? AND SupplierCode = ?",
+                (target_store_name, supplier_code),
+            ).fetchall()
+        }
         cur.execute(
             "DELETE FROM SupplierStock WHERE storename = ? AND suppliercode = ?",
             (target_store_name, supplier_code),
@@ -922,12 +934,13 @@ def replace_supplier_stock(target_store_name, supplier_code, rows):
             cur.executemany(
                 "INSERT INTO SupplierStock "
                 "(suppliercode, supplierproductcode, supplierproductname, mrp, ptr, "
-                "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)",
+                "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack, StoreProductCode) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?, ?)",
                 [
                     (supplier_code, r["code"], r["name"], None, None,
                      r["stock"], str(r["disc_percent"]), None, target_store_name, 0, 0, None,
-                     r.get("rack") or existing_racks.get(str(r["code"])))
+                     r.get("rack") or existing_racks.get(str(r["code"])),
+                     match_map.get(str(r["code"])))
                     for r in rows
                 ],
             )
@@ -1301,6 +1314,7 @@ def orders_by_supplier(store_name, supplier_code, mode, last_offer=False):
         cols = [d[0] for d in cur.description]
         result = [dict(zip(cols, row)) for row in cur.fetchall()]
 
+    result = collapse_lines(result)
     if mode == "stock":
         # Flag rows sourced from the NMW/Ho_code pseudo-supplier (see
         # sync_supplier_product_match_from_mapping) so the UI can highlight
@@ -1339,7 +1353,7 @@ def all_open_orderables(store_name, last_offer=False):
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, store_name)
         cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return collapse_lines([dict(zip(cols, row)) for row in cur.fetchall()])
 
 
 def supplier_stock_compare(store_name):
@@ -1427,22 +1441,27 @@ def assigned_orders(store_name, supplier_code, last_offer=False):
     supplier-match saved at assign time) and SupplierProductName from
     SupplierStock via that same code (owner-confirmed 2026-11-10: the match
     already exists, so export's optional "Supplier Code"/"Supplier Name"
-    columns should show it, not require a second lookup) -- LEFT JOINs since
-    a row assigned without ever having matched supplier stock (e.g. a manual
-    assign with no Live Stock match) must still export, just without those
-    two columns filled in."""
+    columns should show it, not require a second lookup). OUTER APPLY TOP 1,
+    not a plain JOIN: several mappings or stock rows for one store product
+    and this supplier would otherwise repeat the order line. The mapping
+    with the most stock wins. A row assigned without a match still exports
+    (the apply returns NULLs). Other mappings stay in SupplierProductMatch
+    and in supplier_stock_compare."""
     backfill_is_offer(store_name)
     assigned = _assigned_code_values(supplier_code)
     offer_cols, offer_apply = _last_offer_sql(last_offer)
     sql = (
         "SELECT om.ProductCode, om.ProductName, om.OrderQty, om.OrgOrderQty, om.SaleUnit, om.MRP, om.OrSupplier, "
         f"om.Remarks, om.PurchasePrice, om.TotalStock, om.SLSQty, om.UnitDescription, om.WantedType, om.ProductTypeName, om.Status, om.IsOffer, om.Qtycheck, "
-        f"SPM.SupplierProductCode, SS.SupplierProductName{offer_cols} "
+        f"SPM.SupplierProductCode, SPM.SupplierProductName{offer_cols} "
         "FROM OrderManagement om "
-        "LEFT JOIN SupplierProductMatch SPM ON SPM.ProductCode = om.ProductCode "
-        "  AND SPM.StoreName = om.StoreName AND SPM.SupplierCode = om.OrSupplierCode "
-        "LEFT JOIN SupplierStock SS ON SS.SupplierProductCode = SPM.SupplierProductCode "
-        "  AND SS.SupplierCode = SPM.SupplierCode AND SS.StoreName = om.StoreName "
+        "OUTER APPLY (SELECT TOP 1 SPM.SupplierProductCode, SS.SupplierProductName "
+        "  FROM SupplierProductMatch SPM "
+        "  LEFT JOIN SupplierStock SS ON SS.SupplierProductCode = SPM.SupplierProductCode "
+        "    AND SS.SupplierCode = SPM.SupplierCode AND SS.StoreName = om.StoreName "
+        "  WHERE SPM.ProductCode = om.ProductCode AND SPM.StoreName = om.StoreName "
+        "    AND SPM.SupplierCode = om.OrSupplierCode "
+        "  ORDER BY ISNULL(SS.Stock, 0) DESC, SPM.SupplierProductCode) SPM "
         f"{offer_apply}"
         "WHERE om.status = 1 AND om.orderqty > 0 AND om.storename = ? "
         f"AND om.orsuppliercode IN ({_in_list(assigned)}) "
@@ -1451,7 +1470,7 @@ def assigned_orders(store_name, supplier_code, last_offer=False):
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, store_name, *assigned)
         cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return collapse_lines([dict(zip(cols, row)) for row in cur.fetchall()])
 
 
 def all_assigned_orders(store_name, last_offer=False):
@@ -1477,7 +1496,11 @@ def all_assigned_orders(store_name, last_offer=False):
     with database.get_central_connection() as conn:
         cur = conn.cursor().execute(sql, store_name)
         cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        # Same product assigned to two suppliers stays two lines.
+        return collapse_lines(
+            [dict(zip(cols, row)) for row in cur.fetchall()],
+            extra_fields=("OrSupplier",),
+        )
 
 
 def assigned_orders_with_supplier_stock(store_name, supplier_code):
@@ -1871,7 +1894,7 @@ def qty_check_rows(store_name):
         _ensure_skip_schema(cur)
         cur.execute(sql, store_name)
         cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return collapse_lines([dict(zip(cols, row)) for row in cur.fetchall()])
 
 
 def pending_order_rows(store_name):
@@ -1900,7 +1923,7 @@ def pending_order_rows(store_name):
         _ensure_skip_schema(cur)
         cur.execute(sql, store_name)
         cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return collapse_lines([dict(zip(cols, row)) for row in cur.fetchall()])
 
 
 def backfill_is_offer(store_name):
