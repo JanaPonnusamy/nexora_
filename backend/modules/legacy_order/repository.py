@@ -868,6 +868,7 @@ LEFT JOIN LatestPT pt
     ON pt.ProductCode = p.ProductCode
    AND pt.rn = 1
 WHERE p.StoreName = ?
+  AND tsp.TotalStock > 0
 ORDER BY p.ProductName
 """
 
