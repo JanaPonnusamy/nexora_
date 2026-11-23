@@ -303,7 +303,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                AND p.productcode = TRY_CAST(ss.product_code AS INT)
             LEFT JOIN #mapagg mapagg
                 ON mapagg.key_store = ss.store_id
-               AND mapagg.key_code = ss.product_code
+               AND mapagg.key_code = ss.product_code COLLATE DATABASE_DEFAULT
             WHERE ss.tenant_id = ?
               AND ss.supplier_code = ?
               {store_clause}
