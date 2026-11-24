@@ -795,4 +795,21 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
     result = {"rows": inserted, "odata": odata, "header": header, "engine": engine}
     if rulebook_summary:
         result["rulebook"] = rulebook_summary
+
+    # Local SQLite order cache (plan doc: Order_Sync_Redesign_Plan.md
+    # section 3.3) -- additive, opt-in per the "keep existing one for safe"
+    # rule: disabled unless LEGACY_ORDER_CACHE_ENABLED=1, so the always-safe
+    # existing OrderManagement path above is never affected by this failing.
+    # Standalone module (legacy_order.order_cache), no other module wired in.
+    if os.environ.get("LEGACY_ORDER_CACHE_ENABLED") == "1":
+        try:
+            from .order_cache import builder as order_cache_builder
+            path = order_cache_builder.build_cache_for_store(store["store_name"])
+            report(f"Local order cache updated ({path}).")
+            result["order_cache_path"] = path
+        except Exception as exc:
+            logger.exception("order cache build failed for %s (order processing itself succeeded)", store["store_name"])
+            report(f"Local order cache update failed (order itself was processed fine): {exc}")
+            result["order_cache_error"] = str(exc)
+
     return result

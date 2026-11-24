@@ -7,6 +7,7 @@ is a platform-ops console (DB recovery, sync jobs) with no per-tenant model
 of its own, so it's gated to super admin / platform users only rather than
 tenant-scoped like the rest of the API.
 """
+import os
 import re
 from typing import Optional
 
@@ -51,6 +52,7 @@ _VIEWER_READ_PATHS = (
     re.compile(r"^/api/legacy-order/pending-order/[^/]+$"),
     re.compile(r"^/api/legacy-order/suppliers/[^/]+$"),
     re.compile(r"^/api/legacy-order/previous-orders/[^/]+(/.*)?$"),
+    re.compile(r"^/api/legacy-order/order-cache/[^/]+/view$"),
 )
 
 # /stores has no {store_name} path param to check ownership against -- both the
@@ -282,6 +284,54 @@ def db_retention_purge(retention_days: int = 180, confirm: bool = False):
         )
     from . import retention
     return retention.purge_old_rows(retention_days=retention_days)
+
+
+# ---- Local SQLite order cache (opt-in, LEGACY_ORDER_CACHE_ENABLED=1) ----
+# Design doc: docs/order-sync-redesign/Order_Sync_Redesign_Plan.md section
+# 3.3. order_process.run_order_process already builds this automatically
+# after a successful order run when the flag is set; these two endpoints
+# are for manual verification/ops use (admin-only, same default-deny as
+# retention above) -- not required for the normal flow.
+
+@router.post("/order-cache/{store_name}/rebuild")
+def order_cache_rebuild(store_name: str):
+    """Manually (re)builds the store's local order cache file from whatever
+    is currently in central OrderNMC/OrderSMS/OrderSuccess. Drains any
+    pending write-back on the existing file first; refuses to replace it
+    if that drain fails (see order_cache.builder.build_cache_for_store)."""
+    from .order_cache import builder
+    try:
+        path = builder.build_cache_for_store(store_name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"store_name": store_name, "cache_path": path}
+
+
+@router.post("/order-cache/{store_name}/drain-writeback")
+def order_cache_drain_writeback(store_name: str):
+    """Manually drains the store's pending local edits to central without
+    rebuilding the cache file. Mirrors what build normally does automatically
+    before a replace."""
+    from .order_cache import builder, writeback
+    path = builder.cache_path(store_name)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"No order cache file for '{store_name}'.")
+    return writeback.drain(path)
+
+
+@router.get("/order-cache/{store_name}/view")
+def order_cache_view(store_name: str):
+    """Read-only: the store's local order cache content if one exists yet
+    (None/empty when LEGACY_ORDER_CACHE_ENABLED hasn't built one for this
+    store, or the feature isn't enabled at all) -- the client falls back to
+    the existing live qty-check/orders endpoints in that case. Open to a
+    normal store user on their own store (see _VIEWER_READ_PATHS), same
+    access level as the live reads it's meant to speed up."""
+    from .order_cache import builder, reader
+    data = reader.read_cache(store_name, builder.cache_path)
+    if data is None:
+        return {"available": False}
+    return {"available": True, **data}
 
 
 @router.get("/stores")
