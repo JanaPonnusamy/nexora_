@@ -17,7 +17,7 @@
 // send/etc.) are kept here, fully implemented, exactly like the source —
 // per the owner's read-only rule, the UI controls that would trigger them
 // are disabled in the copied components, not the functions themselves.
-import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from '../api/client.js';
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete, apiRequest } from '../api/client.js';
 import { resolveApiBaseUrl } from './settingsStore.js';
 import { getSession } from './sessionStore.js';
 
@@ -500,5 +500,94 @@ export async function nonMovingExcel(section, params, body) {
   const m = /filename="?([^";]+)"?/i.exec(cd);
   const name = m ? m[1] : `non_moving_${String(section).replace(/\//g, '_')}.xlsx`;
   return { blob: await response.blob(), filename: name, fileName: name };
+}
+
+// ----- Rate Analysis (supplier purchase-rate tools) -----
+// Ported from desktop/supplier-stock-client/src/api/client.js's rate* /
+// rateEngine* methods (same endpoints, params, body shapes). The source
+// took an explicit `session` argument per call; dropped here the same way
+// as every other method in this file, since apiGet/apiPost/apiRequest pull
+// the bearer token from sessionStore internally.
+
+async function fetchBlobPost(path, body) {
+  const token = getSession()?.token || '';
+  let response;
+  try {
+    response = await fetch(joinUrl(resolveApiBaseUrl(), path), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error('Unable to reach the server. Check that the API is running.');
+  }
+  if (!response.ok) {
+    let detail = response.statusText || 'Export failed';
+    try {
+      const data = await response.json();
+      detail = data?.detail || detail;
+    } catch {
+      /* not json */
+    }
+    throw new Error(detail);
+  }
+  const cd = response.headers.get('content-disposition') || '';
+  const m = /filename="?([^";]+)"?/i.exec(cd);
+  const name = m ? m[1] : 'rate_analysis.xlsx';
+  return { blob: await response.blob(), filename: name, fileName: name };
+}
+
+export function rateSuppliers(tenantId, days = 90) {
+  return apiGet(`/api/rate-analysis/suppliers${qs({ tenant_id: tenantId, days })}`, { timeoutMs: 120000 });
+}
+
+export function rateQuoteMatch(body) {
+  return apiPost('/api/rate-analysis/quote/match', body, { timeoutMs: 120000 });
+}
+
+// kind: 'quote/compare' | 'fast-movers' | 'rate-difference'.
+export function rateReport(kind, body) {
+  return apiPost(`/api/rate-analysis/${kind}`, body, { timeoutMs: 300000 });
+}
+
+export function rateReportExcel(kind, body) {
+  return fetchBlobPost(`/api/rate-analysis/${kind}?format=xlsx`, body);
+}
+
+export async function rateEngineVariantsUpload(file, days = 90) {
+  const form = new FormData();
+  form.append('file', file);
+  return apiRequest(`/api/supplier-rate-engine/variants/upload${qs({ days })}`, {
+    method: 'POST',
+    body: form,
+    timeoutMs: 120000,
+  });
+}
+
+export function rateEngineProductsSuggest(q) {
+  return apiGet(`/api/supplier-rate-engine/products/suggest${qs({ q })}`, { timeoutMs: 15000 });
+}
+
+export function rateEngineVariantsSearch(q, days = 90) {
+  return apiGet(`/api/supplier-rate-engine/variants/search${qs({ q, days })}`, { timeoutMs: 60000 });
+}
+
+export function rateEngineNmwActivity(days = 90) {
+  return apiGet(`/api/supplier-rate-engine/nmw/activity-90d${qs({ days })}`, { timeoutMs: 120000 });
+}
+
+export function rateEngineNmwActivityExcel(days = 90) {
+  return fetchBlob(`/api/supplier-rate-engine/nmw/activity-90d${qs({ days, format: 'xlsx' })}`);
+}
+
+export function rateEngineVarianceReport(body) {
+  return apiPost('/api/supplier-rate-engine/variance-report', body, { timeoutMs: 300000 });
+}
+
+export function rateEngineVarianceReportExcel(body) {
+  return fetchBlobPost('/api/supplier-rate-engine/variance-report?format=xlsx', body);
 }
 
