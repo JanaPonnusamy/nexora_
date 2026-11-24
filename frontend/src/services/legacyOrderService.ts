@@ -61,6 +61,7 @@ export const legacyOrderService = {
   defaults: () => api.get<{
     min_days: number; max_days: number
     recency_days: number; warehouse_recency_days: number; warehouse_stores: string[]
+    warehouse_source: string | null
   }>(`${BASE}/defaults`),
 
   // OrderNMC mirror: send this store's current OrderNMC data to every remote
@@ -86,8 +87,12 @@ export const legacyOrderService = {
   // Order engine per store: LEGACY (ported VB.NET SQL) or RULEBOOK
   // (Procurement rule book). Both write the same OrderNMC tables.
   getOrderEngine: (storeName: string) =>
-    api.get<{ store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number>; compare_today_previous?: boolean; compare_mode?: CompareMode }>(
-      `${BASE}/engine/${encodeURIComponent(storeName)}`),
+    api.get<{
+      store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number>
+      compare_today_previous?: boolean; compare_mode?: CompareMode
+      order_defaults: { min_days: number | null; max_days: number | null; recency_days: number | null }
+      mode: OrderMode
+    }>(`${BASE}/engine/${encodeURIComponent(storeName)}`),
   // Per-store "Compare today's previous order": every Order Process then
   // compares the new order with the store's earlier order from today.
   setCompareToday: (storeName: string, enabled: boolean) =>
@@ -99,6 +104,34 @@ export const legacyOrderService = {
       `${BASE}/engine/${encodeURIComponent(storeName)}/compare-mode`, { mode }),
   setOrderEngine: (storeName: string, engine: OrderEngine) =>
     api.put<{ store_name: string; engine: OrderEngine }>(`${BASE}/engine/${encodeURIComponent(storeName)}`, { engine }),
+  // Fixed per-store Source for the evening/scheduled run (owner request
+  // 2026-11-24): independent of whatever the live grid's Source shows.
+  setOrderMode: (storeName: string, mode: OrderMode | null) =>
+    api.put<{ store_name: string; mode: OrderMode | null }>(
+      `${BASE}/engine/${encodeURIComponent(storeName)}/mode`, { mode }),
+  // Fixed per-store Min/Max/Recency override; any field left null falls back
+  // to the global/warehouse default again. (getOrderEngine's response already
+  // carries this as `.order_defaults` -- no separate GET needed.)
+  setOrderDefaults: (storeName: string, payload: { min_days: number | null; max_days: number | null; recency_days: number | null }) =>
+    api.put<{ store_name: string; min_days: number | null; max_days: number | null; recency_days: number | null }>(
+      `${BASE}/engine/${encodeURIComponent(storeName)}/order-defaults`, payload),
+
+  // Evening (second) order schedule -- every ticked store, one after another,
+  // from a fixed start time, each with its saved/fixed settings (not the live
+  // grid). Settings live centrally in OrderNMC so web and every desktop
+  // client share one schedule.
+  eveningSchedule: () =>
+    api.get<{
+      enabled: boolean; run_at: string; stores: string[] | null
+      last_run_date: string | null; last_run_started_at: string | null; last_run_finished_at: string | null
+      last_run: { trigger: string; started_at: string; finished_at: string | null
+        stores: { store_name: string; status: string; job_id?: string; rows?: number; error?: string
+          compare?: { order_id: number; affected_rows: number } }[] } | null
+      next_run: string | null; running: boolean; catch_up_minutes: number
+    }>(`${BASE}/schedule/evening`),
+  saveEveningSchedule: (payload: { enabled: boolean; run_at: string; stores: string[] | null }) =>
+    api.put(`${BASE}/schedule/evening`, payload),
+  runEveningNow: () => api.post<{ started: boolean; stores: string[] }>(`${BASE}/schedule/evening/run`, {}),
   // Dry run: legacy vs rule-book order as Excel; writes nothing.
   compareEnginesXlsx: (storeName: string, recencyDays?: number) =>
     api.blob(`${BASE}/engine/${encodeURIComponent(storeName)}/compare.xlsx${recencyDays ? `?recency_days=${recencyDays}` : ''}`),
@@ -142,13 +175,28 @@ export const legacyOrderService = {
   qtyCheckConfirmation: (storeName: string) =>
     api.get<QtyCheckConfirmation>(`${BASE}/orders/${encodeURIComponent(storeName)}/qty-check-confirmation`),
 
-  startStockUpdate: (storeName: string, sourceStoreName = 'NMW') =>
+  startStockUpdate: (storeName: string, sourceStoreName?: string) =>
     api.post<{ job_id: string }>(`${BASE}/stock-update`, {
       store_name: storeName,
       source_store_name: sourceStoreName,
     }),
 
+  startStockUpdateAll: (sourceStoreName?: string) =>
+    api.post<{
+      source_store: string
+      started: { store_name: string; job_id: string; supplier_code: string | null; before_count: number | null }[]
+      skipped: { store_name: string; reason: string }[]
+    }>(
+      `${BASE}/stock-update-all`,
+      { source_store_name: sourceStoreName },
+    ),
+
   getJob: (jobId: string) => api.get<LegacyJob>(`${BASE}/jobs/${jobId}`),
+
+  supplierStockCount: (storeName: string, supplierCode: string) =>
+    api.get<{ store_name: string; supplier_code: string; count: number }>(
+      `${BASE}/stores/${encodeURIComponent(storeName)}/supplier-stock-count?supplier_code=${encodeURIComponent(supplierCode)}`,
+    ),
 
   orders: (storeName: string) =>
     api.get<OrderRow[]>(`${BASE}/orders/${encodeURIComponent(storeName)}`),

@@ -1018,6 +1018,35 @@ export const api = {
     });
   },
 
+  // The store's saved Order Process engine (persists across runs; separate
+  // from a per-run engine override on /order-process).
+  legacySetOrderEngine(storeName, engine, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ engine })
+    });
+  },
+
+  // Fixed per-store Source for the evening/scheduled run (owner request
+  // 2026-11-24); None = 'local'. Agent-synced stores ignore this.
+  legacySetOrderMode(storeName, mode, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/mode`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ mode })
+    });
+  },
+
+  // The store's saved Min/Max/Recency override (null fields = global/warehouse default).
+  legacySetOrderDefaults(storeName, payload, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/order-defaults`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
   // Evening (second) order schedule: {enabled, run_at, stores|null, next_run,
   // last_run, running, ...}. stores null = every active store.
   legacyEveningSchedule(session) {
@@ -1036,6 +1065,16 @@ export const api = {
     return request('/api/legacy-order/schedule/evening/run', { method: 'POST', session });
   },
 
+  // Push the tenant's warehouse stock into every other active store's
+  // SupplierStock in one click. -> {source_store, started: [{store_name, job_id}], skipped: [{store_name, reason}]}
+  legacyStockUpdateAll(sourceStoreName, session) {
+    return request('/api/legacy-order/stock-update-all', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ source_store_name: sourceStoreName || null })
+    });
+  },
+
   legacyJobs(session, limit = 50) {
     return request(`/api/legacy-order/jobs${toQuery({ limit })}`, { session });
   },
@@ -1046,6 +1085,49 @@ export const api = {
 
   legacyQtyCheckRows(storeName, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  // ----- Previous Order Comparison (admin + store-assigned purchase manager;
+  // same endpoints the web Legacy Order console's Compare Previous Order
+  // panel uses, see backend/modules/legacy_order/router.py) -----
+  legacyPreviousOrders(storeName, session) {
+    return request(`/api/legacy-order/previous-orders/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  legacyComparePreviousOrder(storeName, orderId, session) {
+    return request('/api/legacy-order/compare-previous-order', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ store_name: storeName, order_id: orderId }),
+    });
+  },
+
+  legacyPreviousOrderSuppliers(storeName, orderId, session) {
+    return request(`/api/legacy-order/previous-orders/${encodeURIComponent(storeName)}/${orderId}/suppliers`, { session });
+  },
+
+  legacyPreviousOrderSupplierProducts(storeName, orderId, supplierCode, session) {
+    return request(`/api/legacy-order/previous-orders/${encodeURIComponent(storeName)}/${orderId}/suppliers/${encodeURIComponent(supplierCode)}/products`, { session });
+  },
+
+  legacyComparePreviousOrderSupplier(storeName, orderId, supplierCode, session) {
+    return request('/api/legacy-order/compare-previous-order/supplier', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ store_name: storeName, order_id: orderId, supplier_code: supplierCode }),
+    });
+  },
+
+  legacyRestorableOrderPreview(storeName, orderId, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/restorable/${orderId}`, { session });
+  },
+
+  legacyRestoreBackupOrder(storeName, orderId, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/restore`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ order_id: orderId }),
+    });
   },
 
   legacyResetPendingQtyCheck(storeName, session) {
@@ -1784,12 +1866,91 @@ export const api = {
     return { blob, filename: match?.[1] || 'Rate_Analysis.xlsx' };
   },
 
+  // ----- Supplier Rate Engine (NMW vs SMS/Success variance, super admin) -----
+  async rateEngineVariantsUpload(file, days, session) {
+    const settings = loadSettings();
+    const form = new FormData();
+    form.append('file', file);
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/supplier-rate-engine/variants/upload?days=${days || 90}`), {
+        method: 'POST',
+        headers: authHeaders(session),
+        body: form
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    const text = await response.text();
+    const data = text ? safeJson(text) : null;
+    if (!response.ok) throw new Error(detailToMessage(data) || 'Upload failed');
+    return data;
+  },
+
+  rateEngineProductsSuggest(q, session) {
+    return request(`/api/supplier-rate-engine/products/suggest?q=${encodeURIComponent(q)}`, { session, timeoutMs: 15000 });
+  },
+
+  rateEngineVariantsSearch(q, days, session) {
+    return request(`/api/supplier-rate-engine/variants/search?q=${encodeURIComponent(q)}&days=${days || 90}`, { session, timeoutMs: 60000 });
+  },
+
+  rateEngineNmwActivity(days, session) {
+    return request(`/api/supplier-rate-engine/nmw/activity-90d?days=${days || 90}`, { session, timeoutMs: 120000 });
+  },
+
+  async rateEngineNmwActivityExcel(days, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/supplier-rate-engine/nmw/activity-90d?days=${days || 90}&format=xlsx`), {
+        headers: authHeaders(session)
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const match = /filename="?([^"]+)"?/.exec(response.headers.get('Content-Disposition') || '');
+    return { blob, filename: match?.[1] || 'NMW_Activity.xlsx' };
+  },
+
+  rateEngineVarianceReport(body, session) {
+    return request('/api/supplier-rate-engine/variance-report', { method: 'POST', session, timeoutMs: 300000, body: JSON.stringify(body) });
+  },
+
+  async rateEngineVarianceReportExcel(body, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, '/api/supplier-rate-engine/variance-report'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(session) },
+        body: JSON.stringify({ ...body, format: 'xlsx' })
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const match = /filename="?([^"]+)"?/.exec(response.headers.get('Content-Disposition') || '');
+    return { blob, filename: match?.[1] || 'NMW_Variance.xlsx' };
+  },
+
   // ----- Non-Moving Stock analysis (read-only) -----
   // section: 'own-store' | 'other-stores' | 'transfers' | 'dashboard' | 'product'.
   // The first call for a tenant builds every store's snapshot (can take a
   // minute or two on a cold server), so these get a long timeout.
-  nonMoving(section, params, session) {
-    return request(`/api/non-moving-analysis/${section}${toQuery(params)}`, { session, timeoutMs: 300000 });
+  nonMoving(section, params, session, signal) {
+    return request(`/api/non-moving-analysis/${section}${toQuery(params)}`, { session, timeoutMs: 300000, signal });
   },
 
   async nonMovingExcel(section, params, session, body) {
