@@ -671,6 +671,17 @@
   flex: none;
 }
 
+/* As a GlassDropdown trigger's label, this span sits INSIDE the dropdown's
+   own .ntm-glass-button (own height/padding/border/background) -- without
+   this, both boxes painted their own chrome on top of each other, clipping
+   at the button's fixed 32px height (owner-reported overlap, 2026-11-24). */
+.ntm-glass-dropdown__trigger .ntm-tenant-trigger {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  max-width: 140px;
+}
+
 .ntm-tenant-menu {
   display: flex;
   flex-direction: column;
