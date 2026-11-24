@@ -19,7 +19,7 @@ from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, evening_order, order_export, repository, rulebook_order, service, supplier_match_review, supplier_portal, supplier_stock_harvest, supplier_whatsapp, sync_engine
-from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierPortalRequest, SupplierHarvestRequest, SupplierMatchConfirmRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderDefaultsRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierPortalRequest, SupplierHarvestRequest, SupplierMatchConfirmRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, StockUpdateAllRequest, StockUpdateAllStarted, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def _header_value(value) -> str:
@@ -69,9 +69,11 @@ _NO_PARAM_READ_PATHS = (
 # {store_name} path param that _user_owns_store checks, so a store user can
 # only ever touch their own store(s). Everything NOT in this set (or in
 # _PM_WRITE_PATHS below) stays admin-only: sync, order-process, stock-update,
-# DB recovery/repair, and the previous-order compares (their store_name is in
-# the body, not the path, so request.path_params has none -> ownership check
-# can't pass).
+# DB recovery/repair. The previous-order compares (POST /compare-previous-
+# order[/supplier]) have their own body-aware gate (see
+# require_admin_or_store_pm_body) instead of appearing here, since their
+# store_name is in the body, not the path -- this module-level dependency
+# can't check ownership against a path param that doesn't exist.
 _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+$"),         # PATCH OrderQty
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+/remarks$"), # PATCH Remarks
@@ -169,6 +171,21 @@ def require_admin_or_store_pm(store_name: str, current_user: dict = Depends(get_
     raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
 
 
+def require_admin_or_store_pm_body(
+    payload: ComparePreviousOrderRequest, current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Same as require_admin_or_store_pm, for the previous-order compare
+    endpoints -- their store_name lives in the POST body, not the path, so
+    _user_owns_store must be checked against payload.store_name instead of
+    a path param. CompareSupplierRequest also satisfies this (it extends
+    ComparePreviousOrderRequest), so one dependency covers both routes."""
+    if has_unrestricted_scope(current_user):
+        return current_user
+    if _is_purchase_manager(current_user) and _user_owns_store(current_user, payload.store_name):
+        return current_user
+    raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
+
+
 async def _scope_tenant(request: Request, current_user: dict = Depends(get_current_user)):
     """Multi-tenant HOs (.32: Success + SMS) keep OrderNMC/OrderSMS/OrderSuccess
     as SEPARATE databases now; every request must pick the right one before any
@@ -236,6 +253,37 @@ def db_emergency_repair(payload: EmergencyRepairRequest):
     return database.recover_database(allow_data_loss=True)
 
 
+# ---- 180-day retention / DB trim (OrderNMC/OrderSMS/OrderSuccess) ----
+# Design doc: docs/order-sync-redesign/Order_Sync_Redesign_Plan.md section 3.2.
+# Admin-only (falls through to require_order_console_access's default deny,
+# same as db/recover and db/emergency-repair above -- not listed in any of
+# the viewer/store-write path sets).
+
+@router.get("/db/retention-preview")
+def db_retention_preview(retention_days: int = 180):
+    """Report-only: counts rows older than the cutoff per trans table.
+    Deletes nothing. Always run this before /db/retention-purge."""
+    from . import retention
+    return retention.count_purgeable_rows(retention_days=retention_days)
+
+
+@router.post("/db/retention-purge")
+def db_retention_purge(retention_days: int = 180, confirm: bool = False):
+    """Deletes rows older than the cutoff from the append-only trans tables
+    (SaleInformation, PurchaseTrans, ProductSaleInformation). Full history
+    stays in NEXORA_PLATFORM.sync.* untouched -- this only trims the
+    operational OrderNMC/OrderSMS/OrderSuccess copy. Requires confirm=true,
+    same pattern as emergency-repair, since this permanently deletes rows
+    from the central DB (recoverable from NEXORA_PLATFORM only)."""
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Retention purge must be confirmed; it permanently deletes rows from the central DB.",
+        )
+    from . import retention
+    return retention.purge_old_rows(retention_days=retention_days)
+
+
 @router.get("/stores")
 def list_stores(active_only: bool = True, current_user: dict = Depends(get_current_user)):
     """Branches from OrderNMC.Stores. Credentials are never returned. A
@@ -274,10 +322,23 @@ def list_tables():
 
 @router.get("/defaults")
 def defaults():
+    # warehouse_source: the ONE warehouse store that actually feeds the
+    # tenant currently in scope (e.g. SHP for SMS, NMW for Nathan) -- distinct
+    # from warehouse_stores, which is the global set of warehouse names across
+    # EVERY tenant on this HO and can't by itself tell the frontend which one
+    # applies to the stores it's showing right now.
+    try:
+        tenant_stores = repository.list_stores(active_only=True)
+        warehouse_source = next(
+            (s["store_name"] for s in tenant_stores if service.is_warehouse_store(s["store_name"])), None
+        )
+    except database.LegacyDatabaseUnavailable:
+        warehouse_source = None
     return {"min_days": service.DEFAULT_MIN_DAYS, "max_days": service.DEFAULT_MAX_DAYS,
             "recency_days": service.DEFAULT_RECENCY_DAYS,
             "warehouse_recency_days": service.WAREHOUSE_RECENCY_DAYS,
-            "warehouse_stores": sorted(service.WAREHOUSE_STORES)}
+            "warehouse_stores": sorted(service.WAREHOUSE_STORES),
+            "warehouse_source": warehouse_source}
 
 
 @router.post("/sync", response_model=JobStarted)
@@ -330,7 +391,24 @@ def get_order_engine(store_name: str):
                 "engines": list(rulebook_order.ENGINES), "rulebook_params": rulebook_order.rule_params(store_name),
                 "compare_today_previous": rulebook_order.get_compare_today(store_name),
                 "compare_mode": rulebook_order.get_compare_mode(store_name),
-                "compare_modes": list(rulebook_order.COMPARE_MODES)}
+                "compare_modes": list(rulebook_order.COMPARE_MODES),
+                "order_defaults": rulebook_order.get_order_defaults(store_name)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/engine/{store_name}/order-defaults")
+def set_order_defaults(store_name: str, payload: OrderDefaultsRequest, current_user: dict = Depends(require_admin)):
+    """The store's saved Min/Max/Recency override for Order Process (admin
+    only); any field left out/None falls back to the global or warehouse
+    default again."""
+    try:
+        return rulebook_order.set_order_defaults(
+            store_name, payload.min_days, payload.max_days, payload.recency_days,
+            current_user.get("username") or current_user.get("sub"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -445,6 +523,19 @@ def qty_check_confirmation(store_name: str):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/stores/{store_name}/supplier-stock-count")
+def supplier_stock_count(store_name: str, supplier_code: str):
+    """Raw SupplierStock row count for one store/supplier -- a plain record
+    count, independent of any open-order join (unlike
+    /orders/{store}/by-supplier/export-count). Used to show before/after
+    counts around a Stock Update / Stock Update All run."""
+    try:
+        return {"store_name": store_name, "supplier_code": supplier_code,
+                "count": repository.supplier_stock_count(store_name, supplier_code)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/stock-update", response_model=JobStarted)
 def start_stock_update(payload: StockUpdateRequest):
     """Push the source ("HO") store's own branch stock into this store's
@@ -458,6 +549,21 @@ def start_stock_update(payload: StockUpdateRequest):
     except ValueError as exc:
         status = 409 if "already running" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/stock-update-all", response_model=StockUpdateAllStarted)
+def start_stock_update_all(payload: StockUpdateAllRequest):
+    """Push the tenant's warehouse stock into EVERY other active store's
+    SupplierStock in one click (e.g. SHP -> SMA/SMF/SMG for SMS), instead of
+    clicking "Stock update only" once per store. The warehouse/source store is
+    resolved per the tenant currently in scope (router._scope_tenant) unless
+    the caller passes one explicitly."""
+    try:
+        return service.start_stock_update_all(payload.source_store_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -998,7 +1104,10 @@ def previous_orders(store_name: str):
 
 
 @router.post("/compare-previous-order")
-def compare_previous_order(payload: ComparePreviousOrderRequest):
+def compare_previous_order(
+    payload: ComparePreviousOrderRequest,
+    current_user: dict = Depends(require_admin_or_store_pm_body),
+):
     try:
         if not repository.get_store(payload.store_name):
             raise HTTPException(status_code=404, detail="Store not found")
@@ -1030,7 +1139,10 @@ def previous_order_supplier_products(
 
 
 @router.post("/compare-previous-order/supplier")
-def compare_previous_order_supplier(payload: CompareSupplierRequest):
+def compare_previous_order_supplier(
+    payload: CompareSupplierRequest,
+    current_user: dict = Depends(require_admin_or_store_pm_body),
+):
     try:
         result = repository.compare_previous_order_supplier(
             payload.store_name, payload.order_id, payload.supplier_code

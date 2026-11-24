@@ -18,7 +18,9 @@ class OrderProcessRequest(BaseModel):
     # Only products sold in the last N days are ordered; None = the store's
     # default (service.default_recency_days: 15 store / 90 warehouse).
     recency_days: Optional[int] = None
-    mode: str = "local"  # 'local' = OrderNMC's synced copy, 'remote' = branch DB
+    mode: str = "local"  # 'local' = OrderNMC's synced copy, 'remote' = branch DB,
+    # 'nexora' = one-off NEXORA_PLATFORM.sync.* relay before reading (service.
+    # start_order_process's mode == "nexora" branch)
     # Pending-supplier-assignment WARNING (see repository.
     # qty_check_confirmation_count / service.QtyCheckConfirmationRequired):
     # when more than one qty_check=1/status=0 product exists on the
@@ -61,8 +63,20 @@ class StockUpdateRequest(BaseModel):
     source_store_name: str = "NMW"
 
 
+class StockUpdateAllRequest(BaseModel):
+    # Optional: when omitted, the server resolves the tenant's own warehouse
+    # store (e.g. SHP for SMS, NMW for Nathan) instead of assuming NMW.
+    source_store_name: Optional[str] = None
+
+
 class JobStarted(BaseModel):
     job_id: str
+
+
+class StockUpdateAllStarted(BaseModel):
+    source_store: str
+    started: List[dict]
+    skipped: List[dict]
 
 
 class ComparePreviousOrderRequest(BaseModel):
@@ -106,6 +120,13 @@ class OrderEngineRequest(BaseModel):
 
 class CompareTodayRequest(BaseModel):
     enabled: bool
+
+
+class OrderDefaultsRequest(BaseModel):
+    # None clears that field's override, falling back to the global/warehouse default.
+    min_days: Optional[int] = None
+    max_days: Optional[int] = None
+    recency_days: Optional[int] = None
 
 
 class EveningScheduleRequest(BaseModel):

@@ -367,7 +367,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
                          confirmed_order_id=None, confirmed_count=None,
                          confirmed_stale_order=False, engine=None, recency_days=None,
                          compare_today_previous=None, last_bill=None, last_grn=None,
-                         compare_mode=None):
+                         compare_mode=None, trigger="manual"):
     """recency_days: only products sold in the last N days are ordered (the
     store's Order settings); None = default_recency_days(store_name).
     last_bill/last_grn: the store's last sale bill and last GRN as the
@@ -388,11 +388,22 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     confirmed_stale_order is a SEPARATE flag acknowledging the stale-
     current-order warning (StaleCurrentOrder) -- kept independent of
     `confirmed` so confirming one warning never silently waves through the
-    other; a caller who hits both must see and confirm each in turn."""
+    other; a caller who hits both must see and confirm each in turn.
+    trigger: "manual" (default -- a person clicked Generate/Continue, or the
+    PM's Order Entry) records LastManualOrderAt so the evening schedule skips
+    this store for the rest of today instead of generating a second order on
+    top of it; evening_order.run_stores passes trigger="evening" so its own
+    runs don't record themselves as a manual run."""
     checkpoint = repository.normalize_checkpoint(last_bill, last_grn)
     store = _resolve_store(store_name)
     warehouse = is_warehouse_store(store_name)
     agent_synced = is_agent_synced_store(store_name, store)
+    if trigger == "manual":
+        from modules.legacy_order import rulebook_order as _rb
+        try:
+            _rb.mark_manual_order(store["store_name"])
+        except Exception:
+            logger.exception("could not record the manual Order Process marker for %s", store_name)
     # Engine: this run's choice, else the store's setting (default LEGACY).
     # Both engines stay available; neither replaces the other.
     from modules.legacy_order import rulebook_order
@@ -416,20 +427,27 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
             compare_mode = "NONE"
     compare_today_previous = compare_mode
 
-    # Warehouse Min/Max default to the warehouse profile (not the retail 13/18).
+    # Warehouse Min/Max default to the warehouse profile (not the retail 13/18),
+    # unless the store has its own saved Min/Max/Recency (owner request:
+    # settable per-store defaults, not just a per-run manual override).
+    saved_defaults = rulebook_order.get_order_defaults(store["store_name"])
     default_min = WAREHOUSE_MIN_DAYS if warehouse else DEFAULT_MIN_DAYS
     default_max = WAREHOUSE_MAX_DAYS if warehouse else DEFAULT_MAX_DAYS
+    default_min = saved_defaults["min_days"] if saved_defaults["min_days"] is not None else default_min
+    default_max = saved_defaults["max_days"] if saved_defaults["max_days"] is not None else default_max
     min_days = default_min if min_days is None else min_days
     max_days = default_max if max_days is None else max_days
     if min_days <= 0 or max_days <= 0:
         raise ValueError("Min days and max days must be positive.")
     if min_days > max_days:
         raise ValueError("Min days cannot be greater than max days.")
+    if recency_days is None:
+        recency_days = saved_defaults["recency_days"]
     recency_days = default_recency_days(store_name) if recency_days is None else recency_days
     if recency_days <= 0:
         raise ValueError("Recency days must be positive.")
-    if mode not in ("local", "remote"):
-        raise ValueError("Mode must be 'local' or 'remote'.")
+    if mode not in ("local", "remote", "nexora"):
+        raise ValueError("Mode must be 'local', 'remote', or 'nexora'.")
     # The warehouse query is StoreName-scoped and must read the central copy.
     if warehouse:
         mode = "local"
@@ -513,6 +531,37 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
         if order_id is not None and count > 1:
             if not confirmed or confirmed_order_id != order_id or confirmed_count != count:
                 raise QtyCheckConfirmationRequired(order_id, count, sample)
+
+    # "Nexora live" (mode == "nexora"): a manual, per-run choice for a LAN
+    # store that is NOT agent-synced -- reuses the same platform-sync ->
+    # central-order pipeline as the agent_synced branch above
+    # (sync_engine.platform_query_for_table via _run_platform_sync), but as
+    # a one-off read source, not a permanent migration. Placed AFTER the two
+    # warning checks above (stale-order, pending-supplier-assignment) so
+    # this manual mode still goes through them, unlike the agent_synced
+    # branch which the owner explicitly simplified to skip both -- Nexora
+    # mode is an operator-initiated run on a store someone is actively
+    # working, not an unattended agent store. No branch connection test
+    # (test_branch_connection below is LAN-only): there is no branch pull in
+    # this mode. live_device_sync=False: no device agent to trigger-and-wait
+    # for on a LAN store -- this reads whatever is already in
+    # NEXORA_PLATFORM.sync.* from that store's existing sync pipeline.
+    if mode == "nexora":
+        store_id = database.platform_store_id(store["store_name"])
+        if not store_id:
+            raise ValueError(
+                f"'{store_name}' has no platform store_id in NEXORA_PLATFORM.dbo.stores."
+            )
+        plan = list(sync_engine.TABLE_PLAN)
+        job_id = _new_job("order", store_name, len(plan) + 4)
+        threading.Thread(
+            target=database.tenant_scoped(store, _run_agent_sync_then_order),
+            args=(job_id, store, store_id, plan, min_days, max_days, mode,
+                  warehouse, recency_days, compare_today_previous, checkpoint),
+            kwargs={"live_device_sync": False},
+            daemon=True,
+        ).start()
+        return job_id
 
     # Order Process always begins with a fresh full branch sync.
     ok, error = repository.test_branch_connection(store)
@@ -760,11 +809,18 @@ def _run_agent_sync(job_id, store, store_id, plan, live_device_sync=True):
 
 def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days,
                                mode, is_warehouse=False, recency_days=10, compare_today=False,
-                               checkpoint=None):
+                               checkpoint=None, live_device_sync=True):
     """One durable job for an agent-synced store: platform sync must succeed
-    before order generation (same guarantee as the LAN sync-then-order path)."""
+    before order generation (same guarantee as the LAN sync-then-order path).
+
+    live_device_sync=False is the "Nexora live" manual mode on a LAN store
+    (service.start_order_process's mode == "nexora" branch): there is no
+    device agent to trigger-and-wait for, so this just copies whatever is
+    already in NEXORA_PLATFORM.sync.* for that store into central OrderNMC
+    before generating the order.
+    """
     try:
-        tables, failed = _run_platform_sync(job_id, store, store_id, plan)
+        tables, failed = _run_platform_sync(job_id, store, store_id, plan, live_device_sync)
     except (device_sync.DeviceSyncTimeout, device_sync.DeviceSyncFailed) as exc:
         _update(
             job_id, status="failed", result=None, error=str(exc),
@@ -890,6 +946,56 @@ def _run_stock_update(job_id, store, source_store):
             message=f"Stock update failed: {exc}",
             finished_at=datetime.datetime.now(),
         )
+
+
+def start_stock_update_all(source_store_name=None):
+    """Push the warehouse's stock into EVERY other active store of the
+    current tenant's SupplierStock in one click (e.g. SHP -> SMA/SMF/SMG for
+    the SMS tenant), instead of running "Stock update only" once per store.
+
+    source_store_name is optional: when omitted, it's resolved the same way
+    order_process.refresh_warehouse_stock already resolves the per-tenant
+    warehouse for the AUTOMATIC per-order-process refresh (see
+    order_process._warehouse_stock_source_for), so this button and the
+    automatic refresh always agree on which store is "the warehouse" for the
+    tenant currently in scope -- no separate NMW-only default to drift out of
+    sync with SMS's SHP.
+
+    Launches one independent job per target store (same job kind/shape as
+    start_stock_update), skipping stores that already have a job running and
+    the source store itself. Returns the list of job_ids started plus any
+    stores skipped and why, so the UI can show a single combined result
+    instead of the caller having to loop over /stock-update itself.
+    """
+    stores = [s for s in repository.list_stores(active_only=True)]
+    if not source_store_name:
+        warehouses = [s for s in stores if is_warehouse_store(s["store_name"])]
+        if not warehouses:
+            raise ValueError("No warehouse store is configured for this tenant.")
+        source_store_name = warehouses[0]["store_name"]
+
+    started = []
+    skipped = []
+    for store in stores:
+        store_name = store["store_name"]
+        if store_name == source_store_name:
+            continue
+        running = _running_job_kind(store_name)
+        if running:
+            skipped.append({"store_name": store_name, "reason": f"A {running} job is already running."})
+            continue
+        # Captured before the job starts (and before its delete+reinsert), so
+        # the caller can show a real before/after count per store even though
+        # each push runs on its own background thread.
+        before_count = repository.supplier_stock_count(store_name, store["ho_code"]) if store["ho_code"] else None
+        try:
+            job_id = start_stock_update(store_name, source_store_name)
+        except (ValueError, ConnectionError) as exc:
+            skipped.append({"store_name": store_name, "reason": str(exc)})
+            continue
+        started.append({"store_name": store_name, "job_id": job_id, "supplier_code": store["ho_code"], "before_count": before_count})
+
+    return {"source_store": source_store_name, "started": started, "skipped": skipped}
 
 
 def _push_to_mirrors(store_name, job_id=None):

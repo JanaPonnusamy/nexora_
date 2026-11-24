@@ -1,0 +1,1247 @@
+.ntm-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--ntm-bg);
+  color: var(--ntm-text-primary);
+}
+
+.ntm-sidebar {
+  /* Sidebar-scoped color tokens for the redesign. Fixed values, independent
+     of the light/dark theme toggle — the sidebar itself keeps its deep navy
+     base (var(--ntm-panel)) in both themes, per the restyle brief. */
+  --ntm-nav-active-bg: linear-gradient(135deg, #1f4068 0%, #16324d 100%);
+  --ntm-nav-active-indicator: #2fe0d4;
+  --ntm-nav-hover-bg: rgba(255, 255, 255, 0.05);
+  --ntm-nav-text: #e8eff8;
+  --ntm-nav-group-text: #ffffff;
+  --ntm-nav-submenu-text: #93a7c2;
+  --ntm-nav-section-label: #7792b4;
+  --ntm-nav-rail: rgba(184, 200, 218, 0.14);
+
+  width: 272px;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #0f2238 0%, #0b1a2c 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px 12px;
+  overflow: hidden;
+  transition: width 180ms ease;
+}
+
+.ntm-sidebar.is-collapsed {
+  width: 76px;
+  padding: 16px 10px 12px;
+}
+
+/* Arctic Glass / Aurora Light: the sidebar used to inherit a translucent
+   light panel while its labels stayed pale, so text washed out. Solid
+   surface, navy type, blue active item. */
+:root[data-theme='arctic-glass'] .ntm-sidebar {
+  background: #ffffff;
+  backdrop-filter: none;
+  border-right: 1px solid #8fa6c2;
+  --ntm-nav-text: #0b1730;
+  --ntm-nav-group-text: #0b1730;
+  --ntm-nav-submenu-text: #4c6185;
+  --ntm-nav-section-label: #3e5573;
+  --ntm-nav-active-bg: #dbe7fb;
+  --ntm-nav-active-indicator: #2563eb;
+  --ntm-nav-hover-bg: #eef4fc;
+  --ntm-nav-rail: rgba(27, 51, 84, 0.14);
+}
+
+:root[data-theme='aurora-light'] .ntm-sidebar {
+  background: #ffffff;
+  backdrop-filter: none;
+  border-right: 1px solid #a8b0d8;
+  --ntm-nav-text: #1a1744;
+  --ntm-nav-group-text: #1a1744;
+  --ntm-nav-submenu-text: #5b6490;
+  --ntm-nav-section-label: #4a5578;
+  --ntm-nav-active-bg: #e7e8fb;
+  --ntm-nav-active-indicator: #4f46e5;
+  --ntm-nav-hover-bg: #f3f4ff;
+  --ntm-nav-rail: rgba(42, 51, 88, 0.16);
+}
+
+.ntm-sidebar__brand {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px 16px;
+  margin-bottom: 4px;
+  min-height: 52px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.ntm-brand {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 52px;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.ntm-brand--mark {
+  width: 36px;
+  height: 36px;
+  max-height: 36px;
+}
+
+.ntm-sidebar__groups {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0 4px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Thin, unobtrusive scrollbar — same convention as the rest of the
+     shell's scrollable surfaces (command palette list, data tables). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--ntm-border) transparent;
+}
+
+.ntm-sidebar__groups::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ntm-sidebar__groups::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ntm-sidebar__groups::-webkit-scrollbar-thumb {
+  background: var(--ntm-border);
+  border-radius: 3px;
+}
+
+.ntm-sidebar__groups::-webkit-scrollbar-thumb:hover {
+  background: var(--ntm-text-muted);
+}
+
+.ntm-sidebar__group-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border-radius: var(--ntm-radius-sm);
+  transition: background 120ms ease;
+}
+
+.ntm-sidebar__group-row:hover {
+  background: var(--ntm-nav-hover-bg);
+}
+
+.ntm-sidebar__group-row .ntm-sidebar__group-toggle {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.ntm-sidebar__chevron-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 2px;
+  border: none;
+  border-radius: var(--ntm-radius-sm);
+  background: transparent;
+  color: var(--ntm-nav-section-label);
+  cursor: pointer;
+}
+
+.ntm-sidebar__chevron-btn:hover {
+  color: var(--ntm-nav-text);
+}
+
+.ntm-sidebar__group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--ntm-radius-sm);
+  color: var(--ntm-nav-section-label);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 9px 8px;
+  cursor: pointer;
+}
+
+/* Sub-section header inside a single top-level group (System & Administration's
+   "Synchronization" / "Administration" split). Same muted-label convention as
+   the group toggle's own text, one size down, never interactive. */
+.ntm-sidebar__section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ntm-nav-section-label);
+  padding: 10px 10px 4px;
+}
+
+.ntm-sidebar__section-label:first-child {
+  padding-top: 2px;
+}
+
+.ntm-sidebar__chevron {
+  margin-left: auto;
+  transform: rotate(90deg);
+  transition: transform 160ms ease;
+}
+
+.ntm-sidebar__chevron.is-open {
+  transform: rotate(-90deg);
+}
+
+.ntm-sidebar__list {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 2px 0 2px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* A faint rail ties every sub-item visually to its group header above,
+     and the left padding is what actually separates the two tiers --
+     color contrast alone was too subtle to scan at a glance. */
+  border-left: 1px solid var(--ntm-nav-rail, rgba(184, 200, 218, 0.14));
+  margin-left: 15px;
+}
+
+.ntm-sidebar__link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--ntm-nav-submenu-text);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 450;
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.ntm-sidebar__link:hover {
+  background: var(--ntm-nav-hover-bg);
+  color: var(--ntm-nav-text);
+  transform: translateX(1px);
+}
+
+/* Gradient pill + glowing left indicator on the active item, visible in
+   both expanded and collapsed (icon-only) mode. A pseudo-element is used
+   for the indicator instead of box-shadow so it stays crisp when only
+   the icon is shown. */
+.ntm-sidebar__link.is-active {
+  background: var(--ntm-nav-active-bg);
+  color: var(--ntm-nav-text);
+  font-weight: 600;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.ntm-sidebar__link.is-active::before {
+  content: '';
+  position: absolute;
+  left: -13px;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--ntm-nav-active-indicator);
+  box-shadow: 0 0 6px var(--ntm-nav-active-indicator);
+}
+
+.ntm-sidebar.is-collapsed .ntm-sidebar__link.is-active::before {
+  left: -4px;
+}
+
+.ntm-sidebar__link--planned {
+  opacity: 0.72;
+}
+
+.ntm-sidebar__group-toggle.is-active-group {
+  color: var(--ntm-teal);
+}
+
+.ntm-sidebar__label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ntm-sidebar__badge {
+  font-size: 11px;
+  font-style: normal;
+  padding: 1px 5px;
+  border-radius: var(--ntm-radius-sm);
+  border: 1px solid var(--ntm-border);
+  color: var(--ntm-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Fixed (non-scrolling) footer: logout/user block + the collapse toggle.
+   Only .ntm-sidebar__groups above scrolls when it overflows. */
+.ntm-sidebar__footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.ntm-sidebar__user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 7px 9px;
+  cursor: pointer;
+  color: var(--ntm-nav-text);
+  text-align: left;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.ntm-sidebar__user:hover {
+  background: rgba(255, 90, 90, 0.1);
+  border-color: rgba(255, 90, 90, 0.25);
+  color: #ff9b9b;
+}
+
+.ntm-sidebar__user:hover .ntm-sidebar__logout-icon {
+  opacity: 1;
+}
+
+.ntm-sidebar__user-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+
+.ntm-sidebar__user-meta strong {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.ntm-sidebar__user-meta em {
+  font-size: 11px;
+  font-style: normal;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-sidebar__logout-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 120ms ease;
+}
+
+.ntm-sidebar.is-collapsed .ntm-sidebar__user {
+  justify-content: center;
+  padding: 6px;
+}
+
+.ntm-sidebar__collapse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--ntm-nav-section-label);
+  border-radius: 10px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.ntm-sidebar__collapse:hover {
+  background: var(--ntm-nav-hover-bg);
+  color: var(--ntm-nav-text);
+}
+
+.ntm-sidebar.is-collapsed .ntm-sidebar__collapse {
+  justify-content: center;
+}
+
+.ntm-sidebar.is-collapsed .ntm-sidebar__label,
+.ntm-sidebar.is-collapsed .ntm-sidebar__badge,
+.ntm-sidebar.is-collapsed .ntm-sidebar__group-toggle span {
+  display: none;
+}
+
+.ntm-shell__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  transition: margin 180ms ease;
+}
+
+.ntm-topbar {
+  position: relative;
+  z-index: 40;
+  min-height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--ntm-glass-border, var(--ntm-border));
+  background: var(--ntm-panel, var(--ntm-bg));
+  color: var(--ntm-text-primary);
+}
+
+.ntm-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Thin vertical rule between unrelated action clusters instead of boxing
+   every control — keeps the bar reading as one calm row rather than a
+   strip of bordered widgets. */
+.ntm-topbar__divider {
+  width: 1px;
+  height: 22px;
+  background: var(--ntm-border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.ntm-breadcrumbs ol {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--ntm-text-muted);
+  white-space: nowrap;
+}
+
+.ntm-breadcrumbs li:last-child {
+  color: var(--ntm-text-primary);
+  font-weight: 600;
+}
+
+.ntm-breadcrumbs li:not(:last-child)::after {
+  content: '';
+  width: 3px;
+  height: 3px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--ntm-text-muted);
+  display: inline-block;
+  opacity: 0.6;
+  vertical-align: middle;
+}
+
+.ntm-breadcrumbs a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ntm-breadcrumbs a:hover {
+  color: var(--ntm-teal);
+}
+
+.ntm-topbar__theme-option span {
+  display: none;
+}
+
+.ntm-search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 260px;
+  max-width: 260px;
+  margin: 0 auto 0 24px;
+  background: var(--ntm-elevated);
+  border: 1px solid transparent;
+  color: var(--ntm-text-muted);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.ntm-search-trigger:hover {
+  border-color: var(--ntm-border);
+  background: var(--ntm-panel);
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-search-trigger span {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntm-search-trigger kbd {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-family: inherit;
+  border: 1px solid var(--ntm-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--ntm-text-muted);
+}
+
+.ntm-theme-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 2px 2px 2px 4px;
+}
+
+.ntm-topbar__theme-switch {
+  display: flex;
+  gap: 2px;
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-sm);
+  padding: 2px;
+}
+
+.ntm-topbar__theme-option {
+  background: transparent;
+  border: none;
+  color: var(--ntm-text-secondary);
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  text-transform: capitalize;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ntm-topbar__theme-option.is-active {
+  background: var(--ntm-teal);
+  color: var(--ntm-deep-navy);
+  font-weight: 600;
+}
+
+.ntm-icon-button,
+.ntm-user-trigger {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ntm-text-secondary);
+  border-radius: var(--ntm-radius-sm);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.ntm-icon-button:hover,
+.ntm-user-trigger:hover {
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-primary);
+}
+
+.ntm-icon-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+.ntm-user-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+  margin-left: 4px;
+}
+
+.ntm-user-trigger__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.ntm-user-trigger__meta strong {
+  font-size: 13px;
+}
+
+.ntm-user-trigger__meta em {
+  font-size: 11px;
+  color: var(--ntm-text-secondary);
+  font-style: normal;
+}
+
+.ntm-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  background: var(--ntm-deep-navy);
+  color: var(--ntm-teal);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ntm-tenant-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  max-width: 180px;
+}
+
+.ntm-tenant-trigger--static {
+  cursor: default;
+}
+
+.ntm-tenant-trigger__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntm-tenant-trigger svg {
+  flex: none;
+}
+
+.ntm-tenant-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  min-width: 200px;
+}
+
+.ntm-tenant-menu__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ntm-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ntm-tenant-menu__field select {
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-primary);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-sm);
+  padding: 6px 8px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.ntm-tenant-menu__static {
+  font-size: 13px;
+  color: var(--ntm-text-primary);
+  font-weight: 600;
+}
+
+.ntm-menu {
+  position: relative;
+}
+
+.ntm-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 180px;
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-sm);
+  box-shadow: var(--ntm-shadow);
+  z-index: 80;
+  padding: 4px;
+}
+
+.ntm-popover--wide {
+  min-width: 280px;
+  padding: 8px;
+}
+
+.ntm-popover button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--ntm-text-primary);
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.ntm-popover button:hover {
+  background: var(--ntm-elevated);
+}
+
+.ntm-popover__head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ntm-text-muted);
+  padding: 4px 6px 8px;
+}
+
+.ntm-note {
+  padding: 8px 6px;
+}
+
+.ntm-note strong {
+  display: block;
+  font-size: 12px;
+}
+
+.ntm-note p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-overlay {
+  position: fixed;
+  inset: 0;
+  /* No backdrop-filter here: stacking it on top of the sidebar's own
+     blur layer corrupts compositing on this Electron/Chromium build
+     (page text behind the overlay renders as a garbled smear). A plain
+     darker scrim gives the same "dim the page" effect without it. */
+  background: color-mix(in srgb, var(--ntm-deep-navy) 70%, transparent);
+  display: flex;
+  justify-content: center;
+  padding-top: 11vh;
+  z-index: 200;
+  animation: ntm-overlay-in 140ms ease;
+}
+
+@keyframes ntm-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ntm-command {
+  width: min(600px, calc(100vw - 40px));
+  max-height: min(520px, calc(100vh - 22vh));
+  display: flex;
+  flex-direction: column;
+  background: var(--ntm-panel);
+  border: 2px solid var(--ntm-teal);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px -16px rgba(0, 0, 0, 0.6), var(--ntm-shadow);
+  overflow: hidden;
+  animation: ntm-command-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes ntm-command-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.ntm-command__input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--ntm-border);
+  color: var(--ntm-text-muted);
+  flex-shrink: 0;
+}
+
+.ntm-command__input input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--ntm-text-primary);
+  font-size: 15px;
+  outline: none;
+}
+
+.ntm-command__list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ntm-border) transparent;
+}
+
+.ntm-command__item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ntm-text-primary);
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.ntm-command__item > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ntm-command__item strong,
+.ntm-command__item em {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntm-command__item:hover:not(:disabled) {
+  background: var(--ntm-elevated);
+  border-color: var(--ntm-border);
+}
+
+.ntm-command__item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ntm-command__item strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.ntm-command__item em {
+  display: block;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--ntm-text-muted);
+  margin-top: 2px;
+}
+
+.ntm-command__empty {
+  padding: 28px 16px;
+  color: var(--ntm-text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.ntm-shell__content {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ntm-page {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.ntm-page--dense {
+  overflow: hidden;
+}
+
+.ntm-page__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+.ntm-page__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ntm-page__title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.15;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.ntm-page__lede {
+  display: none;
+}
+
+.ntm-dashboard__hello {
+  margin: 0 0 10px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.ntm-card {
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-md);
+  padding: 14px 16px;
+}
+
+.ntm-card h2,
+.ntm-card h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ntm-text-muted);
+}
+
+.ntm-metric {
+  margin: 10px 0 4px;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.ntm-metric--text {
+  font-size: 18px;
+}
+
+.ntm-card__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-section-title {
+  font-size: 13px;
+  margin: 8px 0 10px;
+  color: var(--ntm-text-secondary);
+  font-weight: 600;
+}
+
+.ntm-module-map {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.ntm-card--list header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ntm-card--list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ntm-card--list a {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 0;
+  color: var(--ntm-text-primary);
+  text-decoration: none;
+  font-size: 13px;
+  border-top: 1px solid var(--ntm-border);
+}
+
+.ntm-status-chip {
+  font-size: 10px;
+  font-weight: 600;
+  font-style: normal;
+  border: none;
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.ntm-status-chip--in_progress {
+  background: color-mix(in srgb, var(--ntm-teal) 16%, transparent);
+  color: var(--ntm-teal);
+}
+
+.ntm-status-chip--planned {
+  opacity: 0.75;
+}
+
+.ntm-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 520px;
+}
+
+.ntm-form--panel {
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-md);
+  padding: 16px;
+}
+
+.ntm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-field input:not([type='checkbox']) {
+  box-sizing: border-box;
+  height: 36px;
+  background: var(--ntm-elevated);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-sm);
+  color: var(--ntm-text-primary);
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.ntm-form__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ntm-form__hint {
+  font-size: 12px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px;
+  border: 1px dashed var(--ntm-border);
+  border-radius: var(--ntm-radius-md);
+  background: var(--ntm-panel);
+  color: var(--ntm-text-secondary);
+  max-width: 560px;
+}
+
+.ntm-state p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.ntm-state__art {
+  display: block;
+  width: 96px;
+  height: auto;
+  margin-bottom: 8px;
+}
+
+.ntm-state--loading {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.ntm-state--error strong {
+  color: var(--ntm-error);
+}
+
+/* Pharma-cross "pulse" loader: a small med-cross glyph with two expanding
+   rings behind it, like a heartbeat/EKG blip rather than a generic spinner.
+   Used anywhere mid-screen data is loading (LoadingState component). */
+.ntm-pulse {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+.ntm-pulse__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--ntm-teal);
+  animation: ntm-pulse-ring 1.6s cubic-bezier(0.2, 0.7, 0.4, 1) infinite;
+}
+
+.ntm-pulse__ring--delay {
+  animation-delay: 0.8s;
+}
+
+.ntm-pulse__core {
+  position: relative;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--ntm-teal) 18%, transparent);
+  color: var(--ntm-teal);
+  animation: ntm-pulse-core 1.6s ease-in-out infinite;
+}
+
+@keyframes ntm-pulse-ring {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+@keyframes ntm-pulse-core {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.85);
+    opacity: 0.75;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ntm-pulse__ring,
+  .ntm-pulse__core {
+    animation: none;
+  }
+}
+
+.ntm-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  border-radius: var(--ntm-radius-sm);
+  border: 1px solid var(--ntm-border);
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-primary);
+  padding: 0 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ntm-button--secondary:hover,
+.ntm-button:hover {
+  border-color: var(--ntm-teal);
+}
+
+.ntm-button--primary {
+  background: var(--ntm-accent, #2563eb);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+}
+
+.ntm-button--primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ntm-icon {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1440px) {
+  .ntm-topbar {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .ntm-shell__content {
+    padding: 6px 8px;
+  }
+
+  .ntm-page__title {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .ntm-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ntm-user-trigger__meta,
+  .ntm-search-trigger span,
+  .ntm-search-trigger kbd,
+  .ntm-topbar__theme-option span {
+    display: none;
+  }
+
+  .ntm-search-trigger {
+    min-width: 36px;
+  }
+}

@@ -331,10 +331,15 @@ export interface SupplierComparisonProduct {
   CurrentStock: number | null
   PreviousRemarks: string | null
   PreviousStatus: number | null
+  CurrentSLSQty: number | null
+  CurrentLastSaleDate: string | null
+  CurrentLastReceivedDate: string | null
+  LastReceivedQty: number | null
+  LastGRNDate: string | null
 }
 
 /** 'local' reads OrderNMC's own synced copy; 'remote' hits the branch DB live. */
-export type OrderMode = 'local' | 'remote'
+export type OrderMode = 'local' | 'remote' | 'nexora'
 
 export interface LegacyDbHealth {
   database: string

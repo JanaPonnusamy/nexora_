@@ -29,7 +29,10 @@ import time
 import pyodbc
 
 from modules.legacy_order import database
+from modules.legacy_order import device_sync
 from modules.legacy_order import repository
+from modules.legacy_order import sync_engine
+from modules.procurement.product_identity import collapse_generated_payload
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +219,15 @@ def insert_data_into_destination(columns, rows, store_name):
     # Assignment. Stamp it explicitly so every new row starts unreviewed.
     dest_cols = dest_cols + ["Qtycheck"]
     payload = [tuple(r[i] for i in picks) + (0,) for r in rows]
+    # The order query can emit the same store product twice (a demand line and
+    # an "Additional Row"). One OrderManagement line per product code; the
+    # demand line wins over a zero additional copy. Quantity is not summed.
+    payload = collapse_generated_payload(
+        payload,
+        dest_cols.index("ProductCode"),
+        dest_cols.index("OrderQty"),
+        dest_cols.index("WantedType"),
+    )
     order_id_pos = dest_cols.index("OrderId")
     new_order_ids = {row[order_id_pos] for row in payload}
     # Skip-rule columns/table must exist BEFORE the transaction below: their
@@ -452,6 +464,140 @@ def update_order_header_details(source_cs, store_name, min_days, max_days,
             "last_sale_bill_no": last_sale_bill_no}
 
 
+# Products+Batches is the minimum the stock figure itself needs (Batches is
+# summed into TotalStock, Products supplies name/SubLocation -- see
+# repository._MASTER_STOCK_SQL_CENTRAL). PurchaseTrans only feeds
+# ProductDiscPercent via an optional LEFT JOIN there, so it is deliberately
+# left out of the blocking wait below (owner ruling 2026-11-16: don't wait
+# for the rest of the sync plan, only for the stock figure itself).
+_WAREHOUSE_STOCK_SYNC_PLAN = [
+    (src, dest) for src, dest in sync_engine.TABLE_PLAN
+    if src in ("Products", "Batches")
+]
+
+# Every retail store sharing one agent-synced warehouse calls this before its
+# own order-process run -- without a floor, 3 stores ordering minutes apart
+# (SMA/SMF/SMG against SHP) would each force their own full device sync of
+# the SAME source back-to-back. A fresh-enough last sync is reused instead;
+# env-overridable per deployment, not per tenant (same source, same floor,
+# whichever tenant it is).
+_WAREHOUSE_STOCK_SYNC_MIN_INTERVAL_SECONDS = int(
+    os.getenv("LEGACY_WAREHOUSE_STOCK_SYNC_MIN_INTERVAL_SECONDS", "900")
+)
+
+# Now that the device sync runs on a background thread (doesn't block the
+# caller -- see _sync_agent_source_stock), several stores can hit this within
+# the same second before any thread finishes and updates last_sync_time. This
+# in-process set is the guard against firing one redundant background sync
+# per store for the same source in that window.
+_WAREHOUSE_STOCK_SYNC_IN_PROGRESS = set()
+_WAREHOUSE_STOCK_SYNC_IN_PROGRESS_LOCK = threading.Lock()
+
+# One shared pull per source per cycle, fanned out to every subscribing
+# store's SupplierStock -- SMA/SMF/SMG all read the SAME SHP rows, so there is
+# no reason for each to independently re-read central_branch_stock() and
+# re-run replace_supplier_stock()'s match/insert work. Keyed by source store
+# name; value is (rows, computed_at). Reused by refresh_warehouse_stock()
+# while still within _WAREHOUSE_STOCK_SYNC_MIN_INTERVAL_SECONDS of the last
+# compute, same floor as the device-sync skip above so neither one leads to
+# a staler read than the other.
+_WAREHOUSE_STOCK_ROWS_CACHE = {}
+_WAREHOUSE_STOCK_ROWS_CACHE_LOCK = threading.Lock()
+
+
+def _cached_central_branch_stock(source_store_name):
+    """central_branch_stock(), but computed at most once per
+    _WAREHOUSE_STOCK_SYNC_MIN_INTERVAL_SECONDS across ALL stores sharing this
+    source -- the read itself (not just the device trigger) is shared."""
+    now = time.time()
+    with _WAREHOUSE_STOCK_ROWS_CACHE_LOCK:
+        cached = _WAREHOUSE_STOCK_ROWS_CACHE.get(source_store_name)
+        if cached and now - cached[1] < _WAREHOUSE_STOCK_SYNC_MIN_INTERVAL_SECONDS:
+            return cached[0]
+    rows = repository.central_branch_stock(source_store_name)
+    with _WAREHOUSE_STOCK_ROWS_CACHE_LOCK:
+        _WAREHOUSE_STOCK_ROWS_CACHE[source_store_name] = (rows, now)
+    return rows
+
+
+def _sync_agent_source_stock_blocking(store_name, store_id, on_progress=None):
+    """The actual device-trigger-and-pull, run on a background thread by
+    _sync_agent_source_stock so a slow/offline source device never blocks the
+    retail store's own order generation (see that function's docstring)."""
+    def report(msg):
+        if on_progress:
+            on_progress(msg)
+    try:
+        device_sync.trigger_and_wait(store_id, store_name, on_progress=report)
+        dest_cs = database.central_connection_string()
+        platform_cs = database.platform_connection_string()
+        for src, dest in _WAREHOUSE_STOCK_SYNC_PLAN:
+            rows, batch_errors = sync_engine.sync_table(
+                platform_cs, dest_cs, src, dest, store_name, store_id=store_id,
+            )
+            if batch_errors:
+                report(f"{store_name}: {src} sync had errors ({'; '.join(batch_errors)}).")
+        report(f"{store_name}'s device sync completed; stock is current.")
+    except (device_sync.DeviceSyncTimeout, device_sync.DeviceSyncFailed) as exc:
+        report(f"{store_name}'s device sync did not complete ({exc}); reading last-known stock instead.")
+    except Exception:
+        logger.exception("live stock sync failed for agent-synced source %s", store_name)
+        report(f"Live sync for {store_name} failed; reading last-known stock instead.")
+    finally:
+        with _WAREHOUSE_STOCK_SYNC_IN_PROGRESS_LOCK:
+            _WAREHOUSE_STOCK_SYNC_IN_PROGRESS.discard(store_name)
+
+
+def _sync_agent_source_stock(source_store, on_progress=None):
+    """Kick off a live device sync of just the stock-relevant tables
+    (Products/PurchaseTrans/Batches) for an AGENT-connection-type warehouse
+    source (e.g. SHP under the SMS tenant, or any future agent-synced
+    warehouse -- never hardcoded to one tenant/store), WITHOUT waiting for it
+    -- every retail store sharing that source (SMA/SMF/SMG against SHP) reads
+    whatever is already in the central copy immediately and proceeds with its
+    own order generation as usual, while the live pull from the source's
+    device runs in the background for next time. Owner ruling 2026-11-16:
+    order process must never block on another store's device sync -- SHP's
+    device being offline/unbound used to stall SMF/SMG/SMA for the full
+    15-minute device_sync timeout each.
+
+    Skipped (no thread started) if the source already synced within
+    _WAREHOUSE_STOCK_SYNC_MIN_INTERVAL_SECONDS (see its docstring).
+    """
+    def report(msg):
+        if on_progress:
+            on_progress(msg)
+
+    store_name = source_store["store_name"]
+    last_sync_time = source_store.get("last_sync_time")
+    if last_sync_time:
+        age_seconds = (datetime.datetime.now() - last_sync_time).total_seconds()
+        if 0 <= age_seconds < _WAREHOUSE_STOCK_SYNC_MIN_INTERVAL_SECONDS:
+            report(
+                f"{store_name} synced {int(age_seconds)}s ago (within "
+                f"{_WAREHOUSE_STOCK_SYNC_MIN_INTERVAL_SECONDS}s floor); skipping live sync."
+            )
+            return
+    store_id = database.platform_store_id(store_name)
+    if not store_id:
+        report(f"{store_name} has no platform store_id; skipping live sync, reading last-known stock.")
+        return
+    with _WAREHOUSE_STOCK_SYNC_IN_PROGRESS_LOCK:
+        if store_name in _WAREHOUSE_STOCK_SYNC_IN_PROGRESS:
+            report(f"{store_name}'s device sync already in progress (started by another store's order "
+                    f"run); reading last-known stock now.")
+            return
+        _WAREHOUSE_STOCK_SYNC_IN_PROGRESS.add(store_name)
+    report(f"Requesting a live stock sync from {store_name}'s device in the background "
+           f"(not waiting); reading last-known stock now.")
+    threading.Thread(
+        target=_sync_agent_source_stock_blocking,
+        args=(store_name, store_id),
+        kwargs={"on_progress": None},  # background thread outlives this job's reporter
+        daemon=True,
+    ).start()
+
+
 def refresh_warehouse_stock(store, source_store_name, on_progress=None):
     """Pull ``source_store_name``'s (e.g. NMW) live branch stock into this
     store's SupplierStock rows (central OrderNMC.SupplierStock, filed under
@@ -481,11 +627,18 @@ def refresh_warehouse_stock(store, source_store_name, on_progress=None):
     report(f"Reading stock from {source_store_name}...")
     # Agent-synced source (e.g. SHP) has no direct-SQL branch connection HO
     # can reach -- its own stock arrives via the agent into NEXORA_PLATFORM.
-    # sync.* and is already copied into this tenant's central Products/
-    # Batches/PurchaseTrans by the regular per-store sync, so read that
-    # instead of trying (and failing) a branch connection to its POS PC.
+    # sync.* and is copied into this tenant's central Products/Batches/
+    # PurchaseTrans by the regular per-store sync. That copy can be stale if
+    # nothing else has recently synced the source itself (an agent-synced
+    # warehouse has no scheduled sync of its own unless Evening Order is
+    # configured for it) -- so ask its device to sync now, for ANY tenant's
+    # agent-synced warehouse, before reading the central copy.
     if (source_store.get("connection_type") or "").upper() == "AGENT":
-        rows = repository.central_branch_stock(source_store["store_name"])
+        _sync_agent_source_stock(source_store, on_progress)
+        # Shared read: SMA/SMF/SMG all pull the SAME SHP rows, so one cached
+        # read per source per cycle is reused across every store's refresh
+        # instead of each one re-querying the central copy independently.
+        rows = _cached_central_branch_stock(source_store["store_name"])
     else:
         rows = repository.branch_stock(source_store)
     report(f"Read {len(rows)} products. Updating {store['store_name']}'s supplier stock...")
@@ -574,16 +727,22 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
         # has -- the branch DB has no StoreName column.
         query_cs = database.central_connection_string()
         mode_label = "warehouse"
-    elif is_agent_synced:
+    elif is_agent_synced or mode == "nexora":
         # No branch to query -- the retail order query runs against the central
-        # copy the NMV Integration agent already populated. Forced local;
+        # copy either the NMV Integration agent (is_agent_synced) or the
+        # on-demand "Nexora live" platform-sync relay (mode == "nexora", see
+        # service.start_order_process) already populated. Forced local;
         # source_cs is built but never used (update_order_header_details reads
-        # central instead).
+        # central instead -- see read_header_from_central below, which also
+        # covers "nexora" since plain is_agent_synced would miss it once mode
+        # is overwritten to "local" on the next line).
+        read_header_from_central = True
         sql_name = None
         mode = "local"
         query_cs = database.central_connection_string()
-        mode_label = "agent-synced"
+        mode_label = "agent-synced" if is_agent_synced else "nexora-live"
     else:
+        read_header_from_central = False
         sql_name = None
         query_cs = source_cs if mode == "remote" else database.central_connection_string()
         mode_label = mode
@@ -629,7 +788,7 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
         report("Stamping OrderHeaderDetails...")
         header = update_order_header_details(
             source_cs, store["store_name"], min_days, max_days,
-            from_central=is_agent_synced,
+            from_central=read_header_from_central,
         )
 
     report(f"Order processing completed ({inserted} rows).")

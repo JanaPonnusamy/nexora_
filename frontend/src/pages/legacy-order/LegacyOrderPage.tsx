@@ -17,10 +17,6 @@ const COMPARE_MODE_LABEL: Record<CompareMode, string> = {
   NONE: 'No compare',
   HO: 'HO order (no compare)',
 }
-// The internal "HO" branch whose own stock feeds every other store's
-// SupplierStock rows (Stock Update button). Matches dbo.Stores.StoreName.
-const HO_STORE_NAME = 'NMW'
-
 type StoreSettings = { minDays: number; maxDays: number; recencyDays: number; mode: OrderMode }
 type OrderDefaults = Awaited<ReturnType<typeof legacyOrderService.defaults>>
 
@@ -83,6 +79,8 @@ export default function LegacyOrderPage() {
   const [engines, setEngines] = useState<Record<string, OrderEngine>>({})
   const [comparing, setComparing] = useState<string | null>(null)
   const [pushNote, setPushNote] = useState<Record<string, string>>({})
+  const [pushAllBusy, setPushAllBusy] = useState(false)
+  const [pushAllNote, setPushAllNote] = useState<string | null>(null)
   // Saved per-store Compare mode (owner ruling 2026-11-05).
   const [compareMode, setCompareModeState] = useState<Record<string, CompareMode>>({})
   const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
@@ -238,6 +236,60 @@ export default function LegacyOrderPage() {
   const start = (run: () => Promise<{ job_id: string }>) => {
     setError(null)
     run().then(({ job_id }) => watch(job_id)).catch((e: Error) => setError(e.message))
+  }
+
+  // Push the tenant's warehouse stock (e.g. SHP for SMS, NMW for Nathan --
+  // resolved server-side) into every other active store's SupplierStock in
+  // one click, instead of opening each store's settings and clicking "Stock
+  // update only" one at a time. Reports a storewise before -> after record
+  // count once every push job finishes (before_count comes back with the
+  // start response; after_count is read back from the same count endpoint
+  // once that store's job is no longer running).
+  const pushStockToAllStores = () => {
+    setError(null)
+    setPushAllBusy(true)
+    legacyOrderService.startStockUpdateAll()
+      .then((result) => {
+        result.started.forEach((s) => watch(s.job_id))
+        const headerParts = [`Pushing ${result.source_store}'s stock to ${result.started.length} store(s)…`]
+        if (result.skipped.length > 0) {
+          headerParts.push(`Skipped ${result.skipped.length}: ${result.skipped.map((s) => `${s.store_name} (${s.reason})`).join('; ')}`)
+        }
+        setPushAllNote(headerParts.join(' '))
+        if (result.started.length === 0) return
+
+        const pollAfterCounts = () => {
+          Promise.all(result.started.map((s) => legacyOrderService.getJob(s.job_id)))
+            .then((statuses) => {
+              if (statuses.some((j) => j.status === 'running')) {
+                window.setTimeout(pollAfterCounts, POLL_MS)
+                return
+              }
+              finishAfterCounts()
+            })
+            .catch(() => window.setTimeout(pollAfterCounts, POLL_MS))
+        }
+
+        const finishAfterCounts = () => {
+          Promise.all(
+            result.started.map((s) =>
+              s.supplier_code
+                ? legacyOrderService.supplierStockCount(s.store_name, s.supplier_code).then((r) => ({ ...s, after_count: r.count })).catch(() => ({ ...s, after_count: null }))
+                : Promise.resolve({ ...s, after_count: null }),
+            ),
+          ).then((rows) => {
+            const lines = rows.map((r) => `${r.store_name}: ${r.before_count ?? '?'} -> ${r.after_count ?? '?'}`)
+            const parts = [`Pushed ${result.source_store}'s stock to ${result.started.length} store(s). ${lines.join(', ')}.`]
+            if (result.skipped.length > 0) {
+              parts.push(`Skipped ${result.skipped.length}: ${result.skipped.map((s) => `${s.store_name} (${s.reason})`).join('; ')}`)
+            }
+            setPushAllNote(parts.join(' '))
+          })
+        }
+        window.setTimeout(pollAfterCounts, POLL_MS)
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setPushAllBusy(false))
   }
 
   // Process is gated server-side (service.start_order_process) by a
@@ -513,11 +565,21 @@ export default function LegacyOrderPage() {
           </div>
         </div>
         <div className="lo-actions">
+          <button
+            type="button"
+            className="lo-btn"
+            disabled={pushAllBusy}
+            title="Push the warehouse's current stock into every other active store's supplier feed (e.g. SHP -> SMA/SMF/SMG)."
+            onClick={pushStockToAllStores}
+          >
+            <i className="bi bi-cloud-arrow-up-fill" /> {pushAllBusy ? 'Pushing…' : 'Push Warehouse Stock to All Stores'}
+          </button>
           <Link to="/legacy-order/workspace" className="lo-btn lo-btn-primary"><i className="bi bi-grid-3x3-gap" /> Order Workspace</Link>
           <span className="lo-badge">Legacy DB</span>
         </div>
       </header>
 
+      {pushAllNote && <div className="lo-banner-info" role="status">{pushAllNote}<button type="button" onClick={() => setPushAllNote(null)} aria-label="Dismiss">×</button></div>}
       {error && <div className="lo-error" role="alert">{error}<button type="button" onClick={() => setError(null)} aria-label="Dismiss">×</button></div>}
 
       {((dbHealth && !dbHealth.online) || recovery) && (
@@ -576,6 +638,7 @@ export default function LegacyOrderPage() {
         <div className="lo-store-cards">
           {group.stores.map((store) => {
             const config = settings[store.store_name] ?? defaultSettings(orderDefaults, store.store_name)
+            const warehouseSource = orderDefaults?.warehouse_source
             const running = runningFor(store.store_name)
             const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays || config.recencyDays <= 0
             const failed = (store.last_sync_status ?? '').toLowerCase() === 'failed'
@@ -605,7 +668,7 @@ export default function LegacyOrderPage() {
                     <label><span>Min days</span><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /></label>
                     <label><span>Max days</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></label>
                     <label title="Only products sold in the last N days are ordered (store default 15, warehouse 90)."><span>Recency days</span><input aria-label={`${store.store_name} recency days`} type="number" min={1} value={config.recencyDays} onChange={(e) => patchSettings(store.store_name, { recencyDays: Number(e.target.value) })} /></label>
-                    <label><span>Source</span><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option></select></label>
+                    <label><span>Source</span><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option><option value="nexora">Nexora live</option></select></label>
                     <label title="Which calculation Order Process uses for this store. Both write the same order tables; switch any time.">
                       <span>Order engine</span>
                       <select aria-label={`${store.store_name} order engine`} value={engines[store.store_name] ?? 'LEGACY'} disabled={Boolean(running)}
@@ -621,7 +684,7 @@ export default function LegacyOrderPage() {
                       <button type="button" className="lo-btn" disabled={pushNote[store.store_name] === 'Pushing…'} title="Send this store's current order and transaction data to the remote OrderNMC (only changed rows are sent). Order Process does this automatically when it finishes." onClick={() => pushToRemote(store.store_name)}><i className="bi bi-send" /> Push to remote OrderNMC</button>
                       {pushNote[store.store_name] && <span className="lo-push-note">{pushNote[store.store_name]}</span>}
                       <button type="button" className="lo-btn" disabled={comparing === store.store_name} title="Calculate both engines from the current data and download an Excel comparison. Writes nothing." onClick={() => downloadEngineCompare(store.store_name)}><i className="bi bi-file-earmark-spreadsheet" /> {comparing === store.store_name ? 'Comparing…' : 'Compare engines (dry run)'}</button>
-                      {store.store_name !== HO_STORE_NAME && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${HO_STORE_NAME}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, HO_STORE_NAME))}><i className="bi bi-cloud-arrow-up" /> Stock update only</button>}
+                      {warehouseSource && store.store_name !== warehouseSource && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${warehouseSource}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, warehouseSource))}><i className="bi bi-cloud-arrow-up" /> Stock update only</button>}
                     </div>
                   </div>
                 )}
