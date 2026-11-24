@@ -819,12 +819,31 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
     # rule: disabled unless LEGACY_ORDER_CACHE_ENABLED=1, so the always-safe
     # existing OrderManagement path above is never affected by this failing.
     # Standalone module (legacy_order.order_cache), no other module wired in.
+    #
+    # Owner ruling (order cache monitor turn): a cache rebuild that cannot
+    # drain the PREVIOUS order's pending write-back must BLOCK -- the
+    # previous order's full record (qty/status/supplier edits made on the
+    # store PC) must always reach HO before it is overwritten by the next
+    # order's cache. The order itself (OrderManagement, already committed
+    # above) is never rolled back; only the cache rebuild + an admin alert
+    # happen here, so Order Process still reports success for the order but
+    # surfaces this as a hard error the admin must act on.
     if os.environ.get("LEGACY_ORDER_CACHE_ENABLED") == "1":
+        from .order_cache import builder as order_cache_builder
+        from .order_cache import monitor as order_cache_monitor
         try:
-            from .order_cache import builder as order_cache_builder
             path = order_cache_builder.build_cache_for_store(store["store_name"])
             report(f"Local order cache updated ({path}).")
             result["order_cache_path"] = path
+        except RuntimeError as exc:
+            # build_cache_for_store raises exactly this when drain() left
+            # pending_writeback non-empty -- the one case the owner wants
+            # blocked + alerted, distinct from an unexpected crash below.
+            logger.error("order cache BLOCKED for %s: pending write-back did not drain (%s)", store["store_name"], exc)
+            report(f"Order cache update BLOCKED: {exc}")
+            order_cache_monitor.send_blocked_alert(store["store_name"], str(exc))
+            result["order_cache_blocked"] = True
+            result["order_cache_error"] = str(exc)
         except Exception as exc:
             logger.exception("order cache build failed for %s (order processing itself succeeded)", store["store_name"])
             report(f"Local order cache update failed (order itself was processed fine): {exc}")

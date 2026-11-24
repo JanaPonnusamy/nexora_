@@ -20,6 +20,7 @@ const SyncMappingPage = lazy(() => import('../pages/sync/SyncMappingPage'))
 const SyncAgentsPage = lazy(() => import('../pages/sync/SyncAgentsPage'))
 const DeviceManagementPage = lazy(() => import('../pages/sync/DeviceManagementPage'))
 const StockClientMonitorPage = lazy(() => import('../pages/sync/StockClientMonitorPage'))
+const OrderCacheMonitorPage = lazy(() => import('../pages/sync/OrderCacheMonitorPage'))
 const HoRoutesPage = lazy(() => import('../pages/sync/HoRoutesPage'))
 const BackendUpdatePage = lazy(() => import('../pages/sync/BackendUpdatePage'))
 const DeviceControllerPage = lazy(() => import('../pages/sync/DeviceControllerPage'))
@@ -30,7 +31,7 @@ const StockAvailabilityPage = lazy(() => import('../pages/stock/StockAvailabilit
 const StockCheckReportPage = lazy(() => import('../pages/stock-check/StockCheckReportPage'))
 const LabelExporterPage = lazy(() => import('../pages/label-export/LabelExporterPage'))
 const BoxWorkspacePage = lazy(() => import('../pages/label-export/BoxWorkspacePage'))
-const NmwSalesReportPage = lazy(() => import('../pages/nmw-sales/NmwSalesReportPage'))
+const WarehouseBillExportPage = lazy(() => import('../pages/nmw-sales/WarehouseBillExportPage'))
 const StockIntegrityReportPage = lazy(() => import('../pages/stock-integrity/StockIntegrityReportPage'))
 const PurchaseWorkspacePage = lazy(() => import('../pages/procurement/PurchaseWorkspacePage'))
 const ProductIntelligencePage = lazy(() => import('../pages/procurement/ProductIntelligencePage'))
@@ -57,6 +58,7 @@ const TimeReportPage = lazy(() => import('../pages/TimeReportPage'))
 const PassGenPage = lazy(() => import('../pages/pass-gen/PassGenPage'))
 const LegacyOrderPage = lazy(() => import('../pages/legacy-order/LegacyOrderPage'))
 const OrderWorkspacePage = lazy(() => import('../pages/legacy-order/OrderWorkspacePage'))
+const PreviousOrderComparisonPage = lazy(() => import('../pages/purchase/PreviousOrderComparisonPage'))
 const WhatsAppPage = lazy(() => import('../pages/whatsapp/WhatsAppPage'))
 const SettingsPage = lazy(() => import('../pages/SettingsPage'))
 const PlatformShellPreviewPage = lazy(() => import('../pages/PlatformShellPreviewPage'))
@@ -131,17 +133,23 @@ export const appRouter = createBrowserRouter(
         <Route path="/sync/agents" element={<RequireCapability cap="SYNC"><SyncAgentsPage /></RequireCapability>} />
         <Route path="/sync/devices" element={<RequireCapability cap="SYNC"><DeviceManagementPage /></RequireCapability>} />
         <Route path="/sync/stock-clients" element={<RequireCapability cap="SYNC"><StockClientMonitorPage /></RequireCapability>} />
+        <Route path="/sync/order-cache" element={<RequireCapability cap="SYNC"><OrderCacheMonitorPage /></RequireCapability>} />
         <Route path="/sync/ho-routes" element={<RequireCapability cap="SYNC"><HoRoutesPage /></RequireCapability>} />
         <Route path="/sync/backend-update" element={<RequireCapability cap="SYNC"><BackendUpdatePage /></RequireCapability>} />
         <Route path="/sync/device-control" element={<RequireCapability cap="SYNC"><DeviceControllerPage /></RequireCapability>} />
         <Route path="/sync/terminal" element={<RequireCapability cap="SYNC"><RemoteTerminalPage /></RequireCapability>} />
         <Route path="/product-mapping" element={<RequireCapability cap="PRODUCT_MAPPING"><ProductMappingPage /></RequireCapability>} />
         <Route path="/stock-availability" element={<RequireCapability cap="INVENTORY"><StockAvailabilityPage /></RequireCapability>} />
+        {/* Quick Stock, authenticated path: same page as the public PIN-gated
+            /quick-stock kiosk route, but reached via a real Nexora login and
+            the signed-in session (no PIN at all) -- see QuickStockPage's
+            mediqSession branch. Same INVENTORY capability as Stock Availability. */}
+        <Route path="/quick-stock-app" element={<RequireCapability cap="INVENTORY"><QuickStockPage /></RequireCapability>} />
         <Route path="/stock-check-report" element={<RequireCapability cap="INVENTORY"><StockCheckReportPage /></RequireCapability>} />
         <Route path="/label-exporter" element={<RequireCapability cap="INVENTORY"><LabelExporterPage /></RequireCapability>} />
         <Route path="/label-exporter/box-workspace" element={<RequireCapability cap="INVENTORY"><BoxWorkspacePage /></RequireCapability>} />
         <Route path="/label-exporter/review" element={<Navigate to="/label-exporter" replace />} />
-        <Route path="/nmw-sales-report" element={<RequireCapability cap="INVENTORY"><NmwSalesReportPage /></RequireCapability>} />
+        <Route path="/warehouse-bill-export" element={<RequireCapability cap="INVENTORY"><WarehouseBillExportPage /></RequireCapability>} />
         <Route path="/stock-integrity" element={<RequireCapability cap="INVENTORY"><StockIntegrityReportPage /></RequireCapability>} />
         <Route path="/procurement/console" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleRefreshConsolePage /></RequireCapability>} />
         <Route path="/procurement/cycles" element={<RequireCapability cap="PROCUREMENT_ADMIN"><CycleManagementPage /></RequireCapability>} />
@@ -170,6 +178,7 @@ export const appRouter = createBrowserRouter(
         <Route path="/legacy-order" element={<RequireCapability cap="LEGACY_ORDER"><LegacyOrderPage /></RequireCapability>} />
         <Route path="/legacy-order/qty-check" element={<Navigate to="/legacy-order/workspace" replace />} />
         <Route path="/legacy-order/workspace" element={<RequireCapability cap="LEGACY_ORDER"><OrderWorkspacePage /></RequireCapability>} />
+        <Route path="/purchase/previous-order-comparison" element={<RequireCapability cap="PREVIOUS_ORDER_COMPARISON"><PreviousOrderComparisonPage /></RequireCapability>} />
         <Route path="/whatsapp" element={<RequireCapability cap="SETTINGS"><WhatsAppPage /></RequireCapability>} />
         <Route path="/settings" element={<RequireCapability cap="SETTINGS"><SettingsPage /></RequireCapability>} />
         <Route path="*" element={<RoleLanding />} />

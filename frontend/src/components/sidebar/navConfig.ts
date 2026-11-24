@@ -19,11 +19,12 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: 'bi-box-seam',
     cap: 'INVENTORY',
     children: [
+      { label: 'Quick Stock', to: '/quick-stock-app', icon: 'bi-lightning-charge', cap: 'INVENTORY' },
       { label: 'Stock Availability', to: '/stock-availability', icon: 'bi-box-seam', cap: 'INVENTORY' },
       { label: 'Stock Check Report', to: '/stock-check-report', icon: 'bi-clipboard-check', cap: 'INVENTORY' },
       { label: 'Label Exporter', to: '/label-exporter', icon: 'bi-tags', cap: 'INVENTORY' },
       { label: 'Box Workspace', to: '/label-exporter/box-workspace', icon: 'bi-grid-3x3-gap', cap: 'INVENTORY' },
-      { label: 'NMW Sales Report', to: '/nmw-sales-report', icon: 'bi-receipt', cap: 'INVENTORY' },
+      { label: 'Warehouse Bill Export', to: '/warehouse-bill-export', icon: 'bi-receipt', cap: 'INVENTORY' },
       { label: 'Non-Moving Report', to: '/non-moving-report', icon: 'bi-hourglass-bottom', cap: 'INVENTORY' },
       { label: 'Received, Not Ordered', to: '/received-not-ordered', icon: 'bi-box-arrow-in-down', cap: 'REPORTS' },
       { label: 'Sale Analysis', to: '/sale-analysis', icon: 'bi-graph-up-arrow', cap: 'INVENTORY' },
@@ -38,6 +39,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     children: [
       { label: 'Cycle & Refresh', to: '/procurement/console', icon: 'bi-arrow-repeat', cap: 'PROCUREMENT_ADMIN' },
       { label: 'Purchase Manager', to: '/procurement/workspace', icon: 'bi-cart-check', cap: 'PROCUREMENT_WORKSPACE' },
+      { label: 'Previous Order Comparison', to: '/purchase/previous-order-comparison', icon: 'bi-arrow-left-right', cap: 'PREVIOUS_ORDER_COMPARISON' },
       { label: 'Product Intelligence', to: '/procurement/intelligence', icon: 'bi-cpu', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Refresh Compare', to: '/procurement/compare', icon: 'bi-arrow-left-right', cap: 'PROCUREMENT_WORKSPACE' },
       { label: 'Shelf Sorting & Excel Split', to: '/procurement/shelf-sort', icon: 'bi-signpost-split', cap: 'PROCUREMENT_WORKSPACE' },
@@ -48,7 +50,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       ...(isVplHistoryScreenEnabled()
         ? [{ label: 'VPL History', to: '/procurement/vpl-history', icon: 'bi-clock-history', cap: 'PROCUREMENT_ADMIN' as const }]
         : []),
-      { label: 'NMW Bill Export', to: '/nmw-sales-report', icon: 'bi-receipt', cap: 'INVENTORY' },
+      { label: 'Warehouse Bill Export', to: '/warehouse-bill-export', icon: 'bi-receipt', cap: 'INVENTORY' },
     ],
   },
   {
@@ -83,6 +85,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { label: 'Sync Agents', to: '/sync/agents', icon: 'bi-router', cap: 'SYNC' },
       { label: 'Store Agent Devices', to: '/sync/devices', icon: 'bi-pc-display', cap: 'SYNC' },
       { label: 'Store Client Monitor', to: '/sync/stock-clients', icon: 'bi-pc-display-horizontal', cap: 'SYNC' },
+      { label: 'Order Cache Monitor', to: '/sync/order-cache', icon: 'bi-sd-card', cap: 'SYNC' },
       { label: 'HO Routes', to: '/sync/ho-routes', icon: 'bi-signpost-2', cap: 'SYNC' },
       { label: 'Backend Update', to: '/sync/backend-update', icon: 'bi-cloud-download', cap: 'SYNC' },
       { label: 'Device Control', to: '/sync/device-control', icon: 'bi-hdd-network', cap: 'SYNC' },

@@ -11,7 +11,7 @@ pending write-back rows, which builder.py's replace step waits to drain
 first.
 """
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 CREATE_SQL = """
 PRAGMA journal_mode = WAL;
@@ -40,6 +40,14 @@ CREATE TABLE IF NOT EXISTS order_lines (
     or_supplier_code       TEXT,
     supplier_product_code   TEXT,
     supplier_product_name   TEXT,
+    -- Sync watermark (added schema v2): when this row last changed locally
+    -- and whether that change has reached HO yet. 'synced_at' is stamped by
+    -- writeback.drain() the moment the row's pending_writeback entries clear
+    -- -- it is NOT set at build time, so a freshly built cache (no local
+    -- edits yet) correctly reads as "nothing pending" with synced_at NULL
+    -- until the first local edit+drain cycle touches it.
+    updated_at           TEXT,
+    synced_at            TEXT,
     PRIMARY KEY (product_code)
 );
 

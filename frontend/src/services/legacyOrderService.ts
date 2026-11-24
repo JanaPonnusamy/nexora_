@@ -30,9 +30,36 @@ import type {
   ResetPendingResult,
   RestorableOrderPreview,
   RestoreResult,
+  MessageSetting,
+  MessageType,
+  OrderEntryAutomation,
+  PmOrderEntryRecent,
+  PmOrderEntryState,
+  PmOrderEntrySubmitResult,
+  PmOrderQueueRow,
+  PmOrderType,
+  OrderGapReview,
+  PendingOrderItem,
 } from '../types/legacyOrder'
 
 const BASE = '/api/legacy-order'
+
+export interface OrderCacheMonitorRow {
+  store_name: string
+  exists: boolean
+  cache_path: string
+  file_created_at?: string
+  file_age_seconds?: number
+  built_at?: string | null
+  schema_version?: string | null
+  row_count?: number
+  pending_writeback_count?: number
+  unsynced_row_count?: number
+  last_writeback_at?: string | null
+  last_writeback_status?: 'ok' | 'failed' | null
+  last_writeback_error?: string | null
+  connection_status?: 'ok' | 'broken'
+}
 
 export type CompareMode = 'PREVIOUS_PENDING' | 'TODAY' | 'NONE' | 'HO'
 
@@ -359,4 +386,105 @@ export const legacyOrderService = {
 
   dbEmergencyRepair: () =>
     api.post<LegacyDbRecovery>(`${BASE}/db/emergency-repair`, { confirm: true }),
+
+  // ----- PM Order Entry: last bill/GRN submit, automated queue, automation +
+  // message-type settings (Purchase Manager, store-scoped; owner ruling
+  // 2026-11-05 / automation added later the same cycle). -----
+  pmOrderEntry: (storeName: string) =>
+    api.get<PmOrderEntryState>(`${BASE}/orders/${encodeURIComponent(storeName)}/order-entry`),
+
+  pmSubmitOrderEntry: (
+    storeName: string,
+    payload: { lastBill: string; lastGrn: string; orderType: PmOrderType; confirmed?: boolean },
+  ) =>
+    api.post<PmOrderEntrySubmitResult>(`${BASE}/orders/${encodeURIComponent(storeName)}/order-entry`, {
+      last_bill: payload.lastBill.trim(),
+      last_grn: payload.lastGrn.trim(),
+      order_type: payload.orderType,
+      confirmed: Boolean(payload.confirmed),
+    }),
+
+  // Plain "most recent N" GRN + sale-bill grids for the PM's own visual
+  // verification -- replaces the old received-not-ordered report on this
+  // screen (see repository.recent_grns/recent_sale_bills).
+  pmOrderEntryRecent: (storeName: string, limit = 50) =>
+    api.get<PmOrderEntryRecent>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/order-entry/recent?limit=${limit}`,
+    ),
+
+  pmOrderEntryQueue: (storeName: string) =>
+    api.get<PmOrderQueueRow | { status: null }>(`${BASE}/orders/${encodeURIComponent(storeName)}/order-entry/queue`),
+
+  getOrderEntryAutomation: (storeName: string) =>
+    api.get<OrderEntryAutomation>(`${BASE}/orders/${encodeURIComponent(storeName)}/automation`),
+
+  setOrderEntryAutomation: (
+    storeName: string,
+    payload: { automated_order_enabled: boolean; production_mode: boolean; min_delay_seconds: number; max_delay_seconds: number },
+  ) =>
+    api.put<OrderEntryAutomation>(`${BASE}/orders/${encodeURIComponent(storeName)}/automation`, payload),
+
+  // ----- Order Gap Review: reconciliation since the store's last placed
+  // order, plus the standing pending-reminder list. -----
+  getGapReview: (storeName: string, orderId?: number) =>
+    api.get<OrderGapReview>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/gap-review${orderId != null ? `?order_id=${orderId}` : ''}`,
+    ),
+
+  addPendingItem: (
+    storeName: string,
+    body: { product_code: number; product_name?: string | null; order_id?: number | null; qty?: number | null; note?: string | null },
+  ) =>
+    api.post<PendingOrderItem>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending`, body),
+
+  clearPendingItem: (storeName: string, itemId: number) =>
+    api.delete<{ cleared: true; id: number }>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending/${itemId}`),
+
+  getMessageSettings: (storeName: string) =>
+    api.get<MessageSetting[]>(`${BASE}/orders/${encodeURIComponent(storeName)}/message-settings`),
+
+  setMessageSetting: (
+    storeName: string,
+    messageType: MessageType,
+    payload: { enabled: boolean; targets: { name: string; kind: 'group' | 'contact' }[] },
+  ) =>
+    api.put<MessageSetting>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/message-settings/${encodeURIComponent(messageType)}`,
+      payload,
+    ),
+
+  // ---- Order cache monitor (Sync > Order Cache Monitor) ----
+  orderCacheMonitorAll: () => api.get<{ stores: OrderCacheMonitorRow[] }>(`${BASE}/order-cache/monitor`),
+
+  orderCacheMonitorOne: (storeName: string) =>
+    api.get<OrderCacheMonitorRow>(`${BASE}/order-cache/${encodeURIComponent(storeName)}/monitor`),
+
+  orderCacheForcePull: (storeName: string) =>
+    api.post<{ store_name: string; cache_path: string }>(
+      `${BASE}/order-cache/${encodeURIComponent(storeName)}/force-pull`,
+      {},
+    ),
+
+  orderCacheForcePush: (storeName: string) =>
+    api.post<{ ok: boolean; applied: number; error: string | null }>(
+      `${BASE}/order-cache/${encodeURIComponent(storeName)}/force-push`,
+      {},
+    ),
+
+  orderCacheExport: (storeName: string) => api.blob(`${BASE}/order-cache/${encodeURIComponent(storeName)}/export`),
+
+  orderCacheSend: (storeName: string, channel: 'whatsapp' | 'email') =>
+    api.post<{ ok: boolean; channel: string; error?: string }>(
+      `${BASE}/order-cache/${encodeURIComponent(storeName)}/send?channel=${channel}`,
+      {},
+    ),
+
+  orderCacheImport: (storeName: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.upload<{ store_name: string; imported: boolean; writeback: { ok: boolean; applied: number; error: string | null } }>(
+      `${BASE}/order-cache/${encodeURIComponent(storeName)}/import`,
+      form,
+    )
+  },
 }

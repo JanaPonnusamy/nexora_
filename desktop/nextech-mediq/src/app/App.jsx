@@ -71,6 +71,7 @@ export function App() {
                 <Route path="procurement/order-workspace" element={web('order-entry')} />
                 <Route path="procurement/order-entry" element={web('order-entry')} />
                 <Route path="procurement/order-entry-submit" element={web('pm-order-entry')} />
+                <Route path="procurement/order-gap-review" element={web('order-gap-review')} />
                 <Route path="procurement/previous-order-comparison" element={web('previous-order-comparison')} />
                 <Route path="legacy-order" element={<LegacyOrderPage />} />
                 <Route path="legacy-order/workspace" element={web('order-entry')} />
@@ -96,6 +97,7 @@ export function App() {
                 <Route path="sync/ho-routes" element={web('ho-routes')} />
                 <Route path="sync/backend-update" element={web('backend-update')} />
                 <Route path="sync/store-health" element={web('store-health')} />
+                <Route path="sync/order-cache" element={web('order-cache-monitor')} />
                 <Route path="sync/device-control" element={web('device-control')} />
                 <Route path="sync/terminal" element={web('remote-terminal')} />
                 <Route path="administration" element={workspace('administration')} />
