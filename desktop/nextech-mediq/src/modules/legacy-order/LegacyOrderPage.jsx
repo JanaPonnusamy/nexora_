@@ -885,11 +885,22 @@ export function LegacyOrderPage() {
                         </select>
                       </td>
                       <td className="lgo-left" onClick={(e) => e.stopPropagation()}>
-                        <select aria-label={`${name} order source`} value={c.mode || 'local'} disabled={busy} title={warehouse ? "Remote live isn't available for a warehouse: order_warehouse.sql reads a StoreName column only the central copy has, so there is no branch-schema equivalent." : ''} onChange={(e) => patchCfg(name, { mode: e.target.value })}>
-                          <option value="local">Local copy</option>
-                          {!warehouse && <option value="remote">Remote live</option>}
-                          <option value="nexora">Nexora live</option>
-                        </select>
+                        {agent ? (
+                          <select
+                            aria-label={`${name} order source`}
+                            value="agent"
+                            disabled
+                            title="This store has no direct DB connection -- its agent pushes data to NEXORA_PLATFORM.sync.*, which is always relayed into the central copy before Order Process runs. The Source choice has no effect for an agent-synced store, so it's fixed here rather than offering options that would silently be ignored."
+                          >
+                            <option value="agent">Agent sync (fixed)</option>
+                          </select>
+                        ) : (
+                          <select aria-label={`${name} order source`} value={c.mode || 'local'} disabled={busy} title={warehouse ? "Remote live isn't available for a warehouse: order_warehouse.sql reads a StoreName column only the central copy has, so there is no branch-schema equivalent." : ''} onChange={(e) => patchCfg(name, { mode: e.target.value })}>
+                            <option value="local">Local copy</option>
+                            {!warehouse && <option value="remote">Remote live</option>}
+                            <option value="nexora">Nexora live</option>
+                          </select>
+                        )}
                       </td>
                       {['minDays', 'maxDays', 'recencyDays'].map((field) => {
                         const effective = field === 'minDays' ? minDefault(name) : field === 'maxDays' ? maxDefault(name) : recencyDefault(name);

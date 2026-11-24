@@ -645,6 +645,14 @@ export default function LegacyOrderPage() {
             const dotClass = running ? 'lo-dot-run' : failed ? 'lo-dot-fail' : 'lo-dot-ok'
             const lastJob = sortedJobs.find((job) => job.store_name === store.store_name && job.status !== 'running')
             const cardState = running ? 'running' : lastJob?.status === 'failed' ? 'failed' : lastJob?.status === 'completed' ? 'completed' : 'idle'
+            // Agent-synced stores (no server_name/database on file -- e.g. NMV)
+            // are forced through service.start_order_process's agent_synced
+            // branch regardless of mode (see backend/modules/legacy_order/
+            // service.py) -- the Source choice has no effect for them, so it
+            // must not be offered as a live, editable control (owner-flagged
+            // 2026-11-24: showing Local/Remote/Nexora here was misleading --
+            // nothing the user picked actually changed server behaviour).
+            const agentSynced = !store.server_name && !store.database
             return (
               <article className="lo-op-card" key={store.store_name} data-state={cardState}>
                 <div className="lo-op-head">
@@ -668,7 +676,16 @@ export default function LegacyOrderPage() {
                     <label><span>Min days</span><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /></label>
                     <label><span>Max days</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></label>
                     <label title="Only products sold in the last N days are ordered (store default 15, warehouse 90)."><span>Recency days</span><input aria-label={`${store.store_name} recency days`} type="number" min={1} value={config.recencyDays} onChange={(e) => patchSettings(store.store_name, { recencyDays: Number(e.target.value) })} /></label>
-                    <label><span>Source</span><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option><option value="nexora">Nexora live</option></select></label>
+                    <label>
+                      <span>Source</span>
+                      {agentSynced ? (
+                        <select aria-label={`${store.store_name} order source`} value="agent" disabled title="This store has no direct DB connection -- its agent pushes data to NEXORA_PLATFORM.sync.*, always relayed into the central copy before Order Process runs. The Source choice has no effect here.">
+                          <option value="agent">Agent sync (fixed)</option>
+                        </select>
+                      ) : (
+                        <select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option><option value="nexora">Nexora live</option></select>
+                      )}
+                    </label>
                     <label title="Which calculation Order Process uses for this store. Both write the same order tables; switch any time.">
                       <span>Order engine</span>
                       <select aria-label={`${store.store_name} order engine`} value={engines[store.store_name] ?? 'LEGACY'} disabled={Boolean(running)}
