@@ -448,8 +448,16 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
         raise ValueError("Recency days must be positive.")
     if mode not in ("local", "remote", "nexora"):
         raise ValueError("Mode must be 'local', 'remote', or 'nexora'.")
-    # The warehouse query is StoreName-scoped and must read the central copy.
-    if warehouse:
+    # The warehouse query (order_warehouse.sql) is StoreName-scoped and can
+    # only read the central copy -- there is no branch-schema equivalent, so
+    # "remote" is forced down to "local" for a warehouse (Remote live would
+    # be a silent no-op, since the branch DB has no StoreName column at all).
+    # "nexora" is NOT force-downgraded here: it stays "nexora" so the
+    # platform-sync-then-order dispatch below still runs the relay before
+    # order_process reads the (same) central copy warehouse always reads --
+    # Nexora live is fully compatible with a warehouse store, Remote live
+    # structurally is not.
+    if warehouse and mode == "remote":
         mode = "local"
 
     running = _running_job_kind(store_name)
@@ -483,6 +491,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
             target=database.tenant_scoped(store, _run_agent_sync_then_order),
             args=(job_id, store, store_id, plan, min_days, max_days, mode,
                   warehouse, recency_days, compare_today_previous, checkpoint),
+            kwargs={"trigger": trigger},
             daemon=True,
         ).start()
         return job_id
@@ -558,7 +567,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
             target=database.tenant_scoped(store, _run_agent_sync_then_order),
             args=(job_id, store, store_id, plan, min_days, max_days, mode,
                   warehouse, recency_days, compare_today_previous, checkpoint),
-            kwargs={"live_device_sync": False},
+            kwargs={"live_device_sync": False, "trigger": trigger},
             daemon=True,
         ).start()
         return job_id
@@ -574,6 +583,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
         target=database.tenant_scoped(store, _run_sync_then_order),
         args=(job_id, store, plan, min_days, max_days, mode, warehouse, recency_days,
               compare_today_previous, checkpoint),
+        kwargs={"trigger": trigger},
         daemon=True,
     ).start()
     return job_id
@@ -627,7 +637,7 @@ def _compare_todays_previous(job_id, store_name):
 
 def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
                          is_warehouse=False, recency_days=10, compare_today=False,
-                         checkpoint=None):
+                         checkpoint=None, trigger="manual"):
     """One durable job: full sync must succeed before order generation."""
     source_cs = order_process.database.branch_connection_string(
         store["server_name"], store["database"], store["username"], store["password"]
@@ -698,7 +708,7 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
         _update(job_id, step=base_step, message="Sync completed. Starting order process...")
         result = order_process.run_order_process(
             store, min_days, max_days, mode, report,
-            is_warehouse=is_warehouse, recency_days=recency_days,
+            is_warehouse=is_warehouse, recency_days=recency_days, trigger=trigger,
         )
         result["tables"] = tables
         result["checkpoint"] = check
@@ -809,7 +819,7 @@ def _run_agent_sync(job_id, store, store_id, plan, live_device_sync=True):
 
 def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days,
                                mode, is_warehouse=False, recency_days=10, compare_today=False,
-                               checkpoint=None, live_device_sync=True):
+                               checkpoint=None, live_device_sync=True, trigger="manual"):
     """One durable job for an agent-synced store: platform sync must succeed
     before order generation (same guarantee as the LAN sync-then-order path).
 
@@ -867,6 +877,7 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
         result = order_process.run_order_process(
             store, min_days, max_days, mode, report,
             is_warehouse=is_warehouse, is_agent_synced=True, recency_days=recency_days,
+            trigger=trigger,
         )
         result["tables"] = tables
         result["checkpoint"] = check

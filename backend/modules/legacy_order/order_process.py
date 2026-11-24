@@ -364,7 +364,7 @@ def insert_data_into_destination(columns, rows, store_name):
 
 
 def update_order_header_details(source_cs, store_name, min_days, max_days,
-                                from_central=False):
+                                from_central=False, trigger="manual"):
     """Port of UpdateOrderHeaderDetails.
 
     Last sale bill and last GRN are the watermarks that later tell the GRN
@@ -451,12 +451,19 @@ def update_order_header_details(source_cs, store_name, min_days, max_days,
         ).fetchone()[0]
         order_no = count + 1 if count > 0 else 1
 
+        # RunType: owner-requested audit column (2026-11-24) -- "Manual" for an
+        # operator-clicked run (trigger == "manual"), "Scheduled" for anything
+        # automated (evening_order.run_stores passes trigger="evening"; any
+        # future scheduled trigger value also maps to "Scheduled" via the
+        # else branch, so a new automated trigger name never silently reads
+        # as Manual).
+        run_type = "Manual" if trigger == "manual" else "Scheduled"
         cur.execute(
             "INSERT INTO OrderHeaderDetails (StoreName, OrderId, OrderNo, OrderDateTime, "
-            "LastSaleBillNo, LastBillDateTime, LastGRN, MinDays, MaxDays) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "LastSaleBillNo, LastBillDateTime, LastGRN, MinDays, MaxDays, RunType) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             or_store_name, order_id, order_no, wanted_date,
-            last_sale_bill_no, last_bill_datetime, last_grn, min_days, max_days,
+            last_sale_bill_no, last_bill_datetime, last_grn, min_days, max_days, run_type,
         )
         conn.commit()
 
@@ -696,7 +703,8 @@ def _ensure_unique_order_id(columns, rows, store_name, report):
 
 
 def run_order_process(store, min_days, max_days, mode, on_progress=None,
-                      is_warehouse=False, recency_days=10, is_agent_synced=False):
+                      is_warehouse=False, recency_days=10, is_agent_synced=False,
+                      trigger="manual"):
     """Port of ProcessOrder + the FetchOrderData worker branch.
 
     A warehouse store (``is_warehouse``) runs the order_warehouse.sql query
@@ -724,9 +732,19 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
     if is_warehouse:
         sql_name = "order_warehouse"
         # order_warehouse.sql filters by StoreName, which only the central copy
-        # has -- the branch DB has no StoreName column.
+        # has -- the branch DB has no StoreName column. The order QUERY always
+        # reads central regardless of mode (unchanged). The header-watermark
+        # read, however, keeps its original behaviour EXCEPT for "nexora": a
+        # plain warehouse run still reads its last-bill/last-GRN watermarks
+        # from the branch DB (read_header_from_central stays False, same as
+        # before this change) -- only mode == "nexora" forces that to central
+        # too, since service.start_order_process has already relayed this
+        # store's branch data into the central copy before this function was
+        # called (see service._run_agent_sync_then_order), making a branch
+        # read redundant/stale for that one run.
+        read_header_from_central = mode == "nexora"
         query_cs = database.central_connection_string()
-        mode_label = "warehouse"
+        mode_label = "warehouse-nexora" if mode == "nexora" else "warehouse"
     elif is_agent_synced or mode == "nexora":
         # No branch to query -- the retail order query runs against the central
         # copy either the NMV Integration agent (is_agent_synced) or the
@@ -788,7 +806,7 @@ def run_order_process(store, min_days, max_days, mode, on_progress=None,
         report("Stamping OrderHeaderDetails...")
         header = update_order_header_details(
             source_cs, store["store_name"], min_days, max_days,
-            from_central=read_header_from_central,
+            from_central=read_header_from_central, trigger=trigger,
         )
 
     report(f"Order processing completed ({inserted} rows).")

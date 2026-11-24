@@ -232,6 +232,31 @@
   transition: background 120ms ease, color 120ms ease, transform 120ms ease;
 }
 
+/* Collapsed (icon-only) rail: every group's sub-list stays reachable (per
+   Sidebar.jsx's "expanded = collapsed ? true : ..." so nothing is hidden
+   behind a closed group), but it must become a tight icon column, not keep
+   its expanded-mode indent/rail/left-aligned padding -- those, left in
+   place, squeezed every icon against the rail and forced the whole sidebar
+   into horizontal + vertical scroll at 76px wide. */
+.ntm-sidebar.is-collapsed .ntm-sidebar__list {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: none;
+  align-items: center;
+}
+
+.ntm-sidebar.is-collapsed .ntm-sidebar__link {
+  justify-content: center;
+  width: 44px;
+  padding: 8px;
+  gap: 0;
+}
+
+.ntm-sidebar.is-collapsed .ntm-sidebar__group-toggle {
+  justify-content: center;
+  padding: 9px;
+}
+
 .ntm-sidebar__link:hover {
   background: var(--ntm-nav-hover-bg);
   color: var(--ntm-nav-text);

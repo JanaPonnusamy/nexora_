@@ -1,0 +1,988 @@
+// Legacy Order -- super-admin Order Process across every tenant.
+// OrderNMC is ONE central database that holds every tenant's branches
+// (OrderNMC.Stores.StoreName = the platform store_code), so this screen groups
+// its stores by platform tenant, lets the operator tick stores from any tenant
+// and runs /api/legacy-order/order-process for them as a queue. Jobs run on
+// the HO backend (in memory); the screen only starts them and polls their
+// progress, so it is kept mounted and re-attaches to running jobs from GET
+// /jobs when it loads.
+//
+// Ported from desktop/supplier-stock-client/src/LegacyOrderGeneration.jsx
+// (owner: "just wire this page here" over the generic db-health-only stub).
+// Behavior is unchanged; only the API layer and surrounding chrome are
+// adapted to this app's session-less apiGet/apiPost/apiPut client and
+// PageLayout shell.
+//
+// Warnings follow the owner's single-warning rule (order-process-single-
+// warning): a stale-order OR pending-assignment 409 parks that store as
+// "warning"; Continue & Process re-sends with confirmed_stale_order, which
+// acknowledges both gates server-side.
+//
+// Each store has one saved Compare mode (owner ruling 2026-11-05): Previous
+// pending (the original VB.NET compare), Previous today's orders, No compare,
+// or HO order (no compare). A finished order is pushed to the store's remote
+// OrderNMC, if any.
+//
+// Settings (OrderAutomationSettings) is the one place for the automation the
+// HO backend runs on its own: the evening (second) order -- every chosen store
+// one after another from a set time, each compared with that store's earlier
+// order from today -- and the per-store "Compare today's previous order" after
+// every Order Process. Both are saved in OrderNMC, so web and every PC share them.
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PageLayout } from '../../layouts/PageLayout.jsx';
+import { apiGet, apiPost, apiPut } from '../../api/client.js';
+import './legacyOrder.css';
+
+const POLL_MS = 1500;
+const LOST_AFTER_MS = 120000;
+const UNMAPPED = '__unmapped__';
+const ENGINE_LABEL = { LEGACY: 'Legacy', RULEBOOK: 'Rule book' };
+const BUSY = new Set(['queued', 'starting', 'running']);
+const JOBS_REFRESH_MS = 20000;
+// One Compare mode per store, saved in OrderNMC (owner ruling 2026-11-05).
+const COMPARE_MODES = [
+  ['PREVIOUS_PENDING', 'Previous pending'],
+  ['TODAY', "Previous today's orders"],
+  ['NONE', 'No compare'],
+  ['HO', 'HO order (no compare)'],
+];
+const COMPARE_LABEL = Object.fromEntries(COMPARE_MODES);
+const compares = (mode) => mode === 'TODAY' || mode === 'PREVIOUS_PENDING';
+
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+const codeKey = (value) => String(value || '').trim().toUpperCase();
+const asArray = (value) => (Array.isArray(value) ? value : []);
+
+function positiveInt(value) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function fmtStamp(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-GB', {
+    day: '2-digit', month: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true,
+  }).replace(/\b([ap])m\b/gi, (s) => s.toUpperCase());
+}
+
+function isToday(value) {
+  if (!value) return false;
+  const d = new Date(value);
+  return !Number.isNaN(d.getTime()) && d.toDateString() === new Date().toDateString();
+}
+
+function fmtNextRun(value) {
+  if (!value) return 'off';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return 'off';
+  const time = d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true })
+    .replace(/\b([ap])m\b/gi, (x) => x.toUpperCase());
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (d.toDateString() === new Date().toDateString()) return `today ${time}`;
+  if (d.toDateString() === tomorrow.toDateString()) return `tomorrow ${time}`;
+  return fmtStamp(value);
+}
+
+function scheduleRunning(schedule) {
+  return Boolean(schedule?.running || (schedule?.last_run && !schedule.last_run.finished_at));
+}
+
+// ----- Legacy Order generation API (super admin, every tenant) -----
+const legacyApi = {
+  stores: (activeOnly = true) => apiGet(`/api/legacy-order/stores?active_only=${activeOnly}`),
+  defaults: () => apiGet('/api/legacy-order/defaults'),
+  storeEngine: (storeName) => apiGet(`/api/legacy-order/engine/${encodeURIComponent(storeName)}`),
+  startOrderProcess: (payload) => apiPost('/api/legacy-order/order-process', payload, { timeoutMs: 120000 }),
+  setCompareMode: (storeName, mode) => apiPut(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/compare-mode`, { mode }),
+  eveningSchedule: () => apiGet('/api/legacy-order/schedule/evening'),
+  saveEveningSchedule: (payload) => apiPut('/api/legacy-order/schedule/evening', payload),
+  runEveningNow: () => apiPost('/api/legacy-order/schedule/evening/run', {}),
+  jobs: (limit = 50) => apiGet(`/api/legacy-order/jobs?limit=${limit}`),
+  job: (jobId) => apiGet(`/api/legacy-order/jobs/${encodeURIComponent(jobId)}`, { transientRetries: 0 }),
+  orderHeader: (storeName) => apiGet(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/header`),
+  listTenants: () => apiGet('/api/tenants'),
+  listAllStores: () => apiGet('/api/stores'),
+  // Push the tenant's warehouse stock into every other active store's
+  // SupplierStock in one click (same backend service/job kind as a per-store
+  // Stock update -- see backend/modules/legacy_order/service.start_stock_update_all).
+  stockUpdateAll: (sourceStoreName) => apiPost('/api/legacy-order/stock-update-all', { source_store_name: sourceStoreName || null }),
+  // The store's saved Min/Max/Recency override (null fields clear back to the
+  // global/warehouse default).
+  setOrderDefaults: (storeName, payload) => apiPut(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/order-defaults`, payload),
+};
+
+function LastRun({ schedule }) {
+  const run = schedule?.last_run;
+  if (!run) return <span className="lgo-muted">No evening run yet.</span>;
+  const label = { completed: '✓', failed: '✗', skipped: '–', running: '…', lost: '✗' };
+  return (
+    <span className="lgo-lastrun">
+      <span className="lgo-muted">
+        {scheduleRunning(schedule) ? 'Running since' : 'Last run'} {fmtStamp(run.started_at)}{run.trigger === 'manual' ? ' (run now)' : ''}:
+      </span>
+      {asArray(run.stores).map((e) => {
+        const tone = e.status === 'completed' ? 'lgo-ok' : e.status === 'running' ? 'lgo-run' : e.status === 'skipped' ? 'lgo-warn' : 'lgo-bad';
+        const compared = e.compare?.order_id ? ` · compared ${e.compare.affected_rows}` : '';
+        const title = e.error || (e.compare?.order_id ? `Compared with order ${e.compare.order_id}` : (e.compare ? 'No earlier order today - not compared' : ''));
+        return (
+          <span key={e.store_name} className={`lgo-tag lgo-run-chip ${tone}`} title={title}>
+            {label[e.status] || '?'} {e.store_name}{e.rows != null ? ` ${e.rows}` : ''}{compared}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// One settings dialog for everything the backend automates. Drafts locally;
+// Save writes the schedule + only the compare flags that changed.
+function OrderAutomationSettings({ groups, compareToday, onClose, onSaved }) {
+  const allNames = useMemo(() => groups.flatMap((g) => g.stores.map((st) => st.store_name)), [groups]);
+  const [schedule, setSchedule] = useState(null);
+  const [enabled, setEnabled] = useState(false);
+  const [runAt, setRunAt] = useState('18:25');
+  const [evening, setEvening] = useState(() => new Set());
+  const [compare, setCompare] = useState(() => ({ ...compareToday }));
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const dialogRef = useRef(null);
+
+  const applySchedule = useCallback((sch) => {
+    setSchedule(sch);
+    setEnabled(Boolean(sch.enabled));
+    setRunAt(sch.run_at || '18:25');
+    const wanted = sch.stores ? new Set(sch.stores.map(codeKey)) : null;
+    setEvening(new Set(allNames.filter((n) => !wanted || wanted.has(codeKey(n)))));
+  }, [allNames]);
+
+  useEffect(() => {
+    legacyApi.eveningSchedule().then(applySchedule).catch((err) => setError(err.message));
+  }, [applySchedule]);
+
+  // Live status while an evening run is going.
+  const running = scheduleRunning(schedule);
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(() => {
+      legacyApi.eveningSchedule().then((sch) => setSchedule(sch)).catch(() => {});
+    }, 5000);
+    return () => clearInterval(t);
+  }, [running]);
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const touch = (fn) => { setDirty(true); setNote(''); fn(); };
+  const toggleEvening = (names, on) => touch(() => setEvening((cur) => {
+    const next = new Set(cur);
+    names.forEach((n) => (on ? next.add(n) : next.delete(n)));
+    return next;
+  }));
+  const toggleCompare = (names, on) => touch(() => setCompare((cur) => {
+    const next = { ...cur };
+    names.forEach((n) => { next[n] = on; });
+    return next;
+  }));
+
+  const save = async () => {
+    setBusy('save');
+    setError('');
+    try {
+      const all = allNames.every((n) => evening.has(n));
+      const saved = await legacyApi.saveEveningSchedule({
+        enabled,
+        run_at: runAt,
+        // Every store ticked = null, so stores added later are included too.
+        stores: all ? null : allNames.filter((n) => evening.has(n)),
+      });
+      const changed = allNames.filter((n) => (compare[n] || 'NONE') !== (compareToday[n] || 'NONE'));
+      await Promise.all(changed.map((n) => legacyApi.setCompareMode(n, compare[n] || 'NONE')));
+      applySchedule(saved);
+      setDirty(false);
+      setNote('Saved.');
+      onSaved(Object.fromEntries(allNames.map((n) => [n, compare[n] || 'NONE'])), saved);
+    } catch (err) {
+      setError(err.message || 'Could not save the settings.');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const runNow = async () => {
+    const names = allNames.filter((n) => evening.has(n));
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Run the evening order now for ${names.length} store${names.length === 1 ? '' : 's'}?\n\n${names.join(', ')}\n\nStores run one after another, each compared with its earlier order from today. This counts as today's evening run.`)) return;
+    setBusy('run');
+    setError('');
+    try {
+      await legacyApi.runEveningNow();
+      setNote('Evening order started.');
+      setSchedule(await legacyApi.eveningSchedule());
+    } catch (err) {
+      setError(err.message || 'Could not start the evening order.');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const allEvening = allNames.length > 0 && allNames.every((n) => evening.has(n));
+
+  return (
+    <div className="lgo-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="lgo-modal" role="dialog" aria-modal="true" aria-labelledby="lgo-settings-title" tabIndex={-1} ref={dialogRef}>
+        <header className="lgo-modal-head">
+          <h3 id="lgo-settings-title">Order automation settings</h3>
+          <button type="button" className="lgo-modal-x" aria-label="Close settings" onClick={onClose}>×</button>
+        </header>
+
+        <section className="lgo-set-section">
+          <div className="lgo-set-row">
+            <label className="lgo-inline lgo-set-switch">
+              <input type="checkbox" checked={enabled} onChange={(e) => { const v = e.target.checked; touch(() => setEnabled(v)); }} />
+              Run the evening order automatically
+            </label>
+            <label className="lgo-inline">
+              Start at
+              <input type="time" className="lgo-time" value={runAt} disabled={!enabled} onChange={(e) => { const v = e.target.value; touch(() => setRunAt(v)); }} />
+            </label>
+            <span className="lgo-set-next">Next run: <strong>{schedule ? fmtNextRun(schedule.next_run) : '…'}</strong></span>
+          </div>
+          <p className="lgo-set-hint">
+            From the start time, each ticked store runs Order Process one after another, then is compared with that
+            store&apos;s earlier order from today. Order Process warnings are confirmed automatically. Saving after today&apos;s
+            start time begins tomorrow.
+          </p>
+          <div className="lgo-set-status"><LastRun schedule={schedule} /></div>
+        </section>
+
+        <div className="lgo-set-tablewrap">
+          <table className="lgo-table lgo-set-table">
+            <thead>
+              <tr>
+                <th className="lgo-left">Store</th>
+                <th>
+                  <label className="lgo-inline lgo-th-check">
+                    <input type="checkbox" aria-label="Evening order for every store" checked={allEvening} onChange={(e) => toggleEvening(allNames, e.target.checked)} />
+                    Evening order
+                  </label>
+                </th>
+                <th>
+                  <select aria-label="Compare mode for every store" value="" onChange={(e) => { if (e.target.value) toggleCompare(allNames, e.target.value); }}>
+                    <option value="">Compare mode (set all…)</option>
+                    {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => [
+                <tr key={`sg-${g.tid}`} className="lgo-group"><td colSpan={3}>{g.name}</td></tr>,
+                ...g.stores.map((st) => (
+                  <tr key={st.store_name}>
+                    <td className="lgo-left"><strong>{st.display_name || st.store_name}</strong></td>
+                    <td><input type="checkbox" aria-label={`Evening order ${st.store_name}`} checked={evening.has(st.store_name)} onChange={(e) => toggleEvening([st.store_name], e.target.checked)} /></td>
+                    <td>
+                      <select aria-label={`Compare mode ${st.store_name}`} value={compare[st.store_name] || 'NONE'} onChange={(e) => toggleCompare([st.store_name], e.target.value)}>
+                        {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                )),
+              ])}
+            </tbody>
+          </table>
+        </div>
+
+        <footer className="lgo-modal-foot">
+          <span className={error ? 'lgo-bad lgo-foot-msg' : 'lgo-ok lgo-foot-msg'}>{error || note}</span>
+          <button type="button" className="ntm-button" disabled={Boolean(busy) || dirty || running || !evening.size}
+            title={dirty ? 'Save first' : running ? 'Already running' : ''} onClick={runNow}>
+            {busy === 'run' ? 'Starting…' : 'Run evening order now'}
+          </button>
+          <button type="button" className="ntm-button" onClick={onClose}>Close</button>
+          <button type="button" className="ntm-button ntm-button--primary" disabled={Boolean(busy) || !dirty} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function StatusCell({ entry }) {
+  const job = entry?.job;
+  switch (entry?.state) {
+    case 'queued':
+      return <span className="lgo-status lgo-muted">Queued</span>;
+    case 'starting':
+      return <span className="lgo-status lgo-run">Starting…</span>;
+    case 'running':
+      return (
+        <span className="lgo-status lgo-run">
+          <progress max={job?.total_steps || 1} value={job?.step || 0} />
+          <span className="lgo-msg" title={job?.message || ''}>
+            {job && job.kind !== 'order' ? `${job.kind}: ` : ''}{job?.message || 'Running…'}
+          </span>
+        </span>
+      );
+    case 'completed':
+      return (
+        <span className="lgo-status lgo-ok" title={job?.warning || ''}>
+          ✓ {job?.kind === 'order' && job?.result?.rows != null ? `${job.result.rows} rows` : `${job?.kind || 'job'} done`}
+          <span className="lgo-muted"> · {fmtStamp(job?.finished_at)}</span>
+          {job?.warning && <span className="lgo-warn-dot" aria-label="Completed with a warning"> ⚠</span>}
+        </span>
+      );
+    case 'warning':
+      return <span className="lgo-status lgo-warn" title={entry.message}>⚠ {entry.message}</span>;
+    case 'failed':
+    case 'error': {
+      const text = entry.message || job?.error || 'Failed';
+      return <span className="lgo-status lgo-bad" title={text}>✗ {text}</span>;
+    }
+    default:
+      return <span className="lgo-muted">—</span>;
+  }
+}
+
+export function LegacyOrderPage() {
+  const [tenants, setTenants] = useState([]);
+  const [tenantOf, setTenantOf] = useState({});
+  const [stores, setStores] = useState([]);
+  const [defaults, setDefaults] = useState(null);
+  const [engines, setEngines] = useState({});
+  const [headers, setHeaders] = useState({});
+  const [cfg, setCfg] = useState({});
+  const [run, setRun] = useState({});
+  const [selected, setSelected] = useState(() => new Set());
+  const [tenantFilter, setTenantFilter] = useState('all');
+  const [parallel, setParallel] = useState(1);
+  const [ackWarnings, setAckWarnings] = useState(false);
+  const [logStore, setLogStore] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [queued, setQueued] = useState(0);
+  const [compareToday, setCompareToday] = useState({}); // store -> Compare mode
+  const [savedDefaults, setSavedDefaults] = useState({}); // store -> {min_days, max_days, recency_days}
+  const [schedule, setSchedule] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pushingStock, setPushingStock] = useState(false);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+
+  const flashToast = useCallback((text, kind = 'ok') => {
+    setToast({ text, kind });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), kind === 'ok' ? 2600 : 4200);
+  }, []);
+
+  const alive = useRef(true);
+  const cfgRef = useRef(cfg);
+  const compareRef = useRef({});
+  compareRef.current = compareToday;
+  cfgRef.current = cfg;
+  const runRef = useRef(run);
+  runRef.current = run;
+  const parallelRef = useRef(parallel);
+  parallelRef.current = parallel;
+  const queueRef = useRef([]);
+  const activeRef = useRef(0);
+  const watching = useRef(new Set());
+
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; queueRef.current = []; };
+  }, []);
+
+  const patchRun = useCallback((name, patch) => {
+    setRun((cur) => ({ ...cur, [name]: { ...cur[name], ...patch } }));
+  }, []);
+
+  const loadHeader = useCallback((name) => {
+    legacyApi.orderHeader(name)
+      .then((h) => { if (alive.current) setHeaders((cur) => ({ ...cur, [name]: h })); })
+      .catch(() => {});
+  }, []);
+
+  // Polls one job until it leaves 'running'. A 404 means the backend restarted
+  // and the in-memory job is gone; other errors keep polling for a while.
+  const watch = useCallback(async (jobId, name) => {
+    if (watching.current.has(jobId)) return null;
+    watching.current.add(jobId);
+    let lastOk = Date.now();
+    try {
+      while (alive.current) {
+        try {
+          const job = await legacyApi.job(jobId);
+          lastOk = Date.now();
+          if (!alive.current) return null;
+          patchRun(name, { state: job.status, job, message: '' });
+          if (job.status !== 'running') {
+            loadHeader(name);
+            return job;
+          }
+        } catch (err) {
+          if (/job not found/i.test(err.message)) {
+            patchRun(name, { state: 'failed', message: 'The server restarted while this ran, so the task was lost. Run it again.' });
+            return null;
+          }
+          if (Date.now() - lastOk > LOST_AFTER_MS) {
+            patchRun(name, { state: 'failed', message: `Lost contact with the server: ${err.message}` });
+            return null;
+          }
+        }
+        await sleep(POLL_MS);
+      }
+      return null;
+    } finally {
+      watching.current.delete(jobId);
+    }
+  }, [patchRun, loadHeader]);
+
+  // /jobs is newest first: the first job per store is its latest. Running ones
+  // (started here earlier, by the evening order, from the web console or
+  // another PC) are attached so their progress shows.
+  const attachJobs = useCallback((jobs) => {
+    const latest = {};
+    asArray(jobs).forEach((job) => { if (!latest[job.store_name]) latest[job.store_name] = job; });
+    setRun((cur) => {
+      const next = { ...cur };
+      Object.entries(latest).forEach(([name, job]) => {
+        const entry = next[name];
+        if (BUSY.has(entry?.state) || entry?.job?.job_id === job.job_id) return;
+        // A parked warning / start error stays until a NEW job runs for the store.
+        if ((entry?.state === 'warning' || entry?.state === 'error') && job.status !== 'running') return;
+        next[name] = { state: job.status, job, message: '' };
+      });
+      return next;
+    });
+    Object.entries(latest).forEach(([name, job]) => {
+      if (job.status === 'running') watch(job.job_id, name);
+    });
+  }, [watch]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [tenantRows, platformStores, legacyRows, dflt, jobs] = await Promise.all([
+        legacyApi.listTenants().catch(() => []),
+        legacyApi.listAllStores().catch(() => []),
+        legacyApi.stores(true),
+        legacyApi.defaults().catch(() => null),
+        legacyApi.jobs().catch(() => []),
+      ]);
+      if (!alive.current) return;
+      const storeList = asArray(legacyRows);
+      setTenants(asArray(tenantRows));
+      setTenantOf(Object.fromEntries(asArray(platformStores).map((p) => [codeKey(p.store_code), String(p.tenant_id || '').toUpperCase()])));
+      setStores(storeList);
+      setDefaults(dflt);
+      const names = storeList.map((st) => st.store_name);
+      names.forEach(loadHeader);
+      Promise.all(names.map((n) => legacyApi.storeEngine(n)
+        .then((r) => [n, r.engine, r.compare_mode || (r.compare_today_previous ? 'TODAY' : 'NONE'), r.order_defaults])
+        .catch(() => [n, 'LEGACY', 'NONE', null])))
+        .then((rows) => {
+          if (!alive.current) return;
+          setEngines(Object.fromEntries(rows.map(([n, e]) => [n, e])));
+          setCompareToday(Object.fromEntries(rows.map(([n, , c]) => [n, c])));
+          setSavedDefaults(Object.fromEntries(rows.map(([n, , , d]) => [n, d || { min_days: null, max_days: null, recency_days: null }])));
+        });
+      legacyApi.eveningSchedule().then((sch) => { if (alive.current) setSchedule(sch); }).catch(() => {});
+      attachJobs(jobs);
+    } catch (err) {
+      if (alive.current) setError(err.message || 'Could not load the OrderNMC stores.');
+    } finally {
+      if (alive.current) setLoading(false);
+    }
+  }, [loadHeader, attachJobs]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Jobs started elsewhere (evening order, web console, another PC) show up
+  // without pressing Refresh.
+  useEffect(() => {
+    const t = setInterval(() => {
+      legacyApi.jobs().then(attachJobs).catch(() => {});
+      legacyApi.eveningSchedule().then((sch) => { if (alive.current) setSchedule(sch); }).catch(() => {});
+    }, JOBS_REFRESH_MS);
+    return () => clearInterval(t);
+  }, [attachJobs]);
+
+  const startOne = useCallback(async (name, acknowledge) => {
+    const c = cfgRef.current[name] || {};
+    patchRun(name, { state: 'starting', message: '', job: null });
+    try {
+      const { job_id: jobId } = await legacyApi.startOrderProcess({
+        store_name: name,
+        // null = the store's saved engine / the server's store-or-warehouse
+        // default (sending 13/18 to a warehouse would bypass its 32/35 profile).
+        engine: c.engine || null,
+        min_days: positiveInt(c.minDays),
+        max_days: positiveInt(c.maxDays),
+        recency_days: positiveInt(c.recencyDays),
+        mode: c.mode || 'local',
+        confirmed_stale_order: Boolean(acknowledge),
+        compare_mode: compareRef.current[name] || null,
+      });
+      patchRun(name, { state: 'running' });
+      const job = await watch(jobId, name);
+      return job;
+    } catch (err) {
+      const message = err.message || 'Could not start Order Process.';
+      const warning = /confirm order & process/i.test(message) && !/already running/i.test(message);
+      patchRun(name, { state: warning ? 'warning' : 'error', message });
+      return null;
+    }
+  }, [patchRun, watch]);
+
+  const pump = useCallback(() => {
+    while (alive.current && activeRef.current < parallelRef.current && queueRef.current.length) {
+      const { name, acknowledge } = queueRef.current.shift();
+      activeRef.current += 1;
+      startOne(name, acknowledge).finally(() => {
+        activeRef.current -= 1;
+        if (alive.current) pump();
+      });
+    }
+    setQueued(queueRef.current.length);
+  }, [startOne]);
+
+  const enqueue = useCallback((names, acknowledge) => {
+    const fresh = names.filter((n) => !BUSY.has(runRef.current[n]?.state) && !queueRef.current.some((q) => q.name === n));
+    if (!fresh.length) return;
+    queueRef.current.push(...fresh.map((name) => ({ name, acknowledge })));
+    fresh.forEach((n) => patchRun(n, { state: 'queued', message: '' }));
+    pump();
+  }, [patchRun, pump]);
+
+  // A raised limit takes effect immediately; a lowered one as jobs finish.
+  useEffect(() => { pump(); }, [parallel, pump]);
+
+  const stopQueue = () => {
+    queueRef.current.forEach((q) => patchRun(q.name, { state: '', message: '' }));
+    queueRef.current = [];
+    setQueued(0);
+  };
+
+  const groups = useMemo(() => {
+    const byTenant = new Map();
+    stores.forEach((st) => {
+      // OrderNMC.Stores.tenant_id first: a store code can exist under two tenants (.32 SMA).
+      const tid = (st.tenant_id && String(st.tenant_id).toUpperCase()) || tenantOf[codeKey(st.store_name)] || UNMAPPED;
+      if (!byTenant.has(tid)) byTenant.set(tid, []);
+      byTenant.get(tid).push(st);
+    });
+    const nameOf = (tid) => (tid === UNMAPPED
+      ? 'Not in platform'
+      : String(tenants.find((t) => String(t.tenant_id).toUpperCase() === tid)?.tenant_name || 'Unknown tenant').trim());
+    return [...byTenant.entries()]
+      .map(([tid, list]) => ({ tid, name: nameOf(tid), stores: list }))
+      .sort((a, b) => (a.tid === UNMAPPED) - (b.tid === UNMAPPED) || a.name.localeCompare(b.name));
+  }, [stores, tenantOf, tenants]);
+
+  const visibleGroups = tenantFilter === 'all' ? groups : groups.filter((g) => g.tid === tenantFilter);
+  const visibleNames = visibleGroups.flatMap((g) => g.stores.map((st) => st.store_name));
+  const toRun = visibleNames.filter((n) => selected.has(n) && !BUSY.has(run[n]?.state));
+  const warned = visibleNames.filter((n) => run[n]?.state === 'warning');
+  const counts = useMemo(() => {
+    const c = { running: 0, queued: 0, completed: 0, warning: 0, failed: 0 };
+    Object.values(run).forEach((r) => {
+      if (r?.state === 'running' || r?.state === 'starting') c.running += 1;
+      else if (r?.state === 'error' || r?.state === 'failed') c.failed += 1;
+      else if (r?.state in c) c[r.state] += 1;
+    });
+    return c;
+  }, [run]);
+
+  const warehouses = new Set(asArray(defaults?.warehouse_stores).map(codeKey));
+  const isWarehouse = (name) => warehouses.has(codeKey(name));
+  // The store's saved default (set via "Save as default") wins over the
+  // global/warehouse one -- these are the values Order Process actually
+  // falls back to when the per-run field is left untouched, so the inputs
+  // are pre-filled with them, never blank.
+  const minDefault = (name) => savedDefaults[name]?.min_days ?? (defaults?.min_days ?? 13);
+  const maxDefault = (name) => savedDefaults[name]?.max_days ?? (defaults?.max_days ?? 18);
+  const recencyDefault = (name) => savedDefaults[name]?.recency_days ?? (isWarehouse(name)
+    ? (defaults?.warehouse_recency_days ?? 90)
+    : (defaults?.recency_days ?? 15));
+  const hasRunOverride = (name) => {
+    const c = cfg[name];
+    if (!c) return false;
+    if (c.engine) return true;
+    const checks = [['minDays', minDefault(name)], ['maxDays', maxDefault(name)], ['recencyDays', recencyDefault(name)]];
+    return checks.some(([field, effective]) => c[field] != null && c[field] !== '' && Number(c[field]) !== Number(effective));
+  };
+  const hasSavedDefault = (name) => {
+    const d = savedDefaults[name];
+    return Boolean(d && (d.min_days != null || d.max_days != null || d.recency_days != null));
+  };
+
+  const toggle = (names, on) => setSelected((cur) => {
+    const next = new Set(cur);
+    names.forEach((n) => (on ? next.add(n) : next.delete(n)));
+    return next;
+  });
+  const patchCfg = (name, patch) => setCfg((cur) => ({ ...cur, [name]: { ...cur[name], ...patch } }));
+  // Discards this run's unsaved Engine/Min/Max/Recency edits for one store
+  // (the saved per-store/system default is untouched).
+  const resetRunCfg = (name) => setCfg((cur) => {
+    const next = { ...cur };
+    delete next[name];
+    return next;
+  });
+
+  // Persists this row's current Min/Max/Recency as the store's saved default
+  // (dbo.LegacyOrderEngine), then clears the per-run override now that it IS
+  // the default.
+  const saveDefaults = async (name) => {
+    const c = cfg[name] || {};
+    const payload = {
+      min_days: c.minDays !== undefined && c.minDays !== '' ? Number(c.minDays) : minDefault(name),
+      max_days: c.maxDays !== undefined && c.maxDays !== '' ? Number(c.maxDays) : maxDefault(name),
+      recency_days: c.recencyDays !== undefined && c.recencyDays !== '' ? Number(c.recencyDays) : recencyDefault(name),
+    };
+    try {
+      await legacyApi.setOrderDefaults(name, payload);
+      setSavedDefaults((cur) => ({ ...cur, [name]: payload }));
+      setCfg((cur) => {
+        const next = { ...cur };
+        if (next[name]) {
+          const { minDays, maxDays, recencyDays, ...rest } = next[name];
+          if (Object.keys(rest).length) next[name] = rest; else delete next[name];
+        }
+        return next;
+      });
+      flashToast(`✓ Default saved for ${name}`);
+    } catch (err) {
+      flashToast(err.message || 'Could not save the default.', 'err');
+    }
+  };
+
+  // Clears the store's SAVED Min/Max/Recency override back to the system/
+  // warehouse default (dbo.LegacyOrderEngine row), after confirmation since
+  // this overwrites a permanently stored configuration, not just a draft.
+  const resetStoreDefaults = async (name) => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Reset ${name}'s saved Min/Max/Recency back to the system default?\n\nThis clears the store's own configured values -- it does not affect the saved engine or compare mode.`)) return;
+    try {
+      await legacyApi.setOrderDefaults(name, { min_days: null, max_days: null, recency_days: null });
+      setSavedDefaults((cur) => ({ ...cur, [name]: { min_days: null, max_days: null, recency_days: null } }));
+      resetRunCfg(name);
+      flashToast(`✓ ${name} reset to system defaults`);
+    } catch (err) {
+      flashToast(err.message || 'Could not reset the default.', 'err');
+    }
+  };
+
+  // Header-level Reset Defaults: clears every unsaved per-run edit, and (on
+  // confirmation) every store's saved Min/Max/Recency override across the
+  // CURRENTLY VISIBLE tenant filter -- engine and compare mode are left
+  // alone, matching the per-row reset.
+  const resetAllDefaults = async () => {
+    const names = visibleNames;
+    const overridden = names.filter(hasSavedDefault);
+    setCfg((cur) => {
+      const next = { ...cur };
+      names.forEach((n) => delete next[n]);
+      return next;
+    });
+    if (!overridden.length) {
+      flashToast('Unsaved edits cleared. No saved defaults to reset here.');
+      return;
+    }
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Reset the saved Min/Max/Recency default for ${overridden.length} store${overridden.length === 1 ? '' : 's'} back to the system default?\n\n${overridden.join(', ')}\n\nThis overwrites permanently saved store configuration.`)) {
+      return;
+    }
+    try {
+      await Promise.all(overridden.map((n) => legacyApi.setOrderDefaults(n, { min_days: null, max_days: null, recency_days: null })));
+      setSavedDefaults((cur) => {
+        const next = { ...cur };
+        overridden.forEach((n) => { next[n] = { min_days: null, max_days: null, recency_days: null }; });
+        return next;
+      });
+      flashToast(`✓ Reset ${overridden.length} store${overridden.length === 1 ? '' : 's'} to system defaults`);
+    } catch (err) {
+      flashToast(err.message || 'Could not reset every store.', 'err');
+    }
+  };
+
+  const changeCompareMode = (name, mode) => {
+    setCompareToday((cur) => ({ ...cur, [name]: mode }));
+    legacyApi.setCompareMode(name, mode)
+      .catch((err) => setError(err.message || 'Could not save the compare mode.'));
+  };
+
+  // Push the tenant's warehouse stock into every other active store in one
+  // click -- reuses the SAME backend service as the legacy per-store Stock
+  // update (service.start_stock_update_all); started jobs attach to the
+  // existing job-watch/status-column machinery, so progress shows per row
+  // exactly like a Generate job.
+  const pushStockAll = async () => {
+    if (pushingStock) return;
+    // eslint-disable-next-line no-alert
+    if (!window.confirm("Push this tenant's warehouse stock into every other active store's SupplierStock now?\n\nEach store runs as its own background job (same as Stock update), skipping any store with a job already running.")) return;
+    setPushingStock(true);
+    setError('');
+    try {
+      const result = await legacyApi.stockUpdateAll(null);
+      result.started.forEach((s) => patchRun(s.store_name, { state: 'running', message: '' }));
+      result.started.forEach((s) => watch(s.job_id, s.store_name));
+      const parts = [`Started for ${result.started.length} store${result.started.length === 1 ? '' : 's'} from ${result.source_store}`];
+      if (result.skipped.length) parts.push(`skipped ${result.skipped.length} (${result.skipped.map((s) => s.store_name).join(', ')})`);
+      flashToast(`✓ ${parts.join(' · ')}`, result.skipped.length ? 'warn' : 'ok');
+    } catch (err) {
+      flashToast(err.message || 'Could not push warehouse stock to all stores.', 'err');
+    } finally {
+      setPushingStock(false);
+    }
+  };
+
+  const generate = (names) => {
+    if (!names.length) return;
+    const list = names.map((n) => `${n}  (${COMPARE_LABEL[compareToday[n] || 'NONE']})`).join('\n');
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Generate a new order for ${names.length} store${names.length > 1 ? 's' : ''}?\n\n${list}\n\nEach store runs Order Process (sync + order) on the HO backend.${ackWarnings ? '\nWarnings (stale order / pending assignment) are acknowledged for this batch.' : ''}`)) return;
+    setError('');
+    enqueue(names, ackWarnings);
+  };
+
+  const logEntry = logStore ? run[logStore] : null;
+  const logLines = asArray(logEntry?.job?.log);
+
+  return (
+    <PageLayout
+      title="Legacy Order"
+      actions={
+        <div className="lgo-head-tools">
+          <button type="button" className="ntm-button lgo-push-btn" onClick={pushStockAll} disabled={pushingStock || !stores.length}
+            title="Push this tenant's warehouse stock into every other active store's SupplierStock">
+            ☁ <span className="lgo-push-label">{pushingStock ? 'Pushing…' : 'Push Warehouse Stock to All Stores'}</span>
+          </button>
+          <button type="button" className="ntm-button" onClick={resetAllDefaults} disabled={!visibleNames.length}
+            title="Clear unsaved edits, and (with confirmation) reset every visible store's saved Min/Max/Recency to the system default">
+            ↺ Reset Defaults
+          </button>
+          <span className={`lgo-count${schedule?.enabled ? ' lgo-ok' : ''}`} title="Evening (second) order - change in Settings">
+            Evening order: {scheduleRunning(schedule) ? 'running' : schedule ? fmtNextRun(schedule.next_run) : '…'}
+          </span>
+          <button type="button" className="ntm-button" onClick={() => setSettingsOpen(true)} disabled={!stores.length}>⚙ Settings</button>
+        </div>
+      }
+      dense
+    >
+      <div className="lgo-counts" aria-live="polite">
+        <span className="lgo-count lgo-run">Running {counts.running}</span>
+        <span className="lgo-count">Queued {queued}</span>
+        <span className="lgo-count lgo-ok">Done {counts.completed}</span>
+        <span className="lgo-count lgo-warn">Warnings {counts.warning}</span>
+        <span className="lgo-count lgo-bad">Failed {counts.failed}</span>
+      </div>
+
+      <div className="lgo-bar">
+        <div className="lgo-chips" role="tablist" aria-label="Tenant">
+          <button type="button" role="tab" aria-selected={tenantFilter === 'all'} className={`lgo-chip${tenantFilter === 'all' ? ' active' : ''}`} onClick={() => setTenantFilter('all')}>
+            All tenants<span className="lgo-chip-count">{stores.length}</span>
+          </button>
+          {groups.map((g) => (
+            <button key={g.tid} type="button" role="tab" aria-selected={tenantFilter === g.tid} className={`lgo-chip${tenantFilter === g.tid ? ' active' : ''}`} onClick={() => setTenantFilter(g.tid)}>
+              {g.name}<span className="lgo-chip-count">{g.stores.length}</span>
+            </button>
+          ))}
+        </div>
+        <div className="lgo-bar-actions">
+          <label className="lgo-inline">
+            Run
+            <select value={parallel} onChange={(e) => setParallel(Number(e.target.value))}>
+              <option value={1}>1 at a time</option>
+              <option value={2}>2 at a time</option>
+              <option value={3}>3 at a time</option>
+            </select>
+          </label>
+          <label className="lgo-inline lgo-ack" title="Send the batch with the stale-order / pending-assignment warning already confirmed">
+            <input type="checkbox" checked={ackWarnings} onChange={(e) => setAckWarnings(e.target.checked)} />
+            Confirm warnings
+          </label>
+          {queued > 0 && <button type="button" className="ntm-button" onClick={stopQueue}>Stop queue ({queued})</button>}
+          {warned.length > 0 && (
+            <button type="button" className="ntm-button" onClick={() => enqueue(warned, true)}>Continue warned ({warned.length})</button>
+          )}
+          <button type="button" className="ntm-button" onClick={load} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</button>
+          <button type="button" className="ntm-button ntm-button--primary" disabled={!toRun.length} onClick={() => generate(toRun)}>
+            Generate selected ({toRun.length})
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="lgo-error">{error}</div>}
+
+      <div className="lgo-tablewrap">
+        <table className="lgo-table">
+          <thead>
+            <tr>
+              <th className="lgo-check-col" aria-label="Select" />
+              <th className="lgo-left">Store</th>
+              <th className="lgo-left">Type</th>
+              <th className="lgo-left">Engine</th>
+              <th className="lgo-left" title="Where Order Process reads this run's data from. Nexora live relays NEXORA_PLATFORM.sync.* for this store before reading, same as an agent-synced store, but as a one-off choice.">Source</th>
+              <th title="Min days of cover (blank = store/warehouse default)">Min</th>
+              <th title="Max days of cover (blank = store/warehouse default)">Max</th>
+              <th title="Only products sold in the last N days are ordered">Recency</th>
+              <th className="lgo-left">Current order</th>
+              <th title="How Order Process compares the new order. Saved for the store.">Compare mode</th>
+              <th className="lgo-left lgo-status-col">Status</th>
+              <th aria-label="Action" />
+            </tr>
+          </thead>
+          <tbody>
+            {visibleGroups.map((g) => {
+              const names = g.stores.map((st) => st.store_name);
+              const idle = names.filter((n) => !BUSY.has(run[n]?.state));
+              const allOn = idle.length > 0 && idle.every((n) => selected.has(n));
+              return [
+                <tr key={`g-${g.tid}`} className="lgo-group">
+                  <td className="lgo-check-col">
+                    <input type="checkbox" aria-label={`Select every store in ${g.name}`} checked={allOn} disabled={!idle.length} onChange={(e) => toggle(idle, e.target.checked)} />
+                  </td>
+                  <td colSpan={10} className="lgo-left">
+                    {g.name} <span className="lgo-muted">· {g.stores.length} store{g.stores.length > 1 ? 's' : ''}</span>
+                  </td>
+                </tr>,
+                ...g.stores.map((st) => {
+                  const name = st.store_name;
+                  const entry = run[name];
+                  const busy = BUSY.has(entry?.state);
+                  const c = cfg[name] || {};
+                  const head = headers[name];
+                  const agent = !st.server_name && !st.database;
+                  const warehouse = isWarehouse(name);
+                  return (
+                    <tr key={name} className={`lgo-row${logStore === name ? ' lgo-selected' : ''}`} onClick={() => setLogStore(name)}>
+                      <td className="lgo-check-col" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" aria-label={`Select ${name}`} checked={selected.has(name)} disabled={busy} onChange={(e) => toggle([name], e.target.checked)} />
+                      </td>
+                      <td className="lgo-left lgo-store">
+                        <strong>{name}</strong>
+                        {compares(compareToday[name]) && <span className="lgo-cmp" title={COMPARE_LABEL[compareToday[name]]}>⇄</span>}
+                      </td>
+                      <td className="lgo-left">
+                        {warehouse ? <span className="lgo-tag lgo-tag-wh">Warehouse</span> : agent ? <span className="lgo-tag lgo-tag-agent">Agent</span> : <span className="lgo-tag">LAN</span>}
+                      </td>
+                      <td className="lgo-left" onClick={(e) => e.stopPropagation()}>
+                        <select aria-label={`${name} engine`} value={c.engine || ''} disabled={busy} onChange={(e) => patchCfg(name, { engine: e.target.value })}>
+                          <option value="">{`Saved · ${ENGINE_LABEL[engines[name]] || '…'}`}</option>
+                          <option value="LEGACY">Legacy</option>
+                          <option value="RULEBOOK">Rule book</option>
+                        </select>
+                      </td>
+                      <td className="lgo-left" onClick={(e) => e.stopPropagation()}>
+                        <select aria-label={`${name} order source`} value={c.mode || 'local'} disabled={busy} title={warehouse ? "Remote live isn't available for a warehouse: order_warehouse.sql reads a StoreName column only the central copy has, so there is no branch-schema equivalent." : ''} onChange={(e) => patchCfg(name, { mode: e.target.value })}>
+                          <option value="local">Local copy</option>
+                          {!warehouse && <option value="remote">Remote live</option>}
+                          <option value="nexora">Nexora live</option>
+                        </select>
+                      </td>
+                      {['minDays', 'maxDays', 'recencyDays'].map((field) => {
+                        const effective = field === 'minDays' ? minDefault(name) : field === 'maxDays' ? maxDefault(name) : recencyDefault(name);
+                        const overridden = c[field] != null && c[field] !== '' && Number(c[field]) !== Number(effective);
+                        return (
+                          <td key={field} onClick={(e) => e.stopPropagation()}>
+                            <input
+                              className={`lgo-num${overridden ? ' lgo-num-override' : ''}`}
+                              inputMode="numeric"
+                              aria-label={`${name} ${field}`}
+                              value={c[field] ?? String(effective)}
+                              disabled={busy}
+                              title={overridden ? `This run only. Saved default: ${effective}` : ''}
+                              onChange={(e) => patchCfg(name, { [field]: e.target.value.replace(/\D/g, '') })}
+                            />
+                          </td>
+                        );
+                      })}
+                      <td className="lgo-left">
+                        {head?.order_id != null ? (
+                          <span>
+                            #{head.order_no ?? head.order_id}
+                            <span className="lgo-muted"> · {fmtStamp(head.order_datetime)}</span>
+                            {isToday(head.order_datetime) && <span className="lgo-tag lgo-tag-today">today</span>}
+                          </span>
+                        ) : <span className="lgo-muted">—</span>}
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <select aria-label={`${name} compare mode`} value={compareToday[name] || 'NONE'} disabled={busy}
+                          onChange={(e) => changeCompareMode(name, e.target.value)}>
+                          {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                      </td>
+                      <td className="lgo-left lgo-status-col"><StatusCell entry={entry} /></td>
+                      <td className="lgo-action-col" onClick={(e) => e.stopPropagation()}>
+                        <div className="lgo-action-group">
+                          {entry?.state === 'warning' ? (
+                            <button type="button" className="ntm-button lgo-btn" onClick={() => enqueue([name], true)}>Continue &amp; Process</button>
+                          ) : (
+                            <button type="button" className="ntm-button lgo-btn" disabled={busy} onClick={() => generate([name])}>Generate</button>
+                          )}
+                          {(hasRunOverride(name) || hasSavedDefault(name)) && (
+                            <div className="lgo-reset-row">
+                              {hasRunOverride(name) && (
+                                <button type="button" className="lgo-reset-btn" title="Discard this run's unsaved Engine/Min/Max/Recency edit" disabled={busy} onClick={() => resetRunCfg(name)}>↺ Reset</button>
+                              )}
+                              {hasRunOverride(name) && (
+                                <button type="button" className="lgo-reset-btn lgo-save-default-btn" title="Save this row's Min/Max/Recency as the store's default" disabled={busy} onClick={() => saveDefaults(name)}>⤓ Save</button>
+                              )}
+                              {!hasRunOverride(name) && hasSavedDefault(name) && (
+                                <button type="button" className="lgo-reset-btn" title="Reset this store's saved Min/Max/Recency back to the system default" disabled={busy} onClick={() => resetStoreDefaults(name)}>↺ Reset default</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }),
+              ];
+            })}
+            {!loading && !visibleGroups.length && (
+              <tr><td colSpan={11} className="lgo-muted">No active OrderNMC stores.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="lgo-log">
+        <div className="lgo-log-head">
+          {logStore ? <>Task log · <strong>{logStore}</strong>{logEntry?.job?.kind ? <span className="lgo-muted"> · {logEntry.job.kind}</span> : null}</> : 'Task log · click a store'}
+        </div>
+        <div className="lgo-log-body">
+          {logLines.length
+            ? logLines.slice(-60).map((line, i) => (
+              <div key={i} className="lgo-log-line"><span className="lgo-muted">{fmtStamp(line.at)}</span> {line.message}</div>
+            ))
+            : <div className="lgo-muted">{logStore ? (logEntry?.message || 'No task run yet for this store.') : ''}</div>}
+          {logEntry?.job?.error && <div className="lgo-log-line lgo-bad">{logEntry.job.error}</div>}
+          {logEntry?.job?.warning && <div className="lgo-log-line lgo-warn">{logEntry.job.warning}</div>}
+        </div>
+      </div>
+
+      {settingsOpen && (
+        <OrderAutomationSettings
+          groups={groups}
+          compareToday={compareToday}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={(flags, sch) => { setCompareToday(flags); setSchedule(sch); }}
+        />
+      )}
+
+      {toast && <div className={`lgo-toast lgo-toast-${toast.kind}`} role="status">{toast.text}</div>}
+    </PageLayout>
+  );
+}
