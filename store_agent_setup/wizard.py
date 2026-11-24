@@ -32,7 +32,8 @@ class SetupWizard(tk.Tk):
         self.extra_routes = tk.StringVar(value="")
         self.username = tk.StringVar(value="")
         self.password = tk.StringVar(value="")
-        self.install_path = tk.StringVar(value=default_install_path())
+        _default_path, self._install_path_is_c_fallback = default_install_path()
+        self.install_path = tk.StringVar(value=_default_path)
         self.log_level = tk.StringVar(value="INFO")
         self.deployment = None
         self._signed_in = False
@@ -224,6 +225,17 @@ class SetupWizard(tk.Tk):
         ttk.Entry(row, textvariable=self.install_path, width=46).pack(
             side="left", padx=8)
         ttk.Button(row, text="Browse", command=self._browse).pack(side="left")
+
+        if self._install_path_is_c_fallback:
+            tk.Label(
+                self.body,
+                text="No other fixed drive was found on this machine, so C:\\ is "
+                     "suggested as a last resort. A store PC's C: drive is the one "
+                     "most likely to fill up over time -- pick a different drive "
+                     "here if one is available.",
+                bg="white", fg="#b42318", font=("Segoe UI", 9), wraplength=560,
+                justify="left",
+            ).pack(fill="x", pady=(4, 0))
 
         lvl = tk.Frame(self.body, bg="white")
         lvl.pack(fill="x", pady=6)

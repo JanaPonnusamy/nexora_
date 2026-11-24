@@ -46,10 +46,10 @@ def _enroll_error(ex):
 def _detect_install_path():
     if getattr(sys, "frozen", False):
         return str(Path(sys.executable).resolve().parent)
-    for candidate in (default_install_path(),):
-        if (Path(candidate) / "agent_config.json").is_file():
-            return candidate
-    return default_install_path()
+    default_path, _is_c_fallback = default_install_path()
+    if (Path(default_path) / "agent_config.json").is_file():
+        return default_path
+    return default_path
 
 
 class SettingsApp(tk.Tk):
