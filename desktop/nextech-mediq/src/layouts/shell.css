@@ -527,6 +527,7 @@
 
 .ntm-search-trigger span {
   flex: 1;
+  min-width: 0;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -534,9 +535,11 @@
 }
 
 .ntm-search-trigger kbd {
+  flex: none;
   margin-left: auto;
   font-size: 10.5px;
   font-family: inherit;
+  white-space: nowrap;
   border: 1px solid var(--ntm-border);
   border-radius: 4px;
   padding: 1px 5px;
