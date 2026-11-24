@@ -1,8 +1,8 @@
 {
   "name": "nexora-supplier-stock-client",
-  "version": "0.1.71",
+  "version": "0.1.74",
   "private": true,
-  "description": "NEXORA MEDIQ — Intelligent Pharmaceutical Workspace desktop client",
+  "description": "NexTech Supplier Stock — Intelligent Pharmaceutical Workspace desktop client",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -10,11 +10,13 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "electron .",
-    "dist": "vite build && electron-builder --win --config.artifactName=\"NEXORA-MEDIQ-Setup-${version}.${ext}\""
+    "dist": "vite build && electron-builder --win --config.artifactName=\"NexTech-Supplier-Stock-Setup-${version}.${ext}\""
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-virtual": "^3.14.8",
+    "ag-grid-community": "32.3.9",
+    "ag-grid-react": "32.3.9",
     "electron-updater": "^6.1.9",
     "fflate": "^0.8.3",
     "react": "latest",
@@ -23,7 +25,7 @@
   },
   "build": {
     "appId": "com.nexora.desktop.stock",
-    "productName": "NEXORA MEDIQ",
+    "productName": "NexTech Supplier Stock",
     "directories": {
       "output": "release"
     },
@@ -52,6 +54,7 @@
       "target": [
         "nsis"
       ],
+      "icon": "src/assets/nextech-mediq.ico",
       "signAndEditExecutable": false
     },
     "nsis": {

@@ -620,7 +620,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
         min_days: positiveInt(c.minDays),
         max_days: positiveInt(c.maxDays),
         recency_days: positiveInt(c.recencyDays),
-        mode: 'local',
+        mode: c.mode || 'local',
         confirmed_stale_order: Boolean(acknowledge),
         compare_mode: compareRef.current[name] || null,
       }, sessionRef.current);
@@ -873,6 +873,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
               <th className="trp-left">Store</th>
               <th className="trp-left">Type</th>
               <th className="trp-left">Engine</th>
+              <th className="trp-left">Source</th>
               <th title="Min days of cover (blank = store/warehouse default)">Min</th>
               <th title="Max days of cover (blank = store/warehouse default)">Max</th>
               <th title="Only products sold in the last N days are ordered">Recency</th>
@@ -892,7 +893,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                   <td className="lgo-check-col">
                     <input type="checkbox" aria-label={`Select every store in ${g.name}`} checked={allOn} disabled={!idle.length} onChange={(e) => toggle(idle, e.target.checked)} />
                   </td>
-                  <td colSpan={10} className="trp-left">
+                  <td colSpan={11} className="trp-left">
                     {g.name} <span className="lgo-muted">· {g.stores.length} store{g.stores.length > 1 ? 's' : ''}</span>
                   </td>
                 </tr>,
@@ -923,6 +924,24 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                           <option value="RULEBOOK">Rule book</option>
                         </select>
                       </td>
+                      <td className="trp-left" onClick={(e) => e.stopPropagation()}>
+                        {agent ? (
+                          <select
+                            aria-label={`${name} order source`}
+                            value="agent"
+                            disabled
+                            title="This store has no direct DB connection -- its agent pushes data to NEXORA_PLATFORM.sync.*, which is always relayed into the central copy before Order Process runs. The Source choice has no effect for an agent-synced store, so it's fixed here rather than offering options that would silently be ignored."
+                          >
+                            <option value="agent">Agent sync (fixed)</option>
+                          </select>
+                        ) : (
+                          <select aria-label={`${name} order source`} value={c.mode || 'local'} disabled={busy} title={warehouse ? "Remote live isn't available for a warehouse: order_warehouse.sql reads a StoreName column only the central copy has, so there is no branch-schema equivalent." : ''} onChange={(e) => patchCfg(name, { mode: e.target.value })}>
+                            <option value="local">Local copy</option>
+                            {!warehouse && <option value="remote">Remote live</option>}
+                            <option value="nexora">Nexora live</option>
+                          </select>
+                        )}
+                      </td>
                       {['minDays', 'maxDays', 'recencyDays'].map((field) => {
                         const effective = field === 'minDays' ? minDefault(name) : field === 'maxDays' ? maxDefault(name) : recencyDefault(name);
                         const overridden = c[field] != null && c[field] !== '' && Number(c[field]) !== Number(effective);
@@ -932,8 +951,8 @@ export default function LegacyOrderGeneration({ session, hidden }) {
                               className={`lgo-num${overridden ? ' lgo-num-override' : ''}`}
                               inputMode="numeric"
                               aria-label={`${name} ${field}`}
-                              value={c[field] ?? (warehouse && field !== 'recencyDays' ? 'auto' : String(effective))}
-                              disabled={busy || (warehouse && field !== 'recencyDays')}
+                              value={c[field] ?? String(effective)}
+                              disabled={busy}
                               title={overridden ? `This run only. Saved default: ${effective}` : ''}
                               onChange={(e) => patchCfg(name, { [field]: e.target.value.replace(/\D/g, '') })}
                             />
