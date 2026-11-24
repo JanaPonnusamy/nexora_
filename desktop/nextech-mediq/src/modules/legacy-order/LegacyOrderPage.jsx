@@ -97,6 +97,8 @@ const legacyApi = {
   storeEngine: (storeName) => apiGet(`/api/legacy-order/engine/${encodeURIComponent(storeName)}`),
   startOrderProcess: (payload) => apiPost('/api/legacy-order/order-process', payload, { timeoutMs: 120000 }),
   setCompareMode: (storeName, mode) => apiPut(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/compare-mode`, { mode }),
+  setStoreEngine: (storeName, eng) => apiPut(`/api/legacy-order/engine/${encodeURIComponent(storeName)}`, { engine: eng }),
+  setOrderMode: (storeName, mde) => apiPut(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/mode`, { mode: mde }),
   eveningSchedule: () => apiGet('/api/legacy-order/schedule/evening'),
   saveEveningSchedule: (payload) => apiPut('/api/legacy-order/schedule/evening', payload),
   runEveningNow: () => apiPost('/api/legacy-order/schedule/evening/run', {}),
@@ -139,13 +141,25 @@ function LastRun({ schedule }) {
 
 // One settings dialog for everything the backend automates. Drafts locally;
 // Save writes the schedule + only the compare flags that changed.
-function OrderAutomationSettings({ groups, compareToday, onClose, onSaved }) {
+function OrderAutomationSettings({ groups, compareToday, isWarehouse, onClose, onSaved }) {
   const allNames = useMemo(() => groups.flatMap((g) => g.stores.map((st) => st.store_name)), [groups]);
   const [schedule, setSchedule] = useState(null);
   const [enabled, setEnabled] = useState(false);
   const [runAt, setRunAt] = useState('18:25');
   const [evening, setEvening] = useState(() => new Set());
   const [compare, setCompare] = useState(() => ({ ...compareToday }));
+  // Fixed per-store schedule settings (Min/Max/Recency), loaded from each
+  // store's saved order-defaults (LegacyOrderEngine) -- the same values the
+  // evening run always uses, since it never passes an override (service.
+  // start_order_process falls back to these when min/max/recency are None).
+  const [fixedDefaults, setFixedDefaults] = useState({});
+  const [fixedDraft, setFixedDraft] = useState({});
+  // Fixed per-store Engine (LegacyOrderEngine.Engine) and Source (.Mode) --
+  // same "always use this, not the live grid" guarantee as Compare mode.
+  const [engine, setEngineDraft] = useState({});
+  const [engineSaved, setEngineSaved] = useState({});
+  const [mode, setModeDraft] = useState({});
+  const [modeSaved, setModeSaved] = useState({});
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -163,6 +177,25 @@ function OrderAutomationSettings({ groups, compareToday, onClose, onSaved }) {
   useEffect(() => {
     legacyApi.eveningSchedule().then(applySchedule).catch((err) => setError(err.message));
   }, [applySchedule]);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.all(allNames.map((n) => legacyApi.storeEngine(n).then((r) => [n, r])))
+      .then((pairs) => {
+        if (!alive) return;
+        const defaults = Object.fromEntries(pairs.map(([n, r]) => [n, r.order_defaults]));
+        const eng = Object.fromEntries(pairs.map(([n, r]) => [n, r.engine || 'LEGACY']));
+        const mde = Object.fromEntries(pairs.map(([n, r]) => [n, r.mode || 'local']));
+        setFixedDefaults(defaults);
+        setFixedDraft(defaults);
+        setEngineSaved(eng);
+        setEngineDraft(eng);
+        setModeSaved(mde);
+        setModeDraft(mde);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [allNames]);
 
   // Live status while an evening run is going.
   const running = scheduleRunning(schedule);
@@ -192,6 +225,12 @@ function OrderAutomationSettings({ groups, compareToday, onClose, onSaved }) {
     names.forEach((n) => { next[n] = on; });
     return next;
   }));
+  const setFixedField = (name, field, raw) => touch(() => setFixedDraft((cur) => ({
+    ...cur,
+    [name]: { ...(cur[name] || {}), [field]: raw === '' ? null : positiveInt(raw) },
+  })));
+  const setEngineField = (name, v) => touch(() => setEngineDraft((cur) => ({ ...cur, [name]: v })));
+  const setModeField = (name, v) => touch(() => setModeDraft((cur) => ({ ...cur, [name]: v })));
 
   const save = async () => {
     setBusy('save');
@@ -206,6 +245,22 @@ function OrderAutomationSettings({ groups, compareToday, onClose, onSaved }) {
       });
       const changed = allNames.filter((n) => (compare[n] || 'NONE') !== (compareToday[n] || 'NONE'));
       await Promise.all(changed.map((n) => legacyApi.setCompareMode(n, compare[n] || 'NONE')));
+      const fixedChanged = allNames.filter((n) => {
+        const was = fixedDefaults[n] || {};
+        const now = fixedDraft[n] || {};
+        return was.min_days !== now.min_days || was.max_days !== now.max_days || was.recency_days !== now.recency_days;
+      });
+      await Promise.all(fixedChanged.map((n) => {
+        const d = fixedDraft[n] || {};
+        return legacyApi.setOrderDefaults(n, { min_days: d.min_days ?? null, max_days: d.max_days ?? null, recency_days: d.recency_days ?? null });
+      }));
+      if (fixedChanged.length) setFixedDefaults((cur) => ({ ...cur, ...Object.fromEntries(fixedChanged.map((n) => [n, fixedDraft[n]])) }));
+      const engineChanged = allNames.filter((n) => (engine[n] || 'LEGACY') !== (engineSaved[n] || 'LEGACY'));
+      await Promise.all(engineChanged.map((n) => legacyApi.setStoreEngine(n, engine[n] || 'LEGACY')));
+      if (engineChanged.length) setEngineSaved((cur) => ({ ...cur, ...Object.fromEntries(engineChanged.map((n) => [n, engine[n]])) }));
+      const modeChanged = allNames.filter((n) => (mode[n] || 'local') !== (modeSaved[n] || 'local'));
+      await Promise.all(modeChanged.map((n) => legacyApi.setOrderMode(n, mode[n] || 'local')));
+      if (modeChanged.length) setModeSaved((cur) => ({ ...cur, ...Object.fromEntries(modeChanged.map((n) => [n, mode[n]])) }));
       applySchedule(saved);
       setDirty(false);
       setNote('Saved.');
@@ -281,22 +336,65 @@ function OrderAutomationSettings({ groups, compareToday, onClose, onSaved }) {
                     {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
                 </th>
+                <th title="Fixed per-store settings the evening run always uses -- blank = fall back to the global/warehouse default">Min</th>
+                <th title="Fixed per-store settings the evening run always uses -- blank = fall back to the global/warehouse default">Max</th>
+                <th title="Only products sold in this many days are ordered -- blank = store's usual default">Recency</th>
+                <th title="Fixed Order Process engine the evening run always uses">Engine</th>
+                <th title="Fixed data source the evening run always uses">Source</th>
               </tr>
             </thead>
             <tbody>
               {groups.map((g) => [
-                <tr key={`sg-${g.tid}`} className="lgo-group"><td colSpan={3}>{g.name}</td></tr>,
-                ...g.stores.map((st) => (
-                  <tr key={st.store_name}>
-                    <td className="lgo-left"><strong>{st.display_name || st.store_name}</strong></td>
-                    <td><input type="checkbox" aria-label={`Evening order ${st.store_name}`} checked={evening.has(st.store_name)} onChange={(e) => toggleEvening([st.store_name], e.target.checked)} /></td>
-                    <td>
-                      <select aria-label={`Compare mode ${st.store_name}`} value={compare[st.store_name] || 'NONE'} onChange={(e) => toggleCompare([st.store_name], e.target.value)}>
-                        {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                      </select>
-                    </td>
-                  </tr>
-                )),
+                <tr key={`sg-${g.tid}`} className="lgo-group"><td colSpan={8}>{g.name}</td></tr>,
+                ...g.stores.map((st) => {
+                  const d = fixedDraft[st.store_name] || {};
+                  const agentSynced = !st.server_name && !st.database;
+                  return (
+                    <tr key={st.store_name}>
+                      <td className="lgo-left"><strong>{st.display_name || st.store_name}</strong></td>
+                      <td><input type="checkbox" aria-label={`Evening order ${st.store_name}`} checked={evening.has(st.store_name)} onChange={(e) => toggleEvening([st.store_name], e.target.checked)} /></td>
+                      <td>
+                        <select aria-label={`Compare mode ${st.store_name}`} value={compare[st.store_name] || 'NONE'} onChange={(e) => toggleCompare([st.store_name], e.target.value)}>
+                          {COMPARE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <input type="number" min="1" className="lgo-set-num" aria-label={`Min days ${st.store_name}`}
+                          placeholder="auto" value={d.min_days ?? ''} onChange={(e) => setFixedField(st.store_name, 'min_days', e.target.value)} />
+                      </td>
+                      <td>
+                        <input type="number" min="1" className="lgo-set-num" aria-label={`Max days ${st.store_name}`}
+                          placeholder="auto" value={d.max_days ?? ''} onChange={(e) => setFixedField(st.store_name, 'max_days', e.target.value)} />
+                      </td>
+                      <td>
+                        <input type="number" min="1" className="lgo-set-num" aria-label={`Recency days ${st.store_name}`}
+                          placeholder="auto" value={d.recency_days ?? ''} onChange={(e) => setFixedField(st.store_name, 'recency_days', e.target.value)} />
+                      </td>
+                      <td>
+                        <select aria-label={`Engine ${st.store_name}`} value={engine[st.store_name] || 'LEGACY'}
+                          onChange={(e) => setEngineField(st.store_name, e.target.value)}>
+                          <option value="LEGACY">Legacy</option>
+                          <option value="RULEBOOK">Rule book</option>
+                        </select>
+                      </td>
+                      <td>
+                        {agentSynced ? (
+                          <select aria-label={`Source ${st.store_name}`} value="agent" disabled
+                            title="Agent-synced store -- Source has no effect here; its run always goes through the platform sync relay.">
+                            <option value="agent">Agent sync (fixed)</option>
+                          </select>
+                        ) : (
+                          <select aria-label={`Source ${st.store_name}`} value={mode[st.store_name] || 'local'}
+                            onChange={(e) => setModeField(st.store_name, e.target.value)}>
+                            <option value="local">Local copy</option>
+                            {!isWarehouse(st.store_name) && <option value="remote">Remote live</option>}
+                            <option value="nexora">Nexora live</option>
+                          </select>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }),
               ])}
             </tbody>
           </table>
@@ -988,6 +1086,7 @@ export function LegacyOrderPage() {
         <OrderAutomationSettings
           groups={groups}
           compareToday={compareToday}
+          isWarehouse={isWarehouse}
           onClose={() => setSettingsOpen(false)}
           onSaved={(flags, sch) => { setCompareToday(flags); setSchedule(sch); }}
         />

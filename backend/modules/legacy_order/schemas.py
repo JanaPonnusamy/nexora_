@@ -122,6 +122,10 @@ class CompareTodayRequest(BaseModel):
     enabled: bool
 
 
+class OrderModeRequest(BaseModel):
+    mode: Optional[str] = None  # 'local' | 'remote' | 'nexora' | None (-> local)
+
+
 class OrderDefaultsRequest(BaseModel):
     # None clears that field's override, falling back to the global/warehouse default.
     min_days: Optional[int] = None

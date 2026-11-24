@@ -238,20 +238,33 @@ def _wait_for_job(job_id):
     return service.get_job(job_id)
 
 
-def run_stores(stores, trigger):
+def run_stores(stores, trigger, since=None):
     """Order Process for each store, one after another, with the store's saved
     Compare mode (NONE = the plain .73-style order). Both Order Process
-    warnings are acknowledged (nobody is there to click them)."""
-    from modules.legacy_order import service
+    warnings are acknowledged (nobody is there to click them).
+    since: a store already run manually (service.start_order_process's
+    default trigger="manual") at/after this time is skipped -- the operator
+    already generated today's order for it by hand, so the schedule doesn't
+    pile a second one on top. None (e.g. "Run now") never skips on this
+    basis."""
+    from modules.legacy_order import rulebook_order, service
 
     summary = {"trigger": trigger, "started_at": datetime.datetime.now().isoformat(timespec="seconds"),
                "stores": [], "finished_at": None}
     for name in stores:
+        if since is not None and rulebook_order.ran_manually_today(name, since):
+            summary["stores"].append({"store_name": name, "status": "skipped",
+                                       "error": "Already run manually today; evening order skipped it."})
+            _save_summary(summary, finished=False)
+            continue
         entry = {"store_name": name, "status": "running"}
         summary["stores"].append(entry)
         _save_summary(summary, finished=False)
         try:
-            job_id = service.start_order_process(name, confirmed_stale_order=True)
+            job_id = service.start_order_process(
+                name, mode=rulebook_order.get_order_mode(name) or "local",
+                confirmed_stale_order=True, trigger="evening",
+            )
             entry["job_id"] = job_id
             job = _wait_for_job(job_id) or {}
             result = job.get("result") or {}
@@ -271,11 +284,11 @@ def run_stores(stores, trigger):
     return summary
 
 
-def _run_guarded(stores, trigger):
+def _run_guarded(stores, trigger, since=None):
     if not _run_lock.acquire(blocking=False):
         return False
     try:
-        run_stores(stores, trigger)
+        run_stores(stores, trigger, since=since)
     except Exception:
         logger.exception("[EVENING_ORDER] run failed")
     finally:
@@ -293,7 +306,9 @@ def run_now():
     if not stores:
         raise ValueError("No active store is selected for the evening order.")
     _claim_today(datetime.datetime.now(), force=True)
-    threading.Thread(target=_run_guarded, args=(stores, "manual"), name="legacy-evening-order-now",
+    # "Run now" is an explicit operator request to run everyone selected,
+    # so it does NOT skip a store just because it was run manually earlier.
+    threading.Thread(target=_run_guarded, args=(stores, "manual", None), name="legacy-evening-order-now",
                      daemon=True).start()
     return {"started": True, "stores": stores}
 
@@ -309,8 +324,9 @@ def tick(now=None):
     if not _claim_today(now):
         return False  # another backend on this OrderNMC already took today's run
     stores = target_stores(sch["stores"])
+    since = datetime.datetime.combine(now.date(), parse_run_at(sch["run_at"]))
     logger.info("[EVENING_ORDER] starting for %s", stores)
-    return _run_guarded(stores, "schedule")
+    return _run_guarded(stores, "schedule", since=since)
 
 
 def _loop():

@@ -20,7 +20,7 @@ from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
 from modules.legacy_order import database, evening_order, order_export, repository, rulebook_order, service, supplier_match_review, supplier_portal, supplier_stock_harvest, supplier_whatsapp, sync_engine
-from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderDefaultsRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierPortalRequest, SupplierHarvestRequest, SupplierMatchConfirmRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, StockUpdateAllRequest, StockUpdateAllStarted, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderDefaultsRequest, OrderEngineRequest, OrderModeRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierPortalRequest, SupplierHarvestRequest, SupplierMatchConfirmRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, StockUpdateAllRequest, StockUpdateAllStarted, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
 
 
 def _header_value(value) -> str:
@@ -442,7 +442,21 @@ def get_order_engine(store_name: str):
                 "compare_today_previous": rulebook_order.get_compare_today(store_name),
                 "compare_mode": rulebook_order.get_compare_mode(store_name),
                 "compare_modes": list(rulebook_order.COMPARE_MODES),
-                "order_defaults": rulebook_order.get_order_defaults(store_name)}
+                "order_defaults": rulebook_order.get_order_defaults(store_name),
+                "mode": rulebook_order.get_order_mode(store_name) or "local"}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/engine/{store_name}/mode")
+def set_order_mode(store_name: str, payload: OrderModeRequest, current_user: dict = Depends(require_admin)):
+    """The store's fixed Source for the evening/scheduled run (admin only)."""
+    try:
+        return rulebook_order.set_order_mode(
+            store_name, payload.mode, current_user.get("username") or current_user.get("sub"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
