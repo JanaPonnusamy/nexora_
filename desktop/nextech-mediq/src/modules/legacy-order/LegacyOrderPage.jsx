@@ -141,7 +141,7 @@ function LastRun({ schedule }) {
 
 // One settings dialog for everything the backend automates. Drafts locally;
 // Save writes the schedule + only the compare flags that changed.
-function OrderAutomationSettings({ groups, compareToday, isWarehouse, onClose, onSaved }) {
+function OrderAutomationSettings({ groups, compareToday, isWarehouse, minDefault, maxDefault, recencyDefault, onClose, onSaved }) {
   const allNames = useMemo(() => groups.flatMap((g) => g.stores.map((st) => st.store_name)), [groups]);
   const [schedule, setSchedule] = useState(null);
   const [enabled, setEnabled] = useState(false);
@@ -349,6 +349,9 @@ function OrderAutomationSettings({ groups, compareToday, isWarehouse, onClose, o
                 ...g.stores.map((st) => {
                   const d = fixedDraft[st.store_name] || {};
                   const agentSynced = !st.server_name && !st.database;
+                  const effMin = minDefault(st.store_name);
+                  const effMax = maxDefault(st.store_name);
+                  const effRecency = recencyDefault(st.store_name);
                   return (
                     <tr key={st.store_name}>
                       <td className="lgo-left"><strong>{st.display_name || st.store_name}</strong></td>
@@ -359,16 +362,19 @@ function OrderAutomationSettings({ groups, compareToday, isWarehouse, onClose, o
                         </select>
                       </td>
                       <td>
-                        <input type="number" min="1" className="lgo-set-num" aria-label={`Min days ${st.store_name}`}
-                          placeholder="auto" value={d.min_days ?? ''} onChange={(e) => setFixedField(st.store_name, 'min_days', e.target.value)} />
+                        <input type="number" min="1" className={`lgo-set-num${d.min_days != null ? ' lgo-num-override' : ''}`}
+                          aria-label={`Min days ${st.store_name}`} title={d.min_days == null ? `Using the default: ${effMin}` : 'Fixed override'}
+                          value={d.min_days ?? effMin} onChange={(e) => setFixedField(st.store_name, 'min_days', e.target.value)} />
                       </td>
                       <td>
-                        <input type="number" min="1" className="lgo-set-num" aria-label={`Max days ${st.store_name}`}
-                          placeholder="auto" value={d.max_days ?? ''} onChange={(e) => setFixedField(st.store_name, 'max_days', e.target.value)} />
+                        <input type="number" min="1" className={`lgo-set-num${d.max_days != null ? ' lgo-num-override' : ''}`}
+                          aria-label={`Max days ${st.store_name}`} title={d.max_days == null ? `Using the default: ${effMax}` : 'Fixed override'}
+                          value={d.max_days ?? effMax} onChange={(e) => setFixedField(st.store_name, 'max_days', e.target.value)} />
                       </td>
                       <td>
-                        <input type="number" min="1" className="lgo-set-num" aria-label={`Recency days ${st.store_name}`}
-                          placeholder="auto" value={d.recency_days ?? ''} onChange={(e) => setFixedField(st.store_name, 'recency_days', e.target.value)} />
+                        <input type="number" min="1" className={`lgo-set-num${d.recency_days != null ? ' lgo-num-override' : ''}`}
+                          aria-label={`Recency days ${st.store_name}`} title={d.recency_days == null ? `Using the default: ${effRecency}` : 'Fixed override'}
+                          value={d.recency_days ?? effRecency} onChange={(e) => setFixedField(st.store_name, 'recency_days', e.target.value)} />
                       </td>
                       <td>
                         <select aria-label={`Engine ${st.store_name}`} value={engine[st.store_name] || 'LEGACY'}
@@ -1087,6 +1093,9 @@ export function LegacyOrderPage() {
           groups={groups}
           compareToday={compareToday}
           isWarehouse={isWarehouse}
+          minDefault={minDefault}
+          maxDefault={maxDefault}
+          recencyDefault={recencyDefault}
           onClose={() => setSettingsOpen(false)}
           onSaved={(flags, sch) => { setCompareToday(flags); setSchedule(sch); }}
         />
