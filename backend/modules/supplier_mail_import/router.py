@@ -33,6 +33,7 @@ class SupplierMailPayload(BaseModel):
     enabled: bool
     mail_from: str = ""
     subject_filter: str = ""
+    all_stores: bool = False
 
 
 def _actor(user):
@@ -83,7 +84,7 @@ def save_supplier(payload: SupplierMailPayload, current_user: dict = Depends(req
     try:
         service.save_supplier(
             payload.tenant_id, payload.store_id, payload.supplier_code, payload.enabled,
-            payload.mail_from, payload.subject_filter, _actor(current_user),
+            payload.mail_from, payload.subject_filter, payload.all_stores, _actor(current_user),
         )
     except LookupError as ex:
         raise HTTPException(status_code=404, detail=str(ex))

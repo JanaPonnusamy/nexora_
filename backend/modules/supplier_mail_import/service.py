@@ -7,8 +7,9 @@ Per switched-on supplier, each poll:
      mail with no Excel attachment is logged NO_ATTACHMENT and the walk goes on;
   3. imports the first Excel attachment of the newest usable mail through
      the manual import path (excel_import.import_file -- REPLACES the
-     supplier's stock for the store) with the supplier's SAVED column
-     mapping only. No saved mapping, or the file no longer has the mapped
+     supplier's stock for the store; with all_stores, import_file_bulk into
+     EVERY active store of the tenant carrying the same supplier code) with
+     the supplier's SAVED column mapping only. No saved mapping, or the file no longer has the mapped
      columns -> NEEDS_MAPPING (retried every poll; do one manual import of
      that file to save the mapping);
   4. after a successful import, older unimported mails are logged SUPERSEDED
@@ -104,7 +105,7 @@ def list_suppliers(tenant_id, store_id, store_code):
     return rows
 
 
-def save_supplier(tenant_id, store_id, supplier_code, enabled, mail_from, subject_filter, actor=None):
+def save_supplier(tenant_id, store_id, supplier_code, enabled, mail_from, subject_filter, all_stores=False, actor=None):
     code = str(supplier_code or "").strip()
     mail_from = str(mail_from or "").strip()
     subject_filter = str(subject_filter or "").strip()
@@ -119,7 +120,7 @@ def save_supplier(tenant_id, store_id, supplier_code, enabled, mail_from, subjec
                        if str(r["supplier_code"]).strip() == code), {})
         if not split_addresses(master.get("master_email")):
             raise ValueError("This supplier has no mail id in the supplier master - enter one to switch mail import on.")
-    repository.save_supplier(tenant_id, store_id, code, enabled, mail_from, subject_filter, actor)
+    repository.save_supplier(tenant_id, store_id, code, enabled, mail_from, subject_filter, all_stores, actor)
 
 
 # --- polling --------------------------------------------------------------------
@@ -226,7 +227,13 @@ def _import(tenant_id, supplier, data):
     """Import one file with the supplier's saved mapping only -- an import
     REPLACES the supplier's stock, so nothing is guessed."""
     store_id, code = supplier["store_id"], supplier["supplier_code"]
+    stores = excel_import.bulk_import_stores(tenant_id, code) if supplier.get("all_stores") else []
     saved = excel_import._saved_mapping(tenant_id, store_id, code)
+    # All stores: the mapping may have been saved from any of them.
+    for store in stores:
+        if saved:
+            break
+        saved = excel_import._saved_mapping(tenant_id, store["store_id"], code)
     if not saved:
         return {"status": "NEEDS_MAPPING",
                 "message": "No saved column mapping for this supplier - import one file manually once to save it."}
@@ -241,6 +248,18 @@ def _import(tenant_id, supplier, data):
         return {"status": "NEEDS_MAPPING",
                 "message": "The file's columns changed - not found: " + ", ".join(missing)
                 + ". Import this file manually once to update the mapping."}
+    if supplier.get("all_stores"):
+        result = excel_import.import_file_bulk(tenant_id, code, data, mapping, None, IMPORTED_BY)
+        if not result.get("success"):
+            return {"status": "FAILED", "message": result.get("error") or "Import failed."}
+        done = result["stores"]
+        return {
+            "status": "IMPORTED",
+            "rows_imported": max((s.get("imported") or 0 for s in done), default=0),
+            "products_resolved": sum(s.get("product_codes_resolved") or 0 for s in done),
+            "message": f"Imported to {len(done)} store(s): " + ", ".join(
+                f"{s['store_code']} {s.get('imported') or 0} ({s.get('product_codes_resolved') or 0} matched)" for s in done),
+        }
     result = excel_import.import_file(tenant_id, store_id, code, data, mapping, IMPORTED_BY)
     if not result.get("success"):
         return {"status": "FAILED", "message": result.get("error") or "Import failed."}

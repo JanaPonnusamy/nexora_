@@ -75,6 +75,9 @@ CREATE TABLE dbo.supplier_mail_import_settings (
     updated_by NVARCHAR(100) NULL,
     CONSTRAINT PK_supplier_mail_import_settings PRIMARY KEY (tenant_id, store_id, supplier_code)
 );
+IF COL_LENGTH('dbo.supplier_mail_import_settings', 'all_stores') IS NULL
+ALTER TABLE dbo.supplier_mail_import_settings ADD all_stores BIT NOT NULL
+    CONSTRAINT DF_supplier_mail_import_settings_all_stores DEFAULT 0;
 """
 
 _platform_ready = False
@@ -204,7 +207,7 @@ def list_suppliers(tenant_id, store_id):
             "RTRIM(ISNULL(s.suppliername, '')) AS supplier_name, "
             "LTRIM(RTRIM(ISNULL(s.email, ''))) AS master_email, "
             "ISNULL(m.mail_from, '') AS mail_from, ISNULL(m.subject_filter, '') AS subject_filter, "
-            "CAST(ISNULL(m.is_enabled, 0) AS BIT) AS enabled "
+            "CAST(ISNULL(m.is_enabled, 0) AS BIT) AS enabled, CAST(ISNULL(m.all_stores, 0) AS BIT) AS all_stores "
             "FROM sync.Suppliers s "
             "LEFT JOIN dbo.supplier_mail_import_settings m ON m.tenant_id = s.tenant_id "
             "  AND m.store_id = s.store_id AND m.supplier_code = RTRIM(CAST(s.suppliercode AS VARCHAR(100))) "
@@ -237,7 +240,7 @@ def enabled_suppliers(tenant_id):
             "SELECT CAST(m.store_id AS VARCHAR(36)) AS store_id, RTRIM(st.store_code) AS store_code, "
             "m.supplier_code, RTRIM(ISNULL(s.suppliername, '')) AS supplier_name, "
             "COALESCE(NULLIF(LTRIM(RTRIM(m.mail_from)), ''), LTRIM(RTRIM(ISNULL(s.email, '')))) AS mail_from, "
-            "ISNULL(m.subject_filter, '') AS subject_filter "
+            "ISNULL(m.subject_filter, '') AS subject_filter, CAST(m.all_stores AS BIT) AS all_stores "
             "FROM dbo.supplier_mail_import_settings m "
             "JOIN dbo.stores st ON st.store_id = m.store_id AND ISNULL(st.is_active, 1) = 1 "
             "LEFT JOIN sync.Suppliers s ON s.tenant_id = m.tenant_id AND s.store_id = m.store_id "
@@ -250,21 +253,22 @@ def enabled_suppliers(tenant_id):
         conn.close()
 
 
-def save_supplier(tenant_id, store_id, supplier_code, enabled, mail_from, subject_filter, actor=None):
+def save_supplier(tenant_id, store_id, supplier_code, enabled, mail_from, subject_filter, all_stores=False, actor=None):
     conn = _platform()
     try:
         cur = conn.cursor()
-        params = (1 if enabled else 0, mail_from or None, subject_filter or None, actor)
+        params = (1 if enabled else 0, mail_from or None, subject_filter or None, 1 if all_stores else 0, actor)
         cur.execute(
             "UPDATE dbo.supplier_mail_import_settings SET is_enabled = ?, mail_from = ?, subject_filter = ?, "
-            "updated_at = GETDATE(), updated_by = ? WHERE tenant_id = ? AND store_id = ? AND supplier_code = ?",
+            "all_stores = ?, updated_at = GETDATE(), updated_by = ? "
+            "WHERE tenant_id = ? AND store_id = ? AND supplier_code = ?",
             (*params, tenant_id, store_id, supplier_code),
         )
         if cur.rowcount == 0:
             cur.execute(
                 "INSERT INTO dbo.supplier_mail_import_settings (is_enabled, mail_from, subject_filter, "
-                "updated_at, updated_by, tenant_id, store_id, supplier_code) "
-                "VALUES (?, ?, ?, GETDATE(), ?, ?, ?, ?)",
+                "all_stores, updated_at, updated_by, tenant_id, store_id, supplier_code) "
+                "VALUES (?, ?, ?, ?, GETDATE(), ?, ?, ?, ?)",
                 (*params, tenant_id, store_id, supplier_code),
             )
         conn.commit()
