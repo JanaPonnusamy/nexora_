@@ -96,6 +96,9 @@ from modules.stock_integrity.router import (
 from modules.supplier_stock_analysis.router import (
     router as supplier_stock_analysis_router
 )
+from modules.supplier_mail_import.router import (
+    router as supplier_mail_import_router
+)
 from modules.procurement.router import (
     router as procurement_router
 )
@@ -406,6 +409,7 @@ app.include_router(label_exporter_router)
 app.include_router(nmw_sales_report_router)
 app.include_router(stock_integrity_router)
 app.include_router(supplier_stock_analysis_router)
+app.include_router(supplier_mail_import_router)
 app.include_router(procurement_router)
 app.include_router(reports_router)
 app.include_router(expiry_report_router)
@@ -508,6 +512,18 @@ def _start_sync_health_monitor_on_startup():
     except Exception:
         import traceback
         print("[SYNC_HEALTH] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _start_supplier_mail_import_on_startup():
+    # Polls each tenant's mailbox and imports supplier stock Excel files for
+    # suppliers switched to mail import. Idle until a tenant enables it;
+    # SUPPLIER_MAIL_IMPORT_LOOP=0 disables. See modules/supplier_mail_import.
+    try:
+        from modules.supplier_mail_import import service as supplier_mail_import
+        supplier_mail_import.start_background_loop()
+    except Exception:
+        import traceback
+        print("[SUPPLIER_MAIL_IMPORT] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
 def _start_file_transfer_receiver_on_startup():
