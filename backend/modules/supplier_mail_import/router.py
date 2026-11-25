@@ -24,6 +24,7 @@ class MailConfigPayload(BaseModel):
     folder: str = "INBOX"
     poll_minutes: int = 15
     lookback_days: int = 2
+    daily_time: str = "08:00"  # blank = every poll_minutes instead
 
 
 class SupplierMailPayload(BaseModel):
@@ -102,6 +103,19 @@ def run_now(tenant_id: str, wait: bool = True, current_user: dict = Depends(requ
         service.run_tenant_in_background(tenant_id)
         return {"ok": True, "message": "Mail check started."}
     return service.run_tenant(tenant_id)
+
+
+@router.post("/pull")
+def pull(tenant_id: str, store_id: str, supplier_code: str, current_user: dict = Depends(require_admin_role)):
+    """Read this supplier's newest stock mail now and update SupplierStock
+    (re-imports even if already imported)."""
+    _store(current_user, tenant_id, store_id)
+    try:
+        return service.pull_supplier(tenant_id, store_id, supplier_code)
+    except LookupError as ex:
+        raise HTTPException(status_code=404, detail=str(ex))
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
 
 
 @router.get("/log")

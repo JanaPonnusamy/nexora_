@@ -57,6 +57,8 @@ def _decrypt(blob):
 
 # Terminal statuses: the mail is done and is never read again.
 DONE_STATUSES = ("IMPORTED", "SUPERSEDED", "NO_ATTACHMENT")
+# A failed morning import is retried this often until it succeeds.
+DAILY_RETRY_MINUTES = 10
 # A PROCESSING claim older than this is treated as abandoned (backend died).
 STALE_CLAIM_MINUTES = 30
 
@@ -113,6 +115,8 @@ CREATE TABLE dbo.supplier_mail_import_settings (
 IF COL_LENGTH('dbo.supplier_mail_import_settings', 'all_stores') IS NULL
 ALTER TABLE dbo.supplier_mail_import_settings ADD all_stores BIT NOT NULL
     CONSTRAINT DF_supplier_mail_import_settings_all_stores DEFAULT 0;
+IF COL_LENGTH('dbo.supplier_mail_config', 'daily_time') IS NULL
+ALTER TABLE dbo.supplier_mail_config ADD daily_time CHAR(5) NULL, last_daily_run DATE NULL;
 """
 
 _platform_ready = False
@@ -137,7 +141,7 @@ def get_config(tenant_id, with_password=False):
         cur.execute(
             "SELECT is_enabled, imap_host, imap_port, use_ssl, username, password_enc, folder, "
             "poll_minutes, lookback_days, last_poll_at, last_poll_status, last_poll_message, "
-            "updated_at, updated_by FROM dbo.supplier_mail_config WHERE tenant_id = ?",
+            "updated_at, updated_by, daily_time, last_daily_run FROM dbo.supplier_mail_config WHERE tenant_id = ?",
             (tenant_id,),
         )
         row = cur.fetchone()
@@ -154,6 +158,9 @@ def get_config(tenant_id, with_password=False):
         "has_password": row.password_enc is not None,
         "folder": row.folder or "INBOX",
         "poll_minutes": row.poll_minutes,
+        # Set = once a day at/after this time (HH:MM); blank = every poll_minutes.
+        "daily_time": (row.daily_time or "").strip(),
+        "last_daily_run": row.last_daily_run.isoformat() if row.last_daily_run else None,
         "lookback_days": row.lookback_days,
         "last_poll_at": row.last_poll_at.isoformat() if row.last_poll_at else None,
         "last_poll_status": row.last_poll_status,
@@ -174,19 +181,19 @@ def save_config(tenant_id, values, password=None, actor=None):
         params = (
             1 if values["enabled"] else 0, values["imap_host"], values["imap_port"],
             1 if values["use_ssl"] else 0, values["username"], values["folder"],
-            values["poll_minutes"], values["lookback_days"], actor,
+            values["poll_minutes"], values["lookback_days"], values["daily_time"] or None, actor,
         )
         cur.execute(
             "UPDATE dbo.supplier_mail_config SET is_enabled = ?, imap_host = ?, imap_port = ?, "
-            "use_ssl = ?, username = ?, folder = ?, poll_minutes = ?, lookback_days = ?, "
+            "use_ssl = ?, username = ?, folder = ?, poll_minutes = ?, lookback_days = ?, daily_time = ?, "
             "updated_at = GETDATE(), updated_by = ? WHERE tenant_id = ?",
             (*params, tenant_id),
         )
         if cur.rowcount == 0:
             cur.execute(
                 "INSERT INTO dbo.supplier_mail_config (is_enabled, imap_host, imap_port, use_ssl, "
-                "username, folder, poll_minutes, lookback_days, updated_at, updated_by, tenant_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)",
+                "username, folder, poll_minutes, lookback_days, daily_time, updated_at, updated_by, tenant_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)",
                 (*params, tenant_id),
             )
         if password:
@@ -199,12 +206,15 @@ def save_config(tenant_id, values, password=None, actor=None):
         conn.close()
 
 
-def record_poll(tenant_id, status, message):
+def record_poll(tenant_id, status, message, daily_done=False):
+    """daily_done marks today's morning import as done (no re-run today)."""
     conn = _platform()
     try:
         conn.cursor().execute(
             "UPDATE dbo.supplier_mail_config SET last_poll_at = GETDATE(), last_poll_status = ?, "
-            "last_poll_message = ? WHERE tenant_id = ?",
+            "last_poll_message = ?"
+            + (", last_daily_run = CAST(GETDATE() AS DATE)" if daily_done else "")
+            + " WHERE tenant_id = ?",
             (status, (message or "")[:2000], tenant_id),
         )
         conn.commit()
@@ -213,17 +223,28 @@ def record_poll(tenant_id, status, message):
 
 
 def due_tenants():
-    """Enabled tenants whose poll interval has elapsed."""
+    """[(tenant_id, is_daily)] for enabled tenants due a mail check.
+
+    Daily tenants are due once the clock has passed daily_time and today's
+    run hasn't happened -- so a PC switched on after that time catches up on
+    the first tick after startup. A failed daily run (mailbox unreachable)
+    retries every DAILY_RETRY_MINUTES until it succeeds."""
     conn = _platform()
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT CAST(c.tenant_id AS VARCHAR(36)) FROM dbo.supplier_mail_config c "
+            "SELECT CAST(c.tenant_id AS VARCHAR(36)), CASE WHEN c.daily_time IS NULL THEN 0 ELSE 1 END "
+            "FROM dbo.supplier_mail_config c "
             "JOIN dbo.tenants t ON t.tenant_id = c.tenant_id AND t.is_active = 1 "
-            "WHERE c.is_enabled = 1 AND (c.last_poll_at IS NULL "
-            "OR DATEDIFF(MINUTE, c.last_poll_at, GETDATE()) >= c.poll_minutes)"
+            "WHERE c.is_enabled = 1 AND ("
+            "  (c.daily_time IS NULL AND (c.last_poll_at IS NULL "
+            "    OR DATEDIFF(MINUTE, c.last_poll_at, GETDATE()) >= c.poll_minutes)) "
+            "  OR (c.daily_time IS NOT NULL AND CONVERT(CHAR(5), GETDATE(), 108) >= c.daily_time "
+            "    AND (c.last_daily_run IS NULL OR c.last_daily_run < CAST(GETDATE() AS DATE)) "
+            "    AND (c.last_poll_at IS NULL OR DATEDIFF(MINUTE, c.last_poll_at, GETDATE()) >= ?)))",
+            (DAILY_RETRY_MINUTES,),
         )
-        return [row[0] for row in cur.fetchall()]
+        return [(row[0], bool(row[1])) for row in cur.fetchall()]
     finally:
         conn.close()
 
@@ -284,6 +305,30 @@ def enabled_suppliers(tenant_id):
             (tenant_id,),
         )
         return rows_to_dicts(cur)
+    finally:
+        conn.close()
+
+
+def supplier_target(tenant_id, store_id, supplier_code):
+    """One supplier shaped like enabled_suppliers() rows, switched on or
+    not -- for a manual Pull. None when the supplier isn't on the store."""
+    conn = _platform()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT CAST(s.store_id AS VARCHAR(36)) AS store_id, RTRIM(st.store_code) AS store_code, "
+            "RTRIM(CAST(s.suppliercode AS VARCHAR(100))) AS supplier_code, "
+            "RTRIM(ISNULL(s.suppliername, '')) AS supplier_name, "
+            "COALESCE(NULLIF(LTRIM(RTRIM(m.mail_from)), ''), LTRIM(RTRIM(ISNULL(s.email, '')))) AS mail_from, "
+            "ISNULL(m.subject_filter, '') AS subject_filter, CAST(ISNULL(m.all_stores, 0) AS BIT) AS all_stores "
+            "FROM sync.Suppliers s JOIN dbo.stores st ON st.store_id = s.store_id "
+            "LEFT JOIN dbo.supplier_mail_import_settings m ON m.tenant_id = s.tenant_id "
+            "  AND m.store_id = s.store_id AND m.supplier_code = RTRIM(CAST(s.suppliercode AS VARCHAR(100))) "
+            "WHERE s.tenant_id = ? AND s.store_id = ? AND RTRIM(CAST(s.suppliercode AS VARCHAR(100))) = ?",
+            (tenant_id, store_id, supplier_code),
+        )
+        rows = rows_to_dicts(cur)
+        return rows[0] if rows else None
     finally:
         conn.close()
 
@@ -354,10 +399,11 @@ def statuses(keys):
         conn.close()
 
 
-def claim(key, tenant_id, store_code, supplier_code, mail):
+def claim(key, tenant_id, store_code, supplier_code, mail, force=False):
     """Mark the mail PROCESSING. False when another worker holds it or it is
     already done -- so two backends polling the same mailbox never import
-    the same mail twice."""
+    the same mail twice. force (manual Pull) re-claims a done mail too, but
+    still never one another worker is importing right now."""
     conn = _platform()
     try:
         cur = conn.cursor()
@@ -375,8 +421,8 @@ def claim(key, tenant_id, store_code, supplier_code, mail):
         done = ", ".join(f"'{s}'" for s in DONE_STATUSES)
         cur.execute(
             "UPDATE dbo.supplier_mail_import_log SET status = 'PROCESSING', updated_at = GETDATE() "
-            f"WHERE dedup_key = ? AND status NOT IN ({done}) "
-            "AND (status <> 'PROCESSING' OR DATEDIFF(MINUTE, updated_at, GETDATE()) >= ?)",
+            "WHERE dedup_key = ? " + ("" if force else f"AND status NOT IN ({done}) ")
+            + "AND (status <> 'PROCESSING' OR DATEDIFF(MINUTE, updated_at, GETDATE()) >= ?)",
             (key, STALE_CLAIM_MINUTES),
         )
         claimed = cur.rowcount == 1

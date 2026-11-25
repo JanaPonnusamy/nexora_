@@ -14,8 +14,14 @@ Per switched-on supplier, each poll:
      that file to save the mapping);
   4. after a successful import, older unimported mails are logged SUPERSEDED
      so a stale file can never overwrite a newer one.
+
+Schedule: daily_time set = once a day at/after that time, catching up on
+startup when the PC was off at that time; blank = every poll_minutes. A
+manual Pull (pull_supplier) reads one supplier's newest mail right away
+and re-imports it even if it was imported before.
 """
 import logging
+import re
 import os
 import threading
 import traceback
@@ -30,6 +36,7 @@ logger = logging.getLogger("supplier_mail_import")
 TICK_SECONDS = int(os.getenv("SUPPLIER_MAIL_IMPORT_TICK_SECONDS", "60"))
 LOOP_ENABLED = os.getenv("SUPPLIER_MAIL_IMPORT_LOOP", "1") != "0"
 IMPORTED_BY = "mail-import"
+DEFAULT_DAILY_TIME = "08:00"
 
 _stop_event = threading.Event()
 _thread = None
@@ -48,6 +55,7 @@ def get_config(tenant_id):
     return repository.get_config(tenant_id) or {
         "enabled": False, "imap_host": "", "imap_port": 993, "use_ssl": True, "username": "",
         "has_password": False, "folder": "INBOX", "poll_minutes": 15, "lookback_days": 2,
+        "daily_time": DEFAULT_DAILY_TIME, "last_daily_run": None,
         "last_poll_at": None, "last_poll_status": None, "last_poll_message": None,
     }
 
@@ -62,7 +70,10 @@ def save_config(tenant_id, payload, actor=None):
         "folder": str(payload.get("folder") or "").strip() or "INBOX",
         "poll_minutes": min(max(int(payload.get("poll_minutes") or 15), 5), 1440),
         "lookback_days": min(max(int(payload.get("lookback_days") or 2), 1), 30),
+        "daily_time": str(payload.get("daily_time") or "").strip(),
     }
+    if values["daily_time"] and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", values["daily_time"]):
+        raise ValueError("Daily time must be HH:MM, e.g. 08:00.")
     password = payload.get("password") or None
     if values["enabled"]:
         if not values["imap_host"] or not values["username"]:
@@ -125,9 +136,10 @@ def save_supplier(tenant_id, store_id, supplier_code, enabled, mail_from, subjec
 
 # --- polling --------------------------------------------------------------------
 
-def run_tenant(tenant_id):
-    """Poll the tenant mailbox once for every switched-on supplier. Returns
-    a summary; never raises (failures are recorded on the config row)."""
+def run_tenant(tenant_id, only=None, force=False, daily=False):
+    """Poll the tenant mailbox once for every switched-on supplier (or just
+    the supplier row ``only``). Returns a summary; never raises (failures
+    are recorded on the config row). daily marks today's morning run done."""
     lock = _tenant_lock(tenant_id)
     if not lock.acquire(blocking=False):
         return {"ok": False, "message": "A mail check for this tenant is already running."}
@@ -136,16 +148,16 @@ def run_tenant(tenant_id):
         config = repository.get_config(tenant_id, with_password=True)
         if not config or not config["imap_host"] or not config["password"]:
             return {"ok": False, "message": "Mailbox is not configured."}
-        suppliers = repository.enabled_suppliers(tenant_id)
+        suppliers = [only] if only else repository.enabled_suppliers(tenant_id)
         if not suppliers:
-            repository.record_poll(tenant_id, "OK", "No suppliers are switched on for mail import.")
+            repository.record_poll(tenant_id, "OK", "No suppliers are switched on for mail import.", daily_done=daily)
             return {"ok": True, "message": "No suppliers are switched on for mail import.", "suppliers": []}
 
         results = []
         with Mailbox(config) as box:
             for supplier in suppliers:
                 try:
-                    results.append(_run_supplier(box, tenant_id, supplier, config["lookback_days"]))
+                    results.append(_run_supplier(box, tenant_id, supplier, config["lookback_days"], force))
                 except Exception as ex:
                     logger.exception("mail import failed for %s/%s", supplier["store_code"], supplier["supplier_code"])
                     results.append({**_who(supplier), "status": "FAILED", "message": _friendly_error(ex)})
@@ -155,7 +167,9 @@ def run_tenant(tenant_id):
         message = f"{len(imported)} supplier file(s) imported"
         if problems:
             message += "; needs attention: " + ", ".join(f"{r['supplier_name'] or r['supplier_code']} ({r['status']})" for r in problems)
-        repository.record_poll(tenant_id, "WARN" if problems else "OK", message)
+        if only:
+            message = f"Pull {only.get('supplier_name') or only['supplier_code']}: {results[0]['message']}"
+        repository.record_poll(tenant_id, "WARN" if problems else "OK", message, daily_done=daily)
         return {"ok": True, "message": message, "suppliers": results}
     except Exception as ex:
         message = _friendly_error(ex)
@@ -178,7 +192,21 @@ def _who(supplier):
     }
 
 
-def _run_supplier(box, tenant_id, supplier, lookback_days):
+def pull_supplier(tenant_id, store_id, supplier_code):
+    """Manual Pull: read this supplier's newest stock mail now and update
+    SupplierStock, re-importing it even if it was imported before. Works
+    whether or not the supplier is switched on for automatic import."""
+    target = repository.supplier_target(tenant_id, store_id, str(supplier_code or "").strip())
+    if not target:
+        raise LookupError("That supplier is not in this store's list.")
+    if not split_addresses(target.get("mail_from")):
+        raise ValueError("This supplier has no mail id - enter one in Mail Import first.")
+    result = run_tenant(tenant_id, only=target, force=True)
+    supplier = (result.get("suppliers") or [{}])[0]
+    return {**result, "status": supplier.get("status"), "supplier": supplier}
+
+
+def _run_supplier(box, tenant_id, supplier, lookback_days, force=False):
     who = _who(supplier)
     addresses = split_addresses(supplier.get("mail_from"))
     if not addresses:
@@ -194,11 +222,11 @@ def _run_supplier(box, tenant_id, supplier, lookback_days):
     for index, mail in enumerate(mails):
         key = keys[mail["message_id"]]
         status = known.get(key)
-        if status == "IMPORTED":
+        if status == "IMPORTED" and not force:
             return {**who, "status": "UP_TO_DATE", "message": "Latest mail already imported."}
-        if status in repository.DONE_STATUSES:
+        if status in repository.DONE_STATUSES and status != "IMPORTED":
             continue
-        if not repository.claim(key, tenant_id, store_code, code, mail):
+        if not repository.claim(key, tenant_id, store_code, code, mail, force=force):
             return {**who, "status": "BUSY", "message": "Mail is being imported by another worker."}
 
         attachments = box.excel_attachments(mail["uid"])
@@ -284,10 +312,10 @@ def _friendly_error(ex):
 # --- background loop ------------------------------------------------------------
 
 def run_due_tenants():
-    for tenant_id in repository.due_tenants():
+    for tenant_id, daily in repository.due_tenants():
         if _stop_event.is_set():
             return
-        run_tenant(tenant_id)
+        run_tenant(tenant_id, daily=daily)
 
 
 def _loop():
