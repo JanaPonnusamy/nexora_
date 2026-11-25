@@ -12,13 +12,48 @@ has_mapping reads the active tenant's central legacy DB
 (SupplierExcelMapping), so the caller sets legacy_database.set_active_tenant.
 """
 import hashlib
+import sys
+from pathlib import Path
 
 import pyodbc
+from cryptography.fernet import Fernet, InvalidToken
 
 from config.database import get_connection
 from modules.legacy_order import database as legacy_database
-from modules.legacy_order.supplier_portal import _decrypt, _encrypt
 from modules.procurement._dbutil import rows_to_dicts
+
+# The mailbox password is Fernet-encrypted. Use the platform key (same as
+# dbo.stores / supplier portal) where it exists; an exe HO node such as .32
+# ships without it, so there a key of our own is generated once under the
+# install's config folder (kept across backend updates). An existing own key
+# always wins, so the choice never flips once a password is saved.
+_SHARED_KEY = Path(__file__).resolve().parents[3] / "store_agent" / "config" / "fernet.key"
+_CONFIG_DIR = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
+               else Path(__file__).resolve().parents[2]) / "config"
+_OWN_KEY = _CONFIG_DIR / "supplier_mail_import.key"
+
+
+def _key():
+    if _OWN_KEY.is_file():
+        return _OWN_KEY.read_bytes().strip()
+    if _SHARED_KEY.is_file():
+        return _SHARED_KEY.read_bytes().strip()
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    key = Fernet.generate_key()
+    _OWN_KEY.write_bytes(key)
+    return key
+
+
+def _encrypt(password):
+    return pyodbc.Binary(Fernet(_key()).encrypt(password.encode("utf-8")))
+
+
+def _decrypt(blob):
+    """None when the value can't be read (another key): treated as no password."""
+    try:
+        return Fernet(_key()).decrypt(bytes(blob)).decode("utf-8")
+    except (InvalidToken, TypeError, ValueError):
+        return None
 
 # Terminal statuses: the mail is done and is never read again.
 DONE_STATUSES = ("IMPORTED", "SUPERSEDED", "NO_ATTACHMENT")
