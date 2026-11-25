@@ -270,6 +270,11 @@ def _import(tenant_id, supplier, data):
     except Exception as ex:
         return {"status": "FAILED", "message": f"Could not read the Excel file: {ex}"}
     mapping = {h: saved[h.lower()] for h in headers if h.lower() in saved}
+    dupes = excel_import.duplicate_targets(mapping)
+    if dupes:
+        return {"status": "NEEDS_MAPPING",
+                "message": excel_import._duplicate_error(dupes)["error"]
+                + ". Import this file manually once to fix the mapping."}
     mapped = set(mapping.values())
     missing = [t["label"] for t in excel_import.TARGETS if t["mandatory"] and t["value"] not in mapped]
     if missing:
