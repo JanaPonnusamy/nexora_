@@ -322,6 +322,55 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
         conn.close()
 
 
+STOCK_LIST_LIMIT = 50000
+
+
+def list_stock(tenant_id, supplier_code, store_id=None, search="", only_available=False):
+    """Plain current-stock view of SupplierStock for one supplier across the
+    tenant's stores (or one store) -- the rows exactly as imported, no
+    mapping/cross-store analysis, so it stays fast and is not capped at the
+    3000 rows list_supplier_products returns."""
+    term = (search or "").strip()
+    store_clause = "AND st.store_id = ?" if store_id else ""
+    params = [tenant_id, supplier_code] + ([store_id] if store_id else [])
+    params += [1 if only_available else 0, term, term, term]
+    rows = _fetch(
+        f"""
+        SELECT TOP {STOCK_LIST_LIMIT + 1}
+            st.store_code,
+            st.store_name,
+            s.suppliercode COLLATE DATABASE_DEFAULT AS supplier_code,
+            s.supplierproductcode COLLATE DATABASE_DEFAULT AS supplier_product_code,
+            s.supplierproductname COLLATE DATABASE_DEFAULT AS supplier_product_name,
+            s.packing COLLATE DATABASE_DEFAULT AS packing,
+            s.stock,
+            s.ptr,
+            s.mrp,
+            s.discound COLLATE DATABASE_DEFAULT AS discount,
+            s.free,
+            s.sch AS scheme,
+            s.minqty AS minimum_qty,
+            s.Rack COLLATE DATABASE_DEFAULT AS rack,
+            CAST(s.StoreProductCode AS VARCHAR(50)) AS product_code,
+            s.transactiondate AS imported_at
+        FROM {_ordernmc()}.dbo.SupplierStock s
+        JOIN dbo.stores st
+          ON st.store_code = s.storename COLLATE DATABASE_DEFAULT
+         AND st.tenant_id = ?
+        WHERE s.suppliercode = ?
+          {store_clause}
+          AND (? = 0 OR ISNULL(s.stock, 0) > 0)
+          AND (? = ''
+               OR s.supplierproductname LIKE '%' + ? + '%'
+               OR s.supplierproductcode LIKE ? + '%')
+        ORDER BY s.supplierproductname, st.store_code
+        """,
+        tuple(params),
+    )
+    truncated = len(rows) > STOCK_LIST_LIMIT
+    return rows[:STOCK_LIST_LIMIT], truncated
+
+
 def _warehouse_search_clause(search):
     """Shared LIKE predicate + its 3 bound params, reused by both the counts
     and products queries below so their `base` CTEs stay identical."""

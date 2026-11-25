@@ -80,6 +80,12 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
 
 
 @_tenant_scoped
+def list_stock(tenant_id, supplier_code, store_id=None, search="", only_available=False):
+    items, truncated = repository.list_stock(tenant_id, supplier_code, store_id, search, only_available)
+    return {"items": items, "truncated": truncated, "limit": repository.STOCK_LIST_LIMIT}
+
+
+@_tenant_scoped
 def warehouse_stock_counts(tenant_id, store_id):
     return repository.warehouse_stock_counts(tenant_id, store_id)
 
