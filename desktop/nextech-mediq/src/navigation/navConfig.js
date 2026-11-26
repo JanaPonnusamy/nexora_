@@ -421,4 +421,5 @@ export function statusLabel(status) {
   if (status === MODULE_STATUS.READY) return 'Ready';
   if (status === MODULE_STATUS.IN_PROGRESS) return 'In progress';
   return 'Planned';
+  if (pathname === '/help') return [{ label: 'Help & Guide', path: null }];
 }

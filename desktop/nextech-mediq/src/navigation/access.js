@@ -201,5 +201,6 @@ export function resolvePathForUser(user, pathname) {
   const path = pathname || '/';
   if (allowed.some((item) => pathMatches(item, path))) return null;
   const next = allowed.find((item) => isNavItemEnabled(item)) || allowed[0];
+  if (path === '/help') return null;
   return next?.path || '/dashboard';
 }

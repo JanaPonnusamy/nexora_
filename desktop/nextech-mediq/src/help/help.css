@@ -1,0 +1,243 @@
+/* Help & Guide page and the per-page guide drawer. Colours come only from theme
+   tokens so every theme stays readable. Sizes are relaxed on purpose: 14px body,
+   1.55 line height, generous gaps. */
+.ntm-help {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ntm-text-primary);
+}
+
+.ntm-help__wide { grid-column: 1 / -1; }
+
+.ntm-help__card {
+  padding: 18px 20px;
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: 12px;
+}
+
+.ntm-help h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.ntm-help h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 20px 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-help h4 {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ntm-text-muted);
+}
+
+.ntm-help ul,
+.ntm-help ol { margin: 0; padding-left: 20px; }
+.ntm-help li { margin: 4px 0; }
+.ntm-help__start li { margin: 7px 0; }
+
+.ntm-help__lede { margin: 0 0 12px; color: var(--ntm-text-secondary); }
+
+.ntm-help a { color: var(--nx-accent-ink, var(--ntm-accent-2)); }
+
+.ntm-help kbd {
+  display: inline-block;
+  min-width: 24px;
+  padding: 2px 7px;
+  font: 600 12px/1.4 var(--ntm-font-sans);
+  text-align: center;
+  color: var(--ntm-text-primary);
+  background: var(--ntm-elevated);
+  border: 1px solid var(--ntm-border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+}
+
+.ntm-help__keys { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.ntm-help__plus { color: var(--ntm-text-muted); }
+
+.ntm-help__table { width: 100%; border-collapse: collapse; }
+.ntm-help__table th,
+.ntm-help__table td { padding: 8px 10px; vertical-align: top; border-top: 1px solid var(--ntm-border); text-align: left; font-weight: 400; }
+.ntm-help__table tr:first-child th,
+.ntm-help__table tr:first-child td { border-top: 0; }
+.ntm-help__table th { width: 1%; white-space: nowrap; }
+
+.ntm-help__flow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  counter-reset: none;
+}
+
+.ntm-help__flow li {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--ntm-elevated);
+  border: 1px solid var(--ntm-border);
+  border-radius: 10px;
+}
+
+.ntm-help__flow strong { font-size: 14px; }
+.ntm-help__flow span { color: var(--ntm-text-secondary); }
+
+.ntm-help__searchrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ntm-help__searchrow h2 { margin: 0; }
+
+.ntm-help__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: min(340px, 100%);
+  padding: 8px 12px;
+  background: var(--ntm-elevated);
+  border: 1px solid var(--ntm-border);
+  border-radius: 10px;
+  color: var(--ntm-text-muted);
+}
+
+.ntm-help__search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--ntm-text-primary);
+  font-size: 14px;
+}
+
+.ntm-help__none { color: var(--ntm-text-muted); padding: 16px 0; }
+
+.ntm-help__item {
+  margin: 8px 0;
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: 10px;
+}
+
+.ntm-help__item summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ntm-help__item summary::-webkit-details-marker { display: none; }
+.ntm-help__item[open] summary { border-bottom: 1px solid var(--ntm-border); }
+.ntm-help__item-name { font-size: 14px; font-weight: 600; }
+.ntm-help__item > .ntm-help__guide,
+.ntm-help__item > .ntm-help__open { margin: 0 16px; }
+.ntm-help__item > .ntm-help__guide { padding-top: 12px; }
+.ntm-help__open { display: inline-block; padding: 10px 0 14px; font-weight: 600; }
+.ntm-help__purpose { margin: 0 0 4px; font-size: 14.5px; }
+
+/* ---- top-bar trigger + drawer ---- */
+.ntm-guide-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ntm-text-primary);
+  background: var(--ntm-elevated);
+  border: 1px solid var(--ntm-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ntm-guide-trigger:hover:not(:disabled) { border-color: var(--ntm-accent-2); }
+.ntm-guide-trigger:disabled { opacity: 0.5; cursor: default; }
+
+.ntm-guide-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  border: 0;
+  background: rgba(4, 12, 28, 0.45);
+  cursor: default;
+}
+
+.ntm-guide-drawer {
+  white-space: normal;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 901;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 92vw);
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-primary);
+  border-left: 1px solid var(--ntm-border);
+  box-shadow: -18px 0 40px rgba(4, 12, 28, 0.35);
+}
+
+.ntm-guide-drawer header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--ntm-border);
+}
+
+.ntm-guide-drawer h2 { margin: 2px 0 0; font-size: 18px; font-weight: 650; }
+.ntm-guide-drawer__eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ntm-text-muted); }
+
+.ntm-guide-drawer__close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--ntm-text-secondary);
+  background: transparent;
+  border: 1px solid var(--ntm-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ntm-guide-drawer__body { display: block; flex: 1; overflow: auto; padding: 8px 20px 20px; }
+.ntm-guide-drawer__body.ntm-help { grid-template-columns: none; }
+.ntm-guide-drawer .ntm-help__flow { grid-template-columns: 1fr; }
+.ntm-guide-drawer footer { padding: 14px 20px; border-top: 1px solid var(--ntm-border); font-size: 14px; }
+.ntm-guide-drawer footer a { color: var(--nx-accent-ink, var(--ntm-accent-2)); font-weight: 600; }
+
+@media (max-width: 1100px) {
+  .ntm-help,
+  .ntm-help__flow { grid-template-columns: 1fr; }
+}

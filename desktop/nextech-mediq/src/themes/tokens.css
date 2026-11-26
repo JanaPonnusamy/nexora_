@@ -58,13 +58,31 @@
   }
 }
 
+/* Root size drives every rem-based control, including the web screens hosted
+   inside MediQ (authored for a 16px root). 13px made them render at 81% of
+   their design size and cramped at 1366x768, so laptops get 15px and larger
+   screens the full 16px. */
+html {
+  font-size: 15px;
+}
+
+@media (min-width: 1600px) {
+  html {
+    font-size: 16px;
+  }
+}
+
 html,
 body {
   margin: 0;
   background: var(--ntm-bg);
   color: var(--ntm-text-primary);
   font-family: var(--ntm-font-sans);
-  font-size: 13px;
+}
+
+body {
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 button,

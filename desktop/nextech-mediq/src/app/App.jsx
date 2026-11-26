@@ -6,6 +6,7 @@ import { RequireAuth } from './RequireAuth.jsx';
 import { AppShell } from '../layouts/AppShell.jsx';
 import { DashboardPage } from '../modules/dashboard/DashboardPage.jsx';
 import { SettingsPage } from '../modules/settings/SettingsPage.jsx';
+import { HelpPage } from '../help/HelpPage.jsx';
 import { StockEnquiryPage } from '../modules/stock-enquiry/StockEnquiryPage.jsx';
 import { NonMovingStockPage } from '../modules/non-moving-stock/NonMovingStockPage.jsx';
 import { LabelExportPage } from '../modules/label-export/LabelExportPage.jsx';
@@ -23,6 +24,8 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import 'bootstrap-icons/font/bootstrap-icons.css';
 import '../themes/tokens.css';
 import '../layouts/shell.css';
+import '../layouts/readability.css';
+import '../help/help.css';
 import './login.css';
 import '../modules/stock-enquiry/stockEnquiry.css';
 import '../modules/ai-intelligence/aiIntelligence.css';
@@ -50,6 +53,7 @@ export function App() {
                 <Route path="dashboard" element={<DashboardPage />} />
                 <Route path="stock-enquiry" element={<StockEnquiryPage />} />
                 <Route path="settings" element={<SettingsPage />} />
+                <Route path="help" element={<HelpPage />} />
                 <Route path="inventory/network-stock" element={workspace('network-stock')} />
                 <Route path="inventory/non-moving" element={<NonMovingStockPage />} />
                 <Route path="inventory/non-moving-report" element={web('non-moving-report')} />

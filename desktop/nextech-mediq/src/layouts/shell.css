@@ -591,9 +591,11 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  width: 260px;
-  max-width: 260px;
-  margin: 0 auto 0 24px;
+  flex: 1 1 200px;
+  width: auto;
+  min-width: 150px;
+  max-width: 300px;
+  margin: 0 auto 0 16px;
   background: var(--ntm-elevated);
   border: 1px solid transparent;
   color: var(--ntm-text-muted);
@@ -1527,3 +1529,44 @@
 :root[data-bs-theme='dark'] .btn-outline-secondary:disabled {
   opacity: 0.6;
 }
+
+/* ---- Top bar at laptop widths (1366px and below): never wrap labels ---- */
+.ntm-topbar__actions { flex: none; white-space: nowrap; }
+.ntm-theme-trigger,
+.ntm-guide-trigger,
+.ntm-tenant-trigger,
+.ntm-user-trigger { white-space: nowrap; }
+.ntm-tenant-trigger__name { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.ntm-user-trigger__meta strong,
+.ntm-user-trigger__meta em { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ntm-topbar nav,
+.ntm-topbar .ntm-breadcrumbs { min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 1440px) {
+  .ntm-topbar { gap: 10px; padding: 0 14px; }
+  .ntm-topbar__actions { gap: 4px; }
+  .ntm-theme-trigger { padding-inline: 8px; }
+}
+
+/* Smallest text floor: nothing readable should be under 11px. */
+.ntm-status-chip { font-size: 11px; }
+.ntm-dashboard__ai { font-size: 11px; }
+
+/* Empty-state page guide */
+.ntm-state__guide {
+  max-width: 520px;
+  margin-top: 14px;
+  padding: 14px 18px;
+  text-align: left;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ntm-text-secondary);
+  background: var(--ntm-elevated);
+  border: 1px solid var(--ntm-border);
+  border-radius: 10px;
+}
+.ntm-state__guide p { margin: 4px 0 8px; }
+.ntm-state__guide ol { margin: 0 0 8px; padding-left: 20px; }
+.ntm-state__guide-title { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ntm-text-muted); }
+.ntm-state__guide a { color: var(--nx-accent-ink, var(--ntm-accent-2)); font-weight: 600; }
+.ntm-web-host .sx-tabs { flex-wrap: wrap; }
