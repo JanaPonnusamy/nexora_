@@ -128,6 +128,15 @@ def _check_checkpoint(job_id, store_name, checkpoint):
     bill, grn = checkpoint or (None, None)
     if not bill and grn is None:
         return True, None
+    if bill == repository.TODAY_BILL:
+        _update(job_id, message="Checking today's sale bills in SaleInformation...")
+        try:
+            check = repository.check_today_bill(store_name)
+        except Exception as exc:
+            logger.exception("today's bill check failed for %s", store_name)
+            check = {"ok": False, "message": f"Could not check today's bills: {exc}", "bill": None, "grn": None}
+        _update(job_id, message=check["message"])
+        return check["ok"], check
     _update(job_id, message="Checking the last bill / last GRN in OrderNMC...")
     try:
         check = repository.check_order_checkpoint(store_name, bill, grn)
@@ -150,7 +159,24 @@ class PreviousOrderNotFinalized(ValueError):
     finish (review + finalize) it before a new order is generated."""
 
 
-def start_pm_order(store_name, last_bill, last_grn, order_type="REGULAR", confirmed=False):
+class GapReviewRequired(ValueError):
+    """Order Entry step 1 is not done: the PM has not reviewed the current
+    order's gap (Order Gap Review -> Review done)."""
+
+
+def require_gap_review(store_name):
+    """Order Entry runs Review pending -> Last bill / GRN -> Process order:
+    refuse the PM submit until the current order's gap has been reviewed."""
+    status = repository.gap_review_status(store_name)
+    if status["required"] and not status["done"]:
+        raise GapReviewRequired(
+            f"Review the pending products of order #{status['order_id']} first: open Pending Supply Review, "
+            "mark the products still expected as pending, then press Review done."
+        )
+    return status
+
+
+def start_pm_order(store_name, last_bill, last_grn, order_type="REGULAR", confirmed=False, trigger="manual"):
     """A purchase manager's Order Process for their own store (owner rulings
     2026-11-05): last bill + last GRN are required, the previous day's order
     must be finalized first, and a WH order is never compared."""
@@ -173,7 +199,7 @@ def start_pm_order(store_name, last_bill, last_grn, order_type="REGULAR", confir
     return start_order_process(
         store_name, confirmed_stale_order=bool(confirmed or earlier_day),
         compare_mode="HO" if order_type == "WH" else None,
-        last_bill=last_bill, last_grn=last_grn,
+        last_bill=last_bill, last_grn=last_grn, trigger=trigger,
     )
 
 
@@ -367,7 +393,7 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
                          confirmed_order_id=None, confirmed_count=None,
                          confirmed_stale_order=False, engine=None, recency_days=None,
                          compare_today_previous=None, last_bill=None, last_grn=None,
-                         compare_mode=None, trigger="manual"):
+                         compare_mode=None, trigger="manual", require_today_bill=False):
     """recency_days: only products sold in the last N days are ordered (the
     store's Order settings); None = default_recency_days(store_name).
     last_bill/last_grn: the store's last sale bill and last GRN as the
@@ -395,6 +421,10 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     top of it; evening_order.run_stores passes trigger="evening" so its own
     runs don't record themselves as a manual run."""
     checkpoint = repository.normalize_checkpoint(last_bill, last_grn)
+    # require_today_bill (the morning auto order): after the sync, a sale bill
+    # dated today must be in SaleInformation, or no order is generated.
+    if require_today_bill and not checkpoint[0]:
+        checkpoint = (repository.TODAY_BILL, checkpoint[1])
     store = _resolve_store(store_name)
     warehouse = is_warehouse_store(store_name)
     agent_synced = is_agent_synced_store(store_name, store)
@@ -589,9 +619,24 @@ def start_order_process(store_name, min_days=None, max_days=None, mode="local",
     return job_id
 
 
+# Compare modes that run a compare after the order is generated (same set as
+# rulebook_order.COMPARING_MODES; not imported here, rulebook_order is only
+# imported lazily in this module).
+_COMPARING_MODES = ("PREVIOUS_PENDING", "TODAY", "PENDING_LIST", "TODAY_PENDING")
+
+
 def _compare_for_mode(job_id, store_name, mode):
     """PREVIOUS_PENDING: the original VB compare with the store's previous
-    order; TODAY: every earlier order of today (see below)."""
+    order; TODAY: every earlier order of today (see below); PENDING_LIST:
+    the PM's pending list; TODAY_PENDING: today's earlier orders, then the
+    pending list (only lines today's compare left open are touched)."""
+    if mode == "PENDING_LIST":
+        return _compare_pending_list(job_id, store_name)
+    if mode == "TODAY_PENDING":
+        today = _compare_todays_previous(job_id, store_name)
+        pending = _compare_pending_list(job_id, store_name)
+        return {**today, "pending": pending,
+                "affected_rows": (today.get("affected_rows") or 0) + (pending.get("affected_rows") or 0)}
     if mode != "PREVIOUS_PENDING":
         return _compare_todays_previous(job_id, store_name)
     try:
@@ -606,6 +651,24 @@ def _compare_for_mode(job_id, store_name, mode):
         logger.exception("compare with the previous order failed for %s", store_name)
         _update(job_id, message=f"Compare with the previous order failed: {exc}")
         return {"order_id": None, "order_ids": [], "affected_rows": 0, "error": str(exc)}
+
+
+def _compare_pending_list(job_id, store_name):
+    """Compare the order just generated with the store's pending list
+    (repository.compare_pending_list). Like the other compares, a failure is
+    logged on the job but never fails it."""
+    try:
+        res = repository.compare_pending_list(store_name)
+        if not res["pending_products"]:
+            _update(job_id, message="Pending list compare skipped: the pending list is empty.")
+        else:
+            _update(job_id, message=f"Compared with the pending list ({res['pending_products']} products): "
+                                    f"{res['covered']} covered, {res['reduced']} reduced.")
+        return res
+    except Exception as exc:
+        logger.exception("compare with the pending list failed for %s", store_name)
+        _update(job_id, message=f"Compare with the pending list failed: {exc}")
+        return {"affected_rows": 0, "error": str(exc)}
 
 
 def _compare_todays_previous(job_id, store_name):
@@ -712,7 +775,7 @@ def _run_sync_then_order(job_id, store, plan, min_days, max_days, mode,
         )
         result["tables"] = tables
         result["checkpoint"] = check
-        if compare_today in ("TODAY", "PREVIOUS_PENDING"):
+        if compare_today in _COMPARING_MODES:
             result["compare"] = _compare_for_mode(job_id, store["store_name"], compare_today)
         _update(
             job_id, status="completed", step=base_step + 3, result=result,
@@ -881,7 +944,7 @@ def _run_agent_sync_then_order(job_id, store, store_id, plan, min_days, max_days
         )
         result["tables"] = tables
         result["checkpoint"] = check
-        if compare_today in ("TODAY", "PREVIOUS_PENDING"):
+        if compare_today in _COMPARING_MODES:
             result["compare"] = _compare_for_mode(job_id, store["store_name"], compare_today)
         _update(
             job_id, status="completed", step=base_step + 3, result=result,

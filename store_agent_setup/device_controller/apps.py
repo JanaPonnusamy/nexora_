@@ -27,7 +27,10 @@ from . import (
     STAGING_DIR,
     STATE_DIR,
 )
-from .util import bundled_path, log, run, sha256_of, spawn_detached, wait_until
+from .util import bundled_path, log, prune_old_versions, run, sha256_of, spawn_detached, wait_until
+
+# how many old backups/staged downloads to keep per app, after a successful update
+_KEEP_VERSIONS = 2
 
 try:
     import win32service
@@ -372,6 +375,9 @@ class StoreAgentApp(ServiceApp):
                     if was_running:
                         sc_start(self.service)
                 raise
+        prune_old_versions(backup.parent, keep=_KEEP_VERSIONS, log_label="store_agent backups")
+        prune_old_versions(STAGING_DIR, keep=_KEEP_VERSIONS, log_label="staging",
+                            name_prefix=f"{self.key}-")
         return f"Store Agent updated {previous} -> {pkg['version']}"
 
     def install(self, ctx, pkg, install_dir=None):
@@ -547,6 +553,9 @@ class HoBackendApp(ServiceApp):
                 run(["sc", "config", self.service, "start=", "auto"])
                 self._set_maintenance(False)
                 shutil.rmtree(str(extract), ignore_errors=True)
+        prune_old_versions(BACKUP_DIR / "ho_backend", keep=_KEEP_VERSIONS, log_label="ho_backend backups")
+        prune_old_versions(STAGING_DIR, keep=_KEEP_VERSIONS, log_label="staging",
+                            name_prefix=f"{self.key}-")
         return f"HO backend updated {previous} -> {pkg['version']}"
 
 
@@ -825,6 +834,8 @@ class StockClientApp(App):
             shutil.copy2(str(staged), str(backup_dir / staged.name))
             if was_running:
                 self.start(ctx)
+        prune_old_versions(STAGING_DIR, keep=_KEEP_VERSIONS, log_label="staging",
+                           name_prefix=f"{self.key}-")
         return f"Stock Client {previous or 'not installed'} -> {pkg['version']}"
 
     def install(self, ctx, pkg, install_dir=None):
@@ -879,6 +890,11 @@ class ControllerApp(App):
 
     def update(self, ctx, pkg):
         staged = fetch_package(ctx, self.key, pkg)
+        # prune now -- the swap below restarts this process via a detached
+        # script, so there is no reliable "after success" point to do it from
+        prune_old_versions(BACKUP_DIR / "controller", keep=_KEEP_VERSIONS, log_label="controller backups")
+        prune_old_versions(STAGING_DIR, keep=_KEEP_VERSIONS, log_label="staging",
+                           name_prefix=f"{self.key}-")
         target = INSTALL_DIR / EXE_NAME
         UPDATE_MARKER.parent.mkdir(parents=True, exist_ok=True)
         UPDATE_MARKER.write_text(json.dumps({"command_id": ctx.command_id, "version": pkg["version"],

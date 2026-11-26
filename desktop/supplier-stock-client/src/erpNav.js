@@ -31,8 +31,11 @@ export const ERP_SECTIONS = [
     screens: [
       'procurement_workspace',
       'order_entry',
+      'order_gap_review',
+      'previous_order_comparison',
       'legacy_order',
       'analysis',
+      'supplier_stock_list',
       'rate_analysis',
     ],
   },
@@ -40,7 +43,7 @@ export const ERP_SECTIONS = [
     key: 'inventory',
     label: 'Inventory',
     icon: 'inventory',
-    screens: ['stock_vertical', 'non_moving', 'nmw_sales'],
+    screens: ['stock_quick', 'stock_vertical', 'non_moving', 'nmw_sales'],
   },
   {
     key: 'sales_reports',
@@ -52,7 +55,7 @@ export const ERP_SECTIONS = [
     key: 'tools',
     label: 'Tools',
     icon: 'tools',
-    screens: ['whatsapp', 'sync_live', 'label_exporter', 'schema_sync'],
+    screens: ['whatsapp', 'sync_live', 'label_exporter', 'schema_sync', 'db_monitor', 'order_cache_monitor'],
   },
   {
     key: 'administration',

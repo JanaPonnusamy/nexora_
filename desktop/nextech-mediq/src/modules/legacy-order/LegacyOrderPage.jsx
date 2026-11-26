@@ -32,6 +32,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PageLayout } from '../../layouts/PageLayout.jsx';
 import { apiGet, apiPost, apiPut } from '../../api/client.js';
 import './legacyOrder.css';
+import MorningOrderDialog from './morningOrder.jsx';
 
 const POLL_MS = 1500;
 const LOST_AFTER_MS = 120000;
@@ -43,11 +44,13 @@ const JOBS_REFRESH_MS = 20000;
 const COMPARE_MODES = [
   ['PREVIOUS_PENDING', 'Previous pending'],
   ['TODAY', "Previous today's orders"],
+  ['PENDING_LIST', 'Pending list'],
+  ['TODAY_PENDING', "Today's orders + pending list"],
   ['NONE', 'No compare'],
   ['HO', 'HO order (no compare)'],
 ];
 const COMPARE_LABEL = Object.fromEntries(COMPARE_MODES);
-const compares = (mode) => mode === 'TODAY' || mode === 'PREVIOUS_PENDING';
+const compares = (mode) => ['PREVIOUS_PENDING', 'TODAY', 'PENDING_LIST', 'TODAY_PENDING'].includes(mode);
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const codeKey = (value) => String(value || '').trim().toUpperCase();
@@ -102,6 +105,9 @@ const legacyApi = {
   eveningSchedule: () => apiGet('/api/legacy-order/schedule/evening'),
   saveEveningSchedule: (payload) => apiPut('/api/legacy-order/schedule/evening', payload),
   runEveningNow: () => apiPost('/api/legacy-order/schedule/evening/run', {}),
+  morningSchedules: () => apiGet('/api/legacy-order/schedule/morning'),
+  saveMorningSchedule: (key, payload) => apiPut(`/api/legacy-order/schedule/morning/${encodeURIComponent(key)}`, payload),
+  retryMorningStore: (key, store) => apiPost(`/api/legacy-order/schedule/morning/${encodeURIComponent(key)}/stores/${encodeURIComponent(store)}/retry`, {}),
   jobs: (limit = 50) => apiGet(`/api/legacy-order/jobs?limit=${limit}`),
   job: (jobId) => apiGet(`/api/legacy-order/jobs/${encodeURIComponent(jobId)}`, { transientRetries: 0 }),
   orderHeader: (storeName) => apiGet(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/header`),
@@ -477,6 +483,7 @@ export function LegacyOrderPage() {
   const [savedDefaults, setSavedDefaults] = useState({}); // store -> {min_days, max_days, recency_days}
   const [schedule, setSchedule] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [morningOpen, setMorningOpen] = useState(false);
   const [pushingStock, setPushingStock] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -880,6 +887,7 @@ export function LegacyOrderPage() {
             Evening order: {scheduleRunning(schedule) ? 'running' : schedule ? fmtNextRun(schedule.next_run) : '…'}
           </span>
           <button type="button" className="ntm-button" onClick={() => setSettingsOpen(true)} disabled={!stores.length}>⚙ Settings</button>
+          <button type="button" className="ntm-button" onClick={() => setMorningOpen(true)} title="One order per store every morning, started by the store coming online">🌅 Morning auto</button>
         </div>
       }
       dense
@@ -1087,6 +1095,15 @@ export function LegacyOrderPage() {
           {logEntry?.job?.warning && <div className="lgo-log-line lgo-warn">{logEntry.job.warning}</div>}
         </div>
       </div>
+
+      {morningOpen && (
+        <MorningOrderDialog
+          load={legacyApi.morningSchedules}
+          save={legacyApi.saveMorningSchedule}
+          retry={legacyApi.retryMorningStore}
+          onClose={() => setMorningOpen(false)}
+        />
+      )}
 
       {settingsOpen && (
         <OrderAutomationSettings

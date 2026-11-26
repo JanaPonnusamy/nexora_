@@ -15,6 +15,9 @@
   --qs-red: #dc2626;
   --qs-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
 
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -28,10 +31,13 @@
 .qs-gate {
   height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   background: var(--qs-bg);
   font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  overflow-y: auto;
+  padding: 1rem 0;
 }
 .qs-gate__card {
   background: var(--qs-surface);
@@ -91,14 +97,15 @@
 }
 .qs-head__title i { color: var(--qs-accent); }
 .qs-search {
-  flex: 1 1 320px;
+  flex: 0 1 280px;
+  max-width: 280px;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   background: var(--qs-bg);
   border: 1px solid var(--qs-border);
   border-radius: 10px;
-  padding: 0.45rem 0.75rem;
+  padding: 0.4rem 0.65rem;
 }
 .qs-search i { color: var(--qs-faint); }
 .qs-search input {
@@ -121,96 +128,247 @@
 .qs-status { font-size: 0.78rem; color: var(--qs-muted); white-space: nowrap; }
 
 /* ===== Body ===== */
-.qs-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.9rem; }
+.qs-body { flex: 1 1 auto; min-height: 0; min-width: 0; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; padding: 0.9rem; display: flex; flex-direction: column; }
 
-.qs-branches {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 0.8rem;
-  align-items: start;
-}
-.qs-branch {
-  background: var(--qs-surface);
-  border: 1px solid var(--qs-border);
-  border-top: 3px solid var(--qs-accent);
-  border-radius: 10px;
-  box-shadow: var(--qs-shadow);
-  overflow: hidden;
-}
-.qs-branch__head {
-  padding: 0.4rem 0.65rem;
-  background: var(--qs-accent-soft);
-  font-weight: 800;
-  font-size: 0.88rem;
-  color: var(--qs-accent);
-}
-.qs-branch__row {
-  display: grid;
-  grid-template-columns: 1fr 40px 54px;
-  gap: 0.3rem;
-  align-items: center;
-  width: 100%;
-  min-height: 32px;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--qs-border);
-  padding: 0.3rem 0.6rem;
-  font-size: 0.8rem;
-  color: var(--qs-text);
-  cursor: pointer;
-}
-.qs-branch__row:hover { background: var(--qs-bg); }
-.qs-branch__row--head {
-  font-weight: 650;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--qs-muted);
-  cursor: default;
-}
-.qs-branch__row--head:hover { background: transparent; }
-.qs-branch__row--active { background: var(--qs-accent-soft); }
-.qs-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 0.35rem; flex: none; }
-.qs-dot--in { background: var(--qs-green); }
-.qs-dot--out { background: var(--qs-red); }
-.qs-num { text-align: right; }
-.qs-dim { color: var(--qs-muted); }
-.qs-empty { text-align: center; color: var(--qs-muted); padding: 2.5rem 0; font-size: 0.9rem; }
-
-/* ===== Detail panel ===== */
-.qs-detail {
-  margin-top: 1rem;
-  background: var(--qs-surface);
-  border: 1px solid var(--qs-border);
-  border-radius: 10px;
-  box-shadow: var(--qs-shadow);
-  overflow: hidden;
-}
-.qs-detail__head {
+/* Bar shown above the matrix once a product is picked — replaces the old
+   per-section "Product detail" head, since the whole matrix now carries
+   one product at a time (not a separate detail block below the grid). */
+.qs-active-product {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.6rem;
-  padding: 0.55rem 0.85rem;
-  background: var(--qs-bg);
-  border-bottom: 1px solid var(--qs-border);
-  font-weight: 700;
-  font-size: 0.92rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.6rem;
+  background: var(--qs-surface);
+  border: 1px solid var(--qs-border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  flex: 0 0 auto;
 }
-.qs-detail__panels {
+
+.qs-num { text-align: right; }
+.qs-dim { color: var(--qs-muted); }
+.qs-empty { text-align: center; color: var(--qs-muted); padding: 2.5rem 0; font-size: 0.9rem; }
+.qs-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 0.35rem; flex: none; }
+.qs-dot--in { background: var(--qs-green); }
+.qs-dot--out { background: var(--qs-red); }
+
+/* ===== Row-band matrix (reference layout): store columns across the top,
+   then STORE GRID / CHART / BATCH / PURCHASE / SALES as horizontal bands
+   spanning every store column, each with a colored left-edge label strip.
+   Modeled on supplier-stock-client's `.scm-*` Stock Enquiry matrix. ===== */
+.qs-scm {
+  --qs-scm-label-w: 32px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 0;
+  background: var(--qs-surface);
+  border: 1px solid var(--qs-border);
+  border-radius: 10px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
-.qs-panel { padding: 0.7rem 0.85rem; border-right: 1px solid var(--qs-border); border-bottom: 1px solid var(--qs-border); }
-.qs-panel:last-child { border-right: 0; }
-.qs-panel__title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--qs-muted); margin-bottom: 0.4rem; }
-.qs-panel table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-.qs-panel th { text-align: left; color: var(--qs-faint); font-weight: 600; padding: 0.2rem 0.3rem; border-bottom: 1px solid var(--qs-border); }
-.qs-panel td { padding: 0.25rem 0.3rem; border-bottom: 1px solid var(--qs-border); }
-.qs-panel td.qs-num, .qs-panel th.qs-num { text-align: right; }
-.qs-panel__empty { color: var(--qs-faint); font-size: 0.82rem; padding: 0.3rem; }
+
+/* Per-band colour mapping — STORE GRID/CHART stay neutral (slate), BATCH is
+   red/pink, PURCHASE is blue, SALES is green, matching the reference image
+   and reusing this page's own --qs-* tokens rather than new hex values. */
+.qs-rowlabel--grid,     .qs-cell--grid     { --qs-sec-head: var(--qs-bg); --qs-sec-fg: var(--qs-muted); --qs-sec-label: #e2e8f0; --qs-sec-label-fg: #334155; }
+.qs-rowlabel--chart,    .qs-cell--chart    { --qs-sec-head: var(--qs-bg); --qs-sec-fg: var(--qs-muted); --qs-sec-label: #e2e8f0; --qs-sec-label-fg: #334155; }
+.qs-rowlabel--purchase, .qs-cell--purchase { --qs-sec-head: var(--qs-accent-soft); --qs-sec-fg: var(--qs-accent); --qs-sec-label: #bfdbfe; --qs-sec-label-fg: #1e40af; }
+.qs-rowlabel--sales,    .qs-cell--sales    { --qs-sec-head: #dcfce7; --qs-sec-fg: #166534; --qs-sec-label: #bbf7d0; --qs-sec-label-fg: #166534; }
+
+.qs-corner,
+.qs-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--qs-surface);
+  border-bottom: 2px solid var(--qs-border);
+}
+.qs-corner { left: 0; z-index: 4; border-right: 2px solid var(--qs-border); }
+/* Store headers are uniform — same convention as the old .qs-branch__head
+   label (store_code, falling back to store_name), plus the full store_name
+   underneath when it differs, matching the reference's two-line header. */
+.qs-colhead {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0.4rem 0.65rem;
+  border-right: 1px solid var(--qs-border);
+  border-top: 2px solid var(--qs-border);
+  min-width: 0;
+}
+.qs-colhead__code { font-weight: 800; font-size: 0.86rem; color: var(--qs-text); letter-spacing: 0.02em; }
+.qs-colhead__name { font-size: 0.7rem; color: var(--qs-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Left row-label strip — narrow, rotated text, sticky on horizontal scroll,
+   tinted per band via the --qs-sec-label custom properties set above. */
+.qs-rowlabel {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--qs-sec-label, var(--qs-bg));
+  border-right: 2px solid var(--qs-border);
+  border-bottom: 1px solid var(--qs-border);
+}
+.qs-rowlabel span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--qs-sec-label-fg, var(--qs-text));
+}
+
+/* Data cells — each band's per-store cell. Always rendered (bordered) even
+   with no data; scrolls internally so rows stay aligned across the row. */
+.qs-cell {
+  background: var(--qs-surface);
+  border-right: 1px solid var(--qs-border);
+  border-bottom: 1px solid var(--qs-border);
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+}
+.qs-cell--pending { opacity: 0.55; }
+.qs-cell--chart { overflow: hidden; padding: 4px; }
+.qs-cell--chart .qs-trend2 { height: 100%; }
+
+/* STORE GRID cell: reuses the old .qs-branch__row search-result rows, now
+   inside a .qs-cell--grid instead of a standalone .qs-branch card. */
+.qs-cell--grid { display: flex; flex-direction: column; }
+.qs-branch__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px 54px;
+  gap: 0.3rem;
+  align-items: center;
+  width: 100%;
+  height: 30px;
+  min-height: 30px;
+  text-align: left;
+  background: var(--qs-surface);
+  border: 0;
+  border-bottom: 1px solid var(--qs-border);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--qs-text);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.qs-branch__row:hover { background: var(--qs-bg); }
+.qs-branch__row--head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 650;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--qs-muted);
+  background: var(--qs-sec-head, var(--qs-surface));
+  cursor: default;
+}
+.qs-branch__row--head:hover { background: var(--qs-sec-head, var(--qs-surface)); }
+.qs-branch__row--active { background: var(--qs-accent-soft); }
+.qs-clip,
+.qs-clip__text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+.qs-clip {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.qs-branch__placeholder {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--qs-faint);
+  font-size: 0.78rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+/* Compact tables inside CHART/BATCH/PURCHASE/SALES cells — reuses the old
+   .qs-panel table styling at a slightly denser size for the row-band cells. */
+.qs-cell table { width: 100%; border-collapse: collapse; font-size: 0.74rem; table-layout: fixed; }
+.qs-cell th { position: sticky; top: 0; text-align: left; color: var(--qs-faint); font-weight: 600; padding: 0 0.3rem; border-bottom: 1px solid var(--qs-border); background: var(--qs-surface); }
+.qs-cell td { padding: 0 0.3rem; border-bottom: 1px solid var(--qs-border); }
+.qs-cell th,
+.qs-cell td {
+  height: 26px;
+  line-height: 26px;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.qs-cell td.qs-num, .qs-cell th.qs-num { text-align: right; }
+.qs-cell--grid,
+.qs-cell--purchase,
+.qs-cell--sales {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.qs-cell--purchase th:nth-child(1),
+.qs-cell--purchase td:nth-child(1) { width: 78px; }
+.qs-cell--purchase th:nth-child(3),
+.qs-cell--purchase td:nth-child(3),
+.qs-cell--purchase th:nth-child(4),
+.qs-cell--purchase td:nth-child(4) { width: 36px; }
+.qs-cell--purchase th:nth-child(5),
+.qs-cell--purchase td:nth-child(5),
+.qs-cell--purchase th:nth-child(6),
+.qs-cell--purchase td:nth-child(6) { width: 52px; }
+.qs-panel__empty { color: var(--qs-faint); font-size: 0.78rem; padding: 0.5rem; text-align: center; }
+
+/* Multi-color SVG trend chart (Purchase/Sales/Stock), same visual model as
+   the procurement charts. Taller than the old single-color bars so it reads
+   clearly even inside a 6-column layout. */
+.qs-trend2 { height: 170px; }
+.qs-trend2__plot { position: relative; width: 100%; height: 100%; }
+.qs-trend2__axis { font-size: 8px; fill: var(--qs-faint); }
+.qs-trend2__month { font-size: 9px; fill: var(--qs-muted); }
+.qs-trend2__barval { font-size: 8px; font-weight: 700; }
+.qs-trend2__barval--pur { fill: #1a3fae; }
+.qs-trend2__barval--sal { fill: #12662f; }
+.qs-trend2__barval--stk { fill: #9c1414; }
+.qs-trend2__tip {
+  position: absolute;
+  background: var(--qs-text);
+  color: #fff;
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.7rem;
+  pointer-events: none;
+  z-index: 2;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+}
+.qs-trend2__tip-head { font-weight: 700; margin-bottom: 0.2rem; }
+.qs-trend2__tip-row { display: flex; align-items: center; gap: 0.3rem; }
+.qs-trend2__swatch { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 
 .qs-toggle-purchase {
   font-size: 0.8rem;
@@ -223,6 +381,26 @@
   white-space: nowrap;
 }
 
+/* Sales / Purchase segmented toggle — replaces the old "Hide purchase"
+   checkbox; controls which band occupies the shared third grid row. */
+.qs-seg {
+  display: inline-flex;
+  border: 1px solid var(--qs-border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.qs-seg__btn {
+  font-size: 0.78rem;
+  color: var(--qs-muted);
+  background: var(--qs-surface);
+  border: 0;
+  padding: 0.25rem 0.65rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qs-seg__btn + .qs-seg__btn { border-left: 1px solid var(--qs-border); }
+.qs-seg__btn--active { background: var(--qs-accent); color: #fff; font-weight: 650; }
+
 .qs-close-btn {
   font-size: 0.8rem;
   color: var(--qs-muted);
@@ -230,8 +408,265 @@
   border: 0;
   cursor: pointer;
 }
+.qs-batch-min {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--qs-muted);
+  white-space: nowrap;
+}
+.qs-batch-min input {
+  width: 52px;
+  border: 1px solid var(--qs-border);
+  border-radius: 6px;
+  padding: 0.15rem 0.3rem;
+  font-size: 0.78rem;
+  color: var(--qs-text);
+  background: var(--qs-surface);
+}
+.qs-modal table.qs-line { table-layout: fixed; width: 100%; }
+.qs-modal table.qs-line th,
+.qs-modal table.qs-line td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  height: 26px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+/* ===== Open-on-another-device links ===== */
+.qs-links {
+  width: 320px;
+  margin-top: 0.9rem;
+  background: var(--qs-surface);
+  border: 1px solid var(--qs-border);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+}
+.qs-links__title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--qs-muted); margin-bottom: 0.5rem; }
+.qs-link-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+.qs-link-row:last-child { margin-bottom: 0; }
+.qs-link-row__label { font-size: 0.76rem; font-weight: 650; color: var(--qs-muted); width: 52px; flex: none; }
+.qs-link-row__url {
+  flex: 1 1 auto;
+  font-size: 0.72rem;
+  color: var(--qs-text);
+  background: var(--qs-bg);
+  border-radius: 6px;
+  padding: 0.25rem 0.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qs-link-row__copy {
+  font-size: 0.72rem;
+  border: 1px solid var(--qs-border);
+  background: var(--qs-surface);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  color: var(--qs-accent);
+  flex: none;
+}
+
+/* ===== Row that opens a drawer (bill value / batch) ===== */
+.qs-row-clickable { cursor: pointer; }
+.qs-row-clickable:hover { background: var(--qs-accent-soft); }
+
+
+/* ===== Modal drawers: bill value, batch & expiry ===== */
+.qs-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 20, 30, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 1rem;
+}
+.qs-modal {
+  background: var(--qs-surface);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  width: min(720px, 100%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.qs-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem;
+  background: var(--qs-bg);
+  border-bottom: 1px solid var(--qs-border);
+  font-size: 0.92rem;
+}
+.qs-modal__body { padding: 0.8rem 1rem; overflow-y: auto; }
+.qs-modal__body table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.qs-modal__body th { text-align: left; color: var(--qs-faint); font-weight: 600; padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--qs-border); }
+.qs-modal__body td { padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--qs-border); }
+.qs-modal__body th.qs-num, .qs-modal__body td.qs-num { text-align: right; }
+.qs-modal__total { text-align: right; margin-top: 0.6rem; font-size: 0.92rem; }
 
 @media (max-width: 720px) {
   .qs-head { flex-direction: column; align-items: stretch; }
-  .qs-branches { grid-template-columns: 1fr; }
+  /* Below 720px the store row scrolls horizontally (set above) rather than
+     collapsing to one column — a kiosk window is still wide enough to show
+     several branches at once; stacking vertically would hide most of them. */
+}
+
+/* ===== Full bill-detail modal (Bill Header + Bill Product Details + Summary) ===== */
+.qs-bill-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 20, 30, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 90;
+  padding: 1rem;
+}
+.qs-bill-modal {
+  background: var(--qs-surface);
+  color: var(--qs-text);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  width: min(860px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.qs-bill-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem;
+  background: var(--qs-bg);
+  border-bottom: 1px solid var(--qs-border);
+  font-size: 0.95rem;
+  flex: 0 0 auto;
+}
+.qs-bill-modal__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0.8rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Section A — Bill Header: subtle blue. */
+.qs-bill-header {
+  border: 1px solid #c7d7fb;
+  border-radius: 8px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.qs-bill-header__title {
+  background: #dbe6fe;
+  color: #1e3a8a;
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.7rem;
+  letter-spacing: 0.02em;
+}
+.qs-bill-header__grid {
+  background: #eef3fe;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0.7rem;
+}
+.qs-bill-header__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.82rem;
+  min-width: 0;
+}
+.qs-bill-header__field span { color: var(--qs-muted); font-size: 0.72rem; }
+.qs-bill-header__field strong { font-weight: 600; overflow-wrap: anywhere; }
+
+/* Section B — Bill Product Details: teal/green. */
+.qs-bill-products {
+  border: 1px solid #b7e4d8;
+  border-radius: 8px;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.qs-bill-products__title {
+  background: #ccf2e4;
+  color: #065f46;
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.7rem;
+  letter-spacing: 0.02em;
+  flex: 0 0 auto;
+}
+.qs-bill-products__scroll {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.qs-bill-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  background: #fff;
+}
+.qs-bill-grid thead th {
+  position: sticky;
+  top: 0;
+  background: #e3f9f1;
+  color: #0f766e;
+  text-align: left;
+  font-weight: 600;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid #b7e4d8;
+  white-space: nowrap;
+}
+.qs-bill-grid td {
+  padding: 0.35rem 0.55rem;
+  border-bottom: 1px solid #eef2f0;
+}
+.qs-bill-grid tbody tr:nth-child(even) { background: #fafbfa; }
+.qs-bill-grid th.qs-num, .qs-bill-grid td.qs-num { text-align: right; }
+
+/* Bill Summary footer. */
+.qs-bill-summary {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 1.2rem;
+  padding: 0.65rem 1rem;
+  background: var(--qs-bg);
+  border-top: 1px solid var(--qs-border);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.qs-bill-summary__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.78rem;
+  text-align: right;
+}
+.qs-bill-summary__item span { color: var(--qs-muted); }
+.qs-bill-summary__item strong { font-size: 0.9rem; }
+.qs-bill-summary__item--grand strong {
+  font-size: 1.1rem;
+  color: var(--qs-accent);
 }

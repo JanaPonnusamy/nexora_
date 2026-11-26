@@ -1,0 +1,1555 @@
+/* ============================================================================
+   Non-Moving Stock Workspace (NonMovingStock.jsx) — NexTech MediQ Port
+   Source: desktop/supplier-stock-client/src/styles.css (.nms-*, .trp-*, .rta-*,
+           .ow-*, .st-*, .pw-settings / .pw-col-list)
+   Adapted to NexTech MediQ's 5-theme token system (Midnight Glass, Arctic Glass,
+   Ocean Blue, Graphite Pro, Aurora Light) and AppShell layout.
+   ============================================================================ */
+
+/* Theme semantic sunk / ink / chart tokens (supplementing themeLogic.js) */
+:root {
+  --nx-radius: 8px;
+  --nx-radius-sm: 6px;
+  --ui-font-size: 12px;
+  --ui-small-font: 10.5px;
+
+  /* Fixed semantic chart palette (In = blue, Out = green, Stock = red, Adj = purple) */
+  --ow-in: #2563eb;    --ow-in-hi: #60a5fa;    --ow-in-lo: #1d4ed8;    --ow-in-glow: rgba(37, 99, 235, 0.38);
+  --ow-out: #16a34a;   --ow-out-hi: #4ade80;   --ow-out-lo: #15803d;   --ow-out-glow: rgba(22, 163, 74, 0.38);
+  --ow-stock: #dc2626; --ow-stock-hi: #f87171; --ow-stock-lo: #b91c1c; --ow-stock-glow: rgba(220, 38, 38, 0.38);
+  --ow-adj: #7c3aed;   --ow-adj-hi: #a78bfa;   --ow-adj-lo: #6d28d9;   --ow-adj-glow: rgba(124, 58, 237, 0.38);
+
+  /* Light theme defaults (Arctic Glass / Aurora Light) */
+  --nx-accent-on: #ffffff;
+  --nx-accent-selected: color-mix(in srgb, var(--nx-accent, #2563eb) 18%, var(--nx-surface, #ffffff));
+  --nx-success-sunk: #dcfce7;
+  --nx-success-ink: #047857;
+  --nx-warning-sunk: #fef3c7;
+  --nx-warning-ink: #b45309;
+  --nx-danger-sunk: #fee2e2;
+  --nx-danger-ink: #b91c1c;
+  --nx-info-sunk: #cffafe;
+  --nx-info-ink: #155e75;
+}
+
+/* Dark themes (Midnight Glass, Ocean Blue, Graphite Pro) */
+:root[data-bs-theme='dark'],
+:root[data-theme='midnight-glass'],
+:root[data-theme='ocean-blue'],
+:root[data-theme='graphite-pro'] {
+  --nx-accent-on: var(--nx-text-on, #f8fafc);
+  --nx-accent-selected: color-mix(in srgb, var(--nx-accent, #2563eb) 28%, var(--nx-surface, #162944));
+  --nx-success-sunk: rgba(16, 185, 129, 0.22);
+  --nx-success-ink: #6ee7b7;
+  --nx-warning-sunk: rgba(245, 158, 11, 0.22);
+  --nx-warning-ink: #fde68a;
+  --nx-danger-sunk: rgba(239, 68, 68, 0.24);
+  --nx-danger-ink: #fecaca;
+  --nx-info-sunk: rgba(34, 195, 214, 0.22);
+  --nx-info-ink: #a5f3fc;
+}
+
+/* ----------------------------------------------------------------------------
+   Base Screen & Scoped Control Primitives inside .nms-screen
+   ---------------------------------------------------------------------------- */
+.screen-panel.nms-screen {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  color: var(--nx-text);
+}
+
+.nms-screen .screen-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+
+.nms-screen .screen-header h2 {
+  margin: 0;
+  color: var(--nx-text);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.nms-screen .screen-header p {
+  margin: 2px 0 0;
+  color: var(--nx-text-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.nms-screen input:not([type='checkbox']),
+.nms-screen select {
+  min-height: 30px;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--nx-rule-strong);
+  border-radius: 6px;
+  background: var(--nx-surface);
+  color: var(--nx-text);
+  font: inherit;
+  font-size: 12.5px;
+  box-sizing: border-box;
+}
+
+.nms-screen input:not([type='checkbox'])::placeholder {
+  color: var(--nx-text-muted);
+}
+
+.nms-screen input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  accent-color: var(--nx-accent);
+  cursor: pointer;
+}
+
+.nms-screen .primary-button,
+.nms-screen .secondary-button,
+.nms-screen .ow-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--nx-rule-strong);
+  background: var(--nx-surface);
+  color: var(--nx-text-soft);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.nms-screen .primary-button {
+  border-color: var(--nx-accent);
+  background: var(--nx-accent);
+  color: var(--nx-accent-on);
+}
+
+.nms-screen .primary-button:hover:not(:disabled) {
+  background: var(--nx-accent-hover);
+  border-color: var(--nx-accent-hover);
+}
+
+.nms-screen .secondary-button:hover:not(:disabled),
+.nms-screen .ow-btn:hover:not(:disabled) {
+  border-color: var(--nx-accent);
+  color: var(--nx-text);
+  background: var(--nx-surface-hover);
+}
+
+.nms-screen button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.nms-screen .status-line {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--nx-text-muted);
+}
+
+.nms-screen .status-line.error {
+  color: var(--nx-danger);
+}
+
+.nms-screen .empty-state {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  padding: 16px;
+  border: 1px dashed var(--nx-rule-strong);
+  border-radius: 8px;
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text-muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* ----------------------------------------------------------------------------
+   Shared Report / Table / Chip Primitives (.trp-*, .rta-*)
+   ---------------------------------------------------------------------------- */
+.trp-screen { display: flex; flex-direction: column; gap: 8px; }
+.trp-bar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius);
+}
+.trp-field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nx-text-soft);
+}
+.trp-field select,
+.trp-field input {
+  min-width: 140px;
+  font: inherit;
+  font-size: var(--ui-font-size);
+  font-weight: 400;
+  color: var(--nx-text);
+}
+.trp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-left: auto;
+}
+.trp-subnote {
+  font-size: 12px;
+  color: var(--nx-text-muted);
+  margin: 0 0 8px;
+}
+.trp-subnote b { color: var(--nx-text); }
+
+.trp-tablewrap {
+  overflow: auto;
+  max-height: calc(100vh - 280px);
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius);
+}
+.trp-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+  color: var(--nx-text);
+}
+.trp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 6px 9px;
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text-soft);
+  font-weight: 650;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--nx-rule);
+}
+.trp-table tbody td {
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--nx-rule);
+  white-space: nowrap;
+}
+.trp-table tbody tr:not([style]):hover td {
+  background: var(--nx-surface-hover);
+}
+.trp-left { text-align: left; }
+.trp-center { text-align: center; }
+
+.rta-tabs,
+.rta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.rta-chip {
+  padding: 4px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--nx-rule);
+  background: var(--nx-surface);
+  color: var(--nx-text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.rta-chip:hover {
+  background: var(--nx-surface-hover);
+}
+.rta-chip.active {
+  background: var(--nx-accent-sunk);
+  border-color: var(--nx-accent);
+  color: var(--nx-accent-ink);
+  font-weight: 650;
+}
+.rta-count {
+  margin-left: 4px;
+  opacity: 0.78;
+  font-weight: 600;
+}
+
+/* ----------------------------------------------------------------------------
+   Shared Order Intelligence / Monthly Trend / Store Trends (.ow-*, .st-*)
+   ---------------------------------------------------------------------------- */
+.ow-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface);
+}
+.ow-panel--chart { flex: 0 0 auto; height: clamp(150px, 20vh, 210px); }
+.ow-panel--purchase { flex: 1.5 1 0; min-height: 90px; }
+.ow-panel--sales { flex: 1.1 1 0; min-height: 80px; }
+.ow-panel--stores .ow-panel-scroll { flex: 0 0 auto; overflow: visible; }
+
+.ow-panel-title {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--nx-surface-raised);
+  color: var(--nx-text-soft);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--nx-rule);
+}
+.ow-panel-count { font-weight: 700; color: var(--nx-text-muted); text-transform: none; letter-spacing: 0; }
+.ow-panel-subtitle { font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--nx-text-muted); opacity: 0.85; }
+.ow-panel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.ow-panel-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.ow-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  color: var(--nx-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.ow-intel-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  color: var(--nx-text);
+}
+.ow-intel-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 22px;
+  padding: 0 6px !important;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text-soft);
+  border-bottom: 1px solid var(--nx-rule);
+}
+.ow-intel-table tbody td {
+  height: 22px !important;
+  padding: 0 6px !important;
+  font-size: 11px;
+  border-bottom: 1px solid var(--nx-rule);
+  white-space: nowrap;
+}
+.ow-intel-table .ow-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ow-intel-table .ow-intel-grow { white-space: nowrap; }
+.ow-intel-cust { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-panel--sales .ow-intel-table { width: max-content; min-width: 100%; }
+.ow-panel--purchase .ow-num { min-width: 38px; }
+.ow-panel--purchase .ow-grp { border-left: 1px solid var(--nx-rule); }
+.ow-panel--purchase .ow-col-cost { color: var(--nx-text-muted); }
+.ow-panel--purchase .ow-col-ptr { font-weight: 700; color: var(--nx-text); }
+.ow-panel--purchase .ow-col-mrp { color: var(--nx-accent-ink); }
+.ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
+.ow-intel-clickable { cursor: pointer; }
+.ow-intel-clickable:hover > td { background: var(--nx-surface-hover); }
+.ow-freerow > td { background: var(--nx-warning-sunk); }
+
+/* Monthly Trend Chart (.ow-chart-*) */
+.ow-chart { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; }
+.ow-chart-plot { flex: 1 1 auto; min-height: 60px; display: flex; align-items: stretch; gap: 10px; border-bottom: 1px solid var(--nx-rule); }
+.ow-chart-group {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  outline: none;
+  transition: background 0.15s ease;
+}
+.ow-chart-group:hover,
+.ow-chart-group:focus-visible { background: var(--nx-surface-hover); }
+.ow-chart-bars {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  padding-top: 14px;
+}
+.ow-chart-bar {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 5px;
+  max-width: 15px;
+  min-height: 3px;
+  border-radius: 3px 3px 1px 1px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 1px 2px rgba(15, 23, 42, 0.12);
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.ow-chart-bar:hover { transform: translateY(-1px); }
+.ow-chart-bar--in { background: linear-gradient(180deg, var(--ow-in-hi) 0%, var(--ow-in) 55%, var(--ow-in-lo) 100%); }
+.ow-chart-bar--in:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 8px var(--ow-in-glow); }
+.ow-chart-bar--out { background: linear-gradient(180deg, var(--ow-out-hi) 0%, var(--ow-out) 55%, var(--ow-out-lo) 100%); }
+.ow-chart-bar--out:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 8px var(--ow-out-glow); }
+.ow-chart-bar--stock { background: linear-gradient(180deg, var(--ow-stock-hi) 0%, var(--ow-stock) 55%, var(--ow-stock-lo) 100%); }
+.ow-chart-bar--stock:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 8px var(--ow-stock-glow); }
+.ow-chart-bar.is-zero { box-shadow: none; opacity: 0.55; }
+.ow-chart-bar--in.is-zero { background: var(--ow-in-hi); }
+.ow-chart-bar--out.is-zero { background: var(--ow-out-hi); }
+.ow-chart-bar--stock.is-zero { background: var(--ow-stock-hi); }
+.ow-chart-val {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 2px;
+  font-size: 9px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--nx-text-soft);
+  white-space: nowrap;
+}
+.ow-chart-month {
+  flex: 0 0 auto;
+  padding-top: 3px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--nx-text-muted);
+}
+.ow-chart-adjlane { flex: 0 0 auto; height: 28px; display: flex; flex-direction: column; }
+.ow-chart-adjtrack-pos { flex: 1 1 0; display: flex; align-items: flex-end; justify-content: center; min-height: 0; }
+.ow-chart-adjtrack-neg { flex: 1 1 0; display: flex; align-items: flex-start; justify-content: center; min-height: 0; }
+.ow-chart-adjtrack-base { flex: 0 0 auto; height: 1px; margin: 1px 4px; background: var(--nx-rule-strong); }
+.ow-chart-adjbar {
+  position: relative;
+  width: 55%;
+  max-width: 13px;
+  min-height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--ow-adj-hi) 0%, var(--ow-adj) 55%, var(--ow-adj-lo) 100%);
+}
+.ow-chart-adjbar.is-zero { width: 70%; max-width: none; min-height: 2px; background: var(--ow-adj-hi); opacity: 0.55; }
+.ow-chart-adjval {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ow-adj-hi);
+}
+.ow-chart-adjbar.is-pos .ow-chart-adjval { bottom: 100%; margin-bottom: 2px; }
+.ow-chart-adjbar.is-neg .ow-chart-adjval,
+.ow-chart-adjbar.is-zero .ow-chart-adjval { top: 100%; margin-top: 2px; }
+
+.ow-chart-legend { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.ow-chart-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: var(--nx-text-soft); }
+.ow-chart-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ow-chart-dot--in { background: linear-gradient(135deg, var(--ow-in-hi), var(--ow-in)); }
+.ow-chart-dot--out { background: linear-gradient(135deg, var(--ow-out-hi), var(--ow-out)); }
+.ow-chart-dot--stock { background: linear-gradient(135deg, var(--ow-stock-hi), var(--ow-stock)); }
+.ow-chart-dot--adj { background: linear-gradient(135deg, var(--ow-adj-hi), var(--ow-adj)); }
+
+/* Floating month tooltip (portaled to document.body) */
+.ow-chart-tip {
+  transform: translate(-50%, -100%);
+  z-index: 95;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--nx-rule-strong);
+  background: var(--nx-surface-raised);
+  box-shadow: var(--nx-shadow-lg);
+  pointer-events: none;
+  color: var(--nx-text);
+}
+.ow-chart-tip-month { font-size: 10.5px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; color: var(--nx-text); margin-bottom: 4px; }
+.ow-chart-tip-section { padding: 4px 0; border-top: 1px solid var(--nx-rule); }
+.ow-chart-tip-section:first-of-type { border-top: none; }
+.ow-chart-tip-head { font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 2px; }
+.ow-chart-tip-section--in .ow-chart-tip-head { color: var(--ow-in-hi); }
+.ow-chart-tip-section--out .ow-chart-tip-head { color: var(--ow-out-hi); }
+.ow-chart-tip-section--stock .ow-chart-tip-head { color: var(--ow-stock-hi); }
+.ow-chart-tip-section--adj .ow-chart-tip-head { color: var(--ow-adj-hi); }
+.ow-chart-tip-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 10.5px; color: var(--nx-text-soft); line-height: 1.5; }
+.ow-chart-tip-row b { color: var(--nx-text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.ow-chart-tip-row.ow-chart-tip-total { border-top: 1px dashed var(--nx-rule); margin-top: 2px; padding-top: 2px; font-weight: 700; }
+.ow-chart-tip-row.ow-chart-tip-total b { font-size: 11px; }
+.ow-chart-tip-row.ow-chart-tip-single b { font-size: 13px; }
+.ow-chart-tip-note { font-size: 9px; color: var(--nx-text-muted); font-style: italic; margin-top: 1px; }
+
+/* All Stores comparison panel (.st-*) */
+.st-legend { margin-left: auto; display: inline-flex; gap: 8px; font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--nx-text-soft); }
+.st-legend span { display: inline-flex; align-items: center; gap: 3px; }
+.st-table { display: flex; flex-direction: column; padding: 0 5px 3px; }
+.st-row { display: grid; grid-template-columns: 62px repeat(4, minmax(0, 1fr)); align-items: stretch; height: 42px; border-bottom: 1px solid var(--nx-rule); }
+.st-row:last-child { border-bottom: 0; }
+.st-row--current { background: var(--nx-accent-sunk); }
+.st-head { height: 18px; font-size: 10px; font-weight: 700; color: var(--nx-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.st-head > div { display: flex; align-items: center; justify-content: center; }
+.st-head > .st-store { justify-content: flex-start; padding-left: 4px; font-size: 10px; color: var(--nx-text-muted); }
+.st-head > .st-month { border-left: 1px solid var(--nx-rule); white-space: nowrap; overflow: hidden; }
+.st-m-short { display: none; }
+.st-store { display: flex; flex-direction: column; justify-content: center; padding-left: 4px; min-width: 0; font-size: 12px; line-height: 14px; color: var(--nx-text); }
+.st-code { font-size: 9.5px; color: var(--nx-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-row--current .st-code,
+.st-card--current .st-code { color: var(--nx-accent-ink); }
+.st-cell { display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--nx-rule); }
+.st-cell .ow-chart-bars { padding: 13px 2px 0; }
+.st-cell .ow-chart-bar:not(.is-zero) { min-height: 5px; }
+.st-nodata { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; font-size: 9.5px; font-style: italic; color: var(--nx-text-muted); }
+.st-pickable { cursor: pointer; }
+.st-pickable:hover { background: var(--nx-surface-hover); }
+
+/* ----------------------------------------------------------------------------
+   Column Settings Popover (.pw-settings, .pw-col-list)
+   ---------------------------------------------------------------------------- */
+.pw-settings {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 45;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: 70vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--nx-rule-strong);
+  border-radius: var(--nx-radius);
+  background: var(--nx-surface-raised);
+  box-shadow: var(--nx-shadow-lg);
+}
+.pw-section-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--nx-text-soft);
+}
+.pw-section-label small {
+  text-transform: none;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--nx-text-muted);
+}
+.pw-col-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pw-col-list__row {
+  display: grid;
+  grid-template-columns: 1fr 24px 24px 58px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: var(--nx-radius-sm);
+}
+.pw-col-list__row:hover {
+  background: var(--nx-surface-sunk);
+}
+.pw-col-list__row.is-off .pw-col-list__name span {
+  color: var(--nx-text-muted);
+}
+.pw-col-list__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--nx-text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.pw-col-list__mv {
+  width: 24px;
+  height: 22px;
+  min-height: 0 !important;
+  padding: 0 !important;
+  font-size: 9px;
+  line-height: 1;
+  border: 1px solid var(--nx-rule-strong);
+  border-radius: 4px;
+  background: var(--nx-surface);
+  color: var(--nx-text);
+  cursor: pointer;
+}
+.pw-col-list__mv:hover:not(:disabled) {
+  border-color: var(--nx-accent);
+  color: var(--nx-accent);
+}
+.pw-col-list__mv:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.nms-screen .pw-col-list__w {
+  width: 58px;
+  min-height: 0;
+  height: 22px;
+  padding: 0 5px;
+  font-size: 11px;
+  text-align: right;
+}
+.pw-colsettings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--nx-rule);
+}
+
+/* ----------------------------------------------------------------------------
+   Modal & Document Card Primitives (.modal-overlay, .purchase-detail-*, .ow-doc-*)
+   ---------------------------------------------------------------------------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 10, 20, 0.66);
+  backdrop-filter: blur(8px) saturate(80%);
+  z-index: 80;
+}
+.purchase-detail-card.ow-doc-card {
+  width: min(1100px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--nx-rule-strong);
+  background: var(--nx-surface);
+  border-radius: 14px;
+  box-shadow: var(--nx-shadow-lg);
+  overflow: hidden;
+}
+.purchase-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background: var(--nx-surface-raised);
+  border-bottom: 1px solid var(--nx-rule);
+  color: var(--nx-text);
+}
+.purchase-detail-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+.purchase-detail-heading strong {
+  display: block;
+  font-size: 15px;
+  color: var(--nx-text);
+}
+.purchase-detail-eyebrow {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--nx-accent-ink);
+}
+.purchase-detail-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--nx-accent-sunk);
+  color: var(--nx-accent-ink);
+}
+.purchase-detail-icon svg { width: 18px; height: 18px; fill: currentColor; }
+.purchase-detail-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--nx-rule);
+  border-radius: 6px;
+  background: var(--nx-surface);
+  color: var(--nx-text-soft);
+}
+.purchase-detail-close svg { width: 16px; height: 16px; fill: currentColor; }
+.ow-doc-card .purchase-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+  min-height: 0;
+  overflow: hidden;
+}
+.purchase-party {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--nx-surface-sunk);
+}
+.purchase-party-label {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--nx-text-muted);
+}
+.purchase-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.purchase-metric-tile {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--nx-surface-sunk);
+  border: 1px solid var(--nx-rule);
+}
+.purchase-metric-tile span {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--nx-text-muted);
+}
+.purchase-metric-tile strong {
+  font-size: 13px;
+  color: var(--nx-text);
+}
+.ow-doc-lines {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-sm);
+}
+.ow-doc-lines .ow-intel-table { width: 100%; }
+.ow-doc-lines thead th { position: sticky; top: 0; z-index: 1; background: var(--nx-surface-raised); }
+.ow-doc-lines .ow-doc-name { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-doc-lines tr.ow-doc-current > td { background: var(--nx-accent-sunk); font-weight: 700; }
+
+/* ----------------------------------------------------------------------------
+   Non-Moving Stock Header, KPIs & Tabs (.nms-*)
+   ---------------------------------------------------------------------------- */
+.nms-header { align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.nms-header h2 { margin: 0; }
+.nms-header p { margin: 2px 0 0; }
+.nms-header-tools { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.nms-header-tools select { min-width: 220px; }
+.nms-stamp { font-size: 11.5px; color: var(--nx-text-muted); padding-bottom: 6px; white-space: nowrap; }
+
+.nms-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.nms-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 11px;
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-rule);
+  border-left: 3px solid var(--nx-accent);
+  border-radius: var(--nx-radius);
+  min-width: 0;
+}
+.nms-kpi--warn { border-left-color: var(--nx-warning); }
+.nms-kpi--bad { border-left-color: var(--nx-danger); }
+.nms-kpi--ok { border-left-color: var(--nx-success); }
+.nms-kpi-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--nx-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nms-kpi-value {
+  font-size: 19px;
+  line-height: 24px;
+  font-weight: 700;
+  color: var(--nx-text);
+  font-variant-numeric: tabular-nums;
+}
+.nms-kpi-sub {
+  font-size: 11px;
+  color: var(--nx-text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nms-tabs { flex: 0 0 auto; }
+
+/* ----------------------------------------------------------------------------
+   Section Layout: Grid | Detail Panel (.nms-split, .nms-main, .nms-grid)
+   ---------------------------------------------------------------------------- */
+.nms-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  /* Grid takes priority (owner spec: ~78/22 main/detail split) -- the detail
+     panel is capped at 360px so it never eats grid width on wide screens,
+     and the grid's minmax(0, ...) still lets it shrink below that on narrow
+     viewports instead of overflowing. */
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 8px;
+}
+.nms-split--nodetail {
+  grid-template-columns: minmax(0, 1fr);
+}
+.nms-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+}
+.nms-main--full { flex: 1 1 auto; }
+.nms-filters { flex: 0 0 auto; padding: 7px 10px; gap: 8px; }
+.nms-filters .trp-field select,
+.nms-filters .trp-field input { min-width: 0; }
+.nms-grow { flex: 1 1 180px; }
+.nms-grow input { width: 100%; }
+.nms-supplier { max-width: 210px; }
+.nms-colbtn-wrap { position: relative; display: inline-flex; }
+.nms-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--nx-text-soft);
+  padding-bottom: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nms-note { margin: 0; }
+.nms-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  outline: none;
+}
+.nms-grid:focus-visible {
+  box-shadow: 0 0 0 2px var(--nx-focus);
+}
+.nms-table {
+  font-size: 12px;
+  table-layout: auto;
+}
+.nms-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 5px 7px;
+  font-size: 11.5px;
+}
+.nms-table tbody td {
+  padding: 3px 7px;
+  height: 24px;
+}
+.nms-table td.nms-num,
+.nms-table th.nms-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.nms-table tbody tr { cursor: pointer; }
+.nms-table tbody tr.is-selected td {
+  background: var(--nx-accent-selected) !important;
+}
+.nms-table th.nms-group {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-left: 2px solid var(--nx-rule-strong);
+}
+.nms-table thead tr:nth-child(2) th { top: 26px; }
+.nms-table th.nms-colgroup-start,
+.nms-table td.nms-colgroup-start {
+  border-left: 1px solid var(--nx-rule-strong);
+}
+.nms-table thead th.nms-colgroup-start:first-child,
+.nms-table tbody td.nms-colgroup-start:first-child {
+  border-left: 0;
+}
+.nms-table td.nms-ellipsis {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nms-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.nms-sortable:hover { color: var(--nx-text); }
+.nms-sort {
+  display: inline-block;
+  width: 10px;
+  margin-left: 2px;
+  font-size: 8px;
+  color: var(--nx-accent);
+}
+.nms-col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  user-select: none;
+}
+.nms-col-resizer:hover {
+  background: var(--nx-accent);
+  opacity: 0.55;
+}
+.nms-name {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nms-ellipsis {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nms-muted { color: var(--nx-text-muted); }
+.nms-strong { font-weight: 700; }
+.nms-empty-cell {
+  text-align: center !important;
+  padding: 26px 10px !important;
+  color: var(--nx-text-muted);
+  white-space: normal !important;
+}
+
+/* Own Store AG Grid: status bar replaces the Prev/Next pager (no page
+   navigation -- every filtered row is loaded into the grid at once). */
+.nms-statusbar { flex: 0 0 auto; display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--nx-text-soft); padding: 4px 2px; flex-wrap: wrap; }
+.nms-statusbar b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.nms-statusbar-filters { color: var(--nx-accent); font-weight: 600; }
+.nms-statusbar-sum { margin-left: auto; }
+/* flex-direction must be column: .ag-root-wrapper's own `width: 100%` is a
+   cross-axis size, and in the default row axis it fights flex-basis math
+   against near-zero initial content (AG Grid has no intrinsic width before
+   its first row/column paint), collapsing the whole grid to a sliver. */
+.nms-aggrid-wrap { flex: 1 1 auto; min-height: 0; max-height: none; position: relative; display: flex; flex-direction: column; }
+.nms-aggrid-wrap .ag-root-wrapper { flex: 1 1 auto; width: 100%; min-width: 0; border-radius: var(--nx-radius-sm, 6px); }
+.nms-grid-loading-badge { position: absolute; top: 6px; right: 10px; z-index: 2; font-size: 11px; padding: 2px 8px; border-radius: 9px; background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+/* Midnight Glass (and every other NexTech MediQ theme) skin for AG Grid v32
+   (ag-theme-quartz, imported in NonMovingStock.jsx): overrides that theme's
+   real --ag-* custom properties, reading the SAME --nx-* variables the rest
+   of this screen uses, instead of v36's Theming API
+   (themeQuartz.withParams(...)), which emits native-CSS-nesting (`&`
+   selector) output that Electron 22's Chromium 108 cannot parse (nesting
+   landed in Chromium 112) -- confirmed live via CDP, it silently dropped
+   `.ag-root.ag-layout-normal { flex: 1 1 auto }` and collapsed the whole
+   grid to a ~10px sliver. v32's compiled theme CSS has no nesting, so these
+   variables apply normally and still re-skin live on theme switch. */
+.nms-aggrid-wrap.ag-theme-quartz {
+  --ag-background-color: var(--nx-surface, #0f1d33);
+  --ag-foreground-color: var(--nx-text, #e2eaf5);
+  --ag-header-background-color: var(--nx-surface-sunk, #0b1627);
+  --ag-header-foreground-color: var(--nx-text-soft, #9fb4cc);
+  --ag-header-height: 32px;
+  --ag-row-height: 32px;
+  --ag-font-size: 12.5px;
+  --ag-font-family: inherit;
+  --ag-border-color: var(--nx-rule, #233654);
+  --ag-secondary-border-color: var(--nx-rule, #233654);
+  --ag-row-hover-color: var(--nx-surface-hover, #16263f);
+  --ag-cell-horizontal-padding: 7px;
+}
+.nms-aggrid-wrap.ag-theme-quartz .ag-header-cell-text { font-size: 11.5px; }
+/* Selected row: a lighter navy than the canvas/odd-row background, plus a
+   3px accent bar on the left edge -- visually distinct from the subtler
+   hover tint (--ag-row-hover-color above) so hovering a different row never
+   looks like it moved the selection. Keyed by product_code via getRowId, so
+   the highlight survives re-sort/re-filter/scroll as long as that product is
+   still in the displayed set (owner requirement). Fixed hex per the owner's
+   spec (not a --nx-* token) -- the same navy/blue pairing across every
+   theme, same as supplier-stock-client's port. */
+.nms-aggrid-wrap .ag-row-selected { background-color: #244675 !important; box-shadow: inset 3px 0 0 0 #3b82f6; }
+.nms-aggrid-wrap .ag-row-selected.ag-row-hover { background-color: #244675 !important; }
+.nms-aggrid-wrap .ag-row-selected .ag-cell { color: #f1f5f9; }
+.nms-aggrid-wrap .ag-row-hover:not(.ag-row-selected) { background-color: var(--nx-surface-hover); }
+.nms-aggrid-wrap .ag-cell-value, .nms-aggrid-wrap .ag-cell { display: flex; align-items: center; }
+.nms-row-current td { background: var(--nx-accent-sunk); }
+.nms-row-bad td { color: var(--nx-danger-ink); }
+.nms-row-muted td { opacity: 0.5; }
+.nms-row-flag td:nth-child(6) { color: var(--nx-warning-ink); }
+.nms-flagdot {
+  margin-left: 4px;
+  font-size: 8px;
+  color: var(--nx-warning);
+  vertical-align: middle;
+  cursor: help;
+}
+.nms-storecol { min-width: 64px; }
+.nms-cell { font-size: 11.5px; }
+.nms-cell--selling {
+  color: var(--nx-success-ink);
+  background: var(--nx-success-sunk);
+  font-weight: 600;
+}
+.nms-cell--idle { color: var(--nx-text-muted); }
+
+/* ----------------------------------------------------------------------------
+   Classification & Expiry Badges + Chips (.nms-cls-*, .nms-exp-*, .nms-classchip)
+   ---------------------------------------------------------------------------- */
+.nms-cls {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.nms-cls--active { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.nms-cls--slow { background: var(--nx-info-sunk); color: var(--nx-info-ink); }
+.nms-cls--veryslow { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.nms-cls--risk { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); border-color: var(--nx-warning); }
+.nms-cls--nonmoving { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.nms-cls--dead { background: var(--nx-danger); color: #ffffff; }
+.nms-cls--new { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+.nms-cls--nosales { background: var(--nx-surface-sunk); color: var(--nx-text-soft); border-color: var(--nx-rule-strong); border-style: dashed; }
+
+.nms-exp { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.nms-exp--bad { color: var(--nx-danger-ink); }
+.nms-exp--warn { color: var(--nx-warning-ink); }
+.nms-exp--ok { color: var(--nx-success-ink); font-weight: 500; }
+.nms-exp--muted { color: var(--nx-text-muted); font-weight: 500; }
+
+.nms-classbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+.nms-classchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.12s ease, box-shadow 0.12s ease;
+}
+.nms-classchip b { font-variant-numeric: tabular-nums; }
+.nms-classchip span { opacity: 0.85; font-variant-numeric: tabular-nums; }
+.nms-classchip:hover { opacity: 1; }
+.nms-classchip.is-on {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--nx-focus);
+}
+
+/* ----------------------------------------------------------------------------
+   Row Actions Menu (.nms-actions, .nms-icon-btn, .nms-menu)
+   ---------------------------------------------------------------------------- */
+.nms-actions { position: relative; display: inline-flex; gap: 2px; }
+.nms-icon-btn {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface);
+  color: var(--nx-text-soft);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.nms-icon-btn:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.nms-icon-btn.is-on { color: var(--nx-warning-ink); border-color: var(--nx-warning); }
+.nms-icon-btn.is-ok { background: var(--nx-success-sunk); color: var(--nx-success-ink); border-color: var(--nx-success); }
+.nms-icon-btn.is-bad { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); border-color: var(--nx-danger); }
+
+.nms-menu {
+  position: absolute;
+  right: 0;
+  top: 22px;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  min-width: 210px;
+  padding: 4px 0;
+  background: var(--nx-surface-raised);
+  border: 1px solid var(--nx-rule-strong);
+  border-radius: var(--nx-radius);
+  box-shadow: var(--nx-shadow-md);
+}
+.nms-menu button {
+  padding: 5px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--nx-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.nms-menu button:hover { background: var(--nx-surface-hover); }
+
+/* ----------------------------------------------------------------------------
+   Sales Trend Modal & Pager (.nms-trend-modal, .nms-pager)
+   ---------------------------------------------------------------------------- */
+.nms-trend-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(900px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  background: var(--nx-surface-raised);
+  border: 1px solid var(--nx-rule-strong);
+  border-radius: var(--nx-radius);
+  box-shadow: var(--nx-shadow-lg);
+  overflow: hidden;
+}
+.nms-trend-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--nx-rule);
+}
+.nms-trend-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.nms-trend-title strong {
+  font-size: 14px;
+  color: var(--nx-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nms-trend-title span { font-size: 11.5px; color: var(--nx-text-muted); }
+.nms-trend-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.nms-trend-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.nms-trend-body tfoot td {
+  border-top: 1px solid var(--nx-rule-strong);
+  background: var(--nx-surface-sunk);
+}
+
+.nms-pager {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--nx-text-soft);
+}
+.nms-screen .nms-pager .secondary-button {
+  min-height: 24px;
+  padding: 1px 10px;
+}
+.nms-pager-sum { margin-left: auto; }
+
+/* ----------------------------------------------------------------------------
+   Right-Side Product Detail Panel (.nms-detail*)
+   ---------------------------------------------------------------------------- */
+.nms-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-rule);
+  border-radius: var(--nx-radius);
+  overflow: hidden;
+}
+.nms-detail--empty { justify-content: center; padding: 12px; }
+.nms-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--nx-rule);
+  flex: 0 0 auto;
+}
+.nms-screen .nms-detail-head .secondary-button {
+  min-height: 26px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.nms-detail-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.nms-detail-title strong {
+  font-size: 13.5px;
+  color: var(--nx-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nms-detail-title span {
+  font-size: 11px;
+  color: var(--nx-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nms-review-btn.is-on {
+  color: var(--nx-warning-ink) !important;
+  border-color: var(--nx-warning) !important;
+}
+.nms-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--nx-rule);
+  flex: 0 0 auto;
+}
+.nms-detail-tabs .rta-chip {
+  padding: 2px 9px;
+  font-size: 11.5px;
+}
+.nms-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 8px;
+}
+.nms-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.nms-fact {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 7px;
+  background: var(--nx-surface-sunk);
+  border-radius: var(--nx-radius-sm);
+  min-width: 0;
+}
+.nms-fact span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--nx-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nms-fact b {
+  font-size: 12.5px;
+  color: var(--nx-text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nms-fact em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--nx-text-soft);
+}
+.nms-fact--bad b { color: var(--nx-danger-ink); }
+.nms-fact--warn b { color: var(--nx-warning-ink); }
+
+.nms-flags {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.nms-flag {
+  padding: 3px 8px;
+  border-radius: var(--nx-radius-sm);
+  font-size: 11.5px;
+}
+.nms-flag--warn { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.nms-flag--info { background: var(--nx-info-sunk); color: var(--nx-info-ink); }
+
+.nms-intel { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.nms-intel .ow-panel--chart { height: 190px; }
+.nms-intel--full { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.nms-intel--full .ow-panel { flex: 1 1 auto; min-height: 0; }
+.nms-subtable { max-height: none; flex: 0 0 auto; }
+.nms-detail .nms-table { font-size: 11.5px; }
+.nms-detail .nms-table th,
+.nms-detail .nms-table td { padding-left: 5px; padding-right: 5px; }
+
+.nms-transfer-list { display: flex; flex-direction: column; gap: 6px; }
+.nms-transfer-card {
+  padding: 7px 9px;
+  border: 1px solid var(--nx-rule);
+  border-left: 3px solid var(--nx-success);
+  border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface);
+}
+.nms-transfer-card--blocked {
+  border-left-color: var(--nx-text-muted);
+  background: var(--nx-surface-sunk);
+}
+.nms-transfer-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--nx-text);
+}
+.nms-transfer-qty {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--nx-success-sunk);
+  color: var(--nx-success-ink);
+  font-weight: 700;
+}
+.nms-transfer-reason { font-size: 12px; color: var(--nx-text); margin-top: 2px; white-space: normal; }
+.nms-transfer-calc { font-size: 11px; color: var(--nx-text-soft); margin-top: 2px; white-space: normal; font-family: Consolas, monospace; }
+.nms-calc-row td { background: var(--nx-surface-sunk); white-space: normal !important; }
+
+/* ----------------------------------------------------------------------------
+   Transfers & Stock Value / Expiry Risk Sections (.nms-banner, .nms-value*)
+   ---------------------------------------------------------------------------- */
+.nms-banner {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-radius: var(--nx-radius);
+  background: var(--nx-info-sunk);
+  color: var(--nx-info-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.nms-summary-line {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--nx-text-soft);
+}
+.nms-blocked { color: var(--nx-text-muted); }
+
+.nms-value {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+.nms-value > * { flex: 0 0 auto; }
+.nms-value-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nms-value-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.nms-card { padding-bottom: 6px; }
+.nms-card .ow-panel-title { display: flex; align-items: center; gap: 8px; }
+.nms-card .nms-facts { padding: 4px 8px 0; }
+.nms-card .trp-subnote { padding: 4px 8px 0; }
+.nms-card .nms-subtable { margin: 4px 8px 0; max-height: 320px; }
+.nms-facts--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.nms-toggle { margin-left: auto; display: inline-flex; gap: 4px; text-transform: none; letter-spacing: 0; }
+.nms-toggle .rta-chip { padding: 1px 8px; font-size: 11px; }
+
+.nms-hbars { display: flex; flex-direction: column; gap: 3px; padding: 4px 8px 0; }
+.nms-hbar {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 70px 46px;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--nx-text);
+  text-align: left;
+  cursor: default;
+}
+.nms-hbar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nms-hbar-track { height: 13px; background: var(--nx-surface-sunk); border-radius: 3px; overflow: hidden; }
+.nms-hbar-fill { display: block; height: 100%; border-radius: 3px; }
+.nms-hbar-val { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.nms-hbar-sub { text-align: right; color: var(--nx-text-muted); font-variant-numeric: tabular-nums; }
+.nms-fill--active { background: var(--nx-success); }
+.nms-fill--slow { background: var(--nx-info); }
+.nms-fill--veryslow { background: var(--nx-warning); opacity: 0.7; }
+.nms-fill--risk { background: var(--nx-warning); }
+.nms-fill--nonmoving { background: var(--nx-danger); opacity: 0.7; }
+.nms-fill--dead { background: var(--nx-danger); }
+.nms-fill--new { background: var(--nx-accent); }
+.nms-fill--nosales { background: var(--nx-text-muted); }
+
+.nms-chart { display: flex; flex-direction: column; padding: 4px 10px 0; }
+.nms-chart .ow-chart-plot { flex: 1 1 auto; min-height: 0; }
+.nms-chart-labels { display: flex; gap: 10px; }
+.nms-chart-labels .ow-chart-month { flex: 1 1 0; min-width: 0; }
+.nms-chart-current { background: var(--nx-accent-sunk); }
+.nms-chart-current-label { color: var(--nx-accent-ink); font-weight: 800; }
+.nms-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+.ow-chart-bar--nm-dead { background: var(--nx-danger); }
+.ow-chart-bar--nm-idle { background: var(--nx-warning); }
+.ow-chart-bar--nm-exp { background: var(--ow-adj, #8b5cf6); }
+
+/* ----------------------------------------------------------------------------
+   Manual Review Drawer (.nms-drawer*)
+   ---------------------------------------------------------------------------- */
+.nms-drawer {
+  position: fixed;
+  right: 16px;
+  top: 64px;
+  bottom: 16px;
+  z-index: 60;
+  width: min(520px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  background: var(--nx-surface-raised);
+  border: 1px solid var(--nx-rule-strong);
+  border-radius: var(--nx-radius);
+  box-shadow: var(--nx-shadow-lg);
+}
+.nms-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--nx-rule);
+}
+.nms-drawer-head strong { margin-right: auto; color: var(--nx-text); }
+.nms-drawer-body { flex: 1 1 auto; overflow: auto; padding: 4px 0; }
+.nms-drawer-row {
+  display: grid;
+  grid-template-columns: 44px 70px minmax(0, 1fr) 82px 26px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--nx-text);
+  border-bottom: 1px solid var(--nx-rule);
+}
+.nms-drawer-row em { font-style: normal; color: var(--nx-text-muted); font-size: 11px; }
+
+/* ----------------------------------------------------------------------------
+   Responsive Refinement (1920×1080, 1600×900, 1366×768, 1280×720)
+   ---------------------------------------------------------------------------- */
+@media (max-width: 1600px) {
+  .nms-split {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  }
+  .nms-kpi-value { font-size: 17px; line-height: 22px; }
+}
+
+@media (max-width: 1400px) {
+  .nms-split {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  }
+  .nms-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .nms-header-tools select {
+    min-width: 180px;
+  }
+  .nms-kpi {
+    padding: 5px 8px;
+  }
+  .nms-kpi-value {
+    font-size: 16px;
+    line-height: 20px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .nms-split {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
+  }
+  .nms-name { max-width: 200px; }
+  .st-row { grid-template-columns: 46px repeat(4, minmax(0, 1fr)); }
+  .st-m-long { display: none; }
+  .st-m-short { display: inline; }
+}
+
+@media (max-height: 800px) {
+  .screen-panel.nms-screen { gap: 5px; }
+  .nms-kpi { padding: 4px 8px; }
+  .nms-kpi-value { font-size: 16px; line-height: 19px; }
+  .nms-filters { padding: 5px 8px; gap: 6px; }
+  .nms-intel .ow-panel--chart { height: 155px; }
+  .st-row { height: 34px; }
+}

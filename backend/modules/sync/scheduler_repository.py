@@ -359,6 +359,14 @@ def claim_manual(tenant_id, store_id, execution_type, sync_mode, total_tables):
             conn.rollback()
             raise TimeoutError("Could not acquire sync lock for store %s" % store_id)
 
+        # A zombie RUNNING/PENDING row (agent died or restarted mid-sync, see
+        # SyncAdminRepository._reap_stale_executions) would otherwise be joined
+        # here and returned as "already in progress" -- the background
+        # scheduler tick reaps these too, but a manual trigger (Order Process's
+        # live-sync gate) must not wait up to 30 min for that tick to run.
+        from repositories.sync_admin_repository import SyncAdminRepository
+        SyncAdminRepository()._reap_stale_executions(cur)
+
         cur.execute(
             "SELECT TOP 1 execution_id, execution_status FROM dbo.sync_execution "
             "WHERE store_id = ? AND execution_status IN ('PENDING','RUNNING') "

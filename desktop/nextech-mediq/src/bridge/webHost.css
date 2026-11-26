@@ -1,0 +1,71 @@
+.ntm-web-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  color: var(--ntm-text-primary);
+}
+
+.ntm-web-host > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ntm-web-host .page-header {
+  margin-bottom: 6px;
+}
+
+.ntm-web-host .page-header .breadcrumb,
+.ntm-web-host .page-header__description {
+  display: none;
+}
+
+.ntm-web-host .page-header__title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 650;
+}
+
+.ntm-web-host .ds-workspace-shell {
+  height: 100%;
+  min-height: 0;
+}
+
+.ntm-web-host .qs,
+.ntm-web-host .qs-gate {
+  height: 100%;
+  min-height: 0;
+  --qs-bg: var(--ntm-bg);
+  --qs-surface: var(--ntm-table-bg);
+  --qs-border: var(--ntm-border);
+  --qs-text: var(--ntm-text-primary);
+  --qs-muted: var(--ntm-text-muted);
+  --qs-faint: var(--ntm-text-muted);
+  --qs-accent: var(--ntm-accent);
+  --qs-accent-soft: var(--nx-accent-sunk);
+}
+
+.ntm-web-host .table,
+.ntm-web-host table {
+  --bs-table-bg: var(--ntm-table-bg);
+  background-color: var(--ntm-table-bg);
+  color: var(--ntm-text-primary);
+}
+
+.ntm-web-host .modal-content,
+.ntm-web-host .dropdown-menu,
+.ntm-web-host .card {
+  background: var(--ntm-table-bg);
+  color: var(--ntm-text-primary);
+  border-color: var(--ntm-border);
+}
+
+@media (max-width: 1366px) {
+  .ntm-web-host .page-header__title {
+    font-size: 15px;
+  }
+}

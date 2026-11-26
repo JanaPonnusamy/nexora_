@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
+import { EmptyState } from '../../components/common/EmptyState'
+import { ErrorState } from '../../components/common/ErrorState'
 import { tenantService } from '../../services/tenantService'
 import { storeService } from '../../services/storeService'
 import { nmwSalesReportService } from '../../services/nmwSalesReportService'
@@ -14,6 +16,7 @@ import type {
 } from '../../types/nmwSalesReport'
 import { FilterBar } from '../../design-system/components/FilterBar'
 import { exportNmwBillCsv, exportNmwBillExcel, purchaseStatusLabel } from './exportNmwBill'
+import '../reports.css'
 
 type StatusFilter = 'all' | 'pending' | 'approved'
 
@@ -46,15 +49,24 @@ function money(value: number | null | undefined): string {
   return Number.isFinite(n) ? n.toFixed(2) : '-'
 }
 
-export default function NmwSalesReportPage() {
+function defaultDateRange() {
+  const fmt = (offsetDays: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() - offsetDays)
+    return d.toISOString().slice(0, 10)
+  }
+  return { dateFrom: fmt(2), dateTo: fmt(1) }
+}
+
+export default function WarehouseBillExportPage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [tenantId, setTenantId] = useState('')
   const [stores, setStores] = useState<TenantStore[]>([])
   const [storeId, setStoreId] = useState('')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<PurchaseStatusFilter>('all')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [dateFrom, setDateFrom] = useState(() => defaultDateRange().dateFrom)
+  const [dateTo, setDateTo] = useState(() => defaultDateRange().dateTo)
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -234,17 +246,16 @@ export default function NmwSalesReportPage() {
   }
 
   return (
-    <div className="d-flex flex-column gap-3">
+    <div className="container-fluid px-0 rpt">
       <PageHeader
-        title="NMW Sales Report (Bill-wise)"
-        breadcrumb={['Operations', 'Inventory', 'NMW Sales Report']}
+        title="Warehouse Bill Export (Bill-wise)"
+        breadcrumb={['Operations', 'Inventory', 'Warehouse Bill Export']}
         description="Warehouse (NMW) despatch bills routed to each store. Bills appear once despatched; a super admin approves the despatch before store devices display them."
       />
 
-      <FilterBar compact className="align-items-end" ariaLabel="NMW sales filters">
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">Tenant</span>
-          <select className="form-select" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+      <FilterBar compact className="rpt-bar" ariaLabel="Warehouse bill filters">
+        <label className="rpt-field"><span>Tenant</span>
+          <select className="form-select form-select-sm" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
             {tenants.length === 0 && <option value="">Loading...</option>}
             {tenants.map((t) => (
               <option key={t.tenant_id} value={t.tenant_id}>
@@ -255,9 +266,8 @@ export default function NmwSalesReportPage() {
         </label>
 
         {scope === 'all' && (
-          <label className="d-flex flex-column gap-1">
-            <span className="small text-muted">Destination store</span>
-            <select className="form-select" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+          <label className="rpt-field"><span>Destination store</span>
+            <select className="form-select form-select-sm" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
               <option value="">All stores</option>
               {stores.map((s) => (
                 <option key={s.store_id} value={s.store_id}>
@@ -268,19 +278,17 @@ export default function NmwSalesReportPage() {
           </label>
         )}
 
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">Status</span>
-          <select className="form-select" value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
+        <label className="rpt-field"><span>Status</span>
+          <select className="form-select form-select-sm" value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
             <option value="all">All</option>
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
           </select>
         </label>
 
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">Purchase entry</span>
+        <label className="rpt-field"><span>Purchase entry</span>
           <select
-            className="form-select"
+            className="form-select form-select-sm"
             value={purchaseStatusFilter}
             onChange={(e) => setPurchaseStatusFilter(e.target.value as PurchaseStatusFilter)}
           >
@@ -291,17 +299,15 @@ export default function NmwSalesReportPage() {
           </select>
         </label>
 
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">From</span>
-          <input type="date" className="form-control" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        <label className="rpt-field"><span>From</span>
+          <input type="date" className="form-control form-control-sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
         </label>
 
-        <label className="d-flex flex-column gap-1">
-          <span className="small text-muted">To</span>
-          <input type="date" className="form-control" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        <label className="rpt-field"><span>To</span>
+          <input type="date" className="form-control form-control-sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </label>
 
-        <button className="btn btn-primary" disabled={!tenantId || loading} onClick={() => void load()}>
+        <button className="btn btn-primary btn-sm rpt-load" disabled={!tenantId || loading} onClick={() => void load()}>
           <i className="bi bi-eye me-1" />
           {loading ? 'Loading…' : 'Load'}
         </button>
@@ -309,19 +315,19 @@ export default function NmwSalesReportPage() {
         {canApprove && (
           <>
             <button
-              className="btn btn-success"
+              className="btn btn-success btn-sm"
               disabled={loading || selected.size === 0}
               onClick={() => void approve(pendingBills.filter((b) => selected.has(billKey(b))))}
             >
               <i className="bi bi-check2-all me-1" />
               Approve selected ({selected.size})
             </button>
-            <button className="btn btn-outline-secondary" onClick={() => setShowCustCodes((v) => !v)}>
+            <button className="btn btn-outline-secondary btn-sm" onClick={() => setShowCustCodes((v) => !v)}>
               <i className="bi bi-upc-scan me-1" />
               Store customer codes
             </button>
             <button
-              className="btn btn-outline-danger"
+              className="btn btn-outline-danger btn-sm"
               disabled={loading}
               title="Remove duplicate bill lines left behind when a bill was modified at the store"
               onClick={() => void reconcile()}
@@ -329,7 +335,7 @@ export default function NmwSalesReportPage() {
               <i className="bi bi-recycle me-1" />
               Reconcile duplicates
             </button>
-            <div className="input-group" style={{ width: 'auto' }}>
+            <div className="input-group input-group-sm" style={{ width: 'auto' }}>
               <span className="input-group-text">Approve all before</span>
               <input type="date" className="form-control" style={{ maxWidth: '10rem' }} value={bulkCutoff} onChange={(e) => setBulkCutoff(e.target.value)} />
               <button className="btn btn-warning" disabled={loading || !bulkCutoff} onClick={() => void approveBefore()}>
@@ -341,25 +347,31 @@ export default function NmwSalesReportPage() {
       </FilterBar>
 
       {scope === 'store' && (
-        <div className="alert alert-secondary py-2 small mb-0">
+        <div className="rpt-dirty mb-2">
+          <i className="bi bi-info-circle" />
           You are viewing only your own store's approved bills.
         </div>
       )}
-      {notice && <div className="alert alert-success py-2 small mb-0">{notice}</div>}
-      {error && <div className="alert alert-danger py-2 small mb-0">{error}</div>}
+      {notice && <div className="alert alert-success py-2 small mb-2">{notice}</div>}
       {purchaseStatusError && (
-        <div className="alert alert-warning py-2 small mb-0">
+        <div className="alert alert-warning py-2 small mb-2">
           {purchaseStatusError} Sales bill data below is unaffected; the Purchase Entry column may be unavailable until this is retried.
         </div>
       )}
 
       {showCustCodes && canApprove && <StoreCustCodePanel tenantId={tenantId} onDone={() => void load()} />}
 
-      {bills.length > 0 ? (
-        <div className="table-responsive">
-          <table className="table table-sm table-bordered align-middle mb-0">
+      {error ? (
+        <ErrorState description={error} onRetry={() => void load()} />
+      ) : loading && bills.length === 0 ? (
+        <EmptyState icon="bi-hourglass-split" title="Loading…" description="Fetching warehouse despatch bills." />
+      ) : bills.length === 0 ? (
+        <EmptyState icon="bi-inbox" title="No bills to show" description="Adjust the filters above and press Load." />
+      ) : (
+        <div className="rpt-tablewrap">
+          <table className="rpt-table">
             <thead>
-              <tr className="table-light">
+              <tr>
                 {canApprove && (
                   <th style={{ width: '2rem' }}>
                     <input
@@ -372,16 +384,16 @@ export default function NmwSalesReportPage() {
                     />
                   </th>
                 )}
-                <th style={{ whiteSpace: 'nowrap' }}>Bill No</th>
-                <th style={{ whiteSpace: 'nowrap' }}>Type</th>
-                <th style={{ whiteSpace: 'nowrap' }}>Bill Date</th>
-                <th style={{ whiteSpace: 'nowrap' }}>Despatched</th>
-                <th>Destination Store</th>
-                <th style={{ whiteSpace: 'nowrap' }}>Cust Code</th>
-                <th className="text-end" style={{ whiteSpace: 'nowrap' }}>Amount</th>
-                <th style={{ whiteSpace: 'nowrap' }}>Status</th>
-                <th style={{ whiteSpace: 'nowrap' }}>Purchase Entry</th>
-                <th style={{ whiteSpace: 'nowrap' }} />
+                <th className="rpt-left">Bill No</th>
+                <th className="rpt-left">Type</th>
+                <th className="rpt-left">Bill Date</th>
+                <th className="rpt-left">Despatched</th>
+                <th className="rpt-left">Destination Store</th>
+                <th className="rpt-left">Cust Code</th>
+                <th className="rpt-right">Amount</th>
+                <th className="rpt-left">Status</th>
+                <th className="rpt-left">Purchase Entry</th>
+                <th className="rpt-left" />
               </tr>
             </thead>
             <tbody>
@@ -390,7 +402,7 @@ export default function NmwSalesReportPage() {
                 const isApproved = bill.status === 'approved'
                 return (
                   <Fragment key={key}>
-                    <tr className={bill.is_cancelled ? 'text-danger' : undefined}>
+                    <tr className={bill.is_cancelled ? 'expiry-cut-row' : undefined}>
                       {canApprove && (
                         <td>
                           {!isApproved && (
@@ -404,27 +416,27 @@ export default function NmwSalesReportPage() {
                           )}
                         </td>
                       )}
-                      <td style={{ whiteSpace: 'nowrap' }}>{bill.bill_no}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
+                      <td className="rpt-left">{bill.bill_no}</td>
+                      <td className="rpt-left">
                         <span className={`badge ${bill.is_transfer ? 'text-bg-info' : 'text-bg-secondary'}`}>
                           {bill.bill_type}
                         </span>
                       </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{bill.bill_date}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{bill.issued_date?.slice(0, 19).replace('T', ' ')}</td>
-                      <td>
+                      <td className="rpt-left">{bill.bill_date}</td>
+                      <td className="rpt-left">{bill.issued_date?.slice(0, 19).replace('T', ' ')}</td>
+                      <td className="rpt-left">
                         {bill.dest_store_code} — {bill.dest_store_name}
                       </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{bill.customer_code}</td>
-                      <td className="text-end" style={{ whiteSpace: 'nowrap' }}>{money(bill.bill_amount)}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
+                      <td className="rpt-left">{bill.customer_code}</td>
+                      <td className="rpt-right">{money(bill.bill_amount)}</td>
+                      <td className="rpt-left">
                         {isApproved ? (
                           <span className="badge text-bg-success">Approved</span>
                         ) : (
                           <span className="badge text-bg-warning">Pending</span>
                         )}
                       </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
+                      <td className="rpt-left">
                         {purchaseBadge(bill.purchase_status)}
                         {bill.purchase_status === 'completed' && bill.purchase_entry_no && (
                           <span className="text-muted ms-1 small" title="Store GRN number">
@@ -432,7 +444,7 @@ export default function NmwSalesReportPage() {
                           </span>
                         )}
                       </td>
-                      <td className="text-nowrap">
+                      <td className="rpt-left text-nowrap">
                         <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => void toggleExpand(bill)}>
                           {expanded === key ? 'Hide' : 'Items'}
                         </button>
@@ -461,8 +473,6 @@ export default function NmwSalesReportPage() {
             </tbody>
           </table>
         </div>
-      ) : (
-        !loading && <div className="text-muted small">No bills to show. Adjust filters and press Load.</div>
       )}
     </div>
   )
@@ -590,32 +600,32 @@ function BillItemsTable({
     </tr>
   )
   return (
-    <table className="table table-sm mb-0">
+    <table className="rpt-table mb-0">
       <thead>
-        <tr className="table-light">
-          <th>Product</th>
-          <th style={{ whiteSpace: 'nowrap' }}>Batch</th>
-          <th style={{ whiteSpace: 'nowrap' }}>Expiry</th>
-          <th className="text-end">Qty</th>
-          <th className="text-end">Free</th>
-          <th className="text-end">MRP</th>
-          <th className="text-end">Rate</th>
-          <th className="text-end">Dis%</th>
-          <th className="text-end">Amount</th>
+        <tr>
+          <th className="rpt-left">Product</th>
+          <th className="rpt-left">Batch</th>
+          <th className="rpt-left">Expiry</th>
+          <th className="rpt-right">Qty</th>
+          <th className="rpt-right">Free</th>
+          <th className="rpt-right">MRP</th>
+          <th className="rpt-right">Rate</th>
+          <th className="rpt-right">Dis%</th>
+          <th className="rpt-right">Amount</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((r, i) => (
           <tr key={`${r.product_code}-${r.batch_no}-${i}`}>
-            <td>{r.product_name}</td>
-            <td style={{ whiteSpace: 'nowrap' }}>{r.batch_no}</td>
-            <td style={{ whiteSpace: 'nowrap' }}>{r.expiry_date}</td>
-            <td className="text-end">{r.qty}</td>
-            <td className="text-end">{r.free_qty}</td>
-            <td className="text-end">{money(r.mrp)}</td>
-            <td className="text-end">{money(r.rate)}</td>
-            <td className="text-end">{r.discount_percentage}</td>
-            <td className="text-end">{money(r.amount)}</td>
+            <td className="rpt-left">{r.product_name}</td>
+            <td className="rpt-left">{r.batch_no}</td>
+            <td className="rpt-left">{r.expiry_date}</td>
+            <td className="rpt-right">{r.qty}</td>
+            <td className="rpt-right">{r.free_qty}</td>
+            <td className="rpt-right">{money(r.mrp)}</td>
+            <td className="rpt-right">{money(r.rate)}</td>
+            <td className="rpt-right">{r.discount_percentage}</td>
+            <td className="rpt-right">{money(r.amount)}</td>
           </tr>
         ))}
       </tbody>

@@ -1,0 +1,659 @@
+/* Stock Vertical — store-column row-band matrix. Same interaction model as
+   the desktop Quick Stock client (Store Grid / Chart / Sales-or-Purchase
+   bands spanning store columns), rebuilt here against nextech-mediq's own
+   authenticated stock_availability endpoints. Scoped entirely under .ntm-sm
+   so it cannot collide with the existing flat-table Stock Enquiry view. */
+
+.ntm-sm {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  gap: 8px;
+}
+
+.ntm-sm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.ntm-sm-head__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ntm-text-primary);
+}
+
+.ntm-sm-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  max-width: 420px;
+  height: 36px;
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-md);
+  padding: 0 10px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-sm-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--ntm-text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.ntm-sm-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ntm-text-secondary);
+  white-space: nowrap;
+}
+
+.ntm-sm-status {
+  font-size: 12px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-sm-status--muted {
+  color: var(--ntm-warning);
+}
+
+.ntm-sm-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.ntm-sm-empty-page {
+  padding: 20px;
+  text-align: center;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-sm-active-product {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--ntm-elevated);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-md);
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--ntm-text-primary);
+  flex: 0 0 auto;
+}
+
+.ntm-sm-seg {
+  display: flex;
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-sm);
+  overflow: hidden;
+}
+
+.ntm-sm-seg__btn {
+  background: var(--ntm-panel);
+  border: none;
+  color: var(--ntm-text-secondary);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.ntm-sm-seg__btn + .ntm-sm-seg__btn {
+  border-left: 1px solid var(--ntm-border);
+}
+
+.ntm-sm-seg__btn.is-active {
+  background: var(--ntm-teal);
+  color: var(--ntm-deep-navy);
+  font-weight: 650;
+}
+
+.ntm-sm-close-btn {
+  background: transparent;
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-sm);
+  color: var(--ntm-text-secondary);
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.ntm-sm-close-btn:hover {
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-primary);
+}
+
+/* ----- Row-band grid ------------------------------------------------- */
+
+.ntm-sm-grid {
+  display: grid;
+  gap: 1px;
+  background: var(--ntm-border);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-md);
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ntm-sm-corner,
+.ntm-sm-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--ntm-panel);
+}
+
+.ntm-sm-corner {
+  left: 0;
+  z-index: 4;
+}
+
+.ntm-sm-colhead {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 6px 8px;
+  min-width: 0;
+}
+
+.ntm-sm-colhead__code {
+  font-weight: 800;
+  font-size: 0.86rem;
+  color: var(--ntm-text-primary);
+  letter-spacing: 0.02em;
+}
+
+.ntm-sm-colhead__name {
+  font-size: 0.7rem;
+  color: var(--ntm-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ntm-sm-rowlabel {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--sec-label-bg, var(--ntm-elevated));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--sec-label-fg, var(--ntm-text-secondary));
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 6px 2px;
+}
+
+/* Per-band semantic colour, same family as supplier-stock-client's Stock
+   Comparison Matrix: BLUE = Purchase, GREEN = Sales, RED = Batch; Grid/Chart
+   stay neutral. Applies to both the rotated left label and its data cells. */
+.ntm-sm-rowlabel--grid,     .ntm-sm-cell--grid     { --sec-label-bg: var(--ntm-elevated); --sec-label-fg: var(--ntm-text-secondary); --sec-head-bg: var(--ntm-elevated); --sec-head-fg: var(--ntm-text-secondary); }
+.ntm-sm-rowlabel--chart,    .ntm-sm-cell--chart    { --sec-label-bg: var(--ntm-elevated); --sec-label-fg: var(--ntm-text-secondary); --sec-head-bg: var(--ntm-elevated); --sec-head-fg: var(--ntm-text-secondary); }
+.ntm-sm-rowlabel--batch,    .ntm-sm-cell--batch    { --sec-label-bg: color-mix(in srgb, var(--ntm-error) 20%, var(--ntm-elevated)); --sec-label-fg: var(--ntm-error); --sec-head-bg: color-mix(in srgb, var(--ntm-error) 14%, var(--ntm-elevated)); --sec-head-fg: var(--ntm-error); }
+.ntm-sm-rowlabel--purchase, .ntm-sm-cell--purchase { --sec-label-bg: color-mix(in srgb, var(--ntm-teal) 20%, var(--ntm-elevated)); --sec-label-fg: var(--ntm-teal); --sec-head-bg: color-mix(in srgb, var(--ntm-teal) 14%, var(--ntm-elevated)); --sec-head-fg: var(--ntm-teal); }
+.ntm-sm-rowlabel--sales,    .ntm-sm-cell--sales    { --sec-label-bg: color-mix(in srgb, #22c55e 20%, var(--ntm-elevated)); --sec-label-fg: #22c55e; --sec-head-bg: color-mix(in srgb, #22c55e 14%, var(--ntm-elevated)); --sec-head-fg: #22c55e; }
+.ntm-sm-cell--batch th, .ntm-sm-cell--purchase th, .ntm-sm-cell--sales th {
+  background: var(--sec-head-bg, var(--ntm-panel));
+  color: var(--sec-head-fg, var(--ntm-text-secondary));
+}
+
+/* Purchase/Sales Date columns were truncating under their tables' default
+   even-split column sizing (matches a bug just fixed the same way in
+   supplier-stock-client's Sales panel) — give Date a fixed width sized to
+   the dd Mon yy format, numerics stay tight via .ntm-sm-num, and the text
+   columns (Supplier/Customer) absorb the rest. */
+.ntm-sm-cell--sales table, .ntm-sm-cell--purchase table, .ntm-sm-cell--batch table { table-layout: fixed; width: 100%; }
+.ntm-sm-cell--sales td:nth-child(1), .ntm-sm-cell--sales th:nth-child(1) { width: 58px; }
+.ntm-sm-cell--batch td:nth-child(1), .ntm-sm-cell--batch th:nth-child(1) { width: 58px; }
+.ntm-sm-cell--sales td, .ntm-sm-cell--sales th,
+.ntm-sm-cell--purchase td, .ntm-sm-cell--purchase th,
+.ntm-sm-cell--batch td, .ntm-sm-cell--batch th {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ntm-sm-cell {
+  background: var(--ntm-bg);
+  padding: 4px;
+  overflow: auto;
+  min-width: 0;
+}
+
+.ntm-sm-cell--grid {
+  display: flex;
+  flex-direction: column;
+}
+
+.ntm-sm-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--ntm-border);
+  color: var(--ntm-text-primary);
+  padding: 4px 6px;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ntm-sm-row--head {
+  font-weight: 700;
+  color: var(--ntm-text-secondary);
+  font-size: 0.7rem;
+  cursor: default;
+  border-bottom: 1px solid var(--ntm-border);
+}
+
+.ntm-sm-row:hover {
+  background: var(--ntm-elevated);
+}
+
+.ntm-sm-row.is-active {
+  background: color-mix(in srgb, var(--ntm-teal) 16%, transparent);
+  outline: 1px solid var(--ntm-teal);
+  outline-offset: -1px;
+}
+
+.ntm-sm-placeholder {
+  padding: 12px 8px;
+  font-size: 0.78rem;
+  color: var(--ntm-text-secondary);
+  text-align: center;
+}
+
+.ntm-sm-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+  flex: none;
+}
+
+.ntm-sm-dot--in { background: #22c55e; }
+.ntm-sm-dot--out { background: var(--ntm-error); }
+
+.ntm-sm-dim { color: var(--ntm-text-secondary); font-size: 0.72rem; }
+.ntm-sm-num { text-align: right; }
+
+.ntm-sm-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 60px;
+  color: var(--ntm-text-secondary);
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 8px;
+}
+
+.ntm-sm-cell table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.ntm-sm-cell th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  color: var(--ntm-text-secondary);
+  font-weight: 600;
+  padding: 3px 5px;
+  border-bottom: 1px solid var(--ntm-border);
+  background: var(--ntm-panel);
+}
+
+.ntm-sm-cell td {
+  padding: 3px 5px;
+  border-bottom: 1px solid var(--ntm-border);
+  color: var(--ntm-text-primary);
+}
+
+.ntm-sm-row-clickable { cursor: pointer; }
+.ntm-sm-row-clickable:hover { background: var(--ntm-elevated); }
+
+/* ----- Purchase grid: Date / Qty / Free / PTR / MRP / Cost / Supplier --
+   Proportional column targets (25/9/8/19/19/20, Supplier absorbs the
+   remainder) with subtle per-column tinting so PTR/MRP/Cost stay visually
+   distinct at a glance. box-sizing: border-box on every cell so the
+   declared % widths plus padding never push MRP/Cost against the table's
+   right edge. */
+.ntm-sm-purchase-grid { table-layout: fixed; width: 100%; border-collapse: collapse; box-sizing: border-box; }
+.ntm-sm-purchase-grid col.ntm-sm-pcol--date { width: 25%; }
+.ntm-sm-purchase-grid col.ntm-sm-pcol--qty { width: 9%; }
+.ntm-sm-purchase-grid col.ntm-sm-pcol--free { width: 8%; }
+.ntm-sm-purchase-grid col.ntm-sm-pcol--ptr { width: 19%; }
+.ntm-sm-purchase-grid col.ntm-sm-pcol--mrp { width: 19%; }
+.ntm-sm-purchase-grid col.ntm-sm-pcol--cost { width: 20%; }
+.ntm-sm-purchase-grid col.ntm-sm-pcol--supplier { width: auto; }
+
+.ntm-sm-purchase-grid th,
+.ntm-sm-purchase-grid td {
+  box-sizing: border-box;
+  padding: 0 8px;
+  height: 30px;
+  line-height: 30px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--ntm-border);
+}
+.ntm-sm-purchase-grid th {
+  position: sticky;
+  top: 0;
+  font-size: 12px;
+  font-weight: 600;
+  height: 26px;
+  line-height: 26px;
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-secondary);
+  border-bottom: 1px solid var(--ntm-border);
+}
+.ntm-sm-purchase-grid td { font-size: 12.5px; color: var(--ntm-text-primary); }
+.ntm-sm-purchase-grid th.ntm-sm-num, .ntm-sm-purchase-grid td.ntm-sm-num { text-align: right; padding-right: 10px; }
+
+.ntm-sm-purchase-grid tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--ntm-text-primary) 3%, transparent); }
+.ntm-sm-purchase-grid tbody tr:hover td { background: var(--ntm-elevated); }
+
+/* Soft per-column tint, applied to header AND body cells so each column
+   reads as one strip top-to-bottom; kept very light to stay readable. */
+.ntm-sm-purchase-grid .ntm-sm-pcol--date  { background: color-mix(in srgb, #64748b 10%, transparent); }
+.ntm-sm-purchase-grid .ntm-sm-pcol--qty   { background: color-mix(in srgb, #3b82f6 9%, transparent); }
+.ntm-sm-purchase-grid .ntm-sm-pcol--free  { background: color-mix(in srgb, #34d399 9%, transparent); }
+.ntm-sm-purchase-grid .ntm-sm-pcol--ptr   { background: color-mix(in srgb, #a78bfa 10%, transparent); }
+.ntm-sm-purchase-grid .ntm-sm-pcol--mrp   { background: color-mix(in srgb, #f59e0b 10%, transparent); }
+.ntm-sm-purchase-grid .ntm-sm-pcol--cost  { background: color-mix(in srgb, var(--ntm-teal) 12%, transparent); }
+/* Hover/selected rows keep the column tint visible underneath the row
+   highlight by layering it as a second, stronger wash rather than replacing it. */
+.ntm-sm-purchase-grid tbody tr:hover .ntm-sm-pcol--date  { background: color-mix(in srgb, #64748b 18%, var(--ntm-elevated)); }
+.ntm-sm-purchase-grid tbody tr:hover .ntm-sm-pcol--qty   { background: color-mix(in srgb, #3b82f6 16%, var(--ntm-elevated)); }
+.ntm-sm-purchase-grid tbody tr:hover .ntm-sm-pcol--free  { background: color-mix(in srgb, #34d399 16%, var(--ntm-elevated)); }
+.ntm-sm-purchase-grid tbody tr:hover .ntm-sm-pcol--ptr   { background: color-mix(in srgb, #a78bfa 18%, var(--ntm-elevated)); }
+.ntm-sm-purchase-grid tbody tr:hover .ntm-sm-pcol--mrp   { background: color-mix(in srgb, #f59e0b 18%, var(--ntm-elevated)); }
+.ntm-sm-purchase-grid tbody tr:hover .ntm-sm-pcol--cost  { background: color-mix(in srgb, var(--ntm-teal) 20%, var(--ntm-elevated)); }
+
+/* ----- Mini movement chart -------------------------------------------- */
+
+.ntm-sm-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  height: 100%;
+  gap: 4px;
+  padding: 4px;
+}
+
+.ntm-sm-chart__bar-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+}
+
+.ntm-sm-chart__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+  justify-content: center;
+}
+
+.ntm-sm-chart__bar {
+  width: 6px;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+}
+
+.ntm-sm-chart__bar--pur { background: var(--ntm-teal); }
+.ntm-sm-chart__bar--sal { background: #22c55e; }
+
+.ntm-sm-chart__label {
+  font-size: 0.6rem;
+  color: var(--ntm-text-secondary);
+  white-space: nowrap;
+}
+
+/* ----- Modals ----------------------------------------------------------- */
+
+.ntm-sm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.ntm-sm-modal {
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-lg, var(--ntm-radius-md));
+  width: min(720px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ntm-sm-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ntm-border);
+  font-size: 13px;
+  color: var(--ntm-text-primary);
+}
+
+.ntm-sm-modal__body {
+  padding: 0.8rem 1rem;
+  overflow-y: auto;
+}
+
+.ntm-sm-modal__body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.ntm-sm-modal__body th {
+  text-align: left;
+  color: var(--ntm-text-secondary);
+  font-weight: 600;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--ntm-border);
+}
+
+.ntm-sm-modal__body td {
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--ntm-border);
+  color: var(--ntm-text-primary);
+}
+
+.ntm-sm-modal__body th.ntm-sm-num,
+.ntm-sm-modal__body td.ntm-sm-num {
+  text-align: right;
+}
+
+.ntm-sm-modal__total {
+  text-align: right;
+  margin-top: 0.6rem;
+  font-size: 0.92rem;
+  color: var(--ntm-text-primary);
+}
+
+/* ----- Full bill-detail popup (Bill Header + Products + Summary) ------- */
+.ntm-sm-bill-modal {
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-lg, var(--ntm-radius-md));
+  width: min(880px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ntm-sm-bill-modal__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0.8rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ntm-sm-bill-header {
+  border: 1px solid color-mix(in srgb, var(--ntm-accent) 35%, var(--ntm-border));
+  border-radius: var(--ntm-radius-md);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.ntm-sm-bill-header__title {
+  background: color-mix(in srgb, var(--ntm-accent) 18%, transparent);
+  color: var(--ntm-accent);
+  font-weight: 700;
+  font-size: 12px;
+  padding: 6px 12px;
+  letter-spacing: 0.02em;
+}
+.ntm-sm-bill-header__grid {
+  background: color-mix(in srgb, var(--ntm-accent) 7%, transparent);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px 16px;
+  padding: 10px 12px;
+}
+.ntm-sm-bill-header__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  min-width: 0;
+}
+.ntm-sm-bill-header__field span { color: var(--ntm-text-secondary); font-size: 11px; }
+.ntm-sm-bill-header__field strong { color: var(--ntm-text-primary); font-weight: 600; overflow-wrap: anywhere; }
+
+.ntm-sm-bill-products {
+  border: 1px solid color-mix(in srgb, var(--ntm-success) 35%, var(--ntm-border));
+  border-radius: var(--ntm-radius-md);
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ntm-sm-bill-products__title {
+  background: color-mix(in srgb, var(--ntm-success) 20%, transparent);
+  color: var(--ntm-success);
+  font-weight: 700;
+  font-size: 12px;
+  padding: 6px 12px;
+  letter-spacing: 0.02em;
+  flex: 0 0 auto;
+}
+.ntm-sm-bill-products__scroll {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--ntm-panel);
+}
+.ntm-sm-bill-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ntm-sm-bill-grid thead th {
+  position: sticky;
+  top: 0;
+  background: color-mix(in srgb, var(--ntm-success) 14%, var(--ntm-panel));
+  color: var(--ntm-success);
+  text-align: left;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ntm-success) 35%, var(--ntm-border));
+  white-space: nowrap;
+}
+.ntm-sm-bill-grid td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--ntm-border);
+  color: var(--ntm-text-primary);
+}
+.ntm-sm-bill-grid tbody tr:nth-child(even) { background: color-mix(in srgb, var(--ntm-text-primary) 3%, transparent); }
+.ntm-sm-bill-grid th.ntm-sm-num, .ntm-sm-bill-grid td.ntm-sm-num { text-align: right; }
+
+.ntm-sm-bill-summary {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 1.2rem;
+  padding: 10px 16px;
+  border-top: 1px solid var(--ntm-border);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.ntm-sm-bill-summary__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  text-align: right;
+  color: var(--ntm-text-secondary);
+}
+.ntm-sm-bill-summary__item strong { font-size: 14px; color: var(--ntm-text-primary); }
+.ntm-sm-bill-summary__item--grand strong { font-size: 17px; color: var(--ntm-accent); }
+
+/* ----- Responsive / fluid sizing --------------------------------------- */
+
+@media (max-width: 1100px) {
+  .ntm-sm-grid {
+    font-size: 0.92em;
+  }
+}
+
+@media (max-width: 760px) {
+  .ntm-sm-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ntm-sm-search {
+    max-width: none;
+  }
+}

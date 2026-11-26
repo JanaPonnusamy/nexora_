@@ -91,6 +91,38 @@ ipcMain.handle('session:write', (_event, name, data) => {
 });
 
 // --------------------------------------------------------------------------
+// Store-side copy of this store's HO order cache (backend legacy_order/
+// order_cache). ONE file per store in userData\order_cache, replaced whole
+// each time HO builds a new order's cache -- never accumulates. Written to a
+// temp file then renamed so a crash mid-write never leaves a half file.
+// --------------------------------------------------------------------------
+function orderCacheFilePath(store) {
+  const safe = String(store || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '_');
+  if (!safe) return null;
+  return path.join(app.getPath('userData'), 'order_cache', `order_cache_${safe}.json`);
+}
+
+ipcMain.handle('orderCache:read', (_event, store) => {
+  const file = orderCacheFilePath(store);
+  if (!file) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('orderCache:write', (_event, store, data) => {
+  const file = orderCacheFilePath(store);
+  if (!file) throw new Error('No store given.');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data), 'utf8');
+  fs.renameSync(tmp, file);
+  return file;
+});
+
+// --------------------------------------------------------------------------
 // Order Workspace export-to-disk (Excel/CSV written straight to a chosen
 // folder, not a browser-style "Downloads" prompt — the operator wants the
 // same file landing in a predictable D:\Export Order\ddmmyy\<order no>\
@@ -216,11 +248,11 @@ ipcMain.handle('dev:maximizeViewport', (event) => {
 });
 
 ipcMain.handle('theme:setPreference', (event, { preference, resolvedTheme }) => {
-  const nextPreference = ['light', 'dark'].includes(preference) ? preference : 'light';
+  const nextPreference = ['light', 'dark', 'system'].includes(preference) ? preference : 'dark';
   nativeTheme.themeSource = nextPreference;
 
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (win) win.setBackgroundColor(resolvedTheme === 'dark' ? '#0a0f17' : '#f4f6fa');
+  if (win) win.setBackgroundColor(resolvedTheme === 'dark' ? '#0B1220' : '#F4F7FB');
 });
 
 async function createWindow() {
@@ -235,8 +267,8 @@ async function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     center: true,
-    title: 'NEXORA MEDIQ',
-    backgroundColor: '#f5f7fb',
+    title: 'NexTech Supplier Stock',
+    backgroundColor: '#0B1220',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

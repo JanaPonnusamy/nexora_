@@ -35,6 +35,7 @@ import type {
   OrderEntryAutomation,
   PmOrderEntryRecent,
   PmOrderEntryState,
+  GapReviewStatus,
   PmOrderEntrySubmitResult,
   PmOrderQueueRow,
   PmOrderType,
@@ -61,7 +62,7 @@ export interface OrderCacheMonitorRow {
   connection_status?: 'ok' | 'broken'
 }
 
-export type CompareMode = 'PREVIOUS_PENDING' | 'TODAY' | 'NONE' | 'HO'
+export type CompareMode = 'PREVIOUS_PENDING' | 'TODAY' | 'PENDING_LIST' | 'TODAY_PENDING' | 'NONE' | 'HO'
 
 export interface ReceivedNotOrdered {
   store_name: string
@@ -436,6 +437,25 @@ export const legacyOrderService = {
     body: { product_code: number; product_name?: string | null; order_id?: number | null; qty?: number | null; note?: string | null },
   ) =>
     api.post<PendingOrderItem>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending`, body),
+
+  addPendingItems: (
+    storeName: string,
+    body: {
+      order_id?: number | null
+      items: { product_code: number; product_name?: string | null; qty?: number | null }[]
+      note?: string | null
+    },
+  ) =>
+    api.post<{ added: number; updated: number; pending_items: PendingOrderItem[] }>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending/bulk`,
+      body,
+    ),
+
+  completeGapReview: (storeName: string, body: { order_id?: number | null; not_received?: number | null }) =>
+    api.post<GapReviewStatus>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/complete`, body),
+
+  clearPendingItems: (storeName: string, ids: number[]) =>
+    api.post<{ cleared: number }>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending/clear`, { ids }),
 
   clearPendingItem: (storeName: string, itemId: number) =>
     api.delete<{ cleared: true; id: number }>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending/${itemId}`),

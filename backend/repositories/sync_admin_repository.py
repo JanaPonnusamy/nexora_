@@ -54,9 +54,18 @@ class SyncAdminRepository:
              heartbeating fine while the specific in-flight execution it lost
              track of never gets revisited (heartbeat alone misses this case
              -- confirmed against a real stuck row whose agent was ONLINE the
-             whole time). The slowest table/full sync observed in history is
-             ~5 minutes, so any RUNNING execution older than 2 hours is safe
-             to treat as orphaned regardless of agent health.
+             whole time: SMG 2026-11-23, a mid-sync network drop killed the
+             agent's SQL connection, the watchdog restarted the process a
+             second later and heartbeats never stopped, but the abandoned
+             execution sat RUNNING for nearly 2 hours and kept every new
+             "Sync Now" / Order Process live-sync attempt SKIPPED instead of
+             running). The sync schedule's own cadence is 30 minutes
+             (scheduler_repository's default schedule), so any RUNNING
+             execution older than 60 minutes (2 missed cycles) is reaped
+             regardless of agent health -- the slowest table/full sync
+             observed in history is ~5 minutes, so 60 minutes is still never
+             mistaken for a legitimately long-running sync. The 2-hour
+             ceiling only remains as a final backstop below.
 
         SYNC-SCHED-01 addition: PENDING rows older than 24 hours are reaped
         the same way. Confirmed against live data -- 71 MANUAL-trigger PENDING
@@ -79,7 +88,7 @@ class SyncAdminRepository:
             WHERE e.execution_status = 'RUNNING'
               AND (reg.last_heartbeat IS NULL
                    OR reg.last_heartbeat < DATEADD(SECOND, -90, GETDATE())
-                   OR e.started_at < DATEADD(HOUR, -2, GETDATE()))
+                   OR e.started_at < DATEADD(MINUTE, -60, GETDATE()))
         """)
         running_reaped = cur.rowcount
         cur.execute("""

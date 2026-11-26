@@ -237,7 +237,8 @@ class TargetApplier:
                 cur.execute(f"SET IDENTITY_INSERT [dbo].{q(table)} ON")
             try:
                 if batch["mode"] == "upsert":
-                    cur.execute(_merge_sql(table, names, keys, set(n.lower() for n in identity)))
+                    lob = {c["name"] for c in use if c["sql_type"].endswith("(max)")}
+                    cur.execute(_merge_sql(table, names, keys, set(n.lower() for n in identity), lob))
                 else:
                     cur.execute(_replace_delete_sql(table, keys))
                     col_list = ", ".join(q(n) for n in names)
@@ -311,7 +312,7 @@ def _input_size(col):
     return None
 
 
-def _merge_sql(table, names, keys, identity_lower):
+def _merge_sql(table, names, keys, identity_lower, lob_names=frozenset()):
     key_lower = {k.lower() for k in keys}
     on = " AND ".join(f"T.{q(k)} = S.{q(k)}" for k in keys)
     partition = ", ".join(q(k) for k in keys)
@@ -323,10 +324,17 @@ def _merge_sql(table, names, keys, identity_lower):
         f"FROM {STAGE}) AS x WHERE x.__rn = 1) AS S ON {on} "
     )
     if upd:
-        s_cols = ", ".join(f"S.{q(n)}" for n in upd)
-        t_cols = ", ".join(f"T.{q(n)}" for n in upd)
+        # EXCEPT cannot compare LOB types (varchar/varbinary/nvarchar(max));
+        # those columns are always written on a match instead of change-checked.
+        cmp_cols = [n for n in upd if n not in lob_names]
         sets = ", ".join(f"T.{q(n)} = S.{q(n)}" for n in upd)
-        sql += f"WHEN MATCHED AND EXISTS (SELECT {s_cols} EXCEPT SELECT {t_cols}) THEN UPDATE SET {sets} "
+        if cmp_cols:
+            s_cols = ", ".join(f"S.{q(n)}" for n in cmp_cols)
+            t_cols = ", ".join(f"T.{q(n)}" for n in cmp_cols)
+            cond = f"EXISTS (SELECT {s_cols} EXCEPT SELECT {t_cols})"
+        else:
+            cond = "1 = 1"
+        sql += f"WHEN MATCHED AND {cond} THEN UPDATE SET {sets} "
     sql += (f"WHEN NOT MATCHED BY TARGET THEN INSERT ({col_list}) VALUES ("
             + ", ".join(f"S.{q(n)}" for n in names) + ");")
     return sql
@@ -436,7 +444,7 @@ def reseed_shadow(conn, spec):
     if not cols:
         return
     cur.execute(f"""
-        MERGE {SHADOW} AS s
+        MERGE {SHADOW} WITH (HOLDLOCK) AS s
         USING (SELECT CAST(o.StoreName AS nvarchar(100)) sn, CAST(o.OrderId AS nvarchar(100)) oid,
                       CAST(o.ProductCode AS nvarchar(100)) pc, MAX({_hash_expr(cols)}) h
                FROM dbo.OrderManagement o GROUP BY o.StoreName, o.OrderId, o.ProductCode) AS x

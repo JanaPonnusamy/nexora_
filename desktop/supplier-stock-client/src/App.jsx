@@ -1,6 +1,8 @@
 import { Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import nexoraMediqMark from './assets/nexora-mediq-mark.svg';
+import nextechLockup from './assets/nextech-mediq-lockup.svg';
+import nextechLockupDark from './assets/nextech-mediq-lockup-dark.svg';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from './api/client.js';
@@ -29,6 +31,9 @@ import {
 } from './state/productSelection.js';
 import { applyTheme, normalizeThemePreference, THEME_PREFERENCES } from './theme.js';
 import SchemaSyncPage from './SchemaSyncPage.jsx';
+import DbMonitorPage from './DbMonitorPage.jsx';
+import OrderCacheMonitor from './OrderCacheMonitor.jsx';
+import { useOrderCacheSync } from './orderCacheSync.js';
 import UserManagementScreen from './UserManagementScreen.jsx';
 import RoleManagementScreen from './RoleManagementScreen.jsx';
 import DashboardScreen from './DashboardScreen.jsx';
@@ -43,9 +48,14 @@ import { ErpBreadcrumb } from './ErpBreadcrumb.jsx';
 import TimeReport from './TimeReport.jsx';
 import RateAnalysis from './RateAnalysis.jsx';
 import NonMovingStock from './NonMovingStock.jsx';
+import SupplierStockList from './SupplierStockList.jsx';
 import LegacyOrderGeneration from './LegacyOrderGeneration.jsx';
+import PreviousOrderComparison from './PreviousOrderComparison.jsx';
 import SyncLive from './SyncLive.jsx';
 import PmOrderEntry from './PmOrderEntry.jsx';
+import OrderGapReview from './OrderGapReview.jsx';
+import OrderAutomationSettings from './OrderAutomationSettings.jsx';
+import { SupplierMailImport } from './supplierMailImport.jsx';
 import {
   OW_EXPORT_COLUMN_DEFS,
   OW_GEAR_PATH,
@@ -67,6 +77,7 @@ import {
   owLandingPct,
 } from './OwFormatters.js';
 import { OwDocumentCard } from './OwDocumentCard.jsx';
+import MaintenanceScreen from './MaintenanceScreen.jsx';
 import { OrderIntelligence } from './OwIntelligencePanel.jsx';
 import {
   owDefaultExportSettings,
@@ -97,19 +108,26 @@ const DEV_STORE = import.meta.env.DEV ? (import.meta.env.VITE_DEV_STORE || '') :
 // `short` is the name shown on the group button while that screen is open.
 const screens = [
   { id: 'nexora_dashboard', label: 'Dashboard', group: 'stock', module: 'dashboard' },
+  { id: 'stock_quick', label: 'Quick Stock', short: 'Quick Stock', group: 'stock', module: 'stock_availability' },
   { id: 'stock_vertical', label: 'Stock Enquiry', short: 'Stock', group: 'stock', module: 'stock_availability' },
   { id: 'procurement_workspace', label: 'Procurement', group: 'purchase', module: 'procurement' },
-  { id: 'order_entry', label: 'Order Entry', short: 'Order Entry', hint: 'Last bill + GRN', group: 'purchase', module: 'order_entry' },
+  { id: 'order_entry', label: 'Purchase Entry Complete', short: 'Purchase Entry', hint: 'Last bill + GRN', group: 'purchase', module: 'order_entry' },
+  { id: 'order_gap_review', label: 'Pending Supply Review', short: 'Pending Supply', hint: 'Since last order', group: 'purchase', module: 'order_gap_review' },
   { id: 'legacy_order', label: 'Legacy Order', short: 'Legacy Order', hint: 'All tenants', group: 'purchase', module: 'legacy_order' },
+  { id: 'previous_order_comparison', label: 'Previous Order Comparison', short: 'Prev. Order', group: 'purchase', module: 'previous_order_comparison' },
   { id: 'sync_live', label: 'Sync Live', short: 'Sync', hint: 'All tenants', group: 'tools', module: 'sync' },
   { id: 'analysis', label: 'Supplier Stock Analysis', short: 'Supplier Analysis', group: 'purchase', module: 'supplier_stock_analysis' },
+  { id: 'supplier_stock_list', label: 'Supplier Stock List', short: 'Supplier Stock', group: 'purchase', module: 'supplier_stock_analysis' },
   { id: 'rate_analysis', label: 'Rate Analysis', short: 'Rates', group: 'purchase', module: 'rate_analysis' },
   { id: 'non_moving', label: 'Non-Moving Stock', short: 'Non-Moving', group: 'purchase', module: 'non_moving' },
-  { id: 'nmw_sales', label: 'NMW Sales Report', short: 'NMW Sales', group: 'reports', module: 'nmw_sales_report' },
+  { id: 'nmw_sales', label: 'Warehouse Bill Export', short: 'Bill Export', group: 'reports', module: 'nmw_sales_report' },
   { id: 'time_report', label: 'Time Report', short: 'Time', group: 'reports', module: 'time_report' },
   { id: 'label_exporter', label: 'Label Exporter', short: 'Labels', group: 'tools', module: 'label_exporter' },
   { id: 'whatsapp', label: 'WhatsApp', group: 'tools', module: 'whatsapp' },
   { id: 'schema_sync', label: 'Schema Sync', group: 'tools', module: 'schema_sync' },
+  { id: 'db_monitor', label: 'Live Queries', short: 'Live Queries', hint: 'Repair', group: 'tools', module: 'db_monitor' },
+  { id: 'order_cache_monitor', label: 'Order Cache Monitor', short: 'Order Cache', hint: 'Admin only', group: 'tools', module: 'order_cache_monitor' },
+  { id: 'order_automation', label: 'Order Automation', short: 'Order Automation', hint: 'Admin only', group: 'tools', module: 'order_automation' },
   { id: 'user_management', label: 'User Management', short: 'Users', group: 'system', module: 'user_management' },
   { id: 'role_management', label: 'Role Management', short: 'Roles', group: 'system', module: 'role_management' },
   { id: 'settings', label: 'Settings', group: 'system', module: 'settings' }
@@ -378,8 +396,13 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppShell />
+      <MaintenanceScreen getBaseUrl={currentApiBaseUrl} />
     </QueryClientProvider>
   );
+}
+
+function currentApiBaseUrl() {
+  return loadSettings().apiBaseUrl;
 }
 
 function AppShell() {
@@ -415,6 +438,11 @@ function AppShell() {
 
   useEffect(() => {
     setResolvedTheme(applyTheme(themePreference));
+    if (themePreference !== 'system' || typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => setResolvedTheme(applyTheme('system'));
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
   }, [themePreference]);
 
   useEffect(() => {
@@ -445,13 +473,13 @@ function AppShell() {
       return screens.filter((s) => s.id === 'label_exporter' || s.id === 'settings');
     }
     if (isStockViewerOnly(session)) {
-      return screens.filter((s) => ['stock_vertical', 'nmw_sales'].includes(s.id));
+      return screens.filter((s) => ['stock_quick', 'stock_vertical', 'nmw_sales'].includes(s.id));
     }
     if (isStockAndLabelViewer(session)) {
-      return screens.filter((s) => ['stock_vertical', 'nmw_sales', 'label_exporter'].includes(s.id));
+      return screens.filter((s) => ['stock_quick', 'stock_vertical', 'nmw_sales', 'label_exporter'].includes(s.id));
     }
     if (isSmsPurchaseManagerOnly(session)) {
-      const smsIds = ['stock_vertical', 'procurement_workspace', 'analysis', 'order_entry', 'settings', 'whatsapp'];
+      const smsIds = ['stock_quick', 'stock_vertical', 'procurement_workspace', 'analysis', 'supplier_stock_list', 'order_entry', 'order_gap_review', 'previous_order_comparison', 'settings', 'whatsapp'];
       return screens.filter((s) => smsIds.includes(s.id) && (s.id !== 'whatsapp' || storeWhatsAppAvailable()));
     }
     const modules = userModules(session?.user);
@@ -460,7 +488,7 @@ function AppShell() {
     // server-side, this just keeps the nav honest). Checked before the
     // module-grant early-return below so it also applies to logins with no
     // module list.
-    let base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis') : screens;
+    let base = isSupplierAnalysisBlocked(session) ? screens.filter((s) => s.id !== 'analysis' && s.id !== 'supplier_stock_list') : screens;
     // Store WhatsApp runs inside the Electron app only (not the web build).
     if (!storeWhatsAppAvailable()) base = base.filter((s) => s.id !== 'whatsapp');
     // NMW dispatch-bill LIST: every branch/store login may see it (owner ruling
@@ -474,7 +502,7 @@ function AppShell() {
     // visible to super admins and purchase-manager logins. The APIs also
     // enforce that server-side; this only keeps the nav honest.
     const orderWorkspaceAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
-    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'procurement_workspace' && s.id !== 'rate_analysis' && s.id !== 'order_entry');
+    if (!orderWorkspaceAllowed) base = base.filter((s) => s.id !== 'procurement_workspace' && s.id !== 'rate_analysis' && s.id !== 'order_entry' && s.id !== 'order_gap_review' && s.id !== 'previous_order_comparison');
     // Non-Moving Stock: super admins (every store) and purchase managers
     // (their own store only - scoped server side). Owner rulings 2026-11-01/02.
     const nonMovingAllowed = isSuperAdmin(session) || canViewPurchaseDetails(session);
@@ -487,6 +515,15 @@ function AppShell() {
     if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'legacy_order');
     // Sync Live shows and syncs every tenant's stores - super admin only.
     if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'sync_live');
+    // Live Queries / Repair reads sys.dm_exec_requests and can KILL a session
+    // on the shared central OrderNMC database - super admin only.
+    if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'db_monitor');
+    // Order cache routes are require_admin server-side; hide for everyone else.
+    if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'order_cache_monitor');
+    // Order Automation settings (moved off the PM-facing Order Entry screen
+    // 2026-11-24): super admin only -- PM users must never see or infer
+    // that this automated background process exists.
+    if (!isSuperAdmin(session)) base = base.filter((s) => s.id !== 'order_automation');
     // User/Role Management (Phase 6C/6D): every mutation these screens call
     // is gated server-side by require_super_admin regardless of what the
     // nav shows (35c6018) - the nav gate here just keeps the UI honest, per
@@ -508,12 +545,12 @@ function AppShell() {
     // ever seeded into dbo.role_module_access, which silently hid the tab
     // for any login whose modules list isn't empty (e.g. superadmin).
     const always = new Set(nmwBlocked ? ['settings', 'label_exporter', 'nexora_dashboard'] : ['settings', 'nmw_sales', 'label_exporter', 'nexora_dashboard']);
-    if (orderWorkspaceAllowed) { always.add('procurement_workspace'); always.add('rate_analysis'); always.add('order_entry'); }
+    if (orderWorkspaceAllowed) { always.add('procurement_workspace'); always.add('rate_analysis'); always.add('order_entry'); always.add('order_gap_review'); always.add('previous_order_comparison'); }
     // Every store login may link and use its own store's WhatsApp.
     always.add('whatsapp');
     if (isSuperAdmin(session)) {
-      always.add('schema_sync'); always.add('legacy_order'); always.add('sync_live');
-      always.add('user_management'); always.add('role_management');
+      always.add('schema_sync'); always.add('legacy_order'); always.add('sync_live'); always.add('db_monitor'); always.add('order_cache_monitor');
+      always.add('user_management'); always.add('role_management'); always.add('order_automation');
     }
     if (nonMovingAllowed) always.add('non_moving');
     if (timeReportAllowed) always.add('time_report');
@@ -560,20 +597,22 @@ function AppShell() {
       .catch(() => {});
   }, [sessionToken, settings.apiBaseUrl]);
 
+  // Keep this store PM's local copy of the store's order cache current.
+  useOrderCacheSync(session, !isSuperAdmin(session));
+
   useEffect(() => {
     const storeName = session?.user?.roles?.[0]?.store_name || settings.storeName;
-    document.title = storeName ? `NEXORA MEDIQ · ${storeName}` : 'NEXORA MEDIQ';
+    document.title = storeName ? `NexTech Supplier Stock · ${storeName}` : 'NexTech Supplier Stock';
   }, [session, settings.storeName]);
 
   function persistSettings(next) {
     setSettings(saveSettings(next));
   }
 
-  function cycleTheme() {
-    const index = THEME_PREFERENCES.indexOf(themePreference);
+  function setThemePreference(next) {
     persistSettings({
       ...settings,
-      themePreference: THEME_PREFERENCES[(index + 1) % THEME_PREFERENCES.length]
+      themePreference: normalizeThemePreference(next)
     });
   }
 
@@ -581,11 +620,18 @@ function AppShell() {
     const savedSession = saveSession(loginPayload);
     const user = savedSession?.user || {};
     const primaryRole = user?.roles?.[0] || {};
+    const cached = loadSettings();
+    // A tenant-scoped login (user.tenant_id set) always wins over whatever
+    // tenant/store happens to be cached from a previous login on this PC —
+    // otherwise a second user signing in on a shared/dev machine silently
+    // keeps seeing the first user's tenant's data forever. Only a platform
+    // login (no tenant_id, e.g. super admin) or a device-activated kiosk
+    // (no user.tenant_id at all) falls back to the cached/activation value.
     const nextSettings = saveSettings({
-      ...loadSettings(),
-      tenantId: loadSettings().tenantId || user?.tenant_id || '',
-      storeId: loadSettings().storeId || primaryRole?.store_id || '',
-      storeName: loadSettings().storeName || primaryRole?.store_name || ''
+      ...cached,
+      tenantId: user?.tenant_id || cached.tenantId || '',
+      storeId: user?.tenant_id ? (primaryRole?.store_id || '') : (cached.storeId || primaryRole?.store_id || ''),
+      storeName: user?.tenant_id ? (primaryRole?.store_name || '') : (cached.storeName || primaryRole?.store_name || '')
     });
     setSettings(nextSettings);
     setSession(savedSession);
@@ -673,18 +719,33 @@ function AppShell() {
   // API calls would drop the required tenant_id param and every request 422s.
   // Resolve the tenant from the device's registered store (or the first store
   // in this single-tenant deployment) and persist it so all screens can load.
+  //
+  // A cached settings.tenantId can be STALE: this localStorage profile may
+  // have last signed in against a different backend/tenant entirely (e.g. a
+  // dev machine that earlier tested a remote HO's tenant). A platform user
+  // has no user.tenant_id to cross-check against, so a stale cached value
+  // would otherwise be trusted forever (see the `tenants` effect above,
+  // which always reloads fresh from whatever HO this session is actually
+  // connected to) - only re-resolve once `tenants` has loaded, and only for
+  // a platform user, so a real tenant-scoped user's own tenantId is never
+  // second-guessed.
   useEffect(() => {
-    if (!session || settings.tenantId) return;
+    if (!session) return;
+    const isPlatformUser = !session.user?.tenant_id;
+    if (!isPlatformUser) return;
+    const cachedTenantIsStale = settings.tenantId && tenants.length > 0
+      && !tenants.some((t) => t.tenant_id === settings.tenantId);
+    if (settings.tenantId && !cachedTenantIsStale) return;
     api.listStores(session).then((rows) => {
       const stores = asArray(rows);
       const mine = stores.find((s) => s.store_id === effectiveStoreId)
         || stores.find(isWarehouseStore)
         || stores[0];
       if (mine?.tenant_id) {
-        persistSettings({ ...settings, tenantId: mine.tenant_id });
+        persistSettings({ ...settings, tenantId: mine.tenant_id, storeId: mine.store_id, storeName: mine.store_name });
       }
     }).catch(() => {});
-  }, [session, settings.tenantId, effectiveStoreId]);
+  }, [session, settings.tenantId, effectiveStoreId, tenants]);
 
   // The ERP sidebar (Phase 6B) is the primary nav once signed in with a
   // real nav to show; NavMenu's flat top strip remains the nav before
@@ -694,12 +755,12 @@ function AppShell() {
   const showErpSidebar = Boolean(session) && navItems.length > 1;
 
   return (
-    <div className={`app-shell${showErpSidebar ? ' app-shell-with-sidebar' : ''}`}>
+    <div className={`app-shell${showErpSidebar ? ' app-shell-with-sidebar' : ''}`} data-resolved-theme={resolvedTheme}>
       <header className="menubar">
-        <div className="brand-block" title={`NEXORA MEDIQ v${__APP_VERSION__}`}>
-          <img src={nexoraMediqMark} alt="NEXORA MEDIQ" className="brand-logo" />
+        <div className="brand-block" title={`NexTech Supplier Stock v${__APP_VERSION__}`}>
+          <img src={nexoraMediqMark} alt="NexTech Supplier Stock" className="brand-logo" />
           <div>
-            <h1>NEXORA MEDIQ <span className="app-version">v{__APP_VERSION__}</span></h1>
+            <h1>NexTech Supplier Stock <span className="app-version">v{__APP_VERSION__}</span></h1>
             {/* Last sync lives under the brand (not in menubar-right): at
                 1366x768 the right-side chip collided with the nav tabs. */}
             <LastSyncBadge tenantId={runtimeSettings?.tenantId || session?.user?.tenant_id || ''} />
@@ -709,9 +770,9 @@ function AppShell() {
         {!showErpSidebar && <NavMenu items={navItems} activeScreen={activeScreen} onSelect={setActiveScreen} />}
 
         <div className="menubar-right">
-          <ThemeToggle
-            resolvedTheme={resolvedTheme}
-            onCycle={cycleTheme}
+          <ThemePreferenceControl
+            preference={themePreference}
+            onChange={setThemePreference}
           />
           {session ? (
             <div className="user-panel">
@@ -757,6 +818,8 @@ function AppShell() {
             onSave={persistSettings}
             requireAdminGate={Boolean(session) && !isConfigured && !canUnlockDeviceSetup(session)}
             session={session}
+            themePreference={themePreference}
+            onThemeChange={setThemePreference}
           />
         ) : !session ? (
           DEV_AUTO_LOGIN ? (
@@ -766,6 +829,8 @@ function AppShell() {
           ) : (
             <LoginScreen onLogin={handleLogin} onOpenSettings={() => setActiveScreen('settings')} />
           )
+        ) : activeScreen === 'stock_quick' ? (
+          <StockVerticalView session={session} settings={runtimeSettings} compact />
         ) : activeScreen === 'stock_vertical' ? (
           <StockVerticalView session={session} settings={runtimeSettings} />
         ) : activeScreen === 'analysis' ? (
@@ -775,6 +840,8 @@ function AppShell() {
             tenants={tenants}
             onTenantChange={(tenantId) => persistSettings({ ...settings, tenantId })}
           />
+        ) : activeScreen === 'supplier_stock_list' ? (
+          <SupplierStockList session={session} settings={runtimeSettings} tenants={tenants} />
         ) : activeScreen === 'label_exporter' ? (
           <LabelExporter session={session} settings={runtimeSettings} />
         ) : activeScreen === 'nmw_sales' ? (
@@ -786,11 +853,21 @@ function AppShell() {
         ) : activeScreen === 'rate_analysis' ? (
           <RateAnalysis session={session} settings={runtimeSettings} />
         ) : activeScreen === 'order_entry' ? (
-          <PmOrderEntry session={session} onOpenWorkspace={() => setActiveScreen('procurement_workspace')} />
+          <PmOrderEntry session={session} onOpenGapReview={() => setActiveScreen('order_gap_review')} />
+        ) : activeScreen === 'order_gap_review' ? (
+          <OrderGapReview session={session} ui={PROCUREMENT_UI} onOrderEntry={() => setActiveScreen('order_entry')} />
+        ) : activeScreen === 'previous_order_comparison' ? (
+          <PreviousOrderComparison session={session} />
         ) : activeScreen === 'non_moving' ? (
           <NonMovingStock session={session} settings={runtimeSettings} ui={PROCUREMENT_UI} />
         ) : activeScreen === 'procurement_workspace' || activeScreen === 'legacy_order' || activeScreen === 'sync_live' ? null : activeScreen === 'schema_sync' ? (
           <SchemaSyncPage session={session} />
+        ) : activeScreen === 'db_monitor' ? (
+          isSuperAdmin(session) ? <DbMonitorPage session={session} /> : null
+        ) : activeScreen === 'order_cache_monitor' ? (
+          isSuperAdmin(session) ? <OrderCacheMonitor session={session} /> : null
+        ) : activeScreen === 'order_automation' ? (
+          isSuperAdmin(session) ? <OrderAutomationSettings session={session} /> : null
         ) : activeScreen === 'user_management' ? (
           isSuperAdmin(session) ? <UserManagementScreen session={session} /> : null
         ) : activeScreen === 'role_management' ? (
@@ -881,30 +958,25 @@ function LastSyncBadge({ tenantId }) {
   );
 }
 
-function ThemeToggle({ resolvedTheme, onCycle }) {
-  const label = resolvedTheme === 'dark' ? 'Dark' : 'Light';
-  const next = resolvedTheme === 'dark' ? 'light' : 'dark';
-
+function ThemePreferenceControl({ preference, onChange, className = 'theme-preference' }) {
   return (
-    <button
-      type="button"
-      className="theme-toggle"
-      onClick={onCycle}
-      aria-label={`${label} theme. Switch to ${next} theme`}
-      title={`${label} theme — click for ${next}`}
-    >
-      {resolvedTheme === 'dark' ? (
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.7 15.2A8.5 8.5 0 0 1 8.8 3.3 9 9 0 1 0 20.7 15.2ZM5 12a7 7 0 0 1 1.2-3.9 10.5 10.5 0 0 0 9.7 9.7A7 7 0 0 1 5 12Z" /></svg>
-      ) : (
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0-7h1v3h-2V2h1Zm0 17h1v3h-2v-3h1ZM2 11h3v2H2v-2Zm17 0h3v2h-3v-2ZM4.9 3.5 7 5.6 5.6 7 3.5 4.9l1.4-1.4Zm13.5 13.5 2.1 2.1-1.4 1.4-2.1-2.1 1.4-1.4Zm.7-13.5 1.4 1.4L18.4 7 17 5.6l2.1-2.1ZM5.6 17 7 18.4l-2.1 2.1-1.4-1.4L5.6 17Z" /></svg>
-      )}
-      <span>{label}</span>
-    </button>
+    <label className={className}>
+      <span>Theme</span>
+      <select
+        aria-label="Theme"
+        value={preference}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="system">System</option>
+      </select>
+    </label>
   );
 }
 
 
-function SettingsScreen({ settings, onSave, requireAdminGate = false, session = null }) {
+function SettingsScreen({ settings, onSave, requireAdminGate = false, session = null, themePreference = 'dark', onThemeChange = () => {} }) {
   const [draft, setDraft] = useState(settings);
   const [status, setStatus] = useState({ state: 'idle', message: '' });
   const [tenants, setTenants] = useState([]);
@@ -1262,7 +1334,12 @@ function SettingsScreen({ settings, onSave, requireAdminGate = false, session = 
 
   return (
     <section className="screen-panel">
-      <ScreenHeader title="Settings" subtitle="Choose how this desktop client reaches the NEXORA MEDIQ API." />
+      <ScreenHeader title="Settings" subtitle="Choose how this desktop client reaches the NexTech Supplier Stock API." />
+      <div className="settings-section">
+        <h3>Appearance</h3>
+        <p className="hint">Dark is the default for a new installation. A choice saved on this PC stays in effect after restart and applies immediately.</p>
+        <ThemePreferenceControl className="theme-field" preference={themePreference} onChange={onThemeChange} />
+      </div>
       <div className="form-grid">
         <label>
           Server mode
@@ -1684,9 +1761,9 @@ function LoginScreen({ onLogin, onOpenSettings }) {
   return (
     <section className="login-layout">
       <div className="login-copy">
-        <span className="eyebrow">NEXORA MEDIQ</span>
-        <h2>Intelligent Pharmaceutical Workspace</h2>
-        <p>Use your NEXORA MEDIQ credentials to open stock availability and supplier analysis modules.</p>
+        <img className="login-lockup login-lockup--light" src={nextechLockup} alt="NexTech Supplier Stock" />
+        <img className="login-lockup login-lockup--dark" src={nextechLockupDark} alt="" />
+        <p>Use your NexTech Supplier Stock credentials to open stock availability and supplier analysis modules.</p>
       </div>
       {view === 'forgot-request' ? (
         <ForgotPasswordRequestStep
@@ -2240,6 +2317,18 @@ function canChangeLabelStore(session) {
   return String(store?.store_code || '').trim().toUpperCase() === 'NMW';
 }
 
+// Mirrors backend dependencies.store_scope.assert_label_exporter_export_allowed:
+// a purchase-manager/salesman-only login may review (Y/N + remarks) but not
+// export the printable .xlsx. Any other role (including NMW/admin-tier ones)
+// can still export.
+function canExportLabels(session) {
+  if (isSuperAdmin(session)) return true;
+  const names = (session?.user?.roles || []).map((r) => String(r?.role_name || '').trim().toLowerCase());
+  if (!names.length) return true;
+  const storeLevel = ['purchase', 'salesman', 'sales man'];
+  return !names.every((name) => storeLevel.some((token) => name.includes(token)));
+}
+
 // Searchable multi-select filter (unit description, sublocation, ...), built
 // on the same .ow-supplier-* combo styling as the Order Workspace supplier
 // picker. Options always come from what's really in the product table -
@@ -2477,6 +2566,7 @@ function LabelExporter({ session, settings }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
   const admin = isSuperAdmin(session);
   const canChangeStore = canChangeLabelStore(session);
+  const canExport = canExportLabels(session);
   const ownStoreId = session?.user?.roles?.[0]?.store_id || settings?.storeId || '';
   const sessionUserKey = useMemo(() => lblSessionUserKey(session), [session]);
 
@@ -4068,15 +4158,17 @@ function LabelExporter({ session, settings }) {
           </button>
         )}
         <button type="button" className="lblx-mark lblx-queue" onClick={openQueue} title="Open the label print queue">Label Queue</button>
-        <button
-          type="button"
-          className="lblx-mark lblx-export-excel"
-          disabled={!activeLetter || exportBusy}
-          onClick={exportCurrentLetterExcel}
-          title={activeLetter ? `Export letter ${activeLetter} to Excel` : 'Pick exactly one letter to export'}
-        >
-          {exportBusy ? 'Exporting…' : 'Export to Excel'}
-        </button>
+        {canExport && (
+          <button
+            type="button"
+            className="lblx-mark lblx-export-excel"
+            disabled={!activeLetter || exportBusy}
+            onClick={exportCurrentLetterExcel}
+            title={activeLetter ? `Export letter ${activeLetter} to Excel` : 'Pick exactly one letter to export'}
+          >
+            {exportBusy ? 'Exporting…' : 'Export to Excel'}
+          </button>
+        )}
         {isLocked ? (
           admin && (
             <button
@@ -4825,7 +4917,9 @@ function NmwSalesReport({ session, settings }) {
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    api.listTenants(session).then((rows) => setTenants(asArray(rows))).catch(() => {});
+    // Inactive tenants (e.g. a deactivated TESTSMS) must never reappear in
+    // this filter -- mirrors the top-level App tenant-filter effect.
+    api.listTenants(session).then((rows) => setTenants(asArray(rows).filter((t) => t.is_active))).catch(() => {});
   }, [session]);
 
   useEffect(() => {
@@ -4965,7 +5059,7 @@ function NmwSalesReport({ session, settings }) {
           }
         }
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'NMW Sales');
+        XLSX.utils.book_append_sheet(wb, ws, 'Warehouse Bill');
         const bookType = format === 'xls' ? 'biff8' : 'xlsx';
         const ext = format === 'xls' ? 'xls' : 'xlsx';
         const buffer = XLSX.write(wb, { bookType, type: 'array', cellStyles: true });
@@ -4986,7 +5080,7 @@ function NmwSalesReport({ session, settings }) {
     link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
-    offerWhatsAppShare({ blobs: [{ name: filename, blob }], source: 'NMW Sales Report' });
+    offerWhatsAppShare({ blobs: [{ name: filename, blob }], source: 'Warehouse Bill Export' });
   }
 
   const activeBill = bills.find((b) => nmwBillKey(b) === activeKey) || null;
@@ -4995,7 +5089,7 @@ function NmwSalesReport({ session, settings }) {
   return (
     <section className="screen-panel nmw-report-screen">
       <div className="nmw-toolbar">
-        <strong className="nmw-toolbar-title">NMW Sales Report</strong>
+        <strong className="nmw-toolbar-title">Warehouse Bill Export</strong>
 
         <label className="nmw-toolbar-field">
           Tenant
@@ -6195,7 +6289,7 @@ function StoreProductGrid({ products, hasSearched, sourceProductCode, syncProduc
         const rowStyle = isSourceSelected
           ? { background: '#15803d', color: '#ffffff', fontWeight: 700 }
           : isSyncSelected
-            ? { background: '#2563eb', color: '#ffffff', fontWeight: 700 }
+            ? { background: '#0f766e', color: '#ffffff', fontWeight: 700 }
             : undefined;
         return (
           <GridRow
@@ -7605,6 +7699,7 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
   });
 
   const [importOpen, setImportOpen] = useState(false);
+  const [mailImportOpen, setMailImportOpen] = useState(false);
   // The store's full OrderNMC supplier list, offered in the top supplier box
   // while importing so a supplier with no stock rows yet can be picked.
   const [orderSuppliers, setOrderSuppliers] = useState([]);
@@ -9046,7 +9141,10 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
             </select>
           </label>
         )}
-        <button type="button" className="primary-button toolbar-import-btn" onClick={() => setImportOpen((open) => !open)}>
+        <button type="button" className="secondary-button toolbar-import-btn" onClick={() => { setImportOpen(false); setMailImportOpen((open) => !open); }}>
+          {mailImportOpen ? 'Close mail import' : 'Mail Import'}
+        </button>
+        <button type="button" className="primary-button toolbar-import-btn" onClick={() => { setMailImportOpen(false); setImportOpen((open) => !open); }}>
           {importOpen ? 'Close import' : 'Import Supplier Excel'}
         </button>
         <select
@@ -9130,6 +9228,18 @@ function SupplierStockAnalysis({ session, settings: settingsProp, tenants = [], 
         </button>
         <MappingBadge products={products} />
       </div>
+
+      {mailImportOpen && (
+        <SupplierMailImport
+          session={session}
+          tenantId={selectedWarehouse?.tenant_id}
+          storeId={scopeStoreId}
+          onImported={() => {
+            loadSuppliers(supplierSearch);
+            if (selectedSupplier) loadProducts(selectedSupplier);
+          }}
+        />
+      )}
 
       {importOpen && (
         <SupplierExcelImport
@@ -9888,6 +9998,19 @@ const SCM_ROWS = [
   { key: 'sales', label: 'Sales' },
 ];
 
+// Quick Stock: the same comparison model, fewer rows. No Batch row; Purchase
+// and Sales are each their own independent, always-visible row with their
+// own full-height rail label (owner: "reduce rows only remove batches" —
+// the earlier single toggled "Sales / Purchase" row was dropped because
+// squeezing two rotated button labels into one 32px rail cell clipped and
+// overlapped the text; see SCM rail label fix).
+const SCM_ROWS_COMPACT = [
+  { key: 'grid', label: 'Store Grid' },
+  { key: 'chart', label: 'Chart' },
+  { key: 'sales', label: 'Sales' },
+  { key: 'purchase', label: 'Purchase' },
+];
+
 // A single big label/value tile — used for the NMW warehouse summary a store
 // user sees in place of the full (HO-only) tables.
 function NmwTile({ label, value, hint, zero }) {
@@ -9900,7 +10023,7 @@ function NmwTile({ label, value, hint, zero }) {
   );
 }
 
-function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSelect, superAdmin, session }) {
+function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSelect, superAdmin, session, rows = SCM_ROWS }) {
   const [billDetail, setBillDetail] = useState(null);         // { store, sale }
   const [purchaseDetail, setPurchaseDetail] = useState(null); // { store, row }
   const [chartModal, setChartModal] = useState(null);         // { store, core }
@@ -9998,10 +10121,11 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
   // minmax(0, 1fr): all store columns always share the available width equally,
   // so six stores NEVER cause a horizontal scrollbar between stores.
   const gridTemplateColumns = `var(--scm-label-w) repeat(${stores.length}, minmax(0, 1fr))`;
+  const compactMode = rows !== SCM_ROWS;
 
   return (
     <div className="scm-scroll">
-      <div className="scm-grid" style={{ gridTemplateColumns }}>
+      <div className={`scm-grid${compactMode ? ' scm-grid--compact' : ''}`} style={{ gridTemplateColumns }}>
         {/* Header row: corner + one header per store */}
         <div className="scm-corner" aria-hidden="true" />
         {stores.map((store, index) => {
@@ -10019,25 +10143,30 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
           );
         })}
 
-        {/* One grid row per information type */}
-        {SCM_ROWS.map((row) => (
-          <Fragment key={row.key}>
-            <div className={`scm-rowlabel scm-rowlabel--${row.key}`}><span>{row.label}</span></div>
-            {stores.map((store, index) => {
-              const color = STORE_COLORS[index % STORE_COLORS.length];
-              const isWarehouse = isWarehouseStore(store);
-              return (
-                <div
-                  className={`scm-cell scm-cell--${row.key}`}
-                  key={store.store_id}
-                  style={{ '--store-color': color }}
-                >
-                  {row.key === 'grid' ? gridCell(store) : detailCell(store, row.key, isWarehouse)}
-                </div>
-              );
-            })}
-          </Fragment>
-        ))}
+        {/* One grid row per information type — Sales and Purchase are
+            independent rows now (no toggle), so both always render together. */}
+        {rows.map((row) => {
+          return (
+            <Fragment key={row.key}>
+              <div className={`scm-rowlabel scm-rowlabel--${row.key}`}>
+                <span>{row.label}</span>
+              </div>
+              {stores.map((store, index) => {
+                const color = STORE_COLORS[index % STORE_COLORS.length];
+                const isWarehouse = isWarehouseStore(store);
+                return (
+                  <div
+                    className={`scm-cell scm-cell--${row.key}`}
+                    key={store.store_id}
+                    style={{ '--store-color': color }}
+                  >
+                    {row.key === 'grid' ? gridCell(store) : detailCell(store, row.key, isWarehouse)}
+                  </div>
+                );
+              })}
+            </Fragment>
+          );
+        })}
       </div>
 
       {billDetail && (
@@ -10063,7 +10192,7 @@ function StoreComparisonMatrix({ stores, storeDetails, selectionFor, onProductSe
   );
 }
 
-function StockVerticalView({ session, settings }) {
+function StockVerticalView({ session, settings, compact = false }) {
   const tenantId = settings?.tenantId || session?.user?.tenant_id || '';
   const nativeStoreId = session?.user?.roles?.[0]?.store_id || '';
   const superAdmin = isSuperAdmin(session);
@@ -10442,7 +10571,7 @@ function StockVerticalView({ session, settings }) {
 
   return (
     <section className="screen-panel sv-screen">
-      <ScreenHeader title="Stock Enquiry" subtitle="Stores across the top, information down the side — compare product, trend, batch, purchase and sales side by side." />
+      <ScreenHeader title={compact ? 'Quick Stock' : 'Stock Enquiry'} />
       <div className="sv-toolbar">
         <div className="ns-search__tabs" role="tablist" aria-label="Search mode">
           <button type="button" role="tab" aria-selected={searchMode === 'product'} className={`ns-search__tab${searchMode === 'product' ? ' ns-search__tab--active' : ''}`} onClick={() => setSearchMode('product')}>Product</button>
@@ -10491,6 +10620,7 @@ function StockVerticalView({ session, settings }) {
           onProductSelect={handleProductSelect}
           superAdmin={superAdmin}
           session={session}
+          rows={compact ? SCM_ROWS_COMPACT : SCM_ROWS}
         />
       )}
     </section>
@@ -10713,7 +10843,13 @@ function SupplierExcelImport({ session, supplierCode, supplierName, tenantId, st
               {header}
               <select
                 value={mapping[header] || ''}
-                onChange={(event) => setMapping({ ...mapping, [header]: event.target.value })}
+                onChange={(event) => {
+                  // One field per column: picking a field takes it off whichever column had it.
+                  const target = event.target.value;
+                  const next = {};
+                  Object.entries(mapping).forEach(([h, t]) => { next[h] = target && t === target ? '' : t; });
+                  setMapping({ ...next, [header]: target });
+                }}
               >
                 <option value="">Ignore</option>
                 {preview.targets.map((target) => (
@@ -10745,7 +10881,7 @@ function ScreenHeader({ title, subtitle }) {
     <header className="screen-header">
       <div>
         <h2>{title}</h2>
-        <p>{subtitle}</p>
+        {subtitle ? <p>{subtitle}</p> : null}
       </div>
     </header>
   );

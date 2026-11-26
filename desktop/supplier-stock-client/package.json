@@ -1,6 +1,6 @@
 {
   "name": "nexora-supplier-stock-client",
-  "version": "0.1.74",
+  "version": "0.1.79",
   "private": true,
   "description": "NexTech Supplier Stock — Intelligent Pharmaceutical Workspace desktop client",
   "main": "electron/main.cjs",

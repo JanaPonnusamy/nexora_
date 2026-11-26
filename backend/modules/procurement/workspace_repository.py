@@ -59,15 +59,50 @@ _FROM_BASE = """
 # workspace load. Casting only oi.product_code (varchar, one refresh's rows,
 # never scanned on its own side) keeps pr.ProductCode bare so SQL Server can
 # seek it directly.
+#
+# OUTER APPLY TOP 1, not a plain JOIN: a duplicated product-master row for the
+# same store and code (a sync copy, not a second medicine) would otherwise
+# repeat the order line once per copy. The active master row wins. Pack, unit
+# and product type are display attributes of that one product.
 _FROM = (
     _FROM_BASE
     + """
-    LEFT JOIN sync.Products pr
-        ON pr.tenant_id = oi.tenant_id
-       AND pr.store_id = oi.store_id
-       AND pr.ProductCode = TRY_CAST(oi.product_code AS INT)
+    OUTER APPLY (
+        SELECT TOP 1 pr.UnitDescription, pr.SaleUnit, pr.ProductType
+        FROM sync.Products pr
+        WHERE pr.tenant_id = oi.tenant_id
+          AND pr.store_id = oi.store_id
+          AND pr.ProductCode = TRY_CAST(oi.product_code AS INT)
+        ORDER BY CASE WHEN ISNULL(pr.isActive, 1) = 1 THEN 0 ELSE 1 END, pr.ProductCode
+    ) pr
 """
 )
+
+# One grid line per store + product code. A blank code stays its own order
+# item (there is nothing else to identify it by). Float '123.0' matches 123.
+# The surviving line is the one already assigned, else the larger final qty,
+# else the larger suggestion — quantities are not added together.
+_PRODUCT_KEY = """
+CASE
+    WHEN oi.product_code IS NULL OR LTRIM(RTRIM(oi.product_code)) = ''
+        THEN CAST(oi.order_item_id AS VARCHAR(36))
+    WHEN RIGHT(LTRIM(RTRIM(oi.product_code)), 2) = '.0'
+     AND LEFT(LTRIM(RTRIM(oi.product_code)), LEN(LTRIM(RTRIM(oi.product_code))) - 2) NOT LIKE '%[^0-9]%'
+        THEN LEFT(LTRIM(RTRIM(oi.product_code)), LEN(LTRIM(RTRIM(oi.product_code))) - 2)
+    ELSE LTRIM(RTRIM(oi.product_code))
+END
+"""
+
+_PRODUCT_RANK = f"""
+ROW_NUMBER() OVER (
+    PARTITION BY oi.store_id, {_PRODUCT_KEY}
+    ORDER BY
+        CASE WHEN ISNULL(oi.assigned_qty, 0) > 0 THEN 0 ELSE 1 END,
+        ISNULL(oi.final_qty, 0) DESC,
+        ISNULL(oi.suggested_qty, 0) DESC,
+        oi.order_item_id
+)
+"""
 
 # Planning State — a direct SQL port of the PM grid's client-side classifier
 # (was duplicated in the frontend as a JS function run over every loaded row on
@@ -172,6 +207,8 @@ def list_items(tenant_id, refresh_id, filters, sort_by, sort_dir, page, page_siz
     where_sql = " AND ".join(where)
     order_col = _SORTABLE.get(sort_by, "oi.product_code")
     order_dir = "DESC" if str(sort_dir).lower() == "desc" else "ASC"
+    # Outer query reads the SELECT list, not the oi./vp. sources.
+    order_name = order_col.split(".")[-1]
     offset = (page - 1) * page_size
     count_from = _FROM if needs_pr else _FROM_BASE
 
@@ -179,20 +216,35 @@ def list_items(tenant_id, refresh_id, filters, sort_by, sort_dir, page, page_siz
     try:
         cursor = conn.cursor()
         cursor.execute(
-            f"SELECT COUNT(*) {count_from} WHERE {where_sql}", params
+            f"""
+            SELECT COUNT(*) FROM (
+                SELECT {_PRODUCT_KEY} AS product_key
+                {count_from}
+                WHERE {where_sql}
+                GROUP BY oi.store_id, {_PRODUCT_KEY}
+            ) products
+            """,
+            params,
         )
         total = cursor.fetchone()[0]
 
         cursor.execute(
             f"""
-            SELECT {_SELECT} {_FROM}
-            WHERE {where_sql}
-            ORDER BY {order_col} {order_dir}
+            WITH grid AS (
+                SELECT {_SELECT}, {_PRODUCT_RANK} AS product_row
+                {_FROM}
+                WHERE {where_sql}
+            )
+            SELECT * FROM grid
+            WHERE product_row = 1
+            ORDER BY {order_name} {order_dir}
             OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
             """,
             params + [offset, page_size],
         )
         items = [_stringify(r) for r in _rows_to_dicts(cursor)]
+        for item in items:
+            item.pop("product_row", None)
         return items, total
     finally:
         conn.close()
@@ -230,12 +282,23 @@ def get_summary(tenant_id, refresh_id, filters):
     conn = get_connection()
     try:
         cursor = conn.cursor()
+        ranked = f"""
+            WITH ranked AS (
+                SELECT {_PLANNING_STATE_CASE} AS planning_state,
+                       oi.item_status,
+                       oi.final_qty,
+                       {_PRODUCT_RANK} AS product_row
+                {_FROM_BASE}
+                WHERE {where_sql}
+            )
+        """
         cursor.execute(
-            f"""
-            SELECT {_PLANNING_STATE_CASE} AS planning_state, COUNT(*) AS cnt
-            {_FROM_BASE}
-            WHERE {where_sql}
-            GROUP BY {_PLANNING_STATE_CASE}
+            ranked
+            + """
+            SELECT planning_state, COUNT(*) AS cnt
+            FROM ranked
+            WHERE product_row = 1
+            GROUP BY planning_state
             """,
             params,
         )
@@ -248,13 +311,16 @@ def get_summary(tenant_id, refresh_id, filters):
         # not yet skipped" (item_status outside the reviewed set, qty still 0)
         # — a slightly different cut than the 'pending' planning-state bucket
         # (which only requires qty == 0, regardless of item_status). Compute it
-        # with its own predicate so the footer number is unchanged.
+        # with its own predicate so the footer number is unchanged. Counted on
+        # the same one-row-per-product ranking as the grid.
         cursor.execute(
-            f"""
-            SELECT COUNT(*) {_FROM_BASE}
-            WHERE {where_sql}
-              AND oi.item_status NOT IN ('review', 'assigned', 'partial', 'skipped')
-              AND ISNULL(oi.final_qty, 0) = 0
+            ranked
+            + """
+            SELECT COUNT(*)
+            FROM ranked
+            WHERE product_row = 1
+              AND item_status NOT IN ('review', 'assigned', 'partial', 'skipped')
+              AND ISNULL(final_qty, 0) = 0
             """,
             params,
         )

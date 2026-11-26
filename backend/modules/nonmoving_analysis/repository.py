@@ -248,6 +248,44 @@ def product_batches(tenant_id, store_id, product_code):
         conn.close()
 
 
+def product_sales_trend(tenant_id, store_id, product_code, months=6):
+    """Last `months` calendar months of PRODUCT-LEVEL sales for one store
+    product -- qty, sale value (net, in-bill returns already offset) and bill
+    count -- for the Non-Moving Stock double-click Sales Trend view.
+
+    sync.ProductSaleInformation is a per-SALE-LINE table with no reliable
+    batch key for historical reporting (see this module's own last-sale-date
+    docstring), so this is PRODUCT-level, not batch-level, same as the
+    sales_30/90/180 figures already shown on the grid. SeriesTransID = 1 is
+    the sale series (matches the 30/90/180 own-store query, store_snapshot
+    above); a warehouse additionally counts Transfer-Out (11) there, but a
+    transfer-out has no sale value, so it is correctly excluded here."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SET NOCOUNT ON;
+            DECLARE @t UNIQUEIDENTIFIER = ?, @s UNIQUEIDENTIFIER = ?, @p INT = TRY_CAST(? AS INT);
+            DECLARE @boundary DATE = DATEADD(MONTH, DATEDIFF(MONTH, 0, GETDATE()) - (? - 1), 0);
+            SELECT CONVERT(VARCHAR(7), TransactionDate, 120)                         AS ym,
+                   SUM(CASE WHEN Quantity > 0 THEN Quantity ELSE 0 END)              AS qty,
+                   SUM(Transactionamount)                                           AS sales_value,
+                   COUNT(DISTINCT Bnumber)                                          AS transactions
+            FROM sync.ProductSaleInformation
+            WHERE tenant_id = @t AND store_id = @s AND ProductCode = @p
+              AND SeriesTransID = 1 AND ISNULL(TransactionValidity, 0) = 0
+              AND TransactionDate >= @boundary
+            GROUP BY CONVERT(VARCHAR(7), TransactionDate, 120)
+            ORDER BY ym
+            """,
+            (tenant_id, store_id, str(product_code), int(months)),
+        )
+        return _floatify([_stringify(r) for r in _rows_to_dicts(cur)])
+    finally:
+        conn.close()
+
+
 def monthly_movement(tenant_id, store_id, months=6):
     """Store-level monthly movement from the POS ProductTrans rollup for the
     last `months` calendar months: quantity in (purchase + transfer in), out

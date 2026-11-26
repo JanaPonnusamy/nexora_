@@ -2,7 +2,7 @@
 .sl-card { background: var(--nx-surface); border: 1px solid var(--nx-rule); border-radius: 10px; overflow: hidden; }
 .sl-card-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--nx-rule); }
 .sl-card-head .sl-btn { margin-left: auto; }
-.sl-btn { border: 0; border-radius: 6px; padding: 6px 12px; background: var(--nx-accent); color: var(--nx-text-on); font-weight: 600; cursor: pointer; }
+.sl-btn { border: 0; border-radius: 6px; padding: 6px 12px; background: var(--nx-accent); color: var(--nx-accent-on); font-weight: 600; cursor: pointer; }
 .sl-btn:disabled, .sl-icon:disabled { opacity: 0.5; cursor: default; }
 .sl-icon { border: 1px solid var(--nx-rule-strong); border-radius: 6px; background: transparent; color: var(--nx-text); width: 28px; height: 24px; cursor: pointer; }
 .sl-grid { overflow-x: auto; }
@@ -22,11 +22,11 @@
 .sl-bar i { display: block; height: 100%; background: var(--nx-accent); }
 .sl-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
 .sl-badge-running, .sl-badge-run { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
-.sl-badge-online, .sl-badge-ok { background: rgba(22, 163, 74, 0.14); color: #16a34a; }
-.sl-badge-offline, .sl-badge-bad { background: rgba(220, 38, 38, 0.14); color: #dc2626; }
-.sl-badge-wait { background: rgba(217, 119, 6, 0.14); color: #d97706; }
+.sl-badge-online, .sl-badge-ok { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.sl-badge-offline, .sl-badge-bad { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.sl-badge-wait { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
 .sl-feed { display: grid; grid-template-columns: 1fr auto 60px 80px; gap: 10px; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--nx-rule); font-size: 12.5px; }
 .sl-feed:last-child { border-bottom: 0; }
 .sl-empty { padding: 12px 14px; color: var(--nx-text-muted); font-size: 12.5px; }
 .sl-notice { padding: 8px 12px; border-radius: 8px; background: var(--nx-accent-sunk); color: var(--nx-accent-ink); font-size: 12.5px; }
-.sl-notice-bad { background: rgba(220, 38, 38, 0.12); color: #dc2626; }
+.sl-notice-bad { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }

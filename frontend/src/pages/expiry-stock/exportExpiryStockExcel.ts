@@ -56,7 +56,7 @@ async function buildBlob({
   orientation = 'landscape',
 }: ExpiryStockExcelOpts): Promise<Blob> {
   const wb = new ExcelJS.Workbook()
-  wb.creator = 'Axythic'
+  wb.creator = 'NexTech MediQ'
   wb.created = new Date()
 
   const ws = wb.addWorksheet(sheetName.slice(0, 31) || 'Sheet1', {

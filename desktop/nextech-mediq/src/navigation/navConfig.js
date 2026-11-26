@@ -110,6 +110,14 @@ export const NAV_GROUPS = [
         description: 'Supplier list, product search, warehouse-stock filter, and detail (offer, mapping, stock, near expiry, purchase history). Excel import and mapping/assignment writes are not sent.',
       },
       {
+        id: 'supplier-stock-list',
+        label: 'Supplier Stock List',
+        path: '/supplier-stock-list',
+        status: MODULE_STATUS.IN_PROGRESS,
+        icon: 'supplier',
+        description: 'Current supplier stock rows by tenant and supplier, every store or one.',
+      },
+      {
         id: 'rate-analysis',
         label: 'Rate Analysis',
         path: '/supplier-intelligence/rate-analysis',
@@ -135,7 +143,7 @@ export const NAV_GROUPS = [
       },
       {
         id: 'pm-order-entry',
-        label: 'Order Entry (Submit)',
+        label: 'Purchase Entry Complete',
         path: '/procurement/order-entry-submit',
         status: MODULE_STATUS.READY,
         icon: 'edit',
@@ -143,7 +151,7 @@ export const NAV_GROUPS = [
       },
       {
         id: 'order-gap-review',
-        label: 'Order Gap Review',
+        label: 'Pending Supply Review',
         path: '/procurement/order-gap-review',
         status: MODULE_STATUS.READY,
         icon: 'edit',

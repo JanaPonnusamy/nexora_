@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('nexoraDesktop', {
   readSession: (name) => ipcRenderer.invoke('session:read', name),
   writeSession: (name, data) => ipcRenderer.invoke('session:write', name, data),
   sessionPath: (name) => ipcRenderer.invoke('session:path', name),
+  // Store-side copy of this store's HO order cache (one file per store).
+  orderCache: {
+    read: (store) => ipcRenderer.invoke('orderCache:read', store),
+    write: (store, data) => ipcRenderer.invoke('orderCache:write', store, data)
+  },
   // Order Workspace export-to-disk.
   writeExportFile: (absolutePath, contentBase64) => ipcRenderer.invoke('export:writeFile', { absolutePath, contentBase64 }),
   openExportPath: (absolutePath) => ipcRenderer.invoke('export:openPath', { absolutePath }),

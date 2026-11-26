@@ -221,3 +221,50 @@ export function pwCompareSuppliers(lines, currentCodes = [], orderQty = 0) {
   verdict.short = short(verdict.best);
   return { ranked, current, others, verdict };
 }
+
+// One grid line per store + product code + supplier. A repeated API row
+// (join copy, second snapshot of the same code, refresh that concatenated)
+// keeps the line that already has the larger order qty, then the larger
+// supplier stock. Quantity is the surviving row's quantity. A different
+// code, a different store, or a different supplier stays its own line.
+export function pwCollapseRows(rows) {
+  // One pass: keep a running best row + its rank per group, instead of
+  // collecting every row into an array and re-ranking the whole group in a
+  // second pass (that re-derived "best"'s rank from scratch on every
+  // comparison, doubling pwLineRank() calls and array allocations per group).
+  const best = new Map();
+  const order = [];
+  (Array.isArray(rows) ? rows : []).forEach((row, index) => {
+    const code = pwKey(row?.key ?? row?.code ?? row?.productcode ?? row?.ProductCode);
+    const store = String(row?.store ?? row?.store_id ?? row?.StoreName ?? '');
+    const supplier = row?.supplier == null || row?.supplier === '' ? '' : String(row.supplier);
+    const id = code ? `${store}|${code}|${supplier}` : `row|${index}`;
+    const rank = pwLineRank(row);
+    const existing = best.get(id);
+    if (!existing) {
+      best.set(id, { row, rank });
+      order.push(id);
+    } else if (pwRankBefore(rank, existing.rank)) {
+      existing.row = row;
+      existing.rank = rank;
+    }
+  });
+  return order.map((id) => best.get(id).row);
+}
+
+// A single packed number sorts the same way the old 3-element array did
+// (compare wanted, then qty, then stock, in that priority order) without
+// allocating an array or doing a multi-step compare per row.
+function pwLineRank(row) {
+  const qty = Number(row?.qty ?? row?.OrderQty ?? row?.orderqty ?? 0);
+  const stock = Number(row?.sstock ?? row?.S_Stock ?? 0);
+  const wanted = String(row?.wanted ?? row?.WantedType ?? '');
+  const wantedRank = wanted === 'Additional Row' ? 1 : 0;
+  const qtyRank = -(Number.isFinite(qty) ? qty : 0);
+  const stockRank = -(Number.isFinite(stock) ? stock : 0);
+  return wantedRank * 1e12 + qtyRank * 1e6 + stockRank;
+}
+
+function pwRankBefore(left, right) {
+  return left < right;
+}

@@ -447,3 +447,31 @@
     justify-content: flex-start;
   }
 }
+
+/* Morning auto order dialog (morningOrder.jsx). */
+.mao-body { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; overflow-y: auto; }
+.mao-card { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-sm, 8px); background: var(--ntm-panel); }
+.mao-card.is-on { border-color: var(--ntm-teal); }
+.mao-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mao-head h4 { margin: 0; font-size: 15px; }
+.mao-head small { margin-left: 6px; font-weight: 500; color: var(--ntm-text-secondary); }
+.mao-switch, .mao-row label, .mao-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.mao-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.mao-num { width: 64px; }
+.mao-note { color: var(--ntm-success); font-size: 12.5px; }
+.mao-stores { display: flex; flex-wrap: wrap; gap: 6px; }
+.mao-chip { padding: 3px 9px; border: 1px solid var(--ntm-border); border-radius: 999px; background: var(--ntm-elevated); cursor: pointer; }
+.mao-chip--all { font-weight: 700; }
+.mao-chip--on { border-color: var(--ntm-accent); cursor: default; }
+.mao-chip--on label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.mao-order { min-width: 18px; height: 18px; border-radius: 999px; background: var(--ntm-accent); color: #fff; font-size: 11px; display: inline-grid; place-items: center; }
+.mao-move { border: 0; background: none; padding: 0 2px; font-size: 11px; cursor: pointer; color: inherit; opacity: .7; }
+.mao-move:disabled { opacity: .25; cursor: default; }
+.mao-hint { margin: 0; font-size: 12px; color: var(--ntm-text-secondary); }
+.mao-table { width: 100%; }
+.mao-detail { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+.mao-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--ntm-elevated); color: var(--ntm-text-secondary); }
+.mao-badge--running { background: var(--ntm-teal); color: #fff; }
+.mao-badge--done { background: var(--ntm-success); color: #fff; }
+.mao-badge--failed { background: var(--ntm-error); color: #fff; }
+.mao-badge--manual { background: rgba(224, 164, 0, 0.2); color: var(--ntm-warning); }

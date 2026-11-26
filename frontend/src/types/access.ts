@@ -21,13 +21,14 @@ export type Capability =
   | 'DOCUMENT_EXTRACTION'
   | 'PASS_GEN'
   | 'LEGACY_ORDER'
+  | 'PREVIOUS_ORDER_COMPARISON'
 
 export const ALL_CAPABILITIES: Capability[] = [
   'PLATFORM', 'INVENTORY', 'SYNC', 'ADMINISTRATION', 'REPORTS', 'TIME_REPORT', 'SETTINGS',
   'PRODUCT_MAPPING',
   'PROCUREMENT_WORKSPACE', 'PROCUREMENT_ADMIN',
   'PROCUREMENT_EXPORT', 'PROCUREMENT_PENDING', 'PROCUREMENT_GRN',
-  'DOCUMENT_EXTRACTION', 'PASS_GEN', 'LEGACY_ORDER',
+  'DOCUMENT_EXTRACTION', 'PASS_GEN', 'LEGACY_ORDER', 'PREVIOUS_ORDER_COMPARISON',
 ]
 
 const PROCUREMENT_CAPS: Capability[] = [
@@ -42,6 +43,9 @@ function capForCode(code: string | null | undefined): Capability | null {
   if (!c) return null
   // Checked before PROCUREMENT so a code like "LEGACY_PURCHASE_ORDER" still
   // resolves to the legacy console rather than the new procurement workspace.
+  // Checked before LEGACY so a module code like "LEGACY_PREVIOUS_ORDER_
+  // COMPARISON" still resolves to this narrower PM-facing capability.
+  if (c.includes('PREVIOUS_ORDER') || c.includes('ORDER_COMPARISON')) return 'PREVIOUS_ORDER_COMPARISON'
   if (c.includes('LEGACY')) return 'LEGACY_ORDER'
   if (c.includes('PROCUREMENT') || c.includes('PURCHASE')) {
     // Lifecycle administration (Cycle / Refresh management) is a separate,

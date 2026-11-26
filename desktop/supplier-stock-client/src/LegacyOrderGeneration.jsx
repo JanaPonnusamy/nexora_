@@ -24,6 +24,7 @@
 // every Order Process. Both are saved in OrderNMC, so web and every PC share them.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api/client.js';
+import MorningOrderDialog from './morningOrder.jsx';
 
 const POLL_MS = 1500;
 const LOST_AFTER_MS = 120000;
@@ -35,11 +36,13 @@ const JOBS_REFRESH_MS = 20000;
 const COMPARE_MODES = [
   ['PREVIOUS_PENDING', 'Previous pending'],
   ['TODAY', "Previous today's orders"],
+  ['PENDING_LIST', 'Pending list'],
+  ['TODAY_PENDING', "Today's orders + pending list"],
   ['NONE', 'No compare'],
   ['HO', 'HO order (no compare)'],
 ];
 const COMPARE_LABEL = Object.fromEntries(COMPARE_MODES);
-const compares = (mode) => mode === 'TODAY' || mode === 'PREVIOUS_PENDING';
+const compares = (mode) => ['PREVIOUS_PENDING', 'TODAY', 'PENDING_LIST', 'TODAY_PENDING'].includes(mode);
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const codeKey = (value) => String(value || '').trim().toUpperCase();
@@ -467,6 +470,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
   const [savedDefaults, setSavedDefaults] = useState({}); // store -> {min_days, max_days, recency_days}
   const [schedule, setSchedule] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [morningOpen, setMorningOpen] = useState(false);
   const [statusCard, setStatusCard] = useState(null); // { kind, message }
   const [pushingStock, setPushingStock] = useState(false);
 
@@ -818,6 +822,7 @@ export default function LegacyOrderGeneration({ session, hidden }) {
             Evening order: {scheduleRunning(schedule) ? 'running' : schedule ? fmtNextRun(schedule.next_run) : '…'}
           </span>
           <button type="button" className="secondary-button" onClick={() => setSettingsOpen(true)} disabled={!stores.length}>⚙ Settings</button>
+          <button type="button" className="secondary-button" onClick={() => setMorningOpen(true)} title="One order per store every morning, started by the store coming online">🌅 Morning auto</button>
         </div>
         <div className="lgo-counts" aria-live="polite">
           <span className="lgo-count lgo-run">Running {counts.running}</span>
@@ -1024,6 +1029,15 @@ export default function LegacyOrderGeneration({ session, hidden }) {
             : <div className="lgo-muted">{logStore ? (logEntry?.message || 'No task run yet for this store.') : 'No task activity yet.'}</div>}
         </div>
       </div>
+
+      {morningOpen && (
+        <MorningOrderDialog
+          load={() => api.legacyMorningSchedules(session)}
+          save={(key, payload) => api.legacySaveMorningSchedule(key, payload, session)}
+          retry={(key, store) => api.legacyRetryMorningStore(key, store, session)}
+          onClose={() => setMorningOpen(false)}
+        />
+      )}
 
       {settingsOpen && (
         <OrderAutomationSettings

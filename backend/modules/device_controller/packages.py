@@ -12,13 +12,26 @@ import hashlib
 import json
 import os
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
 
 from modules.device_controller import repository
 
-BACKEND_DIR = Path(__file__).resolve().parents[2]
+# Path(__file__).resolve().parents[2] only lands on the real backend/ folder
+# for a git checkout. Inside the frozen HO_Backend.exe (PyInstaller onedir),
+# this module has no on-disk __file__ at all (bytecode lives in the PYZ
+# archive) -- an exe HO node (.32, .73) must instead anchor release roots on
+# the install directory beside the exe itself, same as ho_ops.service.
+# _frozen_install_dir(). Unlike ho_backend releases (build-node-only, see
+# ho_ops.service's own RELEASES_DIR), stock_client/store_agent releases ARE
+# expected to be served directly from an exe HO node, so this one has to
+# get the frozen case right.
+if getattr(sys, "frozen", False):
+    BACKEND_DIR = Path(sys.executable).resolve().parent / "backend"
+else:
+    BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 # app_key -> local release root (one sub-folder per version)
 RELEASE_ROOTS = {

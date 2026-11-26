@@ -1,0 +1,141 @@
+.live-queries {
+  padding: 1rem 1.25rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.lq-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.lq-head h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.lq-head p {
+  margin: 0.3rem 0 0;
+  max-width: 70ch;
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
+.lq-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.lq-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.lq-card {
+  padding: 0.9rem 1rem 1rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  background: var(--bs-body-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.lq-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.lq-card-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.lq-muted {
+  font-size: 0.78rem;
+  opacity: 0.68;
+}
+
+.lq-tablewrap {
+  overflow-x: auto;
+}
+
+.lq-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.lq-table th,
+.lq-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.lq-table th.lq-left,
+.lq-table td.lq-left {
+  text-align: left;
+  white-space: normal;
+}
+
+.lq-query-cell {
+  max-width: 28rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+}
+
+.lq-warn-row {
+  background: var(--bs-warning-bg-subtle, #fff3cd);
+}
+
+.status-line {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.status-line.error {
+  background: var(--bs-danger-bg-subtle, #f8d7da);
+  color: var(--bs-danger-text-emphasis, #842029);
+}
+
+.status-line.lq-ok {
+  background: var(--bs-success-bg-subtle, #d1e7dd);
+  color: var(--bs-success-text-emphasis, #0a3622);
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  padding: 0.35rem 0.8rem;
+  border-radius: 0.35rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.secondary-button {
+  background: var(--bs-body-bg);
+  border-color: var(--bs-border-color);
+  color: inherit;
+}
+
+.danger-button {
+  background: var(--bs-danger, #dc3545);
+  color: #fff;
+  margin-right: 0.3rem;
+}

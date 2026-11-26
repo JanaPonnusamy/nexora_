@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="Pharmaceutical workspace">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101D32"/>
+      <stop offset="0.55" stop-color="#162944"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <linearGradient id="c" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22C3D6" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#2563EB" stop-opacity="0.2"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#g)"/>
+  <circle cx="980" cy="140" r="180" fill="#22C3D6" opacity="0.16"/>
+  <circle cx="180" cy="640" r="220" fill="#2563EB" opacity="0.18"/>
+  <g fill="none" stroke="#F8FAFC" stroke-opacity="0.35" stroke-width="2">
+    <rect x="140" y="180" width="420" height="280" rx="18"/>
+    <rect x="180" y="230" width="160" height="12" rx="6"/>
+    <rect x="180" y="260" width="280" height="8" rx="4" stroke-opacity="0.2"/>
+    <rect x="180" y="284" width="240" height="8" rx="4" stroke-opacity="0.2"/>
+    <rect x="180" y="330" width="90" height="70" rx="10"/>
+    <rect x="286" y="330" width="90" height="70" rx="10"/>
+    <rect x="392" y="330" width="90" height="70" rx="10"/>
+  </g>
+  <g transform="translate(690 250)">
+    <path d="M70 20c40 0 70 28 78 66 28 6 48 30 48 60 0 34-28 62-62 62H70c-46 0-84-36-84-82 0-40 28-74 66-82 8-14 22-24 40-24z" fill="url(#c)" opacity="0.85"/>
+    <rect x="118" y="150" width="36" height="120" rx="8" fill="#F8FAFC" opacity="0.9"/>
+    <rect x="78" y="190" width="116" height="36" rx="8" fill="#F8FAFC" opacity="0.9"/>
+  </g>
+</svg>

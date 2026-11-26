@@ -79,17 +79,94 @@
 
 .ntm-brand {
   display: block;
-  width: 100%;
-  height: auto;
-  max-height: 52px;
-  object-fit: contain;
-  object-position: left center;
 }
 
 .ntm-brand--mark {
+  width: 34px;
+  height: 34px;
+  filter: drop-shadow(0 4px 10px rgba(34, 195, 214, 0.35));
+}
+
+.ntm-brand--lockup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  --brand-name: #f4f7fb;
+  --brand-caption: #7fe3ee;
+}
+
+.ntm-brand--on-light {
+  --brand-name: #10233f;
+  --brand-caption: #0b8f9c;
+}
+
+.ntm-brand__mark {
   width: 36px;
   height: 36px;
-  max-height: 36px;
+  flex: none;
+  border-radius: 10px;
+  filter: drop-shadow(0 4px 12px rgba(34, 195, 214, 0.4));
+}
+
+.ntm-brand__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.1;
+}
+
+.ntm-brand__name {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.4px;
+  color: var(--brand-name);
+  white-space: nowrap;
+}
+
+.ntm-brand__name b {
+  font-weight: 750;
+  background: linear-gradient(90deg, #2bc4a8, #22c3d6 55%, #3b82f6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.ntm-brand__caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: linear-gradient(90deg, var(--brand-caption) 0%, #a78bfa 45%, var(--brand-caption) 90%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ntm-ai-shimmer 6s linear infinite;
+}
+
+.ntm-brand__caption i {
+  font-style: normal;
+}
+
+@keyframes ntm-ai-shimmer {
+  to { background-position: -220% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ntm-brand__caption { animation: none; }
+}
+
+/* Generated 3D glass icons (ui/icons3d.jsx). */
+.ntm-icon3d {
+  flex: none;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(4, 12, 24, 0.35));
 }
 
 .ntm-sidebar__groups {
@@ -172,10 +249,18 @@
   color: var(--ntm-nav-section-label);
   font-size: 11.5px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding: 9px 8px;
+  padding: 7px 6px;
   cursor: pointer;
+  text-align: left;
+}
+
+.ntm-sidebar__group-toggle span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Sub-section header inside a single top-level group (System & Administration's
@@ -223,11 +308,11 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-radius: 8px;
   color: var(--ntm-nav-submenu-text);
   text-decoration: none;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 450;
   transition: background 120ms ease, color 120ms ease, transform 120ms ease;
 }
@@ -965,9 +1050,64 @@
   display: none;
 }
 
+/* Dashboard banner: generated artwork on the right, greeting on the dark left. */
+.ntm-dashboard__banner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-height: 118px;
+  padding: 16px 22px;
+  margin-bottom: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(34, 195, 214, 0.25);
+  background-color: #08142a;
+  background-size: cover;
+  background-position: right center;
+  box-shadow: 0 14px 34px rgba(4, 12, 28, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.ntm-dashboard__banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, rgba(6, 14, 30, 0.92) 0%, rgba(6, 14, 30, 0.6) 40%, transparent 75%);
+}
+
+.ntm-dashboard__ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #7fe3ee;
+  background: rgba(34, 195, 214, 0.14);
+  border: 1px solid rgba(34, 195, 214, 0.35);
+}
+
 .ntm-dashboard__hello {
-  margin: 0 0 10px;
-  color: var(--ntm-text-secondary);
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.3px;
+  color: #f4f7fb;
+}
+
+.ntm-dashboard__sub {
+  margin: 0;
+  max-width: 46ch;
+  font-size: 12px;
+  color: #b7c6d8;
 }
 
 .ntm-card-grid {
@@ -978,10 +1118,20 @@
 }
 
 .ntm-card {
-  background: var(--ntm-panel);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 55%),
+    var(--ntm-panel);
   border: 1px solid var(--ntm-border);
-  border-radius: var(--ntm-radius-md);
-  padding: 14px 16px;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 18px rgba(4, 12, 28, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.ntm-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(34, 195, 214, 0.35);
+  box-shadow: 0 10px 26px rgba(4, 12, 28, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .ntm-card h2,
@@ -1135,7 +1285,8 @@
 
 .ntm-state__art {
   display: block;
-  width: 96px;
+  width: 88px;
+  filter: drop-shadow(0 8px 16px rgba(4, 12, 28, 0.3));
   height: auto;
   margin-bottom: 8px;
 }
@@ -1284,3 +1435,54 @@
     min-width: 36px;
   }
 }
+
+/* Settings > Supplier Mail Import (TenantMailSettings) */
+.ntm-mail-settings {
+  max-width: 640px;
+}
+
+.ntm-field select {
+  box-sizing: border-box;
+  height: 36px;
+  background: var(--ntm-elevated);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-sm);
+  color: var(--ntm-text-primary);
+  padding: 0 8px;
+  font-size: 14px;
+}
+
+.ntm-mail-settings__row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.ntm-mail-settings__row > .ntm-field {
+  flex: 1 1 160px;
+}
+
+.ntm-mail-settings__row > .ntm-mail-settings__grow {
+  flex: 3 1 240px;
+}
+
+.ntm-mail-settings__row > .ntm-mail-settings__small {
+  flex: 0 1 130px;
+}
+
+.ntm-mail-settings__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ntm-text-primary);
+}
+
+.ntm-mail-settings__status {
+  font-size: 12px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-mail-settings__status.is-ok { color: var(--ntm-success, #15803d); }
+.ntm-mail-settings__status.is-error { color: var(--ntm-danger, #b91c1c); }

@@ -113,3 +113,54 @@ There is no component test that mounts Stock Enquiry or the sidebar. The desktop
 **PARTIAL.** Stock Enquiry, the Batch/MRP request, Procurement's open, and Order Entry's open were exercised against the local API. The blocked-order button click and the batch empty/error sentences were not confirmed on screen.
 
 Phase 7C was not started.
+
+## 11. Dark mode UI modernization
+
+Dark is the primary theme. The work is token-based in `desktop/supplier-stock-client` and does not change business logic, API contracts, or authorization.
+
+### Behavior
+
+- A new installation with no saved `themePreference` defaults to dark. A value already stored as `light`, `dark`, or `system` is left as saved.
+- The menubar and Settings → Appearance both offer Dark, Light, and System. The choice is written to `nexora.desktop.settings` and applied on `documentElement` immediately, without a reload.
+- System follows `prefers-color-scheme`. `theme.test.js` covers the resolver. The operating-system theme was not flipped during the live pass.
+- Light mode keeps a dark brand menubar and a light canvas, sidebar, cards, and grids.
+
+### Tokens
+
+Dark surfaces are `#0B1220` (canvas), `#111827` (sidebar and menubar), `#1E293B` (cards), `#263449` (raised headers), and `#334155` (borders). Text is `#F8FAFC` / `#CBD5E1` / `#94A3B8`. The accent is `#14B8A6`, with dark ink on that fill so button labels stay readable. Success, warning, and error use the requested hues. Light mode uses the darker teal `#0F766E` for filled controls so white labels still meet contrast.
+
+### Screens inspected
+
+Rendered in the Vite app at `127.0.0.1:5193` after dev login, in dark and then light. Navigation confirmed the active item for each of these:
+
+Dashboard, User Management, Role Management, Procurement, Order Entry, Legacy Order, Supplier Stock Analysis, Rate Analysis, Stock Enquiry (Product and Batch / MRP), Non-Moving Stock, NMW Sales Report, Time Report (the Sales & Reports item), Sync Live, Label Exporter, Schema Sync, and Settings.
+
+WhatsApp is a real screen, but this login did not show it because `storeWhatsAppAvailable()` was false. Its chrome was not opened.
+
+Screenshots of the rendered dark theme: Dashboard, Stock Enquiry, Batch / MRP, Procurement, Settings, Rate Analysis. Light theme: Settings, Procurement, Stock Enquiry. Switching Settings from Dark to Light updated the whole window immediately, and the saved preference read back as `light`, then was set back to `dark`.
+
+### Defects fixed in this pass
+
+- The old dark palette was a near-black blue. It now uses the slate tokens above, including sidebar, cards, inputs, grid headers, scrollbars, and the modal overlay.
+- Filled accent buttons used white text on `#14B8A6`, which is too light. Those labels use `--nx-accent-on`.
+- Stock Enquiry's active Product / Batch tab and the stock workbench accent were still the old blue. They follow the theme accent.
+- The quote box on Rate Analysis was a browser-default grey textarea. `textarea` now uses the same surface, text, and border as other fields.
+- Sync Live status badges used fixed green, red, and amber that ignored the theme.
+
+### Tests and build
+
+| Command | Where | Exit | Result |
+|---|---|---|---|
+| `node --test` on `src/*.test.js` and `src/state/*.test.js` | `desktop/supplier-stock-client` | 0 | **68 passed, 0 failed** (the previous 65, plus 3 theme tests) |
+| `pytest tests/` | `backend` | 0 | **492 passed, 0 failed**, 26 pre-existing warnings |
+| `npx vite build` | `desktop/supplier-stock-client` | 0 | 118 modules. Re-run after the textarea rule. |
+
+### Remaining visual issues
+
+- Individual modal, popover, and tooltip instances were not each opened. Shared dialog rules use the overlay and surface tokens.
+- Procurement chart labels stay small. Row density, column widths, and scrolling were not changed.
+- Unused Network Stock CSS is still in `styles.css`.
+- A few semantic fills (store column bands, offer badges, label-review chips) stay on their own colors so their meaning does not collapse into the accent.
+
+The Phase 7B.1 verdict above is unchanged: **PARTIAL**. This section does not start Phase 7C.
+

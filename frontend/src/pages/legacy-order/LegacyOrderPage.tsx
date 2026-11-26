@@ -10,10 +10,12 @@ import { isSuperAdmin } from '../label-export/labelExportAccess'
 
 const POLL_MS = 1500
 // Owner ruling 2026-11-05: one Compare mode per store.
-const COMPARE_MODES: CompareMode[] = ['PREVIOUS_PENDING', 'TODAY', 'NONE', 'HO']
+const COMPARE_MODES: CompareMode[] = ['PREVIOUS_PENDING', 'TODAY', 'PENDING_LIST', 'TODAY_PENDING', 'NONE', 'HO']
 const COMPARE_MODE_LABEL: Record<CompareMode, string> = {
   PREVIOUS_PENDING: 'Previous pending',
   TODAY: "Previous today's orders",
+  PENDING_LIST: 'Pending list',
+  TODAY_PENDING: "Today's orders + pending list",
   NONE: 'No compare',
   HO: 'HO order (no compare)',
 }

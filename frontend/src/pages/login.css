@@ -27,8 +27,10 @@
   overflow: hidden;
   padding: clamp(2rem, 5vw, 5rem);
   background:
-    linear-gradient(145deg, color-mix(in srgb, var(--nx-accent) 88%, #081121), color-mix(in srgb, var(--nx-accent-hover) 64%, #10172a));
-  color: var(--nx-text-on);
+    linear-gradient(100deg, rgba(5, 12, 26, 0.9) 0%, rgba(8, 20, 42, 0.6) 48%, rgba(8, 20, 42, 0.05) 100%),
+    url('../assets/ai/login-hero.webp') 70% center / cover no-repeat,
+    #08142a;
+  color: #eef4fb;
   isolation: isolate;
 }
 
@@ -45,7 +47,9 @@
   mask-image: linear-gradient(to bottom right, black, transparent 74%);
 }
 
+/* The generated hero artwork replaces the decorative orbs. */
 .login-showcase__orb {
+  display: none;
   position: absolute;
   z-index: -1;
   border-radius: 999px;
@@ -76,9 +80,19 @@
   min-height: 100%;
 }
 
-.login-showcase__logo {
-  width: 190px;
-  height: auto;
+.login-showcase__logo .app-brand__lockup-mark {
+  width: 46px;
+  height: 46px;
+}
+
+.login-showcase__logo .app-brand__name {
+  font-size: 1.4rem;
+  color: #f4f7fb;
+}
+
+.login-showcase__logo .app-brand__ai {
+  font-size: 0.66rem;
+  background-image: linear-gradient(90deg, #7fe3ee 0%, #c4b5fd 45%, #7fe3ee 90%);
 }
 
 .login-showcase__copy {
@@ -116,16 +130,38 @@
 }
 
 .login-showcase__features {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 1.3rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 220px));
+  gap: 0.6rem;
   color: color-mix(in srgb, var(--nx-text-on) 78%, transparent);
   font-size: 0.78rem;
   font-weight: 600;
 }
 
-.login-showcase__features span { display: inline-flex; align-items: center; gap: 0.4rem; }
-.login-showcase__features i { color: var(--nx-text-on); }
+.login-showcase__features span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.8rem 0.4rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03));
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(2, 8, 20, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  color: #e7f1fb;
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+.login-showcase__features span:hover {
+  transform: translateY(-2px);
+  border-color: rgba(34, 195, 214, 0.5);
+}
+
+.login-showcase__features img {
+  width: 32px;
+  height: 32px;
+  filter: drop-shadow(0 2px 4px rgba(4, 12, 24, 0.35));
+}
 
 .login-access {
   position: relative;

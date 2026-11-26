@@ -13,9 +13,12 @@ import { LegacyOrderPage } from '../modules/legacy-order/LegacyOrderPage.jsx';
 import { RateAnalysisPage } from '../modules/rate-analysis/RateAnalysisPage.jsx';
 import { AiIntelligencePage } from '../modules/ai-intelligence/AiIntelligencePage.jsx';
 import { SupplierStockPage } from '../modules/supplier-stock/SupplierStockPage.jsx';
+import { SupplierStockList } from '../modules/supplier-stock/SupplierStockList.jsx';
 import { ProcurementWorkspacePage } from '../modules/procurement-workspace/ProcurementWorkspacePage.jsx';
 import { WorkspaceModulePage } from '../modules/workspace/WorkspaceModulePage.jsx';
 import { WebModuleHost } from '../bridge/WebModuleHost.jsx';
+import MaintenanceScreen from '../components/MaintenanceScreen.jsx';
+import { resolveApiBaseUrl } from '../services/settingsStore.js';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import 'bootstrap-icons/font/bootstrap-icons.css';
 import '../themes/tokens.css';
@@ -37,6 +40,7 @@ function web(pageId) {
 export function App() {
   return (
     <ThemeProvider>
+      <MaintenanceScreen getBaseUrl={resolveApiBaseUrl} />
       <AuthProvider>
         <HashRouter>
           <RequireAuth>
@@ -57,6 +61,7 @@ export function App() {
                 <Route path="label-exporter/box-workspace" element={web('box-workspace')} />
                 <Route path="inventory/warehouse-bill-export" element={web('warehouse-bill-export')} />
                 <Route path="supplier-stock" element={<SupplierStockPage />} />
+                <Route path="supplier-stock-list" element={<SupplierStockList />} />
                 <Route path="quick-stock" element={web('quick-stock')} />
                 <Route path="supplier-intelligence/rate-analysis" element={<RateAnalysisPage />} />
                 <Route path="procurement" element={<ProcurementWorkspacePage />} />

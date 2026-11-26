@@ -11,6 +11,11 @@ import { buildErpSections } from './erpNav.js';
 const ERP_SIDEBAR_COLLAPSED_KEY = 'nexora.erpSidebar.collapsed';
 const ERP_SIDEBAR_OPEN_SECTIONS_KEY = 'nexora.erpSidebar.openSections';
 
+// How long the sidebar waits after a navigation, with no further sidebar
+// interaction, before auto-collapsing. Kept to one named constant per the
+// spec so a future tweak (within 10000-15000ms) is a one-line change.
+const SIDEBAR_AUTO_COLLAPSE_DELAY = 12000;
+
 function readStoredCollapsed() {
   try {
     return localStorage.getItem(ERP_SIDEBAR_COLLAPSED_KEY) === '1';
@@ -67,6 +72,68 @@ export function ErpSidebar({ items, activeScreen, onSelect }) {
   });
   const didAutoOpen = useRef(false);
 
+  // Auto-collapse: after the user navigates, give them
+  // SIDEBAR_AUTO_COLLAPSE_DELAY of no sidebar interaction before folding the
+  // sidebar down, so the workspace reclaims the width. Hovering the sidebar,
+  // using its keyboard focus, or a manual collapse/expand all cancel the
+  // pending timer -- this only ever fires on its own, never forces a state
+  // the user didn't effectively ask for.
+  const autoCollapseTimer = useRef(null);
+  const isPointerInsideRef = useRef(false);
+  const isFocusInsideRef = useRef(false);
+  const prevActiveScreenRef = useRef(activeScreen);
+
+  const clearAutoCollapseTimer = () => {
+    if (autoCollapseTimer.current) {
+      clearTimeout(autoCollapseTimer.current);
+      autoCollapseTimer.current = null;
+    }
+  };
+
+  const scheduleAutoCollapse = () => {
+    clearAutoCollapseTimer();
+    autoCollapseTimer.current = setTimeout(() => {
+      autoCollapseTimer.current = null;
+      if (isPointerInsideRef.current || isFocusInsideRef.current) return;
+      setCollapsed(true);
+    }, SIDEBAR_AUTO_COLLAPSE_DELAY);
+  };
+
+  // Restart the timer once per successful navigation (activeScreen change),
+  // but only while already expanded -- a collapsed sidebar has nothing left
+  // to auto-collapse, and this must never auto-expand it.
+  useEffect(() => {
+    if (prevActiveScreenRef.current === activeScreen) return;
+    prevActiveScreenRef.current = activeScreen;
+    if (collapsed) return;
+    scheduleAutoCollapse();
+  }, [activeScreen, collapsed]);
+
+  useEffect(() => () => clearAutoCollapseTimer(), []);
+
+  function handleSidebarPointerEnter() {
+    isPointerInsideRef.current = true;
+    clearAutoCollapseTimer();
+  }
+
+  function handleSidebarPointerLeave() {
+    isPointerInsideRef.current = false;
+    if (!isFocusInsideRef.current && !collapsed) scheduleAutoCollapse();
+  }
+
+  function handleSidebarFocusIn() {
+    isFocusInsideRef.current = true;
+    clearAutoCollapseTimer();
+  }
+
+  function handleSidebarFocusOut(event) {
+    // Ignore focus moving between two elements inside the sidebar itself;
+    // only treat it as "left" once focus actually lands outside the nav.
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    isFocusInsideRef.current = false;
+    if (!isPointerInsideRef.current && !collapsed) scheduleAutoCollapse();
+  }
+
   useEffect(() => {
     try { localStorage.setItem(ERP_SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch { /* per-viewer convenience only */ }
   }, [collapsed]);
@@ -99,11 +166,23 @@ export function ErpSidebar({ items, activeScreen, onSelect }) {
   }
 
   return (
-    <nav className={`erp-sidebar${collapsed ? ' erp-sidebar-collapsed' : ''}`} aria-label="Main navigation">
+    <nav
+      className={`erp-sidebar${collapsed ? ' erp-sidebar-collapsed' : ''}`}
+      aria-label="Main navigation"
+      onPointerEnter={handleSidebarPointerEnter}
+      onPointerLeave={handleSidebarPointerLeave}
+      onFocus={handleSidebarFocusIn}
+      onBlur={handleSidebarFocusOut}
+    >
       <button
         type="button"
         className="erp-sidebar-collapse-toggle"
-        onClick={() => setCollapsed((v) => !v)}
+        onClick={() => {
+          // Manual toggle always wins: cancel any pending auto-collapse so
+          // it can't fire moments after (or fight) what the user just did.
+          clearAutoCollapseTimer();
+          setCollapsed((v) => !v);
+        }}
         aria-expanded={!collapsed}
         title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
       >

@@ -1,0 +1,83 @@
+/* NexTech MediQ Workspace design tokens, as CSS variables. Component CSS must read
+   these variables, not hardcoded hex values, per Phase 2/3 §7. */
+
+:root {
+  --ntm-primary-navy: #101d32;
+  --ntm-deep-navy: #0c1728;
+  --ntm-accent: #2563eb;
+  --ntm-accent-2: #22c3d6;
+  --ntm-teal: #22c3d6;
+  --ntm-bright-teal: #22c3d6;
+
+  --ntm-success: #34d399;
+  --ntm-warning: #fbbf24;
+  --ntm-error: #f87171;
+
+  --ntm-radius-sm: 4px;
+  --ntm-radius-md: 8px;
+  --ntm-radius-lg: 10px;
+
+  --ntm-font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --ntm-shadow: 0 12px 32px rgba(8, 15, 28, 0.38);
+  --ntm-glass-bg: rgba(22, 41, 68, 0.72);
+  --ntm-glass-border: rgba(255, 255, 255, 0.16);
+  --ntm-table-bg: #162944;
+}
+
+/* Dark is the primary/default experience (data-theme="dark" or unset). */
+:root,
+:root[data-theme='midnight-glass'] {
+  --ntm-bg: #101d32;
+  --ntm-panel: rgba(22, 41, 68, 0.78);
+  --ntm-elevated: #1b3354;
+  --ntm-border: rgba(255, 255, 255, 0.14);
+  --ntm-text-primary: #f8fafc;
+  --ntm-text-secondary: #c5d0e0;
+  --ntm-text-muted: #94a3b8;
+}
+
+:root[data-theme='light'] {
+  --ntm-bg: #f4f7fa;
+  --ntm-panel: #ffffff;
+  --ntm-elevated: #eef2f6;
+  --ntm-border: #d7dee6;
+  --ntm-text-primary: #10243a;
+  --ntm-text-secondary: #41566c;
+  --ntm-text-muted: #6a7d91;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --ntm-bg: #f4f7fa;
+    --ntm-panel: #ffffff;
+    --ntm-elevated: #eef2f6;
+    --ntm-border: #d7dee6;
+    --ntm-text-primary: #10243a;
+    --ntm-text-secondary: #41566c;
+    --ntm-text-muted: #6a7d91;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--ntm-bg);
+  color: var(--ntm-text-primary);
+  font-family: var(--ntm-font-sans);
+  font-size: 13px;
+}
+
+button,
+input {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ntm-teal);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--ntm-teal);
+  color: var(--ntm-deep-navy);
+}

@@ -118,3 +118,19 @@ def assert_label_exporter_store_access(user: dict, tenant_id, store_id) -> None:
     if str(user.get("store_id") or "") == str(store_id or ""):
         return
     raise HTTPException(status_code=403, detail="You do not have access to this store.")
+
+
+def assert_label_exporter_export_allowed(user: dict) -> None:
+    """Label Exporter's grid review (Y/N + remarks) is open to any
+    store-scoped user, but downloading the printable .xlsx is not: a
+    purchase-manager/salesman-only login may review, not export. Assignment
+    (assignments/commit) is already locked to require_super_admin - this
+    covers the other action the owner wants restricted."""
+    if is_super_admin(user):
+        return
+    names = [str(r or "").strip().lower() for r in (user.get("role_names") or [])]
+    if not names:
+        return
+    store_level = ("purchase", "salesman", "sales man")
+    if all(any(token in name for token in store_level) for name in names):
+        raise HTTPException(status_code=403, detail="Exporting labels is restricted to admin roles.")

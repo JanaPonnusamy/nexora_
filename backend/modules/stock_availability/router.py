@@ -12,6 +12,7 @@ from dependencies.auth import get_current_user
 from modules.stock_availability import service
 from modules.stock_availability.schemas import (
     CoreBulkRequest,
+    CoreBulkSplitRequest,
     CrossStoreMatchRequest,
     SalesOrderIgnoreUpdate,
     SearchResult,
@@ -80,6 +81,13 @@ def product_core(tenant_id: str, store_id: str, product: str, months: int = 3, c
 def product_core_bulk(payload: CoreBulkRequest, current_user: dict = Depends(get_current_user)):
     """Parallel per-store core loading in one HTTP request."""
     return service.product_core_bulk(current_user, payload.tenant_id, payload.items, payload.months)
+
+
+@router.post("/products/core/bulk-split")
+def product_core_bulk_split(payload: CoreBulkSplitRequest, current_user: dict = Depends(get_current_user)):
+    """Quick Stock's Sales/Purchase toggle, every store in one request: fetches
+    batches + movement (always) plus ONLY the active mode's transactions."""
+    return service.product_core_bulk_split(current_user, payload.tenant_id, payload.items, payload.months, payload.mode)
 
 
 @router.get("/products/batches")

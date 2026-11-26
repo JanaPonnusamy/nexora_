@@ -94,8 +94,16 @@ export function legacyPendingOrderRows(storeName) {
 // { available: false } when no cache has been built for this store yet
 // (LEGACY_ORDER_CACHE_ENABLED unset, or first order not yet processed with
 // it on) -- callers should fall back to legacyQtyCheckRows/legacyOrders.
-export function legacyOrderCacheView(storeName) {
-  return apiGet(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/view`);
+// have = the stamp this PC already holds: HO answers {unchanged: true} with
+// meta only when nothing changed since (orderCacheLocal.jsx's sync).
+export function legacyOrderCacheView(storeName, have) {
+  return apiGet(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/view${qs({ have })}`);
+}
+
+// {rows: [[ProductCode, Status, OrderQty, Qtycheck, Remarks, OrSupplierCode]]}
+// -- live line states laid over the PC's order cache.
+export function legacyOrderLineStates(storeName) {
+  return apiGet(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/line-states`);
 }
 
 export function legacySkipProduct(storeName, productCode, mode) {
@@ -168,6 +176,16 @@ export function legacyMonthlyStats(storeName, productCode, mode, months) {
 
 export function legacySuppliers(storeName, search) {
   return apiGet(`/api/legacy-order/suppliers/${encodeURIComponent(storeName)}${qs({ search: search || '' })}`);
+}
+
+// Why this product is in the order: engine steps + 90-day sales (order_reason.py).
+export function legacyProductWhy(storeName, productCode) {
+  return apiGet(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${encodeURIComponent(productCode)}/why`);
+}
+
+// Can this supplier's order be mailed? { ready, to: [...], reason }.
+export function legacySupplierMailStatus(storeName, supplierCode) {
+  return apiGet(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/supplier-mail/status${qs({ supplier_code: supplierCode })}`);
 }
 
 export function legacyOrdersBySupplier(storeName, supplierCode, mode) {
@@ -303,10 +321,19 @@ async function legacyExportFetch(path, body) {
   const blob = await response.blob();
   const disposition = response.headers.get('Content-Disposition') || '';
   const match = /filename="?([^"]+)"?/.exec(disposition);
+  const mailStatus = response.headers.get('X-Mail-Status');
   return {
     blob,
     filename: match?.[1] || null,
     exportedCount: Number(response.headers.get('X-Exported-Count') || 0),
+    billValue: Number(response.headers.get('X-Bill-Value') || 0),
+    // Only when email_supplier was asked: { status: SENT|SKIPPED|FAILED, to, files, message }.
+    mail: mailStatus ? {
+      status: mailStatus,
+      to: response.headers.get('X-Mail-To') || '',
+      files: Number(response.headers.get('X-Mail-Files') || 0),
+      message: response.headers.get('X-Mail-Message') || '',
+    } : null,
   };
 }
 
@@ -329,6 +356,7 @@ export async function legacyExportOrder(storeName, supplierCode, supplierName, m
     ...(options.billsDays ? { bills_days: options.billsDays } : {}),
     ...(options.nameSuffix ? { name_suffix: options.nameSuffix } : {}),
     ...(options.remarks && Object.keys(options.remarks).length ? { remarks: options.remarks } : {}),
+    ...(options.emailSupplier ? { email_supplier: true } : {}),
   };
   const result = await legacyExportFetch(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/export`, body);
   return { ...result, filename: result.filename || `${supplierName || storeName} export.xlsx` };

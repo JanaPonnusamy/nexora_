@@ -1180,6 +1180,7 @@ def upsert_mapping(payload):
     finally:
         conn.close()
     _upsert_ordernmc_match(payload)
+    backfill_store_product_codes(payload["tenant_id"], payload["store_id"], payload["supplier_code"])
     return {"success": True}
 
 
@@ -1226,6 +1227,60 @@ def _money(value):
         return None if value is None else round(float(value), 2)
     except (TypeError, ValueError):
         return None
+
+
+def backfill_store_product_codes(tenant_id, store_id, supplier_code):
+    """Re-stamp SupplierStock.StoreProductCode from SupplierProductMatch for
+    rows already on file -- replace_supplier_stock only stamps this at
+    IMPORT time from whatever SupplierProductMatch held then, so a product
+    matched (manually or via product_mapping) AFTER that import stayed NULL
+    forever, resurfacing as "not matched to products" until the operator
+    re-uploaded the same Excel. Called after every manual match confirm
+    (upsert_mapping) so newly-resolved codes reach SupplierStock without a
+    re-import.
+
+    Second pass: rows SupplierProductMatch still can't resolve (no row there
+    at all -- the common case for products never ordered through the legacy
+    supplier screens) fall back to dbo.product_mapping_mirror, the local
+    same-database copy of NEXORA_PLATFORM's own cross-store product mapping
+    (see mirror_sync.py). Keyed on store_name + the legacy ProductCode the
+    import already resolved the product to (SupplierProductCode doubles as
+    that store's own catalog code once SupplierProductMatch exists for it;
+    where it doesn't yet, this mirror is the only source of a match at all)."""
+    store_code = _store_code(tenant_id, store_id)
+    if not store_code:
+        return 0
+    supplier_code = str(supplier_code).strip()
+    with legacy_database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE SS SET SS.StoreProductCode = SPM.ProductCode "
+            "FROM SupplierStock SS "
+            "JOIN SupplierProductMatch SPM "
+            "  ON SPM.StoreName = SS.storename AND SPM.SupplierCode = SS.suppliercode "
+            "  AND SPM.SupplierProductCode = SS.supplierproductcode "
+            "WHERE SS.storename = ? AND SS.suppliercode = ? "
+            "  AND (SS.StoreProductCode IS NULL OR SS.StoreProductCode <> SPM.ProductCode)",
+            (store_code, supplier_code),
+        )
+        updated = cur.rowcount
+        if _table_exists(cur, "product_mapping_mirror"):
+            cur.execute(
+                "UPDATE SS SET SS.StoreProductCode = PMM.target_product_code "
+                "FROM SupplierStock SS "
+                "JOIN dbo.product_mapping_mirror PMM "
+                "  ON PMM.store_name = SS.storename AND PMM.source_product_code = SS.supplierproductcode "
+                "WHERE SS.storename = ? AND SS.suppliercode = ? AND SS.StoreProductCode IS NULL",
+                (store_code, supplier_code),
+            )
+            updated += cur.rowcount
+        conn.commit()
+    return updated
+
+
+def _table_exists(cur, table_name):
+    cur.execute("SELECT OBJECT_ID(?, 'U')", (f"dbo.{table_name}",))
+    return cur.fetchone()[0] is not None
 
 
 def _supplier_product_match_map(cur, store_code, supplier_code):

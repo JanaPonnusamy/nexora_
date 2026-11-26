@@ -1,4 +1,5 @@
 import { PageHeader } from '../components/common/PageHeader'
+import bannerArt from '../assets/ai/dashboard-banner.webp'
 import { KpiSection } from '../components/platform-overview/KpiSection'
 import { QuickActions } from '../components/platform-overview/QuickActions'
 import { SystemStatusCard } from '../components/platform-overview/SystemStatusCard'
@@ -9,6 +10,11 @@ export default function PlatformOverviewPage() {
   return (
     <div className="container-fluid px-0">
       <PageHeader title="Platform Overview" breadcrumb={['Platform Overview']} />
+      <section className="overview-banner" style={{ backgroundImage: `url(${bannerArt})` }}>
+        <span className="overview-banner__ai"><i className="bi bi-stars" aria-hidden="true" /> AI-Powered Workspace</span>
+        <h2 className="overview-banner__title">Pharma operations, intelligently connected.</h2>
+        <p className="overview-banner__sub">Inventory, procurement and supplier intelligence across every branch.</p>
+      </section>
       <KpiSection />
 
       <section className="overview-section">

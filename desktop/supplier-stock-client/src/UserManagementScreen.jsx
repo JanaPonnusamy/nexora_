@@ -135,7 +135,7 @@ export default function UserManagementScreen({ session }) {
 
   return (
     <section className="screen-panel">
-      <ScreenHeader title="User Management" subtitle="Create, edit and activate the accounts that can sign in to NEXORA MEDIQ." />
+      <ScreenHeader title="User Management" subtitle="Create, edit and activate the accounts that can sign in to NexTech Supplier Stock." />
 
       <div className="toolbar-row">
         <input

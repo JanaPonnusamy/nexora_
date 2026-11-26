@@ -73,24 +73,37 @@ class SyncRuntimeOrchestrator:
         table_results = []
         print("[SYNC] === FULL SYNC START tables=%d ===" % total, flush=True)
 
-        # Per-table isolation: one failing/absent table must never stop the rest.
-        # Every enabled table in the configuration is attempted, in order.
-        for table in tables:
-            name = table.get("table_name", "?")
-            outcome = self.run_table_safe(task_id, table)
-            table_results.append(outcome)
-            state = outcome.get("state")
-            if state == "COMPLETED":
-                completed += 1
-            elif state == "SKIPPED":
-                skipped += 1
-            else:
-                failed += 1
-            print(
-                "[SYNC] %-24s | %-9s | %s"
-                % (name, state, outcome.get("message", "")),
-                flush=True,
-            )
+        try:
+            # Per-table isolation: one failing/absent table must never stop the
+            # rest. Every enabled table in the configuration is attempted, in
+            # order. A connection-level fault (e.g. the SQL link dying mid-table)
+            # still escapes here -- caught below so the execution is always
+            # reported back to HO instead of left stuck RUNNING forever.
+            for table in tables:
+                name = table.get("table_name", "?")
+                outcome = self.run_table_safe(task_id, table)
+                table_results.append(outcome)
+                state = outcome.get("state")
+                if state == "COMPLETED":
+                    completed += 1
+                elif state == "SKIPPED":
+                    skipped += 1
+                else:
+                    failed += 1
+                print(
+                    "[SYNC] %-24s | %-9s | %s"
+                    % (name, state, outcome.get("message", "")),
+                    flush=True,
+                )
+        except Exception as ex:
+            try:
+                self.polling.fail(task_id, "SYNC_ABORTED: " + str(ex))
+            except Exception:
+                pass
+            self.cache.record_execution(task_id, "FAILED", completed=True)
+            print("[SYNC] === FULL SYNC ABORTED: %s ===" % ex, flush=True)
+            return {"task_id": task_id, "status": "FAILED", "error": str(ex),
+                    "tables": table_results}
 
         # The execution finished (it did not abort). Per-table failures are
         # recorded individually; the run itself completes with a summary.

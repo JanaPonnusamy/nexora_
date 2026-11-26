@@ -386,7 +386,7 @@ def _short_error(exc):
     return text.splitlines()[-1] if text else exc.__class__.__name__
 
 
-def recover_database(allow_data_loss=False):
+def recover_database(allow_data_loss=False, database=None):
     """Walk a database back to ONLINE / MULTI_USER, escalating only as needed.
 
     The ladder, safest first:
@@ -402,9 +402,12 @@ def recover_database(allow_data_loss=False):
 
     Restores in progress (RESTORING/RECOVERING) are always left alone. Returns
     a structured report the UI renders step by step.
+
+    ``database`` defaults to the active tenant's legacy database; the DB guard
+    (db_guard.py) passes NEXORA_PLATFORM / each tenant's database by name.
     """
     server, username, password = _server_and_creds()
-    database = _database_name()
+    database = database or _database_name()
     steps = []
 
     def log(action, ok, detail=""):
@@ -506,7 +509,8 @@ def recover_database(allow_data_loss=False):
     # Confirm with a real application connection.
     connected = False
     try:
-        pyodbc.connect(central_connection_string(), timeout=15).close()
+        check_cs = re.sub(r"DATABASE=[^;]*;", lambda _m: f"DATABASE={database};", central_connection_string(), count=1)
+        pyodbc.connect(check_cs, timeout=15).close()
         connected = True
     except Exception:
         connected = False

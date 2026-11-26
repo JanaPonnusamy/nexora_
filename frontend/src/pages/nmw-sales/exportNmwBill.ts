@@ -89,7 +89,7 @@ export function exportNmwBillCsv(data: NmwBillExportData, fileName: string) {
 export async function exportNmwBillExcel(data: NmwBillExportData, fileName: string) {
   const rows = buildRows(data)
   const wb = new ExcelJS.Workbook()
-  wb.creator = 'Axythic'
+  wb.creator = 'NexTech MediQ'
   wb.created = new Date()
   const ws = wb.addWorksheet('Bill', { views: [{ state: 'frozen', ySplit: 1 }] })
   const thin = { style: 'thin' as const, color: { argb: 'FFB0B0B0' } }

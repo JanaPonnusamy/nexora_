@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Quick Stock Settings</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 1.25rem;
+    font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px; background: #f4f6f9; color: #1f2430;
+  }
+  h1 { font-size: 1rem; margin: 0 0 1rem; }
+  label { display: block; font-size: 0.78rem; font-weight: 650; color: #6b7280; margin: 0.9rem 0 0.3rem; }
+  input {
+    width: 100%; box-sizing: border-box; padding: 0.45rem 0.6rem;
+    border: 1px solid #d7dbe2; border-radius: 7px; font-size: 0.85rem;
+  }
+  .hint { font-size: 0.72rem; color: #9aa3b2; margin-top: 0.25rem; }
+  .row { display: flex; gap: 0.5rem; margin-top: 1.3rem; }
+  button {
+    flex: 1; padding: 0.55rem; border: 0; border-radius: 7px;
+    font-weight: 650; font-size: 0.85rem; cursor: pointer;
+  }
+  #save { background: #2563eb; color: #fff; }
+  #cancel { background: #e5e7eb; color: #1f2430; }
+  #status { margin-top: 0.7rem; font-size: 0.76rem; min-height: 1em; color: #16a34a; }
+</style>
+</head>
+<body>
+  <h1>Quick Stock — HO Connection</h1>
+
+  <label for="lan">LAN address (tried first)</label>
+  <input id="lan" placeholder="http://192.168.10.73:8000" />
+
+  <label for="pub">Public / internet address (fallback)</label>
+  <input id="pub" placeholder="http://122.252.246.181:8443" />
+  <div class="hint">Used only when the LAN address can't be reached.</div>
+
+  <div class="row">
+    <button id="cancel" type="button">Cancel</button>
+    <button id="save" type="button">Save &amp; Restart</button>
+  </div>
+  <div id="status"></div>
+
+  <script>
+    const { settingsApi } = window;
+    settingsApi.getConfig().then((cfg) => {
+      document.getElementById('lan').value = (cfg.hoUrls && cfg.hoUrls[0]) || '';
+      document.getElementById('pub').value = (cfg.hoUrls && cfg.hoUrls[1]) || '';
+    });
+    document.getElementById('cancel').addEventListener('click', () => settingsApi.close());
+    document.getElementById('save').addEventListener('click', async () => {
+      const lan = document.getElementById('lan').value.trim().replace(/\/$/, '');
+      const pub = document.getElementById('pub').value.trim().replace(/\/$/, '');
+      const hoUrls = [lan, pub].filter(Boolean);
+      const status = document.getElementById('status');
+      status.style.color = '#16a34a';
+      status.textContent = 'Saving…';
+      try {
+        await settingsApi.saveConfig({ hoUrls });
+        status.textContent = 'Saved. Restarting…';
+        setTimeout(() => settingsApi.restart(), 400);
+      } catch (e) {
+        status.style.color = '#dc2626';
+        status.textContent = 'Could not save: ' + (e?.message || e);
+      }
+    });
+  </script>
+</body>
+</html>

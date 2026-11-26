@@ -26,3 +26,6 @@ export function fmtMoney(value: number | string | null | undefined): string {
   if (!Number.isFinite(n)) return '—'
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+
+// Order Entry and Order Gap Review open on the same store (step 1 <-> 2/3).
+export const PM_ORDER_STORE_KEY = 'nexora.pmOrderStore'

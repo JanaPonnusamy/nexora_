@@ -558,6 +558,16 @@ export const api = {
     })}`, { session });
   },
 
+  // Plain SupplierStock rows for one supplier, every store of the tenant (or
+  // one store) -> {items, truncated, limit}. No mapping analysis, no 3000 cap.
+  supplierStockList(session, { tenantId, supplierCode, storeId } = {}) {
+    return request(`/api/supplier-stock-analysis/stock-list${toQuery({
+      tenant_id: tenantId,
+      supplier_code: supplierCode,
+      store_id: storeId || ''
+    })}`, { session, timeoutMs: 180000 });
+  },
+
   getSupplierProducts(supplierCode, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/supplier-stock-analysis/supplier-products${toQuery({
@@ -668,6 +678,29 @@ export const api = {
       body: form,
       timeoutMs: 180000
     });
+  },
+
+  // Supplier mail import (backend/modules/supplier_mail_import/router.py).
+  mailImportConfig(tenantId, session) {
+    return request(`/api/supplier-mail-import/config${toQuery({ tenant_id: tenantId })}`, { session });
+  },
+  saveMailImportConfig(tenantId, payload, session) {
+    return request(`/api/supplier-mail-import/config${toQuery({ tenant_id: tenantId })}`, { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+  testMailImportConfig(tenantId, payload, session) {
+    return request(`/api/supplier-mail-import/config/test${toQuery({ tenant_id: tenantId })}`, { method: 'POST', session, body: JSON.stringify(payload), timeoutMs: 90000 });
+  },
+  mailImportSuppliers(tenantId, storeId, session) {
+    return request(`/api/supplier-mail-import/suppliers${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+  saveMailImportSupplier(payload, session) {
+    return request('/api/supplier-mail-import/suppliers', { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+  pullMailImportSupplier(tenantId, storeId, supplierCode, session) {
+    return request(`/api/supplier-mail-import/pull${toQuery({ tenant_id: tenantId, store_id: storeId, supplier_code: supplierCode })}`, { method: 'POST', session, timeoutMs: 600000 });
+  },
+  mailImportLog(tenantId, storeId, session) {
+    return request(`/api/supplier-mail-import/log${toQuery({ tenant_id: tenantId, store_id: storeId, limit: 30 })}`, { session });
   },
 
   bulkImportStores(tenantId, supplierCode, session) {
@@ -993,6 +1026,174 @@ export const api = {
     });
   },
 
+  // Plain "most recent N" GRN + sale-bill grids for the PM's own visual
+  // verification -- replaces the old received-not-ordered report on this
+  // screen (see backend repository.recent_grns/recent_sale_bills).
+  legacyOrderEntryRecent(storeName, session, limit = 50) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/order-entry/recent${toQuery({ limit })}`, { session });
+  },
+
+  // Automated Order Entry: queue status for a store's most recent submit
+  // (only meaningful once StoreOrderAutomation.AutomatedOrderEnabled is on).
+  legacyOrderEntryQueue(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/order-entry/queue`, { session });
+  },
+
+  // Order Gap Review: reconciliation since the store's last placed order
+  // (which may span multiple days), plus the standing pending-reminder list.
+  legacyGapReview(storeName, orderId, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review${toQuery({ order_id: orderId || undefined })}`, { session });
+  },
+
+  legacyAddPendingItem(storeName, body, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/pending`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Order Gap Review "Mark pending": { order_id, items: [{ product_code, product_name, qty }], note }.
+  legacyAddPendingItems(storeName, body, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/pending/bulk`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Order Entry step 1 sign-off: { order_id, not_received }.
+  legacyCompleteGapReview(storeName, body, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/complete`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  legacyClearPendingItems(storeName, ids, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/pending/clear`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ ids })
+    });
+  },
+
+  legacyClearPendingItem(storeName, itemId, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/pending/${encodeURIComponent(itemId)}`, {
+      method: 'DELETE',
+      session
+    });
+  },
+
+  legacyOrderAutomation(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/automation`, { session });
+  },
+
+  legacySetOrderAutomation(storeName, payload, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/automation`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  legacyMessageSettings(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/message-settings`, { session });
+  },
+
+  legacySaveMessageSetting(storeName, messageType, payload, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/message-settings/${encodeURIComponent(messageType)}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  // Live Queries / Repair: currently-executing requests on central OrderNMC,
+  // and a KILL action. Super admin only (server-gated).
+  dbMonitorRequests(session) {
+    return request('/api/db-monitor/requests', { session });
+  },
+
+  dbMonitorSessions(session) {
+    return request('/api/db-monitor/sessions', { session });
+  },
+
+  dbMonitorKill(sessionId, session) {
+    return request('/api/db-monitor/kill', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ session_id: sessionId })
+    });
+  },
+
+  // Order Cache Monitor -- per-store local SQLite order cache (mirrors the
+  // web legacyOrderService.orderCache* calls; all routes are admin-only).
+  orderCacheMonitor(session) {
+    return request('/api/legacy-order/order-cache/monitor', { session });
+  },
+
+  // Store-user readable (own store only): the store's current cache content,
+  // or { available: false } when HO hasn't built one.
+  // have = the stamp this PC already holds: HO answers {unchanged: true}
+  // with meta only when nothing changed since.
+  orderCacheView(storeName, session, have) {
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/view${toQuery({ have })}`, { session });
+  },
+
+  orderCacheForcePull(storeName, session) {
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/force-pull`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
+  },
+
+  orderCacheForcePush(storeName, session) {
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/force-push`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
+  },
+
+  orderCacheSend(storeName, channel, session) {
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/send${toQuery({ channel })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
+  },
+
+  orderCacheImport(storeName, file, session) {
+    const form = new FormData();
+    form.append('file', file);
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/import`, {
+      method: 'POST',
+      session,
+      body: form
+    });
+  },
+
+  async orderCacheExport(storeName, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/export`), {
+        headers: { ...authHeaders(session) }
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Cache export failed';
+      try { const parsed = await response.json(); detail = detailToMessage(parsed) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    return response.blob();
+  },
+
   // Supplier GRN lines since the previous active day's first order for
   // products the app never ordered. productType: pharma | non_pharma | all.
   legacyReceivedNotOrdered(storeName, productType, session) {
@@ -1061,6 +1262,26 @@ export const api = {
     });
   },
 
+  // Morning auto order (one card per tenant DB): {schedules: [...], running}.
+  legacyMorningSchedules(session) {
+    return request('/api/legacy-order/schedule/morning', { session });
+  },
+
+  legacySaveMorningSchedule(tenantKey, payload, session) {
+    return request(`/api/legacy-order/schedule/morning/${encodeURIComponent(tenantKey)}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  legacyRetryMorningStore(tenantKey, storeCode, session) {
+    return request(`/api/legacy-order/schedule/morning/${encodeURIComponent(tenantKey)}/stores/${encodeURIComponent(storeCode)}/retry`, {
+      method: 'POST',
+      session
+    });
+  },
+
   legacyRunEveningNow(session) {
     return request('/api/legacy-order/schedule/evening/run', { method: 'POST', session });
   },
@@ -1081,6 +1302,12 @@ export const api = {
 
   legacyJob(jobId, session) {
     return request(`/api/legacy-order/jobs/${encodeURIComponent(jobId)}`, { session, transientRetries: 0 });
+  },
+
+  legacyStartSync(storeName, session, tables = null) {
+    return request('/api/legacy-order/sync', {
+      method: 'POST', body: JSON.stringify({ store_name: storeName, tables }), session,
+    });
   },
 
   legacyQtyCheckRows(storeName, session) {
@@ -1267,6 +1494,12 @@ export const api = {
 
   // {product_code: [every supplier's live stock/offer/Disc% line]} for the
   // store's open order -- the Procurement row's compare-suppliers card.
+  // {rows: [[ProductCode, Status, OrderQty, Qtycheck, Remarks, OrSupplierCode]]}
+  // -- live line states laid over the PC's order cache (orderCacheLocal.jsx).
+  legacyOrderLineStates(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/line-states`, { session });
+  },
+
   legacySupplierStockCompare(storeName, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/supplier-stock-compare`, { session });
   },
@@ -1627,7 +1860,8 @@ export const api = {
           ...(options.orgName ? { org_name: options.orgName } : {}),
           ...(options.billsDays ? { bills_days: options.billsDays } : {}),
           ...(options.nameSuffix ? { name_suffix: options.nameSuffix } : {}),
-          ...(options.remarks && Object.keys(options.remarks).length ? { remarks: options.remarks } : {})
+          ...(options.remarks && Object.keys(options.remarks).length ? { remarks: options.remarks } : {}),
+          ...(options.emailSupplier ? { email_supplier: true } : {})
         })
       });
     } catch {
@@ -1644,11 +1878,30 @@ export const api = {
     const blob = await response.blob();
     const disposition = response.headers.get('Content-Disposition') || '';
     const match = /filename="?([^"]+)"?/.exec(disposition);
+    const mailStatus = response.headers.get('X-Mail-Status');
     return {
       blob,
       filename: match?.[1] || `${supplierName} ${storeName}.xlsx`,
-      exportedCount: Number(response.headers.get('X-Exported-Count') || 0)
+      exportedCount: Number(response.headers.get('X-Exported-Count') || 0),
+      billValue: Number(response.headers.get('X-Bill-Value') || 0),
+      // Only when emailSupplier was asked: { status: SENT|SKIPPED|FAILED, to, files, message }.
+      mail: mailStatus ? {
+        status: mailStatus,
+        to: response.headers.get('X-Mail-To') || '',
+        files: Number(response.headers.get('X-Mail-Files') || 0),
+        message: response.headers.get('X-Mail-Message') || ''
+      } : null
     };
+  },
+
+  // Why this product is in the order: engine steps + 90-day sales (order_reason.py).
+  legacyProductWhy(storeName, productCode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${encodeURIComponent(productCode)}/why`, { session });
+  },
+
+  // Can this supplier's order be mailed? { ready, to: [...], reason }.
+  legacySupplierMailStatus(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/supplier-mail/status${toQuery({ supplier_code: supplierCode })}`, { session });
   },
 
   // Export the Pending grid (reviewed, qtycheck=1, not yet assigned to any

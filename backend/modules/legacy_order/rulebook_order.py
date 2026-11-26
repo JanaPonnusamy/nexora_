@@ -197,9 +197,13 @@ def set_compare_today(store_name, enabled, actor=None):
 # Compare mode for Order Process (owner ruling 2026-11-05):
 #   PREVIOUS_PENDING  compare with the previous order (the original VB.NET compare)
 #   TODAY             compare with every earlier order of today
+#   PENDING_LIST      compare with the PM's pending list (Order Gap Review)
+#   TODAY_PENDING     today's earlier orders, then the pending list
 #   NONE              no compare
 #   HO                an HO / warehouse order: no compare
-COMPARE_MODES = ("PREVIOUS_PENDING", "TODAY", "NONE", "HO")
+# (CompareMode is VARCHAR(16): keep new names within 16 characters.)
+COMPARE_MODES = ("PREVIOUS_PENDING", "TODAY", "PENDING_LIST", "TODAY_PENDING", "NONE", "HO")
+COMPARING_MODES = ("PREVIOUS_PENDING", "TODAY", "PENDING_LIST", "TODAY_PENDING")
 
 
 def get_compare_mode(store_name):
@@ -220,7 +224,7 @@ def set_compare_mode(store_name, mode, actor=None):
     mode = str(mode or "").upper()
     if mode not in COMPARE_MODES:
         raise ValueError(f"Compare mode must be one of {', '.join(COMPARE_MODES)}.")
-    compares = 1 if mode in ("PREVIOUS_PENDING", "TODAY") else 0
+    compares = 1 if mode in COMPARING_MODES else 0
     with database.get_central_connection() as conn:
         cur = conn.cursor()
         _ensure_engine_schema(cur)

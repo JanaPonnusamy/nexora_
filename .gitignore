@@ -122,3 +122,6 @@ backend/ho_backend_releases/
 # Device Controller HO command-signing PRIVATE key (public .pub.pem stays tracked).
 backend/config/device_controller_command_key.pem
 backend/device_controller_releases/
+
+# HO login tokens dropped by ops sessions
+_token*.txt

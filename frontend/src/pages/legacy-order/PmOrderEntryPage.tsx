@@ -1,25 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { legacyOrderService } from '../../services/legacyOrderService'
 import { ApiError } from '../../services/apiClient'
 import type {
   LegacyStore,
-  OrderWorkflowStatus,
   PmOrderEntryRecent,
   PmOrderEntryState,
   PmOrderQueueRow,
 } from '../../types/legacyOrder'
-import { fmtDate, fmtMoney, fmtQty } from './format'
+import { PM_ORDER_STORE_KEY, fmtDate, fmtMoney, fmtQty } from './format'
+import OrderEntrySync, { type SyncLogLine } from './OrderEntrySync'
 import './pm-order-entry.css'
 
-const POLL_MS = 3000
+const GAP_REVIEW_PATH = '/procurement/order-gap-review'
 
-const STATUS_LABEL: Record<string, string> = {
-  QTY_REVIEW: 'Qty review pending',
-  SUPPLIER_ASSIGNMENT: 'Supplier assignment pending',
-  READY: 'Ready to finalize',
-  FINALIZED: 'Finalized',
-  DRAFT: 'Draft',
-}
+const POLL_MS = 3000
 
 function fmtStamp(value: string | null | undefined): string {
   if (!value) return '—'
@@ -28,6 +23,13 @@ function fmtStamp(value: string | null | undefined): string {
   return d
     .toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true })
     .replace(/\b([ap])m\b/gi, (s) => s.toUpperCase())
+}
+
+function fmtGrnDateTime(date: string | null | undefined, time: string | null | undefined): string {
+  const datePart = fmtDate(date)
+  if (!time) return datePart
+  const timePart = fmtStamp(time).replace(/^\d{2}\/\d{2}\s*/, '')
+  return `${datePart} ${timePart}`
 }
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -46,10 +48,12 @@ function errorMessage(err: unknown, fallback: string): string {
 function RecentVerificationGrids({
   store,
   reloadToken,
+  syncing,
   onTopRow,
 }: {
   store: string
   reloadToken: number
+  syncing: boolean
   onTopRow: (topBill: string | null, topGrn: string | null) => void
 }) {
   const [data, setData] = useState<PmOrderEntryRecent | null>(null)
@@ -69,7 +73,10 @@ function RecentVerificationGrids({
   }, [store])
 
   const load = useCallback(() => {
-    if (!store) return
+    // While the store's sync runs, the rows here would be the pre-sync ones
+    // -- not what the PM is verifying against. Load once the sync is done
+    // (reloadToken bumps then).
+    if (!store || syncing) return
     const requestedStore = store
     setLoading(true)
     setError('')
@@ -86,7 +93,7 @@ function RecentVerificationGrids({
       .catch((err: unknown) => setError(errorMessage(err, 'Could not load the recent GRN/bill grids.')))
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store])
+  }, [store, syncing])
 
   // reloadToken bumps once a triggered sync has finished, so the grids pick
   // up the freshly-synced GRN/bill rows without the PM doing anything else.
@@ -94,8 +101,16 @@ function RecentVerificationGrids({
     load()
   }, [load, reloadToken])
 
-  const grns = data?.grns ?? []
-  const bills = data?.bills ?? []
+  const grns = syncing ? [] : (data?.grns ?? [])
+  const bills = syncing ? [] : (data?.bills ?? [])
+  const waitRow =
+    syncing || (loading && !data) ? (
+      <tr>
+        <td colSpan={5} className="poe-muted">
+          {syncing ? 'Waiting for the sync to finish…' : 'Loading…'}
+        </td>
+      </tr>
+    ) : null
 
   return (
     <div className="poe-grid">
@@ -104,7 +119,7 @@ function RecentVerificationGrids({
           <h3>Recent GRNs</h3>
           <span className="poe-muted">Most recent supplier GRNs · as of the last sync</span>
           <div className="poe-tools">
-            <button type="button" className="secondary-button" onClick={load} disabled={loading}>
+            <button type="button" className="secondary-button" onClick={load} disabled={loading || syncing}>
               {loading ? 'Loading…' : 'Refresh'}
             </button>
           </div>
@@ -115,13 +130,12 @@ function RecentVerificationGrids({
             <thead>
               <tr>
                 <th>GRN#</th>
-                <th>Date</th>
+                <th title="Real GRN entry time at the branch. Time blank until backfilled or re-synced.">
+                  Date / time
+                </th>
                 <th className="poe-left">Supplier</th>
                 <th>Items</th>
                 <th>Total qty</th>
-                <th title="Real GRN entry time where available; falls back to when this GRN reached the server via sync for rows synced before this column existed.">
-                  Time
-                </th>
               </tr>
             </thead>
             <tbody>
@@ -131,18 +145,16 @@ function RecentVerificationGrids({
                     {r.grn_no}
                     {i === 0 && <span className="poe-top-badge">Will be used</span>}
                   </td>
-                  <td>{fmtDate(r.grn_date)}</td>
+                  <td>{fmtGrnDateTime(r.grn_date, r.grn_time)}</td>
                   <td className="poe-left">{r.supplier_name || r.supplier_code || '—'}</td>
                   <td>{r.item_count}</td>
                   <td>{fmtQty(r.total_qty)}</td>
-                  <td>
-                    {r.grn_time ? fmtStamp(r.grn_time) : <>{fmtStamp(r.synced_at)} <span className="poe-auto-tag">(synced)</span></>}
-                  </td>
                 </tr>
               ))}
-              {!loading && !grns.length && (
+              {waitRow}
+              {!loading && !syncing && data && !grns.length && (
                 <tr>
-                  <td colSpan={6} className="poe-muted">
+                  <td colSpan={5} className="poe-muted">
                     No GRNs found.
                   </td>
                 </tr>
@@ -184,7 +196,8 @@ function RecentVerificationGrids({
                   <td>{fmtMoney(r.amount)}</td>
                 </tr>
               ))}
-              {!loading && !bills.length && (
+              {waitRow}
+              {!loading && !syncing && data && !bills.length && (
                 <tr>
                   <td colSpan={5} className="poe-muted">
                     No sale bills found.
@@ -202,11 +215,6 @@ function RecentVerificationGrids({
   )
 }
 
-interface SyncLogLine {
-  stamp: string
-  text: string
-}
-
 function fmtLogStamp(d: Date): string {
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
@@ -216,6 +224,15 @@ export default function PmOrderEntryPage() {
   const [lastSync, setLastSync] = useState<Record<string, string | null>>({})
   const [store, setStore] = useState('')
   const [state, setState] = useState<PmOrderEntryState | null>(null)
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (!store) return
+    try {
+      localStorage.setItem(PM_ORDER_STORE_KEY, store)
+    } catch {
+      /* no storage */
+    }
+  }, [store])
   // Auto-filled from the top row of the recent-GRN / recent-bill grids --
   // the PM never types these (owner ruling 2026-11-24: "pm user dont want to
   // know exactly what they doing").
@@ -229,18 +246,39 @@ export default function PmOrderEntryPage() {
   const [syncNote, setSyncNote] = useState('')
   const [syncProgress, setSyncProgress] = useState(0)
   const [syncLog, setSyncLog] = useState<SyncLogLine[]>([])
+  // The sync view stays up on a failure (with Retry) and gives way to the
+  // order card + grids once the sync is done.
+  const [syncFailed, setSyncFailed] = useState(false)
+  const [syncStartedAt, setSyncStartedAt] = useState(0)
   const [reloadToken, setReloadToken] = useState(0)
+  // The store whose sync is on screen. The picker is locked while a sync
+  // runs, and a loop that finds the store changed under it stops writing to
+  // this screen (its server-side job still finishes on its own).
+  const storeRef = useRef(store)
+  storeRef.current = store
 
-  useEffect(() => {
-    legacyOrderService
+  // Re-run on mount, and again any time the real Stores.LastSyncTime may have
+  // changed (after a sync finishes) -- the label always reflects the DB, not
+  // an optimistic client-clock guess.
+  const loadStores = useCallback(() => {
+    return legacyOrderService
       .listStores(true)
       .then((rows) => {
         setStores(rows)
         setLastSync(Object.fromEntries(rows.map((r) => [r.store_name, r.last_sync_time])))
-        setStore((cur) => cur || rows[0]?.store_name || '')
+        // Order Entry and Order Gap Review open on the same store (step 1 <-> 2/3).
+        let last = ''
+        try {
+          last = localStorage.getItem(PM_ORDER_STORE_KEY) || ''
+        } catch {
+          /* no storage */
+        }
+        setStore((cur) => cur || (rows.some((r) => r.store_name === last) ? last : rows[0]?.store_name) || '')
       })
       .catch((err: unknown) => setError(errorMessage(err, 'Could not load your stores.')))
   }, [])
+
+  useEffect(() => { loadStores() }, [loadStores])
 
   // Trigger this module's own branch/agent -> central OrderNMC sync job
   // (legacyOrderService.startSync, the same one "Sync" in the legacy Order
@@ -252,7 +290,11 @@ export default function PmOrderEntryPage() {
   // any time the PM hits Fetch Data.
   const runSync = useCallback(async () => {
     if (!store) return
+    const syncStore = store
+    const stale = () => storeRef.current !== syncStore
     setSyncing(true)
+    setSyncFailed(false)
+    setSyncStartedAt(Date.now())
     setSyncNote('Connecting to store…')
     setSyncProgress(5)
     setSyncLog([{ stamp: fmtLogStamp(new Date()), text: `Sync requested for ${store}` }])
@@ -266,6 +308,7 @@ export default function PmOrderEntryPage() {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         await new Promise((r) => setTimeout(r, 2000))
+        if (stale()) return
         const job = await legacyOrderService.getJob(jobId).catch(() => null)
         if (!job) continue
         const total = job.total_steps || 1
@@ -281,19 +324,27 @@ export default function PmOrderEntryPage() {
           break
         }
       }
+      if (stale()) return
       setSyncProgress(100)
       setSyncNote('')
       setSyncLog((log) => [...log, { stamp: fmtLogStamp(new Date()), text: 'Sync complete. Order DB is up to date.' }])
-      setLastSync((cur) => ({ ...cur, [store]: new Date().toISOString() }))
       setReloadToken((t) => t + 1)
     } catch (err) {
+      if (stale()) return
       setSyncNote('')
       setSyncLog((log) => [...log, { stamp: fmtLogStamp(new Date()), text: `Sync failed: ${errorMessage(err, 'unknown error')}` }])
       setError(errorMessage(err, 'Sync could not be started.'))
+      setSyncFailed(true)
+      // Still show what the Order DB has, with the error above it.
+      setReloadToken((t) => t + 1)
     } finally {
-      setSyncing(false)
+      // Re-read the real Stores.LastSyncTime -- mark_sync_result runs on
+      // both success and failure, so refresh the label either way instead
+      // of trusting the browser clock.
+      loadStores()
+      if (!stale()) setSyncing(false)
     }
-  }, [store])
+  }, [store, loadStores])
 
   useEffect(() => {
     if (store) runSync()
@@ -322,6 +373,11 @@ export default function PmOrderEntryPage() {
     refresh()
     refreshQueue()
   }, [refresh, refreshQueue])
+
+  // The sync can change the Current Order card too (header, pending counts).
+  useEffect(() => {
+    if (reloadToken) refresh()
+  }, [reloadToken, refresh])
 
   // Terminal states for the PM's simple waiting UI: a queued (automated) row
   // reaching DONE/FAILED, or a direct job reaching completed/failed. The PM
@@ -368,7 +424,17 @@ export default function PmOrderEntryPage() {
   }
 
   const order = state?.latest_order
-  const canSubmit = Boolean(store && topBill && topGrn && !state?.blocked && !running && !busy && !syncing)
+  // Order Entry runs Review pending -> Fetch data / last bill + GRN -> Process
+  // order; the server refuses the submit until step 1 is done too.
+  const gap = state?.gap_review
+  const gapOk = !gap?.required || gap.done
+  const billsOk = Boolean(topBill && topGrn)
+  const canSubmit = Boolean(store && billsOk && gapOk && !state?.blocked && !running && !busy && !syncing)
+  const submitHint = !gapOk
+    ? 'Review the pending products first (step 1).'
+    : state?.blocked
+      ? 'The current order must be finalized in Procurement first.'
+      : undefined
 
   // The PM sees only idle / "Submitted, please wait" / done -- never whether
   // this went through the automated queue or straight to a job, and never a
@@ -384,12 +450,18 @@ export default function PmOrderEntryPage() {
     <section className="pm-order-entry">
       <header className="poe-screen-head">
         <div>
-          <h2>Order Entry</h2>
+          <h2>Purchase Entry Complete</h2>
           <p>Review the recent GRNs and sale bills below against your paperwork, then submit.</p>
         </div>
         <div className="poe-tools">
           {stores.length > 1 && (
-            <select aria-label="Store" value={store} onChange={(e) => setStore(e.target.value)}>
+            <select
+              aria-label="Store"
+              value={store}
+              disabled={syncing}
+              title={syncing ? 'Wait for this store’s sync to finish before switching' : undefined}
+              onChange={(e) => setStore(e.target.value)}
+            >
               {stores.map((s) => (
                 <option key={s.store_name} value={s.store_name}>
                   {s.display_name || s.store_name}
@@ -409,52 +481,80 @@ export default function PmOrderEntryPage() {
 
       {error && <div className="status-line error">{error}</div>}
 
-      {syncing && (
-        <section className="poe-card poe-sync-overlay">
-          <div className="poe-sync-ring" role="status" aria-live="polite">
-            <span className="poe-sync-ring-core" />
-          </div>
-          <div className="poe-sync-stage">{syncNote || 'Syncing…'}</div>
-          <div className="poe-sync-bar">
-            <div className="poe-sync-bar-fill" style={{ width: `${syncProgress}%` }} />
-          </div>
-          <div className="poe-sync-caption">Store → Nexora → Order DB</div>
-          <div className="poe-sync-log">
-            {syncLog.slice(-8).map((line, i) => (
-              <div key={i} className="poe-sync-log-line">
-                <span className="poe-muted">{line.stamp}</span> {line.text}
-              </div>
-            ))}
-          </div>
-        </section>
+      {store && (
+        <ol className="oe-steps" aria-label="Purchase Entry Complete steps">
+          <li className={!state ? 'is-wait' : gapOk ? 'is-done' : 'is-now'}>
+            <span className="oe-step-no">{gapOk && state ? '✓' : '1'}</span>
+            <div className="oe-step-text">
+              <b>Pending Supply Review</b>
+              <span>
+                {!state
+                  ? 'Checking…'
+                  : !gap?.required
+                    ? 'No previous order to review.'
+                    : gap.done
+                      ? `Order #${gap.order_id} reviewed${gap.reviewed_by ? ` by ${gap.reviewed_by}` : ''} · ${fmtStamp(gap.reviewed_at)}`
+                      : `Order #${gap.order_id}: mark the products still expected as pending, then Review done.`}
+              </span>
+            </div>
+            {state && gap?.required && (
+              <button
+                type="button"
+                className={gap.done ? 'secondary-button poe-inline-btn' : 'primary-button poe-inline-btn'}
+                onClick={() => navigate(GAP_REVIEW_PATH)}
+              >
+                {gap.done ? 'Open review' : 'Open Pending Supply Review'}
+              </button>
+            )}
+          </li>
+          <li className={syncing ? 'is-now' : billsOk ? 'is-done' : gapOk ? 'is-now' : 'is-wait'}>
+            <span className="oe-step-no">{billsOk && !syncing ? '✓' : '2'}</span>
+            <div className="oe-step-text">
+              <b>Fetch data · last bill / GRN</b>
+              <span>
+                {syncing ? 'Syncing the store…' : billsOk ? `${topBill} / ${topGrn}` : 'Fetch Data, then check the bills and GRNs below.'}
+              </span>
+            </div>
+          </li>
+          <li className={running || busy || canSubmit ? 'is-now' : 'is-wait'}>
+            <span className="oe-step-no">3</span>
+            <div className="oe-step-text">
+              <b>Process order</b>
+              <span>{running || busy ? 'Processing…' : canSubmit ? 'Ready -- press Submit.' : 'After steps 1 and 2.'}</span>
+            </div>
+          </li>
+        </ol>
       )}
 
+      {(syncing || syncFailed) && (
+        <OrderEntrySync
+          storeLabel={stores.find((x) => x.store_name === store)?.display_name || store}
+          status={syncing ? 'running' : 'failed'}
+          progress={syncProgress}
+          note={syncNote}
+          log={syncLog}
+          startedAt={syncStartedAt}
+          onRetry={runSync}
+        />
+      )}
+
+      {/* Order card + grids only after the sync, so nothing pre-sync is shown. */}
+      {!syncing && (
+        <>
       <div className="poe-grid">
         <section className="poe-card">
           <header className="poe-card-head">
             <h3>Current order · {store || '—'}</h3>
           </header>
-          {order?.order_id ? (
+          {!state ? (
+            <p className="poe-muted">Loading…</p>
+          ) : order?.order_id ? (
             <dl className="poe-meta">
               <div>
                 <dt>Order</dt>
                 <dd>
                   #{order.order_no ?? order.order_id} · {fmtStamp(state?.header?.order_datetime)}
                 </dd>
-              </div>
-              <div>
-                <dt>Status</dt>
-                <dd className={order.status === ('FINALIZED' as OrderWorkflowStatus) ? 'poe-ok' : 'poe-warn'}>
-                  {STATUS_LABEL[order.status] || order.status}
-                </dd>
-              </div>
-              <div>
-                <dt>Qty review pending</dt>
-                <dd>{order.qty_pending}</dd>
-              </div>
-              <div>
-                <dt>Unassigned</dt>
-                <dd>{order.unassigned_lines}</dd>
               </div>
               <div>
                 <dt>Last bill / GRN</dt>
@@ -465,12 +565,6 @@ export default function PmOrderEntryPage() {
             </dl>
           ) : (
             <p className="poe-muted">No order yet.</p>
-          )}
-          {state?.blocked && (
-            <div className="status-line error">
-              This order is from an earlier day and is not finalized. Review the pending products and Finalize it in
-              Procurement before generating today&apos;s order.
-            </div>
           )}
         </section>
 
@@ -497,7 +591,13 @@ export default function PmOrderEntryPage() {
               </button>
             </div>
           ) : (
-            <button type="button" className="primary-button" disabled={!canSubmit} onClick={() => submit(false)}>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!canSubmit}
+              title={submitHint}
+              onClick={() => submit(false)}
+            >
               {simpleStatus === 'submitted' ? 'Submitted, please wait…' : 'Submit'}
             </button>
           )}
@@ -510,12 +610,15 @@ export default function PmOrderEntryPage() {
       {store && (
         <RecentVerificationGrids
           store={store}
+          syncing={syncing}
           reloadToken={reloadToken}
           onTopRow={(bill, grn) => {
             setTopBill(bill)
             setTopGrn(grn)
           }}
         />
+      )}
+        </>
       )}
     </section>
   )

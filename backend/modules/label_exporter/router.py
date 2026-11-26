@@ -11,7 +11,11 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from dependencies.auth import get_current_user
-from dependencies.store_scope import assert_label_exporter_store_access, require_super_admin
+from dependencies.store_scope import (
+    assert_label_exporter_export_allowed,
+    assert_label_exporter_store_access,
+    require_super_admin,
+)
 from modules.label_exporter import pdf_export, service
 from modules.label_exporter.schemas import (
     BoxProductResult,
@@ -408,8 +412,10 @@ def export_products_excel(
 ):
     """Download the currently loaded letter's grid as a styled .xlsx —
     same filters as the on-screen search, so the file always matches what
-    the reviewer sees."""
+    the reviewer sees. Purchase-manager/salesman-only logins may review but
+    not export (owner ruling)."""
     assert_label_exporter_store_access(current_user, tenant_id, store_id)
+    assert_label_exporter_export_allowed(current_user)
     buf = service.export_letter_excel(
         tenant_id, store_id, letter, unit_description, unit_description_mode, stock_filter
     )

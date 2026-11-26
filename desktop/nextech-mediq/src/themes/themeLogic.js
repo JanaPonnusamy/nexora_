@@ -1,0 +1,306 @@
+// Theme ids are the persisted preference. `system` follows the OS and
+// resolves to a concrete glass theme. Legacy `dark` / `light` values from
+// the earlier toggle still load.
+
+export const THEME_IDS = Object.freeze([
+  'midnight-glass',
+  'arctic-glass',
+  'ocean-blue',
+  'graphite-pro',
+  'aurora-light',
+]);
+
+export const DEFAULT_THEME_PREFERENCE = 'midnight-glass';
+
+const LEGACY = Object.freeze({
+  dark: 'midnight-glass',
+  light: 'arctic-glass',
+});
+
+export const THEMES = Object.freeze({
+  'midnight-glass': {
+    id: 'midnight-glass',
+    label: 'Midnight Glass',
+    mode: 'dark',
+    bg: '#101D32',
+    panel: 'rgba(22, 41, 68, 0.78)',
+    elevated: '#1B3354',
+    border: 'rgba(255, 255, 255, 0.14)',
+    text: '#F8FAFC',
+    textSecondary: '#C5D0E0',
+    muted: '#94A3B8',
+    accent: '#2563EB',
+    accentHover: '#1D4ED8',
+    cyan: '#22C3D6',
+    navy: '#101D32',
+    navyDeep: '#0C1728',
+    glassBg: 'rgba(22, 41, 68, 0.72)',
+    glassBorder: 'rgba(255, 255, 255, 0.16)',
+    tableBg: '#162944',
+    surface: '#162944',
+    surfaceRaised: '#1C3352',
+    surfaceSunk: '#101D32',
+    surfaceHover: '#1E3A5C',
+    rule: 'rgba(148, 163, 184, 0.28)',
+    textOn: '#F8FAFC',
+    accentSunk: 'rgba(37, 99, 235, 0.22)',
+    accentInk: '#93C5FD',
+    success: '#34D399',
+    warning: '#FBBF24',
+    danger: '#F87171',
+    info: '#22C3D6',
+    shadow: '0 12px 32px rgba(8, 15, 28, 0.38)',
+  },
+  'arctic-glass': {
+    id: 'arctic-glass',
+    label: 'Arctic Glass',
+    mode: 'light',
+    bg: '#F4F7FB',
+    panel: '#FFFFFF',
+    elevated: '#E7EEF8',
+    border: '#8FA6C2',
+    text: '#0B1730',
+    textSecondary: '#1B3354',
+    muted: '#3E5573',
+    accent: '#2563EB',
+    accentHover: '#1D4ED8',
+    cyan: '#0E7490',
+    navy: '#0B1730',
+    navyDeep: '#101D32',
+    glassBg: '#FFFFFF',
+    glassBorder: '#8FA6C2',
+    tableBg: '#FFFFFF',
+    surface: '#FFFFFF',
+    surfaceRaised: '#FFFFFF',
+    surfaceSunk: '#EEF3F9',
+    surfaceHover: '#E3EDF8',
+    rule: '#C5D2E2',
+    textOn: '#FFFFFF',
+    accentSunk: '#DBE7FB',
+    accentInk: '#1D4ED8',
+    success: '#059669',
+    warning: '#D97706',
+    danger: '#DC2626',
+    info: '#0891B2',
+    shadow: '0 10px 28px rgba(16, 29, 50, 0.08)',
+  },
+  'ocean-blue': {
+    id: 'ocean-blue',
+    label: 'Ocean Blue',
+    mode: 'dark',
+    bg: '#06283A',
+    panel: 'rgba(8, 61, 82, 0.78)',
+    elevated: '#0C4A62',
+    border: 'rgba(34, 195, 214, 0.22)',
+    text: '#F8FAFC',
+    textSecondary: '#D3E7EE',
+    muted: '#94C4D1',
+    accent: '#22C3D6',
+    accentHover: '#06B6D4',
+    cyan: '#67E8F9',
+    navy: '#06283A',
+    navyDeep: '#041E2C',
+    glassBg: 'rgba(8, 61, 82, 0.7)',
+    glassBorder: 'rgba(255, 255, 255, 0.14)',
+    tableBg: '#083848',
+    surface: '#083848',
+    surfaceRaised: '#0C4A62',
+    surfaceSunk: '#06283A',
+    surfaceHover: '#0E5670',
+    rule: 'rgba(148, 196, 209, 0.28)',
+    textOn: '#06283A',
+    accentSunk: 'rgba(34, 195, 214, 0.18)',
+    accentInk: '#A5F3FC',
+    success: '#34D399',
+    warning: '#FBBF24',
+    danger: '#F87171',
+    info: '#67E8F9',
+    shadow: '0 12px 32px rgba(4, 20, 32, 0.4)',
+  },
+  'graphite-pro': {
+    id: 'graphite-pro',
+    label: 'Graphite Pro',
+    mode: 'dark',
+    bg: '#1A1F27',
+    panel: 'rgba(36, 42, 51, 0.88)',
+    elevated: '#2C3440',
+    border: 'rgba(203, 213, 225, 0.16)',
+    text: '#F8FAFC',
+    textSecondary: '#CBD5E1',
+    muted: '#94A3B8',
+    accent: '#2563EB',
+    accentHover: '#3B82F6',
+    cyan: '#7DD3FC',
+    navy: '#1A1F27',
+    navyDeep: '#12161C',
+    glassBg: 'rgba(36, 42, 51, 0.82)',
+    glassBorder: 'rgba(255, 255, 255, 0.12)',
+    tableBg: '#222831',
+    surface: '#222831',
+    surfaceRaised: '#2C3440',
+    surfaceSunk: '#161B22',
+    surfaceHover: '#323A46',
+    rule: 'rgba(148, 163, 184, 0.24)',
+    textOn: '#F8FAFC',
+    accentSunk: 'rgba(37, 99, 235, 0.22)',
+    accentInk: '#BFDBFE',
+    success: '#34D399',
+    warning: '#FBBF24',
+    danger: '#F87171',
+    info: '#7DD3FC',
+    shadow: '0 12px 28px rgba(0, 0, 0, 0.35)',
+  },
+  'aurora-light': {
+    id: 'aurora-light',
+    label: 'Aurora Light',
+    mode: 'light',
+    bg: '#F4F7FB',
+    panel: '#FFFFFF',
+    elevated: '#EEF2FF',
+    border: '#A8B0D8',
+    text: '#1A1744',
+    textSecondary: '#2A3358',
+    muted: '#4A5578',
+    accent: '#4F46E5',
+    accentHover: '#4338CA',
+    cyan: '#2563EB',
+    navy: '#1A1744',
+    navyDeep: '#312E81',
+    glassBg: '#FFFFFF',
+    glassBorder: '#A8B0D8',
+    tableBg: '#FFFFFF',
+    surface: '#FFFFFF',
+    surfaceRaised: '#FFFFFF',
+    surfaceSunk: '#F8FAFC',
+    surfaceHover: '#EEF2FF',
+    rule: '#E2E8F0',
+    textOn: '#FFFFFF',
+    accentSunk: '#EEF2FF',
+    accentInk: '#4338CA',
+    success: '#059669',
+    warning: '#D97706',
+    danger: '#DC2626',
+    info: '#2563EB',
+    shadow: '0 10px 28px rgba(49, 46, 129, 0.08)',
+  },
+});
+
+export function normalizeThemePreference(value) {
+  if (value === 'system') return 'system';
+  if (LEGACY[value]) return LEGACY[value];
+  return THEME_IDS.includes(value) ? value : DEFAULT_THEME_PREFERENCE;
+}
+
+export function resolveTheme(preference, prefersLight) {
+  const normalized = normalizeThemePreference(preference);
+  if (normalized === 'system') return prefersLight ? 'arctic-glass' : 'midnight-glass';
+  return normalized;
+}
+
+export function themeById(id) {
+  return THEMES[id] || THEMES[DEFAULT_THEME_PREFERENCE];
+}
+
+export function nativeThemeSource(preference) {
+  const normalized = normalizeThemePreference(preference);
+  if (normalized === 'system') return 'system';
+  return themeById(resolveTheme(normalized, false)).mode === 'light' ? 'light' : 'dark';
+}
+
+function rgbTriplet(hex) {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!match) return null;
+  const int = parseInt(match[1], 16);
+  return `${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}`;
+}
+
+/** CSS variables for one resolved theme. Shell and embedded web pages both read these. */
+export function variablesForTheme(themeId) {
+  const t = themeById(themeId);
+  const vars = {
+    '--ntm-bg': t.bg,
+    '--ntm-panel': t.panel,
+    '--ntm-elevated': t.elevated,
+    '--ntm-border': t.border,
+    '--ntm-text-primary': t.text,
+    '--ntm-text-secondary': t.textSecondary,
+    '--ntm-text-muted': t.muted,
+    '--ntm-accent': t.accent,
+    '--ntm-accent-2': t.cyan,
+    '--ntm-teal': t.cyan,
+    '--ntm-bright-teal': t.cyan,
+    '--ntm-primary-navy': t.navy,
+    '--ntm-deep-navy': t.navyDeep,
+    '--ntm-glass-bg': t.glassBg,
+    '--ntm-glass-border': t.glassBorder,
+    '--ntm-table-bg': t.tableBg,
+    '--ntm-shadow': t.shadow,
+    '--ntm-success': t.success,
+    '--ntm-warning': t.warning,
+    '--ntm-error': t.danger,
+    '--nx-canvas': t.bg,
+    '--nx-surface': t.surface,
+    '--nx-surface-raised': t.surfaceRaised,
+    '--nx-surface-sunk': t.surfaceSunk,
+    '--nx-surface-hover': t.surfaceHover,
+    '--nx-rule': t.rule,
+    '--nx-rule-strong': t.border,
+    '--nx-text': t.text,
+    '--nx-text-soft': t.textSecondary,
+    '--nx-text-muted': t.muted,
+    '--nx-text-on': t.textOn,
+    '--nx-accent': t.accent,
+    '--nx-accent-hover': t.accentHover,
+    '--nx-accent-sunk': t.accentSunk,
+    '--nx-accent-ink': t.accentInk,
+    '--nx-success': t.success,
+    '--nx-warning': t.warning,
+    '--nx-danger': t.danger,
+    '--nx-info': t.info,
+    '--nx-focus': t.accent,
+    '--nx-glass-canvas': t.bg,
+    '--nx-glass-bg': t.glassBg,
+    '--nx-glass-bg-raised': t.panel,
+    '--nx-glass-bg-sunk': t.surfaceSunk,
+    '--nx-glass-border': t.glassBorder,
+    '--nx-glass-border-soft': t.rule,
+    '--nx-glass-blur': '16px',
+    '--nx-glass-shadow': t.shadow,
+    '--nx-shadow-sm': t.shadow,
+    '--nx-shadow-md': t.shadow,
+    '--nx-shadow-lg': t.shadow,
+    '--bs-body-bg': t.bg,
+    '--bs-body-color': t.text,
+    '--bs-emphasis-color': t.text,
+    '--bs-secondary-color': t.muted,
+    '--bs-secondary-bg': t.surfaceSunk,
+    '--bs-tertiary-bg': t.surfaceHover,
+    '--bs-tertiary-color': t.muted,
+    '--bs-border-color': t.rule,
+    '--bs-primary': t.accent,
+    '--bs-link-color': t.accent,
+    '--bs-link-hover-color': t.accentHover,
+    '--bs-success': t.success,
+    '--bs-warning': t.warning,
+    '--bs-danger': t.danger,
+    '--bs-info': t.info,
+    '--bs-primary-bg-subtle': t.accentSunk,
+    '--bs-card-bg': t.tableBg,
+    '--bs-card-border-color': t.rule,
+    '--bs-modal-bg': t.surfaceRaised,
+    '--bs-dropdown-bg': t.surfaceRaised,
+    '--bs-dropdown-link-color': t.textSecondary,
+    '--bs-dropdown-link-hover-bg': t.surfaceHover,
+    '--bs-form-control-bg': t.tableBg,
+    '--bs-table-bg': t.tableBg,
+    '--bs-table-color': t.text,
+    '--bs-table-border-color': t.rule,
+    '--bs-table-striped-bg': t.surfaceSunk,
+    '--bs-table-hover-bg': t.surfaceHover,
+  };
+  const textRgb = rgbTriplet(t.text);
+  const accentRgb = rgbTriplet(t.accent);
+  if (textRgb) vars['--bs-body-color-rgb'] = textRgb;
+  if (accentRgb) vars['--bs-primary-rgb'] = accentRgb;
+  return vars;
+}

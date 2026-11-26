@@ -17,4 +17,9 @@ export interface AuthContextValue {
   restoring: boolean
   login: (token: string, user: AuthUser) => void
   logout: () => void
+  /** Identifies this running app to pages that behave differently when
+   *  embedded elsewhere (e.g. QuickStockPage's public-kiosk vs
+   *  signed-in-session branch). Always 'nextech-mediq' here — this IS
+   *  NexTech MedIQ, the main Nexora web app. */
+  host: string
 }

@@ -406,67 +406,107 @@
   font-weight: 600;
 }
 
-/* Fetch Data overlay: center-screen heartbeat ring + progress bar + live
-   sync log, shown while a triggered sync is running (owner request
-   2026-11-24: "one progress bar on center screen like tick or heart beat
-   round model also current log in log panel"). */
-.poe-sync-overlay {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 1.75rem 1.25rem;
-  text-align: center;
+/* Order Entry sync view (OrderEntrySync.tsx): stands in for the order card
+   and grids while a store's sync runs -- headline + % + elapsed, a live
+   striped progress bar, the Store -> Nexora -> Order DB route, per-table
+   steps read from the job log, and the full auto-scrolling log. */
+.oes { display: flex; flex-direction: column; gap: 14px; padding: 20px 22px; }
+.oes-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.oes-head h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.oes-head p { margin: 0; }
+.oes-figures { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.oes-figures strong { font-size: 1.6rem; line-height: 1; font-variant-numeric: tabular-nums; color: var(--bs-primary); }
+.oes-figures span { font-variant-numeric: tabular-nums; font-size: 0.8rem; }
+.oes-bar { height: 10px; border-radius: 999px; background: var(--bs-secondary-bg); overflow: hidden; }
+.oes-bar-fill {
+  height: 100%; border-radius: inherit; transition: width 0.5s ease;
+  background: linear-gradient(90deg, var(--bs-primary-border-subtle, var(--bs-primary)), var(--bs-primary));
 }
-.poe-sync-ring {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  border: 4px solid var(--bs-border-color);
-  border-top-color: var(--bs-primary, #3b82f6);
-  animation: poe-sync-spin 1s linear infinite;
+.oes-bar--live .oes-bar-fill {
+  background-image:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18) 25%, transparent 25%, transparent 50%,
+      rgba(255, 255, 255, 0.18) 50%, rgba(255, 255, 255, 0.18) 75%, transparent 75%),
+    linear-gradient(90deg, var(--bs-primary-border-subtle, var(--bs-primary)), var(--bs-primary));
+  background-size: 22px 22px, 100% 100%;
+  animation: oes-stripes 0.8s linear infinite;
+}
+@keyframes oes-stripes { to { background-position: 22px 0, 0 0; } }
+.oes--failed .oes-bar-fill { background: var(--bs-danger); }
+.oes--failed .oes-figures strong { color: var(--bs-danger-text-emphasis); }
+.oes-route { display: flex; gap: 0; margin: 0; padding: 0; list-style: none; font-size: 0.78rem; }
+.oes-route li { flex: 1; text-align: center; padding: 6px 4px; color: var(--bs-secondary-color); border-bottom: 2px solid var(--bs-border-color); }
+.oes-route li.on { color: var(--bs-body-color); border-bottom-color: var(--bs-primary); font-weight: 600; }
+.oes-body { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 1.4fr); gap: 14px; }
+.oes-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.oes-step {
+  display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 0.35rem; background: var(--bs-secondary-bg); font-size: 0.85rem;
+}
+.oes-step-rows { color: var(--bs-secondary-color); font-variant-numeric: tabular-nums; font-size: 0.78rem; }
+.oes-dot {
+  width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; font-weight: 700;
+}
+.oes-step.running .oes-dot { border: 2px solid var(--bs-border-color); border-top-color: var(--bs-primary); animation: oes-spin 0.8s linear infinite; }
+.oes-step.running .oes-step-rows { color: var(--bs-primary); }
+.oes-step.done .oes-dot { background: var(--bs-success); color: #fff; }
+.oes-step.failed .oes-dot { background: var(--bs-danger); color: #fff; }
+.oes-step.failed .oes-step-rows { color: var(--bs-danger-text-emphasis); }
+@keyframes oes-spin { to { transform: rotate(360deg); } }
+.oes-log {
+  max-height: 240px; min-height: 120px; overflow-y: auto; padding: 8px 10px;
+  border: 1px solid var(--bs-border-color); border-radius: 0.35rem; background: var(--bs-secondary-bg);
+  font-family: Consolas, 'Cascadia Mono', monospace; font-size: 0.76rem; line-height: 1.55;
+}
+.oes-log-line span { color: var(--bs-secondary-color); margin-right: 10px; }
+.oes-actions { display: flex; justify-content: flex-end; }
+@media (max-width: 760px) { .oes-body { grid-template-columns: 1fr; } }
+
+/* Order Entry steps: Review pending -> Fetch data / last bill + GRN -> Process order. */
+.oe-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.oe-steps li {
   display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  background: var(--bs-body-bg);
+}
+
+.oe-steps li.is-now { border-color: var(--bs-primary); box-shadow: inset 3px 0 0 var(--bs-primary); }
+.oe-steps li.is-wait { opacity: 0.6; }
+
+.oe-step-no {
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  font-weight: 800;
+  font-size: 0.8rem;
+  background: var(--bs-tertiary-bg, #eee);
+  color: var(--bs-secondary-color, inherit);
 }
-.poe-sync-ring-core {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--bs-primary, #3b82f6);
-  animation: poe-sync-pulse 1s ease-in-out infinite;
+
+.oe-steps li.is-now .oe-step-no { background: var(--bs-primary); color: #fff; }
+.oe-steps li.is-done .oe-step-no { background: var(--bs-success); color: #fff; }
+
+.oe-step-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.oe-step-text b { font-size: 0.86rem; }
+.oe-step-text span { font-size: 0.76rem; color: var(--bs-secondary-color, inherit); overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 1000px) {
+  .oe-steps { grid-template-columns: 1fr; }
 }
-@keyframes poe-sync-spin {
-  to { transform: rotate(360deg); }
-}
-@keyframes poe-sync-pulse {
-  0%, 100% { transform: scale(0.75); opacity: 0.6; }
-  50% { transform: scale(1.15); opacity: 1; }
-}
-.poe-sync-stage { font-weight: 600; }
-.poe-sync-caption { font-size: 0.78rem; opacity: 0.65; }
-.poe-sync-bar {
-  width: min(420px, 90%);
-  height: 6px;
-  border-radius: 4px;
-  background: var(--bs-secondary-bg, #f1f3f5);
-  overflow: hidden;
-}
-.poe-sync-bar-fill {
-  height: 100%;
-  background: var(--bs-primary, #3b82f6);
-  transition: width 0.4s ease;
-}
-.poe-sync-log {
-  width: min(520px, 95%);
-  max-height: 160px;
-  overflow-y: auto;
-  text-align: left;
-  border: 1px solid var(--bs-border-color);
-  border-radius: 0.35rem;
-  background: var(--bs-secondary-bg, #f1f3f5);
-  padding: 0.5rem 0.65rem;
-  font-size: 0.78rem;
-}
-.poe-sync-log-line { padding: 0.12rem 0; }
-.poe-sync-log-line .poe-muted { margin-right: 0.5rem; font-family: monospace; }

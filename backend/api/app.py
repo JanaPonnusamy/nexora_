@@ -120,6 +120,9 @@ from modules.nonmoving_analysis.router import (
 from modules.rate_analysis.router import (
     router as rate_analysis_router
 )
+from modules.supplier_rate_engine.router import (
+    router as supplier_rate_engine_router
+)
 from modules.sale_analysis.router import (
     router as sale_analysis_router
 )
@@ -144,6 +147,9 @@ from modules.pass_gen.router import (
 )
 from modules.legacy_order.router import (
     router as legacy_order_router
+)
+from modules.db_monitor.router import (
+    router as db_monitor_router
 )
 from modules.nmv_integration.router import (
     router as nmv_integration_router,
@@ -416,6 +422,7 @@ app.include_router(expiry_report_router)
 app.include_router(expiry_stock_router)
 app.include_router(nonmoving_report_router)
 app.include_router(nonmoving_analysis_router)
+app.include_router(supplier_rate_engine_router)
 app.include_router(rate_analysis_router)
 app.include_router(sale_analysis_router)
 app.include_router(time_report_router)
@@ -424,6 +431,7 @@ if document_extraction_router is not None:
     app.include_router(document_extraction_router)
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
+app.include_router(db_monitor_router)
 app.include_router(nmv_integration_router)
 app.include_router(nmv_integration_admin_router)
 app.include_router(remote_order_agent_router)
@@ -502,6 +510,18 @@ def _start_legacy_evening_order_on_startup():
         print("[EVENING_ORDER] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
+def _start_legacy_morning_order_on_startup():
+    # Morning auto order: one order per store per day once its agent is online
+    # and today's bills are synced (off until enabled per tenant in Legacy
+    # Order > Morning auto order). See legacy_order/morning_order.py.
+    try:
+        from modules.legacy_order import morning_order
+        morning_order.start_background_loop()
+    except Exception:
+        import traceback
+        print("[MORNING_ORDER] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
 def _start_sync_health_monitor_on_startup():
     # Watches every store/table sync and WhatsApps an alert when one keeps
     # failing / goes stale / an agent drops (silent when all good). See
@@ -512,6 +532,32 @@ def _start_sync_health_monitor_on_startup():
     except Exception:
         import traceback
         print("[SYNC_HEALTH] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _start_db_guard_on_startup():
+    # Auto-repairs NEXORA_PLATFORM + every tenant's legacy DB out of
+    # RECOVERY_PENDING / SUSPECT / EMERGENCY / SINGLE_USER (never a data-loss
+    # repair) and feeds /health/maintenance. See modules/legacy_order/db_guard.py.
+    try:
+        from modules.legacy_order import db_guard
+        db_guard.start_background_loop()
+    except Exception:
+        import traceback
+        print("[DB_GUARD] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _start_product_mapping_mirror_sync_on_startup():
+    # PRODMAP-MIRROR-01: keeps dbo.product_mapping_mirror inside each
+    # tenant's OrderNMC/OrderSMS/OrderSuccess current from NEXORA_PLATFORM's
+    # product_mapping, so backfill_store_product_codes() can resolve
+    # StoreProductCode locally with no cross-database join. See
+    # modules/supplier_stock_analysis/mirror_sync.py.
+    try:
+        from modules.supplier_stock_analysis import mirror_sync
+        mirror_sync.start_background_loop()
+    except Exception:
+        import traceback
+        print("[PRODUCT_MAPPING_MIRROR] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
 def _start_supplier_mail_import_on_startup():
@@ -571,6 +617,14 @@ async def health():
     # thread pool, which previously made desktop readiness probes stall even
     # while the API process was alive.
     return {'status':'healthy'}
+
+@app.get('/health/maintenance')
+async def health_maintenance():
+    # Polled (no login) by the Stock Client and MediQ for their "under
+    # maintenance" screen. In-memory only -- the DB guard thread does the
+    # database work -- so it answers even while SQL Server is down.
+    from modules.legacy_order import db_guard
+    return db_guard.status()
 
 @app.get('/health/db')
 def health_db():

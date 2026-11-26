@@ -221,7 +221,16 @@ def load_source(conn, tenant_id, store_id, params):
             leg_wm.last_received_date           AS legacy_last_received_date,
             ls.last_sale_date                    AS last_sale_date,
             grn.last_received_date               AS last_received_date
-        FROM sync.Products p
+        FROM (
+            SELECT p.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY p.store_id, p.ProductCode
+                       ORDER BY p.ProductCode
+                   ) AS product_master_row
+            FROM sync.Products p
+            WHERE p.tenant_id = ? AND p.store_id = ?
+              AND ISNULL(p.isActive, 1) = 1
+        ) p
         LEFT JOIN agg ON agg.ProductCode = p.ProductCode
         LEFT JOIN md  ON md.ProductCode  = p.ProductCode
         LEFT JOIN mb  ON mb.ProductCode  = p.ProductCode
@@ -231,8 +240,7 @@ def load_source(conn, tenant_id, store_id, params):
         LEFT JOIN leg_agg ON leg_agg.ProductCode = p.ProductCode
         LEFT JOIN leg_max ON leg_max.ProductCode = p.ProductCode
         LEFT JOIN leg_wm  ON leg_wm.ProductCode  = p.ProductCode
-        WHERE p.tenant_id = ? AND p.store_id = ?
-          AND ISNULL(p.isActive, 1) = 1
+        WHERE p.product_master_row = 1
         """,
         (tenant_id, store_id, cutoff, tenant_id, store_id,
          tenant_id, store_id,

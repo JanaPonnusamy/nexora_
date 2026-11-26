@@ -40,7 +40,7 @@ function owMoneyOrNull(value) {
 // trendFit {fetch, min, max} (Procurement): fetch `fetch` calendar months and
 // draw the latest `min` that have data, or up to `max` when the chart is wide
 // enough. Omitted (Order Workspace) = the legacy 4-month window, all drawn.
-export function OrderIntelligence({ store, productCode, visibleCodes, product, mode, session, onError, sections = ['trend', 'purchase', 'sales'], onPurchaseSelect, onSalesSelect, onLatest, trendFit }) {
+export function OrderIntelligence({ store, productCode, visibleCodes, product, mode, session, onError, sections = ['trend', 'purchase', 'sales'], onPurchaseSelect, onSalesSelect, onLatest, trendFit, exactRow = false }) {
   const [purchase, setPurchase] = useState([]);
   const [sales, setSales] = useState([]);
   const [monthly, setMonthly] = useState([]);
@@ -75,16 +75,22 @@ export function OrderIntelligence({ store, productCode, visibleCodes, product, m
     const hit = owIntelCacheGet(key);
     if (hit) return hit;
     const p = Promise.all([
-      api.legacyPurchaseDetails(store, code, mode, session).catch(() => []),
-      api.legacySalesDetails(store, code, mode, session).catch(() => []),
-      api.legacyMonthlyStats(store, code, mode, session, trendMonths).catch(() => [])
-    ]).then(([pp, ss, mm]) => ({ purchase: asArray(pp), sales: asArray(ss), monthly: asArray(mm) }))
+      api.legacyPurchaseDetails(store, code, mode, session).catch(() => (exactRow ? null : [])),
+      api.legacySalesDetails(store, code, mode, session).catch(() => (exactRow ? null : [])),
+      api.legacyMonthlyStats(store, code, mode, session, trendMonths).catch(() => (exactRow ? null : []))
+    ]).then(([pp, ss, mm]) => {
+      // Procurement (exactRow): a call that failed (HO unreachable) is not
+      // cached as "no history" -- the next visit to the row asks again.
+      if (pp === null || ss === null || mm === null) owIntelCache.delete(key);
+      return { purchase: asArray(pp), sales: asArray(ss), monthly: asArray(mm), failed: pp === null && ss === null && mm === null };
+    })
       .catch(() => { owIntelCache.delete(key); return { purchase: [], sales: [], monthly: [] }; });
     owIntelCacheSet(key, p);
     return p;
-  }, [store, mode, session]);
+  }, [store, mode, session, exactRow]);
 
   const [pricedCode, setPricedCode] = useState(null);
+  const [failed, setFailed] = useState(false);
   const onLatestRef = useRef(onLatest);
   onLatestRef.current = onLatest;
 
@@ -102,6 +108,7 @@ export function OrderIntelligence({ store, productCode, visibleCodes, product, m
         setPurchase(data.purchase);
         setSales(data.sales);
         setMonthly(data.monthly);
+        setFailed(Boolean(data.failed));
         setPricedCode(settledCode);
       })
       .catch((e) => { if (!cancelled) onError?.(e.message); })
@@ -140,16 +147,26 @@ export function OrderIntelligence({ store, productCode, visibleCodes, product, m
   }, [purchase, sales, pricedCode, settledCode]);
 
   const empty = productCode == null;
+  // Procurement (exactRow): show Purchase / Sales / Trend only once they
+  // belong to the highlighted row. Until then the panels say Loading, never
+  // the previous row's figures (a slow HO link used to hold them for rows).
+  const stale = exactRow && !empty && (pricedCode == null || String(pricedCode) !== String(productCode));
+  const loadFailed = exactRow && !stale && failed;
+  const purchaseRows = stale ? [] : purchase;
+  const salesRows = stale ? [] : sales;
+  const monthlyRows = stale ? [] : monthly;
+  const busy = loading || stale;
+  const emptyText = (none) => (empty ? 'Select a product.' : busy ? 'Loading…' : loadFailed ? 'Could not load — HO not reachable. Move away and back to retry.' : none);
 
   const sectionMap = {
     trend: (
       <section className="ow-panel ow-panel--chart" key="trend">
         <div className="ow-panel-title">
-          Monthly Trend<span className="ow-panel-subtitle">Stock movement — last {(trendFit ? trendShown : monthly.length) || 4} months</span>
-          {loading && <span className="ow-intel-loading">…</span>}
+          Monthly Trend<span className="ow-panel-subtitle">Stock movement — last {(trendFit ? trendShown : monthlyRows.length) || 4} months</span>
+          {busy && <span className="ow-intel-loading">…</span>}
         </div>
         <div className="ow-panel-body">
-          {empty ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={monthly} loading={loading} fit={trendFit} onShown={setTrendShown} />}
+          {empty ? <div className="ow-empty">Select a product.</div> : <OwTrendChart rows={monthlyRows} loading={busy} fit={trendFit} onShown={setTrendShown} />}
         </div>
       </section>
     ),
@@ -160,7 +177,7 @@ export function OrderIntelligence({ store, productCode, visibleCodes, product, m
           <table className="ow-intel-table">
             <thead><tr><th className="ow-num">Stock</th><th className="ow-num">Free</th><th className="ow-num ow-grp">Dis%</th><th className="ow-num">Land%</th><th className="ow-num ow-grp ow-col-cost">Cost</th><th className="ow-num ow-col-ptr">PTR</th><th className="ow-num ow-col-mrp">MRP</th><th className="ow-grp">GRN Date</th><th className="ow-intel-grow">Supplier</th></tr></thead>
             <tbody>
-              {purchase.map((row, i) => (
+              {purchaseRows.map((row, i) => (
                 <tr key={i} className={`ow-intel-clickable${Number(row.FreeQty) > 0 ? ' ow-freerow' : ''}`} title="Click to see the whole purchase invoice" onClick={() => onPurchaseSelect?.(row)}>
                   <td className="ow-num">{fmtOwQty(row.RStock)}</td>
                   <td className="ow-num">{fmtOwQty(row.FreeQty)}</td>
@@ -173,7 +190,7 @@ export function OrderIntelligence({ store, productCode, visibleCodes, product, m
                   <td className="ow-intel-grow">{row.SupplierName ?? '—'}</td>
                 </tr>
               ))}
-              {!purchase.length && <tr><td colSpan={9} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No purchase history.'}</td></tr>}
+              {!purchaseRows.length && <tr><td colSpan={9} className="ow-empty">{emptyText('No purchase history.')}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -186,7 +203,7 @@ export function OrderIntelligence({ store, productCode, visibleCodes, product, m
           <table className="ow-intel-table">
             <thead><tr><th className="ow-num">Qty</th><th>Bill Time</th><th className="ow-intel-cust">Salesman</th><th className="ow-intel-cust">Customer</th><th className="ow-num">Dis%</th><th className="ow-num">MRP</th></tr></thead>
             <tbody>
-              {sales.map((row, i) => (
+              {salesRows.map((row, i) => (
                 <tr key={i} className="ow-intel-clickable" title="Click to see the whole sales bill" onClick={() => onSalesSelect?.(row)}>
                   <td className="ow-num">{fmtOwQty(row.TotalQuantity)}</td>
                   <td>{fmtOwDate(row.Bill_Time)}</td>
@@ -196,7 +213,7 @@ export function OrderIntelligence({ store, productCode, visibleCodes, product, m
                   <td className="ow-num">{fmtOwMoney(row.mrp)}</td>
                 </tr>
               ))}
-              {!sales.length && <tr><td colSpan={6} className="ow-empty">{empty ? 'Select a product.' : loading ? 'Loading…' : 'No sales history.'}</td></tr>}
+              {!salesRows.length && <tr><td colSpan={6} className="ow-empty">{emptyText('No sales history.')}</td></tr>}
             </tbody>
           </table>
         </div>

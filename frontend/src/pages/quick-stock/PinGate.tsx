@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ApiError } from '../../services/apiClient'
 import { pinStorage } from './pinStorage'
 import { quickStockService } from './quickStockService'
+import { QuickStockLinks } from './QuickStockLinks'
 
 export function PinGate({ onUnlocked }: { onUnlocked: () => void }) {
   const [pin, setPin] = useState('')
@@ -27,7 +28,7 @@ export function PinGate({ onUnlocked }: { onUnlocked: () => void }) {
   return (
     <div className="qs-gate">
       <div className="qs-gate__card">
-        <div className="qs-gate__title">Quick Stock</div>
+        <div className="qs-gate__title">NexTech Quick Stock</div>
         <div className="qs-gate__sub">Enter the passcode to continue</div>
         <input
           className="qs-gate__input"
@@ -45,6 +46,7 @@ export function PinGate({ onUnlocked }: { onUnlocked: () => void }) {
         </button>
         <div className="qs-gate__error">{error}</div>
       </div>
+      <QuickStockLinks />
     </div>
   )
 }

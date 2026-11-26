@@ -11,7 +11,7 @@ pending write-back rows, which builder.py's replace step waits to drain
 first.
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CREATE_SQL = """
 PRAGMA journal_mode = WAL;
@@ -74,6 +74,35 @@ CREATE TABLE IF NOT EXISTS export_state (
     product_code    TEXT NOT NULL PRIMARY KEY,
     exported        INTEGER NOT NULL DEFAULT 0,
     exported_at      TEXT
+);
+
+-- Schema v3: what the Procurement workspace's By Supplier / Live Stock /
+-- All products / compare card need, so the store PC can serve them from its
+-- downloaded copy instead of re-running the slow PurchaseTrans queries on HO.
+-- workspace_rows: one API-shaped row per product (every status -- the app
+-- overlays live status from /orders/{store}/line-states), JSON exactly as
+-- repository.all_open_orderables returns it, incl. the last-offer columns.
+CREATE TABLE IF NOT EXISTS workspace_rows (
+    product_code    TEXT NOT NULL PRIMARY KEY,
+    row_json        TEXT NOT NULL
+);
+
+-- Every real SupplierCode that ever supplied the product (PurchaseTrans,
+-- InvoiceSeries <> 'TI') -- By Supplier's "History" mode filter.
+CREATE TABLE IF NOT EXISTS product_suppliers (
+    product_code    TEXT NOT NULL,
+    supplier_code   TEXT NOT NULL,
+    PRIMARY KEY (product_code, supplier_code)
+);
+
+-- Best-stocked SupplierStock line per (product, SupplierCode) -- Live Stock
+-- mode and the compare card. Refreshed on its own (builder.
+-- refresh_supplier_stock) whenever SupplierStock changes after the build.
+CREATE TABLE IF NOT EXISTS supplier_stock (
+    product_code    TEXT NOT NULL,
+    supplier_code   TEXT NOT NULL,
+    line_json       TEXT NOT NULL,
+    PRIMARY KEY (product_code, supplier_code)
 );
 
 -- One row, identifies which order this cache file is for and the cache's

@@ -19,6 +19,8 @@ type ColumnKey =
   | 'productCode'
   | 'sublocation'
   | 'productName'
+  | 'supplier'
+  | 'unit'
   | 'totalStock'
   | 'batchStock'
   | 'countedStock'
@@ -40,6 +42,8 @@ const COLUMNS: Array<{
   { header: 'Product Code', key: 'productCode', minWidth: 8.3, maxWidth: 10, alignment: { horizontal: 'left', vertical: 'middle' }, numFmt: '@' },
   { header: 'Sublocation', key: 'sublocation', minWidth: 8.4, maxWidth: 10, alignment: { horizontal: 'left', vertical: 'middle' } },
   { header: 'Product Name', key: 'productName', minWidth: 21.9, maxWidth: 24, alignment: { horizontal: 'left', vertical: 'middle', wrapText: true } },
+  { header: 'Supplier', key: 'supplier', minWidth: 14, maxWidth: 20, alignment: { horizontal: 'left', vertical: 'middle' } },
+  { header: 'Unit', key: 'unit', minWidth: 6, maxWidth: 10, alignment: { horizontal: 'center', vertical: 'middle' } },
   { header: 'Total Stock', key: 'totalStock', minWidth: 4.6, maxWidth: 6, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
   { header: 'Stock', key: 'batchStock', minWidth: 4.3, maxWidth: 6, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
   { header: 'Counted Stock', key: 'countedStock', minWidth: 5.3, maxWidth: 7, alignment: { horizontal: 'right', vertical: 'middle' }, numFmt: '0' },
@@ -97,6 +101,8 @@ export async function exportStockCheckExcel({
           productCode: r.product_code ?? '',
           sublocation: r.sublocation ?? '',
           productName: (r.product_name ?? '') + (product.nonMoving ? ' (NM)' : ''),
+          supplier: r.supplier_name ?? r.supplier_code ?? '',
+          unit: r.unit_description ?? '',
           totalStock: r.total_stock,
           batchStock: r.batch_stock,
           countedStock: null,
@@ -121,7 +127,7 @@ export async function exportStockCheckExcel({
       })
       const endRow = ws.rowCount
       if (endRow > startRow) {
-        for (const key of ['productCode', 'sublocation', 'productName', 'totalStock', 'pday', 'sday'] as ColumnKey[]) {
+        for (const key of ['productCode', 'sublocation', 'productName', 'supplier', 'unit', 'totalStock', 'pday', 'sday'] as ColumnKey[]) {
           for (let row = startRow; row <= endRow; row += 1) {
             styleCell(ws.getCell(row, colIndex(key)), key)
           }
