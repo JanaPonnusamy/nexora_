@@ -215,7 +215,7 @@
 .lo-btn-primary {
   border-color: var(--bs-primary);
   background: var(--bs-primary);
-  color: #fff;
+  color: var(--nx-text-on, #fff);
 }
 
 .lo-btn-danger {

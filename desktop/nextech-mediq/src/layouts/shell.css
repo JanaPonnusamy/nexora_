@@ -628,7 +628,8 @@
   border: 1px solid var(--ntm-border);
   border-radius: 4px;
   padding: 1px 5px;
-  color: var(--ntm-text-muted);
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-secondary);
 }
 
 .ntm-theme-trigger {
@@ -1389,7 +1390,7 @@
 
 .ntm-button--primary {
   background: var(--ntm-accent, #2563eb);
-  color: #fff;
+  color: var(--nx-text-on, #fff);
   border: none;
   font-weight: 600;
 }
@@ -1486,3 +1487,43 @@
 
 .ntm-mail-settings__status.is-ok { color: var(--ntm-success, #15803d); }
 .ntm-mail-settings__status.is-error { color: var(--ntm-danger, #b91c1c); }
+
+/* Bootstrap's outline buttons and muted text keep their light-theme greys in
+   data-bs-theme="dark", which disappear on the dark glass surfaces. Re-point
+   them at the active theme's own text tokens. */
+:root[data-bs-theme='dark'] .btn-outline-secondary {
+  --bs-btn-color: var(--ntm-text-secondary);
+  --bs-btn-border-color: var(--ntm-border);
+  --bs-btn-hover-bg: var(--ntm-elevated);
+  --bs-btn-hover-color: var(--ntm-text-primary);
+  --bs-btn-hover-border-color: var(--ntm-border);
+  --bs-btn-disabled-color: var(--ntm-text-muted);
+}
+
+:root[data-bs-theme='dark'] .btn-outline-success {
+  --bs-btn-color: var(--ntm-success);
+  --bs-btn-border-color: var(--ntm-success);
+  --bs-btn-hover-bg: var(--ntm-success);
+  --bs-btn-hover-color: var(--ntm-deep-navy);
+  --bs-btn-disabled-color: var(--ntm-success);
+  --bs-btn-disabled-border-color: var(--ntm-success);
+}
+
+:root[data-bs-theme='dark'] .btn-outline-primary {
+  --bs-btn-color: var(--nx-accent-ink, var(--ntm-accent-2));
+  --bs-btn-border-color: var(--nx-accent-ink, var(--ntm-accent-2));
+  --bs-btn-hover-bg: var(--ntm-accent-2);
+  --bs-btn-hover-color: var(--ntm-deep-navy);
+  --bs-btn-disabled-color: var(--nx-accent-ink, var(--ntm-accent-2));
+  --bs-btn-disabled-border-color: var(--nx-accent-ink, var(--ntm-accent-2));
+}
+
+:root[data-bs-theme='dark'] .text-secondary,
+:root[data-bs-theme='dark'] .text-muted {
+  color: var(--ntm-text-muted) !important;
+}
+
+:root[data-bs-theme='dark'] .btn.btn-sm:disabled,
+:root[data-bs-theme='dark'] .btn-outline-secondary:disabled {
+  opacity: 0.6;
+}

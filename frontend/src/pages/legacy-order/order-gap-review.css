@@ -104,7 +104,7 @@
 
 .ogr-seg button.active {
   background: var(--bs-primary);
-  color: #fff;
+  color: var(--nx-text-on, #fff);
 }
 
 .ogr-seg-count {

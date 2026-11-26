@@ -26,6 +26,8 @@
 .lgo-count.lgo-run { color: var(--ntm-bright-teal); border-color: var(--ntm-teal); }
 .lgo-count.lgo-ok { color: var(--ntm-success); }
 .lgo-count.lgo-warn { color: var(--ntm-warning); }
+:root[data-bs-theme='light'] .lgo-count.lgo-warn, :root[data-bs-theme='light'] .lgo-warn { color: #b45309; }
+:root[data-theme='aurora-light'] .lgo-chip.active { color: #fff; }
 .lgo-count.lgo-bad { color: var(--ntm-error); }
 
 .lgo-bar {

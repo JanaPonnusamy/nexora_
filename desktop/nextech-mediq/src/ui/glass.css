@@ -137,7 +137,7 @@
   border: 1px solid var(--ntm-border);
 }
 
-.ntm-glass-badge--info { color: var(--ntm-accent); }
+.ntm-glass-badge--info { color: var(--nx-accent-ink, var(--ntm-accent)); }
 .ntm-glass-badge--ok { color: var(--ntm-success); }
 .ntm-glass-badge--warn { color: var(--ntm-warning); }
 

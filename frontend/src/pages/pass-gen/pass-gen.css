@@ -77,7 +77,7 @@
 .pg-chip.is-on {
   background: var(--bs-primary);
   border-color: var(--bs-primary);
-  color: #fff;
+  color: var(--nx-text-on, #fff);
 }
 
 .pg-chip:disabled {

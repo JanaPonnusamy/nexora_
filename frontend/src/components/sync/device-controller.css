@@ -89,7 +89,7 @@
   color: var(--sx-text); font-size: 0.85rem; max-width: 240px;
 }
 .rt-tab--active { border-color: var(--sx-accent); background: var(--sx-accent-soft); font-weight: 600; }
-.rt-tab--new { border-style: dashed; color: var(--sx-accent); }
+.rt-tab--new { border-style: dashed; color: var(--sx-accent-ink); }
 .rt-tab__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rt-tab__x { background: none; border: 0; color: var(--sx-muted); font-size: 1rem; line-height: 1; padding: 0 0.1rem; cursor: pointer; }
 .rt-tab__x:hover { color: var(--sx-danger); }

@@ -1798,7 +1798,7 @@
 .pm-totals__v { font-size: 16px; font-weight: 800; color: var(--bs-primary, #4f46e5); font-variant-numeric: tabular-nums; }
 /* Footer stat chips: Total Products · Current Row · Pending Review · Filter · Value */
 .pm-stat { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1.2; }
-.pm-stat__k { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: #94a3b8; }
+.pm-stat__k { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--bs-secondary-color, #64748b); }
 .pm-stat__v { font-size: 13px; font-weight: 800; color: var(--bs-body-color, #0f172a); font-variant-numeric: tabular-nums; }
 .pm-stat__v--warn { color: #b45309; }
 .pm-stat--value { margin-left: auto; }

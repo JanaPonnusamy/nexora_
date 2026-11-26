@@ -179,7 +179,7 @@
    and reusing this page's own --qs-* tokens rather than new hex values. */
 .qs-rowlabel--grid,     .qs-cell--grid     { --qs-sec-head: var(--qs-bg); --qs-sec-fg: var(--qs-muted); --qs-sec-label: #e2e8f0; --qs-sec-label-fg: #334155; }
 .qs-rowlabel--chart,    .qs-cell--chart    { --qs-sec-head: var(--qs-bg); --qs-sec-fg: var(--qs-muted); --qs-sec-label: #e2e8f0; --qs-sec-label-fg: #334155; }
-.qs-rowlabel--purchase, .qs-cell--purchase { --qs-sec-head: var(--qs-accent-soft); --qs-sec-fg: var(--qs-accent); --qs-sec-label: #bfdbfe; --qs-sec-label-fg: #1e40af; }
+.qs-rowlabel--purchase, .qs-cell--purchase { --qs-sec-head: var(--qs-accent-soft); --qs-sec-fg: var(--nx-accent-ink, var(--qs-accent)); --qs-sec-label: #bfdbfe; --qs-sec-label-fg: #1e40af; }
 .qs-rowlabel--sales,    .qs-cell--sales    { --qs-sec-head: #dcfce7; --qs-sec-fg: #166534; --qs-sec-label: #bbf7d0; --qs-sec-label-fg: #166534; }
 
 .qs-corner,
@@ -372,7 +372,7 @@
 
 .qs-toggle-purchase {
   font-size: 0.8rem;
-  color: var(--qs-accent);
+  color: var(--nx-accent-ink, var(--qs-accent));
   background: transparent;
   border: 1px solid var(--qs-accent);
   border-radius: 7px;
