@@ -81,3 +81,31 @@
 :root .pw-whyd-win {
   font-size: 11px;
 }
+
+/* All HOs: badge text was hardcoded dark navy / white on a theme colour, which
+   vanished on the light themes' dark teal and on the dark themes' coral. Pair the
+   accent fill with the theme's own on-accent text, and use fixed strong colours for
+   the "down" state and the warning text. */
+:root .hof-ho-badge {
+  background: var(--nx-accent);
+  color: var(--nx-text-on);
+}
+
+:root .hof-ho-badge--down {
+  background: #b91c1c;
+  color: #fff;
+}
+
+:root .hof-health-card .rta-warn,
+:root .hof-error-chip {
+  color: var(--ntm-warning);
+}
+
+:root[data-bs-theme='light'] .hof-health-card .rta-warn,
+:root[data-bs-theme='light'] .hof-error-chip {
+  color: #92400e;
+}
+
+:root[data-bs-theme='light'] .hof-health-card--down {
+  background: rgba(185, 28, 28, 0.07);
+}
