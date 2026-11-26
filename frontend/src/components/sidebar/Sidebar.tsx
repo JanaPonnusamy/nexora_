@@ -69,12 +69,15 @@ export function Sidebar({ isMobileOpen, onNavigate }: SidebarProps) {
     if (open) setOpen(null)
   }
 
-  // A pinned flyout is dismissed by clicking anywhere outside it.
+  // A pinned flyout is dismissed by clicking anywhere outside it. On mobile the
+  // children render inline in `.app-nav__sublist`; a tap fires mousedown before
+  // click, so treating the sublist as "outside" unmounted the link before its
+  // click landed and sub-items could never be opened from the drawer.
   useEffect(() => {
     if (!open?.pinned) return
     const onDown = (event: MouseEvent) => {
       const target = event.target as Element
-      if (!target.closest?.('.nav-flyout') && !target.closest?.('.app-nav__row')) close()
+      if (!target.closest?.('.nav-flyout') && !target.closest?.('.app-nav__item, .app-nav__row')) close()
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)

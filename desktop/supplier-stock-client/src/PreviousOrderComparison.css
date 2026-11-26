@@ -1,0 +1,169 @@
+/* Previous Order Comparison -- scoped styles using this app's existing
+   --nx-* theme tokens (see styles.css :root), matching the look of
+   LegacyOrderGeneration's lgo-* screen rather than introducing a new
+   visual language. */
+.legacy-order { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+.legacy-order .lo-header h1 { margin: 0 0 4px; font-size: 1.25rem; color: var(--nx-text); }
+.legacy-order .lo-note { margin: 0; color: var(--nx-text-muted); font-size: 0.85rem; }
+.legacy-order .lo-error {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--nx-danger-sunk); color: var(--nx-danger-ink);
+  border: 1px solid var(--nx-danger); border-radius: 8px; padding: 8px 12px;
+}
+.legacy-order .lo-error button { background: none; border: none; color: inherit; cursor: pointer; font-size: 1rem; }
+.legacy-order .lo-success {
+  margin-top: 10px; background: var(--nx-success-sunk); color: var(--nx-success-ink);
+  border: 1px solid var(--nx-success); border-radius: 8px; padding: 8px 12px; font-size: 0.85rem;
+}
+.legacy-order .lo-card {
+  background: var(--nx-surface); border: 1px solid var(--nx-rule);
+  border-radius: 10px; padding: 16px;
+}
+.legacy-order .lo-compare-toprow { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.legacy-order .lo-compare-toprow label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: var(--nx-text-soft); }
+.legacy-order .lo-compare-toprow .lo-grow { flex: 1; min-width: 200px; }
+.legacy-order .lo-compare-toprow select,
+.legacy-order .lo-compare-toprow input {
+  padding: 6px 8px; border: 1px solid var(--nx-rule-strong); border-radius: 6px;
+  background: var(--nx-surface); color: var(--nx-text);
+}
+.legacy-order .lo-compare-grid { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.legacy-order .lo-order-tile {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 8px 12px; border: 1px solid var(--nx-rule); border-radius: 8px;
+  background: var(--nx-surface-sunk); cursor: pointer; text-align: left;
+}
+.legacy-order .lo-order-tile:hover { background: var(--nx-surface-hover); }
+.legacy-order .lo-order-tile.is-selected { border-color: var(--nx-accent); background: var(--nx-accent-sunk); }
+.legacy-order .lo-order-tile small { display: block; color: var(--nx-text-muted); }
+.legacy-order .lo-empty { color: var(--nx-text-muted); font-size: 0.85rem; padding: 12px 0; }
+.legacy-order .lo-supplier-area { margin-top: 14px; border-top: 1px solid var(--nx-rule); padding-top: 14px; }
+.legacy-order .lo-compare-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+.legacy-order .lo-compare-toolbar small { display: block; color: var(--nx-text-muted); }
+.legacy-order .lo-op-settings-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.legacy-order .lo-btn {
+  padding: 6px 12px; border: 1px solid var(--nx-rule-strong); border-radius: 6px;
+  background: var(--nx-surface); color: var(--nx-text); cursor: pointer; font-size: 0.85rem;
+}
+.legacy-order .lo-btn:hover:not(:disabled) { background: var(--nx-surface-hover); }
+.legacy-order .lo-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.legacy-order .lo-btn-primary { background: var(--nx-accent); color: var(--nx-accent-on); border-color: var(--nx-accent); }
+.legacy-order .lo-btn-primary:hover:not(:disabled) { background: var(--nx-accent-hover); }
+.legacy-order .lo-btn-danger { background: var(--nx-danger); color: var(--nx-text-on); border-color: var(--nx-danger); }
+.legacy-order .lo-supplier-grid { display: flex; flex-direction: column; gap: 4px; }
+.legacy-order .lo-supplier-head {
+  display: grid; grid-template-columns: 1fr 90px 90px; font-size: 0.75rem;
+  color: var(--nx-text-muted); padding: 4px 12px;
+}
+.legacy-order .lo-supplier-row {
+  display: grid; grid-template-columns: 1fr 90px 90px; align-items: center;
+  padding: 8px 12px; border: 1px solid var(--nx-rule); border-radius: 8px;
+  background: var(--nx-surface-sunk); cursor: pointer; text-align: left;
+}
+.legacy-order .lo-supplier-row:hover { background: var(--nx-surface-hover); }
+.legacy-order .lo-supplier-row.is-selected { border-color: var(--nx-accent); background: var(--nx-accent-sunk); }
+.legacy-order .lo-supplier-row small { display: block; color: var(--nx-text-muted); }
+.legacy-order .lo-product-count { text-align: center; }
+.legacy-order .lo-review-link { color: var(--nx-accent-ink); font-size: 0.8rem; }
+.legacy-order .lo-activity { margin-top: 0; }
+.legacy-order .lo-review-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+.legacy-order .lo-review-header-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ----- review overlay: opens as a floating card above the supplier list ----- */
+.legacy-order .lo-review-overlay {
+  width: min(980px, 94vw); max-height: 88vh; overflow-y: auto;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.35);
+}
+.legacy-order .lo-eyebrow { display: block; font-size: 0.7rem; text-transform: uppercase; color: var(--nx-text-muted); letter-spacing: 0.04em; }
+.legacy-order .lo-review-header h3 { margin: 2px 0; }
+.legacy-order .lo-review-header p { margin: 0; color: var(--nx-text-muted); font-size: 0.8rem; }
+.legacy-order .lo-chip { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; background: var(--nx-surface-sunk); color: var(--nx-text-soft); }
+.legacy-order .lo-chip-running { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.legacy-order .lo-chip-success { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.legacy-order .lo-chip-partial { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.legacy-order .lo-chip-danger { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.legacy-order .lo-chip-neutral { background: var(--nx-surface-sunk); color: var(--nx-text-muted); }
+.legacy-order .lo-review-scroll { max-height: 420px; overflow-y: auto; margin-bottom: 10px; }
+.legacy-order .lo-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+.legacy-order .lo-table th, .legacy-order .lo-table td { padding: 5px 8px; border-bottom: 1px solid var(--nx-rule); text-align: left; }
+.legacy-order .lo-table th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--nx-text-muted); font-weight: 600; }
+.legacy-order .lo-table .lo-num { text-align: right; }
+.legacy-order .lo-cell-sub { display: block; color: var(--nx-text-muted); font-size: 0.72rem; }
+.legacy-order .lo-review-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.legacy-order .lo-review-footer small { display: block; color: var(--nx-text-muted); }
+.legacy-order .lo-drawer-backdrop {
+  position: fixed; inset: 0; background: var(--nx-overlay); display: flex;
+  align-items: center; justify-content: center; z-index: 50;
+}
+.legacy-order .lo-drawer {
+  background: var(--nx-surface); border-radius: 12px; padding: 0; width: min(560px, 92vw);
+  max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+.legacy-order .lo-drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--nx-rule); }
+.legacy-order .lo-drawer-head h3 { margin: 0; font-size: 1rem; }
+.legacy-order .lo-icon-btn { background: none; border: none; font-size: 1.1rem; cursor: pointer; color: var(--nx-text-muted); }
+.legacy-order .lo-drawer-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+
+/* ----- compact in-grid chip + qty-diff ----- */
+.legacy-order .lo-review-table { table-layout: fixed; width: 100%; }
+.legacy-order .lo-review-table th:nth-child(2), .legacy-order .lo-review-table td:nth-child(2),
+.legacy-order .lo-review-table th:nth-child(3), .legacy-order .lo-review-table td:nth-child(3) { width: 15%; }
+.legacy-order .lo-review-table th:nth-child(4), .legacy-order .lo-review-table td:nth-child(4) { width: 12%; }
+.legacy-order .lo-review-table th:nth-child(5), .legacy-order .lo-review-table td:nth-child(5) { width: 20%; }
+.legacy-order .lo-review-table th:nth-child(6), .legacy-order .lo-review-table td:nth-child(6) { width: 4.5rem; }
+.legacy-order .lo-review-table td:nth-child(1) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legacy-order .lo-review-table .lo-chip { padding: 1px 6px; font-size: 0.6rem; font-weight: 600; }
+.legacy-order .lo-review-table tbody tr.is-selected > td { background: var(--nx-accent-sunk); box-shadow: inset 3px 0 0 var(--nx-accent); }
+.legacy-order .lo-qty-diff { font-variant-numeric: tabular-nums; font-weight: 600; }
+.legacy-order .lo-qty-diff.is-zero { opacity: 0.55; font-weight: 400; }
+.legacy-order .lo-qty-diff.is-up { color: var(--nx-success-ink); }
+.legacy-order .lo-qty-diff.is-down { color: var(--nx-danger-ink); }
+
+/* ----- product review detail card ----- */
+.legacy-order .lo-product-card {
+  margin: 10px 0 0; border: 1px solid var(--nx-rule);
+  border-radius: 10px; overflow: hidden; background: var(--nx-surface);
+}
+.legacy-order .lo-product-card-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 10px 14px; background: var(--nx-surface-sunk); border-bottom: 1px solid var(--nx-rule);
+}
+.legacy-order .lo-product-card-head strong { display: block; font-size: 0.88rem; }
+.legacy-order .lo-product-card-head small { color: var(--nx-text-muted); }
+
+/* 4-group strip: a left accent bar names each group without stacking a
+   second tinted background on top of the status chip colors already used. */
+.legacy-order .lo-group-grid { display: grid; grid-template-columns: repeat(4, minmax(170px, 1fr)); }
+.legacy-order .lo-group { padding: 11px 14px; border-right: 1px solid var(--nx-rule); border-left: 3px solid transparent; }
+.legacy-order .lo-group:last-child { border-right: none; }
+.legacy-order .lo-group h4 {
+  margin: 0 0 8px; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--nx-text-muted);
+}
+.legacy-order .lo-group .lo-meta { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.legacy-order .lo-group .lo-meta > div { display: flex; flex-direction: column; gap: 2px; }
+.legacy-order .lo-group .lo-meta dt { font-size: 0.64rem; }
+.legacy-order .lo-group .lo-meta dd { font-size: 0.82rem; }
+.legacy-order .lo-group-yesterday { border-left-color: var(--nx-text-muted); }
+.legacy-order .lo-group-activity { border-left-color: var(--nx-info, #0e7490); }
+.legacy-order .lo-group-current { border-left-color: var(--nx-accent); }
+.legacy-order .lo-group-decision { display: flex; flex-direction: column; background: var(--nx-surface-sunk); }
+.legacy-order .lo-group-decision-success { border-left-color: var(--nx-success); }
+.legacy-order .lo-group-decision-partial { border-left-color: var(--nx-warning); }
+.legacy-order .lo-group-decision-danger { border-left-color: var(--nx-danger); }
+.legacy-order .lo-group-decision-neutral { border-left-color: var(--nx-text-muted); }
+.legacy-order .lo-decision-remark {
+  margin: 9px 0 0; padding-top: 8px; border-top: 1px solid var(--nx-rule);
+  font-size: 0.78rem; line-height: 1.45; color: var(--nx-text-soft);
+}
+
+@media (max-width: 960px) {
+  .legacy-order .lo-group-grid { grid-template-columns: 1fr 1fr; }
+  .legacy-order .lo-group:nth-child(2n) { border-right: none; }
+  .legacy-order .lo-group:nth-child(-n+2) { border-bottom: 1px solid var(--nx-rule); }
+}
+@media (max-width: 600px) {
+  .legacy-order .lo-group-grid { grid-template-columns: 1fr; }
+  .legacy-order .lo-group { border-right: none; border-bottom: 1px solid var(--nx-rule); }
+  .legacy-order .lo-group:last-child { border-bottom: none; }
+}

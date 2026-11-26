@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from './api/client.js';
 import { AbnormalMark, AbnormalSalesStrip, useAbnormalSales } from './abnormalSales.jsx';
-import { PW_DOCKS, PW_PANEL_DEFS, pwAssignRefusal, pwColumnOrder, pwCompareSuppliers, pwColumnWidth, pwExportGuard, pwFinalizePlan, pwGrnForSelection, pwKey, pwNormalizePanels, pwOfferRemark, pwOfferText, pwQtyKeyAction, pwSupplierLine, pwWholeQty } from './procurementWorkspaceView.js';
+import { PW_DOCKS, PW_PANEL_DEFS, pwAssignRefusal, pwCollapseRows, pwColumnOrder, pwCompareSuppliers, pwColumnWidth, pwExportGuard, pwFinalizePlan, pwGrnForSelection, pwKey, pwNormalizePanels, pwOfferRemark, pwOfferText, pwQtyKeyAction, pwSupplierLine, pwWholeQty } from './procurementWorkspaceView.js';
 import { SuggestionPanel, invalidateProductSuggestions, useProductSuggestions } from './suggestionPanel.jsx';
 import { StoreTrendsPanel } from './storeTrends.jsx';
 import { SupplierCompareBadge, SupplierCompareCard, useSupplierCompare } from './supplierCompare.jsx';
@@ -13,10 +13,23 @@ import { OwBulkAssign } from './bulkAssign.jsx';
 import { roEnter, siteAvailable, siteCheckOne, siteKind, siteScript } from './siteCheck.js';
 import { WhatsAppSendDialog, storeWhatsAppAvailable } from './storeWhatsApp.jsx';
 import { SupplierWhatsAppDialog, useSupplierWhatsApp } from './supplierWhatsApp.jsx';
+import { OrderCacheChip } from './orderCacheLocal.jsx';
+import { orderCache } from './orderCacheSync.js';
+import OrderMailSentCard from './OrderMailSentCard.jsx';
+import { OrderWhyCard, OrderWhyDialog, invalidateOrderWhy, useOrderWhy } from './OrderWhy.jsx';
 
 // Monthly Trend: look back 6 calendar months, draw the latest 4 that have
 // data, or 5 when the detail column is wide enough.
 const PW_TREND_FIT = { fetch: 6, min: 4, max: 5 };
+
+// Mirrors App.jsx's isSuperAdmin (this file never imports App.jsx back, see
+// PROCUREMENT_UI comment) -- used only to lock the export card's file
+// type/columns to the tenant's superadmin-set defaults for every other role.
+function pwIsSuperAdmin(session) {
+  const roles = session?.user?.roles || [];
+  const roleNames = roles.map((role) => String(role?.role_name || role?.role || '').toLowerCase().replace(/[^a-z]/g, ''));
+  return roleNames.some((name) => name.includes('superadmin') || name.includes('platformowner'));
+}
 
 // Procurement -- ONE workspace (owner ruling 2026-10-25): the Order
 // Workspace's model (legacy OrderNMC order via /api/legacy-order, its
@@ -260,6 +273,15 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   });
   const [platformStores, setPlatformStores] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  // Declared here (not nearer its other use further down) because an
+  // earlier useEffect's dependency array already references tenantId --
+  // dependency arrays are evaluated during render, so the const had to be
+  // readable before that point or it throws a temporal-dead-zone
+  // ReferenceError the moment this screen renders (found 2026-11-13 via
+  // live ERP-sidebar click-through testing; no existing test renders this
+  // component, so it had never been exercised before).
+  const platformStore = platformStores.find((s) => String(s.store_code || '').toUpperCase() === String(store).toUpperCase()) || null;
+  const tenantId = platformStore?.tenant_id || settings?.tenantId || session?.user?.tenant_id || '';
 
   // ---- process / data ----
   const [processKey, setProcessKey] = useState('qty');
@@ -277,6 +299,10 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [banner, setBanner] = useState('');
+  // Export & Mail: can the picked supplier be mailed + the centre success card.
+  const [mailInfo, setMailInfo] = useState(null);
+  const [mailSent, setMailSent] = useState(null);
+  const closeMailSent = useCallback(() => setMailSent(null), []);
   const [workflow, setWorkflow] = useState(null);
   const [orderHeader, setOrderHeader] = useState(null);
   const [reloadTick, setReloadTick] = useState(0);
@@ -287,6 +313,14 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   const [stickyKeys, setStickyKeys] = useState(() => new Set());
   const [removedKeys, setRemovedKeys] = useState(() => new Set());
   const [savingKey, setSavingKey] = useState(null);
+  // Qty Check / skip saves the HO did not take (connection lost): key ->
+  // { store, code, name, kind: 'qty'|'skip', value, mode }. The grid keeps
+  // showing the operator's value, they retry in the background, and export /
+  // finalize wait until every one is saved -- otherwise the HO's OLD qty
+  // would be assigned and sent to the supplier.
+  const [unsaved, setUnsaved] = useState({});
+  const unsavedRef = useRef(unsaved);
+  unsavedRef.current = unsaved;
   const [assigningKey, setAssigningKey] = useState(null);
   const [selectedKey, setSelectedKey] = useState(null);
 
@@ -357,6 +391,8 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   const [exportSettings, setExportSettings] = useState(exportKit.defaults);
   const [exportOpen, setExportOpen] = useState(false);
   const [splitCount, setSplitCount] = useState(0);
+  const [exportDefaults, setExportDefaults] = useState(null);
+  const canEditExportLock = pwIsSuperAdmin(session);
   const [exporting, setExporting] = useState(false);
   const [removingUnavailable, setRemovingUnavailable] = useState(false);
   const [lastExport, setLastExport] = useState(null);
@@ -386,6 +422,27 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       setExportSettings(loaded);
     });
   }, [exportKit]);
+  useEffect(() => {
+    if (!tenantId) return;
+    let live = true;
+    api.procurementExportDefaults(tenantId, session)
+      .then((d) => { if (live) setExportDefaults(d?.locked ? d : null); })
+      .catch(() => { if (live) setExportDefaults(null); });
+    return () => { live = false; };
+  }, [tenantId, session]);
+  // A non-super-admin with tenant defaults set is locked to them: force the
+  // file type/columns onto exportSettings (rows-per-file stays untouched).
+  useEffect(() => {
+    if (!exportDefaults || canEditExportLock) return;
+    setExportSettings((cur) => {
+      const columns = { ...cur.columns };
+      exportKit.columnDefs.forEach((c) => { columns[c.key] = exportDefaults.columns.includes(c.key); });
+      const next = { ...cur, fileFormat: exportDefaults.file_format, columns };
+      exportKit.write(next);
+      return next;
+    });
+  }, [exportDefaults, canEditExportLock, exportKit]);
+  const exportLocked = Boolean(exportDefaults) && !canEditExportLock;
   const updateExportSettings = (patch) => setExportSettings((cur) => {
     const next = { ...cur, ...patch };
     exportKit.write(next);
@@ -411,8 +468,6 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       .catch((e) => setError(e.message));
     api.listStores(session).then((list) => setPlatformStores(pwAsArray(list))).catch(() => setPlatformStores([]));
   }, [session]);
-  const platformStore = platformStores.find((s) => String(s.store_code || '').toUpperCase() === String(store).toUpperCase()) || null;
-  const tenantId = platformStore?.tenant_id || settings?.tenantId || session?.user?.tenant_id || '';
 
   // The store's legacy supplier list: the By Supplier picker AND the card ->
   // UnifiedSupplierCODE resolution.
@@ -498,12 +553,22 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
     if (view === 'qty') req = api.legacyQtyCheckRows(store, session);
     else if (view === 'pending') req = api.legacyPendingOrderRows(store, session);
     else if (view === 'supplier') {
-      if (supplierMode === 'all' || supplierMode === 'site') req = api.legacyAllOpenOrders(store, session);
-      else if (supplier) req = api.legacyOrdersBySupplier(store, supplier.supplier_code, supplierMode, session);
+      // Served from this PC's order cache when it has one (orderCacheLocal.jsx), else live SQL.
+      if (supplierMode === 'all' || supplierMode === 'site') req = orderCache.allOpen(store, () => api.legacyAllOpenOrders(store, session));
+      else if (supplier) {
+        const { supplier_code: code } = supplier;
+        req = orderCache.bySupplier(store, code, supplierMode, () => api.legacyOrdersBySupplier(store, code, supplierMode, session));
+      }
     } else if (supplier) req = api.legacyAssignedOrders(store, supplier.supplier_code, session);
     if (!req) { setLoading(false); return undefined; }
     req
-      .then((r) => { if (!cancelled) setRows(pwAsArray(r).map((row) => pwNorm(view, row))); })
+      .then((r) => {
+        if (cancelled) return;
+        setRows(pwCollapseRows(pwAsArray(r).map((row) => pwNorm(view, row))));
+        // A reload must not hide a qty the HO has not saved yet.
+        const pending = Object.entries(unsavedRef.current).filter(([, u]) => u.store === store && u.kind === 'qty');
+        if (pending.length) setEdits(Object.fromEntries(pending.map(([key, u]) => [key, u.value])));
+      })
       .catch((e) => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -581,6 +646,17 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   const supplierView = view === 'supplier' || view === 'assigned';
   const compare = useSupplierCompare({ store, enabled: true, reloadKey: reloadTick, session });
   const currentCodes = useMemo(() => (supplier ? String(supplier.supplier_code).split(',').map((c) => c.trim()).filter(Boolean) : []), [supplier]);
+  // "Last Stock Update" under Live Stock: newest SupplierStock import time
+  // among the picked supplier's compare lines (each import stamps them all).
+  const stockUpdatedAt = useMemo(() => {
+    let latest = '';
+    for (const lines of Object.values(compare.byCode)) {
+      for (const l of lines || []) {
+        if (l.updated_at && l.updated_at > latest && currentCodes.includes(l.supplier_code)) latest = l.updated_at;
+      }
+    }
+    return latest;
+  }, [compare.byCode, currentCodes]);
   // The picked supplier's stock + offer for a row: Live Stock rows carry
   // their own SupplierStock line; other views look it up. null = the
   // supplier does not list the product (no stock).
@@ -961,6 +1037,54 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
     e.stopPropagation();
   }
 
+  function rememberUnsaved(row, entry, e) {
+    setUnsaved((cur) => ({ ...cur, [row.key]: { store, code: row.code, name: pwCleanName(row.name) || `#${row.key}`, ...entry } }));
+    if (entry.kind === 'qty') setEdits((cur) => ({ ...cur, [row.key]: entry.value }));
+    setError(`NOT SAVED: ${pwCleanName(row.name) || row.key} (${e.message}). Your qty is kept and retried automatically; export waits until it is saved.`);
+  }
+  function forgetUnsaved(key) {
+    setUnsaved((cur) => { if (!(key in cur)) return cur; const n = { ...cur }; delete n[key]; return n; });
+  }
+  // Save every pending change again; resolves to how many are still not saved.
+  const flushingRef = useRef(null);
+  function flushUnsaved() {
+    if (flushingRef.current) return flushingRef.current;
+    flushingRef.current = (async () => {
+      let left = 0;
+      for (const [key, u] of Object.entries(unsavedRef.current)) {
+        try {
+          if (u.kind === 'skip') await api.legacySkipProduct(u.store, u.code, u.mode, session);
+          else await api.legacyUpdateQtyCheck(u.store, u.code, u.value, session);
+          if (u.store === store) {
+            patchRow(key, u.kind === 'skip' ? { qty: 0, qtycheck: 1, skipReason: u.mode } : { qty: u.value, qtycheck: 1 });
+            addTo(setReviewedHere, key);
+            dropEdit(key);
+          }
+          forgetUnsaved(key);
+        } catch {
+          left += 1;
+        }
+      }
+      if (!left) setError((cur) => (/^NOT SAVED|not saved on the HO/.test(String(cur || '')) ? '' : cur));
+      return left;
+    })().finally(() => { flushingRef.current = null; });
+    return flushingRef.current;
+  }
+  const unsavedCount = Object.keys(unsaved).length;
+  useEffect(() => {
+    if (!unsavedCount) return undefined;
+    const t = setInterval(() => { flushUnsaved(); }, 10000);
+    return () => clearInterval(t);
+  }, [unsavedCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Export / finalize must not run on the HO's old quantities.
+  async function unsavedBlocks(action) {
+    if (!Object.keys(unsavedRef.current).length) return false;
+    const left = await flushUnsaved();
+    if (!left) return false;
+    setError(`${left} qty change(s) are not saved on the HO yet (connection lost). ${action} stopped so the old qty is not used. Retrying every 10 s - or press "Retry now".`);
+    return true;
+  }
+
   // Qty Check commit (OrderManagement Qtycheck=1 + the qty), then optionally
   // move. Focus moves first; the save runs behind it (slow remote links).
   async function commitReviewed(row, value, nextIndex) {
@@ -973,9 +1097,10 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       addTo(setReviewedHere, row.key);
       addTo(setStickyKeys, row.key);
       dropEdit(row.key);
+      forgetUnsaved(row.key);
       return true;
     } catch (e) {
-      setError(e.message);
+      rememberUnsaved(row, { kind: 'qty', value }, e);
       return false;
     } finally {
       setSavingKey(null);
@@ -995,9 +1120,10 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
       addTo(setReviewedHere, row.key);
       addTo(setStickyKeys, row.key);
       dropEdit(row.key);
+      forgetUnsaved(row.key);
       return true;
     } catch (e) {
-      setError(e.message);
+      rememberUnsaved(row, { kind: 'skip', mode, value: 0 }, e);
       return false;
     } finally {
       setSavingKey(null);
@@ -1015,6 +1141,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
         await api.legacyUpdateOrderQty(store, row.code, Number(edited), session);
         patchRow(row.key, { qty: Number(edited) });
         dropEdit(row.key);
+        forgetUnsaved(row.key);
       }
       const res = await api.legacyAssignSupplier(store, row.code, sup.supplier_code, sup.supplier_name, session);
       if (view === 'assigned' && res.status !== 1) setRows((cur) => cur.filter((r) => r.key !== row.key));
@@ -1100,6 +1227,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
         patchRow(row.key, { qty: value, qtycheck: 1 });
         addTo(setReviewedHere, row.key);
         dropEdit(row.key);
+        forgetUnsaved(row.key);
       }
       const res = await api.legacyAssignSupplier(store, row.code, uni.supplier_code, uni.supplier_name, session);
       patchRow(row.key, { status: res.status, supplier: res.status === 1 ? uni.supplier_name : null, qtycheck: 1 });
@@ -1190,7 +1318,8 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   }, [store, selected?.key, decisionsShown, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- finalize / export / out-of-stock ----
-  function finalize(reopen) {
+  async function finalize(reopen) {
+    if (!reopen && await unsavedBlocks('Finalize')) return;
     const plan = pwFinalizePlan({
       store,
       reopen,
@@ -1208,9 +1337,22 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
     : workflow?.order_id != null ? String(workflow.order_id) : dateFolder);
   const exportExt = ['csv', 'xlsx'].includes(exportSettings.fileFormat) ? exportSettings.fileFormat : 'xls';
 
-  async function runExport() {
+  useEffect(() => {
+    setMailInfo(null);
+    if (!store || !supplier || !(view === 'supplier' || view === 'assigned')) return undefined;
+    let cancelled = false;
+    api.legacySupplierMailStatus(store, supplier.supplier_code, session)
+      .then((r) => { if (!cancelled) setMailInfo(r); })
+      .catch((e) => { if (!cancelled) setMailInfo({ ready: false, to: [], reason: e.message }); });
+    return () => { cancelled = true; };
+  }, [store, supplier, view, session]);
+
+  // mail: also send the exported file(s) to the supplier from the tenant
+  // mailbox (Export & Mail -- one click, the saved default export settings).
+  async function runExport({ mail = false } = {}) {
     const blocked = pwExportGuard({ needsSupplier: true, supplier });
     if (blocked) { setError(blocked); return; }
+    if (await unsavedBlocks('Export')) return;
     setExporting(true); setError('');
     try {
       const allProducts = view === 'supplier' && (supplierMode === 'all' || supplierMode === 'site');
@@ -1223,9 +1365,9 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
           ? visible.filter((r) => ['cart', 'available'].includes(site.marks[r.key]?.state)).map((r) => r.key)
           : visible.map((r) => r.key))
         : undefined;
-      const { blob, filename: backendFilename, exportedCount } = await api.legacyExportOrder(
+      const { blob, filename: backendFilename, exportedCount, billValue, mail: mailed } = await api.legacyExportOrder(
         store, supplier.supplier_code, supplier.supplier_name, mode, Number(splitCount) || 0, session,
-        { columns, fileFormat: exportSettings.fileFormat, orderNo, productCodes, allProducts, images: exportSettings.images, remarks: exportRemarks() },
+        { columns, fileFormat: exportSettings.fileFormat, orderNo, productCodes, allProducts, images: exportSettings.images, remarks: exportRemarks(), emailSupplier: mail },
       );
       const filename = `${exportKit.safeFileName(`${supplier.supplier_name} ${store}   ${dateFolder}`)}.${exportExt}`;
       const folderParts = [exportSettings.basePath, dateFolder, exportKit.safePathSegment(orderNo)];
@@ -1238,6 +1380,14 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
         title: `Send ${supplier.supplier_name} order on WhatsApp`, source: 'Order',
       } : null);
       setBanner(savedTo ? `Exported ${exportedCount} product(s) for ${supplier.supplier_name} → ${savedTo}` : `Exported ${exportedCount} product(s) for ${supplier.supplier_name}.`);
+      if (mailed?.status === 'SENT') {
+        setMailSent({
+          supplier: supplier.supplier_name, supplierCode: supplier.supplier_code, store, to: mailed.to,
+          files: mailed.files, products: exportedCount, billValue, orderNo, at: pwDateTime(new Date().toISOString()),
+        });
+      } else if (mailed) {
+        setError(`Exported, but the order was NOT mailed: ${mailed.message}`);
+      }
       setExportOpen(false);
       setReloadTick((t) => t + 1);
     } catch (e) {
@@ -1247,6 +1397,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
     }
   }
   async function runPendingExport() {
+    if (await unsavedBlocks('Export')) return;
     setExporting(true); setError('');
     try {
       const dateFolder = exportKit.dateFolder();
@@ -1423,7 +1574,8 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
             <span className="ow-qty-diff-slot"><PwQtyDiff from={row.org ?? 0} to={value} /></span>
             <input
               ref={(el) => { qtyRefs.current[index] = el; }}
-              className={`ow-qty pw-qty${edits[row.key] != null && Number(edits[row.key]) !== Number(row.qty) ? ' pw-qty--dirty' : ''}`}
+              className={`ow-qty pw-qty${edits[row.key] != null && Number(edits[row.key]) !== Number(row.qty) ? ' pw-qty--dirty' : ''}${unsaved[row.key] ? ' pw-qty--unsaved' : ''}`}
+              title={unsaved[row.key] ? 'NOT saved on the HO yet (connection lost) - retrying automatically' : undefined}
               type="number" min={0} step={1} inputMode="numeric"
               aria-label={`${pwCleanName(row.name) || `#${row.key}`} order quantity`}
               value={value}
@@ -1445,6 +1597,12 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
   }
 
   // ---- detail header facts ----
+  // Why this product is in the order (Product Summary) + its 90-day popup.
+  const whyLoader = useCallback((st, code) => api.legacyProductWhy(st, code, session), [session]);
+  const why = useOrderWhy(store, selected?.code ?? null, whyLoader);
+  const [whyOpen, setWhyOpen] = useState(false);
+  useEffect(() => { setWhyOpen(false); }, [selected?.key]);
+  useEffect(() => { invalidateOrderWhy(); }, [reloadTick, store]);
   const otherStores = suggestions.otherStores;
   const holding = otherStores.filter((s) => Number(s.stock) > 0).length + (Number(selected?.stock) > 0 ? 1 : 0);
   const latestCard = suggestions.suppliers.find((s) => s.tags?.includes('latest'));
@@ -1552,46 +1710,10 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
                           selected.unit,
                           selected.pack != null ? `Pack ${pwQty(selected.pack)}` : null,
                           suggestions.data ? `${holding}/${otherStores.length + 1} Stores` : null,
-                          latestCard?.ptr != null ? `Last ${pwRupees(latestCard.ptr)}` : null,
                         ].filter(Boolean).join(' • ')}
                       </span>
                     </div>
-                    {(() => {
-                      // Quantities, then the latest GRN's prices, as one tile grid.
-                      // GRN facts only once they belong to THIS product -- no
-                      // stale values from the previous row, no fake zeros.
-                      const grn = latestPurchase;
-                      const finalQty = edits[selected.key] ?? selected.qty;
-                      const changed = selected.org != null && Number(selected.org) !== Number(finalQty);
-                      const pct = (v) => (v == null || v === '' ? '—' : `${pwQty(v)}%`);
-                      return (
-                        <>
-                          <dl className="pw-facts pw-facts--tiles">
-                            <div><dt>Original</dt><dd>{pwQty(selected.org)}</dd></div>
-                            <div><dt>Final</dt><dd className={changed ? (Number(finalQty) > Number(selected.org) ? 'is-up' : 'is-down') : undefined}>{pwQty(finalQty)}</dd></div>
-                            <div><dt>Stock</dt><dd className={selected.stock != null && Number(selected.stock) <= 0 ? 'is-zero' : undefined}>{pwQty(selected.stock)}</dd></div>
-                            <div><dt>90d sales</dt><dd className="is-sales">{pwQty(selected.sls)}</dd></div>
-                            {selected.maxqty != null && <div><dt>Max sale</dt><dd>{pwQty(selected.maxqty)}</dd></div>}
-                            {selectedSup && <div><dt>Sup. stock</dt><dd>{pwQty(selectedSup.stock)}</dd></div>}
-                            {selectedSup?.offer && <div><dt>Sup. offer</dt><dd className="pw-soffer">{selectedSup.offer}</dd></div>}
-                            <div className="is-price" title="Latest GRN"><dt>Cost</dt><dd>{grn ? pwMoney(grn.cost) : '—'}</dd></div>
-                            <div className="is-price" title="Latest GRN"><dt>PTR</dt><dd>{grn ? pwMoney(grn.ptr) : '—'}</dd></div>
-                            <div className="is-price"><dt>MRP</dt><dd>{selected.mrp != null ? pwMoney(selected.mrp) : grn ? pwMoney(grn.purchaseMrp) : '—'}</dd></div>
-                            <div className="is-price" title="Latest GRN"><dt>Disc</dt><dd>{grn ? pct(grn.discount) : '—'}</dd></div>
-                            <div className="is-price" title="Latest GRN"><dt>Received</dt><dd>{grn ? pwQty(grn.receivedQty) : '—'}</dd></div>
-                            <div className="is-price" title="Latest GRN"><dt>Free</dt><dd>{grn ? pwQty(grn.freeQty) : '—'}</dd></div>
-                          </dl>
-                          <div className="pw-dhead-facts">
-                            <span title="Supplier of the latest GRN"><b>Supplier</b>{grn?.supplier ? pwCleanName(grn.supplier) : '—'}</span>
-                            <span><b>Last sale</b>{pwDate(grn?.lastSaleDate || selected.lsd)}</span>
-                            <span><b>Last GRN</b>{pwDate(grn?.grnDate || selected.lrd)}</span>
-                            {selected.wanted && <span><b>Wanted</b>{selected.wanted}</span>}
-                            {selected.offer && <span><b>Offer</b>🎁</span>}
-                            {selected.supplier && <span><b>Order supplier</b>{pwCleanName(selected.supplier)}</span>}
-                          </div>
-                        </>
-                      );
-                    })()}
+                    <OrderWhyCard why={why} finalQty={valueOf(selected)} onOpen={() => setWhyOpen(true)} />
                   </div>
                 </>
               ) : <span className="ow-side-hint">Select a product to see its trend, purchase &amp; sales.</span>}
@@ -1623,7 +1745,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
     return store ? (
       <div key={p.key} className={`pw-peek-zone${peek ? ' is-peek' : ''}`} data-peek-zone=""
         style={peek ? { '--pw-peek-label': JSON.stringify(` · ${peek.store} #${peek.code}`) } : undefined}>
-        <IntelPanel
+        <IntelPanel exactRow
           sections={[p.key]}
           trendFit={PW_TREND_FIT}
           store={detailStore}
@@ -1663,6 +1785,12 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
         {/* Order chip + reload + settings stay together at the right edge
             (wrapping as one unit), so the settings card opens on-screen. */}
         <span className="pw-topbar-end">
+        {unsavedCount > 0 && (
+          <button type="button" className="pw-unsaved-chip" title={Object.values(unsaved).map((u) => `${u.name}: ${u.kind === 'skip' ? 'skip' : `qty ${u.value}`}`).join('\n')}
+            onClick={() => { flushUnsaved().then((left) => { if (left) setError(`${left} change(s) still not saved - HO not reachable.`); }); }}>
+            ⚠ {unsavedCount} not saved · Retry now
+          </button>
+        )}
         <span className="pw-order-chip" title={[orderContext, orderUpdated ? `Updated ${orderUpdated}` : ''].filter(Boolean).join(' · ')}>
           {orderContext}{orderUpdated ? ` · ${orderUpdated}` : ''}
         </span>
@@ -1746,6 +1874,49 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
                   <input type="checkbox" checked={compareOn && compareCardOn} disabled={!compareOn} onChange={(e) => setCompareCardOn(e.target.checked)} /> Show other-supplier stock card
                 </label>
               </div>
+              {canEditExportLock && (
+                <div className="pw-settings-pane">
+                  <span className="pw-section-label">Export lock <small>(applies to every non-super-admin login in this tenant)</small></span>
+                  <label className="ow-export-field">
+                    <span>File type</span>
+                    <select value={exportSettings.fileFormat} onChange={(e) => updateExportSettings({ fileFormat: e.target.value })} aria-label="Locked export file format">
+                      <option value="xls">Excel 97-2003 (.xls)</option>
+                      <option value="xlsx">Excel (.xlsx)</option>
+                      <option value="csv">CSV (.csv)</option>
+                    </select>
+                  </label>
+                  <div className="ow-export-columns">
+                    <div className="ow-export-columns-grid">
+                      {exportKit.columnDefs.map((col) => (
+                        <label key={col.key} className="ow-export-check ow-export-col-check">
+                          <input
+                            type="checkbox"
+                            checked={col.required || exportSettings.columns[col.key]}
+                            disabled={col.required}
+                            onChange={(e) => updateExportSettings({ columns: { ...exportSettings.columns, [col.key]: e.target.checked } })}
+                          />
+                          <span>{col.label}{col.required && ' *'}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="ow-btn ow-btn-sm"
+                    onClick={() => {
+                      const columns = exportKit.columnDefs.filter((c) => c.required || exportSettings.columns[c.key]).map((c) => c.key);
+                      api.procurementSaveExportDefaults(tenantId, { file_format: exportSettings.fileFormat, columns }, session)
+                        .then(() => setExportDefaults({ file_format: exportSettings.fileFormat, columns, locked: true }))
+                        .catch(() => { /* best-effort — the local export settings are already saved */ });
+                    }}
+                  >
+                    Save as tenant default
+                  </button>
+                  {exportDefaults && (
+                    <span className="pw-settings-hint">Locked for other logins: {exportDefaults.file_format.toUpperCase()}, {exportDefaults.columns.length} optional column(s).</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1759,6 +1930,7 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
           </span>
         )}
         {view === 'supplier' && (
+          <span className="pw-seg-stack">
           <span className="pw-seg pw-seg--small" role="tablist" aria-label="Supplier list">
             {PW_SUPPLIER_MODES.map(([key, label]) => (
               <button key={key} type="button" role="tab" aria-selected={supplierMode === key} className={supplierMode === key ? 'active' : undefined}
@@ -1772,7 +1944,14 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
                 onClick={() => setSiteCheckOn((v) => !v)}>🌐 Check in site</button>
             )}
           </span>
+          {supplierMode === 'stock' && supplier && (
+            <span className="pw-stock-updated" title="When this supplier's stock was last imported (mail, Excel or website)">
+              Last Stock Update: {stockUpdatedAt ? pwDateTime(stockUpdatedAt) : compare.loading ? '…' : '—'}
+            </span>
+          )}
+          </span>
         )}
+        {view === 'supplier' && <OrderCacheChip cache={orderCache} store={store} onChange={() => setReloadTick((t) => t + 1)} />}
         <span className="pw-search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></svg>
           <input type="search" placeholder="Search product or code…" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -1819,6 +1998,11 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
             <button type="button" ref={exportBtnRef} className="ow-btn ow-btn-sm" disabled={process.key !== 'pending' && !supplier}
               title={process.key === 'pending' ? 'Export pending (reviewed, not assigned) products' : supplier ? 'Export this supplier’s order' : 'Pick a supplier first'}
               aria-expanded={exportOpen} onClick={() => setExportOpen((v) => !v)}>⬇ Export</button>
+          )}
+          {showExport && process.key !== 'pending' && supplier && (
+            <button type="button" className={`ow-btn ow-btn-sm${mailInfo?.ready ? ' pw-mail-on' : ''}`} disabled={exporting || !mailInfo?.ready}
+              title={mailInfo?.ready ? `Export with the default settings and mail it to ${mailInfo.to.join(', ')}` : (mailInfo?.reason || 'Checking the supplier mail id…')}
+              onClick={() => runExport({ mail: true })}>{exporting ? 'Sending…' : '✉ Export & Mail'}</button>
           )}
           {view !== 'assigned' && (
             <button type="button" className={`ow-btn ow-btn-sm${bulkOpen ? ' ow-btn-primary' : ''}`} disabled={finalized} aria-pressed={bulkOpen}
@@ -1879,16 +2063,20 @@ export default function ProcurementWorkspace({ session, settings, hidden, ui }) 
           exportSettings={exportSettings} onUpdateExportSettings={updateExportSettings}
           headline="Read-only — no supplier assignment. Downloads every pending (reviewed, not yet assigned) product."
           showColumns={false} showSupplierWise={false}
+          locked={exportLocked} lockedHint="File type and columns are set by your super admin."
         />
       )}
       {exportOpen && process.key !== 'pending' && (
         <ExportCard
           anchorRef={exportBtnRef} splitCount={splitCount} setSplitCount={setSplitCount} exporting={exporting}
           scopeLabel={view === 'assigned' ? `${supplier?.supplier_name || 'selected supplier'} (assigned)` : `${supplier?.supplier_name || 'selected supplier'}`}
-          onExport={runExport} onClose={() => setExportOpen(false)}
+          onExport={() => runExport()} onClose={() => setExportOpen(false)}
           exportSettings={exportSettings} onUpdateExportSettings={updateExportSettings}
+          locked={exportLocked} lockedHint="File type and columns are set by your super admin."
         />
       )}
+      <OrderMailSentCard sent={mailSent} onClose={closeMailSent} />
+      {whyOpen && <OrderWhyDialog why={why} finalQty={selected ? valueOf(selected) : null} onClose={() => setWhyOpen(false)} />}
       {bulkOpen && (
         <div className="pw-bulkcard">
           <div className="pw-bulkcard-head">

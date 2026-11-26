@@ -76,6 +76,35 @@ def spawn_detached(cmd):
     )
 
 
+def prune_old_versions(root, keep=2, log_label=None, name_prefix=None):
+    """Delete all but the `keep` most-recently-modified entries directly under
+    `root` (files or folders, e.g. version-named backups/staged downloads).
+    `name_prefix` restricts pruning to entries whose name starts with it (so a
+    shared STAGING_DIR can be pruned per app_key without touching the others).
+    Never raises -- called after a successful update, must not break it."""
+    try:
+        root = Path(root)
+        if not root.is_dir():
+            return
+        candidates = root.iterdir()
+        if name_prefix:
+            candidates = (p for p in candidates if p.name.startswith(name_prefix))
+        entries = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
+        for stale in entries[keep:]:
+            try:
+                if stale.is_dir():
+                    import shutil
+                    shutil.rmtree(str(stale), ignore_errors=True)
+                else:
+                    stale.unlink()
+                if log_label:
+                    log(f"{log_label}: pruned old {stale.name}")
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
 def sha256_of(path):
     digest = hashlib.sha256()
     with open(path, "rb") as f:

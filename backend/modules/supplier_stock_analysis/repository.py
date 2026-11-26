@@ -28,13 +28,17 @@ def _ordernmc():
 
 def _supplier_stock_source():
     """OrderNMC.SupplierStock shaped like the old procurement.supplier_stock
-    table, so the analysis queries below keep their column names. The legacy
-    storename is the store CODE; product_code resolves through the store's
-    OrderNMC SupplierProductMatch (unique per store+supplier+product, same
-    join the legacy order screens use). OrderNMC is Latin1_General_CI_AI and
-    NEXORA_PLATFORM is SQL_Latin1_General_CP1_CI_AS, hence the COLLATEs.
-    supplier_stock_id is the hex of storename|supplier|product (URL-safe,
-    decoded by supplier_stock_row)."""
+    table, so the analysis queries below keep their column names. product_code
+    is read straight off SupplierStock.StoreProductCode -- resolved once at
+    import time (see replace_supplier_stock / replace_supplier_stock_bulk)
+    from the store's SupplierProductMatch, instead of joining
+    SupplierProductMatch on every read. That join, done per-row across
+    databases, was the slow part of "By Supplier -> Live Stock" on stores
+    with a big SupplierStock+SupplierProductMatch (e.g. SMG supplier 292).
+    OrderNMC is Latin1_General_CI_AI and NEXORA_PLATFORM is
+    SQL_Latin1_General_CP1_CI_AS, hence the COLLATEs. supplier_stock_id is
+    the hex of storename|supplier|product (URL-safe, decoded by
+    supplier_stock_row)."""
     db = _ordernmc()
     return f"""(
         SELECT
@@ -46,7 +50,7 @@ def _supplier_stock_source():
             s.suppliercode COLLATE DATABASE_DEFAULT AS supplier_code,
             s.supplierproductcode COLLATE DATABASE_DEFAULT AS supplier_product_code,
             s.supplierproductname COLLATE DATABASE_DEFAULT AS supplier_product_name,
-            CAST(spm.ProductCode AS VARCHAR(50)) AS product_code,
+            CAST(s.StoreProductCode AS VARCHAR(50)) AS product_code,
             s.stock AS available_stock,
             s.ptr,
             s.mrp,
@@ -63,10 +67,6 @@ def _supplier_stock_source():
         FROM {db}.dbo.SupplierStock s
         JOIN dbo.stores st
           ON st.store_code = s.storename COLLATE DATABASE_DEFAULT
-        LEFT JOIN {db}.dbo.SupplierProductMatch spm
-          ON spm.StoreName = s.storename
-         AND spm.SupplierCode = s.suppliercode
-         AND spm.SupplierProductCode = s.supplierproductcode
     )"""
 
 
@@ -303,7 +303,7 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
                AND p.productcode = TRY_CAST(ss.product_code AS INT)
             LEFT JOIN #mapagg mapagg
                 ON mapagg.key_store = ss.store_id
-               AND mapagg.key_code = ss.product_code
+               AND mapagg.key_code = ss.product_code COLLATE DATABASE_DEFAULT
             WHERE ss.tenant_id = ?
               AND ss.supplier_code = ?
               {store_clause}
@@ -320,6 +320,55 @@ def list_supplier_products(tenant_id, supplier_code, store_id=None, search="", o
         return rows_to_dicts(cur)
     finally:
         conn.close()
+
+
+STOCK_LIST_LIMIT = 50000
+
+
+def list_stock(tenant_id, supplier_code, store_id=None, search="", only_available=False):
+    """Plain current-stock view of SupplierStock for one supplier across the
+    tenant's stores (or one store) -- the rows exactly as imported, no
+    mapping/cross-store analysis, so it stays fast and is not capped at the
+    3000 rows list_supplier_products returns."""
+    term = (search or "").strip()
+    store_clause = "AND st.store_id = ?" if store_id else ""
+    params = [tenant_id, supplier_code] + ([store_id] if store_id else [])
+    params += [1 if only_available else 0, term, term, term]
+    rows = _fetch(
+        f"""
+        SELECT TOP {STOCK_LIST_LIMIT + 1}
+            st.store_code,
+            st.store_name,
+            s.suppliercode COLLATE DATABASE_DEFAULT AS supplier_code,
+            s.supplierproductcode COLLATE DATABASE_DEFAULT AS supplier_product_code,
+            s.supplierproductname COLLATE DATABASE_DEFAULT AS supplier_product_name,
+            s.packing COLLATE DATABASE_DEFAULT AS packing,
+            s.stock,
+            s.ptr,
+            s.mrp,
+            s.discound COLLATE DATABASE_DEFAULT AS discount,
+            s.free,
+            s.sch AS scheme,
+            s.minqty AS minimum_qty,
+            s.Rack COLLATE DATABASE_DEFAULT AS rack,
+            CAST(s.StoreProductCode AS VARCHAR(50)) AS product_code,
+            s.transactiondate AS imported_at
+        FROM {_ordernmc()}.dbo.SupplierStock s
+        JOIN dbo.stores st
+          ON st.store_code = s.storename COLLATE DATABASE_DEFAULT
+         AND st.tenant_id = ?
+        WHERE s.suppliercode = ?
+          {store_clause}
+          AND (? = 0 OR ISNULL(s.stock, 0) > 0)
+          AND (? = ''
+               OR s.supplierproductname LIKE '%' + ? + '%'
+               OR s.supplierproductcode LIKE ? + '%')
+        ORDER BY s.supplierproductname, st.store_code
+        """,
+        tuple(params),
+    )
+    truncated = len(rows) > STOCK_LIST_LIMIT
+    return rows[:STOCK_LIST_LIMIT], truncated
 
 
 def _warehouse_search_clause(search):
@@ -1131,6 +1180,7 @@ def upsert_mapping(payload):
     finally:
         conn.close()
     _upsert_ordernmc_match(payload)
+    backfill_store_product_codes(payload["tenant_id"], payload["store_id"], payload["supplier_code"])
     return {"success": True}
 
 
@@ -1179,11 +1229,81 @@ def _money(value):
         return None
 
 
+def backfill_store_product_codes(tenant_id, store_id, supplier_code):
+    """Re-stamp SupplierStock.StoreProductCode from SupplierProductMatch for
+    rows already on file -- replace_supplier_stock only stamps this at
+    IMPORT time from whatever SupplierProductMatch held then, so a product
+    matched (manually or via product_mapping) AFTER that import stayed NULL
+    forever, resurfacing as "not matched to products" until the operator
+    re-uploaded the same Excel. Called after every manual match confirm
+    (upsert_mapping) so newly-resolved codes reach SupplierStock without a
+    re-import.
+
+    Second pass: rows SupplierProductMatch still can't resolve (no row there
+    at all -- the common case for products never ordered through the legacy
+    supplier screens) fall back to dbo.product_mapping_mirror, the local
+    same-database copy of NEXORA_PLATFORM's own cross-store product mapping
+    (see mirror_sync.py). Keyed on store_name + the legacy ProductCode the
+    import already resolved the product to (SupplierProductCode doubles as
+    that store's own catalog code once SupplierProductMatch exists for it;
+    where it doesn't yet, this mirror is the only source of a match at all)."""
+    store_code = _store_code(tenant_id, store_id)
+    if not store_code:
+        return 0
+    supplier_code = str(supplier_code).strip()
+    with legacy_database.get_central_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE SS SET SS.StoreProductCode = SPM.ProductCode "
+            "FROM SupplierStock SS "
+            "JOIN SupplierProductMatch SPM "
+            "  ON SPM.StoreName = SS.storename AND SPM.SupplierCode = SS.suppliercode "
+            "  AND SPM.SupplierProductCode = SS.supplierproductcode "
+            "WHERE SS.storename = ? AND SS.suppliercode = ? "
+            "  AND (SS.StoreProductCode IS NULL OR SS.StoreProductCode <> SPM.ProductCode)",
+            (store_code, supplier_code),
+        )
+        updated = cur.rowcount
+        if _table_exists(cur, "product_mapping_mirror"):
+            cur.execute(
+                "UPDATE SS SET SS.StoreProductCode = PMM.target_product_code "
+                "FROM SupplierStock SS "
+                "JOIN dbo.product_mapping_mirror PMM "
+                "  ON PMM.store_name = SS.storename AND PMM.source_product_code = SS.supplierproductcode "
+                "WHERE SS.storename = ? AND SS.suppliercode = ? AND SS.StoreProductCode IS NULL",
+                (store_code, supplier_code),
+            )
+            updated += cur.rowcount
+        conn.commit()
+    return updated
+
+
+def _table_exists(cur, table_name):
+    cur.execute("SELECT OBJECT_ID(?, 'U')", (f"dbo.{table_name}",))
+    return cur.fetchone()[0] is not None
+
+
+def _supplier_product_match_map(cur, store_code, supplier_code):
+    """{supplierproductcode: ProductCode} for this store+supplier, from
+    SupplierProductMatch -- fetched ONCE per import and used to stamp
+    SupplierStock.StoreProductCode, so reads never need this join again."""
+    return {
+        str(r.SupplierProductCode): r.ProductCode
+        for r in cur.execute(
+            "SELECT SupplierProductCode, ProductCode FROM SupplierProductMatch "
+            "WHERE StoreName = ? AND SupplierCode = ?",
+            (store_code, supplier_code),
+        ).fetchall()
+    }
+
+
 def replace_supplier_stock(tenant_id, store_id, supplier_code, rows, imported_by=None):
     """REPLACE this supplier's rows for the store in OrderNMC.SupplierStock
     (storename = store code) -- the same delete+reinsert the legacy Excel
     import did. A row's Rack is carried forward when the file has none, so a
-    re-upload doesn't wipe racks already on file."""
+    re-upload doesn't wipe racks already on file. StoreProductCode is
+    stamped here from SupplierProductMatch so later reads (supplier live
+    stock) need only SupplierStock -- see _supplier_stock_source."""
     store_code = _store_code(tenant_id, store_id)
     if not store_code:
         raise ValueError("Unknown store for this tenant.")
@@ -1199,37 +1319,37 @@ def replace_supplier_stock(tenant_id, store_id, supplier_code, rows, imported_by
             ).fetchall()
             if r.Rack
         }
+        match_map = _supplier_product_match_map(cur, store_code, supplier_code)
         cur.execute(
             "DELETE FROM SupplierStock WHERE storename = ? AND suppliercode = ?",
             (store_code, supplier_code),
         )
+        resolved = 0
         if rows:
             cur.fast_executemany = True
+            insert_rows = []
+            for r in rows:
+                code = _text(r["supplier_product_code"])
+                store_product_code = match_map.get(code)
+                if store_product_code is not None:
+                    resolved += 1
+                insert_rows.append((
+                    supplier_code, code,
+                    _text(r.get("supplier_product_name")),
+                    _money(r.get("mrp")), _money(r.get("ptr")),
+                    r.get("available_stock") or 0, _text(r.get("discount")),
+                    _text(r.get("packing")), store_code,
+                    r.get("scheme") or 0, r.get("free") or 0, r.get("minimum_qty"),
+                    _text(r.get("rack")) or existing_racks.get(code),
+                    store_product_code,
+                ))
             cur.executemany(
                 "INSERT INTO SupplierStock "
                 "(suppliercode, supplierproductcode, supplierproductname, mrp, ptr, "
-                "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)",
-                [
-                    (
-                        supplier_code, _text(r["supplier_product_code"]),
-                        _text(r.get("supplier_product_name")),
-                        _money(r.get("mrp")), _money(r.get("ptr")),
-                        r.get("available_stock") or 0, _text(r.get("discount")),
-                        _text(r.get("packing")), store_code,
-                        r.get("scheme") or 0, r.get("free") or 0, r.get("minimum_qty"),
-                        _text(r.get("rack")) or existing_racks.get(_text(r["supplier_product_code"])),
-                    )
-                    for r in rows
-                ],
+                "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack, StoreProductCode) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?, ?)",
+                insert_rows,
             )
-        resolved = cur.execute(
-            "SELECT COUNT(1) FROM SupplierStock ss "
-            "JOIN SupplierProductMatch spm ON spm.StoreName = ss.storename "
-            " AND spm.SupplierCode = ss.suppliercode AND spm.SupplierProductCode = ss.supplierproductcode "
-            "WHERE ss.storename = ? AND ss.suppliercode = ?",
-            (store_code, supplier_code),
-        ).fetchone()[0]
         conn.commit()
     return {"imported": len(rows), "product_codes_resolved": resolved, "store_code": store_code}
 
@@ -1285,37 +1405,37 @@ def replace_supplier_stock_bulk(tenant_id, supplier_code, rows, store_codes, imp
                 ).fetchall()
                 if r.Rack
             }
+            match_map = _supplier_product_match_map(cur, store_code, supplier_code)
             cur.execute(
                 "DELETE FROM SupplierStock WHERE storename = ? AND suppliercode = ?",
                 (store_code, supplier_code),
             )
+            resolved = 0
             if rows:
                 cur.fast_executemany = True
+                insert_rows = []
+                for r in rows:
+                    code = _text(r["supplier_product_code"])
+                    store_product_code = match_map.get(code)
+                    if store_product_code is not None:
+                        resolved += 1
+                    insert_rows.append((
+                        supplier_code, code,
+                        _text(r.get("supplier_product_name")),
+                        _money(r.get("mrp")), _money(r.get("ptr")),
+                        r.get("available_stock") or 0, _text(r.get("discount")),
+                        _text(r.get("packing")), store_code,
+                        r.get("scheme") or 0, r.get("free") or 0, r.get("minimum_qty"),
+                        _text(r.get("rack")) or existing_racks.get(code),
+                        store_product_code,
+                    ))
                 cur.executemany(
                     "INSERT INTO SupplierStock "
                     "(suppliercode, supplierproductcode, supplierproductname, mrp, ptr, "
-                    "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)",
-                    [
-                        (
-                            supplier_code, _text(r["supplier_product_code"]),
-                            _text(r.get("supplier_product_name")),
-                            _money(r.get("mrp")), _money(r.get("ptr")),
-                            r.get("available_stock") or 0, _text(r.get("discount")),
-                            _text(r.get("packing")), store_code,
-                            r.get("scheme") or 0, r.get("free") or 0, r.get("minimum_qty"),
-                            _text(r.get("rack")) or existing_racks.get(_text(r["supplier_product_code"])),
-                        )
-                        for r in rows
-                    ],
+                    "stock, discound, packing, storename, sch, free, transactiondate, minqty, Rack, StoreProductCode) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?, ?)",
+                    insert_rows,
                 )
-            resolved = cur.execute(
-                "SELECT COUNT(1) FROM SupplierStock ss "
-                "JOIN SupplierProductMatch spm ON spm.StoreName = ss.storename "
-                " AND spm.SupplierCode = ss.suppliercode AND spm.SupplierProductCode = ss.supplierproductcode "
-                "WHERE ss.storename = ? AND ss.suppliercode = ?",
-                (store_code, supplier_code),
-            ).fetchone()[0]
             results[store_code] = {"imported": len(rows), "product_codes_resolved": resolved}
         conn.commit()
     return results

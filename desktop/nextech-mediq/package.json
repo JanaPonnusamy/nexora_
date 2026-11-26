@@ -1,0 +1,58 @@
+{
+  "name": "nextech-mediq",
+  "version": "0.1.1",
+  "private": true,
+  "description": "NexTech MediQ Workspace — Intelligent Pharmaceutical Workspace",
+  "main": "electron/main/index.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"node scripts/wait-and-launch.mjs\"",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "electron .",
+    "test": "node --test tests/*.test.js tests/*.test.mjs",
+    "dist": "vite build && electron-builder --win --config.win.signAndEditExecutable=false --config.artifactName=\"NexTechMediQWorkspace-Setup-${version}.${ext}\""
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.26",
+    "ag-grid-community": "32.3.9",
+    "ag-grid-react": "32.3.9",
+    "exceljs": "^4.4.0",
+    "fflate": "^0.8.3",
+    "lucide-react": "^1.73.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "electron": "22.3.27",
+    "electron-builder": "^24.13.3",
+    "vite": "^5.4.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.nextech.mediq.workspace",
+    "productName": "NexTech MediQ Workspace",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "src/assets/branding/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

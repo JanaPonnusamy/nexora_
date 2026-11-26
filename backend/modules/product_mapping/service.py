@@ -89,7 +89,20 @@ def approve_mapping(tenant_id, mapping_id, actor, target_product_code=None, targ
     )
     if updated:
         logger.info("mapping %s APPROVED by %s", mapping_id, actor)
+        _sync_mirror(tenant_id)
     return updated
+
+
+def _sync_mirror(tenant_id):
+    """Best-effort immediate refresh of the legacy-side product_mapping_mirror
+    (see supplier_stock_analysis/mirror_sync.py) so this approval is usable by
+    backfill_store_product_codes() right away instead of waiting for the next
+    background tick. A sync failure here must never fail the approval itself."""
+    try:
+        from modules.supplier_stock_analysis import mirror_sync
+        mirror_sync.sync_tenant_now(tenant_id)
+    except Exception:
+        logger.exception("mirror sync after approve_mapping failed for tenant %s", tenant_id)
 
 
 def reject_mapping(tenant_id, mapping_id, actor):

@@ -30,11 +30,39 @@ import type {
   ResetPendingResult,
   RestorableOrderPreview,
   RestoreResult,
+  MessageSetting,
+  MessageType,
+  OrderEntryAutomation,
+  PmOrderEntryRecent,
+  PmOrderEntryState,
+  GapReviewStatus,
+  PmOrderEntrySubmitResult,
+  PmOrderQueueRow,
+  PmOrderType,
+  OrderGapReview,
+  PendingOrderItem,
 } from '../types/legacyOrder'
 
 const BASE = '/api/legacy-order'
 
-export type CompareMode = 'PREVIOUS_PENDING' | 'TODAY' | 'NONE' | 'HO'
+export interface OrderCacheMonitorRow {
+  store_name: string
+  exists: boolean
+  cache_path: string
+  file_created_at?: string
+  file_age_seconds?: number
+  built_at?: string | null
+  schema_version?: string | null
+  row_count?: number
+  pending_writeback_count?: number
+  unsynced_row_count?: number
+  last_writeback_at?: string | null
+  last_writeback_status?: 'ok' | 'failed' | null
+  last_writeback_error?: string | null
+  connection_status?: 'ok' | 'broken'
+}
+
+export type CompareMode = 'PREVIOUS_PENDING' | 'TODAY' | 'PENDING_LIST' | 'TODAY_PENDING' | 'NONE' | 'HO'
 
 export interface ReceivedNotOrdered {
   store_name: string
@@ -61,6 +89,7 @@ export const legacyOrderService = {
   defaults: () => api.get<{
     min_days: number; max_days: number
     recency_days: number; warehouse_recency_days: number; warehouse_stores: string[]
+    warehouse_source: string | null
   }>(`${BASE}/defaults`),
 
   // OrderNMC mirror: send this store's current OrderNMC data to every remote
@@ -86,8 +115,12 @@ export const legacyOrderService = {
   // Order engine per store: LEGACY (ported VB.NET SQL) or RULEBOOK
   // (Procurement rule book). Both write the same OrderNMC tables.
   getOrderEngine: (storeName: string) =>
-    api.get<{ store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number>; compare_today_previous?: boolean; compare_mode?: CompareMode }>(
-      `${BASE}/engine/${encodeURIComponent(storeName)}`),
+    api.get<{
+      store_name: string; engine: OrderEngine; engines: OrderEngine[]; rulebook_params: Record<string, number>
+      compare_today_previous?: boolean; compare_mode?: CompareMode
+      order_defaults: { min_days: number | null; max_days: number | null; recency_days: number | null }
+      mode: OrderMode
+    }>(`${BASE}/engine/${encodeURIComponent(storeName)}`),
   // Per-store "Compare today's previous order": every Order Process then
   // compares the new order with the store's earlier order from today.
   setCompareToday: (storeName: string, enabled: boolean) =>
@@ -99,6 +132,34 @@ export const legacyOrderService = {
       `${BASE}/engine/${encodeURIComponent(storeName)}/compare-mode`, { mode }),
   setOrderEngine: (storeName: string, engine: OrderEngine) =>
     api.put<{ store_name: string; engine: OrderEngine }>(`${BASE}/engine/${encodeURIComponent(storeName)}`, { engine }),
+  // Fixed per-store Source for the evening/scheduled run (owner request
+  // 2026-11-24): independent of whatever the live grid's Source shows.
+  setOrderMode: (storeName: string, mode: OrderMode | null) =>
+    api.put<{ store_name: string; mode: OrderMode | null }>(
+      `${BASE}/engine/${encodeURIComponent(storeName)}/mode`, { mode }),
+  // Fixed per-store Min/Max/Recency override; any field left null falls back
+  // to the global/warehouse default again. (getOrderEngine's response already
+  // carries this as `.order_defaults` -- no separate GET needed.)
+  setOrderDefaults: (storeName: string, payload: { min_days: number | null; max_days: number | null; recency_days: number | null }) =>
+    api.put<{ store_name: string; min_days: number | null; max_days: number | null; recency_days: number | null }>(
+      `${BASE}/engine/${encodeURIComponent(storeName)}/order-defaults`, payload),
+
+  // Evening (second) order schedule -- every ticked store, one after another,
+  // from a fixed start time, each with its saved/fixed settings (not the live
+  // grid). Settings live centrally in OrderNMC so web and every desktop
+  // client share one schedule.
+  eveningSchedule: () =>
+    api.get<{
+      enabled: boolean; run_at: string; stores: string[] | null
+      last_run_date: string | null; last_run_started_at: string | null; last_run_finished_at: string | null
+      last_run: { trigger: string; started_at: string; finished_at: string | null
+        stores: { store_name: string; status: string; job_id?: string; rows?: number; error?: string
+          compare?: { order_id: number; affected_rows: number } }[] } | null
+      next_run: string | null; running: boolean; catch_up_minutes: number
+    }>(`${BASE}/schedule/evening`),
+  saveEveningSchedule: (payload: { enabled: boolean; run_at: string; stores: string[] | null }) =>
+    api.put(`${BASE}/schedule/evening`, payload),
+  runEveningNow: () => api.post<{ started: boolean; stores: string[] }>(`${BASE}/schedule/evening/run`, {}),
   // Dry run: legacy vs rule-book order as Excel; writes nothing.
   compareEnginesXlsx: (storeName: string, recencyDays?: number) =>
     api.blob(`${BASE}/engine/${encodeURIComponent(storeName)}/compare.xlsx${recencyDays ? `?recency_days=${recencyDays}` : ''}`),
@@ -142,13 +203,28 @@ export const legacyOrderService = {
   qtyCheckConfirmation: (storeName: string) =>
     api.get<QtyCheckConfirmation>(`${BASE}/orders/${encodeURIComponent(storeName)}/qty-check-confirmation`),
 
-  startStockUpdate: (storeName: string, sourceStoreName = 'NMW') =>
+  startStockUpdate: (storeName: string, sourceStoreName?: string) =>
     api.post<{ job_id: string }>(`${BASE}/stock-update`, {
       store_name: storeName,
       source_store_name: sourceStoreName,
     }),
 
+  startStockUpdateAll: (sourceStoreName?: string) =>
+    api.post<{
+      source_store: string
+      started: { store_name: string; job_id: string; supplier_code: string | null; before_count: number | null }[]
+      skipped: { store_name: string; reason: string }[]
+    }>(
+      `${BASE}/stock-update-all`,
+      { source_store_name: sourceStoreName },
+    ),
+
   getJob: (jobId: string) => api.get<LegacyJob>(`${BASE}/jobs/${jobId}`),
+
+  supplierStockCount: (storeName: string, supplierCode: string) =>
+    api.get<{ store_name: string; supplier_code: string; count: number }>(
+      `${BASE}/stores/${encodeURIComponent(storeName)}/supplier-stock-count?supplier_code=${encodeURIComponent(supplierCode)}`,
+    ),
 
   orders: (storeName: string) =>
     api.get<OrderRow[]>(`${BASE}/orders/${encodeURIComponent(storeName)}`),
@@ -311,4 +387,124 @@ export const legacyOrderService = {
 
   dbEmergencyRepair: () =>
     api.post<LegacyDbRecovery>(`${BASE}/db/emergency-repair`, { confirm: true }),
+
+  // ----- PM Order Entry: last bill/GRN submit, automated queue, automation +
+  // message-type settings (Purchase Manager, store-scoped; owner ruling
+  // 2026-11-05 / automation added later the same cycle). -----
+  pmOrderEntry: (storeName: string) =>
+    api.get<PmOrderEntryState>(`${BASE}/orders/${encodeURIComponent(storeName)}/order-entry`),
+
+  pmSubmitOrderEntry: (
+    storeName: string,
+    payload: { lastBill: string; lastGrn: string; orderType: PmOrderType; confirmed?: boolean },
+  ) =>
+    api.post<PmOrderEntrySubmitResult>(`${BASE}/orders/${encodeURIComponent(storeName)}/order-entry`, {
+      last_bill: payload.lastBill.trim(),
+      last_grn: payload.lastGrn.trim(),
+      order_type: payload.orderType,
+      confirmed: Boolean(payload.confirmed),
+    }),
+
+  // Plain "most recent N" GRN + sale-bill grids for the PM's own visual
+  // verification -- replaces the old received-not-ordered report on this
+  // screen (see repository.recent_grns/recent_sale_bills).
+  pmOrderEntryRecent: (storeName: string, limit = 50) =>
+    api.get<PmOrderEntryRecent>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/order-entry/recent?limit=${limit}`,
+    ),
+
+  pmOrderEntryQueue: (storeName: string) =>
+    api.get<PmOrderQueueRow | { status: null }>(`${BASE}/orders/${encodeURIComponent(storeName)}/order-entry/queue`),
+
+  getOrderEntryAutomation: (storeName: string) =>
+    api.get<OrderEntryAutomation>(`${BASE}/orders/${encodeURIComponent(storeName)}/automation`),
+
+  setOrderEntryAutomation: (
+    storeName: string,
+    payload: { automated_order_enabled: boolean; production_mode: boolean; min_delay_seconds: number; max_delay_seconds: number },
+  ) =>
+    api.put<OrderEntryAutomation>(`${BASE}/orders/${encodeURIComponent(storeName)}/automation`, payload),
+
+  // ----- Order Gap Review: reconciliation since the store's last placed
+  // order, plus the standing pending-reminder list. -----
+  getGapReview: (storeName: string, orderId?: number) =>
+    api.get<OrderGapReview>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/gap-review${orderId != null ? `?order_id=${orderId}` : ''}`,
+    ),
+
+  addPendingItem: (
+    storeName: string,
+    body: { product_code: number; product_name?: string | null; order_id?: number | null; qty?: number | null; note?: string | null },
+  ) =>
+    api.post<PendingOrderItem>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending`, body),
+
+  addPendingItems: (
+    storeName: string,
+    body: {
+      order_id?: number | null
+      items: { product_code: number; product_name?: string | null; qty?: number | null }[]
+      note?: string | null
+    },
+  ) =>
+    api.post<{ added: number; updated: number; pending_items: PendingOrderItem[] }>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending/bulk`,
+      body,
+    ),
+
+  completeGapReview: (storeName: string, body: { order_id?: number | null; not_received?: number | null }) =>
+    api.post<GapReviewStatus>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/complete`, body),
+
+  clearPendingItems: (storeName: string, ids: number[]) =>
+    api.post<{ cleared: number }>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending/clear`, { ids }),
+
+  clearPendingItem: (storeName: string, itemId: number) =>
+    api.delete<{ cleared: true; id: number }>(`${BASE}/orders/${encodeURIComponent(storeName)}/gap-review/pending/${itemId}`),
+
+  getMessageSettings: (storeName: string) =>
+    api.get<MessageSetting[]>(`${BASE}/orders/${encodeURIComponent(storeName)}/message-settings`),
+
+  setMessageSetting: (
+    storeName: string,
+    messageType: MessageType,
+    payload: { enabled: boolean; targets: { name: string; kind: 'group' | 'contact' }[] },
+  ) =>
+    api.put<MessageSetting>(
+      `${BASE}/orders/${encodeURIComponent(storeName)}/message-settings/${encodeURIComponent(messageType)}`,
+      payload,
+    ),
+
+  // ---- Order cache monitor (Sync > Order Cache Monitor) ----
+  orderCacheMonitorAll: () => api.get<{ stores: OrderCacheMonitorRow[] }>(`${BASE}/order-cache/monitor`),
+
+  orderCacheMonitorOne: (storeName: string) =>
+    api.get<OrderCacheMonitorRow>(`${BASE}/order-cache/${encodeURIComponent(storeName)}/monitor`),
+
+  orderCacheForcePull: (storeName: string) =>
+    api.post<{ store_name: string; cache_path: string }>(
+      `${BASE}/order-cache/${encodeURIComponent(storeName)}/force-pull`,
+      {},
+    ),
+
+  orderCacheForcePush: (storeName: string) =>
+    api.post<{ ok: boolean; applied: number; error: string | null }>(
+      `${BASE}/order-cache/${encodeURIComponent(storeName)}/force-push`,
+      {},
+    ),
+
+  orderCacheExport: (storeName: string) => api.blob(`${BASE}/order-cache/${encodeURIComponent(storeName)}/export`),
+
+  orderCacheSend: (storeName: string, channel: 'whatsapp' | 'email') =>
+    api.post<{ ok: boolean; channel: string; error?: string }>(
+      `${BASE}/order-cache/${encodeURIComponent(storeName)}/send?channel=${channel}`,
+      {},
+    ),
+
+  orderCacheImport: (storeName: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.upload<{ store_name: string; imported: boolean; writeback: { ok: boolean; applied: number; error: string | null } }>(
+      `${BASE}/order-cache/${encodeURIComponent(storeName)}/import`,
+      form,
+    )
+  },
 }

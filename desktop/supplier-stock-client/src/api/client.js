@@ -14,6 +14,15 @@ function authHeaders(session) {
 const TRANSIENT_STATUS = new Set([408, 425, 429, 502, 503, 504]);
 const RETRY_DELAYS_MS = [350, 1000];
 
+// A connection the HO/port-forward silently drops (half-closed CLOSE_WAIT
+// socket) never surfaces as an error to fetch() - Chromium just keeps
+// waiting on it, so a GET sat behind one of these stalled for the full
+// `timeoutMs` every time instead of failing fast onto a fresh connection.
+// A short first-attempt deadline turns that into a quick, invisible retry;
+// only the LAST attempt gets the full timeout, so a genuinely slow (not
+// dead) request still has its full budget to complete.
+const FAST_RETRY_TIMEOUT_MS = 8000;
+
 function delay(ms, signal) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, ms);
@@ -45,16 +54,23 @@ function detailToMessage(data) {
 async function request(path, options = {}) {
   const settings = loadSettings();
   const session = options.session;
-  const timeoutMs = options.timeoutMs ?? 45000;
+  const timeoutMs = options.timeoutMs ?? (Number(settings.requestTimeoutSec) || 120) * 1000;
   const method = String(options.method || 'GET').toUpperCase();
   const retries = options.transientRetries ?? (method === 'GET' ? RETRY_DELAYS_MS.length : 0);
   const { session: _session, timeoutMs: _timeoutMs, transientRetries: _transientRetries, ...fetchOptions } = options;
   let response;
+  const loadStart = Date.now();
+  logRequest('start', { method, path });
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const isLastAttempt = attempt === retries;
+    // Give every attempt but the last a short deadline so a dead/stalled
+    // connection fails fast onto a retry instead of burning the whole
+    // timeout on a socket that will never respond - see FAST_RETRY_TIMEOUT_MS.
+    const attemptTimeoutMs = isLastAttempt ? timeoutMs : Math.min(FAST_RETRY_TIMEOUT_MS, timeoutMs);
     const controller = new AbortController();
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, attemptTimeoutMs);
     const onCallerAbort = () => controller.abort();
     if (options.signal) {
       if (options.signal.aborted) controller.abort();
@@ -74,10 +90,20 @@ async function request(path, options = {}) {
       if (!TRANSIENT_STATUS.has(response.status) || attempt === retries) break;
       // Drain the body so Chromium can reuse the keep-alive connection.
       await response.arrayBuffer().catch(() => {});
+      logRequest('retry-status', { method, path, attempt, status: response.status, elapsedMs: Date.now() - loadStart });
     } catch (err) {
       if (options.signal?.aborted) throw err;
-      if (timedOut) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
-      if (attempt === retries) throw err;
+      if (timedOut && isLastAttempt) {
+        logRequest('timeout', { method, path, attempt, elapsedMs: Date.now() - loadStart });
+        throw new Error(`Request timed out after ${Math.round(attemptTimeoutMs / 1000)}s`);
+      }
+      if (!timedOut && isLastAttempt) {
+        logRequest('error', { method, path, attempt, elapsedMs: Date.now() - loadStart, message: err?.message });
+        throw err;
+      }
+      // A fast-attempt timeout (dead connection) or any other network error
+      // on a non-final attempt falls through to the retry delay below.
+      logRequest('retry-conn', { method, path, attempt, timedOut, elapsedMs: Date.now() - loadStart, message: err?.message });
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener('abort', onCallerAbort);
@@ -90,6 +116,7 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const message = detailToMessage(data) || `Request failed with ${response.status}`;
+    logRequest('http-error', { method, path, status: response.status, elapsedMs: Date.now() - loadStart, message });
     // A 401 here means the stored token is missing/expired/invalid for a
     // request that did carry a session - the UI would otherwise sit showing
     // "Request failed with 401" on every panel forever with no way out. Let
@@ -100,7 +127,26 @@ async function request(path, options = {}) {
     throw new Error(message);
   }
 
+  logRequest('done', { method, path, status: response.status, elapsedMs: Date.now() - loadStart });
   return data;
+}
+
+// Every request's timing/outcome, so a slow or dropped-connection load can be
+// diagnosed from the renderer console (and DevTools' persisted console log)
+// without reproducing it live - see the CloseWait investigation this was
+// added for (supplier-stock-analysis 45s timeouts that were actually a
+// ~6s server-side connection drop the HTTP client wasn't detecting).
+function logRequest(event, detail) {
+  const line = `[api:${event}] ${detail.method} ${detail.path}` +
+    (detail.elapsedMs != null ? ` ${detail.elapsedMs}ms` : '') +
+    (detail.attempt != null ? ` attempt=${detail.attempt}` : '') +
+    (detail.status != null ? ` status=${detail.status}` : '') +
+    (detail.message ? ` - ${detail.message}` : '');
+  if (event === 'timeout' || event === 'error' || event === 'http-error') {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
 }
 
 function safeJson(text) {
@@ -188,6 +234,85 @@ export const api = {
     return request('/api/stores', { session }).then((rows) => (
       Array.isArray(rows) ? rows.filter((s) => s.is_active !== false) : rows
     ));
+  },
+
+  // --- Masters: User Management (Phase 6C) ---------------------------------
+  listUsers(params = {}, session) {
+    return request(`/api/users${toQuery(params)}`, { session });
+  },
+  getUser(userId, session) {
+    return request(`/api/users/${userId}`, { session });
+  },
+  createUser(payload, session) {
+    return request('/api/users', { method: 'POST', session, body: JSON.stringify(payload) });
+  },
+  updateUser(userId, payload, session) {
+    return request(`/api/users/${userId}`, { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+  setUserStatus(userId, isActive, session) {
+    return request(`/api/users/${userId}/status`, {
+      method: 'PATCH', session, body: JSON.stringify({ is_active: isActive }),
+    });
+  },
+  getUserRoles(userId, session) {
+    return request(`/api/user-roles/user/${userId}`, { session });
+  },
+
+  // --- Masters: Role and Permission Management (Phase 6D) -------------------
+  listRoles(params = {}, session) {
+    return request(`/api/roles${toQuery(params)}`, { session });
+  },
+  getRole(roleId, session) {
+    return request(`/api/roles/${roleId}`, { session });
+  },
+  createRole(payload, session) {
+    return request('/api/roles', { method: 'POST', session, body: JSON.stringify(payload) });
+  },
+  updateRole(roleId, payload, session) {
+    return request(`/api/roles/${roleId}`, { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+  setRoleStatus(roleId, isActive, session) {
+    return request(`/api/roles/${roleId}/status`, {
+      method: 'PATCH', session, body: JSON.stringify({ is_active: isActive }),
+    });
+  },
+  getRolePermissions(roleId, session) {
+    return request(`/api/role-module-access/role/${roleId}`, { session });
+  },
+  getPermissionMatrix(session) {
+    return request('/api/role-module-access/matrix', { session });
+  },
+  setRolePermissions(roleId, moduleId, flags, session) {
+    return request('/api/role-module-access', {
+      method: 'PUT', session,
+      body: JSON.stringify({ role_id: roleId, module_id: moduleId, ...flags }),
+    });
+  },
+
+  // --- Forgot Password (Phase 6F) -- no session, these run before login ----
+  requestPasswordReset(email) {
+    return request('/api/auth/password-reset/request', {
+      method: 'POST', body: JSON.stringify({ email }),
+    });
+  },
+  confirmPasswordReset(token, newPassword) {
+    return request('/api/auth/password-reset/confirm', {
+      method: 'POST', body: JSON.stringify({ token, new_password: newPassword }),
+    });
+  },
+
+  // --- Dashboard (Phase 6G) --------------------------------------------
+  procurementDashboard(tenantId, fromMonth, toMonth, session) {
+    return request(`/api/procurement/reports/dashboard${toQuery({ tenant_id: tenantId, from_month: fromMonth, to_month: toMonth })}`, { session });
+  },
+  nonMovingTotals(tenantId, storeId, session) {
+    return request(`/api/reports/non-moving/totals${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+  syncLiveStatus(session) {
+    return request('/api/sync/live', { session });
+  },
+  recentActivity(pageSize, session) {
+    return request(`/api/audit-logs${toQuery({ page: 1, page_size: pageSize })}`, { session });
   },
 
   requestActivation(payload, session) {
@@ -433,6 +558,16 @@ export const api = {
     })}`, { session });
   },
 
+  // Plain SupplierStock rows for one supplier, every store of the tenant (or
+  // one store) -> {items, truncated, limit}. No mapping analysis, no 3000 cap.
+  supplierStockList(session, { tenantId, supplierCode, storeId } = {}) {
+    return request(`/api/supplier-stock-analysis/stock-list${toQuery({
+      tenant_id: tenantId,
+      supplier_code: supplierCode,
+      store_id: storeId || ''
+    })}`, { session, timeoutMs: 180000 });
+  },
+
   getSupplierProducts(supplierCode, session, filters = {}) {
     const settings = loadSettings();
     return request(`/api/supplier-stock-analysis/supplier-products${toQuery({
@@ -543,6 +678,29 @@ export const api = {
       body: form,
       timeoutMs: 180000
     });
+  },
+
+  // Supplier mail import (backend/modules/supplier_mail_import/router.py).
+  mailImportConfig(tenantId, session) {
+    return request(`/api/supplier-mail-import/config${toQuery({ tenant_id: tenantId })}`, { session });
+  },
+  saveMailImportConfig(tenantId, payload, session) {
+    return request(`/api/supplier-mail-import/config${toQuery({ tenant_id: tenantId })}`, { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+  testMailImportConfig(tenantId, payload, session) {
+    return request(`/api/supplier-mail-import/config/test${toQuery({ tenant_id: tenantId })}`, { method: 'POST', session, body: JSON.stringify(payload), timeoutMs: 90000 });
+  },
+  mailImportSuppliers(tenantId, storeId, session) {
+    return request(`/api/supplier-mail-import/suppliers${toQuery({ tenant_id: tenantId, store_id: storeId })}`, { session });
+  },
+  saveMailImportSupplier(payload, session) {
+    return request('/api/supplier-mail-import/suppliers', { method: 'PUT', session, body: JSON.stringify(payload) });
+  },
+  pullMailImportSupplier(tenantId, storeId, supplierCode, session) {
+    return request(`/api/supplier-mail-import/pull${toQuery({ tenant_id: tenantId, store_id: storeId, supplier_code: supplierCode })}`, { method: 'POST', session, timeoutMs: 600000 });
+  },
+  mailImportLog(tenantId, storeId, session) {
+    return request(`/api/supplier-mail-import/log${toQuery({ tenant_id: tenantId, store_id: storeId, limit: 30 })}`, { session });
   },
 
   bulkImportStores(tenantId, supplierCode, session) {
@@ -791,6 +949,21 @@ export const api = {
     });
   },
 
+  // Tenant-wide export defaults a super admin sets (file format + columns)
+  // for the Procurement export card. A restricted role reads these and the
+  // UI locks those two fields to them; "rows per file" stays free for all.
+  procurementExportDefaults(tenantId, session) {
+    return request(`/api/procurement/export-defaults${toQuery({ tenant_id: tenantId })}`, { session });
+  },
+
+  procurementSaveExportDefaults(tenantId, body, session) {
+    return request(`/api/procurement/export-defaults${toQuery({ tenant_id: tenantId })}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
   // ----- Order Workspace (legacy VB-style ordering console) -----
   // Store-scoped by store_name and authorised server-side; independent of the
   // desktop tenant/store GUID context (mirrors the web legacyOrderService).
@@ -853,6 +1026,174 @@ export const api = {
     });
   },
 
+  // Plain "most recent N" GRN + sale-bill grids for the PM's own visual
+  // verification -- replaces the old received-not-ordered report on this
+  // screen (see backend repository.recent_grns/recent_sale_bills).
+  legacyOrderEntryRecent(storeName, session, limit = 50) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/order-entry/recent${toQuery({ limit })}`, { session });
+  },
+
+  // Automated Order Entry: queue status for a store's most recent submit
+  // (only meaningful once StoreOrderAutomation.AutomatedOrderEnabled is on).
+  legacyOrderEntryQueue(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/order-entry/queue`, { session });
+  },
+
+  // Order Gap Review: reconciliation since the store's last placed order
+  // (which may span multiple days), plus the standing pending-reminder list.
+  legacyGapReview(storeName, orderId, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review${toQuery({ order_id: orderId || undefined })}`, { session });
+  },
+
+  legacyAddPendingItem(storeName, body, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/pending`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Order Gap Review "Mark pending": { order_id, items: [{ product_code, product_name, qty }], note }.
+  legacyAddPendingItems(storeName, body, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/pending/bulk`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  // Order Entry step 1 sign-off: { order_id, not_received }.
+  legacyCompleteGapReview(storeName, body, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/complete`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify(body)
+    });
+  },
+
+  legacyClearPendingItems(storeName, ids, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/pending/clear`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ ids })
+    });
+  },
+
+  legacyClearPendingItem(storeName, itemId, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/gap-review/pending/${encodeURIComponent(itemId)}`, {
+      method: 'DELETE',
+      session
+    });
+  },
+
+  legacyOrderAutomation(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/automation`, { session });
+  },
+
+  legacySetOrderAutomation(storeName, payload, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/automation`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  legacyMessageSettings(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/message-settings`, { session });
+  },
+
+  legacySaveMessageSetting(storeName, messageType, payload, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/message-settings/${encodeURIComponent(messageType)}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  // Live Queries / Repair: currently-executing requests on central OrderNMC,
+  // and a KILL action. Super admin only (server-gated).
+  dbMonitorRequests(session) {
+    return request('/api/db-monitor/requests', { session });
+  },
+
+  dbMonitorSessions(session) {
+    return request('/api/db-monitor/sessions', { session });
+  },
+
+  dbMonitorKill(sessionId, session) {
+    return request('/api/db-monitor/kill', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ session_id: sessionId })
+    });
+  },
+
+  // Order Cache Monitor -- per-store local SQLite order cache (mirrors the
+  // web legacyOrderService.orderCache* calls; all routes are admin-only).
+  orderCacheMonitor(session) {
+    return request('/api/legacy-order/order-cache/monitor', { session });
+  },
+
+  // Store-user readable (own store only): the store's current cache content,
+  // or { available: false } when HO hasn't built one.
+  // have = the stamp this PC already holds: HO answers {unchanged: true}
+  // with meta only when nothing changed since.
+  orderCacheView(storeName, session, have) {
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/view${toQuery({ have })}`, { session });
+  },
+
+  orderCacheForcePull(storeName, session) {
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/force-pull`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
+  },
+
+  orderCacheForcePush(storeName, session) {
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/force-push`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
+  },
+
+  orderCacheSend(storeName, channel, session) {
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/send${toQuery({ channel })}`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({})
+    });
+  },
+
+  orderCacheImport(storeName, file, session) {
+    const form = new FormData();
+    form.append('file', file);
+    return request(`/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/import`, {
+      method: 'POST',
+      session,
+      body: form
+    });
+  },
+
+  async orderCacheExport(storeName, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/legacy-order/order-cache/${encodeURIComponent(storeName)}/export`), {
+        headers: { ...authHeaders(session) }
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Cache export failed';
+      try { const parsed = await response.json(); detail = detailToMessage(parsed) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    return response.blob();
+  },
+
   // Supplier GRN lines since the previous active day's first order for
   // products the app never ordered. productType: pharma | non_pharma | all.
   legacyReceivedNotOrdered(storeName, productType, session) {
@@ -878,6 +1219,35 @@ export const api = {
     });
   },
 
+  // The store's saved Order Process engine (persists across runs; separate
+  // from a per-run engine override on /order-process).
+  legacySetOrderEngine(storeName, engine, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ engine })
+    });
+  },
+
+  // Fixed per-store Source for the evening/scheduled run (owner request
+  // 2026-11-24); None = 'local'. Agent-synced stores ignore this.
+  legacySetOrderMode(storeName, mode, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/mode`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify({ mode })
+    });
+  },
+
+  // The store's saved Min/Max/Recency override (null fields = global/warehouse default).
+  legacySetOrderDefaults(storeName, payload, session) {
+    return request(`/api/legacy-order/engine/${encodeURIComponent(storeName)}/order-defaults`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
   // Evening (second) order schedule: {enabled, run_at, stores|null, next_run,
   // last_run, running, ...}. stores null = every active store.
   legacyEveningSchedule(session) {
@@ -892,8 +1262,38 @@ export const api = {
     });
   },
 
+  // Morning auto order (one card per tenant DB): {schedules: [...], running}.
+  legacyMorningSchedules(session) {
+    return request('/api/legacy-order/schedule/morning', { session });
+  },
+
+  legacySaveMorningSchedule(tenantKey, payload, session) {
+    return request(`/api/legacy-order/schedule/morning/${encodeURIComponent(tenantKey)}`, {
+      method: 'PUT',
+      session,
+      body: JSON.stringify(payload)
+    });
+  },
+
+  legacyRetryMorningStore(tenantKey, storeCode, session) {
+    return request(`/api/legacy-order/schedule/morning/${encodeURIComponent(tenantKey)}/stores/${encodeURIComponent(storeCode)}/retry`, {
+      method: 'POST',
+      session
+    });
+  },
+
   legacyRunEveningNow(session) {
     return request('/api/legacy-order/schedule/evening/run', { method: 'POST', session });
+  },
+
+  // Push the tenant's warehouse stock into every other active store's
+  // SupplierStock in one click. -> {source_store, started: [{store_name, job_id}], skipped: [{store_name, reason}]}
+  legacyStockUpdateAll(sourceStoreName, session) {
+    return request('/api/legacy-order/stock-update-all', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ source_store_name: sourceStoreName || null })
+    });
   },
 
   legacyJobs(session, limit = 50) {
@@ -904,8 +1304,57 @@ export const api = {
     return request(`/api/legacy-order/jobs/${encodeURIComponent(jobId)}`, { session, transientRetries: 0 });
   },
 
+  legacyStartSync(storeName, session, tables = null) {
+    return request('/api/legacy-order/sync', {
+      method: 'POST', body: JSON.stringify({ store_name: storeName, tables }), session,
+    });
+  },
+
   legacyQtyCheckRows(storeName, session) {
     return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  // ----- Previous Order Comparison (admin + store-assigned purchase manager;
+  // same endpoints the web Legacy Order console's Compare Previous Order
+  // panel uses, see backend/modules/legacy_order/router.py) -----
+  legacyPreviousOrders(storeName, session) {
+    return request(`/api/legacy-order/previous-orders/${encodeURIComponent(storeName)}`, { session });
+  },
+
+  legacyComparePreviousOrder(storeName, orderId, session) {
+    return request('/api/legacy-order/compare-previous-order', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ store_name: storeName, order_id: orderId }),
+    });
+  },
+
+  legacyPreviousOrderSuppliers(storeName, orderId, session) {
+    return request(`/api/legacy-order/previous-orders/${encodeURIComponent(storeName)}/${orderId}/suppliers`, { session });
+  },
+
+  legacyPreviousOrderSupplierProducts(storeName, orderId, supplierCode, session) {
+    return request(`/api/legacy-order/previous-orders/${encodeURIComponent(storeName)}/${orderId}/suppliers/${encodeURIComponent(supplierCode)}/products`, { session });
+  },
+
+  legacyComparePreviousOrderSupplier(storeName, orderId, supplierCode, session) {
+    return request('/api/legacy-order/compare-previous-order/supplier', {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ store_name: storeName, order_id: orderId, supplier_code: supplierCode }),
+    });
+  },
+
+  legacyRestorableOrderPreview(storeName, orderId, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/restorable/${orderId}`, { session });
+  },
+
+  legacyRestoreBackupOrder(storeName, orderId, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/restore`, {
+      method: 'POST',
+      session,
+      body: JSON.stringify({ order_id: orderId }),
+    });
   },
 
   legacyResetPendingQtyCheck(storeName, session) {
@@ -1045,6 +1494,12 @@ export const api = {
 
   // {product_code: [every supplier's live stock/offer/Disc% line]} for the
   // store's open order -- the Procurement row's compare-suppliers card.
+  // {rows: [[ProductCode, Status, OrderQty, Qtycheck, Remarks, OrSupplierCode]]}
+  // -- live line states laid over the PC's order cache (orderCacheLocal.jsx).
+  legacyOrderLineStates(storeName, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/line-states`, { session });
+  },
+
   legacySupplierStockCompare(storeName, session) {
     return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/supplier-stock-compare`, { session });
   },
@@ -1405,7 +1860,8 @@ export const api = {
           ...(options.orgName ? { org_name: options.orgName } : {}),
           ...(options.billsDays ? { bills_days: options.billsDays } : {}),
           ...(options.nameSuffix ? { name_suffix: options.nameSuffix } : {}),
-          ...(options.remarks && Object.keys(options.remarks).length ? { remarks: options.remarks } : {})
+          ...(options.remarks && Object.keys(options.remarks).length ? { remarks: options.remarks } : {}),
+          ...(options.emailSupplier ? { email_supplier: true } : {})
         })
       });
     } catch {
@@ -1422,11 +1878,30 @@ export const api = {
     const blob = await response.blob();
     const disposition = response.headers.get('Content-Disposition') || '';
     const match = /filename="?([^"]+)"?/.exec(disposition);
+    const mailStatus = response.headers.get('X-Mail-Status');
     return {
       blob,
       filename: match?.[1] || `${supplierName} ${storeName}.xlsx`,
-      exportedCount: Number(response.headers.get('X-Exported-Count') || 0)
+      exportedCount: Number(response.headers.get('X-Exported-Count') || 0),
+      billValue: Number(response.headers.get('X-Bill-Value') || 0),
+      // Only when emailSupplier was asked: { status: SENT|SKIPPED|FAILED, to, files, message }.
+      mail: mailStatus ? {
+        status: mailStatus,
+        to: response.headers.get('X-Mail-To') || '',
+        files: Number(response.headers.get('X-Mail-Files') || 0),
+        message: response.headers.get('X-Mail-Message') || ''
+      } : null
     };
+  },
+
+  // Why this product is in the order: engine steps + 90-day sales (order_reason.py).
+  legacyProductWhy(storeName, productCode, session) {
+    return request(`/api/legacy-order/qty-check/${encodeURIComponent(storeName)}/${encodeURIComponent(productCode)}/why`, { session });
+  },
+
+  // Can this supplier's order be mailed? { ready, to: [...], reason }.
+  legacySupplierMailStatus(storeName, supplierCode, session) {
+    return request(`/api/legacy-order/orders/${encodeURIComponent(storeName)}/supplier-mail/status${toQuery({ supplier_code: supplierCode })}`, { session });
   },
 
   // Export the Pending grid (reviewed, qtycheck=1, not yet assigned to any
@@ -1644,12 +2119,91 @@ export const api = {
     return { blob, filename: match?.[1] || 'Rate_Analysis.xlsx' };
   },
 
+  // ----- Supplier Rate Engine (NMW vs SMS/Success variance, super admin) -----
+  async rateEngineVariantsUpload(file, days, session) {
+    const settings = loadSettings();
+    const form = new FormData();
+    form.append('file', file);
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/supplier-rate-engine/variants/upload?days=${days || 90}`), {
+        method: 'POST',
+        headers: authHeaders(session),
+        body: form
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    const text = await response.text();
+    const data = text ? safeJson(text) : null;
+    if (!response.ok) throw new Error(detailToMessage(data) || 'Upload failed');
+    return data;
+  },
+
+  rateEngineProductsSuggest(q, session) {
+    return request(`/api/supplier-rate-engine/products/suggest?q=${encodeURIComponent(q)}`, { session, timeoutMs: 15000 });
+  },
+
+  rateEngineVariantsSearch(q, days, session) {
+    return request(`/api/supplier-rate-engine/variants/search?q=${encodeURIComponent(q)}&days=${days || 90}`, { session, timeoutMs: 60000 });
+  },
+
+  rateEngineNmwActivity(days, session) {
+    return request(`/api/supplier-rate-engine/nmw/activity-90d?days=${days || 90}`, { session, timeoutMs: 120000 });
+  },
+
+  async rateEngineNmwActivityExcel(days, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, `/api/supplier-rate-engine/nmw/activity-90d?days=${days || 90}&format=xlsx`), {
+        headers: authHeaders(session)
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const match = /filename="?([^"]+)"?/.exec(response.headers.get('Content-Disposition') || '');
+    return { blob, filename: match?.[1] || 'NMW_Activity.xlsx' };
+  },
+
+  rateEngineVarianceReport(body, session) {
+    return request('/api/supplier-rate-engine/variance-report', { method: 'POST', session, timeoutMs: 300000, body: JSON.stringify(body) });
+  },
+
+  async rateEngineVarianceReportExcel(body, session) {
+    const settings = loadSettings();
+    let response;
+    try {
+      response = await fetch(joinUrl(settings.apiBaseUrl, '/api/supplier-rate-engine/variance-report'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(session) },
+        body: JSON.stringify({ ...body, format: 'xlsx' })
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Check that the API is running.');
+    }
+    if (!response.ok) {
+      let detail = response.statusText || 'Export failed';
+      try { detail = detailToMessage(await response.json()) || detail; } catch { /* no JSON body */ }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const match = /filename="?([^"]+)"?/.exec(response.headers.get('Content-Disposition') || '');
+    return { blob, filename: match?.[1] || 'NMW_Variance.xlsx' };
+  },
+
   // ----- Non-Moving Stock analysis (read-only) -----
   // section: 'own-store' | 'other-stores' | 'transfers' | 'dashboard' | 'product'.
   // The first call for a tenant builds every store's snapshot (can take a
   // minute or two on a cold server), so these get a long timeout.
-  nonMoving(section, params, session) {
-    return request(`/api/non-moving-analysis/${section}${toQuery(params)}`, { session, timeoutMs: 300000 });
+  nonMoving(section, params, session, signal) {
+    return request(`/api/non-moving-analysis/${section}${toQuery(params)}`, { session, timeoutMs: 300000, signal });
   },
 
   async nonMovingExcel(section, params, session, body) {

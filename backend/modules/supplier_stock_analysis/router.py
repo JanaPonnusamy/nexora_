@@ -55,6 +55,21 @@ def supplier_products(
     )
 
 
+@router.get("/stock-list")
+def stock_list(
+    tenant_id: str,
+    supplier_code: str,
+    store_id: Optional[str] = None,
+    search: str = "",
+    only_available: int = 0,
+    current_user: dict = Depends(require_admin_role),
+):
+    """Current SupplierStock rows for one supplier, every store of the tenant
+    (or one store) -- the plain stock list, no mapping analysis."""
+    _assert_scope(current_user, tenant_id, store_id)
+    return service.list_stock(tenant_id, supplier_code, store_id, search, only_available == 1)
+
+
 @router.get("/warehouse-stock/counts")
 def warehouse_stock_counts(tenant_id: str, store_id: str, current_user: dict = Depends(require_admin_role)):
     """Store-wide stock-status counts (all/zero/positive/cross-store), for the

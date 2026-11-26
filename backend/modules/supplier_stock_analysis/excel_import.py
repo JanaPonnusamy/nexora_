@@ -133,6 +133,49 @@ def _guess(header):
     return ""
 
 
+def _unique_suggestions(headers, saved):
+    """{header: target} with every target used by ONE column at most.
+
+    Supplier files often carry several look-alike columns (WMM: Total Stock,
+    BulkQty, LooseQty, Due Stock all read as "stock"; Product Code and Alt
+    Product Code). Precedence: the supplier's saved mapping, then exact
+    header-name hits, then phrase guesses -- each pass in file order, so the
+    first real column wins and the look-alikes stay unmapped."""
+    picked, used = {}, set()
+    passes = (
+        lambda h: saved.get(h.lower()),
+        lambda h: _SUGGESTIONS.get(_norm(h)),
+        _guess,
+    )
+    for guess in passes:
+        for h in headers:
+            target = h not in picked and guess(h)
+            if target and target not in used:
+                picked[h] = target
+                used.add(target)
+    return {h: picked.get(h, "") for h in headers}
+
+
+def duplicate_targets(mapping):
+    """{target label: [columns]} for every field mapped from more than one
+    column -- an import must take each field from exactly one column."""
+    by_target = {}
+    for source, target in (mapping or {}).items():
+        if target:
+            by_target.setdefault(target, []).append(source)
+    labels = {t["value"]: t["label"] for t in TARGETS}
+    return {labels.get(t, t): cols for t, cols in by_target.items() if len(cols) > 1}
+
+
+def _duplicate_error(dupes):
+    return {
+        "success": False,
+        "error": "Each field can come from one column only: " + "; ".join(
+            f"{label} is set on {', '.join(cols)}" for label, cols in dupes.items()),
+        "duplicates": dupes,
+    }
+
+
 def _number(value):
     if value in (None, ""):
         return None
@@ -239,7 +282,7 @@ def preview(file_bytes, tenant_id=None, store_id=None, supplier_code=None):
     hi = _detect_header_row(matrix, list(saved))
     headers = [("" if c is None else str(c).strip()) for c in matrix[hi]]
     headers = [h for h in headers if h]
-    suggested = {h: saved.get(h.lower()) or _guess(h) for h in headers}
+    suggested = _unique_suggestions(headers, saved)
     sample = []
     for row in matrix[hi + 1: hi + 11]:
         sample.append({headers[i]: (row[i] if i < len(row) else None) for i in range(len(headers))})
@@ -321,6 +364,9 @@ def _parse_rows(file_bytes, mapping):
 
 
 def import_file(tenant_id, store_id, supplier_code, file_bytes, mapping, imported_by=None):
+    dupes = duplicate_targets(mapping)
+    if dupes:
+        return _duplicate_error(dupes)
     rows, missing = _parse_rows(file_bytes, mapping)
     if missing:
         return {"success": False, "error": "Missing required mapping", "missing": missing}
@@ -347,6 +393,9 @@ def import_file_bulk(tenant_id, supplier_code, file_bytes, mapping, store_ids=No
     tenant_id that has this exact supplier code (or just store_ids, when the
     operator deselected some from the confirm list) -- one parse, one
     mapping save (keyed by supplier_code, not per-store), many stores."""
+    dupes = duplicate_targets(mapping)
+    if dupes:
+        return _duplicate_error(dupes)
     rows, missing = _parse_rows(file_bytes, mapping)
     if missing:
         return {"success": False, "error": "Missing required mapping", "missing": missing}

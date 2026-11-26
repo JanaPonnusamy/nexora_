@@ -1,0 +1,427 @@
+/* Login screen — premium enterprise palette, scoped to .ntm-login only.
+   Intentionally independent of the app's dark workspace theme tokens:
+   the login surface is the one screen a signed-out visitor sees, and it
+   targets a light enterprise SaaS look regardless of the in-app theme. */
+.ntm-login {
+  --login-primary: #1257b8;
+  --login-primary-dark: #0e4694;
+  --login-navy: #10233f;
+  --login-cyan: #16b8c4;
+  --login-teal: #0fb88f;
+  --login-bg: #eef3fa;
+  --login-card: #ffffff;
+  --login-text: #15243b;
+  --login-text-muted: #718096;
+  --login-border: #dce5f0;
+
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(900px 600px at 15% 10%, rgba(15, 184, 143, 0.08), transparent 60%),
+    radial-gradient(900px 600px at 85% 90%, rgba(18, 87, 184, 0.07), transparent 60%),
+    var(--login-bg);
+  color: var(--login-text);
+  font-family: var(--ntm-font-sans);
+}
+
+.ntm-login__stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 460px);
+  width: min(1180px, 94vw);
+  min-height: min(680px, 88vh);
+  background: var(--login-card);
+  border: 1px solid var(--login-border);
+  border-radius: 20px;
+  box-shadow: 0 30px 70px rgba(16, 35, 63, 0.12), 0 2px 0 rgba(255, 255, 255, 0.6) inset;
+  overflow: hidden;
+}
+
+/* ---------- Left: brand & intelligence pane ---------- */
+
+.ntm-login__brandpane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  padding: 56px 56px 48px;
+  background:
+    linear-gradient(100deg, rgba(5, 12, 26, 0.88) 0%, rgba(8, 20, 42, 0.62) 45%, rgba(8, 20, 42, 0.05) 100%),
+    url('../assets/ai/login-hero.webp') 70% center/cover no-repeat;
+  color: #eef4fb;
+  overflow: hidden;
+}
+
+.ntm-login__brandpane::after {
+  content: '';
+  position: absolute;
+  inset: auto -20% -40% auto;
+  width: 70%;
+  height: 70%;
+  background: radial-gradient(circle, rgba(22, 184, 196, 0.22), transparent 70%);
+  pointer-events: none;
+}
+
+.ntm-login__brandpane::before {
+  content: '';
+  position: absolute;
+  inset: -30% auto auto -15%;
+  width: 55%;
+  height: 55%;
+  background: radial-gradient(circle, rgba(15, 184, 143, 0.18), transparent 70%);
+  pointer-events: none;
+}
+
+.ntm-login__brandpane-lockup {
+  margin-bottom: 8px;
+}
+
+.ntm-login__brandpane-logo .ntm-brand__mark {
+  width: 46px;
+  height: 46px;
+}
+
+.ntm-login__brandpane-logo .ntm-brand__name {
+  font-size: 22px;
+}
+
+.ntm-login__brandpane-logo .ntm-brand__caption {
+  font-size: 10.5px;
+}
+
+.ntm-login__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  margin: 0;
+  padding: 6px 13px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  color: #bfe9ee;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ntm-login__headline {
+  margin: 6px 0 0;
+  max-width: 13ch;
+  max-width: 420px;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.ntm-login__subcopy {
+  margin: 0;
+  max-width: 400px;
+  color: #c6d6e8;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.ntm-login__features {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+  max-width: 420px;
+}
+
+.ntm-login__feature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 8px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(2, 8, 20, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  font-size: 13px;
+  font-weight: 600;
+  color: #e7f1fb;
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+.ntm-login__feature:hover {
+  transform: translateY(-2px);
+  border-color: rgba(34, 195, 214, 0.5);
+}
+
+.ntm-login__feature-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 10px;
+  background: radial-gradient(circle at 50% 60%, rgba(34, 195, 214, 0.28), transparent 70%);
+}
+
+/* ---------- Right: authentication panel ---------- */
+
+.ntm-login__panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 44px;
+  background: var(--login-card);
+}
+
+.ntm-login__panel-inner {
+  width: 100%;
+  max-width: 320px;
+}
+
+.ntm-login__brand {
+  display: none;
+}
+
+.ntm-login__welcome {
+  margin: 4px 0 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--login-navy);
+  letter-spacing: -0.01em;
+}
+
+.ntm-login__tagline {
+  margin: 4px 0 26px;
+  color: var(--login-text-muted);
+  font-size: 13.5px;
+}
+
+.ntm-login__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ntm-login__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ntm-login__field-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #46577a;
+}
+
+.ntm-login__input-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.ntm-login__input-icon {
+  position: absolute;
+  left: 12px;
+  color: #9aa9c0;
+  pointer-events: none;
+}
+
+.ntm-login__form input {
+  width: 100%;
+  background: #fbfdff;
+  border: 1px solid var(--login-border);
+  border-radius: 9px;
+  color: var(--login-text);
+  padding: 11px 14px 11px 38px;
+  font-size: 14px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.ntm-login__field:has(.ntm-login__reveal) input {
+  padding-right: 40px;
+}
+
+.ntm-login__form input::placeholder {
+  color: #a7b4c6;
+}
+
+.ntm-login__form input:hover {
+  border-color: #b9c8de;
+}
+
+.ntm-login__form input:focus {
+  outline: none;
+  background: #ffffff;
+  border-color: var(--login-primary);
+  box-shadow: 0 0 0 3px rgba(18, 87, 184, 0.14);
+}
+
+.ntm-login__reveal {
+  position: absolute;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  color: #9aa9c0;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.ntm-login__reveal:hover {
+  color: var(--login-primary);
+  background: rgba(18, 87, 184, 0.08);
+}
+
+.ntm-login__reveal:focus-visible {
+  outline: 2px solid var(--login-primary);
+  outline-offset: 1px;
+}
+
+.ntm-login__remember {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  margin: -2px 0 0;
+  color: var(--login-text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ntm-login__remember input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--login-primary);
+  cursor: pointer;
+}
+
+.ntm-login__remember input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--login-primary);
+  outline-offset: 2px;
+}
+
+.ntm-login__error,
+.ntm-login__notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.ntm-login__error {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fda29b;
+}
+
+.ntm-login__notice {
+  color: #3a4b63;
+  background: #f1f5fb;
+  border: 1px solid var(--login-border);
+}
+
+.ntm-login__submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, var(--login-primary) 0%, var(--login-primary-dark) 65%, #0a3a79 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 150ms ease, transform 120ms ease, box-shadow 150ms ease;
+  box-shadow: 0 8px 20px rgba(18, 87, 184, 0.28);
+}
+
+.ntm-login__submit:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: 0 10px 24px rgba(18, 87, 184, 0.34);
+}
+
+.ntm-login__submit:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ntm-login__submit:focus-visible {
+  outline: 2px solid var(--login-teal);
+  outline-offset: 2px;
+}
+
+.ntm-login__submit:disabled {
+  opacity: 0.7;
+  cursor: default;
+  box-shadow: none;
+}
+
+.ntm-login__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: ntm-login-spin 700ms linear infinite;
+}
+
+@keyframes ntm-login-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ntm-login__footer {
+  margin: 26px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--login-border);
+  text-align: center;
+  color: #a2aec1;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 900px) {
+  .ntm-login__stage {
+    grid-template-columns: 1fr;
+    width: min(480px, 94vw);
+  }
+
+  .ntm-login__brandpane {
+    display: none;
+  }
+
+  .ntm-login__brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+}
+
+@media (max-height: 740px) {
+  .ntm-login__stage {
+    min-height: auto;
+  }
+
+  .ntm-login__brandpane {
+    padding: 40px 48px;
+  }
+}

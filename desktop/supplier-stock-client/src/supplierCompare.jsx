@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api/client.js';
 import { pwCompareSuppliers } from './procurementWorkspaceView.js';
+import { orderCache } from './orderCacheSync.js';
 
 // Supplier stock compare -- the card that opens under the current Procurement
 // row (owner 2026-10-26). Before placing a product with the picked supplier it
@@ -26,7 +27,7 @@ export function useSupplierCompare({ store, enabled, reloadKey, session }) {
     if (!store || !enabled) { setState({ loading: false, byCode: {}, error: '' }); return undefined; }
     let cancelled = false;
     setState((cur) => ({ ...cur, loading: true, error: '' }));
-    api.legacySupplierStockCompare(store, session)
+    orderCache.compare(store, () => api.legacySupplierStockCompare(store, session))
       .then((r) => { if (!cancelled) setState({ loading: false, byCode: r && typeof r === 'object' ? r : {}, error: '' }); })
       .catch((e) => { if (!cancelled) setState({ loading: false, byCode: {}, error: e.message || 'Could not load supplier stock.' }); });
     return () => { cancelled = true; };

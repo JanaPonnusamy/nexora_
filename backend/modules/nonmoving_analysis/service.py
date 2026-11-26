@@ -473,6 +473,8 @@ def filter_rows(rows, search=None, classes=None, ptype=None, supplier=None, min_
                 continue
             if e == "risk" and r["expiry_status"] not in ("Expired", "Near expiry"):
                 continue
+            if e == "valid" and r["expiry_status"] != "OK":
+                continue
         if q and not _text_match(r, q):
             continue
         out.append(r)
@@ -609,6 +611,32 @@ def product_detail(tenant_id, store_id, product_code, cfg):
 def product_batches(tenant_id, store_id, product_code):
     store = _store_of(tenant_id, store_id)
     return {"store": store, "batches": repo.product_batches(tenant_id, store["store_id"], product_code)}
+
+
+def product_sales_trend(tenant_id, store_id, product_code, months=6):
+    """Six-month (default) product-level sales trend for the Non-Moving Stock
+    double-click detail: every month in the window, zero-filled when a month
+    had no sale (never omitted, so the chart/table always show a full run)."""
+    store = _store_of(tenant_id, store_id)
+    months = max(1, min(24, int(months)))
+    rows = repo.product_sales_trend(tenant_id, store["store_id"], product_code, months)
+    by_ym = {r["ym"]: r for r in rows}
+    today = date.today()
+    out = []
+    for i in range(months - 1, -1, -1):
+        y, m = today.year, today.month - i
+        while m <= 0:
+            m += 12
+            y -= 1
+        ym = f"{y:04d}-{m:02d}"
+        r = by_ym.get(ym)
+        out.append({
+            "ym": ym,
+            "qty": round(_n(r["qty"]), 2) if r else 0.0,
+            "sales_value": round(_n(r["sales_value"]), 2) if r else 0.0,
+            "transactions": int(_n(r["transactions"])) if r else 0,
+        })
+    return {"store": store, "level": "product", "months": out}
 
 
 # --------------------------------------------------------------------------

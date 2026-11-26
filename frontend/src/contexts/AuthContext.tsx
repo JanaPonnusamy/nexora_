@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = Boolean(token) && !restoring
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, token, isAuthenticated, restoring, login, logout }),
+    () => ({ user, token, isAuthenticated, restoring, login, logout, host: 'nextech-mediq' }),
     [user, token, isAuthenticated, restoring, login, logout],
   )
 

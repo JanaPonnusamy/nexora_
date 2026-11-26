@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { legacyOrderService } from '../../services/legacyOrderService'
 import type {
   MonthlyStatRow,
@@ -165,15 +165,28 @@ export function ProductDetailPanel({ store, productCode, mode, onError }: Produc
   const [salesDetails, setSalesDetails] = useState<SalesDetailRow[]>([])
   const [monthlyStats, setMonthlyStats] = useState<MonthlyStatRow[]>([])
   const [loading, setLoading] = useState(false)
+  // Rapid row-to-row selection fires overlapping fetches; without tracking
+  // which request is actually current, a slow response for an earlier
+  // product can resolve after a newer one and clobber the panel with stale
+  // data -- the "updates 4 rows late" symptom. Only the response matching
+  // the product/store/mode still selected when it lands is applied.
+  const requestRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!store || productCode == null) {
+      requestRef.current = null
       setPurchaseDetails([])
       setSalesDetails([])
       setMonthlyStats([])
       return
     }
-    let cancelled = false
+    const requestKey = `${store}|${mode}|${productCode}`
+    requestRef.current = requestKey
+    // Clear immediately so the panel never shows the previous product's
+    // chart/tables while the new one is loading.
+    setPurchaseDetails([])
+    setSalesDetails([])
+    setMonthlyStats([])
     setLoading(true)
     Promise.all([
       legacyOrderService.qtyCheckPurchaseDetails(store, productCode, mode),
@@ -181,14 +194,13 @@ export function ProductDetailPanel({ store, productCode, mode, onError }: Produc
       legacyOrderService.qtyCheckMonthlyStats(store, productCode, mode),
     ])
       .then(([purchase, sales, stats]) => {
-        if (cancelled) return
+        if (requestRef.current !== requestKey) return
         setPurchaseDetails(purchase)
         setSalesDetails(sales)
         setMonthlyStats(stats)
       })
-      .catch((e: Error) => { if (!cancelled) onError?.(e.message) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+      .catch((e: Error) => { if (requestRef.current === requestKey) onError?.(e.message) })
+      .finally(() => { if (requestRef.current === requestKey) setLoading(false) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, mode, productCode])
 

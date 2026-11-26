@@ -27,7 +27,10 @@ from . import (
     STAGING_DIR,
     STATE_DIR,
 )
-from .util import bundled_path, log, run, sha256_of, spawn_detached, wait_until
+from .util import bundled_path, log, prune_old_versions, run, sha256_of, spawn_detached, wait_until
+
+# how many old backups/staged downloads to keep per app, after a successful update
+_KEEP_VERSIONS = 2
 
 try:
     import win32service
@@ -372,6 +375,9 @@ class StoreAgentApp(ServiceApp):
                     if was_running:
                         sc_start(self.service)
                 raise
+        prune_old_versions(backup.parent, keep=_KEEP_VERSIONS, log_label="store_agent backups")
+        prune_old_versions(STAGING_DIR, keep=_KEEP_VERSIONS, log_label="staging",
+                            name_prefix=f"{self.key}-")
         return f"Store Agent updated {previous} -> {pkg['version']}"
 
     def install(self, ctx, pkg, install_dir=None):
@@ -547,6 +553,9 @@ class HoBackendApp(ServiceApp):
                 run(["sc", "config", self.service, "start=", "auto"])
                 self._set_maintenance(False)
                 shutil.rmtree(str(extract), ignore_errors=True)
+        prune_old_versions(BACKUP_DIR / "ho_backend", keep=_KEEP_VERSIONS, log_label="ho_backend backups")
+        prune_old_versions(STAGING_DIR, keep=_KEEP_VERSIONS, log_label="staging",
+                            name_prefix=f"{self.key}-")
         return f"HO backend updated {previous} -> {pkg['version']}"
 
 
@@ -659,7 +668,17 @@ class HoBackendGitApp(App):
 # Stock Client (Electron GUI, not a service)
 # ---------------------------------------------------------------------------
 
-PRODUCT_NAME = "Axythic Supplier Stock"
+# NEXORA MEDIQ Phase 5 rebrand: electron-builder's `productName` changed from
+# "Axythic Supplier Stock" to "NEXORA MEDIQ" (desktop/supplier-stock-client/
+# package.json), which changes the real installed exe filename and the HKLM
+# DisplayName this class matches against. PRODUCT_NAME must track the CURRENT
+# productName for new installs to be discoverable at all.
+PRODUCT_NAME = "NEXORA MEDIQ"
+# Prior productName values, oldest first, kept so a fleet still mid-rollout
+# (PCs not yet updated past the rebrand) remain discoverable/updatable during
+# the transition window -- see doc 24 Phase 5 report, Watchdog/Controller
+# coordination section.
+_LEGACY_PRODUCT_NAMES = ("Axythic Supplier Stock",)
 
 
 def _uninstall_key_dirs(winreg, sub):
@@ -695,9 +714,10 @@ class StockClientApp(App):
 
     def exe(self):
         for root in self._candidate_dirs():
-            exe = root / f"{PRODUCT_NAME}.exe"
-            if exe.is_file():
-                return exe
+            for name in (PRODUCT_NAME,) + _LEGACY_PRODUCT_NAMES:
+                exe = root / f"{name}.exe"
+                if exe.is_file():
+                    return exe
         return None
 
     def _candidate_dirs(self):
@@ -714,10 +734,14 @@ class StockClientApp(App):
                             try:
                                 with winreg.OpenKey(root, winreg.EnumKey(root, i)) as sub:
                                     name = winreg.QueryValueEx(sub, "DisplayName")[0]
-                                    # electron-builder writes "Axythic Supplier Stock 0.1.48"
-                                    # and may leave InstallLocation empty (custom install dir)
-                                    if name == PRODUCT_NAME or name.startswith(PRODUCT_NAME + " "):
-                                        dirs += _uninstall_key_dirs(winreg, sub)
+                                    # electron-builder writes "<productName> 0.1.48" and may
+                                    # leave InstallLocation empty (custom install dir). Match
+                                    # the current AND legacy product names so PCs not yet
+                                    # updated past the NEXORA MEDIQ rebrand stay discoverable.
+                                    for candidate in (PRODUCT_NAME,) + _LEGACY_PRODUCT_NAMES:
+                                        if name == candidate or name.startswith(candidate + " "):
+                                            dirs += _uninstall_key_dirs(winreg, sub)
+                                            break
                             except OSError:
                                 continue
                 except OSError:
@@ -725,12 +749,17 @@ class StockClientApp(App):
         except ImportError:
             pass
         pf = Path(os.environ.get("ProgramW6432") or os.environ.get("ProgramFiles") or r"C:\Program Files")
-        dirs.append(pf / PRODUCT_NAME)
-        # older installs used a custom dir with no matching uninstall key (NMS .32)
-        dirs.append(pf / "Nexora Supplier Stock" / PRODUCT_NAME)
         local = host.user_localappdata()
+        for name in (PRODUCT_NAME,) + _LEGACY_PRODUCT_NAMES:
+            dirs.append(pf / name)
+            # older installs used a custom dir with no matching uninstall key (NMS .32)
+            dirs.append(pf / "Nexora Supplier Stock" / name)
+            if local:
+                dirs.append(local / "Programs" / name)
+        # pre-rebrand LOCALAPPDATA installs use electron-builder's slugified folder
+        # name, not the raw product name (e.g. "axythic-supplier-stock").
         if local:
-            dirs += [local / "Programs" / PRODUCT_NAME, local / "Programs" / "axythic-supplier-stock"]
+            dirs.append(local / "Programs" / "axythic-supplier-stock")
         return dirs
 
     def installed(self):
@@ -739,6 +768,10 @@ class StockClientApp(App):
     def status(self):
         exe = self.exe()
         return "running" if exe and host.is_running(exe) else "stopped"
+
+    def is_running(self):
+        exe = self.exe()
+        return bool(exe and host.is_running(exe))
 
     def version(self):
         exe = self.exe()
@@ -801,6 +834,8 @@ class StockClientApp(App):
             shutil.copy2(str(staged), str(backup_dir / staged.name))
             if was_running:
                 self.start(ctx)
+        prune_old_versions(STAGING_DIR, keep=_KEEP_VERSIONS, log_label="staging",
+                           name_prefix=f"{self.key}-")
         return f"Stock Client {previous or 'not installed'} -> {pkg['version']}"
 
     def install(self, ctx, pkg, install_dir=None):
@@ -855,6 +890,11 @@ class ControllerApp(App):
 
     def update(self, ctx, pkg):
         staged = fetch_package(ctx, self.key, pkg)
+        # prune now -- the swap below restarts this process via a detached
+        # script, so there is no reliable "after success" point to do it from
+        prune_old_versions(BACKUP_DIR / "controller", keep=_KEEP_VERSIONS, log_label="controller backups")
+        prune_old_versions(STAGING_DIR, keep=_KEEP_VERSIONS, log_label="staging",
+                           name_prefix=f"{self.key}-")
         target = INSTALL_DIR / EXE_NAME
         UPDATE_MARKER.parent.mkdir(parents=True, exist_ok=True)
         UPDATE_MARKER.write_text(json.dumps({"command_id": ctx.command_id, "version": pkg["version"],

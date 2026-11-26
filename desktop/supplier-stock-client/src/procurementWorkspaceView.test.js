@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   pwAssignRefusal,
+  pwCollapseRows,
   pwColumnOrder,
   pwColumnWidth,
   pwCompareSuppliers,
@@ -213,4 +214,43 @@ test('offer remark: supplier offer first, history fallback reduced', () => {
   // A live supplier offer is taken as-is: 10+2 is not 5+1.
   assert.equal(pwOfferRemark(15, [{ sch: 10, free: 2 }]), '');
   assert.equal(pwOfferRemark(9, undefined), '');
+});
+
+test('same product returned twice, or loaded again, is one line and the qty is not added', () => {
+  const first = { key: '100', code: '100.0', name: 'DOLO', qty: 4, supplier: null, store: 'NMW' };
+  const copy = { key: '100', code: 100, name: 'DOLO', qty: 4, supplier: null, store: 'NMW' };
+  const once = pwCollapseRows([first, copy]);
+  assert.equal(once.length, 1);
+  assert.equal(once[0].qty, 4);
+  const refreshed = pwCollapseRows([...once, ...once]);
+  assert.equal(refreshed.length, 1);
+  assert.equal(refreshed[0].qty, 4);
+});
+
+test('two snapshots of one product keep the line that already has a quantity', () => {
+  const empty = { key: '100', qty: 0, supplier: null, store: 'NMW' };
+  const reviewed = { key: '100', qty: 8, supplier: null, store: 'NMW' };
+  const kept = pwCollapseRows([empty, reviewed]);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0], reviewed);
+});
+
+test('supplier mappings, similar names, and other stores stay distinct', () => {
+  const rows = pwCollapseRows([
+    { key: '100', name: 'BRIV 25MG', qty: 5, supplier: 'Purani', sstock: 2, store: 'NMW' },
+    { key: '100', name: 'BRIV 25MG', qty: 5, supplier: 'Medley', sstock: 40, store: 'NMW' },
+    { key: '101', name: 'BRIV 25MG TAB', qty: 3, supplier: 'Purani', store: 'NMW' },
+    { key: '100', name: 'BRIV 25MG', qty: 9, supplier: 'Purani', store: 'NMA' },
+  ]);
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows.map((row) => row.qty), [5, 5, 3, 9]);
+});
+
+test('repeated mapping copies of one assigned line keep qty and the stockier row', () => {
+  const low = { key: '100', qty: 7, supplier: 'Purani', sstock: 1, store: 'NMW' };
+  const high = { key: '100', qty: 7, supplier: 'Purani', sstock: 30, store: 'NMW' };
+  const kept = pwCollapseRows([low, high]);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0], high);
+  assert.equal(kept[0].qty, 7);
 });

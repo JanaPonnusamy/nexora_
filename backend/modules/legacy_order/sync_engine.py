@@ -96,10 +96,17 @@ def get_query_for_table(table_name):
             "ORDER BY ProductCode, MonthOfStatistics"
         )
     if table_name == "PurchaseTrans":
+        # TransactionTime is the branch's real GRN entry timestamp -- grndate
+        # is a datetime column but is always stamped at midnight there, so it
+        # carries no time of day (confirmed against live NMW branch data,
+        # 2026-11-25). TransactionTime is the row-insert time during GRN
+        # entry and was previously never pulled into central; added so the
+        # PM Order Entry screen can show the real GRN time instead of a
+        # sync-arrival proxy.
         return (
             "SELECT PT.ID, p.productcode, P.ProductType, pt.stockreceived, pt.FreeQty, "
             "ProductDiscPercent, pt.itemcost, pt.purchaseprice, pt.mrp, pt.grndate, "
-            "pt.InvoiceSeries, pt.Grnnumber, s.suppliername, pt.suppliercode "
+            "pt.TransactionTime, pt.InvoiceSeries, pt.Grnnumber, s.suppliername, pt.suppliercode "
             "FROM PurchaseTrans pt "
             "INNER JOIN suppliers s ON pt.suppliercode = s.suppliercode "
             "INNER JOIN products p ON p.productcode = pt.productcode "
@@ -196,9 +203,15 @@ def platform_query_for_table(table_name):
             "ORDER BY ProductCode, MonthOfStatistics"
         )
     if table_name == "PurchaseTrans":
+        # sync.PurchaseTrans.TransactionTime: added 2026-11-25 via the sync
+        # column-mapping registry (sync.sync_column_mapping, previously
+        # unselected) + shared_table_builder_service.build_shared_tables's
+        # ALTER TABLE. Agent stores now carry the real branch GRN entry time
+        # the same way LAN/branch stores do via get_query_for_table.
         return (
             "SELECT PT.ID, p.productcode, P.ProductType, pt.stockreceived, pt.FreeQty, "
             "pt.ProductDiscPercent, pt.itemcost, pt.purchaseprice, pt.mrp, pt.grndate, "
+            "pt.TransactionTime, "
             "pt.InvoiceSeries, pt.Grnnumber, s.suppliername, pt.suppliercode "
             "FROM sync.PurchaseTrans pt "
             "INNER JOIN sync.Suppliers s ON pt.suppliercode = s.suppliercode AND s.store_id = pt.store_id "
@@ -337,6 +350,23 @@ def _ensure_ho_supplier_code_column(dest_cur, dest_conn):
         dest_conn.commit()
 
 
+def _ensure_transaction_time_column(dest_cur, dest_conn):
+    """Purchasetrans predates the TransactionTime column (the branch's real
+    GRN entry time -- grndate is date-only there); add it once. Existing
+    rows stay NULL: the real time was never captured centrally before this,
+    and grndate's branch value is always midnight, so there is nothing to
+    backfill it from."""
+    exists = dest_cur.execute(
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_NAME = 'Purchasetrans' AND COLUMN_NAME = 'TransactionTime'"
+    ).fetchone()[0]
+    if not exists:
+        dest_cur.execute(
+            "ALTER TABLE Purchasetrans ADD TransactionTime DATETIME NULL"
+        )
+        dest_conn.commit()
+
+
 def _ensure_supplier_isactive_column(dest_cur, dest_conn):
     """OrderSuppliers predates the IsActive column; add it once.
 
@@ -438,6 +468,8 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name,
         if dest_table.lower() == "ordersuppliers":
             _ensure_supplier_isactive_column(dest_cur, dest_conn)
             _ensure_supplier_portal_columns(dest_cur, dest_conn)
+        if dest_table.lower() == "purchasetrans":
+            _ensure_transaction_time_column(dest_cur, dest_conn)
 
         # STEP 1 -- watermark
         param = _watermark(dest_cur, table_name, dest_table, store_name)
@@ -478,10 +510,14 @@ def sync_table(source_cs, dest_cs, table_name, dest_table, store_name,
 
         # Batches is a full-replace snapshot: the branch only sends rows with
         # Stock > 0, so anything the MERGE does not touch must first be zeroed
-        # or sold-out batches would keep their last-known stock forever.
+        # or sold-out batches would keep their last-known stock forever. Most
+        # rows are already 0 from a prior cycle -- "AND Stock > 0" keeps this
+        # an update of only the rows that actually change, not a full-table
+        # write every sync (confirmed stalling the shared SQL Server for
+        # minutes under concurrent load).
         if dest_table.lower() == "batches":
             dest_cur.execute(
-                "UPDATE Batches SET Stock = 0 WHERE StoreName = ?", store_name
+                "UPDATE Batches SET Stock = 0 WHERE StoreName = ? AND Stock > 0", store_name
             )
             dest_conn.commit()
 

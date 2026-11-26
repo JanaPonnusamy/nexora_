@@ -112,8 +112,7 @@ class DataExtractionService:
                     "FROM [ProductSaleInformation] psi "
                     "WHERE psi.[ID] > ? "
                     f"AND psi.[Bnumber] = [{source_alias}].[BNumber] "
-                    f"AND ISNULL(CAST(psi.[BillNumber] AS NVARCHAR(100)), '') = "
-                    f"ISNULL(CAST([{source_alias}].[BillNumber] AS NVARCHAR(100)), '')"
+                    f"AND psi.[BillNumber] = [{source_alias}].[BillNumber]"
                     ")"
                 )
                 incremental_params.append(last_child_id)

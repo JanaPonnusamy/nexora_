@@ -1,0 +1,2011 @@
+/* ============================================================================
+   Procurement Workspace (ProcurementWorkspace.jsx) — NexTech MediQ Port
+   Source: desktop/supplier-stock-client/src/styles.css (.ow-*, .pw-*
+           Order Workspace shared chrome + Procurement-specific layout,
+           intelligence dock, chart, harvest-review tier colors).
+   Adapted to NexTech MediQ's 5-theme token system (Midnight Glass, Arctic Glass,
+   Ocean Blue, Graphite Pro, Aurora Light) and AppShell layout. Shared base rules
+   also used by Non-Moving Stock (.ow-panel, .ow-chart-*, .ow-intel-table,
+   .pw-settings, .pw-col-list, --ow-in/--ow-out/--ow-stock/--ow-adj chart tokens)
+   are defined once in nonMovingStock.css and reused here — not redeclared.
+   ============================================================================ */
+
+/* ===== Order Workspace (desktop, Purchase-Manager ordering console) ===== */
+/* Bound the screen to the viewport exactly like the stock workbench: no page
+   scroll (only inner panels scroll), reclaim the roomy 32px frame, and drop the
+   .screen-panel 1120px cap so the grid + sidebar use the FULL window width
+   (that was the empty gap on the right). */
+.workspace:has(> .ow-screen:not(.ow-screen-hidden)) {
+  padding: var(--ui-workspace-padding); overflow: hidden;
+  width: 100%; max-width: 100vw; box-sizing: border-box;
+}
+/* Order Workspace is kept mounted (not unmounted) when another screen is
+   active, so operator state survives switching screens and back — see
+   AppShell's orderWorkspaceVisited. Must stay a direct child of .workspace
+   (no wrapper div) for the :has() selector above to see it correctly. */
+.ow-screen.ow-proc { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.ow-screen {
+  display: flex; flex-direction: column; gap: 6px;
+  /* Ported from supplier-stock-client, which sized this off a vh calc using
+     --ui-nav-height/--ui-workspace-padding. Neither token is defined anywhere
+     in NexTech MediQ (grep confirms), so that calc() was invalid and `height`
+     fell back to `auto` — the screen sized to its own content instead of the
+     viewport, starting small/empty and only reaching full size once the grid
+     and panels had real content to size around (the "page suddenly expands
+     after load" bug). This app's shell already gives the routed page a sized
+     flex parent (AppShell's <main class="ntm-shell__content">, itself
+     flex:1/column/overflow:hidden) — stretch to fill THAT instead of
+     recomputing the viewport here. */
+  flex: 1 1 auto;
+  min-height: 0; max-width: none; width: 100%;
+  overflow: hidden;
+}
+/* Two classes so this beats `.ow-screen { display: flex }` above. A hidden
+   Order Workspace was staying on screen and covering Procurement. */
+.ow-screen.ow-screen-hidden { display: none; }
+/* Single-row command bar. flex-wrap is deliberately OFF (not a safety net --
+   a toolbar that wraps at 1366px is exactly the bug this fixes): every
+   flexible field carries its own min-width:0 + shrink budget, and the
+   status/assignment content (workflow chip, pending/assigned counts, the
+   Enter/Esc/Navigate hint) lives in the separate .ow-status-strip row below
+   instead of competing with Export/Finalize for toolbar width. */
+.ow-toolbar {
+  /* wrap is the last-resort net only: the width caps below keep it on one
+     row at normal widths, but a hidden Export/Finalize is worse than a
+     second toolbar row on a narrow window (owner report 2026-10-24). */
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 0 0 auto;
+  padding: 6px 8px; min-height: 44px;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); box-shadow: var(--nx-shadow-sm);
+  /* NOT overflow-x:auto here -- setting either overflow axis to a scrolling
+     value forces the OTHER axis to auto too (CSS overflow is a pair), which
+     clipped the Supplier search popover (position:absolute, taller than the
+     toolbar) along with it. The narrow-window clipping this used to paper
+     over is handled by .ow-search's low min-width instead (it shrinks first,
+     so trailing controls keep their room without needing toolbar scroll). */
+}
+/* Trailing action controls must never be the ones sacrificed to make room --
+   .ow-search is the one flexible field and shrinks first. */
+.ow-toolbar > .ow-icon-btn,
+.ow-toolbar > .ow-btn { flex: 0 0 auto; }
+/* Vertical divider between logical control groups. */
+.ow-sep { flex: 0 0 auto; align-self: stretch; width: 1px; margin: 3px 2px; background: var(--nx-rule-strong); }
+.ow-field { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 0 0 auto; }
+.ow-field > span { color: var(--nx-text-muted); font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; white-space: nowrap; }
+.ow-field select {
+  min-height: 32px; padding: 2px 8px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
+}
+/* Chromium sizes a closed <select> to its widest <option>, so every select
+   with long option text needs an explicit closed-width cap (dropdown panel
+   still shows full text) -- otherwise it, not the flex layout, is what
+   forces the toolbar to overflow/wrap at 1366px. */
+.ow-store-select { max-width: 88px; }
+.ow-process-select { max-width: 168px; }
+/* Wanted's options are full sentences ("Regular Order Based Min & Max...")
+   -- uncapped, it alone pushed Finalize/Export off the right edge. */
+.ow-type-select { max-width: 110px; }
+.ow-wanted-select { max-width: 150px; }
+.ow-tabs { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); overflow: hidden; }
+.ow-tabs button { padding: 4px 10px; border: 0; background: var(--nx-surface); color: var(--nx-text-soft); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.ow-tabs button + button { border-left: 1px solid var(--nx-rule); }
+.ow-tabs button.active { background: var(--nx-accent); color: var(--nx-accent-on); }
+.ow-search {
+  flex: 1 1 140px; min-width: 40px; min-height: 32px; padding: 2px 10px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
+}
+.ow-chip { flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
+.ow-chip-ok { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.ow-chip-run { background: var(--nx-warning-sunk); color: var(--nx-warning); }
+.ow-not-reviewed-badge { margin-right: 6px; padding: 1px 6px; font-size: 9px; }
+.ow-metrics { flex: 0 0 auto; font-size: 11px; color: var(--nx-text-muted); white-space: nowrap; }
+.ow-metrics strong { color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.ow-count { flex: 0 0 auto; font-size: 11px; font-weight: 600; color: var(--nx-text-muted); white-space: nowrap; }
+.ow-history .ow-count { margin-left: 0; }
+.ow-btn {
+  flex: 0 0 auto; min-height: 32px; padding: 4px 10px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-raised); color: var(--nx-text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap; transition: background 100ms ease, border-color 100ms ease;
+}
+.ow-btn:hover:not(:disabled) { background: var(--nx-surface-hover, var(--nx-surface-sunk)); border-color: var(--nx-accent); }
+.ow-btn-primary { border-color: var(--nx-accent); background: var(--nx-accent); color: var(--nx-accent-on); }
+.ow-btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.ow-btn-danger { border-color: var(--nx-danger); background: var(--nx-danger); color: var(--nx-text-on); }
+.ow-btn-sm { min-height: 24px; padding: 1px 10px; font-size: 11px; }
+.ow-btn:disabled { opacity: 0.45; cursor: not-allowed; background: var(--nx-surface); }
+
+/* Assigned rows in the By-Supplier grid turn green. */
+.ow-screen tbody tr.ow-row-assigned > td { background: var(--nx-success-sunk); }
+.ow-screen tbody tr.ow-row-assigned.ow-row-sel > td:first-child { box-shadow: inset 3px 0 0 var(--nx-success-ink); }
+/* Already qty-checked in ANY grid (same OrderManagement.Qtycheck column) --
+   a quiet dim, not a loud badge, so reviewed rows visually recede without
+   the noise the old NR badge had (that one flagged NOT-reviewed on nearly
+   every row here; this flags the opposite state, so it's the minority). */
+.ow-screen tbody tr.ow-row-reviewed:not(.ow-row-assigned) > td { opacity: 0.72; }
+.ow-reviewed-check { color: var(--nx-success-ink); font-weight: 700; margin-left: 2px; }
+/* QTY CHECK status badge (Checked/Pending/Unknown) -- strictly server-
+   persisted (see owQtyCheckStatus), a deliberately separate signal from the
+   ✓ icon above which also reflects a same-session, not-yet-saved edit. */
+.ow-qtycheck-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1.4; white-space: nowrap; }
+.ow-qtycheck-checked { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.ow-qtycheck-pending { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.ow-qtycheck-unknown { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+/* S.Stock (the SUPPLIER's own live stock, Live Stock mode only) -- moved
+   next to the main Stock column (owner request) and given its own color so
+   the two numbers read as visually distinct at a glance, not as a repeat of
+   the same figure. Uses the existing accent token (not success/warning/
+   danger, which already mean something else in this grid) so it reads as
+   "a different kind of number" without implying good/bad. */
+.ow-sstock-val { color: var(--nx-accent-ink, var(--nx-info-ink, #2563eb)); font-weight: 600; }
+/* Procurement S.Offer: the picked supplier's live sch+free offer ("10+1"). */
+.pw-soffer { color: var(--nx-success-ink, #15803d); font-weight: 700; }
+/* Procurement export remark: a compact 10-character box beside Or Qty (owner
+   2026-11-04). An auto-filled offer reads green; a typed note in normal ink.
+   No outline on idle rows (a column of empty boxes read as wasted space);
+   it shows on the selected / hovered row and while typing. Same focus
+   treatment as .ow-qty. */
+.pw-note {
+  width: 100%; height: 24px; min-height: 0; padding: 0 4px; border: 1px solid transparent;
+  border-radius: 4px; background: transparent; color: var(--nx-text); font: inherit; box-sizing: border-box;
+}
+.pw-row:hover .pw-note, .ow-row-sel .pw-note { border-color: var(--nx-rule); }
+.pw-note:hover { border-color: var(--nx-rule-strong); }
+.pw-note:focus-visible { outline: none; border-color: var(--nx-accent); box-shadow: inset 0 0 0 1px var(--nx-accent); background: var(--nx-surface); }
+.pw-note--auto { color: var(--nx-success-ink, #15803d); font-weight: 700; }
+
+/* Zero-stock hint: red text on the Stock number only (not a full-row/panel
+   shade, so it doesn't clash with the selection highlight or dominate the
+   grid) -- wherever a Stock value is shown: every grid + the dock header. */
+.ow-stock-zero { color: var(--nx-danger); font-weight: 700; }
+
+/* Success banner (assign confirmation, export done). */
+.ow-banner {
+  display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+  padding: 5px 10px; border: 1px solid var(--nx-success-ink); border-radius: var(--nx-radius-sm);
+  background: var(--nx-success-sunk); color: var(--nx-success-ink); font-size: 12px;
+}
+.ow-banner button { border: 0; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+.ow-banner > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-banner .ow-banner-open {
+  flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 2px 10px;
+  border: 1px solid currentColor; border-radius: var(--nx-radius-sm);
+}
+.ow-banner .ow-banner-open:hover { background: var(--nx-success-ink); color: var(--nx-success-sunk); }
+
+/* Searchable supplier combo (By Supplier / Assigned toolbar). Explicit
+   font-size/weight throughout -- this list isn't inside .ow-screen (it's not
+   portaled, but the toolbar's own font can inherit from a larger ancestor),
+   and matching the app's dense 11-12px scale keeps it calm instead of
+   jumping out at a bold, oversized default. */
+.ow-supplier-pick { position: relative; display: inline-flex; align-items: center; font-size: 12px; }
+.ow-supplier-input {
+  width: 220px; min-height: 30px; padding: 2px 46px 2px 10px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface); color: var(--nx-text); font-size: 12px; font-weight: 500;
+}
+.ow-supplier-clear {
+  position: absolute; right: 4px; width: 20px; height: 20px; display: grid; place-items: center;
+  border: 0; background: none; color: var(--nx-text-muted); font-size: 15px; line-height: 1; cursor: pointer; border-radius: 4px;
+}
+.ow-supplier-clear:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+/* Dedicated "switch supplier" affordance, separate from Clear -- makes
+   re-opening the full supplier list a one-click action instead of requiring
+   the operator to notice the text box itself is clickable. */
+.ow-supplier-switch {
+  position: absolute; right: 24px; width: 18px; height: 20px; display: grid; place-items: center;
+  border: 0; background: none; color: var(--nx-text-muted); font-size: 9px; line-height: 1; cursor: pointer; border-radius: 4px;
+}
+.ow-supplier-switch:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.ow-supplier-list {
+  position: absolute; top: calc(100% + 3px); left: 0; z-index: 30;
+  width: 320px; max-height: 320px; overflow: auto; margin: 0; padding: 4px;
+  list-style: none; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-raised); box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  font-size: 12px;
+}
+.ow-supplier-list:focus { outline: none; box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 0 0 2px var(--nx-accent-sunk); }
+.ow-supplier-list > li {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 5px 8px; border: 0; border-radius: 4px;
+  background: none; color: var(--nx-text-soft); font-size: 12px; font-weight: 500; line-height: 1.4;
+  text-align: left; cursor: pointer;
+}
+.ow-supplier-list > li.is-active { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); font-weight: 600; }
+.ow-supplier-list > li.is-selected { color: var(--nx-text); font-weight: 600; }
+.ow-supplier-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-supplier-code { flex-shrink: 0; color: var(--nx-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ow-supplier-list > li.is-active .ow-supplier-code { color: var(--nx-accent-ink); }
+.ow-supplier-empty { padding: 8px; color: var(--nx-text-muted); font-size: 12px; }
+
+/* Export options card. */
+.ow-export-body { display: flex; flex-direction: column; gap: 8px; padding: 10px; min-width: 260px; }
+/* Export card opens centred in the window (not under the Export button,
+   which can wrap to the toolbar's left edge and push the card off-screen). */
+.ow-export-card--centered {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  z-index: 200;
+}
+.ow-export-scope { font-size: 12px; color: var(--nx-text-muted); }
+.ow-export-scope b { color: var(--nx-text); }
+.ow-export-field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text-muted); }
+.ow-export-field input { width: 64px; min-height: 28px; padding: 2px 8px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; text-align: right; }
+.ow-export-hint { margin: 0; font-size: 11px; color: var(--nx-text-muted); }
+.ow-export-go { align-self: flex-start; }
+.ow-export-field select { min-height: 28px; padding: 2px 8px; border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); font: inherit; }
+.ow-export-path { flex-wrap: wrap; }
+.ow-export-path-val {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--nx-surface-sunk); color: var(--nx-text);
+}
+/* Checkboxes here had no explicit size at all -- this app's global reset
+   doesn't touch input[type=checkbox] (other screens that look right set their
+   own size), so these fell back to the raw native control, which renders
+   oversized relative to the 11-12px label text next to it. */
+.ow-export-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text); cursor: pointer; }
+.ow-export-check input[type="checkbox"] { width: 14px; height: 14px; min-width: 14px; margin: 0; accent-color: var(--nx-accent); cursor: pointer; }
+.ow-export-columns { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; border-top: 1px solid var(--nx-rule); }
+.ow-export-columns-label { font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--nx-text-muted); }
+.ow-export-columns-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.ow-export-col-check { font-size: 11px; }
+.ow-export-col-check input[type="checkbox"] { width: 13px; height: 13px; min-width: 13px; }
+/* Compact status/assignment strip: keyboard hint + workflow chip + dynamic
+   pending/assigned/open counts + product count, all on one line beneath the
+   toolbar -- this is where that content lives instead of inside .ow-toolbar,
+   so Export/Finalize never get pushed out or wrapped by it. */
+.ow-help {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto; flex-wrap: nowrap;
+  padding: 3px 8px; font-size: 11px; color: var(--nx-text-muted); overflow: hidden;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-sunk);
+}
+.ow-help kbd { padding: 0 5px; border: 1px solid var(--nx-rule-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--nx-surface-raised); color: var(--nx-text-soft); font: inherit; font-size: 10px; font-weight: 700; }
+.ow-status-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.ow-status-sep { flex: 0 0 auto; color: var(--nx-text-muted); opacity: 0.6; }
+/* Compact footer: current store + current order + last GRN, same visual
+   language as .ow-help above but anchored to the bottom of the screen. */
+.ow-footer {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto; flex-wrap: wrap;
+  padding: 4px 10px; font-size: 11px; color: var(--nx-text-muted);
+  border-top: 1px solid var(--nx-rule); background: var(--nx-surface-sunk);
+}
+.ow-footer-item { white-space: nowrap; }
+.ow-footer-item b { color: var(--nx-text-soft); font-weight: 700; }
+.ow-footer-error { color: var(--nx-danger-ink); }
+.ow-error {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto;
+  padding: 6px 10px; border: 1px solid var(--nx-danger); border-radius: var(--nx-radius-sm);
+  background: var(--nx-danger-sunk); color: var(--nx-danger-ink); font-size: 12px;
+}
+.ow-error button { border: 0; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+
+.ow-grid { flex: 1 1 auto; min-height: 0; overflow: auto; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); }
+
+/* Dense, aligned grids — full-width flexible product-name column, compact numerics. */
+.ow-screen table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* Product grid tables (Qty Check/Pending/Review/By Supplier/Assigned) carry
+   an explicit <colgroup> of FIXED px widths now (see owColgroupPct / the
+   per-view colgroups in App.jsx) sized to match the legacy VB.NET grid's
+   compact columns. width:max-content (not 100%) is the actual fix: under
+   table-layout:fixed, width:100% always stretches every <col>'s share to
+   fill the container, which is what inflated the gap between e.g. OR QTY
+   and STOCK on a wide window even though the px widths above were already
+   tight -- the % conversion this used to do just scaled those px widths
+   back up to fill whatever the container happened to be. max-content sizes
+   the table to the sum of its columns; any leftover container width is
+   left blank after the last column, matching the VB.NET grid instead of
+   redistributing it into every column. Previous Decisions / Purchase-Sales
+   intelligence tables (.ow-intel-table) deliberately stay outside this —
+   see their own width:100% override below — so only the grids below opt in. */
+.ow-screen table.ow-fixed,
+.ow-screen table.ow-cfg { table-layout: fixed; width: max-content; }
+/* table-layout:fixed locks each column to its <colgroup> share, but a cell's
+   CONTENT can still force the column wider than that share unless the cell
+   itself has min-width:0 -- browsers give table cells an implicit "shrink to
+   fit unbreakable content" floor otherwise, which is exactly what pushed the
+   Pending/By Supplier grids into a horizontal scrollbar despite Product Name
+   already being capped via .ow-grow's max-width:0. */
+.ow-screen table.ow-fixed > :is(thead, tbody) > tr > :is(th, td) { min-width: 0; }
+/* min-width:0 alone stops a cell from forcing the COLUMN wider, but its TEXT
+   still defaults to overflow:visible -- long Wanted/Supplier/Remarks text in
+   a column narrowed by today's extra columns (offer/check/action) visually
+   bled sideways over the next cell's content instead of being contained
+   (only .ow-name-cell had its own truncation; every other text column in a
+   .ow-fixed table never did). Same :has(.ow-qty) exemption .ow-cfg already
+   uses -- the editable qty cell's own diff-arrow/offer-badge children need
+   overflow:visible, not ellipsis-clipped. */
+.ow-screen table.ow-fixed > tbody > tr > td { overflow: hidden; text-overflow: ellipsis; }
+.ow-screen table.ow-fixed > tbody > tr > td:has(.ow-qty-cell) { overflow: visible; text-overflow: clip; }
+.ow-panel--history .ow-intel-table.ow-fixed { width: 100%; min-width: 0; }
+/* Override the global `th,td { padding: 12px 10px }` (24px of vertical padding)
+   that was inflating these rows — force compact heights. */
+.ow-screen thead th {
+  position: sticky; top: 0; z-index: 1; height: 28px; padding: 0 8px !important;
+  border-bottom: 1px solid var(--nx-rule-strong); background: var(--nx-surface-raised);
+  color: var(--nx-text-soft); text-align: left; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.02em; text-transform: uppercase; white-space: nowrap;
+  line-height: 1; vertical-align: middle;
+}
+/* Icon-only header cells (🎁 / ✓) -- NOT a blanket rule on every th: that
+   earlier clipped real text headers too (e.g. "S.No" -> "S..."). Scoped to
+   just the glyph cells, which is what actually needed clamping against the
+   emoji's own taller font metrics growing the sticky row. */
+.ow-screen thead th.ow-icon-th { overflow: hidden; text-align: center; }
+/* The th-level clamp alone still wasn't enough -- the raw glyph's own font
+   metrics could still push the row's rendered line height taller than its
+   siblings even inside an overflow:hidden cell (vertical-align/line-height
+   on a th is a weaker guarantee than an explicit box). Same fix that already
+   works correctly for the body-row offer badge: a fixed-size inline-flex box
+   the glyph sits centered inside, so its real rendered footprint can never
+   exceed this span regardless of the emoji font's own metrics. */
+.ow-header-icon { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; font-size: 11px; line-height: 1; overflow: hidden; vertical-align: middle; }
+/* Per-column filter row (OwFilterRow) -- hidden by default (toggled via the
+   toolbar's Filters button); a second sticky header row, offset by the first
+   row's own height (28px) so both stay pinned together while scrolling. One
+   shared rule (.ow-screen, not a per-grid class), so every grid -- Qty
+   Check, Pending, By Supplier, Assigned, Review All -- gets the identical
+   height, not just Qty Check. box-sizing:border-box on the <th> itself
+   (table cells default to content-box, so height+padding would otherwise
+   render TALLER than the declared height). Deliberately noticeably SHORTER
+   than a real body row (.ow-screen tbody td is 30px content height) -- this
+   is just an input box, not a data row, and reading taller/equal to a real
+   row was the actual complaint. */
+.ow-screen thead tr.ow-filter-row th {
+  position: sticky; top: 28px; z-index: 1; height: 26px; box-sizing: border-box; padding: 1px 4px !important;
+  background: var(--nx-surface-raised); border-bottom: 1px solid var(--nx-rule-strong);
+  text-transform: none; font-weight: 400; line-height: 0;
+}
+.ow-filter-input, .ow-filter-select {
+  width: 100%; min-width: 0; box-sizing: border-box; height: 22px; padding: 0 4px;
+  border: 1px solid var(--nx-rule-strong); border-radius: 3px; background: var(--nx-surface);
+  color: var(--nx-text); font-size: 10px; font-weight: 400; text-transform: none;
+  /* ROOT CAUSE of every previous "still too tall" report: a generic global
+     reset further up this file -- `input, select { min-height: 42px; ... }`
+     (meant for roomier standalone forms like Settings) -- was never
+     overridden here. min-height is a FLOOR: it always wins over a plain
+     `height` declaration regardless of selector specificity or source
+     order, because they aren't the same property and don't compete on
+     specificity -- the box is simply never allowed to compute shorter than
+     min-height. Confirmed via live computed-style inspection (Electron
+     --remote-debugging-port + CDP): height was "22px" in this rule, but
+     getComputedStyle reported height:42px / min-height:42px, i.e. the
+     42px global floor, not this file's height, was what actually rendered.
+     Every prior fix attempt changed `height` here and never touched
+     `min-height`, so nothing could have worked. See the identical bug/fix
+     already documented on .global-search-row .stock-search-field input
+     further down this file. min-height MUST be set here, every time this
+     block is touched, or the row silently reverts to 42+px again. */
+  min-height: 22px;
+  /* The actual fix for the "extra gap below the row" complaint: <input>/
+     <select> are inline REPLACED elements, which sit on their containing
+     line's text baseline and reserve descender space below themselves --
+     invisible on the control itself, but it pads out the <th>'s rendered
+     height regardless of the th's own explicit height. vertical-align only
+     has an effect on an inline/table-cell element, so it has to be set HERE
+     (on the control), not on the parent th. */
+  display: inline-block; vertical-align: middle;
+}
+/* A native <select> (Wanted/Offer filter dropdowns) carries Chromium's own
+   minimum intrinsic height/padding that plain `height` CSS can't fully
+   override -- a row's rendered height is set by its TALLEST cell, so the
+   select (not the plain text inputs next to it) was what was actually
+   keeping the whole filter row tall even after the input/row height cuts
+   above. -webkit-appearance:none strips the native control chrome entirely,
+   replaced with a small drawn-on arrow, so height:16px applies for real.
+   line-height:1 stops the select's own default line box from adding height
+   on top of that. */
+.ow-filter-select {
+  -webkit-appearance: none; appearance: none; line-height: 1;
+  background-image: linear-gradient(45deg, transparent 50%, var(--nx-text-muted) 50%), linear-gradient(135deg, var(--nx-text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 9px) 7px, calc(100% - 5px) 7px;
+  background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
+  padding-right: 14px;
+}
+.ow-filter-input:focus-visible, .ow-filter-select:focus-visible { outline: none; border-color: var(--nx-accent); box-shadow: inset 0 0 0 1px var(--nx-accent); }
+.ow-filter-input::placeholder { color: var(--nx-text-muted); }
+/* Toolbar toggle for the filter row -- same active-state treatment as the
+   Load-all-products toggle, so "filters are on" reads clearly at a glance. */
+.ow-filters-toggle.active { background: var(--nx-accent); color: var(--nx-accent-on); border-color: var(--nx-accent); }
+.ow-screen tbody td {
+  height: 30px; padding: 1px 8px !important; border-bottom: 1px solid var(--nx-rule);
+  line-height: 1.15; white-space: nowrap; vertical-align: middle;
+}
+.ow-screen tbody tr:hover > td { background: var(--nx-surface-hover); }
+/* Flexible name column: width:100% grabs the leftover space, max-width:0 lets it
+   shrink BELOW its (nowrap) content so a long product name truncates with an
+   ellipsis instead of widening the table into a horizontal scrollbar. */
+.ow-screen .ow-grow { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Product Name that follows its <colgroup> share instead of grabbing all
+   leftover space. ow-grow's width:100% overrides the colgroup even under
+   table-layout:fixed (Chromium quirk), so a grid with fewer columns than Qty
+   Check (e.g. By Supplier) gave Name a much wider column. This truncates with
+   an ellipsis at the colgroup width (cells already carry min-width:0), so Name
+   stays the SAME proportional width across every grid -- matching Qty Check. */
+.ow-screen .ow-name-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-screen .ow-idx { width: 1%; text-align: right; color: var(--nx-text-muted); font-variant-numeric: tabular-nums; }
+/* width:1% here is a Chromium-specific override of the <colgroup>'s own <col>
+   width, same quirk as .ow-grow below (a cell-level width can still perturb
+   table-layout:fixed's column sizing). Harmless -- even desirable -- for a
+   short numeric column like Stock/MRP where header and body content are
+   both narrow. For Or Qty specifically it was the actual cause of the header
+   label ("Or Qty") visually landing in a different column position than the
+   input/diff-arrow box beneath it: the th and td disagree on how wide "1%"
+   resolves to because their content widths differ (a few characters of text
+   vs. the input+diff-slot flex box), so each row's instance of this column
+   got sized independently instead of both honoring the single 116px <col>
+   set specifically to fit that flex box (see OW_QTY_COLUMNS). Carving this
+   column out of the 1% rule is what actually fixes it -- not another
+   one-off margin/padding nudge. */
+.ow-screen .ow-num:not(.ow-orqty-col) { width: 1%; }
+.ow-screen .ow-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* WANTED: flexible but bounded — truncate instead of widening the table into a
+   horizontal scrollbar (§13). */
+.ow-screen .ow-wanted { max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-qty {
+  flex: 1 1 auto; max-width: 3.4rem; min-width: 1.9rem; height: 24px; min-height: 0; padding: 0 6px; border: 1px solid var(--nx-rule-strong); border-radius: 4px;
+  background: var(--nx-editable); color: var(--nx-text); text-align: right; font: inherit; box-sizing: border-box;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.ow-qty::-webkit-outer-spin-button, .ow-qty::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.ow-qty:disabled { opacity: 0.6; }
+/* The global input:focus-visible rule (3px outline, 1px offset) reads as a
+   heavy "thick border" on a box this small and visually overlaps the
+   neighbouring stepper/diff-badge cells. Border-color + inset shadow instead
+   -- same box-sizing: border-box width/height as unfocused, so the cell
+   never shifts position on focus. */
+.ow-qty:focus-visible { outline: none; border-color: var(--nx-accent); box-shadow: inset 0 0 0 1px var(--nx-accent); }
+/* Flexbox, not grid: a CSS Grid track list (1.05rem offer / auto input /
+   3.6rem diff) looked correct on paper but two confirmed-real offer products
+   (verified directly against the database -- IsOffer=True, genuine FreeQty>0
+   purchase history) still rendered with no visible icon in this app's older
+   Chromium (22.3.27 / ~108), suggesting a grid-track-sizing edge case rather
+   than a data or component bug. flex-shrink:0 is a simpler, less ambiguous
+   guarantee than a grid track's base-size resolution -- an item with
+   flex-shrink:0 physically cannot be compressed below its content, full stop.
+   min-width:0 + flex:1 on the input is what still lets IT shrink/ellipsize
+   first if the cell is ever genuinely too narrow for everything. */
+.ow-qty-cell { display: flex; align-items: center; justify-content: flex-end; gap: 4px; width: 100%; min-width: 0; }
+.ow-qty-diff-slot { flex: 0 0 auto; width: 3.6rem; display: inline-flex; justify-content: flex-start; overflow: hidden; }
+/* OR QTY header: mirrors .ow-qty-cell's exact flex structure (a same-width
+   ow-qty-diff-slot placeholder standing in for the diff-arrow slot every
+   body row reserves) so the header's own flexbox centers "Or Qty" over the
+   SAME visual position as the input below it, not over the input+diff-slot
+   pair as one block. Without this, a right-aligned/centered header label
+   sits ~30px right of where the input actually renders (the diff-slot is
+   reserved space, almost always empty, flex-end-packed after the input) --
+   see OwOrQtyHeaderLabel's comment in App.jsx for the full measurement. */
+.ow-qty-header-cell { display: flex; align-items: center; justify-content: flex-end; gap: 4px; width: 100%; }
+.ow-qty-header-label { flex: 1 1 auto; text-align: center; min-width: 1.9rem; max-width: 3.4rem; }
+/* Offer gift icon: flex-shrink:0 so it can never be compressed away. Also a
+   visible colored chip (not just the 🎁 glyph) via :not(:empty) -- this app's
+   font stack (styles.css top) lists no explicit emoji font, so if Chromium's
+   emoji-glyph fallback ever silently renders a blank/tofu glyph instead of
+   🎁, the amber chip is still there and still reads as "this row has an
+   offer" on its own. */
+/* Square gift-box chip, not a circle -- and critically NO box-shadow ring:
+   a shadow doesn't participate in flex layout/sizing, so the earlier ring
+   (0 0 0 2px #fff, 0 0 0 3px #b45309) visually bled ~6px past this element's
+   own reserved space and overlapped the Or Qty input next to it. Everything
+   here (including the border) stays inside the element's own box-sizing, so
+   it can never spill into a neighbour no matter how tight the column is. */
+.ow-offer-badge {
+  flex: 0 0 auto; width: 15px; height: 15px; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; line-height: 1; border-radius: 3px;
+  position: relative; overflow: hidden; /* clip the ribbon stripes to this box -- nothing here can ever spill past it */
+}
+.ow-offer-badge:not(:empty) { background: #f59e0b; border: 1px solid #b45309; z-index: 1; }
+/* Ribbon cross -- a thin lighter stripe each way through the chip, like a
+   gift box's ribbon -- so the mark reads as "gift" even if the 🎁 glyph
+   itself renders blank (no explicit emoji font in this app's stack). Both
+   stripes are sized/positioned in px relative to THIS box (position:relative
+   above) and clipped by its own overflow:hidden, so -- unlike the box-shadow
+   ring this replaced -- there is no way for either stripe to render outside
+   the badge's own 15x15 footprint. */
+.ow-offer-badge:not(:empty)::before { content: ''; position: absolute; left: 6px; top: 0; width: 3px; height: 15px; background: #fde68a; }
+.ow-offer-badge:not(:empty)::after { content: ''; position: absolute; top: 6px; left: 0; width: 15px; height: 3px; background: #fde68a; }
+.ow-offer-badge > span { position: relative; z-index: 2; }
+.ow-qty-diff {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 6px; border-radius: 10px;
+  font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ow-qty-up, .ow-qty-diff-up, .ow-facts dd.is-up { color: var(--nx-success-ink); }
+.ow-qty-down, .ow-qty-diff-down, .ow-facts dd.is-down { color: var(--nx-danger-ink); }
+.ow-qty-up, .ow-qty-down { font-weight: 700; }
+.ow-qty-diff-up { background: var(--nx-success-sunk); }
+.ow-qty-diff-down { background: var(--nx-danger-sunk); }
+.ow-qty-diff-flat { color: var(--nx-info-ink); background: var(--nx-info-sunk); }
+/* Active row: a clean, unambiguous highlight across the FULL row (every td,
+   not just a left accent bar) so it always reads distinctly from hover/zebra/
+   assigned rows, without going full solid-fill (that read as too flat/harsh
+   -- spreadsheet apps like Excel/Sheets use a translucent tint over normal
+   text, not an inverted block, so cell content stays legible at a glance).
+   Plain rgba, NOT color-mix() -- this app's Electron (22.3.27) ships
+   Chromium ~108, which predates color-mix() support (Chromium 111); that
+   rule silently failed to apply at all, leaving selected rows unstyled. */
+.ow-screen tbody tr.ow-row-sel > td { background: var(--nx-accent-selected) !important; color: var(--nx-text); }
+.ow-screen tbody tr.ow-row-sel > td:first-child { box-shadow: inset 4px 0 0 var(--nx-accent); }
+.ow-screen tbody tr.ow-row-sel .ow-chip,
+.ow-screen tbody tr.ow-row-sel .ow-qty-diff { filter: brightness(1.3) saturate(1.2); }
+/* The row's first cell (S.No) is the keyboard target when its qty box is
+   disabled (assigned rows) or absent (read-only Assigned grid) -- see
+   owFocusSupplierRow/the Assigned grid's first-<td> ref (a <tr> itself is an
+   unreliable keydown target in this app's older Chromium). The selection tint
+   already shows which row it is, so suppress the default focus outline that
+   would otherwise ring just that one cell oddly. */
+.ow-screen tbody td:focus { outline: none; }
+.ow-empty { padding: 1.2rem; text-align: center; color: var(--nx-text-muted); }
+/* LoadingState's own card chrome (dashed border, background, left-aligned
+   flex row — meant for a page-level empty state) doesn't fit floating alone
+   inside a table cell; strip it to a centered inline row here only. */
+.ow-empty .ntm-state--loading {
+  display: inline-flex; flex-direction: row; align-items: center; justify-content: center;
+  padding: 0; border: 0; background: transparent; max-width: none;
+}
+
+/* "Load all products" toggle: a normal small button that reads clearly as ON
+   when active (accent fill), so the operator always knows the grid is showing
+   the full open list rather than a supplier's matched set. */
+.ow-loadall-toggle.active { background: var(--nx-accent); color: var(--nx-accent-on); border-color: var(--nx-accent); }
+
+/* ===== Order Workspace layout: main grid on top, intelligence dock below ===== */
+.ow-title { margin: 0 2px 0 0; padding-left: 2px; font-size: 13px; font-weight: 800; letter-spacing: 0.01em; color: var(--nx-text); white-space: nowrap; }
+
+/* Order Workspace command chrome. Scoped to .ow-proc so the Procurement
+   screen, which reuses .ow-toolbar, keeps its own header. */
+.ow-proc .ow-identity { display: flex; flex-direction: column; justify-content: center; line-height: 1.05; margin-right: 2px; min-width: 0; }
+.ow-proc .ow-kicker { font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--nx-accent-ink); }
+.ow-proc .ow-title { font-size: 14px; }
+.ow-proc .ow-store-select { max-width: 128px; }
+.ow-proc .ow-toolbar { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.ow-proc .ow-search { flex: 1 1 88px; min-width: 72px; max-width: 180px; }
+.ow-proc .ow-context {
+  flex: 1 1 80px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: var(--nx-text-muted);
+}
+.ow-proc .ow-command-actions { margin-left: auto; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
+.ow-summary {
+  display: flex; align-items: stretch; flex-wrap: wrap; gap: 0; flex: 0 0 auto;
+  min-height: 36px; padding: 2px 4px;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-sunk);
+}
+.ow-summary-mode {
+  display: inline-flex; align-items: center; padding: 0 8px;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-soft);
+}
+.ow-summary-loading { display: inline-flex; align-items: center; padding: 0 8px; font-size: 12px; color: var(--nx-text-muted); }
+.ow-stat {
+  display: flex; flex-direction: column; justify-content: center; min-width: 68px; padding: 1px 10px;
+  border-left: 1px solid var(--nx-rule);
+}
+.ow-stat span { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-muted); }
+.ow-stat b { font-size: 13px; font-weight: 750; line-height: 1.15; font-variant-numeric: tabular-nums; color: var(--nx-text); }
+.ow-summary .ow-chip { align-self: center; margin-left: 8px; }
+.ow-line {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 7px;
+  max-height: 46%; overflow: auto;
+  padding: 10px 12px 8px; border-bottom: 1px solid var(--nx-rule); background: transparent;
+}
+.ow-line.is-nostock { background: var(--nx-danger-sunk); }
+.ow-line-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.ow-line-id { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ow-line-name { display: block; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--nx-text); line-height: 1.25; }
+.ow-line-sub { display: flex; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--nx-text-muted); }
+.ow-line-sub span + span::before { content: "·"; margin: 0 6px; color: var(--nx-text-muted); }
+.ow-line-toggle { border: 0; background: transparent; color: var(--nx-text-muted); padding: 0 2px; }
+.ow-line-status { margin: 0; font-size: 12px; line-height: 1.35; color: var(--nx-text-soft); }
+.ow-line-split {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 16px; align-items: start;
+}
+.ow-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin: 1px 0 0; }
+.ow-facts > div { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ow-facts dt { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-muted); }
+.ow-facts dd { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--nx-text); }
+.ow-facts dd.is-zero { color: var(--nx-danger); }
+.ow-facts > div.is-sales { padding: 1px 8px; border-radius: 6px; background: var(--nx-accent-sunk); }
+.ow-facts > div.is-sales dd { color: var(--nx-accent-ink); }
+.ow-line-move { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0; }
+.ow-line-move > span + span::before { content: "·"; margin: 0 6px; color: var(--nx-text-muted); }
+.ow-move-sale { color: var(--nx-success-ink); }
+.ow-move-grn { color: var(--nx-accent-ink); }
+.ow-move-received { color: var(--nx-warning-ink); }
+.ow-when { font-weight: 750; }
+.ow-when-today, .ow-when-yesterday { padding: 0 5px; border-radius: 4px; }
+.ow-move-sale .ow-when-today, .ow-move-sale .ow-when-yesterday { color: var(--nx-success-ink); background: var(--nx-success-sunk); }
+.ow-move-grn .ow-when-today, .ow-move-grn .ow-when-yesterday { color: var(--nx-accent-ink); background: var(--nx-accent-sunk); }
+.ow-move-received .ow-when-today, .ow-move-received .ow-when-yesterday { color: var(--nx-warning-ink); background: var(--nx-warning-sunk); }
+.ow-facts-price { padding-top: 2px; }
+.ow-facts-price dd { font-size: 16px; }
+.ow-line-meta { margin: 0; font-size: 12px; line-height: 1.4; color: var(--nx-text-soft); }
+.ow-line-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.ow-line-badge {
+  display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 7px; border: 1px solid var(--nx-rule-strong); border-radius: 999px;
+  background: var(--nx-surface); color: var(--nx-text-soft); font-size: 10px; font-weight: 700;
+}
+.ow-line-badge.is-alert { color: var(--nx-danger); border-color: transparent; background: var(--nx-danger-sunk); }
+.ow-line-badge.is-ok { color: var(--nx-success-ink); border-color: transparent; background: var(--nx-success-sunk); }
+.ow-line-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0; }
+.ow-line-metrics > div {
+  min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 3px 6px;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
+}
+.ow-line-metrics dt { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-muted); }
+.ow-line-metrics dd { margin: 0; font-size: 13px; font-weight: 750; text-align: right; font-variant-numeric: tabular-nums; color: var(--nx-text); }
+.ow-line-note { margin: 0; font-size: 11px; line-height: 1.35; color: var(--nx-text-soft); }
+.ow-line-empty { font-size: 12px; line-height: 1.4; color: var(--nx-text-muted); }
+.ow-name-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.ow-name-wrap > .ow-cellname { flex: 1 1 auto; min-width: 0; }
+.ow-row-info {
+  flex: 0 0 auto; display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: var(--nx-accent); cursor: pointer;
+}
+.ow-row-info svg { width: 14px; height: 14px; fill: currentColor; }
+.ow-row-info:hover, .ow-row-info:focus-visible { background: var(--nx-accent-sunk); outline: none; }
+.purchase-detail-card.ow-product-info { width: min(860px, calc(100vw - 32px)); }
+.ow-product-info .purchase-detail-body { gap: 8px; }
+.ow-product-info .ow-line-metrics { flex: 0 0 auto; }
+.ow-product-info .ow-doc-lines { max-height: 280px; }
+@media (max-width: 1100px) {
+  .ow-line-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Side-by-side split: order grid on the left (~2/3), intelligence panels
+   stacked in a right column (~1/3): Trend, Purchase, Sales, Previous Decisions. */
+.ow-body {
+  flex: 1 1 auto; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(320px, 1fr);
+  grid-template-rows: minmax(0, 1fr); gap: 8px; align-items: stretch;
+}
+/* Left column: order grid (flexible) with Previous Decisions docked below it. */
+.ow-left { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.ow-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.ow-main .ow-grid { flex: 1 1 auto; min-height: 0; }
+/* Bottom dock: panels docked under the grid sit side by side. */
+.ow-left > .ow-bottom-dock { flex: 0 0 auto; height: clamp(120px, 22vh, 190px); min-height: 0; display: flex; gap: 8px; }
+.ow-bottom-dock > .ow-panel { flex: 1 1 0; height: auto; min-width: 0; }
+.ow-side-panels > .ow-panel--history { flex: 1 1 0; min-height: 90px; }
+
+/* Layout settings (grid settings panel -> Layout; every role incl. PM). */
+.ow-body { --ow-side-w: minmax(320px, 1fr); }
+.ow-body.ow-side-w-narrow { --ow-side-w: minmax(280px, 0.7fr); }
+.ow-body.ow-side-w-wide { --ow-side-w: minmax(420px, 1.5fr); }
+.ow-body.ow-side-right { grid-template-columns: minmax(0, 2.4fr) var(--ow-side-w); }
+.ow-body.ow-side-left { grid-template-columns: var(--ow-side-w) minmax(0, 2.4fr); }
+.ow-body.ow-side-left > .ow-side { order: -1; }
+.ow-body.ow-side-hidden { grid-template-columns: minmax(0, 1fr); }
+.ow-body.ow-side-hidden > .ow-side { display: none; }
+.ow-body.ow-bottom-small .ow-left > .ow-bottom-dock { height: 110px; }
+.ow-body.ow-bottom-large .ow-left > .ow-bottom-dock { height: clamp(220px, 34vh, 340px); }
+.ow-details-toggle { margin-left: auto; }
+.ow-intel-clickable { cursor: pointer; }
+/* Whole purchase invoice / sales bill card (click a detail-panel row). */
+.purchase-detail-card.ow-doc-card { width: min(1100px, calc(100vw - 32px)); max-width: none; max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.ow-doc-card .purchase-detail-body { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
+.ow-doc-card .purchase-metric-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.ow-doc-lines { min-height: 0; overflow: auto; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); }
+.ow-doc-lines .ow-intel-table { width: 100%; }
+.ow-doc-lines thead th { position: sticky; top: 0; z-index: 1; background: var(--nx-surface-raised); }
+.ow-doc-lines .ow-doc-name { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-doc-lines tr.ow-doc-current > td { background: var(--nx-accent-sunk, rgba(91, 141, 239, 0.22)); font-weight: 700; }
+/* ---- Procurement Workspace (ProcurementWorkspace.jsx) -- Order Workspace
+   layout (.ow-*), plus the few decision-engine specific marks below. ---- */
+/* Two classes: the plain `.ow-screen { display: flex }` rule is later in the
+   file at equal specificity than `.ow-screen-hidden`, so a hidden Procurement
+   screen would otherwise render under the active one. */
+.pw-screen.ow-screen-hidden { display: none; }
+/* Selected row's info button (Why-this-qty card). The name keeps ellipsis;
+   the button never shrinks. */
+.pw-name-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.pw-name-wrap > .ow-cellname { flex: 1 1 auto; min-width: 0; }
+.pw-info-btn {
+  flex: 0 0 auto; display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: var(--nx-accent); cursor: pointer;
+}
+.pw-info-btn svg { width: 16px; height: 16px; fill: currentColor; }
+.pw-info-btn:hover, .pw-info-btn:focus-visible { background: var(--nx-accent-sunk); outline: none; }
+.pw-store-select { max-width: 140px; }
+.pw-refresh-select { max-width: 190px; }
+.pw-move, .pw-state {
+  display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 800;
+  letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; line-height: 1.5;
+}
+.pw-move--fast { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.pw-move--medium { background: var(--nx-info-sunk, var(--nx-accent-sunk)); color: var(--nx-info-ink, var(--nx-accent-ink)); }
+.pw-move--slow { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.pw-move--nonmoving { background: var(--nx-surface-sunk); color: var(--nx-text-muted); }
+.pw-state--pending { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.pw-state--finalized { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+.pw-state--assigned { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.pw-state--rejected, .pw-state--deferred { background: var(--nx-surface-sunk); color: var(--nx-text-soft); }
+.pw-state--skipped { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.pw-sugg { color: var(--nx-text-muted); font-weight: 700; }
+.ow-screen table .pw-center { text-align: center; }
+.pw-check { font-size: 14px; font-weight: 800; line-height: 1; }
+.pw-settings-wrap { position: relative; flex: 0 0 auto; }
+.pw-settings {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; min-width: 220px;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  border: 1px solid var(--nx-rule-strong); border-radius: var(--nx-radius-sm);
+  background: var(--nx-surface-raised); box-shadow: var(--nx-shadow-md);
+}
+.pw-settings .ow-tabs { align-self: flex-start; }
+.pw-settings-hint { font-size: 11px; color: var(--nx-text-muted); }
+.pw-check--pending { color: var(--nx-text-muted); }
+.pw-check--finalized, .pw-check--assigned { color: var(--nx-success-ink); }
+.pw-check--rejected, .pw-check--deferred { color: var(--nx-text-soft); }
+
+/* ---- Abnormal bill-sale review (abnormalSales.jsx) -- shared by the Order
+
+/* Right intelligence column. */
+.ow-side {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
+}
+.ow-side-head {
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 14px;
+  padding: 6px 10px; border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface-raised);
+}
+.ow-side-name { display: block; width: 100%; font-size: 13px; font-weight: 800; color: var(--nx-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-side-meta { font-size: 11px; color: var(--nx-text-muted); }
+.ow-side-meta b { color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.ow-side-hint { font-size: 12px; color: var(--nx-text-muted); }
+
+/* Vertical panel stack. */
+.ow-side-panels { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px; overflow: hidden; }
+.ow-panel {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
+}
+.ow-panel--chart { flex: 0 0 auto; height: clamp(150px, 20vh, 210px); }
+.ow-panel--purchase { flex: 1.5 1 0; min-height: 90px; }   /* Purchase gets the most room. */
+.ow-panel--sales { flex: 1.1 1 0; min-height: 80px; }
+.ow-panel-title {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 3px 8px;
+  background: var(--nx-surface-raised); color: var(--nx-text-soft);
+  font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.ow-panel-count { font-weight: 700; color: var(--nx-text-muted); text-transform: none; letter-spacing: 0; }
+.ow-panel-subtitle { font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--nx-text-muted); opacity: 0.85; }
+.ow-panel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.ow-panel-body { flex: 1 1 auto; min-height: 0; display: flex; }
+
+/* Dense rows inside the dock tables. Tight padding on the numeric columns
+   (Stock/Free/Dis/etc.) and no forced 100% width -- when the Supplier name is
+   long the table grows past the panel and .ow-panel-scroll scrolls it
+   horizontally instead of squeezing/truncating the name. */
+.ow-intel-table { width: max-content; min-width: 100%; }
+.ow-intel-table thead th { position: sticky; top: 0; z-index: 1; height: 22px; padding: 0 4px !important; font-size: 10px; white-space: nowrap; }
+.ow-proc .ow-panel--purchase .ow-intel-table thead th,
+.ow-proc .ow-panel--sales .ow-intel-table thead th {
+  background: var(--nx-surface-sunk);
+  color: var(--nx-text-soft);
+}
+.ow-proc .ow-freerow > td { background: var(--nx-warning-sunk); }
+.ow-intel-table tbody td { height: 22px !important; padding: 0 4px !important; font-size: 11px; }
+.ow-intel-table .ow-intel-grow { white-space: nowrap; }
+/* Bill/Sales Customer: a second column can't ALSO be ow-grow (max-width:0
+   fights with Salesman's and collapses both to ~nothing) -- give it its own
+   bounded width with ellipsis instead. */
+.ow-intel-cust { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Bill/Sales has no ow-grow column anymore (Salesman + Customer are both
+   bounded) -- don't force the table to stretch to the panel's full width,
+   or the browser distributes the leftover space as a wide empty gap
+   between columns instead of packing them together. */
+.ow-panel--sales .ow-intel-table { width: max-content; min-width: 0; }
+/* Purchase/GRN: narrow numeric columns (Stock/Free/Dis%/Land%/Cost/PTR/MRP) so
+   the table doesn't eat width the Supplier name needs. */
+.ow-panel--purchase .ow-num { min-width: 38px; }
+/* Group dividers so Cost/PTR/MRP (three similar-looking decimal numbers in a
+   row) don't blur together -- a light rule + distinct weight/color per
+   column breaks up the "wall of numbers" look. */
+.ow-panel--purchase .ow-grp { border-left: 1px solid var(--nx-rule); }
+.ow-panel--purchase .ow-col-cost { color: var(--nx-text-muted); }
+.ow-panel--purchase .ow-col-ptr { font-weight: 700; color: var(--nx-text); }
+.ow-panel--purchase .ow-col-mrp { color: var(--nx-accent-ink); }
+.ow-intel-loading { font-size: 10px; font-weight: 700; color: var(--nx-text-muted); }
+.ow-freerow > td { background: rgba(236, 20, 130, 0.42); }
+
+/* Compact monthly trend chart. Semantic colors are fixed and must never swap:
+   In = blue, Out = green, Stock = red, Adjustment = purple -- everywhere
+
+/* ---- Procurement (ProcurementWorkspace.jsx) -- web Purchase Manager layout:
+   grid | Supplier Recommendation | product detail, totals footer. ---- */
+.pw-topbar, .pw-filterbar { flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.pw-filterbar { padding-bottom: 2px; }
+.pw-title { margin: 0 6px 0 0; font-size: 15px; font-weight: 800; color: var(--nx-text); white-space: nowrap; }
+.pw-spacer { flex: 1 1 auto; }
+.pw-select {
+  height: 28px; padding: 0 8px; border: 1px solid var(--nx-rule-strong); border-radius: 6px;
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px;
+}
+/* The global input/select rule is width:100% / min-height:42px. */
+.pw-screen .pw-select { width: auto; min-height: 0; padding: 0 8px; flex: 0 0 auto; }
+.pw-screen .pw-search input { min-height: 0; }
+.pw-screen .pw-col-toggle input { width: auto; min-height: 0; padding: 0; }
+/* Fill the grid box. Neutralise the shared width:1% numeric rule, which
+   overrides <col> and was squeezing S.No below its 56px column. */
+.pw-screen table.ow-fixed.pw-grid { width: 100%; }
+.pw-screen table.pw-grid .ow-num { width: auto; }
+.pw-screen table.pw-grid .ow-num.pw-sno { width: 56px; }
+.pw-store-select { max-width: 120px; font-weight: 700; }
+.pw-refresh-select { max-width: 210px; }
+.pw-seg { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border: 1px solid var(--nx-rule); border-radius: 8px; background: var(--nx-surface-sunk); }
+.pw-seg button {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--nx-text-soft); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.pw-seg button:hover { color: var(--nx-text); background: var(--nx-surface-hover); }
+.pw-seg button.active { background: var(--nx-accent); color: var(--nx-accent-on); }
+.pw-seg-count { min-width: 16px; padding: 0 5px; border-radius: 999px; background: var(--nx-surface); color: var(--nx-text-soft); font-size: 10.5px; text-align: center; font-variant-numeric: tabular-nums; }
+.pw-seg button.active .pw-seg-count { background: rgba(255, 255, 255, 0.22); color: #ffffff; }
+.pw-seg button.pw-seg--abn { color: var(--nx-danger-ink); }
+.pw-seg button.pw-seg--abn.active { background: var(--nx-danger); color: #ffffff; }
+.pw-round-btn {
+  display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--nx-rule-strong); border-radius: 50%;
+  background: var(--nx-surface); color: var(--nx-text-soft); font-size: 15px; cursor: pointer;
+}
+.pw-round-btn:hover:not(:disabled) { color: var(--nx-text); border-color: var(--nx-accent); }
+.pw-round-btn svg { width: 16px; height: 16px; fill: currentColor; }
+.pw-count-chip { padding: 4px 10px; border: 1px solid var(--nx-rule); border-radius: 999px; background: var(--nx-surface-raised); font-size: 11.5px; font-weight: 700; color: var(--nx-text-soft); white-space: nowrap; }
+.pw-search { position: relative; flex: 0 1 300px; min-width: 180px; }
+.pw-search svg { position: absolute; left: 9px; top: 50%; width: 14px; height: 14px; transform: translateY(-50%); fill: none; stroke: var(--nx-text-muted); stroke-width: 2; }
+.pw-search input {
+  width: 100%; height: 28px; padding: 0 8px 0 28px; border: 1px solid var(--nx-rule-strong); border-radius: 6px;
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12px; box-sizing: border-box;
+}
+.pw-keys { margin-left: auto; font-size: 11px; color: var(--nx-text-muted); white-space: nowrap; }
+.pw-keys kbd, .pw-esc-skip kbd {
+  display: inline-block; margin-left: 6px; padding: 1px 6px;
+  border: 1px solid var(--nx-rule-strong); border-bottom-width: 2px; border-radius: 4px;
+  background: var(--nx-surface-raised); color: var(--nx-text); font: inherit; font-size: 10px; font-weight: 700;
+}
+.pw-esc-skip kbd { margin-left: 0; }
+.pw-settings-wrap { position: relative; flex: 0 0 auto; }
+.pw-col-toggles { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 12px; }
+.pw-col-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--nx-text); cursor: pointer; white-space: nowrap; }
+
+.pw-body {
+  flex: 1 1 auto; min-height: 0; display: grid; gap: 8px;
+  grid-template-columns: minmax(0, 2.25fr) minmax(250px, 0.8fr) minmax(330px, 1.1fr); grid-template-rows: minmax(0, 1fr);
+}
+.pw-body--nodetail { grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); }
+.pw-gridcol, .pw-supcol { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.pw-gridbox { flex: 1 1 auto; min-height: 0; }
+.pw-grid .pw-name-wrap { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.pw-grid .pw-prod-name { flex: 1 1 auto; min-width: 0; }
+.pw-tag { flex: 0 0 auto; padding: 0 6px; border-radius: 4px; font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.6; }
+.pw-tag--network { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+.pw-tag--manual { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.pw-qty--dirty { border-color: var(--nx-warning) !important; }
+.pw-screen tbody tr.pw-row--finalized > td { background: rgba(124, 58, 237, 0.06); }
+.pw-screen tbody tr.pw-row--assigned > td { background: rgba(22, 163, 74, 0.08); }
+.pw-screen tbody tr.pw-row--skipped > td { color: var(--nx-text-muted); }
+.pw-screen tbody tr.pw-row--skipped > td .pw-prod-name { text-decoration: line-through; text-decoration-color: var(--nx-rule-strong); }
+.pw-state-cell { overflow: visible !important; }
+.pw-state-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.pw-pill {
+  display: inline-flex; align-items: center; padding: 1px 9px; border-radius: 6px; font-size: 11px; font-weight: 800; white-space: nowrap;
+  border: 1px solid transparent; line-height: 1.6;
+}
+.pw-pill--pending { background: var(--nx-surface-sunk); color: var(--nx-text-soft); border-color: var(--nx-rule-strong); }
+.pw-pill--finalized { background: var(--nx-info-sunk); color: var(--nx-info-ink, var(--nx-accent-ink)); }
+.pw-pill--assigned { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.pw-pill--deferred { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.pw-pill--rejected { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.pw-pill--skipped { background: var(--nx-surface-sunk); color: var(--nx-text-muted); }
+.pw-check--rejected { color: var(--nx-danger-ink); }
+.pw-icon-act {
+  flex: 0 0 auto; display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--nx-text-muted); font-size: 13px; line-height: 1; cursor: pointer;
+}
+.pw-icon-act:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.pw-icon-act--skip { color: var(--nx-danger); opacity: 0.75; }
+.pw-icon-act--skip:hover { opacity: 1; background: var(--nx-danger-sunk); color: var(--nx-danger); }
+.pw-icon-act--skip svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+.pw-skipcell { position: relative; display: inline-flex; min-width: 0; }
+.pw-skipcell-btn {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; height: 22px; padding: 0 7px; border: 1px solid var(--nx-rule-strong); border-radius: 6px;
+  background: var(--nx-surface-sunk); color: var(--nx-text-soft); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.pw-skipcell-btn:focus-visible, .pw-skipcell--open .pw-skipcell-btn { outline: none; border-color: var(--nx-accent); box-shadow: 0 0 0 2px var(--nx-accent-sunk); }
+.pw-skipcell-icon { color: var(--nx-danger); }
+.pw-skipcell-label { overflow: hidden; text-overflow: ellipsis; }
+.pw-skipcell-caret { font-size: 9px; opacity: 0.7; }
+.pw-skipcell-menu {
+  position: absolute; z-index: 30; top: calc(100% + 2px); right: 0; min-width: 170px; margin: 0; padding: 4px; list-style: none;
+  border: 1px solid var(--nx-rule-strong); border-radius: 8px; background: var(--nx-surface-raised); box-shadow: var(--nx-shadow-lg);
+}
+.pw-skipcell-menu li { padding: 5px 8px; border-radius: 5px; font-size: 12px; color: var(--nx-text); cursor: pointer; white-space: nowrap; }
+.pw-skipcell-menu li.hi { background: var(--nx-accent); color: #ffffff; }
+.pw-skipcell-menu li.cur:not(.hi) { font-weight: 800; }
+
+.pw-detail {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
+}
+.pw-dhead { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface-raised); }
+.pw-dhead-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pw-dhead-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; min-width: 0; }
+.pw-dhead-title strong { font-size: 14px; color: var(--nx-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.pw-dhead-meta { font-size: 11px; color: var(--nx-text-muted); }
+.pw-dhead-facts { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 11px; color: var(--nx-text); }
+.pw-dhead-facts b { margin-right: 4px; font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-muted); }
+.pw-dhead-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.pw-vswitch { display: inline-flex; padding: 2px; border: 1px solid var(--nx-rule); border-radius: 7px; background: var(--nx-surface-sunk); }
+.pw-vswitch button { height: 22px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: var(--nx-text-soft); font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.pw-vswitch button.active { background: var(--nx-surface); color: var(--nx-text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
+.pw-ghost-btn {
+  display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 9px; border: 1px solid var(--nx-rule-strong); border-radius: 7px;
+  background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer;
+}
+.pw-ghost-btn svg { width: 14px; height: 14px; fill: currentColor; }
+.pw-ghost-btn:hover { border-color: var(--nx-accent); }
+.pw-detail-panels { flex: 1 1 auto; }
+
+.pw-footbar {
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px; padding: 7px 12px;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface-raised);
+}
+.pw-stat { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.pw-stat > span { font-size: 10px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--nx-text-muted); }
+.pw-stat > b { font-size: 13px; color: var(--nx-text); font-variant-numeric: tabular-nums; }
+.pw-stat > b.pw-warn { color: var(--nx-warning-ink); }
+.pw-stat--soft > b { font-size: 12px; font-weight: 600; color: var(--nx-text-soft); }
+.pw-stat--value > b { font-size: 17px; color: var(--nx-accent); }
+.pw-foot-hint { font-size: 11.5px; color: var(--nx-text-muted); }
+.pw-primary-btn {
+  height: 32px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--nx-accent); color: #ffffff;
+  font: inherit; font-size: 12.5px; font-weight: 800; cursor: pointer; white-space: nowrap;
+}
+.pw-primary-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.pw-primary-btn:disabled { opacity: 0.5; cursor: default; }
+.pw-primary-btn--ghost { background: var(--nx-surface); color: var(--nx-text); border: 1px solid var(--nx-rule-strong); }
+/* Legacy-order Procurement (Order Workspace model, UniNex design). */
+.pw-seg--small button { height: 22px; padding: 0 8px; font-size: 11.5px; }
+.pw-seg-stack { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.pw-stock-updated { padding-left: 4px; font-size: 10.5px; color: var(--nx-text-muted); white-space: nowrap; }
+.pw-abn-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--nx-danger); border-radius: 8px;
+  background: var(--nx-danger-sunk); color: var(--nx-danger-ink); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
+}
+.pw-abn-chip.active { background: var(--nx-danger); color: #ffffff; }
+/* Row reveal (focusRow scrollIntoView): keep a moving-up row clear of the
+   sticky header instead of tucking it underneath. */
+.pw-screen .pw-grid tbody > tr { scroll-margin-top: 44px; }
+/* Skip mode pickers (Esc default in the key hints; per row on Rejected). */
+.pw-skip-mode { height: 22px; padding: 0 4px; font-size: 11px; font-weight: 600; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface); color: var(--nx-text); }
+.pw-state-wrap .pw-skip-mode { max-width: 128px; }
+.pw-order-chip { padding: 4px 10px; border: 1px solid var(--nx-rule); border-radius: 999px; background: var(--nx-surface-raised); font-size: 11.5px; font-weight: 700; color: var(--nx-text-soft); white-space: nowrap; flex: 0 1 auto; min-width: 0; max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
+.pw-supplier-pick { flex: 0 1 300px; min-width: 220px; }
+.pw-screen .pw-supplier-pick input { min-height: 0; height: 28px; padding: 0 8px; }
+.pw-filter-actions { display: inline-flex; align-items: center; gap: 6px; }
+.pw-screen .pw-wanted-select { max-width: 190px; }
+.pw-center { text-align: center; }
+.pw-screen tbody tr.pw-pad > td { padding: 0 !important; border: 0 !important; background: transparent !important; }
+/* Virtual-scroll spacer height. Must beat the compact/large row-height rule
+   (#root .ow-screen.ow-rows-* tbody td, !important): an inline height lost to
+   it, the spacers shrank to one row and the grid stopped scrolling at ~row 67. */
+#root .pw-screen tbody tr.pw-pad > td { height: var(--pw-pad-h) !important; }
+.pw-screen tbody tr.pw-row--checked > td { background: rgba(124, 58, 237, 0.06); }
+.pw-screen tbody tr.pw-row--rejected > td { color: var(--nx-text-muted); }
+.pw-pill--checked { background: var(--nx-info-sunk); color: var(--nx-info-ink, var(--nx-accent-ink)); }
+.pw-pill--closed { background: var(--nx-surface-sunk); color: var(--nx-text-muted); }
+.pw-pill--assigned { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.pw-mini-btn {
+  flex: 0 0 auto; height: 22px; padding: 0 9px; border: 0; border-radius: 6px; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap;
+}
+.pw-mini-btn--ok { background: var(--nx-success); color: #ffffff; }
+.pw-mini-btn--danger { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); border: 1px solid var(--nx-danger); }
+.pw-mini-btn:disabled { opacity: 0.45; cursor: default; }
+.pw-decisions { flex: 1 1 auto; }
+.pw-decisions .ow-intel-table { width: 100%; }
+/* Detail facts: quantities left, latest-GRN prices right. */
+.pw-facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; margin-top: 2px; }
+.pw-facts-col { margin: 0; display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border-radius: 6px; background: var(--nx-surface-sunk); }
+.pw-facts-col > div { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0; }
+.pw-facts-col dt { font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-muted); white-space: nowrap; }
+.pw-facts-col dd { margin: 0; font-size: 12px; font-weight: 800; color: var(--nx-text); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pw-facts-col dd.is-zero { color: var(--nx-danger-ink); }
+.pw-facts-col dd.is-up { color: var(--nx-success-ink); }
+.pw-facts-col dd.is-down { color: var(--nx-danger-ink); }
+.pw-facts-col dd.is-sales { color: var(--nx-accent-ink); }
+.pw-screen td.pw-name-col, .pw-screen th.pw-name-col { overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1100px) { .pw-facts { grid-template-columns: minmax(0, 1fr); } }
+/* Detail header: view tabs pinned top-right so the facts use the full width. */
+.pw-dhead { position: relative; display: block; }
+.pw-dhead-actions { position: absolute; top: 6px; right: 8px; }
+.pw-dhead-title { padding-right: 214px; min-height: 26px; }
+/* 1366-class windows (the app's design size): fixed side columns, grid takes the rest. */
+@media (max-width: 1500px) {
+  .pw-body { grid-template-columns: minmax(0, 1fr) 216px 268px; }
+  .sg-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pw-body.pw-body--nodetail { grid-template-columns: minmax(0, 1fr) 260px; }
+  .pw-footbar { gap: 4px 12px; padding: 5px 10px; }
+  .pw-footbar .pw-stat--soft { display: none; }
+  .pw-stat--value > b { font-size: 15px; }
+  .pw-dhead-title { padding-right: 0; padding-top: 30px; }
+}
+/* Readability (WCAG AA, light + dark) -- measured in the running app.
+   Scoped to the Procurement screen so the Order Workspace is unchanged. */
+.pw-screen { --pw-ok: #047857; --pw-ok-hover: #065f46; --pw-active: var(--nx-accent); --pw-abn: #b91c1c; }
+.pw-seg button.active { background: var(--pw-active); color: var(--nx-accent-on); }
+.pw-seg button.pw-tab--abn.active { background: var(--pw-abn); }
+.pw-seg button.active .pw-seg-count { background: rgba(0, 0, 0, 0.32); color: #ffffff; }
+
+/* Supplier Recommendation column (suggestionPanel.jsx): web Purchase Manager
+   cards + other stores' non-moving stock. Right Arrow focuses it. */
+.sg-panel {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; outline: none;
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface);
+}
+.sg-panel--active { box-shadow: 0 0 0 2px var(--nx-accent); border-color: var(--nx-accent); }
+.sg-head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 1px; padding: 7px 10px 6px; border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface-raised); }
+.sg-title { font-size: 11px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--nx-text-soft); }
+.sg-sub { font-size: 10.5px; color: var(--nx-text-muted); }
+.sg-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; padding: 8px; }
+.sg-list { display: flex; flex-direction: column; gap: 8px; }
+.sg-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
+  border: 1px solid var(--nx-rule-strong); border-radius: 8px; background: var(--nx-surface-raised); cursor: pointer;
+}
+.sg-card:hover { border-color: var(--nx-accent); }
+.sg-card--best { border-color: var(--nx-success); }
+.sg-card--assigned { background: var(--nx-success-sunk); }
+.sg-card--sel { border-color: var(--nx-accent); box-shadow: 0 0 0 2px var(--nx-accent); }
+.sg-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.sg-tag { padding: 0 7px; border-radius: 999px; font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.7; white-space: nowrap; }
+.sg-tag--best { background: var(--nx-success); color: #ffffff; }
+.sg-tag--frequent { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+.sg-tag--latest { background: var(--nx-info-sunk); color: var(--nx-info-ink, var(--nx-text-soft)); }
+.sg-tag--live { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.sg-tag--warehouse { background: var(--nx-surface-sunk); color: var(--nx-text-soft); border: 1px solid var(--nx-rule-strong); }
+.sg-tag--assigned { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.sg-card-name { font-size: 12.5px; font-weight: 800; color: var(--nx-text); text-transform: uppercase; overflow-wrap: anywhere; }
+.sg-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 6px 4px; border-radius: 6px; background: var(--nx-surface-sunk); }
+.sg-stat { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.sg-stat b { font-size: 11.5px; font-weight: 800; color: var(--nx-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.sg-stat label { font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--nx-text-muted); }
+.sg-stat b.sg-margin { color: var(--nx-success-ink); }
+.sg-facts { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; font-size: 10.5px; color: var(--nx-text-soft); }
+.sg-live { color: var(--nx-warning-ink); font-weight: 700; }
+.sg-assign {
+  width: 100%; min-height: 28px; padding: 4px 8px; border: 0; border-radius: 6px; cursor: pointer;
+  background: var(--nx-success); color: #ffffff; font: inherit; font-size: 12px; font-weight: 800;
+}
+.sg-assign:hover:not(:disabled) { filter: brightness(1.08); }
+.sg-assign:disabled { cursor: default; background: var(--nx-surface-sunk); color: var(--nx-text-muted); }
+.sg-card--assigned .sg-assign:disabled { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.sg-hint, .sg-none { font-size: 11px; color: var(--nx-text-muted); padding: 2px; }
+.sg-stores { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--nx-rule); }
+.sg-stores-title { display: flex; align-items: baseline; gap: 8px; font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-muted); }
+.sg-nm-total { margin-left: auto; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--nx-success-ink); }
+.sg-stores .ow-intel-table { width: 100%; }
+.sg-moving { font-size: 11px; color: var(--nx-text-soft); }
+.pw-bottom-dock > .sg-panel { overflow: auto; }
+
+.sg-tag--best, .sg-assign, .pw-mini-btn--ok { background: var(--pw-ok); color: #ffffff; }
+.sg-assign:hover:not(:disabled), .pw-mini-btn--ok:hover:not(:disabled) { background: var(--pw-ok-hover); filter: none; }
+/* Disabled: muted but legible -- not the global 55% fade. */
+.pw-screen button:disabled { opacity: 1; }
+.pw-screen .sg-assign:disabled, .pw-screen .pw-primary-btn:disabled, .pw-screen .pw-mini-btn:disabled {
+  background: var(--nx-surface-sunk); color: var(--nx-text-soft); border: 1px dashed var(--nx-rule-strong);
+}
+.pw-screen .pw-round-btn:disabled, .pw-screen .ow-btn:disabled { color: var(--nx-text-muted); }
+.pw-screen .ow-panel-subtitle { opacity: 1; color: var(--nx-text-soft); }
+.pw-screen td.ow-grp { color: var(--nx-text); }
+:root[data-theme="dark"] .pw-screen .ow-chart-adjval { color: var(--ow-adj-hi); }
+:root[data-theme="dark"] .pw-screen .abn-mark--abnormal { color: #f87171; }
+.pw-settings .ow-tabs button.active { background: var(--pw-active); color: var(--nx-accent-on); }
+/* 5-digit Or Qty must stay readable beside its badge; the gift icon is never ellipsised. */
+.pw-screen .pw-grid .ow-qty { min-width: 2.8rem; max-width: 2.8rem; padding: 0 4px; }
+/* Compact Or Qty (88px) + Remark (64px), owner 2026-11-04 "space waste": the
+   change badge ("▼409") sits LEFT of the box, so on unchanged rows the empty
+   slot borders the narrow State column and Or Qty sits tight against Remark.
+   Procurement only -- the frozen Order Workspace keeps the shared sizes. */
+.pw-screen .pw-grid .ow-qty-cell, .pw-screen .pw-grid .ow-qty-header-cell { gap: 2px; }
+.pw-screen .pw-grid .ow-qty-diff-slot { width: 2.1rem; justify-content: flex-end; }
+.pw-screen .pw-grid .ow-qty-diff { padding: 1px 3px; font-size: 10.5px; }
+.pw-screen .pw-grid tbody td.ow-orqty-col, .pw-screen .pw-grid thead th.ow-orqty-col,
+.pw-screen .pw-grid tbody td.pw-note-col { padding-left: 4px !important; padding-right: 4px !important; }
+.pw-screen .pw-grid td.pw-center { padding-left: 0; padding-right: 0; text-overflow: clip; }
+.pw-screen .sg-body { overflow-x: hidden; }
+.pw-screen .sg-stores .ow-intel-table { table-layout: fixed; }
+.pw-screen .sg-stores .ow-intel-table th, .pw-screen .sg-stores .ow-intel-table td { white-space: normal; overflow-wrap: anywhere; }
+/* Small muted labels sat at ~4.3:1 on the light theme -- one step darker. */
+.pw-facts-col dt, .sg-stat label, .pw-keys, .pw-keys kbd, .pw-check--pending, .pw-stat > span, .sg-sub { color: var(--nx-text-soft); }
+:root:not([data-theme="dark"]) .pw-screen .ow-stock-zero { color: #b91c1c; }
+:root:not([data-theme="dark"]) .pw-screen .ow-intel-table td.ow-col-mrp { color: #1e3a8a; }
+:root:not([data-theme="dark"]) .pw-screen .abn-mark--warning { color: #b45309; }
+:root:not([data-theme="dark"]) .pw-screen .abn-mark--abnormal, :root:not([data-theme="dark"]) .pw-screen .abn-strip-icon { color: #b91c1c; }
+/* Qty Check tab dropdown: All products / Abnormal sales. */
+.pw-tab-drop { position: relative; display: inline-flex; }
+.pw-tab-caret { margin-left: 2px; padding: 0 2px; font-size: 10px; opacity: 0.75; }
+.pw-tab-menu {
+  position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; min-width: 210px; display: flex; flex-direction: column; gap: 2px; padding: 4px;
+  border: 1px solid var(--nx-rule-strong); border-radius: 8px; background: var(--nx-surface-raised); box-shadow: var(--nx-shadow-lg);
+}
+.pw-seg .pw-tab-menu button { justify-content: space-between; width: 100%; height: 28px; color: var(--nx-text); background: transparent; }
+.pw-seg .pw-tab-menu button:hover:not(:disabled) { background: var(--nx-surface-hover); }
+.pw-seg .pw-tab-menu button.cur { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+.pw-seg .pw-tab-menu button b { color: var(--nx-danger-ink); }
+@media (max-width: 1280px) {
+  .pw-body { grid-template-columns: minmax(0, 1fr) 200px 240px; }
+  .pw-keys { display: none; }
+}
+
+/* Store WhatsApp (storeWhatsApp.jsx) */
+.swa-screen h3 { margin: 0 0 8px; font-size: 13px; color: var(--nx-text); }
+.swa-grid { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.4fr); gap: 12px; margin-bottom: 12px; }
+.swa-card { display: flex; flex-direction: column; gap: 8px; }
+.swa-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--ui-small-font); color: var(--nx-text-soft); }
+.swa-field input, .swa-field textarea { font: inherit; font-size: var(--ui-font-size); color: var(--nx-text); }
+.swa-muted { margin: 0; font-size: var(--ui-small-font); color: var(--nx-text-muted); }
+.swa-qr { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.swa-qr img { width: 228px; height: 228px; padding: 8px; background: #ffffff; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); image-rendering: pixelated; }
+.swa-ok { color: var(--nx-success-ink); }
+.swa-bad { color: var(--nx-danger-ink); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swa-dialog { width: min(460px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 18px; background: var(--nx-surface-raised); color: var(--nx-text); border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); box-shadow: var(--nx-shadow-lg); }
+.swa-dialog h3 { margin: 0; font-size: 14px; }
+.swa-files { margin: 0; padding: 8px 10px 8px 26px; max-height: 110px; overflow: auto; background: var(--nx-surface-sunk); border-radius: var(--nx-radius-sm); font-size: var(--ui-small-font); }
+.swa-dialog .action-row { justify-content: flex-end; }
+@media (max-width: 900px) { .swa-grid { grid-template-columns: 1fr; } }
+/* Supplier WhatsApp targets: chat picker + auto-send rule */
+.swa-dialog-wide { width: min(620px, 100%); max-height: calc(100vh - 48px); overflow: auto; }
+.swa-targets { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; align-items: center; }
+.swa-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px; font-size: var(--ui-small-font); background: var(--nx-accent-sunk); color: var(--nx-accent-ink); border: 1px solid var(--nx-rule); }
+.swa-chip.swa-kind-group { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.swa-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; }
+.swa-picker { display: flex; flex-direction: column; gap: 6px; }
+.swa-picker-bar { display: flex; gap: 6px; }
+.swa-picker-bar input { flex: 1; min-width: 0; font: inherit; color: var(--nx-text); }
+.swa-picker-tabs { display: flex; gap: 4px; align-items: center; }
+.swa-picker-tabs [role='tab'] { padding: 3px 12px; border-radius: 999px; border: 1px solid var(--nx-rule); background: var(--nx-surface); color: var(--nx-text-soft); font-size: var(--ui-small-font); cursor: pointer; }
+.swa-picker-tabs [role='tab'].is-active { background: var(--nx-accent); border-color: var(--nx-accent); color: var(--nx-text-on); }
+.swa-link-start { align-self: flex-start; margin-left: 0 !important; padding: 0; }
+.swa-link { margin-left: auto; border: 0; background: transparent; color: var(--nx-accent-ink); font-size: var(--ui-small-font); cursor: pointer; }
+.swa-picker-list { list-style: none; margin: 0; padding: 4px; max-height: 200px; overflow: auto; background: var(--nx-surface-sunk); border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); }
+.swa-picker-list button { display: flex; width: 100%; gap: 8px; align-items: center; padding: 5px 8px; border: 0; border-radius: var(--nx-radius-sm); background: transparent; color: var(--nx-text); text-align: left; cursor: pointer; font-size: var(--ui-font-size); }
+.swa-picker-list button:hover:not(:disabled) { background: var(--nx-surface-hover); }
+.swa-picker-list button:disabled { opacity: 0.45; cursor: default; }
+.swa-picker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swa-kind { flex: none; min-width: 58px; padding: 1px 6px; border-radius: 4px; font-size: 11px; text-align: center; background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+.swa-kind-group { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.swa-check { display: flex; gap: 8px; align-items: center; font-size: var(--ui-small-font); color: var(--nx-text-soft); }
+.swa-rule { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); }
+.swa-rule legend { padding: 0 4px; font-size: var(--ui-small-font); font-weight: 600; color: var(--nx-text); }
+.swa-rule-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.swa-inline { display: flex; align-items: center; gap: 6px; }
+.swa-inline input { width: 72px; }
+.pw-wa-on { border-color: var(--nx-success); color: var(--nx-success-ink); }
+.pw-mail-on { border-color: #3b82f6; color: #60a5fa; }
+.swa-dialog .swa-check input[type='checkbox'] { flex: none; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; }
+.swa-dialog .swa-picker-bar input { flex: 1 1 auto; width: auto; min-width: 0; }
+.swa-dialog .swa-picker-bar select { flex: none; width: auto; }
+.swa-dialog .swa-picker-bar > * { min-height: 34px; }
+.swa-dialog .swa-rule-grid input, .swa-dialog .swa-rule-grid select { min-height: 32px; }
+@media (max-width: 640px) { .swa-rule-grid { grid-template-columns: 1fr; } }
+
+/* Procurement ⚙ column list: show / move / width per column (like the Order Workspace grid settings). */
+.pw-col-list { list-style: none; margin: 0; padding: 0; max-height: min(52vh, 440px); overflow-y: auto; display: flex; flex-direction: column; gap: 2px; min-width: 260px; }
+.pw-col-list__row { display: grid; grid-template-columns: 1fr 22px 22px 52px; align-items: center; gap: 4px; padding: 2px 4px; border-radius: var(--nx-radius-sm); }
+.pw-col-list__row:hover { background: var(--nx-surface-sunk); }
+.pw-col-list__row.is-off .pw-col-list__name span { color: var(--nx-text-muted); }
+.pw-col-list__name { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nx-text); cursor: pointer; white-space: nowrap; overflow: hidden; }
+.pw-screen .pw-col-list__name input { width: auto; min-height: 0; padding: 0; }
+.pw-col-list__mv { width: 22px; height: 20px; padding: 0; font-size: 9px; line-height: 1; border: 1px solid var(--nx-rule); border-radius: 4px; background: var(--nx-surface); color: var(--nx-text); cursor: pointer; }
+.pw-col-list__mv:disabled { opacity: .35; cursor: default; }
+.pw-screen .pw-col-list__w { width: 52px; min-height: 0; height: 20px; padding: 0 4px; font-size: 11px; text-align: right; }
+.pw-col-list__auto { font-size: 11px; color: var(--nx-text-muted); text-align: right; }
+.pw-diff-up { color: var(--nx-success-ink); font-weight: 600; }
+.pw-diff-down { color: var(--nx-danger-ink, #b91c1c); font-weight: 600; }
+
+/* Order Workspace: Bulk Assign · Best Margin (bulkAssign.jsx). */
+.ow-bulk-assign { display: flex; flex-direction: column; min-height: 0; }
+.ow-bulk-bar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  box-sizing: border-box; height: 34px; padding: 0 8px; font-size: 12px; color: var(--nx-text-soft);
+  border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface-sunk);
+}
+.ow-screen .ow-bulk-assign thead th { top: 34px; } /* below the sticky bar */
+.ow-bulk-none { color: var(--nx-text-muted); }
+.ow-bulk-assign tr.ow-bulk-row-none > td { color: var(--nx-text-muted); }
+.ow-bulk-assign th:first-child, .ow-bulk-assign td:first-child { text-align: center; }
+
+/* Procurement "All Stores" panel (storeTrends.jsx). Never scrolls: it takes
+   its natural height (owner: "must be visible, no scroll") and the panels
+   around it shrink instead. Rows layout in the Middle/Side docks, one card
+   per store in the Bottom dock. Each store-month is the Monthly Trend's own
+   .ow-chart-bars cluster (trendChart.jsx TrendBars: three adjacent 5-15px
+   bars, 4px apart, centred in the month) -- only the cell around it is
+   All-Stores-specific. */
+.ow-panel.ow-panel--stores { flex: 0 0 auto; height: auto; max-height: none; min-height: 0; container-type: inline-size; }
+.ow-panel--stores .ow-panel-scroll { flex: 0 0 auto; overflow: visible; }
+.st-legend { margin-left: auto; display: inline-flex; gap: 8px; font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--nx-text-soft); }
+.st-legend span { display: inline-flex; align-items: center; gap: 3px; }
+.st-table { display: flex; flex-direction: column; padding: 0 5px 3px; }
+.st-row { display: grid; grid-template-columns: 62px repeat(4, minmax(0, 1fr)); align-items: stretch; height: 42px; border-bottom: 1px solid var(--nx-rule); }
+.st-row:last-child { border-bottom: 0; }
+.st-row--current { background: var(--nx-accent-sunk); }
+.st-head { height: 16px; font-size: 10px; font-weight: 700; color: var(--nx-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.st-head > div { display: flex; align-items: center; justify-content: center; }
+.st-head > .st-store { justify-content: flex-start; padding-left: 4px; font-size: 10px; color: var(--nx-text-muted); }
+.st-head > .st-month { border-left: 1px solid var(--nx-rule); white-space: nowrap; overflow: hidden; }
+.st-m-short { display: none; }
+.st-store { display: flex; flex-direction: column; justify-content: center; padding-left: 4px; min-width: 0; font-size: 12px; line-height: 14px; color: var(--nx-text); }
+.st-code { font-size: 9.5px; color: var(--nx-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-row--current .st-code, .st-card--current .st-code { color: var(--nx-accent-ink); }
+.st-cell { display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--nx-rule); }
+.st-cell .ow-chart-bars { padding: 13px 2px 0; }
+/* One scale across all stores: a small non-zero bar stays taller than the
+   3px zero marker. */
+.st-cell .ow-chart-bar:not(.is-zero) { min-height: 5px; }
+.st-nodata { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; font-size: 9.5px; font-style: italic; color: var(--nx-text-muted); }
+/* Narrow columns (1366-class windows): smaller store column; the bars
+   shrink on their own (Monthly Trend's 5-15px flex bars). */
+@container (max-width: 330px) {
+  .st-row { grid-template-columns: 44px repeat(4, minmax(0, 1fr)); }
+  .st-head { letter-spacing: 0; }
+  .st-m-long { display: none; }
+  .st-m-short { display: inline; }
+  .st-cell .ow-chart-bars { gap: 2px; padding-inline: 1px; }
+  .st-cell .ow-chart-val { font-size: 8px; letter-spacing: -0.03em; }
+  .ow-panel--stores .ow-panel-subtitle { display: none; }
+  .st-legend { gap: 5px; }
+}
+.st-cards { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); gap: 5px; padding: 4px 5px 5px; }
+/* Bottom dock: the cards stretch to the strip's height (taller bars, no gap). */
+.st-layout-cards .ow-panel-scroll { flex: 1 1 auto; min-height: 0; }
+.st-layout-cards .st-cards { height: 100%; box-sizing: border-box; }
+.st-layout-cards .st-card { height: auto; min-height: 92px; }
+.st-card { display: flex; flex-direction: column; min-width: 0; height: 100px; padding: 2px 5px 1px; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface-sunk); }
+.st-card--current { border-color: var(--nx-accent); }
+.st-card-head { display: flex; align-items: baseline; gap: 5px; font-size: 11.5px; line-height: 14px; color: var(--nx-text); }
+.st-card-head .st-code { margin-left: auto; }
+.st-card-plot { flex: 1 1 auto; min-height: 0; display: flex; }
+.st-card-month { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.st-card-month .st-cell { flex: 1 1 auto; min-height: 0; border-left: 0; }
+.st-card-month + .st-card-month .st-cell { border-left: 1px dashed var(--nx-rule); }
+.st-card-month .ow-chart-bars { gap: 2px; padding-inline: 2px; }
+.st-card .st-nodata { font-size: 8.5px; text-align: center; padding: 0 2px; }
+.st-card-month .st-month { text-align: center; font-size: 9.5px; line-height: 12px; color: var(--nx-text-muted); border-top: 1px solid var(--nx-rule); }
+
+/* ---- Procurement dockable panels (Middle / Side / Bottom) ---- */
+/* 🌐 Sites: the supplier portals take both right-hand columns. */
+.pw-screen .pw-body.pw-body--web { grid-template-columns: minmax(0, var(--pw-grid-w, 1fr)) minmax(420px, 1fr); }
+.pw-webcol { min-width: 0; min-height: 0; display: flex; }
+
+/* Web panel (src/webPanel.jsx): sites bar, browser bar, the page. */
+.wp {
+  flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--nx-rule); border-radius: 8px; background: var(--nx-surface); overflow: hidden;
+}
+.wp-sites { display: flex; gap: 4px; padding: 5px 6px; overflow-x: auto; border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface-sunk); }
+.wp-site {
+  flex: 0 0 auto; max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 3px 9px; border: 1px solid var(--nx-rule); border-radius: 999px; background: var(--nx-surface);
+  color: var(--nx-text); font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.wp-site:hover { border-color: var(--nx-rule-strong); }
+.wp-site.is-active { background: var(--nx-accent); border-color: var(--nx-accent); color: #ffffff; }
+.wp-site.has-login::before { content: '🔑 '; }
+.wp-site--manage { margin-left: auto; color: var(--nx-text-soft); }
+.wp-bar { display: flex; align-items: center; gap: 3px; padding: 4px 6px; border-bottom: 1px solid var(--nx-rule); }
+.wp-btn {
+  flex: 0 0 auto; min-width: 26px; height: 26px; padding: 0 6px; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: var(--nx-text); font: inherit; cursor: pointer;
+}
+.wp-btn:hover:not(:disabled) { border-color: var(--nx-rule); background: var(--nx-surface-sunk); }
+.wp-btn:disabled { color: var(--nx-text-muted); cursor: default; }
+.wp-address {
+  flex: 1 1 auto; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--nx-rule); border-radius: 999px;
+  background: var(--nx-surface-sunk); color: var(--nx-text); font: inherit; font-size: 12px; box-sizing: border-box;
+}
+.wp-address:focus-visible { outline: none; border-color: var(--nx-accent); background: var(--nx-surface); }
+.wp-zoom { min-width: 2.6rem; text-align: center; font-size: 11px; color: var(--nx-text-soft); font-variant-numeric: tabular-nums; }
+.wp-error { padding: 4px 8px; font-size: 12px; color: var(--nx-danger-ink); border-bottom: 1px solid var(--nx-rule); }
+.wp-view { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.wp-webview { flex: 1 1 auto; min-width: 0; min-height: 0; border: 0; }
+.wp-empty { margin: auto; padding: 16px; text-align: center; color: var(--nx-text-soft); display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.wp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wp-note { margin: 0; font-size: 12px; color: var(--nx-text-soft); }
+.wp-manage {
+  position: absolute; top: 8px; right: 8px; width: min(440px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--nx-rule-strong); border-radius: 8px;
+  background: var(--nx-surface); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18); z-index: 2;
+}
+.wp-manage-head { display: flex; align-items: center; gap: 8px; }
+.wp-manage-head b { margin-right: auto; }
+.wp-add input { flex: 1 1 8rem; min-width: 0; height: 26px; padding: 0 6px; border: 1px solid var(--nx-rule); border-radius: 5px; background: var(--nx-surface); color: var(--nx-text); font: inherit; }
+.wp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.wp-list > li { padding: 5px 6px; border: 1px solid var(--nx-rule); border-radius: 6px; }
+.wp-list-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wp-list-name small { margin-left: 6px; color: var(--nx-text-muted); }
+.wp-has-login { border-color: var(--nx-success-ink, #15803d); color: var(--nx-success-ink, #15803d); }
+.wp-login { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--nx-rule); }
+.wp-login label { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--nx-text-soft); }
+.wp-login input:not([type=checkbox]) { height: 26px; padding: 0 6px; border: 1px solid var(--nx-rule); border-radius: 5px; background: var(--nx-surface); color: var(--nx-text); font: inherit; }
+.wp-login .wp-check { flex-direction: row; align-items: center; grid-column: 1 / -1; color: var(--nx-text); }
+.wp-login .wp-row, .wp-login .wp-note { grid-column: 1 / -1; }
+/* HO supplier sites vs this PC's: a rule between them in the bar; the
+   store's linked supplier as a tag; the two login levels stacked. */
+.wp-sites-gap { flex: 0 0 1px; align-self: stretch; margin: 2px 3px; background: var(--nx-rule-strong); }
+.wp-tag { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--nx-surface-sunk); color: var(--nx-text-soft); font-style: normal; font-size: 11px; }
+.wp-levels { display: flex; flex-direction: column; }
+.wp-login-title, .wp-login .wp-wide { grid-column: 1 / -1; }
+.wp-login-title { font-size: 12px; }
+.wp-manage-sub { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--nx-rule); }
+/* By Supplier -> Website (siteCheckBar.jsx): run bar, per-row result chips. */
+.pw-sitebar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 6px; padding: 5px 8px;
+  border: 1px solid var(--nx-rule); border-radius: 8px; background: var(--nx-surface); font-size: 12px;
+}
+
+/* Supplier stock harvest review: three tiers, each its own colour + watermark. */
+.hv { border: 1px solid var(--nx-rule); border-radius: 8px; background: var(--nx-surface); margin: 0 0 6px; font-size: 12px; }
+.hv-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border-bottom: 1px solid var(--nx-rule); }
+.hv-tabs { display: inline-flex; gap: 4px; }
+.hv-tab { border: 1px solid var(--nx-rule); background: transparent; border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; color: var(--nx-text-soft); }
+.hv-tab.is-on { font-weight: 650; }
+.hv-tab--matched.is-on { background: color-mix(in srgb, #1f7a4d 16%, transparent); color: #1f7a4d; border-color: #1f7a4d; }
+.hv-tab--suggested.is-on { background: color-mix(in srgb, #b4791a 18%, transparent); color: #b4791a; border-color: #b4791a; }
+.hv-tab--unmapped.is-on { background: color-mix(in srgb, #b5402f 16%, transparent); color: #b5402f; border-color: #b5402f; }
+.hv-progress { margin: 0; padding: 4px 8px; color: var(--nx-text-soft); }
+.hv-list { max-height: 340px; overflow: auto; }
+.hv-table { width: 100%; }
+.hv-table th { position: sticky; top: 0; background: var(--nx-surface); z-index: 1; }
+/* Watermark stripe + tint per tier so the eye catches what needs review. */
+.hv-row--suggested { background: color-mix(in srgb, #b4791a 8%, transparent); box-shadow: inset 3px 0 0 #b4791a; }
+.hv-row--needs_mapping { background: color-mix(in srgb, #b5402f 8%, transparent); box-shadow: inset 3px 0 0 #b5402f; }
+.hv-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.hv-dot--matched { background: #1f7a4d; }
+.hv-dot--suggested { background: #b4791a; }
+.hv-dot--needs_mapping { background: #b5402f; }
+.hv-acts { display: inline-flex; gap: 3px; }
+.hv-ok { color: #1f7a4d; font-weight: 700; }
+.hv-map { display: inline-flex; gap: 4px; align-items: center; }
+.hv-map input { min-width: 0; width: 11rem; }
+.pw-sitebar-site { font-weight: 600; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-sitebar-counts { display: inline-flex; align-items: center; gap: 4px; }
+.pw-sitebar-left { color: var(--nx-text-soft); }
+.pw-sitebar-note { color: var(--nx-danger-ink); }
+.pw-sitebar-confirm {
+  flex: 1 1 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding-top: 6px; border-top: 1px dashed var(--nx-rule);
+}
+.pw-sitebar-confirm > span { flex: 1 1 18rem; }
+.pw-site-mark { display: inline-flex; align-items: center; gap: 2px; }
+.pw-site-chip {
+  padding: 1px 7px; border: 1px solid var(--nx-rule); border-radius: 999px; background: var(--nx-surface);
+  color: var(--nx-text-soft); font: inherit; font-size: 11px; line-height: 16px; white-space: nowrap;
+}
+button.pw-site-chip { cursor: pointer; }
+button.pw-site-chip:disabled { cursor: default; }
+.pw-site-chip--searching { border-color: var(--nx-accent); color: var(--nx-accent); }
+.pw-site-chip--cart { border-color: var(--nx-success-ink, #15803d); color: var(--nx-success-ink, #15803d); font-weight: 600; }
+.pw-site-chip--none { border-color: var(--nx-danger-ink); color: var(--nx-danger-ink); }
+.pw-site-chip--available { border-color: var(--nx-success-ink, #15803d); color: var(--nx-success-ink, #15803d); }
+/* ⚡ Auto Assign card (reuses the .ow-bulk-* proposal grid). */
+.pw-bulkcard { margin: 0 0 6px; max-height: 44vh; overflow: auto; border: 1px solid var(--nx-rule); border-radius: 8px; background: var(--nx-surface); }
+.pw-bulkcard-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--nx-rule); background: var(--nx-surface); }
+.pw-bulkcard-head b { white-space: nowrap; }
+.pw-bulkcard-head span { flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--nx-text-soft); }
+.pw-bulkcard .ow-bulk-assign { padding: 6px 8px; }
+.pw-bulk-opt { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; font-size: 11.5px; color: var(--nx-text-soft); white-space: nowrap; }
+.pw-bulk-opt input[type=checkbox] { width: 14px; height: 14px; margin: 0; }
+.pw-sitebar-opt { display: inline-flex; align-items: center; gap: 4px; color: var(--nx-text-soft); white-space: nowrap; }
+.pw-sitebar-opt input[type=checkbox] { flex: none; width: 14px; height: 14px; min-width: 0; margin: 0; padding: 0; }
+.pw-sitebar-status { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nx-text-soft); }
+.pw-site-chip--partial, .pw-site-chip--check { border-color: #b45309; color: #b45309; }
+.pw-body.pw-body--nomid { grid-template-columns: minmax(0, 2.25fr) minmax(330px, 1.1fr); }
+.pw-body.pw-body--nomid.pw-body--nodetail { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1500px) {
+  .pw-body.pw-body--nomid { grid-template-columns: minmax(0, 1fr) 268px; }
+  .pw-body.pw-body--nomid.pw-body--nodetail { grid-template-columns: minmax(0, 1fr); }
+}
+.pw-supcol { overflow: hidden; }
+.pw-supcol > .ow-panel, .pw-bottom-dock > .ow-panel { margin: 0; }
+.pw-supcol > .ow-panel--purchase, .pw-supcol > .ow-panel--sales, .pw-supcol > .pw-decisions { flex: 1 1 0; min-height: 80px; }
+.pw-detail-panels > .pw-decisions { flex: 1 1 0; min-height: 80px; }
+.pw-bottom-dock { flex: 0 0 auto; display: flex; gap: 6px; height: clamp(124px, 22vh, 200px); min-height: 0; }
+.pw-bottom-dock > * { flex: 1 1 0; min-width: 0; min-height: 0; height: auto !important; max-height: none; }
+.pw-bottom-dock > .ow-panel--stores { flex: 2 1 0; overflow-x: auto; display: flex; flex-direction: column; }
+.pw-bottom-dock > .sg-panel { overflow: auto; }
+
+/* Product Summary panel: one compact tile grid (no half-empty columns). */
+.ow-panel.pw-facts-panel { flex: 0 0 auto; height: auto; padding: 6px 8px; }
+.pw-facts-panel .pw-dhead-main { gap: 4px; }
+.pw-facts-panel .pw-dhead-title { padding: 0; min-height: 0; }
+.pw-facts--tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 3px; margin: 0; }
+.pw-facts--tiles > div { min-width: 0; padding: 2px 6px 3px; border-radius: 5px; background: var(--nx-surface-sunk); }
+.pw-facts--tiles > div.is-price { background: var(--nx-accent-sunk); }
+.pw-facts--tiles dt { font-size: 9px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--nx-text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pw-facts--tiles dd { margin: 0; font-size: 13px; line-height: 16px; font-weight: 800; color: var(--nx-text); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pw-facts--tiles dd.is-zero { color: var(--nx-danger-ink); }
+.pw-facts--tiles dd.is-up { color: var(--nx-success-ink); }
+.pw-facts--tiles dd.is-down { color: var(--nx-danger-ink); }
+.pw-facts--tiles dd.is-sales { color: var(--nx-accent-ink); }
+
+/* Settings card: columns | panels side by side. */
+.pw-settings.pw-settings--panes { flex-direction: row; align-items: flex-start; gap: 16px; max-height: calc(100vh - 140px); }
+.pw-settings-pane { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pw-settings-pane .pw-settings-hint { font-size: 10.5px; }
+.pw-panel-list { min-width: 410px; max-height: none; }
+.pw-panel-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 22px 22px; align-items: center; gap: 4px; padding: 2px 4px; border-radius: var(--nx-radius-sm); }
+.pw-panel-row:hover { background: var(--nx-surface-sunk); }
+.pw-panel-row.is-off .pw-col-list__name span { color: var(--nx-text-muted); }
+.pw-dock-seg { display: inline-flex; padding: 1px; border: 1px solid var(--nx-rule); border-radius: 6px; background: var(--nx-surface-sunk); }
+.pw-dock-seg button { height: 20px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: var(--nx-text-soft); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.pw-dock-seg button.active { background: var(--pw-active, var(--nx-accent)); color: #ffffff; }
+
+/* Other stores -- non-moving stock: fixed column widths, no letter-wrapping. */
+.pw-screen .sg-stores .ow-intel-table.sg-stores-table { width: 100%; table-layout: fixed; }
+.pw-screen .sg-stores .ow-intel-table.sg-stores-table th,
+.pw-screen .sg-stores .ow-intel-table.sg-stores-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; padding-left: 4px; padding-right: 4px; }
+
+/* All Stores click -> Trend / Purchase / Sales show that store (ProcurementWorkspace peek). */
+.pw-peek-zone { display: contents; }
+.pw-peek-zone.is-peek > .ow-panel { box-shadow: 0 0 0 1px var(--nx-warning); }
+.pw-peek-zone.is-peek > .ow-panel > .ow-panel-title::after {
+  content: var(--pw-peek-label); margin-left: 4px; padding: 0 6px; border-radius: 4px;
+  background: var(--nx-warning-sunk); color: var(--nx-warning-ink); letter-spacing: 0.02em;
+}
+.st-pickable { cursor: pointer; }
+.st-pickable:hover { background: var(--nx-surface-sunk); }
+.st-pickable:focus-visible { outline: 2px solid var(--nx-accent); outline-offset: -2px; }
+.st-row.st-row--peek, .st-card.st-card--peek { background: var(--nx-warning-sunk); box-shadow: inset 3px 0 0 var(--nx-warning); }
+.st-row--peek .st-code, .st-card--peek .st-code { color: var(--nx-warning-ink); }
+
+/* Procurement column widths at every resolution: the grid takes only what
+   its columns need (--pw-grid-w, set from the columns + longest product
+   name) and the Middle / Side panels share the rest. At 1366 the panels keep
+   their minimums and the grid gives way first. */
+.pw-screen .pw-body { grid-template-columns: minmax(0, var(--pw-grid-w, 2.25fr)) minmax(240px, 0.8fr) minmax(300px, 1.1fr); }
+.pw-screen .pw-body.pw-body--nodetail { grid-template-columns: minmax(0, var(--pw-grid-w, 1fr)) minmax(260px, 1fr); }
+.pw-screen .pw-body.pw-body--nomid { grid-template-columns: minmax(0, var(--pw-grid-w, 2.25fr)) minmax(300px, 1fr); }
+.pw-screen .pw-body.pw-body--nomid.pw-body--nodetail { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1500px) {
+  .pw-screen .pw-body { grid-template-columns: minmax(0, var(--pw-grid-w, 1fr)) minmax(216px, 0.8fr) minmax(268px, 1fr); }
+  .pw-screen .pw-body.pw-body--nodetail { grid-template-columns: minmax(0, var(--pw-grid-w, 1fr)) minmax(240px, 1fr); }
+  .pw-screen .pw-body.pw-body--nomid { grid-template-columns: minmax(0, var(--pw-grid-w, 1fr)) minmax(268px, 1fr); }
+}
+/* Short windows (768-class): the bottom strip gives the grid more rows. */
+@media (max-height: 820px) {
+  .pw-bottom-dock { height: clamp(104px, 18vh, 150px); }
+}
+
+/* 1366-class widths: denser Product Summary tiles (4 per row in the side column). */
+@media (max-width: 1500px) {
+  .pw-facts--tiles { grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 2px; }
+  .pw-facts--tiles > div { padding: 1px 5px 2px; }
+  .pw-facts--tiles dt { font-size: 8.5px; }
+  .pw-facts--tiles dd { font-size: 12px; line-height: 15px; }
+  .pw-facts-panel .pw-dhead-title strong { font-size: 13px; }
+  .pw-facts-panel .pw-dhead-meta, .pw-facts-panel .pw-dhead-facts { font-size: 10.5px; }
+}
+/* 768-class heights: shorter trend chart and All Stores rows, so every
+   panel (Supplier cards, Purchase, Bill/Sales) keeps usable room. */
+@media (max-height: 820px) {
+  .pw-screen .ow-panel--chart { height: clamp(108px, 17vh, 170px); }
+  .st-row { height: 34px; }
+  .st-head { height: 15px; }
+  .st-cell .ow-chart-bars { padding-top: 12px; }
+}
+
+/* Procurement toolbars at every window size: the right-hand groups wrap as
+   one unit (never past the window edge), the Esc skip-mode picker stays
+   available when the key hints hide, and popovers stay on-screen. */
+.pw-topbar-end, .pw-filter-end { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px 10px; margin-left: auto; min-width: 0; max-width: 100%; }
+.pw-filter-end .pw-keys { margin-left: 0; padding-right: 10px; border-right: 1px solid var(--nx-rule); }
+.pw-filter-actions { flex: 0 0 auto; }
+.pw-esc-skip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--nx-text-soft); white-space: nowrap; padding-right: 10px; border-right: 1px solid var(--nx-rule); }
+.pw-screen .pw-esc-skip .pw-skip-mode { width: auto; min-height: 0; height: 24px; padding: 0 4px; }
+.pw-settings.pw-settings--panes { flex-wrap: wrap; max-width: calc(100vw - 32px); overflow: auto; }
+@media (max-width: 1100px) {
+  .pw-panel-list { min-width: 0; }
+  .pw-order-chip { max-width: 260px; }
+}
+
+/* ---- Grouped main menu (navMenu.jsx) --------------------------------------
+   One button per group; groups with several screens open a dropdown. The
+   bar no longer scrolls sideways, so the dropdown is never clipped. */
+.menubar-nav { overflow: visible; }
+.nav-group { position: relative; flex: 0 0 auto; }
+.menubar-nav .nav-group-button { display: inline-flex; align-items: center; gap: 6px; }
+.nav-group-current { padding: 1px 7px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); color: var(--nx-text-on); font-size: 11px; font-weight: 600; }
+.nav-group-caret { font-size: 10px; opacity: 0.7; }
+.nav-group-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  display: flex; flex-direction: column; min-width: 220px; padding: 5px;
+  background: var(--nx-surface-raised); border: 1px solid var(--nx-rule); border-radius: var(--nx-radius);
+  box-shadow: var(--nx-shadow-lg);
+}
+.menubar-nav .nav-group-menu button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%;
+  min-height: 34px; padding: 6px 10px; border: 0; border-radius: var(--nx-radius-sm);
+  color: var(--nx-text); background: transparent; text-align: left; font-size: 13px; font-weight: 550;
+}
+.menubar-nav .nav-group-menu button:hover,
+.menubar-nav .nav-group-menu button:focus-visible { background: var(--nx-surface-hover); color: var(--nx-text); outline: none; }
+.menubar-nav .nav-group-menu button.active { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); box-shadow: none; }
+.nav-item-hint { font-size: 11px; font-weight: 400; color: var(--nx-text-muted); }
+@media (max-width: 1280px) { .nav-group-current { display: none; } }
+
+/* ---- Report "Send on WhatsApp" toast (storeWhatsApp.jsx) ---- */
+.swa-share-toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 70;
+  display: flex; align-items: center; gap: 10px; max-width: min(520px, calc(100vw - 36px));
+  padding: 10px 12px; background: var(--nx-surface-raised); color: var(--nx-text);
+  border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); box-shadow: var(--nx-shadow-lg);
+  font-size: var(--ui-font-size);
+}
+.swa-share-toast > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swa-share-x { border: 0; background: transparent; color: var(--nx-text-muted); font-size: 18px; cursor: pointer; }
+
+/* ---- Time Report (TimeReport.jsx) ---- */
+.trp-screen { display: flex; flex-direction: column; gap: 10px; }
+.trp-bar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; padding: 10px 12px; background: var(--nx-surface); border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); }
+.trp-field { display: inline-flex; flex-direction: column; gap: 3px; font-size: 11px; font-weight: 600; color: var(--nx-text-soft); }
+.trp-field select, .trp-field input { min-width: 140px; font: inherit; font-size: var(--ui-font-size); font-weight: 400; color: var(--nx-text); }
+.trp-field .trp-num { min-width: 90px; width: 90px; }
+.trp-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }
+.trp-wa { display: inline-flex; gap: 6px; padding-left: 6px; border-left: 1px solid var(--nx-rule); }
+.trp-result { min-width: 0; }
+.trp-period { font-weight: 700; font-size: 13px; margin: 2px 0 8px; color: var(--nx-text); }
+.trp-subnote { font-size: 12px; color: var(--nx-text-muted); margin: 0 0 10px; }
+.trp-subnote b { color: var(--nx-text); }
+.trp-dept-head { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 6px; }
+.trp-dept-head h3 { font-size: 14px; font-weight: 700; margin: 0; color: var(--nx-text); }
+.trp-dept-actions { display: flex; gap: 6px; }
+.trp-tablewrap { overflow: auto; max-height: calc(100vh - 280px); background: var(--nx-surface); border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); }
+.trp-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; color: var(--nx-text); }
+.trp-table thead th { position: sticky; top: 0; z-index: 1; padding: 6px 9px; background: var(--nx-surface-sunk); color: var(--nx-text-soft); font-weight: 600; white-space: nowrap; border-bottom: 1px solid var(--nx-rule); }
+.trp-daily thead tr:nth-child(2) th { top: 29px; }
+.trp-table tbody td { padding: 5px 9px; border-bottom: 1px solid var(--nx-rule); white-space: nowrap; }
+.trp-table tbody tr:not([style]):hover td { background: var(--nx-surface-hover); }
+.trp-left { text-align: left; }
+.trp-center { text-align: center; }
+.trp-foot td { font-weight: 700; border-top: 2px solid var(--nx-rule-strong); background: var(--nx-surface-sunk); padding: 6px 9px; }
+.trp-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 10px; font-weight: 700; background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.trp-muster td.trp-day { text-align: center; padding: 4px; min-width: 22px; font-weight: 600; }
+.trp-muster .trp-fixed { position: sticky; left: 0; z-index: 1; background: var(--nx-surface); }
+.trp-muster thead .trp-fixed { z-index: 2; background: var(--nx-surface-sunk); }
+.trp-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; font-size: 12px; color: var(--nx-text-muted); }
+.trp-leg-label { font-weight: 700; }
+.trp-leg-item { display: inline-flex; align-items: center; gap: 5px; }
+.trp-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--nx-rule-strong); display: inline-block; }
+.trp-summary-line { font-size: 13px; margin: 2px 0 8px; color: var(--nx-text); }
+.trp-daily .trp-mtd-sep { border-left: 2px solid var(--nx-rule-strong); }
+.trp-daily td.trp-mtd { text-align: center; font-variant-numeric: tabular-nums; }
+.trp-daily th.trp-grp { font-size: 11px; letter-spacing: 0.02em; text-transform: uppercase; }
+.trp-zero { color: var(--nx-text-muted); opacity: 0.7; }
+.trp-pill { display: inline-block; min-width: 22px; padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 700; line-height: 18px; }
+.trp-pill-mp { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.trp-pill-w830 { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.trp-pill-w800 { background: var(--nx-info-sunk); color: var(--nx-info-ink); }
+
+/* Rate Analysis (RateAnalysis.jsx) - reuses the trp-* report layout */
+.rta-tabs, .rta-sheetbar, .rta-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.rta-chip { padding: 4px 12px; border-radius: 14px; border: 1px solid var(--nx-rule); background: var(--nx-surface); color: var(--nx-text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.rta-chip:hover { background: var(--nx-surface-hover); }
+.rta-chip.active { background: var(--nx-accent-sunk); border-color: var(--nx-accent); color: var(--nx-accent-ink); font-weight: 600; }
+.rta-count { margin-left: 4px; opacity: 0.7; font-weight: 400; }
+.rta-bar { align-items: stretch; }
+.rta-grow { flex: 1 1 420px; }
+.rta-text { width: 100%; min-height: 110px; font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
+.rta-small { min-height: 54px; }
+.rta-side { display: flex; flex-direction: column; gap: 8px; justify-content: flex-end; }
+.rta-filter { min-width: 200px; font: inherit; font-size: var(--ui-font-size); }
+.rta-picker { flex: 1 1 460px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rta-picker-head { display: flex; gap: 10px; align-items: center; }
+.rta-picker-list { max-height: 220px; overflow: auto; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius); background: var(--nx-surface); }
+.rta-picker-row { display: flex; gap: 8px; align-items: center; padding: 3px 8px; font-size: 12.5px; cursor: pointer; border-bottom: 1px solid var(--nx-rule); }
+.rta-picker-row:hover { background: var(--nx-surface-hover); }
+.rta-picker-name { flex: 1; color: var(--nx-text); }
+.rta-picker-meta { color: var(--nx-text-muted); font-size: 11px; white-space: nowrap; }
+.rta-result-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
+.rta-note { margin: 0 0 2px; }
+.rta-match { max-height: 320px; }
+.rta-match select { width: 100%; min-width: 380px; font: inherit; }
+.rta-cell { width: 72px; text-align: right; font: inherit; }
+.rta-table td.rta-num, .rta-table th.rta-num, .rta-match .rta-num { text-align: right; font-variant-numeric: tabular-nums; }
+.rta-table th.rta-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; border-left: 2px solid var(--nx-rule-strong); }
+.rta-table thead tr:nth-child(2) th { top: 29px; }
+.rta-table td.rta-good { background: var(--nx-success-sunk); color: var(--nx-success-ink); font-weight: 600; }
+.rta-table td.rta-bad { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); font-weight: 600; }
+.rta-table td.rta-warn, .rta-match td.rta-warn { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+@media (max-width: 900px) { .trp-actions { margin-left: 0; } }
+
+/* ---- Procurement: supplier stock compare card under the current row ---- */
+.pw-screen .pw-grid tbody > tr.pw-row--carded > td { border-bottom-color: transparent; }
+.pw-screen .pw-grid tbody > tr.pw-cmp-tr > td {
+  height: auto !important; padding: 0 6px 8px 10px; overflow: visible; white-space: normal;
+  background: var(--nx-surface-sunk); border-bottom: 1px solid var(--nx-rule-strong);
+  box-shadow: inset 4px 0 0 var(--nx-accent);
+}
+.pw-cmp {
+  margin-top: 4px; padding: 8px 10px 6px; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius);
+  background: var(--nx-surface); box-shadow: var(--nx-shadow-md); font-size: 12px; line-height: 1.35; color: var(--nx-text);
+  animation: pw-cmp-in 0.14s ease-out;
+}
+@keyframes pw-cmp-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.pw-cmp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.pw-cmp-title { font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--nx-text-muted); }
+.pw-cmp-verdict {
+  flex: 1 1 260px; min-width: 0; display: flex; align-items: center; gap: 7px; padding: 4px 10px 4px 5px;
+  border-radius: 999px; font-size: 12px;
+}
+.pw-cmp-verdict__icon {
+  flex: 0 0 auto; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  font-size: 11px; font-weight: 900; color: #ffffff;
+}
+.pw-cmp-verdict__text { min-width: 0; }
+.pw-cmp-verdict--ok { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.pw-cmp-verdict--ok .pw-cmp-verdict__icon { background: var(--nx-success); }
+.pw-cmp-verdict--better { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.pw-cmp-verdict--better .pw-cmp-verdict__icon { background: var(--nx-warning); }
+.pw-cmp-verdict--warn { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); }
+.pw-cmp-verdict--warn .pw-cmp-verdict__icon { background: var(--nx-danger); }
+.pw-cmp-verdict--info { background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+.pw-cmp-verdict--info .pw-cmp-verdict__icon { background: var(--nx-accent); }
+.pw-cmp-assigned {
+  margin-left: auto; flex: 0 0 auto; padding: 1px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800;
+  background: var(--nx-surface); color: var(--nx-success-ink); border: 1px solid currentColor;
+}
+.pw-cmp-lock { font-size: 11px; color: var(--nx-text-muted); font-style: italic; }
+.pw-cmp-head .pw-mini-btn { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+
+.pw-cmp-list { display: flex; flex-direction: column; gap: 2px; }
+.pw-cmp-line {
+  display: grid; align-items: center; gap: 10px; padding: 3px 8px; border-radius: var(--nx-radius-sm);
+  grid-template-columns: minmax(150px, 1fr) 72px 54px 50px minmax(110px, 150px) 60px 64px;
+}
+.pw-cmp-line--head {
+  padding-top: 0; padding-bottom: 2px; font-size: 10px; font-weight: 800; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--nx-text-muted);
+}
+.pw-cmp-line:not(.pw-cmp-line--head):hover { background: var(--nx-surface-hover); }
+.pw-cmp-line.is-current { background: var(--nx-accent-sunk); }
+.pw-cmp-line.is-best:not(.is-current) { background: var(--nx-success-sunk); }
+.pw-cmp-line.is-out { color: var(--nx-text-muted); }
+.pw-cmp-num { text-align: right; font-variant-numeric: tabular-nums; }
+.pw-cmp-sup { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pw-cmp-sup__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.pw-cmp-tag {
+  flex: 0 0 auto; padding: 0 6px; border-radius: 999px; font-size: 9.5px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.pw-cmp-tag--current { background: var(--nx-accent); color: #ffffff; }
+.pw-cmp-tag--best { background: var(--nx-success); color: #ffffff; }
+.pw-cmp-stock { display: inline-block; min-width: 3.2em; padding: 0 7px; border-radius: 999px; font-weight: 800; text-align: center; }
+.pw-cmp-stock--in { background: var(--nx-success-sunk); color: var(--nx-success-ink); }
+.pw-cmp-stock--short { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); }
+.pw-cmp-stock--out { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); font-size: 10.5px; }
+.pw-cmp-eff { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.pw-cmp-eff b { flex: 0 0 auto; min-width: 3.6em; text-align: right; }
+.pw-cmp-bar { flex: 1 1 auto; height: 6px; border-radius: 999px; background: var(--nx-rule); overflow: hidden; }
+.pw-cmp-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--nx-accent); }
+.pw-cmp-line.is-best .pw-cmp-bar > span { background: var(--nx-success); }
+.pw-cmp-line.is-out .pw-cmp-bar > span { background: var(--nx-text-soft); opacity: 0.45; }
+.pw-cmp-act { text-align: right; }
+.pw-cmp-assign {
+  height: 20px; padding: 0 9px; border: 1px solid var(--nx-success); border-radius: 6px; background: transparent;
+  color: var(--nx-success-ink); font: inherit; font-size: 11px; font-weight: 800; cursor: pointer;
+}
+.pw-cmp-assign:hover:not(:disabled) { background: var(--nx-success); color: #ffffff; }
+.pw-screen .pw-cmp-assign:disabled { opacity: 0.5; cursor: default; }
+
+/* Grid badge on the product name: better deal elsewhere with stock. */
+.pw-cmp-badge {
+  flex: 0 0 auto; padding: 0 5px; border-radius: 999px; font-size: 10px; font-weight: 900; line-height: 15px; cursor: help;
+}
+.pw-cmp-badge--better { background: var(--nx-warning-sunk); color: var(--nx-warning-ink); border: 1px solid var(--nx-warning); }
+.pw-cmp-badge--warn { background: var(--nx-danger-sunk); color: var(--nx-danger-ink); border: 1px solid var(--nx-danger); }
+.swa-engine { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: var(--nx-surface-sunk); border-radius: var(--nx-radius-sm); }
+.swa-engine input[type='radio'] { flex: none; width: 15px; height: 15px; min-height: 0; margin: 0; }
+.pw-cmp--compact { padding: 5px 8px; }
+.pw-cmp--compact .pw-cmp-head { margin-bottom: 0; }
+
+/* Floating month tooltip for the All Stores chart (storeTrends.jsx), portaled
+   to body so it is never clipped by the side panel's overflow:hidden
+   ancestors. Base .ow-chart-* grid/bar rules live in nonMovingStock.css. */
+.ow-chart-tip {
+  transform: translate(-50%, -100%);
+  z-index: 40; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--nx-rule); background: var(--nx-surface-raised);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.08);
+  pointer-events: none;
+}
+.ow-chart-tip-month { font-size: 10.5px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; color: var(--nx-text); margin-bottom: 4px; }
+.ow-chart-tip-section { padding: 4px 0; border-top: 1px solid var(--nx-rule); }
+.ow-chart-tip-section:first-of-type { border-top: none; }
+.ow-chart-tip-head { font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 2px; }
+.ow-chart-tip-section--in .ow-chart-tip-head { color: var(--ow-in); }
+.ow-chart-tip-section--out .ow-chart-tip-head { color: var(--ow-out); }
+.ow-chart-tip-section--stock .ow-chart-tip-head { color: var(--ow-stock); }
+.ow-chart-tip-section--adj .ow-chart-tip-head { color: var(--ow-adj); }
+.ow-chart-tip-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 10.5px; color: var(--nx-text-soft); line-height: 1.5; }
+.ow-chart-tip-row b { color: var(--nx-text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.ow-chart-tip-row.ow-chart-tip-total { border-top: 1px dashed var(--nx-rule); margin-top: 2px; padding-top: 2px; font-weight: 700; }
+.ow-chart-tip-row.ow-chart-tip-total b { font-size: 11px; }
+.ow-chart-tip-row.ow-chart-tip-single b { font-size: 13px; }
+.ow-chart-tip-note { font-size: 9px; color: var(--nx-text-muted); font-style: italic; margin-top: 1px; }
+
+/* Abnormal/warning bill-sale review (abnormalSales.jsx) — mark, strip and
+   the info-only one-line variant used inline in the Qty Check grid. */
+.abn-mark { flex: 0 0 auto; font-size: 12px; line-height: 1; cursor: help; }
+.abn-mark--abnormal { color: var(--nx-danger); }
+.abn-mark--warning { color: var(--nx-warning); }
+.abn-mark--reviewed { color: var(--nx-text-muted); opacity: 0.7; }
+.abn-strip {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 6px 10px;
+  border: 1px solid var(--nx-warning); border-left-width: 4px; border-radius: var(--nx-radius-sm);
+  background: var(--nx-warning-sunk); color: var(--nx-text);
+}
+.abn-strip--abnormal { border-color: var(--nx-danger); background: var(--nx-danger-sunk); }
+.abn-strip--reviewed { border-color: var(--nx-rule-strong); background: var(--nx-surface-sunk); }
+.abn-strip-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; }
+.abn-strip-icon { font-size: 14px; color: var(--nx-warning); }
+.abn-strip--abnormal .abn-strip-icon { color: var(--nx-danger); }
+.abn-strip-name { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.abn-strip-text { font-weight: 600; }
+.abn-strip-meta { margin-left: auto; color: var(--nx-text-soft); }
+.abn-strip-bills { max-height: 132px; overflow: auto; border: 1px solid var(--nx-rule); border-radius: var(--nx-radius-sm); background: var(--nx-surface); }
+.abn-strip-bills .ow-intel-table { width: 100%; }
+.abn-strip-bills thead th { position: sticky; top: 0; z-index: 1; background: var(--nx-surface-raised); }
+.abn-strip-bills tr.abn-bill--abnormal > td { color: var(--nx-danger-ink); font-weight: 700; }
+.abn-strip-bills tr.abn-bill-excluded > td { color: var(--nx-text-muted); text-decoration: line-through; }
+.abn-strip-bills tr.abn-bill-excluded > td:last-child { text-decoration: none; }
+.abn-customer { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.abn-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.abn-strip-error { font-size: 12px; color: var(--nx-danger-ink); }
+.abn-strip--info { flex-direction: row; align-items: center; gap: 8px; padding: 3px 10px; font-size: 12px; white-space: nowrap; overflow: hidden; }
+.abn-strip--info .abn-strip-name, .abn-strip--info .abn-strip-text { flex: 0 0 auto; }
+.abn-info-bills { display: flex; gap: 6px; min-width: 0; overflow: hidden; }
+.abn-info-bill { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 1px 8px; border-radius: 999px; background: var(--nx-surface); color: var(--nx-danger-ink); }
+.abn-info-bill.abn-bill-excluded { color: var(--nx-text-muted); text-decoration: line-through; }
+
+/* Match review (harvestReview.jsx): supplier-product -> store-product mapping. */
+.hv-row { }
+.hv-row--suggested { background: color-mix(in srgb, #b4791a 8%, transparent); box-shadow: inset 3px 0 0 #b4791a; }
+.hv-row--needs_mapping { background: color-mix(in srgb, #b5402f 8%, transparent); box-shadow: inset 3px 0 0 #b5402f; }
+
+/* Bulk assign / site-check action tints (bulkAssign.jsx, siteCheckBar.jsx). */
+.pw-icon-act--ok { color: var(--nx-success-ink, #15803d); }
+.pw-icon-act--no { color: var(--nx-danger-ink, #b91c1c); }
+.pw-sitebar-bulk { display: inline-flex; gap: 4px; padding-left: 6px; border-left: 1px solid var(--nx-border, #d4d4d8); }
+.pw-bulk-ok { color: var(--nx-success-ink, #15803d); border-color: currentColor; }
+.pw-bulk-no { color: var(--nx-danger-ink, #b91c1c); border-color: currentColor; }
+
+/* Generic table card shell (table-wrap) used by storeWhatsApp.jsx's
+   StoreWhatsAppScreen and other read-only report tables in this module. */
+.table-wrap {
+  display: grid; gap: 16px; padding: 22px;
+  border: 1px solid var(--nx-rule); border-radius: 8px; background: var(--nx-surface);
+  box-shadow: 0 16px 44px rgba(20, 34, 56, 0.08);
+}
+
+/* Purchase/Sale detail modal (OwDocumentCard.jsx) — base card, party block
+   and metric tiles. .modal-overlay / .purchase-detail-card / .ow-doc-* base
+   chrome is already defined once in nonMovingStock.css (shared primitive);
+   these are the pieces that file's own condensed port left out because Non-
+   Moving Stock's card never needed them. */
+.purchase-party--transfer { border-color: rgba(37, 99, 235, 0.35); border-left-color: var(--nx-accent); background: var(--nx-accent-sunk); }
+.purchase-party--transfer .purchase-party-label { color: var(--nx-accent-ink); }
+.purchase-party-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 800; color: var(--nx-text); }
+.purchase-party--transfer .purchase-party-name { color: var(--nx-accent-ink); }
+.purchase-metric { display: grid; gap: 2px; min-width: 0; padding: 7px 9px; border: 1px solid var(--nx-rule); border-radius: 8px; background: var(--nx-surface-sunk); }
+.purchase-metric span { font-size: 9px; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase; color: var(--nx-text-muted); }
+.purchase-metric strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; color: var(--nx-text); }
+.purchase-metric .num-value { color: var(--nx-accent-ink); font-size: 13px; text-align: left; }
+.num-value { font-variant-numeric: tabular-nums; text-align: right; }
+
+/* Grid Settings popover (OwSharedControls.jsx: OwGridSettings, OwExportCard)
+   — portalled to document.body, shared visual language across every ported
+   grid. Base .grid-settings-panel chrome + the Procurement/Order Workspace
+   .ow-settings / .ow-export-card extension (columns + layout two-pane card,
+   export options popover). */
+.grid-settings-panel {
+  z-index: 60; display: grid; gap: 10px; width: 340px; max-height: min(560px, calc(100vh - 96px)); overflow-y: auto;
+  padding: 12px; border: 1px solid var(--nx-rule-strong); border-radius: 10px; background: var(--nx-surface-raised);
+  color: var(--nx-text); box-shadow: var(--nx-shadow-lg);
+}
+.grid-settings-panel__head { display: grid; gap: 2px; padding: 0 2px 9px; border-bottom: 1px solid var(--nx-rule); }
+.grid-settings-panel__head strong { font-size: 12px; letter-spacing: 0.02em; text-transform: uppercase; }
+.grid-settings-panel__head span { color: var(--nx-text-muted); font-size: 10px; font-weight: 600; }
+.grid-settings-panel__body { display: grid; gap: 3px; }
+.grid-settings-panel__cols { display: grid; gap: 3px; margin: 0; padding: 3px 2px 2px; list-style: none; }
+.grid-settings-panel__col { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto 52px; align-items: center; gap: 7px; padding: 2px 4px; border-radius: 6px; }
+.grid-settings-panel__col:hover { background: var(--nx-surface-hover); }
+.grid-settings-panel__col.is-off .grid-settings-panel__colname { color: var(--nx-text-muted); text-decoration: line-through; }
+.grid-settings-panel__col input[type="checkbox"] { width: 14px; height: 14px; min-height: 0; margin: 0; accent-color: var(--nx-accent); }
+.grid-settings-panel__colname { overflow: hidden; color: var(--nx-text); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.grid-settings-panel__lock { font-style: normal; font-size: 10px; opacity: 0.7; }
+.grid-settings-panel__movebtns { display: inline-flex; gap: 2px; }
+.grid-settings-panel__movebtn { display: grid; place-items: center; width: 20px; height: 22px; min-height: 0; padding: 0; border: 1px solid var(--nx-rule-strong); border-radius: 5px; background: var(--nx-surface-sunk); color: var(--nx-text-soft); font-size: 9px; line-height: 1; }
+.grid-settings-panel__movebtn:hover:not(:disabled) { border-color: var(--nx-accent); background: var(--nx-accent-sunk); color: var(--nx-accent); }
+.grid-settings-panel__movebtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.grid-settings-panel__width { width: 52px; height: 24px; min-height: 0; padding: 0 6px; border: 1px solid var(--nx-rule-strong); border-radius: 6px; background: var(--nx-surface); color: var(--nx-text); font-size: 10.5px; text-align: center; }
+.grid-settings-panel__width:focus { border-color: var(--nx-accent); outline: none; }
+.grid-settings-panel.ow-settings { width: min(1000px, calc(100vw - 32px)); }
+.ow-settings--cols-only { width: 340px; }
+.ow-settings__head { display: flex; align-items: flex-start; gap: 8px; }
+.ow-settings__heading { display: grid; gap: 2px; margin-right: auto; min-width: 0; }
+.ow-settings__heading strong { font-size: 15px; font-weight: 800; color: var(--nx-text); }
+.ow-settings__heading span { font-size: 11.5px; color: var(--nx-text-muted); }
+.ow-settings__reset {
+  flex: 0 0 auto; padding: 5px 10px; border: 1px solid var(--nx-rule-strong); border-radius: 7px;
+  background: var(--nx-surface); color: var(--nx-text-soft); font-size: 11.5px; font-weight: 700; cursor: pointer;
+}
+.ow-settings__reset:hover { border-color: var(--nx-danger-ink); color: var(--nx-danger-ink); }
+.ow-settings__close {
+  flex: 0 0 auto; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px;
+  background: transparent; color: var(--nx-text-soft); font-size: 14px; cursor: pointer;
+}
+.ow-settings__close:hover { background: var(--nx-surface-hover); color: var(--nx-text); }
+.ow-settings__body { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr); gap: 16px; }
+.ow-settings--cols-only .ow-settings__body { grid-template-columns: minmax(0, 1fr); }
+.ow-settings__pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ow-settings__pane--layout { padding-left: 16px; border-left: 1px solid var(--nx-rule); }
+.ow-settings__pane-head { display: flex; align-items: baseline; gap: 8px; }
+.ow-settings__pane-title { font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--nx-text-soft); }
+.ow-settings__pane-hint { font-size: 11px; color: var(--nx-text-muted); }
+.ow-settings__cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ow-settings__panels { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ow-settings__col { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border: 1px solid var(--nx-rule); border-radius: 7px; background: var(--nx-surface-sunk); }
+.ow-settings__col:hover { border-color: var(--nx-accent); }
+.ow-settings__col.is-off { background: transparent; border-style: dashed; }
+.ow-settings__col.is-off .ow-settings__col-name span { color: var(--nx-text-muted); text-decoration: line-through; }
+.ow-settings__col-name { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; min-width: 0; cursor: pointer; }
+.ow-settings__col.is-locked .ow-settings__col-name { cursor: default; }
+.ow-settings__col-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-settings__col-name input { flex: 0 0 auto; width: 15px; height: 15px; min-height: 0; margin: 0; accent-color: var(--nx-accent); }
+.ow-settings__lock { flex: 0 0 auto; font-style: normal; font-size: 10px; opacity: 0.6; }
+.ow-settings__move { display: inline-flex; flex: 0 0 auto; gap: 3px; }
+.ow-settings__move button { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--nx-rule-strong); border-radius: 5px; background: var(--nx-surface); color: var(--nx-text-soft); font-size: 9px; cursor: pointer; }
+.ow-settings__move button:hover:not(:disabled) { border-color: var(--nx-accent); color: var(--nx-accent); }
+.ow-settings__move button:disabled { opacity: 0.35; cursor: not-allowed; }
+.ow-settings__width { width: 52px; height: 24px; padding: 0 6px; border: 1px solid var(--nx-rule-strong); border-radius: 6px; background: var(--nx-surface); color: var(--nx-text); font-size: 10.5px; text-align: center; }
+.ow-settings__width::-webkit-outer-spin-button, .ow-settings__width::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.ow-settings__width:focus { border-color: var(--nx-accent); outline: none; }
+.ow-settings__opts { display: grid; gap: 8px; margin-bottom: 8px; }
+.ow-settings__opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; }
+.ow-settings__opt > span { font-size: 12.5px; font-weight: 650; color: var(--nx-text); white-space: nowrap; }
+.ow-settings__seg { display: inline-flex; padding: 2px; border: 1px solid var(--nx-rule); border-radius: 8px; background: var(--nx-surface-sunk); }
+.ow-settings__seg-btn { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--nx-text-soft); font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.ow-settings__seg-btn:hover:not(:disabled) { color: var(--nx-text); }
+.ow-settings__seg-btn.is-on { background: var(--nx-accent); color: #fff; box-shadow: 0 1px 3px rgba(2, 6, 23, 0.25); }
+.ow-settings__seg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.ow-settings__panels .ow-settings__seg-btn { height: 22px; padding: 0 9px; font-size: 11px; }
+.ow-export-card--centered {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 48px); z-index: 200;
+}
+
+
+/* ── Order mailed to supplier: centre success card (OrderMailSentCard) ── */
+.oms-backdrop {
+  position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; padding: 16px;
+  background: radial-gradient(ellipse at center, rgba(8, 15, 30, .45), rgba(8, 15, 30, .72));
+  backdrop-filter: blur(6px) saturate(120%); -webkit-backdrop-filter: blur(6px) saturate(120%);
+  animation: oms-fade .22s ease-out;
+}
+.oms-card {
+  --oms-a: #14b8a6; --oms-b: #3b82f6; --oms-c: #8b5cf6;
+  position: relative; overflow: hidden; width: min(440px, 100%); padding: 30px 26px 20px; border-radius: 22px;
+  text-align: center; color: var(--nx-text, #e8eefc);
+  background:
+    linear-gradient(var(--nx-surface, #0f1729), var(--nx-surface, #0f1729)) padding-box,
+    linear-gradient(135deg, var(--oms-a), var(--oms-b) 50%, var(--oms-c)) border-box;
+  border: 1.5px solid transparent;
+  box-shadow: 0 30px 80px -20px rgba(20, 184, 166, .35), 0 12px 40px rgba(0, 0, 0, .35);
+  animation: oms-pop .42s cubic-bezier(.2, 1.3, .4, 1);
+}
+.oms-glow {
+  position: absolute; inset: -40% -20% auto; height: 220px; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(20, 184, 166, .28), transparent 70%);
+}
+.oms-badge { position: relative; width: 76px; height: 76px; margin: 0 auto 12px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--oms-a), var(--oms-b)); box-shadow: 0 0 0 8px rgba(20, 184, 166, .14), 0 10px 30px rgba(20, 184, 166, .45); }
+.oms-badge svg { width: 100%; height: 100%; }
+.oms-ring { fill: none; stroke: rgba(255, 255, 255, .35); stroke-width: 2; }
+.oms-tick { fill: none; stroke: #fff; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 40; stroke-dashoffset: 40; animation: oms-draw .45s .25s ease-out forwards; }
+.oms-eyebrow { position: relative; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+  background: linear-gradient(90deg, var(--oms-a), var(--oms-b)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.oms-title { position: relative; margin: 6px 0 4px; font-size: 21px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.oms-sub { position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-bottom: 18px; font-size: 12px; color: var(--nx-text-muted, #94a3b8); }
+.oms-code { padding: 2px 8px; border-radius: 999px; background: rgba(148, 163, 184, .14); font-weight: 600; }
+.oms-to { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oms-stats { position: relative; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.oms-stat { display: flex; flex-direction: column; gap: 3px; padding: 12px 10px; border-radius: 14px;
+  background: linear-gradient(160deg, rgba(148, 163, 184, .10), rgba(148, 163, 184, .03));
+  border: 1px solid rgba(148, 163, 184, .16); animation: oms-rise .4s ease-out both; }
+.oms-stat:nth-child(2) { animation-delay: .06s; } .oms-stat:nth-child(3) { animation-delay: .12s; } .oms-stat:nth-child(4) { animation-delay: .18s; }
+.oms-stat-value { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.oms-stat-label { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--nx-text-muted, #94a3b8); }
+.oms-foot { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 18px; font-size: 11.5px; color: var(--nx-text-muted, #94a3b8); text-align: left; }
+.oms-done { height: 34px; padding: 0 22px; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, var(--oms-a), var(--oms-b)); box-shadow: 0 6px 18px rgba(59, 130, 246, .35); }
+.oms-done:hover { filter: brightness(1.08); }
+.oms-done:focus-visible { outline: 2px solid var(--oms-a); outline-offset: 3px; }
+.oms-timer { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; transform-origin: left;
+  background: linear-gradient(90deg, var(--oms-a), var(--oms-b), var(--oms-c)); animation: oms-timer linear forwards; }
+@keyframes oms-fade { from { opacity: 0; } }
+@keyframes oms-pop { from { opacity: 0; transform: translateY(14px) scale(.94); } }
+@keyframes oms-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes oms-draw { to { stroke-dashoffset: 0; } }
+@keyframes oms-timer { to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .oms-backdrop, .oms-card, .oms-stat { animation: none; }
+  .oms-tick { animation: none; stroke-dashoffset: 0; }
+}
+
+/* ── Unsaved Qty Check saves (HO connection lost) ── */
+.pw-qty.pw-qty--unsaved { border-color: var(--nx-danger) !important; background: var(--nx-danger-sunk) !important; }
+.pw-unsaved-chip {
+  height: 26px; padding: 0 10px; border: 1px solid var(--nx-danger); border-radius: 999px; cursor: pointer;
+  background: var(--nx-danger-sunk); color: var(--nx-danger-ink); font: inherit; font-size: 11.5px; font-weight: 700; white-space: nowrap;
+  animation: pw-unsaved-pulse 1.6s ease-in-out infinite;
+}
+@keyframes pw-unsaved-pulse { 50% { box-shadow: 0 0 0 4px var(--nx-danger-sunk); } }
+@media (prefers-reduced-motion: reduce) { .pw-unsaved-chip { animation: none; } }
+
+/* ── Product Summary: why this product is in the order (OrderWhy.jsx) ── */
+.pw-why { display: flex; flex-direction: column; gap: 4px; padding: 7px 9px; border-radius: var(--nx-radius-sm, 6px);
+  background: var(--nx-surface-sunk); border: 1px solid var(--nx-rule); }
+.pw-why--muted { color: var(--nx-text-muted); font-size: 11.5px; }
+.pw-why-head { display: flex; align-items: center; gap: 6px; }
+.pw-why-label { font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--nx-accent); }
+.pw-why-engine { padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; background: var(--nx-accent-sunk); color: var(--nx-accent-ink); }
+.pw-why-engine--rulebook { background: var(--nx-info-sunk); color: var(--nx-info-ink); }
+.pw-why-info { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--nx-accent); border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--nx-accent); font: inherit; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.pw-why-info:hover { background: var(--nx-accent-sunk); }
+.pw-why-reason { margin: 0; font-size: 12px; line-height: 1.35; color: var(--nx-text); }
+.pw-why-math { font-size: 11.5px; font-weight: 600; color: var(--nx-text-soft); font-variant-numeric: tabular-nums; }
+.pw-why-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.pw-why-chips span { padding: 1px 7px; border-radius: 999px; font-size: 10.5px; color: var(--nx-text-muted); background: var(--nx-surface); border: 1px solid var(--nx-rule); }
+.pw-why-chips b { color: var(--nx-text); }
+.pw-why-chips .pw-why-changed { color: var(--nx-warning-ink); background: var(--nx-warning-sunk); border-color: var(--nx-warning); }
+.pw-why-chips .pw-why-excl { color: var(--nx-danger-ink); background: var(--nx-danger-sunk); border-color: transparent; }
+
+/* 90-day calculation popup */
+.pw-whyd-backdrop { position: fixed; inset: 0; z-index: 1900; display: grid; place-items: center; padding: 16px;
+  background: rgba(8, 15, 30, .55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.pw-whyd { width: min(760px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 18px 20px; border-radius: 16px; outline: none;
+  background: var(--nx-surface); color: var(--nx-text); border: 1px solid var(--nx-rule-strong); box-shadow: var(--nx-shadow-lg, 0 24px 60px rgba(0,0,0,.4)); }
+.pw-whyd-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pw-whyd-eyebrow { font-size: 10.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--nx-accent); }
+.pw-whyd-head h2 { margin: 3px 0 2px; font-size: 17px; font-weight: 800; }
+.pw-whyd-sub { font-size: 11.5px; color: var(--nx-text-muted); }
+.pw-whyd-close { flex: 0 0 auto; width: 30px; height: 30px; border: 1px solid var(--nx-rule-strong); border-radius: 50%; cursor: pointer;
+  background: var(--nx-surface-sunk); color: var(--nx-text); font: inherit; }
+.pw-whyd-reason { margin: 10px 0 12px; padding: 8px 10px; border-left: 3px solid var(--nx-accent); border-radius: 4px;
+  background: var(--nx-accent-sunk); font-size: 13px; line-height: 1.4; }
+.pw-whyd-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pw-whyd-tiles div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; background: var(--nx-surface-sunk); border: 1px solid var(--nx-rule); }
+.pw-whyd-tiles b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.pw-whyd-tiles span { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--nx-text-muted); }
+.pw-whyd-section { margin: 14px 0 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--nx-text-muted); }
+.pw-whyd-chart { display: block; width: 100%; height: 80px; padding: 4px; border-radius: 8px; background: var(--nx-surface-sunk); box-sizing: border-box; }
+.pw-whyd-bar { fill: var(--nx-accent); }
+.pw-whyd-bar--zero { fill: var(--nx-rule); }
+.pw-whyd-steps { width: 100%; border-collapse: collapse; font-size: 12px; }
+.pw-whyd-steps td { padding: 6px 8px; border-bottom: 1px solid var(--nx-rule); vertical-align: top; }
+.pw-whyd-step-n { width: 22px; color: var(--nx-text-muted); font-variant-numeric: tabular-nums; }
+.pw-whyd-formula { color: var(--nx-text-soft); font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
+.pw-whyd-val { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pw-whyd-steps tr.is-winner td { background: var(--nx-success-sunk); }
+.pw-whyd-win { margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 10px; font-weight: 700; background: var(--nx-success); color: var(--nx-text-on, #fff); }
+.pw-whyd-final td { border-bottom: 0; font-weight: 800; color: var(--nx-accent); }
+.pw-whyd-notes { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; font-size: 11px; color: var(--nx-text-muted); }
+@media (max-width: 560px) {
+  .pw-whyd-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pw-whyd-formula { display: none; }
+}

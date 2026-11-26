@@ -10,13 +10,37 @@
 // The detail panel reuses Procurement's Monthly Trend / Purchase / Sales
 // panels (ui.IntelPanel = OrderIntelligence) and the All Stores chart.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AgGridReact } from 'ag-grid-react';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-quartz.css';
 import { api } from './api/client.js';
 import { StoreTrendsPanel } from './storeTrends.jsx';
 import { TrendBars, TrendTip, fmtMonthLabel, trendMax } from './trendChart.jsx';
 import {
-  AGE_PRESETS, CLASSES, CLASS_BY_KEY, FLAG_TEXT, NON_MOVING_KEYS, SECTIONS, barPct, fmtCompact, fmtDate, fmtDays,
-  fmtMoney, fmtQty, inReview, ownParams, readReview, toggleReview, writeReview,
+  AGE_PRESETS, CLASSES, CLASS_BY_KEY, COMPARATORS, DEFAULT_SHOW_ID, FLAG_TEXT, NON_MOVING_KEYS, OWN_COLS_BY_KEY,
+  OWN_COLS_DEFAULT_ORDER, OWN_COLS_MANDATORY, OWN_COL_GROUPS, SECTIONS, SHOW_PRESETS, SHOW_PRESET_BY_ID,
+  activeFilterCount, barPct, filtersEqual, fmtCompact, fmtDate, fmtDays, fmtMoney, fmtQty, inReview, ownParams,
+  readColSettings, readReview, resolveOwnCols, toggleReview, writeColSettings, writeReview,
 } from './nonMovingView.js';
+
+// Midnight Glass skin for the Own Store AG Grid -- mirrors the .nms-table
+// CSS custom properties (dark navy canvas, 12-13.5px type, ~32px rows) rather
+// than AG Grid's default look. Dark/light is fixed to dark here because this
+// desktop client's data screens are dark-only (see styles.css
+// :root[data-theme="dark"] -- Non-Moving Stock does not expose a light mode).
+//
+// AG Grid is pinned to v32.3.9 (pre-Theming-API) -- v36's Theming API
+// (`theme={...}`, `themeQuartz.withParams(...)`) emits CSS using native
+// nesting (`&` selectors), which Electron 22's Chromium 108 cannot parse
+// (nesting landed in Chromium 112). That silently dropped core layout rules
+// (`.ag-root.ag-layout-normal { flex: 1 1 auto }`), collapsing the whole grid
+// to a ~10px sliver -- confirmed live via CDP (CSS.getMatchedStylesForNode
+// showed the nested block as inert). v32 ships plain, already-compiled CSS
+// (ag-theme-quartz.css, imported above) with no nesting, so this skin is
+// applied the old way: override that theme's real `--ag-*` custom
+// properties, scoped to this grid's wrapper, instead of calling
+// themeQuartz.withParams(...). See nms-aggrid-wrap's ag-theme-quartz rules
+// in styles.css for the actual --ag-* overrides (border-color, hover, etc).
 
 const PAGE_SIZE = 200;
 const TREND_FIT = { fetch: 6, min: 4, max: 5 };
@@ -71,12 +95,14 @@ function Kpi({ label, value, sub, tone }) {
   );
 }
 
-// Sortable header cell (server-side sort).
+// Sortable header cell (server-side sort). `groupStart` draws the stronger
+// separator between logical column groups (Column Settings).
 function Th({ col, sort, onSort, className = '' }) {
-  if (!col.sort) return <th className={`${col.num ? 'nms-num' : 'trp-left'} ${className}`} style={col.w ? { width: col.w } : undefined}>{col.label}</th>;
+  const groupCls = col.groupStart ? ' nms-colgroup-start' : '';
+  if (!col.sort) return <th className={`${col.num ? 'nms-num' : 'trp-left'}${groupCls} ${className}`} style={col.w ? { width: col.w } : undefined}>{col.label}</th>;
   const active = sort.key === col.sort;
   return (
-    <th className={`nms-sortable ${col.num ? 'nms-num' : 'trp-left'} ${className}`} style={col.w ? { width: col.w } : undefined}
+    <th className={`nms-sortable ${col.num ? 'nms-num' : 'trp-left'}${groupCls} ${className}`} style={col.w ? { width: col.w } : undefined}
       aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
       onClick={() => onSort(col.sort)}>
       {col.label}<span className="nms-sort">{active ? (sort.dir === 'asc' ? '▲' : '▼') : ''}</span>
@@ -403,95 +429,400 @@ function RowMenu({ row, onAction, inList, onReview }) {
 }
 
 // ---------------------------------------------------------------------------
-const OWN_COLS = [
-  { label: '#', w: 44, num: true },
-  { label: 'Code', sort: 'product_code', w: 70 },
-  { label: 'Product Name', sort: 'product_name' },
-  { label: 'Unit', sort: 'unit', w: 50 },
-  { label: 'Pack', sort: 'pack', w: 46 },
-  { label: 'Stock', sort: 'stock', num: true, w: 64 },
-  { label: 'Value (₹)', sort: 'cost_value', num: true, w: 84 },
-  { label: 'Last Sale', sort: 'last_sale_date', w: 82 },
-  { label: 'Days', sort: 'days_since_sale', num: true, w: 56 },
-  { label: 'Last Purchase', sort: 'last_purchase_date', w: 90 },
-  { label: 'Last GRN', sort: 'last_grn_date', w: 82 },
-  { label: 'Supplier', sort: 'supplier_name', w: 150 },
-  { label: 'Expiry', sort: 'expiry_status', w: 80 },
-  { label: 'Classification', sort: 'classification', w: 128 },
-  { label: 'Action', w: 58 },
-];
+// Six-month Sales Trend (double-click a row). Fetched only on open --
+// /api/non-moving-analysis/product/sales-trend, product-level (PSI has no
+// reliable batch key for historical reporting -- see the module docstring),
+// clearly labelled as such below the chart. Reuses the BarChart / TrendTip
+// machinery the Value tab already draws its charts with, as two independently
+// scaled mini-charts (qty and value can't share one axis).
+const TREND_QTY_SERIES = [{ key: 'qty', label: 'Sales qty', cls: 'in' }];
+const TREND_VALUE_SERIES = [{ key: 'sales_value', label: 'Sales value (₹)', cls: 'out' }];
 
-const DEFAULT_FILTERS = { search: '', classes: [], ptype: '', supplier: '', minDays: '', maxDays: '', age: '', expiry: '', includeZero: false, nonMovingOnly: true };
+function SalesTrendModal({ session, tenantId, store, row, onClose }) {
+  const [state, setState] = useState({ loading: true, data: null, error: '' });
+  useEffect(() => {
+    let cancelled = false;
+    setState({ loading: true, data: null, error: '' });
+    api.nonMoving('product/sales-trend', { tenant_id: tenantId, store_id: store.store_id, product_code: row.product_code, months: 6 }, session)
+      .then((d) => { if (!cancelled) setState({ loading: false, data: d, error: '' }); })
+      .catch((e) => { if (!cancelled) setState({ loading: false, data: null, error: e.message || 'Could not load the sales trend' }); });
+    return () => { cancelled = true; };
+  }, [session, tenantId, store, row]);
+  useEffect(() => {
+    const esc = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', esc);
+    return () => document.removeEventListener('keydown', esc);
+  }, [onClose]);
+  const months = state.data?.months || [];
+  const hasAnySale = months.some((m) => m.qty > 0);
+  const totalQty = months.reduce((t, m) => t + m.qty, 0);
+  const totalValue = months.reduce((t, m) => t + m.sales_value, 0);
+  const qtyGroups = months.map((m) => ({ key: m.ym, label: fmtMonthLabel(m.ym), values: m }));
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="nms-trend-modal" role="dialog" aria-modal="true" aria-label="Sales trend" onClick={(e) => e.stopPropagation()}>
+        <div className="nms-trend-head">
+          <div className="nms-trend-title">
+            <strong title={row.product_name}>{row.product_name}</strong>
+            <span>{[row.product_code, store.store_code, store.store_name].filter(Boolean).join(' · ')} · 6-month sales trend</span>
+          </div>
+          <button type="button" className="secondary-button" onClick={onClose} aria-label="Close" title="Close (Esc)">✕</button>
+        </div>
+        <div className="nms-trend-body">
+          {state.loading && <div className="empty-state">Loading the last 6 months of sales…</div>}
+          {state.error && <div className="status-line error">{state.error}</div>}
+          {!state.loading && !state.error && (
+            <>
+              <div className="trp-subnote nms-note">Product-level trend from the synced sale lines (sync.ProductSaleInformation) -- batch-level history isn't available for historical sales. Returns are already netted off each month.</div>
+              {!hasAnySale && <div className="empty-state">No sales recorded for this product at {store.store_code} in the last 6 months.</div>}
+              <div className="nms-trend-charts">
+                <section className="ow-panel nms-card">
+                  <div className="ow-panel-title">Monthly sales qty</div>
+                  <BarChart groups={qtyGroups} series={TREND_QTY_SERIES} height={150}
+                    tipRows={(g) => [['Qty', fmtQty(g.values.qty)], ['Value', `₹${fmtMoney(g.values.sales_value)}`], ['Transactions', fmtQty(g.values.transactions)]]} />
+                </section>
+                <section className="ow-panel nms-card">
+                  <div className="ow-panel-title">Monthly sales value (₹)</div>
+                  <BarChart groups={qtyGroups} series={TREND_VALUE_SERIES} height={150}
+                    tipRows={(g) => [['Value', `₹${fmtMoney(g.values.sales_value)}`], ['Qty', fmtQty(g.values.qty)], ['Transactions', fmtQty(g.values.transactions)]]} />
+                </section>
+              </div>
+              <div className="trp-tablewrap nms-subtable">
+                <table className="trp-table nms-table">
+                  <thead><tr><th className="trp-left">Month</th><th className="nms-num">Sales Qty</th><th className="nms-num">Sales Value</th><th className="nms-num">Transactions</th></tr></thead>
+                  <tbody>
+                    {months.map((m) => (
+                      <tr key={m.ym}>
+                        <td className="trp-left">{fmtMonthLabel(m.ym)}</td>
+                        <td className="nms-num">{fmtQty(m.qty)}</td>
+                        <td className="nms-num">{fmtMoney(m.sales_value)}</td>
+                        <td className="nms-num">{fmtQty(m.transactions)}</td>
+                      </tr>
+                    ))}
+                    {!months.length && <tr><td colSpan={4} className="nms-empty-cell">No data.</td></tr>}
+                  </tbody>
+                  {months.length > 0 && (
+                    <tfoot><tr>
+                      <td className="trp-left"><b>Total</b></td>
+                      <td className="nms-num"><b>{fmtQty(totalQty)}</b></td>
+                      <td className="nms-num"><b>{fmtMoney(totalValue)}</b></td>
+                      <td className="nms-num">—</td>
+                    </tr></tfoot>
+                  )}
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Column Settings: the same show / move-up-down / width-px / Default columns
+// model as Procurement's ⚙ panel (ProcurementWorkspace.jsx pw-col-list), on
+// the pw-settings* styling it already defines -- a second grid, not a second
+// settings system. Persistence is this module's own (readColSettings), so
+// nothing here touches Procurement's saved column config.
+function ColumnSettings({ settings, onChange, onClose, anchorRef }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const close = (e) => { if (!ref.current?.contains(e.target) && !anchorRef?.current?.contains(e.target)) onClose(); };
+    const esc = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
+  }, [onClose, anchorRef]);
+  const toggle = (key) => {
+    if (OWN_COLS_MANDATORY.includes(key)) return;
+    const hidden = settings.hidden.includes(key) ? settings.hidden.filter((k) => k !== key) : [...settings.hidden, key];
+    onChange({ ...settings, hidden });
+  };
+  const move = (key, dir) => {
+    const i = settings.order.indexOf(key);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= settings.order.length) return;
+    const order = [...settings.order];
+    [order[i], order[j]] = [order[j], order[i]];
+    onChange({ ...settings, order });
+  };
+  const setWidth = (key, value) => {
+    const widths = { ...settings.widths };
+    if (value === '' || value == null) delete widths[key]; else widths[key] = Number(value);
+    onChange({ ...settings, widths });
+  };
+  return (
+    <div className="pw-settings" ref={ref} role="dialog" aria-label="Non-Moving Stock column settings">
+      <span className="pw-section-label">Columns <small>(show, move, width · Supplier / Product / Stock always shown)</small></span>
+      <ul className="pw-col-list">
+        {settings.order.map((key, i, arr) => {
+          const col = OWN_COLS_BY_KEY[key];
+          if (!col) return null;
+          const on = col.mandatory || !settings.hidden.includes(key);
+          return (
+            <li key={key} className={`pw-col-list__row${on ? '' : ' is-off'}`} title={col.label}>
+              <label className="pw-col-list__name">
+                <input type="checkbox" checked={on} disabled={col.mandatory} onChange={() => toggle(key)} />
+                <span>{col.label}</span>
+              </label>
+              <button type="button" className="pw-col-list__mv" disabled={i === 0} aria-label={`Move ${col.label} up`} onClick={() => move(key, -1)}>▲</button>
+              <button type="button" className="pw-col-list__mv" disabled={i === arr.length - 1} aria-label={`Move ${col.label} down`} onClick={() => move(key, 1)}>▼</button>
+              <input type="number" min={30} max={400} className="pw-col-list__w" aria-label={`${col.label} width`}
+                placeholder={String(col.w || '')} value={settings.widths?.[key] ?? ''} onChange={(e) => setWidth(key, e.target.value)} />
+            </li>
+          );
+        })}
+      </ul>
+      <div className="pw-colsettings-actions">
+        <button type="button" className="ow-btn ow-btn-sm" onClick={() => onChange({ order: OWN_COLS_DEFAULT_ORDER, hidden: [], widths: {} })}>Default columns</button>
+        <button type="button" className="secondary-button" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+// Default report = the Show preset "Non-Moving (180+ days / no sales)"
+// (see SHOW_PRESETS in nonMovingView.js) -- a NEW default distinct from the
+// old nonMovingOnly/>90-day flag, expressed as minDays only (already
+// includes never-sold rows, see the comment on SHOW_PRESETS).
+const DEFAULT_FILTERS = {
+  search: '', classes: [], ptype: '', supplier: '', expiry: '', includeZero: false,
+  ...SHOW_PRESET_BY_ID[DEFAULT_SHOW_ID], show: DEFAULT_SHOW_ID, age: '',
+};
+delete DEFAULT_FILTERS.id; delete DEFAULT_FILTERS.label;
+
+// Own Store grid cell content by column key (product_code / supplier /
+// product_name / action are rendered inline at the call site).
+function renderOwnCell(key, r) {
+  switch (key) {
+    case 'product_code': return r.product_code;
+    case 'supplier': return r.supplier_name || '—';
+    case 'product_name': return <>{r.product_name}{r.flags?.length ? <span className="nms-flagdot" title={r.flags.map((f) => FLAG_TEXT[f] || f).join('\n')}>●</span> : null}</>;
+    case 'pack': return r.pack || fmtQty(r.sale_unit);
+    case 'batch_count': return fmtQty(r.batch_count);
+    case 'stock': return fmtQty(r.stock);
+    case 'expiry_status': return <ExpiryBadge value={r.expiry_status} />;
+    case 'last_grn_date': return fmtDate(r.last_grn_date);
+    case 'last_sale_date': return fmtDate(r.last_sale_date);
+    case 'days_since_sale': return <b>{fmtDays(r.days_since_sale)}</b>;
+    case 'ptr_value': return fmtMoney(r.ptr_value);
+    case 'cost_value': return fmtMoney(r.cost_value);
+    case 'mrp_value': return fmtMoney(r.mrp_value);
+    case 'classification': return <ClassBadge value={r.classification} label={r.classification_label} />;
+    default: return null;
+  }
+}
+
+// AG Grid column defs for the Own Store grid, built from the same
+// OWN_COLS_DEF / column-settings model the ⚙ panel already edits (order,
+// hidden, widths) -- the panel keeps driving plain objects; this just maps
+// the resolved list to AG Grid's shape once per render.
+function buildAgColumns(cols, { review, store, onReview, onAction }) {
+  const base = cols.map((c) => {
+    if (c.key === 'action') {
+      return {
+        colId: 'action', headerName: '', width: c.w, pinned: false, sortable: false, resizable: false,
+        cellRenderer: (p) => (
+          <RowMenu row={p.data} inList={inReview(review, store.store_id, p.data.product_code)} onReview={onReview} onAction={onAction} />
+        ),
+      };
+    }
+    const comparator = COMPARATORS[c.sortType] || null;
+    return {
+      colId: c.key,
+      headerName: c.label,
+      field: c.sort || c.key,
+      width: c.w,
+      minWidth: 50,
+      resizable: true,
+      sortable: true,
+      comparator: comparator || undefined,
+      type: c.num ? 'rightAligned' : undefined,
+      cellClass: `${c.num ? 'nms-num' : 'trp-left'}${c.groupStart ? ' nms-colgroup-start' : ''}${c.key === 'product_name' ? ' nms-name' : ''}${c.key === 'supplier' ? ' nms-ellipsis' : ''}`,
+      cellRenderer: (p) => renderOwnCell(c.key, p.data),
+      tooltipValueGetter: (p) => (c.key === 'product_name' ? p.data.product_name : c.key === 'supplier' ? p.data.supplier_name
+        : c.key === 'last_sale_date' && p.data.last_sale_source ? `Source: ${p.data.last_sale_source}` : undefined),
+    };
+  });
+  return [
+    { colId: 'rownum', headerName: '#', width: 44, pinned: 'left', sortable: false, resizable: false,
+      cellClass: 'nms-num nms-muted', valueGetter: (p) => (p.node ? p.node.rowIndex + 1 : ''), type: 'rightAligned' },
+    ...base,
+  ];
+}
 
 function OwnStoreSection({ ui, session, tenantId, store, refreshTick, onLoaded, review, onToggleReview, setError }) {
+  // `filters` = pending toolbar state (what the controls show); `applied` =
+  // the filter state the last fetch actually used. A filter change never
+  // fires a query by itself -- only Apply Filters / Enter-in-search /
+  // Reset / Refresh advance `applied`, per the owner's explicit requirement
+  // that the user always knows when a change triggers a backend query.
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [applied, setApplied] = useState(DEFAULT_FILTERS);
   const [searchText, setSearchText] = useState('');
-  const [sort, setSort] = useState({ key: 'cost_value', dir: 'desc' });
-  const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState(-1);
+  // Local (grid-scoped) load error, separate from the page-level error
+  // banner (setError) -- so the grid area itself can show a clear Failed
+  // state with Retry, distinct from Loading and from a genuine zero-row
+  // Empty result (owner requirement: never confuse the three).
+  const [loadError, setLoadError] = useState('');
+  const [retryTick, setRetryTick] = useState(0);
+  const [selectedCode, setSelectedCode] = useState(null);
   const [detailTab, setDetailTab] = useState('summary');
   const [showDetail, setShowDetail] = useState(true);
   const [exporting, setExporting] = useState(false);
-  const gridRef = useRef(null);
+  const [colSettings, setColSettings] = useState(() => readColSettings(globalThis.localStorage, tenantId, store?.store_id));
+  const [showColSettings, setShowColSettings] = useState(false);
+  const [trendRow, setTrendRow] = useState(null);
+  const gridApiRef = useRef(null);
+  const colBtnRef = useRef(null);
   const lastTick = useRef(refreshTick);
+  const abortRef = useRef(null);
 
-  useEffect(() => { const t = setTimeout(() => setFilters((f) => (f.search === searchText ? f : { ...f, search: searchText })), 300); return () => clearTimeout(t); }, [searchText]);
-  useEffect(() => { setPage(1); }, [filters, sort, store]);
+  useEffect(() => { setColSettings(readColSettings(globalThis.localStorage, tenantId, store?.store_id)); }, [tenantId, store?.store_id]);
+  const setCols = (next) => { setColSettings(next); writeColSettings(globalThis.localStorage, tenantId, store?.store_id, next); };
+  const cols = useMemo(() => resolveOwnCols(colSettings), [colSettings]);
 
+  // Store change resets both pending and applied state to the default
+  // report (switching stores is a fresh analysis, not a filter tweak).
+  useEffect(() => { setFilters(DEFAULT_FILTERS); setApplied(DEFAULT_FILTERS); setSearchText(''); }, [store?.store_id]);
+
+  const dirty = !filtersEqual(filters, applied);
+  const applyFilters = useCallback(() => setApplied(filters), [filters]);
+  const resetFilters = useCallback(() => { setFilters(DEFAULT_FILTERS); setApplied(DEFAULT_FILTERS); setSearchText(''); }, []);
+
+  // Own Store loads EVERY filtered row in one request (all_rows=true) --
+  // no page/page_size, no Prev/Next: the grid itself does client-side sort
+  // and virtual scrolling over the full set (owner requirement: no silent
+  // row cap anywhere in this path). A stale response (superseded by a
+  // newer filter change) is ignored via AbortController, same idiom the
+  // rest of this file uses the `cancelled` flag for. Fires on `applied`
+  // only -- never on `filters` -- so a pending (unapplied) toolbar change
+  // never triggers a query by itself.
   useEffect(() => {
     if (!store) return undefined;
-    let cancelled = false;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     const refresh = lastTick.current !== refreshTick;
     lastTick.current = refreshTick;
     setLoading(true);
     setError('');
-    api.nonMoving('own-store', { ...ownParams(tenantId, store.store_id, filters, sort, page, PAGE_SIZE), refresh: refresh ? 'true' : undefined }, session)
-      .then((d) => { if (!cancelled) { setData(d); setSelected(d.rows.length ? 0 : -1); onLoaded?.(d); } })
-      .catch((e) => { if (!cancelled) setError(e.message || 'Could not load the analysis'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [store, filters, sort, page, refreshTick, tenantId, session]); // eslint-disable-line react-hooks/exhaustive-deps
+    setLoadError('');
+    const params = { ...ownParams(tenantId, store.store_id, applied, { key: 'cost_value', dir: 'desc' }, 1, 1), all_rows: 'true', page: undefined, page_size: undefined };
+    api.nonMoving('own-store', { ...params, refresh: refresh ? 'true' : undefined }, session, controller.signal)
+      .then((d) => {
+        if (controller.signal.aborted) return;
+        setData(d);
+        setSelectedCode((cur) => (cur && d.rows.some((r) => r.product_code === cur)) ? cur : (d.rows[0]?.product_code ?? null));
+        onLoaded?.(d);
+      })
+      .catch((e) => {
+        if (controller.signal.aborted) return;
+        const msg = e.message || 'Could not load the analysis';
+        setError(msg);
+        setLoadError(msg);
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [store, applied, refreshTick, retryTick, tenantId, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useScrollSelected(gridRef, selected);
   const rows = data?.rows || [];
-  const row = selected >= 0 ? rows[selected] : null;
-  const visibleCodes = useMemo(() => rows.slice(Math.max(0, selected - 1), selected + 5).map((r) => r.product_code), [rows, selected]);
-  const onSort = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: ['product_name', 'product_code', 'supplier_name', 'unit', 'pack'].includes(key) ? 'asc' : 'desc' }));
-  const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
-  const openTab = (r, tab) => { setSelected(rows.indexOf(r)); setDetailTab(tab); setShowDetail(true); };
-  const onKeyDown = useGridKeys(rows.length, selected, setSelected, () => { setDetailTab('summary'); setShowDetail(true); }, (e) => {
-    if ((e.key === 'r' || e.key === 'R') && row) { e.preventDefault(); onToggleReview({ ...row, store_id: store.store_id, store_code: store.store_code }); }
-    if (e.key === 'PageDown' && data && page * PAGE_SIZE < data.total) { e.preventDefault(); setPage(page + 1); }
-    if (e.key === 'PageUp' && page > 1) { e.preventDefault(); setPage(page - 1); }
-  });
+  const selectedIdx = selectedCode == null ? -1 : rows.findIndex((r) => r.product_code === selectedCode);
+  const row = selectedIdx >= 0 ? rows[selectedIdx] : null;
+  const visibleCodes = useMemo(() => rows.slice(Math.max(0, selectedIdx - 1), selectedIdx + 5).map((r) => r.product_code), [rows, selectedIdx]);
+  const set = (patch) => setFilters((f) => ({ ...f, ...patch, search: searchText }));
+  const review_ = useCallback((r) => onToggleReview({ ...r, store_id: store.store_id, store_code: store.store_code }), [onToggleReview, store]);
+  const openTab = useCallback((r, tab) => { setSelectedCode(r.product_code); setDetailTab(tab); setShowDetail(true); }, []);
+  const onRowClicked = useCallback((e) => {
+    setSelectedCode(e.data.product_code);
+    e.event?.currentTarget?.closest('.nms-aggrid-wrap')?.focus();
+  }, []);
+  const onRowDoubleClicked = useCallback((e) => setTrendRow(e.data), []);
+  const getRowId = useCallback((p) => String(p.data.product_code), []);
+  const getRowClass = useCallback((p) => (p.data?.flags?.includes('STOCK_MISMATCH') ? 'nms-row-flag' : undefined), []);
+
+  const agColumns = useMemo(() => buildAgColumns(cols, { review, store, onReview: review_, onAction: openTab }),
+    [cols, review, store, review_, openTab]);
+
+  // Explicit Loading/Error/Empty overlay control -- AG Grid only infers
+  // "no rows" from an empty rowData array, which would otherwise show the
+  // Empty message while a fetch is still in flight or just failed (the
+  // "blank grid with no explanation" bug this screen had). Loading always
+  // wins; a failed load replaces the grid area with .nms-grid-error instead
+  // (see render below) rather than AG Grid's own overlay.
+  useEffect(() => {
+    const api_ = gridApiRef.current;
+    if (!api_) return;
+    if (loading) api_.showLoadingOverlay();
+    else if (loadError) api_.hideOverlay();
+    else if (!rows.length) api_.showNoRowsOverlay();
+    else api_.hideOverlay();
+  }, [loading, loadError, rows.length]);
+
+  // Keep AG Grid's own row selection (used for the highlight CSS) in sync
+  // with selectedCode -- needed when selection changes from outside the
+  // grid (row menu "View product details" etc.) or after a reload replaces
+  // the row objects.
+  useEffect(() => {
+    const api_ = gridApiRef.current;
+    if (!api_) return;
+    api_.deselectAll();
+    if (selectedCode != null) {
+      const node = api_.getRowNode(String(selectedCode));
+      node?.setSelected(true);
+    }
+  }, [selectedCode, rows]);
+
+  const onGridKeyDown = (e) => {
+    if ((e.key === 'r' || e.key === 'R') && row) { e.preventDefault(); review_(row); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!rows.length) return;
+      e.preventDefault();
+      const i = rows.findIndex((r) => r.product_code === selectedCode);
+      const next = Math.min(rows.length - 1, Math.max(0, (i < 0 ? -1 : i) + (e.key === 'ArrowDown' ? 1 : -1)));
+      const code = rows[next]?.product_code;
+      if (code != null) {
+        setSelectedCode(code);
+        gridApiRef.current?.ensureNodeVisible(gridApiRef.current.getRowNode(String(code)));
+      }
+    }
+    if (e.key === 'Enter' && row) { e.preventDefault(); setDetailTab('summary'); setShowDetail(true); }
+  };
   const exportExcel = async () => {
     setExporting(true);
     try {
-      const { blob, filename } = await api.nonMovingExcel('own-store', ownParams(tenantId, store.store_id, filters, sort, 1, PAGE_SIZE), session);
+      const { blob, filename } = await api.nonMovingExcel('own-store', ownParams(tenantId, store.store_id, applied, { key: 'cost_value', dir: 'desc' }, 1, 1), session);
       saveBlob(blob, filename);
     } catch (e) { setError(e.message || 'Export failed'); } finally { setExporting(false); }
   };
   const byClass = data?.by_class || [];
-  const toggleClass = (key) => set({ classes: filters.classes.includes(key) ? filters.classes.filter((k) => k !== key) : [...filters.classes, key], nonMovingOnly: false });
-  const review_ = (r) => onToggleReview({ ...r, store_id: store.store_id, store_code: store.store_code });
+  // Classification chips reflect/toggle the PENDING Show selection (a chip
+  // IS one of the SHOW_PRESETS -- clicking Active, say, has no dedicated
+  // preset, so a bare class toggle still goes through pending state and
+  // needs Apply like every other filter change).
+  const toggleClass = (key) => set({ classes: filters.classes.includes(key) ? filters.classes.filter((k) => k !== key) : [...filters.classes, key], show: '', nonMovingOnly: false, minDays: '', maxDays: '' });
+  const filterCount = activeFilterCount(applied);
+  const onSearchKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); setApplied({ ...filters, search: searchText }); } };
 
   return (
     <div className={`nms-split${showDetail ? '' : ' nms-split--nodetail'}`}>
       <div className="nms-main">
         <div className="trp-bar nms-filters">
           <label className="trp-field nms-grow">Search
-            <input type="search" placeholder="Product name, code or supplier…" value={searchText} onChange={(e) => setSearchText(e.target.value)} />
+            <input type="search" placeholder="Product name, code or supplier… (Enter to apply)" value={searchText}
+              onChange={(e) => { setSearchText(e.target.value); set({ search: e.target.value }); }} onKeyDown={onSearchKeyDown} />
           </label>
           <label className="trp-field">Show
-            <select value={filters.nonMovingOnly ? 'nm' : 'all'} onChange={(e) => set({ nonMovingOnly: e.target.value === 'nm', classes: [] })}>
-              <option value="nm">Non-moving (&gt; 90 days / no sales)</option>
-              <option value="all">All in-stock products</option>
+            <select value={filters.show || ''} onChange={(e) => { const p = SHOW_PRESET_BY_ID[e.target.value]; set(p ? { ...p, show: p.id, age: '' } : { show: '' }); }}>
+              {SHOW_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              <option value="">Custom</option>
             </select>
           </label>
           <label className="trp-field">Age
-            <select value={filters.age} onChange={(e) => { const p = AGE_PRESETS.find((x) => x.id === e.target.value); set({ age: p.id, minDays: p.min, maxDays: p.max }); }}>
+            <select value={filters.age} onChange={(e) => { const p = AGE_PRESETS.find((x) => x.id === e.target.value); set({ age: p.id, minDays: p.min, maxDays: p.max, show: '' }); }}>
               {AGE_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </select>
           </label>
@@ -508,16 +839,29 @@ function OwnStoreSection({ ui, session, tenantId, store, refreshTick, onLoaded, 
           </label>
           <label className="trp-field">Expiry
             <select value={filters.expiry} onChange={(e) => set({ expiry: e.target.value })}>
-              <option value="">Any</option><option value="risk">Expired or near expiry</option><option value="expired">Expired</option><option value="near">Near expiry (90 d)</option>
+              <option value="">Any</option>
+              <option value="expired">Expired</option>
+              <option value="near">Expiring within 90 days</option>
+              <option value="risk">Expired or near expiry</option>
+              <option value="valid">Valid stock</option>
             </select>
           </label>
           <label className="nms-check"><input type="checkbox" checked={filters.includeZero} onChange={(e) => set({ includeZero: e.target.checked })} /> Zero stock</label>
           <div className="trp-actions">
-            {(filters !== DEFAULT_FILTERS) && <button type="button" className="secondary-button" onClick={() => { setFilters(DEFAULT_FILTERS); setSearchText(''); }}>Reset</button>}
+            <button type="button" className={`primary-button nms-apply-btn${dirty ? ' is-dirty' : ''}`} onClick={applyFilters} disabled={!dirty}
+              title={dirty ? 'Filters changed -- click to run the report with the new filters' : 'Filters are already applied'}>
+              {dirty && <span className="nms-apply-dot" aria-hidden="true" />}Apply Filters
+            </button>
+            {(dirty || !filtersEqual(applied, DEFAULT_FILTERS)) && <button type="button" className="secondary-button" onClick={resetFilters}>Reset</button>}
             <button type="button" className="secondary-button" onClick={() => setShowDetail((v) => !v)}>{showDetail ? 'Hide details' : 'Show details'}</button>
+            <span className="nms-colbtn-wrap">
+              <button type="button" className="secondary-button" ref={colBtnRef} title="Show/hide, reorder and resize columns" onClick={() => setShowColSettings((v) => !v)}>⚙ Columns</button>
+              {showColSettings && <ColumnSettings settings={colSettings} onChange={setCols} onClose={() => setShowColSettings(false)} anchorRef={colBtnRef} />}
+            </span>
             <button type="button" className="primary-button" disabled={exporting || !data} onClick={exportExcel}>{exporting ? 'Preparing…' : 'Export Excel'}</button>
           </div>
         </div>
+        {dirty && <div className="nms-filter-pending">Filters changed -- click <b>Apply Filters</b> (or press Enter in Search) to run the report.</div>}
         <div className="nms-classbar" role="group" aria-label="Classification filter">
           {byClass.map((c) => (
             <button key={c.key} type="button" className={`nms-classchip nms-cls--${CLASS_BY_KEY[c.key]?.tone}${filters.classes.includes(c.key) ? ' is-on' : ''}`}
@@ -526,46 +870,53 @@ function OwnStoreSection({ ui, session, tenantId, store, refreshTick, onLoaded, 
             </button>
           ))}
         </div>
-        <div className="trp-tablewrap nms-grid" ref={gridRef} tabIndex={0} onKeyDown={onKeyDown} aria-label="Own store products (arrow keys move, Enter opens, R adds to review)">
-          <table className="trp-table nms-table">
-            <thead><tr>{OWN_COLS.map((c) => <Th key={c.label} col={c} sort={sort} onSort={onSort} />)}</tr></thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={r.product_code} data-idx={i} className={`${i === selected ? 'is-selected' : ''}${r.flags?.includes('STOCK_MISMATCH') ? ' nms-row-flag' : ''}`}
-                  onClick={() => setSelected(i)} onDoubleClick={() => openTab(r, 'summary')}>
-                  <td className="nms-num nms-muted">{(page - 1) * PAGE_SIZE + i + 1}</td>
-                  <td className="trp-left">{r.product_code}</td>
-                  <td className="trp-left nms-name" title={r.product_name}>{r.product_name}{r.flags?.length ? <span className="nms-flagdot" title={r.flags.map((f) => FLAG_TEXT[f] || f).join('\n')}>●</span> : null}</td>
-                  <td className="trp-left">{r.unit || '—'}</td>
-                  <td className="trp-left">{r.pack || fmtQty(r.sale_unit)}</td>
-                  <td className="nms-num">{fmtQty(r.stock)}</td>
-                  <td className="nms-num">{fmtMoney(r.cost_value)}</td>
-                  <td className="trp-left" title={r.last_sale_source ? `Source: ${r.last_sale_source}` : undefined}>{fmtDate(r.last_sale_date)}</td>
-                  <td className="nms-num"><b>{fmtDays(r.days_since_sale)}</b></td>
-                  <td className="trp-left">{fmtDate(r.last_purchase_date)}</td>
-                  <td className="trp-left">{fmtDate(r.last_grn_date)}</td>
-                  <td className="trp-left nms-ellipsis" title={r.supplier_name}>{r.supplier_name || '—'}</td>
-                  <td className="trp-left"><ExpiryBadge value={r.expiry_status} /></td>
-                  <td className="trp-left"><ClassBadge value={r.classification} label={r.classification_label} /></td>
-                  <td className="trp-left"><RowMenu row={r} inList={inReview(review, store.store_id, r.product_code)} onReview={review_} onAction={openTab} /></td>
-                </tr>
-              ))}
-              {!rows.length && (
-                <tr><td colSpan={OWN_COLS.length} className="nms-empty-cell">
-                  {loading ? `Analysing ${store?.store_code || ''}… the first load reads every sale, purchase and batch (up to a minute).` : 'No products match these filters.'}
-                </td></tr>
-              )}
-            </tbody>
-          </table>
+        <div className="nms-aggrid-wrap ag-theme-quartz" tabIndex={0} onKeyDown={onGridKeyDown} aria-label="Own store products (arrow keys move, Enter opens, click selects, double-click opens the sales trend, R adds to review)">
+          <AgGridReact
+            rowData={rows}
+            columnDefs={agColumns}
+            getRowId={getRowId}
+            getRowClass={getRowClass}
+            rowSelection="single"
+            suppressRowClickSelection={false}
+            onRowClicked={onRowClicked}
+            onRowDoubleClicked={onRowDoubleClicked}
+            onGridReady={(p) => { gridApiRef.current = p.api; }}
+            domLayout="normal"
+            loadingOverlayComponentParams={{ loadingMessage: `Analysing ${store?.store_code || ''}…` }}
+            overlayLoadingTemplate={`<span class="nms-empty-cell">Analysing ${store?.store_code || ''}… the first load reads every sale, purchase and batch (up to a minute).</span>`}
+            overlayNoRowsTemplate={'<span class="nms-empty-cell">No products match these filters.</span>'}
+            animateRows={false}
+            suppressCellFocus
+          />
+          {/* Loading / Empty / Failed are kept visually distinct (owner
+              requirement): Loading shows AG Grid's own overlay (driven by
+              `loading` below, never confused with a genuine zero-row
+              result); Failed replaces the grid area entirely with an
+              actionable retry, so a backend error never just LOOKS like an
+              empty report. */}
+          {loading && <div className="nms-grid-loading-badge">Loading…</div>}
+          {loadError && !loading && (
+            <div className="nms-grid-error" role="alert">
+              <div className="nms-grid-error-msg">Could not load this report.<br /><span>{loadError}</span></div>
+              <button type="button" className="primary-button" onClick={() => setRetryTick((t) => t + 1)}>Retry</button>
+            </div>
+          )}
         </div>
         {data && (
-          <Pager page={page} total={data.total} pageSize={PAGE_SIZE} onPage={setPage}
-            extra={<span className="nms-pager-sum">Filtered: <b>{fmtQty(data.filtered_qty)}</b> qty · <b>₹{fmtMoney(data.filtered_value)}</b> at cost{loading ? ' · updating…' : ''}</span>} />
+          <div className="nms-statusbar">
+            <span><b>{fmtQty(data.total)}</b> products</span>
+            <span><b>{fmtQty(rows.length)}</b> shown</span>
+            {filterCount > 0 && <span className="nms-statusbar-filters">{filterCount} filter{filterCount > 1 ? 's' : ''} active</span>}
+            <span className="nms-statusbar-sum">Qty: <b>{fmtQty(data.filtered_qty)}</b> · Value: <b>₹{fmtMoney(data.filtered_value)}</b> at cost{loading ? ' · updating…' : ''}</span>
+          </div>
         )}
       </div>
       {showDetail && (
         <ProductDetail ui={ui} session={session} tenantId={tenantId} store={store} row={row} tab={detailTab} setTab={setDetailTab}
           onClose={() => setShowDetail(false)} review={review} onToggleReview={review_} visibleCodes={visibleCodes} />
+      )}
+      {trendRow && (
+        <SalesTrendModal session={session} tenantId={tenantId} store={store} row={trendRow} onClose={() => setTrendRow(null)} />
       )}
     </div>
   );

@@ -10,17 +10,15 @@ import { isSuperAdmin } from '../label-export/labelExportAccess'
 
 const POLL_MS = 1500
 // Owner ruling 2026-11-05: one Compare mode per store.
-const COMPARE_MODES: CompareMode[] = ['PREVIOUS_PENDING', 'TODAY', 'NONE', 'HO']
+const COMPARE_MODES: CompareMode[] = ['PREVIOUS_PENDING', 'TODAY', 'PENDING_LIST', 'TODAY_PENDING', 'NONE', 'HO']
 const COMPARE_MODE_LABEL: Record<CompareMode, string> = {
   PREVIOUS_PENDING: 'Previous pending',
   TODAY: "Previous today's orders",
+  PENDING_LIST: 'Pending list',
+  TODAY_PENDING: "Today's orders + pending list",
   NONE: 'No compare',
   HO: 'HO order (no compare)',
 }
-// The internal "HO" branch whose own stock feeds every other store's
-// SupplierStock rows (Stock Update button). Matches dbo.Stores.StoreName.
-const HO_STORE_NAME = 'NMW'
-
 type StoreSettings = { minDays: number; maxDays: number; recencyDays: number; mode: OrderMode }
 type OrderDefaults = Awaited<ReturnType<typeof legacyOrderService.defaults>>
 
@@ -40,6 +38,326 @@ function fmtDateTime(value: string | null): string {
   if (!value) return '—'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
+}
+
+type EveningSchedule = Awaited<ReturnType<typeof legacyOrderService.eveningSchedule>>
+type EngineInfo = Awaited<ReturnType<typeof legacyOrderService.getOrderEngine>>
+
+function fmtStamp(value: string | null | undefined): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true })
+    .replace(/\b([ap])m\b/gi, (s) => s.toUpperCase())
+}
+
+function fmtNextRun(value: string | null | undefined): string {
+  if (!value) return 'off'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return 'off'
+  const time = d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true }).replace(/\b([ap])m\b/gi, (x) => x.toUpperCase())
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  if (d.toDateString() === new Date().toDateString()) return `today ${time}`
+  if (d.toDateString() === tomorrow.toDateString()) return `tomorrow ${time}`
+  return fmtStamp(value)
+}
+
+function scheduleRunning(schedule: EveningSchedule | null): boolean {
+  return Boolean(schedule?.running || (schedule?.last_run && !schedule.last_run.finished_at))
+}
+
+const codeKey = (value: string) => value.trim().toUpperCase()
+
+function positiveIntOrNull(raw: string): number | null {
+  if (raw.trim() === '') return null
+  const n = parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+// One settings dialog for everything the backend automates on its own: the
+// evening (second) order -- every chosen store one after another from a set
+// time, each with FIXED settings (not whatever the live grid shows at the
+// moment it fires) -- and the per-store Compare mode. Mirrors nextech-mediq's
+// OrderAutomationSettings (same backend, same OrderNMC-stored schedule).
+function OrderAutomationSettings({ groups, compareToday, isWarehouse, minDefault, maxDefault, recencyDefault, onClose, onSaved }: {
+  groups: { key: string; name: string; stores: LegacyStore[] }[]
+  compareToday: Record<string, CompareMode>
+  isWarehouse: (name: string) => boolean
+  minDefault: (name: string) => number
+  maxDefault: (name: string) => number
+  recencyDefault: (name: string) => number
+  onClose: () => void
+  onSaved: (compare: Record<string, CompareMode>, schedule: EveningSchedule) => void
+}) {
+  const allNames = useMemo(() => groups.flatMap((g) => g.stores.map((st) => st.store_name)), [groups])
+  const [schedule, setSchedule] = useState<EveningSchedule | null>(null)
+  const [enabled, setEnabled] = useState(false)
+  const [runAt, setRunAt] = useState('18:25')
+  const [evening, setEvening] = useState<Set<string>>(new Set())
+  const [compare, setCompare] = useState<Record<string, CompareMode>>({ ...compareToday })
+  const [fixedDefaults, setFixedDefaults] = useState<Record<string, { min_days: number | null; max_days: number | null; recency_days: number | null }>>({})
+  const [fixedDraft, setFixedDraft] = useState<Record<string, { min_days: number | null; max_days: number | null; recency_days: number | null }>>({})
+  const [engineSaved, setEngineSaved] = useState<Record<string, OrderEngine>>({})
+  const [engineDraft, setEngineDraft] = useState<Record<string, OrderEngine>>({})
+  const [modeSaved, setModeSaved] = useState<Record<string, OrderMode>>({})
+  const [modeDraft, setModeDraft] = useState<Record<string, OrderMode>>({})
+  const [dirty, setDirty] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+  const [note, setNote] = useState('')
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  const applySchedule = useCallback((sch: EveningSchedule) => {
+    setSchedule(sch)
+    setEnabled(Boolean(sch.enabled))
+    setRunAt(sch.run_at || '18:25')
+    const wanted = sch.stores ? new Set(sch.stores.map(codeKey)) : null
+    setEvening(new Set(allNames.filter((n) => !wanted || wanted.has(codeKey(n)))))
+  }, [allNames])
+
+  useEffect(() => {
+    legacyOrderService.eveningSchedule().then(applySchedule).catch((err: Error) => setError(err.message))
+  }, [applySchedule])
+
+  useEffect(() => {
+    let alive = true
+    Promise.all(allNames.map((n) => legacyOrderService.getOrderEngine(n).then((r: EngineInfo) => [n, r] as const)))
+      .then((pairs) => {
+        if (!alive) return
+        const defaults = Object.fromEntries(pairs.map(([n, r]) => [n, r.order_defaults]))
+        const eng = Object.fromEntries(pairs.map(([n, r]) => [n, r.engine || 'LEGACY']))
+        const mde = Object.fromEntries(pairs.map(([n, r]) => [n, r.mode || 'local']))
+        setFixedDefaults(defaults); setFixedDraft(defaults)
+        setEngineSaved(eng); setEngineDraft(eng)
+        setModeSaved(mde); setModeDraft(mde)
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [allNames])
+
+  const running = scheduleRunning(schedule)
+  useEffect(() => {
+    if (!running) return undefined
+    const t = window.setInterval(() => {
+      legacyOrderService.eveningSchedule().then(setSchedule).catch(() => {})
+    }, 5000)
+    return () => window.clearInterval(t)
+  }, [running])
+
+  useEffect(() => {
+    dialogRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const touch = (fn: () => void) => { setDirty(true); setNote(''); fn() }
+  const toggleEvening = (names: string[], on: boolean) => touch(() => setEvening((cur) => {
+    const next = new Set(cur)
+    names.forEach((n) => (on ? next.add(n) : next.delete(n)))
+    return next
+  }))
+  const toggleCompare = (names: string[], mode: CompareMode) => touch(() => setCompare((cur) => {
+    const next = { ...cur }
+    names.forEach((n) => { next[n] = mode })
+    return next
+  }))
+  const setFixedField = (name: string, field: 'min_days' | 'max_days' | 'recency_days', raw: string) => touch(() => setFixedDraft((cur) => ({
+    ...cur, [name]: { ...(cur[name] || { min_days: null, max_days: null, recency_days: null }), [field]: positiveIntOrNull(raw) },
+  })))
+  const setEngineField = (name: string, v: OrderEngine) => touch(() => setEngineDraft((cur) => ({ ...cur, [name]: v })))
+  const setModeField = (name: string, v: OrderMode) => touch(() => setModeDraft((cur) => ({ ...cur, [name]: v })))
+
+  const allEvening = allNames.length > 0 && allNames.every((n) => evening.has(n))
+
+  const save = async () => {
+    setBusy('save'); setError('')
+    try {
+      const all = allNames.every((n) => evening.has(n))
+      const saved = await legacyOrderService.saveEveningSchedule({
+        enabled, run_at: runAt, stores: all ? null : allNames.filter((n) => evening.has(n)),
+      })
+      const changed = allNames.filter((n) => (compare[n] || 'NONE') !== (compareToday[n] || 'NONE'))
+      await Promise.all(changed.map((n) => legacyOrderService.setCompareMode(n, compare[n] || 'NONE')))
+      const fixedChanged = allNames.filter((n) => {
+        const was = fixedDefaults[n] || { min_days: null, max_days: null, recency_days: null }
+        const now = fixedDraft[n] || { min_days: null, max_days: null, recency_days: null }
+        return was.min_days !== now.min_days || was.max_days !== now.max_days || was.recency_days !== now.recency_days
+      })
+      await Promise.all(fixedChanged.map((n) => {
+        const d = fixedDraft[n] || { min_days: null, max_days: null, recency_days: null }
+        return legacyOrderService.setOrderDefaults(n, d)
+      }))
+      if (fixedChanged.length) setFixedDefaults((cur) => ({ ...cur, ...Object.fromEntries(fixedChanged.map((n) => [n, fixedDraft[n]])) }))
+      const engineChanged = allNames.filter((n) => (engineDraft[n] || 'LEGACY') !== (engineSaved[n] || 'LEGACY'))
+      await Promise.all(engineChanged.map((n) => legacyOrderService.setOrderEngine(n, engineDraft[n] || 'LEGACY')))
+      if (engineChanged.length) setEngineSaved((cur) => ({ ...cur, ...Object.fromEntries(engineChanged.map((n) => [n, engineDraft[n]])) }))
+      const modeChanged = allNames.filter((n) => (modeDraft[n] || 'local') !== (modeSaved[n] || 'local'))
+      await Promise.all(modeChanged.map((n) => legacyOrderService.setOrderMode(n, modeDraft[n] || 'local')))
+      if (modeChanged.length) setModeSaved((cur) => ({ ...cur, ...Object.fromEntries(modeChanged.map((n) => [n, modeDraft[n]])) }))
+      applySchedule(saved)
+      setDirty(false)
+      setNote('Saved.')
+      onSaved(Object.fromEntries(allNames.map((n) => [n, compare[n] || 'NONE'])), saved)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save the settings.')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const runNow = async () => {
+    const names = allNames.filter((n) => evening.has(n))
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Run the evening order now for ${names.length} store${names.length === 1 ? '' : 's'}?\n\n${names.join(', ')}\n\nStores run one after another, each compared with its earlier order from today. This counts as today's evening run.`)) return
+    setBusy('run'); setError('')
+    try {
+      await legacyOrderService.runEveningNow()
+      setNote('Evening order started.')
+      setSchedule(await legacyOrderService.eveningSchedule())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start the evening order.')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <div className="lo-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="lo-modal" role="dialog" aria-modal="true" aria-labelledby="lo-settings-title" tabIndex={-1} ref={dialogRef}>
+        <header className="lo-modal-head">
+          <h3 id="lo-settings-title">Order automation settings</h3>
+          <button type="button" className="lo-modal-x" aria-label="Close settings" onClick={onClose}>×</button>
+        </header>
+
+        <section className="lo-set-section">
+          <div className="lo-set-row">
+            <label className="lo-inline lo-set-switch">
+              <input type="checkbox" checked={enabled} onChange={(e) => { const v = e.target.checked; touch(() => setEnabled(v)) }} />
+              Run the evening order automatically
+            </label>
+            <label className="lo-inline">
+              Start at
+              <input type="time" className="lo-time" value={runAt} disabled={!enabled} onChange={(e) => { const v = e.target.value; touch(() => setRunAt(v)) }} />
+            </label>
+            <span className="lo-set-next">Next run: <strong>{schedule ? fmtNextRun(schedule.next_run) : '…'}</strong></span>
+          </div>
+          <p className="lo-set-hint">
+            From the start time, each ticked store runs Order Process one after another, then is compared with that
+            store&apos;s earlier order from today. Order Process warnings are confirmed automatically. Saving after today&apos;s
+            start time begins tomorrow.
+          </p>
+          {schedule?.last_run && (
+            <div className="lo-set-status">
+              <span className="lo-muted">
+                {scheduleRunning(schedule) ? 'Running since' : 'Last run'} {fmtStamp(schedule.last_run.started_at)}{schedule.last_run.trigger === 'manual' ? ' (run now)' : ''}:
+              </span>
+              {schedule.last_run.stores.map((e) => {
+                const tone = e.status === 'completed' ? 'lo-auto-ok' : e.status === 'running' ? 'lo-auto-run' : e.status === 'skipped' ? 'lo-auto-warn' : 'lo-auto-bad'
+                return <span key={e.store_name} className={`lo-auto-tag ${tone}`} title={e.error || ''}>{e.store_name} {e.status}{e.rows != null ? ` · ${e.rows}` : ''}</span>
+              })}
+            </div>
+          )}
+        </section>
+
+        <div className="lo-set-tablewrap">
+          <table className="lo-table lo-set-table">
+            <thead>
+              <tr>
+                <th className="lo-left">Store</th>
+                <th>
+                  <label className="lo-inline">
+                    <input type="checkbox" aria-label="Evening order for every store" checked={allEvening} onChange={(e) => toggleEvening(allNames, e.target.checked)} />
+                    Evening order
+                  </label>
+                </th>
+                <th>
+                  <select aria-label="Compare mode for every store" value="" onChange={(e) => { if (e.target.value) toggleCompare(allNames, e.target.value as CompareMode) }}>
+                    <option value="">Compare mode (set all…)</option>
+                    {COMPARE_MODES.map((m) => <option key={m} value={m}>{COMPARE_MODE_LABEL[m]}</option>)}
+                  </select>
+                </th>
+                <th title="Fixed per-store settings the evening run always uses -- shows the resolved default when unset">Min</th>
+                <th title="Fixed per-store settings the evening run always uses -- shows the resolved default when unset">Max</th>
+                <th title="Only products sold in this many days are ordered -- shows the resolved default when unset">Recency</th>
+                <th title="Fixed Order Process engine the evening run always uses">Engine</th>
+                <th title="Fixed data source the evening run always uses">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => [
+                <tr key={`sg-${g.key}`} className="lo-set-group"><td colSpan={8}>{g.name}</td></tr>,
+                ...g.stores.map((st) => {
+                  const d = fixedDraft[st.store_name] || { min_days: null, max_days: null, recency_days: null }
+                  const agentSynced = !st.server_name && !st.database
+                  const effMin = minDefault(st.store_name)
+                  const effMax = maxDefault(st.store_name)
+                  const effRecency = recencyDefault(st.store_name)
+                  return (
+                    <tr key={st.store_name}>
+                      <td className="lo-left"><strong>{st.display_name || st.store_name}</strong></td>
+                      <td><input type="checkbox" aria-label={`Evening order ${st.store_name}`} checked={evening.has(st.store_name)} onChange={(e) => toggleEvening([st.store_name], e.target.checked)} /></td>
+                      <td>
+                        <select aria-label={`Compare mode ${st.store_name}`} value={compare[st.store_name] || 'NONE'} onChange={(e) => toggleCompare([st.store_name], e.target.value as CompareMode)}>
+                          {COMPARE_MODES.map((m) => <option key={m} value={m}>{COMPARE_MODE_LABEL[m]}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <input type="number" min={1} className={`lo-set-num${d.min_days != null ? ' lo-num-override' : ''}`}
+                          aria-label={`Min days ${st.store_name}`} title={d.min_days == null ? `Using the default: ${effMin}` : 'Fixed override'}
+                          value={d.min_days ?? effMin} onChange={(e) => setFixedField(st.store_name, 'min_days', e.target.value)} />
+                      </td>
+                      <td>
+                        <input type="number" min={1} className={`lo-set-num${d.max_days != null ? ' lo-num-override' : ''}`}
+                          aria-label={`Max days ${st.store_name}`} title={d.max_days == null ? `Using the default: ${effMax}` : 'Fixed override'}
+                          value={d.max_days ?? effMax} onChange={(e) => setFixedField(st.store_name, 'max_days', e.target.value)} />
+                      </td>
+                      <td>
+                        <input type="number" min={1} className={`lo-set-num${d.recency_days != null ? ' lo-num-override' : ''}`}
+                          aria-label={`Recency days ${st.store_name}`} title={d.recency_days == null ? `Using the default: ${effRecency}` : 'Fixed override'}
+                          value={d.recency_days ?? effRecency} onChange={(e) => setFixedField(st.store_name, 'recency_days', e.target.value)} />
+                      </td>
+                      <td>
+                        <select aria-label={`Engine ${st.store_name}`} value={engineDraft[st.store_name] || 'LEGACY'} onChange={(e) => setEngineField(st.store_name, e.target.value as OrderEngine)}>
+                          <option value="LEGACY">Legacy</option>
+                          <option value="RULEBOOK">Rule book</option>
+                        </select>
+                      </td>
+                      <td>
+                        {agentSynced ? (
+                          <select aria-label={`Source ${st.store_name}`} value="agent" disabled
+                            title="Agent-synced store -- Source has no effect here; its run always goes through the platform sync relay.">
+                            <option value="agent">Agent sync (fixed)</option>
+                          </select>
+                        ) : (
+                          <select aria-label={`Source ${st.store_name}`} value={modeDraft[st.store_name] || 'local'} onChange={(e) => setModeField(st.store_name, e.target.value as OrderMode)}>
+                            <option value="local">Local copy</option>
+                            {!isWarehouse(st.store_name) && <option value="remote">Remote live</option>}
+                            <option value="nexora">Nexora live</option>
+                          </select>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                }),
+              ])}
+            </tbody>
+          </table>
+        </div>
+
+        <footer className="lo-modal-foot">
+          <span className={error ? 'lo-auto-bad lo-foot-msg' : 'lo-auto-ok lo-foot-msg'}>{error || note}</span>
+          <button type="button" className="lo-btn" disabled={Boolean(busy) || dirty || running || !evening.size}
+            title={dirty ? 'Save first' : running ? 'Already running' : ''} onClick={runNow}>
+            {busy === 'run' ? 'Starting…' : 'Run evening order now'}
+          </button>
+          <button type="button" className="lo-btn" onClick={onClose}>Close</button>
+          <button type="button" className="lo-btn lo-btn-primary" disabled={Boolean(busy) || !dirty} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+        </footer>
+      </div>
+    </div>
+  )
 }
 
 export default function LegacyOrderPage() {
@@ -83,11 +401,15 @@ export default function LegacyOrderPage() {
   const [engines, setEngines] = useState<Record<string, OrderEngine>>({})
   const [comparing, setComparing] = useState<string | null>(null)
   const [pushNote, setPushNote] = useState<Record<string, string>>({})
+  const [pushAllBusy, setPushAllBusy] = useState(false)
+  const [pushAllNote, setPushAllNote] = useState<string | null>(null)
   // Saved per-store Compare mode (owner ruling 2026-11-05).
   const [compareMode, setCompareModeState] = useState<Record<string, CompareMode>>({})
   const [dbHealth, setDbHealth] = useState<LegacyDbHealth | null>(null)
   const [dbBusy, setDbBusy] = useState<'' | 'check' | 'recover' | 'repair'>('')
   const [recovery, setRecovery] = useState<LegacyDbRecovery | null>(null)
+  const [automationOpen, setAutomationOpen] = useState(false)
+  const [eveningSchedule, setEveningSchedule] = useState<EveningSchedule | null>(null)
   const pollers = useRef(new Map<string, number>())
 
   const loadStores = useCallback(() =>
@@ -175,6 +497,10 @@ export default function LegacyOrderPage() {
     })
   }, [loadStores, checkHealth])
 
+  useEffect(() => {
+    legacyOrderService.eveningSchedule().then(setEveningSchedule).catch(() => {})
+  }, [])
+
   const runRecovery = (mode: 'recover' | 'repair') => {
     if (mode === 'repair' && !window.confirm(
       'Emergency Repair runs DBCC CHECKDB with REPAIR_ALLOW_DATA_LOSS. It can permanently '
@@ -238,6 +564,60 @@ export default function LegacyOrderPage() {
   const start = (run: () => Promise<{ job_id: string }>) => {
     setError(null)
     run().then(({ job_id }) => watch(job_id)).catch((e: Error) => setError(e.message))
+  }
+
+  // Push the tenant's warehouse stock (e.g. SHP for SMS, NMW for Nathan --
+  // resolved server-side) into every other active store's SupplierStock in
+  // one click, instead of opening each store's settings and clicking "Stock
+  // update only" one at a time. Reports a storewise before -> after record
+  // count once every push job finishes (before_count comes back with the
+  // start response; after_count is read back from the same count endpoint
+  // once that store's job is no longer running).
+  const pushStockToAllStores = () => {
+    setError(null)
+    setPushAllBusy(true)
+    legacyOrderService.startStockUpdateAll()
+      .then((result) => {
+        result.started.forEach((s) => watch(s.job_id))
+        const headerParts = [`Pushing ${result.source_store}'s stock to ${result.started.length} store(s)…`]
+        if (result.skipped.length > 0) {
+          headerParts.push(`Skipped ${result.skipped.length}: ${result.skipped.map((s) => `${s.store_name} (${s.reason})`).join('; ')}`)
+        }
+        setPushAllNote(headerParts.join(' '))
+        if (result.started.length === 0) return
+
+        const pollAfterCounts = () => {
+          Promise.all(result.started.map((s) => legacyOrderService.getJob(s.job_id)))
+            .then((statuses) => {
+              if (statuses.some((j) => j.status === 'running')) {
+                window.setTimeout(pollAfterCounts, POLL_MS)
+                return
+              }
+              finishAfterCounts()
+            })
+            .catch(() => window.setTimeout(pollAfterCounts, POLL_MS))
+        }
+
+        const finishAfterCounts = () => {
+          Promise.all(
+            result.started.map((s) =>
+              s.supplier_code
+                ? legacyOrderService.supplierStockCount(s.store_name, s.supplier_code).then((r) => ({ ...s, after_count: r.count })).catch(() => ({ ...s, after_count: null }))
+                : Promise.resolve({ ...s, after_count: null }),
+            ),
+          ).then((rows) => {
+            const lines = rows.map((r) => `${r.store_name}: ${r.before_count ?? '?'} -> ${r.after_count ?? '?'}`)
+            const parts = [`Pushed ${result.source_store}'s stock to ${result.started.length} store(s). ${lines.join(', ')}.`]
+            if (result.skipped.length > 0) {
+              parts.push(`Skipped ${result.skipped.length}: ${result.skipped.map((s) => `${s.store_name} (${s.reason})`).join('; ')}`)
+            }
+            setPushAllNote(parts.join(' '))
+          })
+        }
+        window.setTimeout(pollAfterCounts, POLL_MS)
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setPushAllBusy(false))
   }
 
   // Process is gated server-side (service.start_order_process) by a
@@ -513,11 +893,37 @@ export default function LegacyOrderPage() {
           </div>
         </div>
         <div className="lo-actions">
+          <button
+            type="button"
+            className="lo-btn"
+            disabled={pushAllBusy}
+            title="Push the warehouse's current stock into every other active store's supplier feed (e.g. SHP -> SMA/SMF/SMG)."
+            onClick={pushStockToAllStores}
+          >
+            <i className="bi bi-cloud-arrow-up-fill" /> {pushAllBusy ? 'Pushing…' : 'Push Warehouse Stock to All Stores'}
+          </button>
           <Link to="/legacy-order/workspace" className="lo-btn lo-btn-primary"><i className="bi bi-grid-3x3-gap" /> Order Workspace</Link>
+          <button type="button" className="lo-btn" onClick={() => setAutomationOpen(true)}>
+            <i className="bi bi-gear-wide-connected" /> Settings{eveningSchedule ? ` · evening ${eveningSchedule.enabled ? (eveningSchedule.running ? 'running' : fmtNextRun(eveningSchedule.next_run)) : 'off'}` : ''}
+          </button>
           <span className="lo-badge">Legacy DB</span>
         </div>
       </header>
 
+      {automationOpen && (
+        <OrderAutomationSettings
+          groups={storeGroups}
+          compareToday={compareMode}
+          isWarehouse={(name) => (orderDefaults?.warehouse_stores ?? []).includes(name.toUpperCase())}
+          minDefault={(name) => settings[name]?.minDays ?? defaultSettings(orderDefaults, name).minDays}
+          maxDefault={(name) => settings[name]?.maxDays ?? defaultSettings(orderDefaults, name).maxDays}
+          recencyDefault={(name) => settings[name]?.recencyDays ?? defaultSettings(orderDefaults, name).recencyDays}
+          onClose={() => setAutomationOpen(false)}
+          onSaved={(compare, sch) => { setCompareModeState(compare); setEveningSchedule(sch) }}
+        />
+      )}
+
+      {pushAllNote && <div className="lo-banner-info" role="status">{pushAllNote}<button type="button" onClick={() => setPushAllNote(null)} aria-label="Dismiss">×</button></div>}
       {error && <div className="lo-error" role="alert">{error}<button type="button" onClick={() => setError(null)} aria-label="Dismiss">×</button></div>}
 
       {((dbHealth && !dbHealth.online) || recovery) && (
@@ -576,12 +982,21 @@ export default function LegacyOrderPage() {
         <div className="lo-store-cards">
           {group.stores.map((store) => {
             const config = settings[store.store_name] ?? defaultSettings(orderDefaults, store.store_name)
+            const warehouseSource = orderDefaults?.warehouse_source
             const running = runningFor(store.store_name)
             const invalid = config.minDays <= 0 || config.maxDays <= 0 || config.minDays > config.maxDays || config.recencyDays <= 0
             const failed = (store.last_sync_status ?? '').toLowerCase() === 'failed'
             const dotClass = running ? 'lo-dot-run' : failed ? 'lo-dot-fail' : 'lo-dot-ok'
             const lastJob = sortedJobs.find((job) => job.store_name === store.store_name && job.status !== 'running')
             const cardState = running ? 'running' : lastJob?.status === 'failed' ? 'failed' : lastJob?.status === 'completed' ? 'completed' : 'idle'
+            // Agent-synced stores (no server_name/database on file -- e.g. NMV)
+            // are forced through service.start_order_process's agent_synced
+            // branch regardless of mode (see backend/modules/legacy_order/
+            // service.py) -- the Source choice has no effect for them, so it
+            // must not be offered as a live, editable control (owner-flagged
+            // 2026-11-24: showing Local/Remote/Nexora here was misleading --
+            // nothing the user picked actually changed server behaviour).
+            const agentSynced = !store.server_name && !store.database
             return (
               <article className="lo-op-card" key={store.store_name} data-state={cardState}>
                 <div className="lo-op-head">
@@ -605,7 +1020,16 @@ export default function LegacyOrderPage() {
                     <label><span>Min days</span><input aria-label={`${store.store_name} minimum days`} type="number" min={1} value={config.minDays} onChange={(e) => patchSettings(store.store_name, { minDays: Number(e.target.value) })} /></label>
                     <label><span>Max days</span><input aria-label={`${store.store_name} maximum days`} type="number" min={1} value={config.maxDays} onChange={(e) => patchSettings(store.store_name, { maxDays: Number(e.target.value) })} /></label>
                     <label title="Only products sold in the last N days are ordered (store default 15, warehouse 90)."><span>Recency days</span><input aria-label={`${store.store_name} recency days`} type="number" min={1} value={config.recencyDays} onChange={(e) => patchSettings(store.store_name, { recencyDays: Number(e.target.value) })} /></label>
-                    <label><span>Source</span><select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option></select></label>
+                    <label>
+                      <span>Source</span>
+                      {agentSynced ? (
+                        <select aria-label={`${store.store_name} order source`} value="agent" disabled title="This store has no direct DB connection -- its agent pushes data to NEXORA_PLATFORM.sync.*, always relayed into the central copy before Order Process runs. The Source choice has no effect here.">
+                          <option value="agent">Agent sync (fixed)</option>
+                        </select>
+                      ) : (
+                        <select aria-label={`${store.store_name} order source`} value={config.mode} onChange={(e) => patchSettings(store.store_name, { mode: e.target.value as OrderMode })}><option value="local">Local copy</option><option value="remote">Remote live</option><option value="nexora">Nexora live</option></select>
+                      )}
+                    </label>
                     <label title="Which calculation Order Process uses for this store. Both write the same order tables; switch any time.">
                       <span>Order engine</span>
                       <select aria-label={`${store.store_name} order engine`} value={engines[store.store_name] ?? 'LEGACY'} disabled={Boolean(running)}
@@ -621,7 +1045,7 @@ export default function LegacyOrderPage() {
                       <button type="button" className="lo-btn" disabled={pushNote[store.store_name] === 'Pushing…'} title="Send this store's current order and transaction data to the remote OrderNMC (only changed rows are sent). Order Process does this automatically when it finishes." onClick={() => pushToRemote(store.store_name)}><i className="bi bi-send" /> Push to remote OrderNMC</button>
                       {pushNote[store.store_name] && <span className="lo-push-note">{pushNote[store.store_name]}</span>}
                       <button type="button" className="lo-btn" disabled={comparing === store.store_name} title="Calculate both engines from the current data and download an Excel comparison. Writes nothing." onClick={() => downloadEngineCompare(store.store_name)}><i className="bi bi-file-earmark-spreadsheet" /> {comparing === store.store_name ? 'Comparing…' : 'Compare engines (dry run)'}</button>
-                      {store.store_name !== HO_STORE_NAME && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${HO_STORE_NAME}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, HO_STORE_NAME))}><i className="bi bi-cloud-arrow-up" /> Stock update only</button>}
+                      {warehouseSource && store.store_name !== warehouseSource && <button type="button" className="lo-btn" disabled={Boolean(running)} title={`Push ${warehouseSource}'s stock into this store's supplier feed`} onClick={() => start(() => legacyOrderService.startStockUpdate(store.store_name, warehouseSource))}><i className="bi bi-cloud-arrow-up" /> Stock update only</button>}
                     </div>
                   </div>
                 )}

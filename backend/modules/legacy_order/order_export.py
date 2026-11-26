@@ -35,12 +35,13 @@ class ExportGenerationFailed(Exception):
 
 
 class ExportResult:
-    def __init__(self, content, filename, media_type, count, supplier_name):
+    def __init__(self, content, filename, media_type, count, supplier_name, bill_value=None):
         self.content = content
         self.filename = filename
         self.media_type = media_type
         self.count = count
         self.supplier_name = supplier_name
+        self.bill_value = bill_value  # approx: sum(OrderQty x PurchasePrice)
 
 
 # --------------------------------------------------------------------------
@@ -942,4 +943,5 @@ def export_order(store_name, supplier_code, supplier_name, mode, split_size, act
         )
         raise ExportGenerationFailed("Excel generation failed. No assignments were changed -- retry the export.") from exc
 
-    return ExportResult(content, filename, media_type, assigned_count, supplier_name)
+    bill_value = sum(float(r.get("OrderQty") or 0) * float(r.get("PurchasePrice") or 0) for r in rows)
+    return ExportResult(content, filename, media_type, assigned_count, supplier_name, round(bill_value, 2))

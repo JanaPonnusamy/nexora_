@@ -1,0 +1,8 @@
+{
+  "pin": "9213029b3430261048feb8e7de05d06921547ad6fdde426dcba38cfcdc5fe875",
+  "path": "/quick-stock-app",
+  "hoUrls": [
+    "http://192.168.10.73:8000",
+    "http://122.252.246.181:8443"
+  ]
+}

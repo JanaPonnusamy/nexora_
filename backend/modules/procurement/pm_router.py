@@ -9,9 +9,9 @@ Supplier Queue, Supplier Assignment (single/bulk/change/remove) and Export.
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
-from dependencies.auth import get_current_user_optional
+from dependencies.auth import get_current_user_optional, has_full_access
 from dependencies.store_scope import assert_tenant_access
 from modules.procurement.access import (
     get_current_user,
@@ -33,6 +33,7 @@ from modules.procurement import reconciliation_service
 from modules.procurement import reconciliation_repository
 from modules.procurement import pending_service
 from modules.procurement import distribution_service
+from modules.procurement import tenant_export_defaults_repository
 from modules.procurement.pm_schemas import (
     FinalQtyUpdate, SkipRequest, ReviewedBy,
     AssignRequest, BulkAssignRequest, ChangeSupplierRequest, ExportRequest,
@@ -40,6 +41,7 @@ from modules.procurement.pm_schemas import (
     SupplierReplyImportRequest,
     GrnSubmit, PendingAdjust, ManualAdd, PendingBulk, SupplierSettingsUpdate,
     SupplierExportSettingsUpdate, DontConsiderUpdate,
+    TenantExportDefaultsUpdate,
 )
 from modules.procurement import abnormal_sales_service
 from modules.procurement import suggestion_service
@@ -408,6 +410,43 @@ def update_supplier_export_settings(
         tenant_id, store_id, supplier_code,
         body.format, body.columns, body.order_qty_header, body.sort_by, body.export_folder_path,
     )
+
+
+# --------------------------------------------------------------------------
+# Tenant Export Defaults (desktop Procurement export card — superadmin locks
+# file format + columns for every other role; rows-per-file stays free)
+# --------------------------------------------------------------------------
+
+@router.get("/export-defaults")
+def tenant_export_defaults(
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(require_procurement_workspace),
+):
+    assert_tenant_access(current_user, tenant_id)
+    row = tenant_export_defaults_repository.get(tenant_id)
+    if not row:
+        return {"file_format": None, "columns": None, "locked": False}
+    return {
+        "file_format": row.get("file_format") or "xls",
+        "columns": [c for c in (row.get("columns") or "").split(",") if c],
+        "locked": True,
+    }
+
+
+@router.put("/export-defaults")
+def update_tenant_export_defaults(
+    body: TenantExportDefaultsUpdate,
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(require_procurement_workspace),
+):
+    assert_tenant_access(current_user, tenant_id)
+    if not has_full_access(current_user):
+        raise HTTPException(status_code=403, detail="Only a super admin can set export defaults.")
+    tenant_export_defaults_repository.upsert(
+        tenant_id, body.file_format, ",".join(body.columns or []),
+        current_user.get("username"),
+    )
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------

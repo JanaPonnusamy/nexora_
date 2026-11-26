@@ -50,6 +50,16 @@ class CoreBulkRequest(BaseModel):
     items: List[CoreBulkItem] = []
 
 
+class CoreBulkSplitRequest(BaseModel):
+    """Quick Stock's Sales/Purchase toggle: `mode` picks which transaction
+    type is fetched for every store in `items` -- the other type is never
+    queried (see service.product_core_bulk_split)."""
+    tenant_id: str
+    months: int = 4
+    mode: str = "sales"  # "sales" | "purchase"
+    items: List[CoreBulkItem] = []
+
+
 class CrossStoreMatchRequest(BaseModel):
     tenant_id: str
     source_store_id: str

@@ -7,10 +7,12 @@ is a platform-ops console (DB recovery, sync jobs) with no per-tenant model
 of its own, so it's gated to super admin / platform users only rather than
 tenant-scoped like the rest of the API.
 """
+import logging
+import os
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, File
 
 from modules.procurement import abnormal_sales_service
 from modules.procurement.pm_schemas import DontConsiderUpdate
@@ -18,8 +20,8 @@ from modules.procurement.pm_schemas import DontConsiderUpdate
 from config.database import get_connection
 from dependencies.auth import get_current_user
 from dependencies.store_scope import has_unrestricted_scope
-from modules.legacy_order import database, evening_order, order_export, repository, rulebook_order, service, supplier_match_review, supplier_portal, supplier_stock_harvest, supplier_whatsapp, sync_engine
-from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderEngineRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierPortalRequest, SupplierHarvestRequest, SupplierMatchConfirmRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest
+from modules.legacy_order import auto_order_entry, database, evening_order, morning_order, order_export, order_reason, repository, rulebook_order, service, supplier_match_review, supplier_order_mail, supplier_portal, supplier_stock_harvest, supplier_whatsapp, sync_engine
+from modules.legacy_order.schemas import CompareModeRequest, PmOrderRequest, AssignSupplierRequest, AutoAssignRequest, CompareTodayRequest, EveningScheduleRequest, OrderDefaultsRequest, OrderEngineRequest, OrderModeRequest, ComparePreviousOrderRequest, CompareSupplierRequest, EmergencyRepairRequest, ExportOrderRequest, ExportPendingOrderRequest, JobStarted, OrderProcessRequest, RestoreBackupOrderRequest, SkipProductRequest, SupplierPortalRequest, SupplierHarvestRequest, SupplierMatchConfirmRequest, SupplierWhatsAppContactRequest, SupplierWhatsAppSentRequest, StockUpdateRequest, StockUpdateAllRequest, StockUpdateAllStarted, SupplierCodeRequest, SyncRequest, UpdateOrderQtyRequest, UpdateQtyCheckRequest, UpdateRemarksRequest, WorkflowActionRequest, OrderAutomationRequest, MessageSettingRequest, AddPendingOrderItemRequest, AddPendingOrderItemsRequest, ClearPendingOrderItemsRequest, CompleteGapReviewRequest, MorningScheduleRequest
 
 
 def _header_value(value) -> str:
@@ -51,6 +53,7 @@ _VIEWER_READ_PATHS = (
     re.compile(r"^/api/legacy-order/pending-order/[^/]+$"),
     re.compile(r"^/api/legacy-order/suppliers/[^/]+$"),
     re.compile(r"^/api/legacy-order/previous-orders/[^/]+(/.*)?$"),
+    re.compile(r"^/api/legacy-order/order-cache/[^/]+/view$"),
 )
 
 # /stores has no {store_name} path param to check ownership against -- both the
@@ -69,9 +72,11 @@ _NO_PARAM_READ_PATHS = (
 # {store_name} path param that _user_owns_store checks, so a store user can
 # only ever touch their own store(s). Everything NOT in this set (or in
 # _PM_WRITE_PATHS below) stays admin-only: sync, order-process, stock-update,
-# DB recovery/repair, and the previous-order compares (their store_name is in
-# the body, not the path, so request.path_params has none -> ownership check
-# can't pass).
+# DB recovery/repair. The previous-order compares (POST /compare-previous-
+# order[/supplier]) have their own body-aware gate (see
+# require_admin_or_store_pm_body) instead of appearing here, since their
+# store_name is in the body, not the path -- this module-level dependency
+# can't check ownership against a path param that doesn't exist.
 _STORE_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+$"),         # PATCH OrderQty
     re.compile(r"^/api/legacy-order/orders/[^/]+/\d+/remarks$"), # PATCH Remarks
@@ -95,6 +100,15 @@ _PM_WRITE_PATHS = (
     re.compile(r"^/api/legacy-order/orders/[^/]+/suppliers/[^/]+/portal$"),  # a supplier's web-order portal (URL + login)
     re.compile(r"^/api/legacy-order/orders/[^/]+/suppliers/[^/]+/harvest$"),  # harvest supplier stock -> SupplierStock
     re.compile(r"^/api/legacy-order/orders/[^/]+/suppliers/[^/]+/match-review/confirm$"),  # map supplier product
+    # Pending Supply Review (owner ruling 2026-11-27: full access for PMs):
+    # mark pending (one / bulk), clear, and the "Review done" sign-off that
+    # unlocks Purchase Entry Complete.
+    re.compile(r"^/api/legacy-order/orders/[^/]+/gap-review/pending(/bulk|/clear)?$"),
+    re.compile(r"^/api/legacy-order/orders/[^/]+/gap-review/complete$"),
+)
+# DELETE paths a PM may call on their own store (remove one pending item).
+_PM_DELETE_PATHS = (
+    re.compile(r"^/api/legacy-order/orders/[^/]+/gap-review/pending/\d+$"),
 )
 
 
@@ -157,6 +171,8 @@ def require_order_console_access(request: Request, current_user: dict = Depends(
             return current_user
         if request.method == "POST" and _is_purchase_manager(current_user) and any(p.match(path) for p in _PM_WRITE_PATHS):
             return current_user
+        if request.method == "DELETE" and _is_purchase_manager(current_user) and any(p.match(path) for p in _PM_DELETE_PATHS):
+            return current_user
     raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
 
 
@@ -165,6 +181,21 @@ def require_admin_or_store_pm(store_name: str, current_user: dict = Depends(get_
     if has_unrestricted_scope(current_user):
         return current_user
     if _is_purchase_manager(current_user) and _user_owns_store(current_user, store_name):
+        return current_user
+    raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
+
+
+def require_admin_or_store_pm_body(
+    payload: ComparePreviousOrderRequest, current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Same as require_admin_or_store_pm, for the previous-order compare
+    endpoints -- their store_name lives in the POST body, not the path, so
+    _user_owns_store must be checked against payload.store_name instead of
+    a path param. CompareSupplierRequest also satisfies this (it extends
+    ComparePreviousOrderRequest), so one dependency covers both routes."""
+    if has_unrestricted_scope(current_user):
+        return current_user
+    if _is_purchase_manager(current_user) and _user_owns_store(current_user, payload.store_name):
         return current_user
     raise HTTPException(status_code=403, detail="Legacy Order console is restricted to platform admins.")
 
@@ -236,6 +267,232 @@ def db_emergency_repair(payload: EmergencyRepairRequest):
     return database.recover_database(allow_data_loss=True)
 
 
+# ---- 180-day retention / DB trim (OrderNMC/OrderSMS/OrderSuccess) ----
+# Design doc: docs/order-sync-redesign/Order_Sync_Redesign_Plan.md section 3.2.
+# Admin-only (falls through to require_order_console_access's default deny,
+# same as db/recover and db/emergency-repair above -- not listed in any of
+# the viewer/store-write path sets).
+
+@router.get("/db/retention-preview")
+def db_retention_preview(retention_days: int = 180):
+    """Report-only: counts rows older than the cutoff per trans table.
+    Deletes nothing. Always run this before /db/retention-purge."""
+    from . import retention
+    return retention.count_purgeable_rows(retention_days=retention_days)
+
+
+@router.post("/db/retention-purge")
+def db_retention_purge(retention_days: int = 180, confirm: bool = False):
+    """Deletes rows older than the cutoff from the append-only trans tables
+    (SaleInformation, PurchaseTrans, ProductSaleInformation). Full history
+    stays in NEXORA_PLATFORM.sync.* untouched -- this only trims the
+    operational OrderNMC/OrderSMS/OrderSuccess copy. Requires confirm=true,
+    same pattern as emergency-repair, since this permanently deletes rows
+    from the central DB (recoverable from NEXORA_PLATFORM only)."""
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Retention purge must be confirmed; it permanently deletes rows from the central DB.",
+        )
+    from . import retention
+    return retention.purge_old_rows(retention_days=retention_days)
+
+
+# ---- Local SQLite order cache (opt-in, LEGACY_ORDER_CACHE_ENABLED=1) ----
+# Design doc: docs/order-sync-redesign/Order_Sync_Redesign_Plan.md section
+# 3.3. order_process.run_order_process already builds this automatically
+# after a successful order run when the flag is set; these two endpoints
+# are for manual verification/ops use (admin-only, same default-deny as
+# retention above) -- not required for the normal flow.
+
+@router.post("/order-cache/{store_name}/rebuild")
+def order_cache_rebuild(store_name: str):
+    """Manually (re)builds the store's local order cache file from whatever
+    is currently in central OrderNMC/OrderSMS/OrderSuccess. Drains any
+    pending write-back on the existing file first; refuses to replace it
+    if that drain fails (see order_cache.builder.build_cache_for_store)."""
+    from .order_cache import builder
+    try:
+        path = builder.build_cache_for_store(store_name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"store_name": store_name, "cache_path": path}
+
+
+@router.post("/order-cache/{store_name}/drain-writeback")
+def order_cache_drain_writeback(store_name: str):
+    """Manually drains the store's pending local edits to central without
+    rebuilding the cache file. Mirrors what build normally does automatically
+    before a replace."""
+    from .order_cache import builder, writeback
+    path = builder.cache_path(store_name)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"No order cache file for '{store_name}'.")
+    return writeback.drain(path)
+
+
+@router.get("/order-cache/{store_name}/view")
+def order_cache_view(store_name: str, have: Optional[str] = None):
+    """Read-only: the store's local order cache content if one exists yet
+    (None/empty when LEGACY_ORDER_CACHE_ENABLED hasn't built one for this
+    store, or the feature isn't enabled at all) -- the client falls back to
+    the existing live qty-check/orders endpoints in that case. Open to a
+    normal store user on their own store (see _VIEWER_READ_PATHS), same
+    access level as the live reads it's meant to speed up."""
+    from .order_cache import builder, reader
+    # Supplier stock imported after the order was built: refresh just that
+    # table first so the PC's copy carries it (cheap no-op when unchanged).
+    try:
+        builder.refresh_supplier_stock(store_name)
+    except Exception:
+        logging.getLogger(__name__).exception("order cache supplier-stock refresh failed for %s", store_name)
+    if have:
+        # have = the stamp the PC already holds: answer with meta only when
+        # nothing changed, so the 2-minute poll doesn't re-send megabytes.
+        meta = reader.read_meta(store_name, builder.cache_path)
+        if meta is not None and reader.stamp_of(meta) == have:
+            return {"available": True, "unchanged": True, "stamp": have, "meta": meta}
+    data = reader.read_cache(store_name, builder.cache_path)
+    if data is None:
+        return {"available": False}
+    return {"available": True, **data}
+
+
+# ---- Order cache monitor (Sync > Order Cache Monitor) ----
+# Design doc: Order_Sync_Redesign_Plan.md section 3.3, extended this turn:
+# per-store file age / last write-back time+status / unsynced row count /
+# connection status, plus admin-only force actions. Same default-deny as the
+# rest of this block (platform admin only).
+
+@router.get("/order-cache/monitor")
+def order_cache_monitor_status(current_user: dict = Depends(require_admin)):
+    """One row per active store: whether a cache file exists, its age, last
+    write-back outcome, how many order_lines rows have a local edit newer
+    than their last sync (synced_at < updated_at), and connection_status."""
+    from .order_cache import monitor as order_cache_monitor
+    stores = repository.list_stores(active_only=True)
+    names = [s["store_name"] for s in stores]
+    return {"stores": order_cache_monitor.status_all(names)}
+
+
+@router.get("/order-cache/{store_name}/monitor")
+def order_cache_monitor_one(store_name: str, current_user: dict = Depends(require_admin)):
+    from .order_cache import monitor as order_cache_monitor
+    return order_cache_monitor.status_for_store(store_name)
+
+
+@router.post("/order-cache/{store_name}/force-pull")
+def order_cache_force_pull(store_name: str, current_user: dict = Depends(require_admin)):
+    """Admin action: rebuild the store's cache file straight from whatever
+    is in central right now, same as order_cache_rebuild above -- kept as a
+    separate 'force-pull' name/route under the monitor so the frontend's
+    monitor screen reads as one coherent admin tool, not two unrelated
+    endpoints for the same action."""
+    from .order_cache import builder
+    try:
+        path = builder.build_cache_for_store(store_name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"store_name": store_name, "cache_path": path}
+
+
+@router.post("/order-cache/{store_name}/force-push")
+def order_cache_force_push(store_name: str, current_user: dict = Depends(require_admin)):
+    """Admin action: drains pending write-back to central without waiting
+    for the next Order Process run -- 'push the store's edits up to HO now'.
+    Mirrors order_cache_drain_writeback above; exposed again under the
+    monitor route set for the same reason as force-pull."""
+    from .order_cache import builder, writeback, monitor as order_cache_monitor
+    path = builder.cache_path(store_name)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"No order cache file for '{store_name}'.")
+    result = writeback.drain(path)
+    if result["ok"]:
+        order_cache_monitor.mark_connection_ok(path)
+    return result
+
+
+@router.get("/order-cache/{store_name}/export")
+def order_cache_export_file(store_name: str, current_user: dict = Depends(require_admin)):
+    """Downloads the store's raw .sqlite cache file -- the 'push to store
+    client' / offline-fallback path: HO hands this file to the admin, who
+    gets it to the store PC however the network allows (USB, mail, WhatsApp)
+    and imports it there, or (reverse direction) the admin downloads it here
+    to inspect/back it up before a force action."""
+    from .order_cache import builder
+    path = builder.cache_path(store_name)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"No order cache file for '{store_name}'.")
+    with open(path, "rb") as fh:
+        content = fh.read()
+    return Response(
+        content=content,
+        media_type="application/x-sqlite3",
+        headers={"Content-Disposition": f'attachment; filename="order_cache_{store_name}.sqlite"'},
+    )
+
+
+@router.post("/order-cache/{store_name}/send")
+def order_cache_send_file(
+    store_name: str,
+    channel: str = Query("whatsapp", pattern="^(whatsapp|email)$"),
+    current_user: dict = Depends(require_admin),
+):
+    """Offline fallback: when the store PC has no direct path to HO, send
+    its current cache file as a WhatsApp attachment (or email) to the admin,
+    who downloads it on the store PC and imports it with the SAME import
+    endpoint below that HO itself uses -- one import code path for both
+    directions, per the owner's instruction this turn."""
+    from .order_cache import builder, sendfile
+    path = builder.cache_path(store_name)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"No order cache file for '{store_name}'.")
+    return sendfile.send_cache_file(store_name, path, channel=channel)
+
+
+@router.post("/order-cache/{store_name}/import")
+def order_cache_import_file(
+    store_name: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_admin),
+):
+    """Imports an uploaded .sqlite cache file (received by mail/WhatsApp when
+    the store PC had no direct HO connection) and drains it through the
+    SAME writeback.drain() logic a live local drain would use -- the file is
+    staged at the store's normal cache path first, so there is exactly one
+    drain code path regardless of how the file got here."""
+    from .order_cache import builder, writeback, monitor as order_cache_monitor
+    content = file.file.read()
+    if not content.startswith(b"SQLite format 3\x00"):
+        raise HTTPException(status_code=400, detail="Uploaded file is not a SQLite database.")
+    path = builder.cache_path(store_name)
+    tmp_path = path + ".import.tmp"
+    with open(tmp_path, "wb") as fh:
+        fh.write(content)
+    try:
+        # Any pending write-back already sitting in the file HO currently has
+        # must drain first -- importing must never silently discard edits
+        # the live file hadn't pushed yet, same rule build_cache_for_store
+        # already enforces on a normal rebuild.
+        if os.path.exists(path):
+            existing_drain = writeback.drain(path)
+            if not existing_drain["ok"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot import over '{store_name}': the current cache file's own "
+                    f"pending write-back did not drain ({existing_drain.get('error')}). Resolve that first.",
+                )
+            os.remove(path)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    result = writeback.drain(path)
+    if result["ok"]:
+        order_cache_monitor.mark_connection_ok(path)
+    return {"store_name": store_name, "imported": True, "writeback": result}
+
+
 @router.get("/stores")
 def list_stores(active_only: bool = True, current_user: dict = Depends(get_current_user)):
     """Branches from OrderNMC.Stores. Credentials are never returned. A
@@ -274,10 +531,23 @@ def list_tables():
 
 @router.get("/defaults")
 def defaults():
+    # warehouse_source: the ONE warehouse store that actually feeds the
+    # tenant currently in scope (e.g. SHP for SMS, NMW for Nathan) -- distinct
+    # from warehouse_stores, which is the global set of warehouse names across
+    # EVERY tenant on this HO and can't by itself tell the frontend which one
+    # applies to the stores it's showing right now.
+    try:
+        tenant_stores = repository.list_stores(active_only=True)
+        warehouse_source = next(
+            (s["store_name"] for s in tenant_stores if service.is_warehouse_store(s["store_name"])), None
+        )
+    except database.LegacyDatabaseUnavailable:
+        warehouse_source = None
     return {"min_days": service.DEFAULT_MIN_DAYS, "max_days": service.DEFAULT_MAX_DAYS,
             "recency_days": service.DEFAULT_RECENCY_DAYS,
             "warehouse_recency_days": service.WAREHOUSE_RECENCY_DAYS,
-            "warehouse_stores": sorted(service.WAREHOUSE_STORES)}
+            "warehouse_stores": sorted(service.WAREHOUSE_STORES),
+            "warehouse_source": warehouse_source}
 
 
 @router.post("/sync", response_model=JobStarted)
@@ -330,7 +600,38 @@ def get_order_engine(store_name: str):
                 "engines": list(rulebook_order.ENGINES), "rulebook_params": rulebook_order.rule_params(store_name),
                 "compare_today_previous": rulebook_order.get_compare_today(store_name),
                 "compare_mode": rulebook_order.get_compare_mode(store_name),
-                "compare_modes": list(rulebook_order.COMPARE_MODES)}
+                "compare_modes": list(rulebook_order.COMPARE_MODES),
+                "order_defaults": rulebook_order.get_order_defaults(store_name),
+                "mode": rulebook_order.get_order_mode(store_name) or "local"}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/engine/{store_name}/mode")
+def set_order_mode(store_name: str, payload: OrderModeRequest, current_user: dict = Depends(require_admin)):
+    """The store's fixed Source for the evening/scheduled run (admin only)."""
+    try:
+        return rulebook_order.set_order_mode(
+            store_name, payload.mode, current_user.get("username") or current_user.get("sub"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/engine/{store_name}/order-defaults")
+def set_order_defaults(store_name: str, payload: OrderDefaultsRequest, current_user: dict = Depends(require_admin)):
+    """The store's saved Min/Max/Recency override for Order Process (admin
+    only); any field left out/None falls back to the global or warehouse
+    default again."""
+    try:
+        return rulebook_order.set_order_defaults(
+            store_name, payload.min_days, payload.max_days, payload.recency_days,
+            current_user.get("username") or current_user.get("sub"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -392,6 +693,40 @@ def set_evening_schedule(payload: EveningScheduleRequest, current_user: dict = D
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/schedule/morning")
+def get_morning_schedules(current_user: dict = Depends(require_admin)):
+    """Morning auto order, one entry per legacy database (tenant) this HO
+    serves, with today's per-store progress."""
+    try:
+        return morning_order.get_schedules()
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/schedule/morning/{tenant_key}")
+def set_morning_schedule(tenant_key: str, payload: MorningScheduleRequest,
+                         current_user: dict = Depends(require_admin)):
+    try:
+        return morning_order.set_schedule(tenant_key, payload.enabled, payload.run_at, payload.until,
+                                          payload.stores, payload.retry_minutes,
+                                          actor=current_user.get("username"), days=payload.days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/schedule/morning/{tenant_key}/stores/{store_code}/retry")
+def retry_morning_store(tenant_key: str, store_code: str, current_user: dict = Depends(require_admin)):
+    """Clear today's morning-order result for one store so it runs again as
+    soon as it is online (path param is store_code, not store_name, so the
+    tenant comes from tenant_key rather than the store-name lookup)."""
+    try:
+        return morning_order.reset_store_today(tenant_key, store_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/schedule/evening/run")
 def run_evening_order_now(current_user: dict = Depends(require_admin)):
     """Run the evening order now (counts as today's run)."""
@@ -445,6 +780,19 @@ def qty_check_confirmation(store_name: str):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/stores/{store_name}/supplier-stock-count")
+def supplier_stock_count(store_name: str, supplier_code: str):
+    """Raw SupplierStock row count for one store/supplier -- a plain record
+    count, independent of any open-order join (unlike
+    /orders/{store}/by-supplier/export-count). Used to show before/after
+    counts around a Stock Update / Stock Update All run."""
+    try:
+        return {"store_name": store_name, "supplier_code": supplier_code,
+                "count": repository.supplier_stock_count(store_name, supplier_code)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/stock-update", response_model=JobStarted)
 def start_stock_update(payload: StockUpdateRequest):
     """Push the source ("HO") store's own branch stock into this store's
@@ -458,6 +806,21 @@ def start_stock_update(payload: StockUpdateRequest):
     except ValueError as exc:
         status = 409 if "already running" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/stock-update-all", response_model=StockUpdateAllStarted)
+def start_stock_update_all(payload: StockUpdateAllRequest):
+    """Push the tenant's warehouse stock into EVERY other active store's
+    SupplierStock in one click (e.g. SHP -> SMA/SMF/SMG for SMS), instead of
+    clicking "Stock update only" once per store. The warehouse/source store is
+    resolved per the tenant currently in scope (router._scope_tenant) unless
+    the caller passes one explicitly."""
+    try:
+        return service.start_stock_update_all(payload.source_store_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -596,6 +959,15 @@ def all_open_orderables(store_name: str):
     operator assigns/exports these to whichever supplier is picked."""
     try:
         return repository.all_open_orderables(store_name, last_offer=True)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders/{store_name}/line-states")
+def order_line_states(store_name: str):
+    """Live status/qty per order line, overlaid on the store PC's order cache."""
+    try:
+        return {"rows": repository.order_line_states(store_name)}
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -943,16 +1315,33 @@ def export_order(
     except order_export.ExportGenerationFailed as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return Response(
-        content=result.content,
-        media_type=result.media_type,
-        headers={
-            "Content-Disposition": _header_value(f'attachment; filename="{result.filename}"'),
-            "X-Exported-Count": str(result.count),
-            "X-Supplier-Name": _header_value(result.supplier_name),
-            "Access-Control-Expose-Headers": "Content-Disposition, X-Exported-Count, X-Supplier-Name",
-        },
-    )
+    headers = {
+        "Content-Disposition": _header_value(f'attachment; filename="{result.filename}"'),
+        "X-Exported-Count": str(result.count),
+        "X-Supplier-Name": _header_value(result.supplier_name),
+        "X-Bill-Value": str(result.bill_value or 0),
+    }
+    if payload.email_supplier:
+        mail = supplier_order_mail.send_order_mail(
+            store_name, payload.supplier_code, result.supplier_name, result.content, result.filename,
+            result.count, result.bill_value, payload.order_no,
+            current_user.get("username") or current_user.get("sub"),
+        )
+        headers.update({
+            "X-Mail-Status": mail["status"],
+            "X-Mail-To": _header_value(", ".join(mail["to"])),
+            "X-Mail-Files": str(mail["files"]),
+            "X-Mail-Message": _header_value(mail["message"]),
+        })
+    headers["Access-Control-Expose-Headers"] = ", ".join(h for h in headers if h != "Content-Disposition") + ", Content-Disposition"
+    return Response(content=result.content, media_type=result.media_type, headers=headers)
+
+
+@router.get("/orders/{store_name}/supplier-mail/status")
+def supplier_mail_status(store_name: str, supplier_code: str):
+    """Can this supplier's order be mailed (tenant mailbox set up + the
+    supplier has a mail id)? {ready, to, reason}."""
+    return supplier_order_mail.mail_status(store_name, supplier_code)
 
 
 @router.post("/orders/{store_name}/export-pending")
@@ -998,7 +1387,10 @@ def previous_orders(store_name: str):
 
 
 @router.post("/compare-previous-order")
-def compare_previous_order(payload: ComparePreviousOrderRequest):
+def compare_previous_order(
+    payload: ComparePreviousOrderRequest,
+    current_user: dict = Depends(require_admin_or_store_pm_body),
+):
     try:
         if not repository.get_store(payload.store_name):
             raise HTTPException(status_code=404, detail="Store not found")
@@ -1030,7 +1422,10 @@ def previous_order_supplier_products(
 
 
 @router.post("/compare-previous-order/supplier")
-def compare_previous_order_supplier(payload: CompareSupplierRequest):
+def compare_previous_order_supplier(
+    payload: CompareSupplierRequest,
+    current_user: dict = Depends(require_admin_or_store_pm_body),
+):
     try:
         result = repository.compare_previous_order_supplier(
             payload.store_name, payload.order_id, payload.supplier_code
@@ -1253,6 +1648,19 @@ def qty_check_monthly_stats(store_name: str, product_code: int, mode: str = "loc
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/qty-check/{store_name}/{product_code}/why")
+def qty_check_why(store_name: str, product_code: int):
+    """Why this product is in the order: the engine's calculation steps with
+    the stored quantities, plus its 90-day sales day by day."""
+    try:
+        result = order_reason.product_reason(store_name, product_code)
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="This product is not in the current order.")
+    return result
+
+
 @router.get("/qty-check/{store_name}/{product_code}/order-history")
 def qty_check_order_history(store_name: str, product_code: int):
     try:
@@ -1273,25 +1681,163 @@ def pm_order_entry(store_name: str):
         block = repository.previous_day_order_block(store_name)
         return {"store_name": store_name, "latest_order": summary,
                 "blocked": bool(block), "header": repository.order_header_summary(store_name),
+                "gap_review": repository.gap_review_status(store_name),
                 "job": service.latest_job(store_name)}
     except database.LegacyDatabaseUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/orders/{store_name}/order-entry", response_model=JobStarted)
+@router.get("/orders/{store_name}/order-entry/recent")
+def pm_order_entry_recent(store_name: str, limit: int = 50):
+    """Plain "most recent N" GRN + sale-bill grids for the PM's own visual
+    verification against physical paperwork -- replaces the old "received,
+    not ordered" exclusionary report on this screen (see
+    repository.recent_grns/recent_sale_bills for why these numbers always
+    agree with update_order_header_details's LastGRN/LastSaleBillNo, unlike
+    that retired report, which deliberately excludes rows). The PM's Last
+    bill / Last GRN fields are auto-filled from row 0 of each, read-only."""
+    try:
+        return {
+            "store_name": store_name,
+            "grns": repository.recent_grns(store_name, limit),
+            "bills": repository.recent_sale_bills(store_name, limit),
+        }
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/order-entry")
 def pm_start_order(store_name: str, payload: PmOrderRequest,
                    current_user: dict = Depends(require_admin_or_store_pm)):
     try:
-        return JobStarted(job_id=service.start_pm_order(
-            store_name, payload.last_bill, payload.last_grn, payload.order_type, payload.confirmed))
+        service.require_gap_review(store_name)
+        automation = auto_order_entry.get_automation(store_name)
+        if automation["automated_order_enabled"]:
+            queued = auto_order_entry.queue_auto_order(
+                store_name, payload.last_bill, payload.last_grn, payload.order_type, payload.confirmed,
+                actor=current_user.get("username"),
+            )
+            return {"queued": True, **queued}
+        return {"queued": False, "job_id": service.start_pm_order(
+            store_name, payload.last_bill, payload.last_grn, payload.order_type, payload.confirmed)}
     except (service.PreviousOrderNotFinalized, service.QtyCheckConfirmationRequired,
-            service.StaleCurrentOrder) as exc:
+            service.StaleCurrentOrder, service.GapReviewRequired) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ConnectionError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     except ValueError as exc:
         status = 409 if "already running" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc))
+
+
+@router.get("/orders/{store_name}/order-entry/queue")
+def pm_order_entry_queue_status(store_name: str):
+    """Poll target for a queued (automated) submit -- returns the latest queue
+    row for this store, or None if nothing has ever been queued."""
+    return auto_order_entry.latest_queue_row(store_name) or {"status": None}
+
+
+@router.get("/orders/{store_name}/automation")
+def get_order_automation(store_name: str):
+    return auto_order_entry.get_automation(store_name)
+
+
+# ---- Order Gap Review (PM: reconciliation since the store's last placed
+# order, which may span multiple days) ----
+
+@router.get("/orders/{store_name}/gap-review")
+def gap_review(store_name: str, order_id: int | None = None,
+               current_user: dict = Depends(require_admin_or_store_pm)):
+    try:
+        return repository.order_gap_review(store_name, order_id, product_type="all")
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/gap-review/pending")
+def add_gap_review_pending_item(store_name: str, payload: AddPendingOrderItemRequest,
+                                 current_user: dict = Depends(require_admin_or_store_pm)):
+    try:
+        return repository.add_pending_order_item(
+            store_name, payload.product_code, payload.product_name, payload.order_id,
+            payload.qty, current_user.get("username"), payload.note,
+        )
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/gap-review/pending/bulk")
+def add_gap_review_pending_items(store_name: str, payload: AddPendingOrderItemsRequest,
+                                  current_user: dict = Depends(require_admin_or_store_pm)):
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Select at least one product.")
+    try:
+        return repository.add_pending_order_items(
+            store_name, payload.order_id, [i.model_dump() for i in payload.items],
+            current_user.get("username"), payload.note,
+        )
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/gap-review/complete")
+def complete_gap_review(store_name: str, payload: CompleteGapReviewRequest,
+                        current_user: dict = Depends(require_admin_or_store_pm)):
+    """Order Entry step 1 sign-off: the PM has reviewed the current order's
+    gap (and marked what is still expected as pending)."""
+    try:
+        return repository.complete_gap_review(store_name, payload.order_id,
+                                              current_user.get("username"), payload.not_received)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{store_name}/gap-review/pending/clear")
+def clear_gap_review_pending_items(store_name: str, payload: ClearPendingOrderItemsRequest,
+                                    current_user: dict = Depends(require_admin_or_store_pm)):
+    try:
+        return {"cleared": repository.clear_pending_order_items(store_name, payload.ids)}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.delete("/orders/{store_name}/gap-review/pending/{item_id}")
+def clear_gap_review_pending_item(store_name: str, item_id: int,
+                                   current_user: dict = Depends(require_admin_or_store_pm)):
+    try:
+        cleared = repository.clear_pending_order_item(item_id, store_name)
+        if not cleared:
+            raise HTTPException(status_code=404, detail="Pending item not found.")
+        return {"cleared": True, "id": item_id}
+    except database.LegacyDatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/orders/{store_name}/automation")
+def set_order_automation(store_name: str, payload: OrderAutomationRequest,
+                         current_user: dict = Depends(require_admin)):
+    return auto_order_entry.set_automation(
+        store_name, payload.automated_order_enabled, payload.production_mode,
+        payload.min_delay_seconds, payload.max_delay_seconds, actor=current_user.get("username"),
+    )
+
+
+@router.get("/orders/{store_name}/message-settings")
+def list_message_settings(store_name: str):
+    return auto_order_entry.list_message_settings(store_name)
+
+
+@router.put("/orders/{store_name}/message-settings/{message_type}")
+def save_message_setting(store_name: str, message_type: str, payload: MessageSettingRequest,
+                         current_user: dict = Depends(require_admin)):
+    try:
+        return auto_order_entry.save_message_setting(
+            store_name, message_type, payload.enabled, payload.targets, actor=current_user.get("username"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/orders/{store_name}/received-not-ordered")

@@ -331,10 +331,15 @@ export interface SupplierComparisonProduct {
   CurrentStock: number | null
   PreviousRemarks: string | null
   PreviousStatus: number | null
+  CurrentSLSQty: number | null
+  CurrentLastSaleDate: string | null
+  CurrentLastReceivedDate: string | null
+  LastReceivedQty: number | null
+  LastGRNDate: string | null
 }
 
 /** 'local' reads OrderNMC's own synced copy; 'remote' hits the branch DB live. */
-export type OrderMode = 'local' | 'remote'
+export type OrderMode = 'local' | 'remote' | 'nexora'
 
 export interface LegacyDbHealth {
   database: string
@@ -385,4 +390,245 @@ export interface LegacyDbRecovery {
   connected?: boolean
   steps: LegacyDbRecoveryStep[]
   message: string
+}
+
+/** ---- PM Order Entry: automated order submit (per store) ---- */
+
+export type PmOrderType = 'REGULAR' | 'WH'
+
+export interface PmOrderEntryJobLog {
+  at: string
+  message: string
+}
+
+export interface PmOrderEntryJob {
+  job_id: string
+  status: 'running' | 'completed' | 'failed'
+  message: string
+  error: string | null
+  log: PmOrderEntryJobLog[]
+}
+
+export interface PmOrderEntryLatestOrder {
+  order_id: number
+  order_no: number | null
+  status: OrderWorkflowStatus
+  qty_pending: number
+  unassigned_lines: number
+}
+
+export interface PmOrderEntryHeader {
+  order_datetime: string | null
+  last_sale_bill_no: string | null
+  last_grn: string | null
+}
+
+/** GET .../order-entry */
+export interface PmOrderEntryState {
+  store_name: string
+  latest_order: PmOrderEntryLatestOrder | null
+  blocked: boolean
+  header: PmOrderEntryHeader | null
+  gap_review?: GapReviewStatus | null
+  job: PmOrderEntryJob | null
+}
+
+/** Order Entry step 1: the PM's review of the current order's gap. */
+export interface GapReviewStatus {
+  required: boolean
+  done: boolean
+  order_id: number | null
+  reviewed_at: string | null
+  reviewed_by: string | null
+  not_received?: number | null
+  pending_count?: number | null
+}
+
+export type PmOrderQueueStatus = 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED'
+
+/** POST (queued) / GET .../order-entry/queue */
+export interface PmOrderQueueRow {
+  queue_id: number
+  store_name: string
+  last_bill: string
+  last_grn: string
+  order_type: PmOrderType
+  confirmed: boolean
+  status: PmOrderQueueStatus
+  queued_at: string | null
+  run_at: string | null
+  started_at: string | null
+  finished_at: string | null
+  job_id: string | null
+  error: string | null
+}
+
+/** POST .../order-entry when automation is off */
+export interface PmOrderEntryImmediateResult {
+  queued: false
+  job_id: string
+}
+
+export type PmOrderEntrySubmitResult = PmOrderQueueRow & { queued: true } | PmOrderEntryImmediateResult
+
+/** Plain "most recent N" rows for the PM's own verification grids -- see
+ *  GET .../order-entry/recent. Deliberately unfiltered (no received-not-
+ *  ordered exclusion), so row 0 of each always matches the Current Order
+ *  card's Last bill / Last GRN watermark. */
+export interface RecentGrnRow {
+  grn_no: number
+  grn_date: string | null
+  supplier_code: string | null
+  supplier_name: string | null
+  item_count: number
+  total_qty: number
+  /** When this GRN reached central OrderNMC via sync -- a fallback only,
+   *  used when grn_time is unavailable (rows synced before TransactionTime
+   *  was added to the pipeline, or an agent-synced store whose remote
+   *  source has no such column). */
+  synced_at: string | null
+  /** The branch's real GRN entry time (PurchaseTrans.TransactionTime).
+   *  NULL for rows synced before this column existed and for agent-synced
+   *  stores -- grndate itself has no time component at the source. */
+  grn_time: string | null
+}
+
+export interface RecentSaleBillRow {
+  bill_no: string | null
+  bill_date: string | null
+  salesman: string | null
+  customer: string | null
+  amount: number
+}
+
+export interface PmOrderEntryRecent {
+  store_name: string
+  grns: RecentGrnRow[]
+  bills: RecentSaleBillRow[]
+}
+
+/** GET/PUT .../automation */
+export interface OrderEntryAutomation {
+  store_name: string
+  automated_order_enabled: boolean
+  production_mode: boolean
+  min_delay_seconds: number
+  max_delay_seconds: number
+  updated_at: string | null
+  updated_by: string | null
+}
+
+export type MessageType = 'ORDER_GENERATED' | 'STOCK_LIST' | 'TIME_LIST' | 'STOCK_READY' | 'ENTRY_READY'
+
+export interface MessageTarget {
+  name: string
+  kind: 'group' | 'contact'
+}
+
+/** GET/PUT .../message-settings[/{message_type}] */
+export interface MessageSetting {
+  store_name: string
+  message_type: MessageType
+  enabled: boolean
+  targets: MessageTarget[]
+  updated_at: string | null
+  updated_by: string | null
+}
+
+/** ---- Live Queries / Repair (db-monitor) ---- */
+
+export interface DbMonitorRequest {
+  session_id: number
+  status: string
+  command: string | null
+  wait_type: string | null
+  wait_time_ms: number | null
+  blocking_session_id: number | null
+  cpu_time_ms: number | null
+  total_elapsed_ms: number | null
+  reads: number | null
+  writes: number | null
+  logical_reads: number | null
+  row_count: number | null
+  start_time: string | null
+  login_name: string | null
+  host_name: string | null
+  program_name: string | null
+  database_name: string | null
+  query_text: string | null
+}
+
+export interface DbMonitorSession {
+  session_id: number
+  status: string
+  login_name: string | null
+  host_name: string | null
+  program_name: string | null
+  database_name: string | null
+  last_request_start_time: string | null
+  last_request_end_time: string | null
+  total_elapsed_ms: number | null
+  blocking_session_id: number | null
+  wait_type: string | null
+}
+
+export interface DbMonitorKillResult {
+  session_id: number
+  killed: true
+}
+
+/** Order Gap Review: a PM's reconciliation screen for the gap since the
+ *  store's last placed order, which may span multiple days (e.g. reviewing
+ *  Saturday's order on Monday). See GET/POST/DELETE .../gap-review*. */
+export interface NotReceivedRow {
+  product_code: number | null
+  product_name: string | null
+  ordered_qty: number
+  order_date: string | null
+  product_type?: string
+  supplier_name?: string | null
+  mrp?: number | null
+  stock?: number | null
+  sales_90?: number | null
+  remarks?: string | null
+}
+
+export interface ReceivedNotOrderedRow {
+  grn_no: number
+  grn_date: string | null
+  supplier_code: string | null
+  supplier_name: string | null
+  product_code: number | null
+  product_name: string | null
+  qty: number
+  free_qty: number
+  purchase_price: number
+  mrp: number
+  product_type: string
+}
+
+/** A PM-flagged "ordered but never arrived" line that carries forward as a
+ *  reminder across reviews until a later GRN arrives or it is dismissed. */
+export interface PendingOrderItem {
+  id: number
+  store_name: string
+  product_code: number | null
+  product_name: string | null
+  order_id: number | null
+  qty: number | null
+  flagged_at: string | null
+  flagged_by: string | null
+  cleared_at: string | null
+  note: string | null
+}
+
+/** GET .../gap-review */
+export interface OrderGapReview {
+  store_name: string
+  order_id: number | null
+  order_date: string | null
+  not_received: NotReceivedRow[]
+  received_not_ordered: ReceivedNotOrderedRow[]
+  pending_items: PendingOrderItem[]
+  review?: GapReviewStatus | null
 }

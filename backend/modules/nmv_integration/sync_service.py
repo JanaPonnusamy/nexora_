@@ -88,9 +88,14 @@ def apply_uplink(cur, source_table, columns, rows, store_name, snapshot_reset=Fa
 
     # Batches is a full-snapshot replace: zero the store's stock before the
     # first page merges so sold-out batches don't keep stale stock forever
-    # (identical to sync_engine's Batches handling).
+    # (identical to sync_engine's Batches handling). "AND Stock > 0" keeps
+    # this an update of only the rows that actually change -- most rows are
+    # already 0 from a prior cycle, and the unfiltered full-table UPDATE was
+    # observed holding a lock for 2+ minutes and blocking every other
+    # store's Batches MERGE behind it (PAGEIOLATCH_EX -> LCK_M_IX chain,
+    # 2026-11-16), serializing what should be independent per-store syncs.
     if snapshot_reset and dest_table.lower() == "batches":
-        cur.execute("UPDATE Batches SET Stock = 0 WHERE StoreName = ?", store_name)
+        cur.execute("UPDATE Batches SET Stock = 0 WHERE StoreName = ? AND Stock > 0", store_name)
 
     if not rows:
         return 0, dropped

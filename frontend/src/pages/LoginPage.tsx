@@ -3,8 +3,12 @@ import type { FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { api, ApiError } from '../services/apiClient'
-import logoLockup from '../assets/axythic-logo-white.svg'
-import logoMark from '../assets/axythic-mark.svg'
+import { Brand } from '../components/brand/Brand'
+import iconInventory from '../assets/ai/icon-inventory.webp'
+import iconProcurement from '../assets/ai/icon-procurement.webp'
+import iconReports from '../assets/ai/icon-reports.webp'
+import iconAi from '../assets/ai/icon-ai.webp'
+import logoMark from '../assets/nextech-mediq-mark.svg'
 import { APP_NAME } from '../utils/appInfo'
 import { ThemeToggle } from '../components/common/ThemeToggle'
 import './login.css'
@@ -73,16 +77,17 @@ export default function LoginPage() {
         <div className="login-showcase__orb login-showcase__orb--one" aria-hidden="true" />
         <div className="login-showcase__orb login-showcase__orb--two" aria-hidden="true" />
         <div className="login-showcase__content">
-          <img className="login-showcase__logo" src={logoLockup} alt={APP_NAME} />
+          <div className="login-showcase__logo"><Brand to="" /></div>
           <div className="login-showcase__copy">
-            <span className="login-showcase__eyebrow">Unified operations platform</span>
+            <span className="login-showcase__eyebrow"><i className="bi bi-stars" aria-hidden="true" /> AI-powered pharma operations</span>
             <h1>One workspace.<br />Every operation.</h1>
             <p>Run procurement, inventory, reporting and store operations with clarity across your entire network.</p>
           </div>
           <div className="login-showcase__features" aria-label="Platform benefits">
-            <span><i className="bi bi-shield-check" aria-hidden="true" /> Secure access</span>
-            <span><i className="bi bi-lightning-charge" aria-hidden="true" /> Live workflows</span>
-            <span><i className="bi bi-diagram-3" aria-hidden="true" /> Connected stores</span>
+            <span><img src={iconInventory} alt="" /> Inventory</span>
+            <span><img src={iconProcurement} alt="" /> Procurement</span>
+            <span><img src={iconReports} alt="" /> Sales &amp; Reports</span>
+            <span><img src={iconAi} alt="" /> AI Intelligence</span>
           </div>
         </div>
       </section>

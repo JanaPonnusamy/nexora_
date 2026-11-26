@@ -1,0 +1,43 @@
+{
+  "name": "nexora-quick-stock-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NexTech Quick Stock - lightweight, no-login stock lookup across all branches",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --config.artifactName=\"NexTechQuickStock-Setup-${version}.${ext}\""
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.nexora.desktop.quickstock",
+    "productName": "NexTech Quick Stock",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "quick-stock-config.json",
+        "to": "../quick-stock-config.json"
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

@@ -1,0 +1,84 @@
+/* Rate Analysis -- supplier purchase-rate tools.
+   Ported from supplier-stock-client's trp-/rta- prefixed rules (styles.css,
+   the "Rate Analysis (RateAnalysis.jsx)" block), rebuilt against this app's
+   ntm- design tokens instead of the source's nx- tokens. */
+
+.trp-screen { display: flex; flex-direction: column; gap: 10px; }
+.trp-bar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; padding: 10px 12px; background: var(--ntm-panel); border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-md); }
+.trp-field { display: inline-flex; flex-direction: column; gap: 3px; font-size: 11px; font-weight: 600; color: var(--ntm-text-muted); }
+.trp-field select, .trp-field input { min-width: 140px; font: inherit; font-size: 13px; font-weight: 400; color: var(--ntm-text-primary); background: var(--ntm-elevated); border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-sm); padding: 4px 8px; }
+.trp-field .trp-num { min-width: 90px; width: 90px; }
+.trp-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }
+.trp-result { min-width: 0; }
+.trp-period { font-weight: 700; font-size: 13px; margin: 2px 0 8px; color: var(--ntm-text-primary); }
+.trp-subnote { font-size: 12px; color: var(--ntm-text-muted); margin: 0 0 10px; }
+.trp-subnote b { color: var(--ntm-text-primary); }
+.trp-tablewrap { overflow: auto; max-height: calc(100vh - 280px); background: var(--ntm-panel); border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-md); }
+.trp-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; color: var(--ntm-text-primary); }
+.trp-table thead th { position: sticky; top: 0; z-index: 1; padding: 6px 9px; background: var(--ntm-elevated); color: var(--ntm-text-secondary); font-weight: 600; white-space: nowrap; border-bottom: 1px solid var(--ntm-border); }
+.trp-table tbody td { padding: 5px 9px; border-bottom: 1px solid var(--ntm-border); white-space: nowrap; }
+.trp-table tbody tr:not([style]):hover td { background: var(--ntm-elevated); }
+.trp-left { text-align: left; }
+.trp-center { text-align: center; }
+.trp-foot td { font-weight: 700; border-top: 2px solid var(--ntm-border); background: var(--ntm-elevated); padding: 6px 9px; }
+
+/* Rate Analysis (RateAnalysisPage.jsx) - reuses the trp-* report layout */
+.rta-tabs, .rta-sheetbar, .rta-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.rta-chip { padding: 4px 12px; border-radius: 14px; border: 1px solid var(--ntm-border); background: var(--ntm-panel); color: var(--ntm-text-primary); font: inherit; font-size: 12.5px; cursor: pointer; }
+.rta-chip:hover { background: var(--ntm-elevated); }
+.rta-chip.active { background: var(--ntm-teal); border-color: var(--ntm-teal); color: var(--ntm-deep-navy); font-weight: 600; }
+.rta-count { margin-left: 4px; opacity: 0.7; font-weight: 400; }
+.rta-bar { align-items: stretch; }
+.rta-grow { flex: 1 1 420px; }
+.rta-typeahead { position: relative; }
+.rta-suggest {
+  position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 20; max-height: 240px; overflow: auto;
+  background: var(--ntm-panel); border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-md);
+  box-shadow: var(--ntm-shadow);
+}
+.rta-suggest-row {
+  display: block; width: 100%; text-align: left; padding: 6px 10px; font: inherit; font-size: 12.5px; font-weight: 400;
+  color: var(--ntm-text-primary); background: none; border: none; border-bottom: 1px solid var(--ntm-border); cursor: pointer;
+}
+.rta-suggest-row:last-child { border-bottom: none; }
+.rta-suggest-row:hover { background: var(--ntm-elevated); }
+.rta-suggest-empty { color: var(--ntm-text-muted); cursor: default; }
+.rta-suggest-empty:hover { background: none; }
+.rta-text { width: 100%; min-height: 110px; font-family: Consolas, monospace; font-size: 12px; background: var(--ntm-elevated); color: var(--ntm-text-primary); border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-sm); padding: 6px 8px; resize: vertical; }
+.rta-small { min-height: 54px; }
+.rta-side { display: flex; flex-direction: column; gap: 8px; justify-content: flex-end; }
+.rta-filter { min-width: 200px; font: inherit; font-size: 13px; background: var(--ntm-elevated); color: var(--ntm-text-primary); border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-sm); padding: 4px 8px; }
+.trp-field input[type="file"] { min-width: 260px; font-size: 11.5px; color: var(--ntm-text-muted); }
+.trp-field input[type="file"]::file-selector-button {
+  padding: 4px 10px; margin-right: 8px; border-radius: var(--ntm-radius-sm); border: 1px solid var(--ntm-border);
+  background: var(--ntm-elevated); color: var(--ntm-text-primary); font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.trp-field input[type="file"]::file-selector-button:hover { background: var(--ntm-teal); color: var(--ntm-deep-navy); }
+.rta-picker { flex: 1 1 460px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rta-picker-head { display: flex; gap: 10px; align-items: center; }
+.rta-picker-list { max-height: 220px; overflow: auto; border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-md); background: var(--ntm-panel); }
+.rta-picker-row { display: flex; gap: 8px; align-items: center; padding: 3px 8px; font-size: 12.5px; cursor: pointer; border-bottom: 1px solid var(--ntm-border); }
+.rta-picker-row:hover { background: var(--ntm-elevated); }
+.rta-picker-row input[type="checkbox"] { width: 14px; height: 14px; min-width: 14px; margin: 0; flex: none; accent-color: var(--ntm-teal); cursor: pointer; }
+.rta-picker-name { flex: 1; color: var(--ntm-text-primary); }
+.rta-picker-meta { color: var(--ntm-text-muted); font-size: 11px; white-space: nowrap; }
+.rta-result-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
+.rta-note { margin: 0 0 2px; }
+.rta-match { max-height: 320px; }
+.rta-match select { width: 100%; min-width: 380px; font: inherit; background: var(--ntm-elevated); color: var(--ntm-text-primary); border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-sm); padding: 3px 6px; }
+.rta-cell { width: 72px; text-align: right; font: inherit; background: var(--ntm-elevated); color: var(--ntm-text-primary); border: 1px solid var(--ntm-border); border-radius: var(--ntm-radius-sm); padding: 3px 6px; }
+.rta-table td.rta-num, .rta-table th.rta-num, .rta-match .rta-num { text-align: right; font-variant-numeric: tabular-nums; }
+.rta-table th.rta-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; border-left: 2px solid var(--ntm-border); }
+.rta-table thead tr:nth-child(2) th { top: 29px; }
+.rta-table td.rta-good { background: rgba(52, 211, 153, 0.16); color: var(--ntm-success); font-weight: 600; }
+.rta-table td.rta-bad { background: rgba(248, 113, 113, 0.16); color: var(--ntm-error); font-weight: 600; }
+.rta-table td.rta-warn, .rta-match td.rta-warn { background: rgba(251, 191, 36, 0.16); color: var(--ntm-warning); }
+.rta-warn { color: var(--ntm-warning); }
+
+.status-line { font-size: 12.5px; font-weight: 650; color: var(--ntm-text-muted); }
+.status-line.error { color: var(--ntm-error); }
+.empty-state {
+  display: grid; min-height: 120px; place-items: center; padding: 16px;
+  border: 1px dashed var(--ntm-border); border-radius: var(--ntm-radius-md);
+  color: var(--ntm-text-muted); font-size: 12.5px; text-align: center;
+}

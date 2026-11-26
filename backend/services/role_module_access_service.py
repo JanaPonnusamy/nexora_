@@ -27,3 +27,8 @@ class RoleModuleAccessService:
 
     def remove(self, role_id, module_id):
         return RoleModuleAccessRepository().remove(role_id, module_id)
+
+    def set_permissions(self, role_id, module_id, can_view, can_create, can_edit, can_delete, can_export):
+        return RoleModuleAccessRepository().set_permissions(
+            role_id, module_id, can_view, can_create, can_edit, can_delete, can_export
+        )

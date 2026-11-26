@@ -278,8 +278,10 @@ def product_core_bulk(user, tenant_id, items, months=3):
     unique_items = []
     seen = set()
     for item in items or []:
-        store_id = str(item.get("store_id") or "").strip()
-        product_code = str(item.get("product_code") or "").strip()
+        raw_store_id = item.get("store_id") if isinstance(item, dict) else item.store_id
+        raw_product_code = item.get("product_code") if isinstance(item, dict) else item.product_code
+        store_id = str(raw_store_id or "").strip()
+        product_code = str(raw_product_code or "").strip()
         if not store_id or not product_code:
             continue
         key = (store_id, product_code)
@@ -306,6 +308,57 @@ def product_core_bulk(user, tenant_id, items, months=3):
             "movement": core.get("movement") or [],
             "billItems": [],
             "activeBillNo": None,
+        }
+
+    if not unique_items:
+        return {"items": []}
+
+    workers = min(8, len(unique_items))
+    results = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_load_one, item) for item in unique_items]
+        for future in as_completed(futures):
+            results.append(future.result())
+
+    return {"items": results}
+
+
+def product_core_bulk_split(user, tenant_id, items, months, mode):
+    """Quick Stock's Sales/Purchase toggle, across all stores in one request.
+
+    Unlike product_core_bulk (which always runs usp_ProductCore and gets both
+    purchases AND sales back whether the toggle needs them or not), this calls
+    only the SPs the active `mode` actually needs: batches + movement (always,
+    for the chart/batch modal) and ONLY sales or ONLY purchases -- never both.
+    usp_PurchaseHistory / usp_SalesHistory / usp_BatchDetails /
+    usp_MonthlyMovement are the same SPs usp_ProductCore's result sets are
+    copy-pasted from (see stock_procedures.sql), so this returns identical
+    rows, just without computing the side the toggle isn't showing."""
+    assert_tenant_access(user, tenant_id)
+    unique_items = []
+    seen = set()
+    for item in items or []:
+        raw_store_id = item.get("store_id") if isinstance(item, dict) else item.store_id
+        raw_product_code = item.get("product_code") if isinstance(item, dict) else item.product_code
+        store_id = str(raw_store_id or "").strip()
+        product_code = str(raw_product_code or "").strip()
+        if not store_id or not product_code:
+            continue
+        key = (store_id, product_code)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_items.append({"store_id": store_id, "product_code": product_code})
+
+    def _load_one(item):
+        core = repository.get_product_core_split(tenant_id, item["store_id"], item["product_code"], months, mode)
+        return {
+            "store_id": item["store_id"],
+            "product_code": item["product_code"],
+            "batches": core.get("batches") or [],
+            "purchases": core.get("purchases") or [],
+            "sales": core.get("sales") or [],
+            "movement": core.get("movement") or [],
         }
 
     if not unique_items:

@@ -56,6 +56,28 @@ def _execution_status(execution_id):
     return row[0] if row else None
 
 
+def _agent_heartbeat_age_seconds(store_id):
+    """Seconds since this store's agent last beat, or None if it never has."""
+    conn = platform_connection()
+    try:
+        row = conn.cursor().execute(
+            "SELECT DATEDIFF(SECOND, last_heartbeat, GETDATE()) FROM dbo.store_agent_registry "
+            "WHERE store_id = ? AND is_active = 1",
+            store_id,
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row and row[0] is not None else None
+
+
+# A PENDING claim the agent never picks up (store PC is off for the night,
+# or still on its way back from a restart) should fail fast with a clear
+# reason instead of silently burning the full 900s timeout -- this is the
+# same signal SyncAdminRepository._reap_stale_executions uses for agent death.
+AGENT_OFFLINE_HEARTBEAT_SECONDS = 90
+STILL_PENDING_GRACE_SECONDS = 60
+
+
 def trigger_and_wait(store_id, store_code, on_progress=None,
                       timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
     """Queue a FULL device sync for ``store_id`` and block until it completes.
@@ -80,6 +102,7 @@ def trigger_and_wait(store_id, store_code, on_progress=None,
     execution_id = claim["execution_id"]
 
     deadline = time.monotonic() + timeout_seconds
+    pending_since = time.monotonic() if claim["status"] == "PENDING" else None
     last_status = claim["status"]
     report(f"Waiting for {store_code}'s device to sync (status: {last_status})...")
 
@@ -88,6 +111,7 @@ def trigger_and_wait(store_id, store_code, on_progress=None,
         if status != last_status:
             report(f"{store_code} device sync: {status}")
             last_status = status
+            pending_since = time.monotonic() if status == "PENDING" else None
         if status == "COMPLETED":
             return execution_id
         if status == "FAILED":
@@ -100,6 +124,20 @@ def trigger_and_wait(store_id, store_code, on_progress=None,
                 f"Sync execution {execution_id} for {store_code} disappeared "
                 "before completing."
             )
+        # Still PENDING past the grace period: check whether the agent is
+        # even reachable instead of silently burning the full timeout on a
+        # claim nobody is going to pick up (store PC off for the night, or
+        # mid-restart). A live agent just hasn't polled yet -- keep waiting.
+        if (status == "PENDING" and pending_since is not None
+                and time.monotonic() - pending_since > STILL_PENDING_GRACE_SECONDS):
+            age = _agent_heartbeat_age_seconds(store_id)
+            if age is None or age > AGENT_OFFLINE_HEARTBEAT_SECONDS:
+                raise DeviceSyncFailed(
+                    f"{store_code}'s device agent is offline "
+                    f"({'no heartbeat ever recorded' if age is None else f'last seen {age}s ago'}); "
+                    f"the live sync request is still queued (execution_id={execution_id}) "
+                    "and will run automatically once the device reconnects."
+                )
         time.sleep(POLL_INTERVAL_SECONDS)
 
     raise DeviceSyncTimeout(

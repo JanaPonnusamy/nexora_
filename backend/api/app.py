@@ -22,6 +22,7 @@ mimetypes.add_type('font/woff', '.woff')
 mimetypes.add_type('font/woff2', '.woff2')
 
 from controllers.auth_controller import router as auth_router
+from controllers.password_reset_controller import router as password_reset_router
 from controllers.tenant_controller import router as tenant_router
 from controllers.store_controller import router as store_router
 from controllers.role_controller import router as role_router
@@ -77,6 +78,9 @@ from modules.licensing.router import (
 from modules.stock_availability.router import (
     router as stock_availability_router
 )
+from modules.quick_stock.router import (
+    router as quick_stock_router
+)
 from modules.stock_check_report.router import (
     router as stock_check_report_router
 )
@@ -91,6 +95,9 @@ from modules.stock_integrity.router import (
 )
 from modules.supplier_stock_analysis.router import (
     router as supplier_stock_analysis_router
+)
+from modules.supplier_mail_import.router import (
+    router as supplier_mail_import_router
 )
 from modules.procurement.router import (
     router as procurement_router
@@ -112,6 +119,9 @@ from modules.nonmoving_analysis.router import (
 )
 from modules.rate_analysis.router import (
     router as rate_analysis_router
+)
+from modules.supplier_rate_engine.router import (
+    router as supplier_rate_engine_router
 )
 from modules.sale_analysis.router import (
     router as sale_analysis_router
@@ -137,6 +147,9 @@ from modules.pass_gen.router import (
 )
 from modules.legacy_order.router import (
     router as legacy_order_router
+)
+from modules.db_monitor.router import (
+    router as db_monitor_router
 )
 from modules.nmv_integration.router import (
     router as nmv_integration_router,
@@ -223,6 +236,14 @@ _cors_regex_compiled = re.compile(_cors_regex)
 _PUBLIC_API_PATHS = {
     '/api/auth/login',
     '/api/auth/setup-login',
+    # Forgot Password: a locked-out user has no JWT yet, by definition.
+    # Both endpoints are self-contained-safe without auth -- /request never
+    # reveals account existence and is rate-limited server-side; /confirm
+    # requires possession of a cryptographically random, single-use,
+    # short-lived token mailed only to the account's own registered
+    # address (see modules/password_reset/service.py).
+    '/api/auth/password-reset/request',
+    '/api/auth/password-reset/confirm',
     # HO discovery: a store agent / desktop client calls this BEFORE it has any
     # credential, precisely to learn where HO currently lives. Returns only
     # public routing info (URLs + ordering), no secrets.
@@ -296,6 +317,10 @@ _PUBLIC_AGENT_PATTERNS = (
     # HO node <-> HO node package mirror: no user session; authenticated by the
     # shared NEXORA_PACKAGE_PEER_KEY header inside the route (403 without it).
     re.compile(r'^/api/device-controller/peer/.+$'),
+    # Quick Stock: deliberately no login (kiosk-style, opens and searches
+    # instantly on any store PC). Authenticated by its own shared-passcode
+    # header (x-quick-stock-pin) inside each route, not a JWT.
+    re.compile(r'^/api/quick-stock/.+$'),
 )
 
 def _is_public_agent_call(request: Request) -> bool:
@@ -362,6 +387,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(password_reset_router)
 app.include_router(audit_router)
 app.include_router(tenant_router)
 app.include_router(store_router)
@@ -383,17 +409,20 @@ app.include_router(sync_agent_router)
 app.include_router(sync_shared_table_router)
 app.include_router(file_transfer_admin_router)
 app.include_router(stock_availability_router)
+app.include_router(quick_stock_router)
 app.include_router(stock_check_report_router)
 app.include_router(label_exporter_router)
 app.include_router(nmw_sales_report_router)
 app.include_router(stock_integrity_router)
 app.include_router(supplier_stock_analysis_router)
+app.include_router(supplier_mail_import_router)
 app.include_router(procurement_router)
 app.include_router(reports_router)
 app.include_router(expiry_report_router)
 app.include_router(expiry_stock_router)
 app.include_router(nonmoving_report_router)
 app.include_router(nonmoving_analysis_router)
+app.include_router(supplier_rate_engine_router)
 app.include_router(rate_analysis_router)
 app.include_router(sale_analysis_router)
 app.include_router(time_report_router)
@@ -402,6 +431,7 @@ if document_extraction_router is not None:
     app.include_router(document_extraction_router)
 app.include_router(pass_gen_router)
 app.include_router(legacy_order_router)
+app.include_router(db_monitor_router)
 app.include_router(nmv_integration_router)
 app.include_router(nmv_integration_admin_router)
 app.include_router(remote_order_agent_router)
@@ -480,6 +510,18 @@ def _start_legacy_evening_order_on_startup():
         print("[EVENING_ORDER] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
+def _start_legacy_morning_order_on_startup():
+    # Morning auto order: one order per store per day once its agent is online
+    # and today's bills are synced (off until enabled per tenant in Legacy
+    # Order > Morning auto order). See legacy_order/morning_order.py.
+    try:
+        from modules.legacy_order import morning_order
+        morning_order.start_background_loop()
+    except Exception:
+        import traceback
+        print("[MORNING_ORDER] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
 def _start_sync_health_monitor_on_startup():
     # Watches every store/table sync and WhatsApps an alert when one keeps
     # failing / goes stale / an agent drops (silent when all good). See
@@ -490,6 +532,44 @@ def _start_sync_health_monitor_on_startup():
     except Exception:
         import traceback
         print("[SYNC_HEALTH] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _start_db_guard_on_startup():
+    # Auto-repairs NEXORA_PLATFORM + every tenant's legacy DB out of
+    # RECOVERY_PENDING / SUSPECT / EMERGENCY / SINGLE_USER (never a data-loss
+    # repair) and feeds /health/maintenance. See modules/legacy_order/db_guard.py.
+    try:
+        from modules.legacy_order import db_guard
+        db_guard.start_background_loop()
+    except Exception:
+        import traceback
+        print("[DB_GUARD] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _start_product_mapping_mirror_sync_on_startup():
+    # PRODMAP-MIRROR-01: keeps dbo.product_mapping_mirror inside each
+    # tenant's OrderNMC/OrderSMS/OrderSuccess current from NEXORA_PLATFORM's
+    # product_mapping, so backfill_store_product_codes() can resolve
+    # StoreProductCode locally with no cross-database join. See
+    # modules/supplier_stock_analysis/mirror_sync.py.
+    try:
+        from modules.supplier_stock_analysis import mirror_sync
+        mirror_sync.start_background_loop()
+    except Exception:
+        import traceback
+        print("[PRODUCT_MAPPING_MIRROR] failed to start:\n" + traceback.format_exc())
+
+@app.on_event('startup')
+def _start_supplier_mail_import_on_startup():
+    # Polls each tenant's mailbox and imports supplier stock Excel files for
+    # suppliers switched to mail import. Idle until a tenant enables it;
+    # SUPPLIER_MAIL_IMPORT_LOOP=0 disables. See modules/supplier_mail_import.
+    try:
+        from modules.supplier_mail_import import service as supplier_mail_import
+        supplier_mail_import.start_background_loop()
+    except Exception:
+        import traceback
+        print("[SUPPLIER_MAIL_IMPORT] failed to start:\n" + traceback.format_exc())
 
 @app.on_event('startup')
 def _start_file_transfer_receiver_on_startup():
@@ -537,6 +617,14 @@ async def health():
     # thread pool, which previously made desktop readiness probes stall even
     # while the API process was alive.
     return {'status':'healthy'}
+
+@app.get('/health/maintenance')
+async def health_maintenance():
+    # Polled (no login) by the Stock Client and MediQ for their "under
+    # maintenance" screen. In-memory only -- the DB guard thread does the
+    # database work -- so it answers even while SQL Server is down.
+    from modules.legacy_order import db_guard
+    return db_guard.status()
 
 @app.get('/health/db')
 def health_db():

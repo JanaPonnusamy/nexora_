@@ -18,7 +18,9 @@ class OrderProcessRequest(BaseModel):
     # Only products sold in the last N days are ordered; None = the store's
     # default (service.default_recency_days: 15 store / 90 warehouse).
     recency_days: Optional[int] = None
-    mode: str = "local"  # 'local' = OrderNMC's synced copy, 'remote' = branch DB
+    mode: str = "local"  # 'local' = OrderNMC's synced copy, 'remote' = branch DB,
+    # 'nexora' = one-off NEXORA_PLATFORM.sync.* relay before reading (service.
+    # start_order_process's mode == "nexora" branch)
     # Pending-supplier-assignment WARNING (see repository.
     # qty_check_confirmation_count / service.QtyCheckConfirmationRequired):
     # when more than one qty_check=1/status=0 product exists on the
@@ -48,6 +50,40 @@ class OrderProcessRequest(BaseModel):
     last_grn: Optional[Union[int, str]] = None
 
 
+class AddPendingOrderItemRequest(BaseModel):
+    product_code: int
+    product_name: Optional[str] = None
+    order_id: Optional[int] = None
+    qty: Optional[float] = None
+    note: Optional[str] = None
+
+
+class AddPendingOrderItemsRequest(BaseModel):
+    # Order Gap Review "Mark pending": the reviewed not-received lines.
+    order_id: Optional[int] = None
+    items: List[AddPendingOrderItemRequest]
+    note: Optional[str] = None
+
+
+class ClearPendingOrderItemsRequest(BaseModel):
+    ids: List[int]
+
+
+class MorningScheduleRequest(BaseModel):
+    enabled: bool = False
+    run_at: str = "07:45"     # first start (store online from here on)
+    until: str = "09:00"      # no new start after this
+    stores: Optional[List[str]] = None  # None = every active store of the tenant
+    retry_minutes: int = 10   # offline / no bill from today yet -> try again
+    days: Optional[List[int]] = None  # weekday() numbers; None = Monday-Saturday
+
+
+class CompleteGapReviewRequest(BaseModel):
+    # The order the screen reviewed (must be the store's current order).
+    order_id: Optional[int] = None
+    not_received: Optional[int] = None
+
+
 class RestoreBackupOrderRequest(BaseModel):
     # Always the operator's explicit selection -- never inferred as
     # MAX(OrderId) (see repository.restore_backup_order's docstring and
@@ -61,8 +97,20 @@ class StockUpdateRequest(BaseModel):
     source_store_name: str = "NMW"
 
 
+class StockUpdateAllRequest(BaseModel):
+    # Optional: when omitted, the server resolves the tenant's own warehouse
+    # store (e.g. SHP for SMS, NMW for Nathan) instead of assuming NMW.
+    source_store_name: Optional[str] = None
+
+
 class JobStarted(BaseModel):
     job_id: str
+
+
+class StockUpdateAllStarted(BaseModel):
+    source_store: str
+    started: List[dict]
+    skipped: List[dict]
 
 
 class ComparePreviousOrderRequest(BaseModel):
@@ -106,6 +154,17 @@ class OrderEngineRequest(BaseModel):
 
 class CompareTodayRequest(BaseModel):
     enabled: bool
+
+
+class OrderModeRequest(BaseModel):
+    mode: Optional[str] = None  # 'local' | 'remote' | 'nexora' | None (-> local)
+
+
+class OrderDefaultsRequest(BaseModel):
+    # None clears that field's override, falling back to the global/warehouse default.
+    min_days: Optional[int] = None
+    max_days: Optional[int] = None
+    recency_days: Optional[int] = None
 
 
 class EveningScheduleRequest(BaseModel):
@@ -166,6 +225,9 @@ class ExportOrderRequest(BaseModel):
     # note like "12%"). Never stored in OrderNMC; it only adds a Remarks column
     # after OrderQty when at least one exported row has one.
     remarks: dict[str, str] | None = None
+    # Also mail the exported file(s) to the supplier from the tenant mailbox
+    # (see supplier_order_mail); the result comes back in X-Mail-* headers.
+    email_supplier: bool = False
 
 
 class SupplierWhatsAppTarget(BaseModel):
@@ -256,5 +318,17 @@ class PmOrderRequest(BaseModel):
     confirmed: bool = False  # acknowledge a same-day pending-assignment warning
 
 
+class OrderAutomationRequest(BaseModel):
+    automated_order_enabled: bool = False
+    production_mode: bool = False
+    min_delay_seconds: int = 60
+    max_delay_seconds: int = 420
+
+
+class MessageSettingRequest(BaseModel):
+    enabled: bool = False
+    targets: List[dict] = []  # [{"name": "...", "kind": "group"|"contact"}]
+
+
 class CompareModeRequest(BaseModel):
-    mode: str  # PREVIOUS_PENDING / TODAY / NONE / HO
+    mode: str  # PREVIOUS_PENDING / TODAY / PENDING_LIST / TODAY_PENDING / NONE / HO

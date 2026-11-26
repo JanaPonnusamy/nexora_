@@ -1,0 +1,512 @@
+.pm-order-entry {
+  padding: 1.25rem 1.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  font-size: 0.95rem;
+}
+
+.poe-screen-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.poe-screen-head h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.poe-screen-head p {
+  margin: 0.3rem 0 0;
+  font-size: 0.92rem;
+  opacity: 0.68;
+}
+
+.poe-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.poe-tools select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.45rem;
+  background: var(--bs-body-bg);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.poe-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.1rem;
+}
+
+.poe-card {
+  padding: 1.1rem 1.25rem 1.25rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.65rem;
+  background: var(--bs-body-bg);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.poe-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--bs-border-color-translucent, var(--bs-border-color));
+}
+
+.poe-card-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+.poe-muted {
+  font-size: 0.86rem;
+  opacity: 0.65;
+}
+
+.poe-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0;
+}
+
+.poe-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 8rem;
+}
+
+.poe-meta dt {
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.poe-meta dd {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.poe-ok {
+  color: var(--bs-success-text-emphasis, #0a3622);
+}
+
+.poe-warn {
+  color: var(--bs-warning-text-emphasis, #664d03);
+}
+
+.poe-bad,
+.status-line.error {
+  color: var(--bs-danger-text-emphasis, #842029);
+}
+
+.poe-run {
+  color: var(--bs-info-text-emphasis, #055160);
+}
+
+.status-line {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.status-line.error {
+  background: var(--bs-danger-bg-subtle, #f8d7da);
+}
+
+.status-line.poe-warn {
+  background: var(--bs-warning-bg-subtle, #fff3cd);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.status-line.poe-ok {
+  background: var(--bs-success-bg-subtle, #d1e7dd);
+}
+
+.poe-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.poe-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.poe-form label > span {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.poe-form input,
+.poe-form select {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.35rem;
+  background: var(--bs-body-bg);
+  color: inherit;
+  font: inherit;
+}
+
+.poe-form-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.poe-form-row label input {
+  width: 6rem;
+}
+
+.poe-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.poe-checkbox input {
+  margin-top: 0.2rem;
+}
+
+.poe-inline-btn {
+  margin-left: auto;
+}
+
+.poe-job {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.poe-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 10rem;
+  overflow-y: auto;
+  font-size: 0.78rem;
+}
+
+.poe-tablewrap {
+  overflow-x: auto;
+}
+
+.poe-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.poe-table thead th {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  padding-bottom: 0.5rem;
+}
+
+.poe-table th,
+.poe-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.poe-table th.poe-left,
+.poe-table td.poe-left {
+  text-align: left;
+  white-space: normal;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  padding: 0.55rem 1.1rem;
+  border-radius: 0.5rem;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: filter 0.12s ease, box-shadow 0.12s ease;
+}
+
+.primary-button {
+  background: var(--bs-primary, #0d6efd);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(13, 110, 253, 0.25);
+}
+
+.primary-button:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.primary-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.secondary-button {
+  background: var(--bs-body-bg);
+  border-color: var(--bs-border-color);
+  color: inherit;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: var(--bs-secondary-bg, #f1f3f5);
+}
+
+.danger-button {
+  background: var(--bs-danger, #dc3545);
+  color: #fff;
+}
+
+.poe-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.poe-modal-panel {
+  background: var(--bs-body-bg);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  max-width: 48rem;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.poe-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.poe-modal-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+/* The top ("will be used") row of the recent GRN / sale bill grids -- the
+   number that gets auto-submitted as Last GRN / Last bill. */
+.poe-table tr.poe-top-row {
+  background: var(--bs-success-bg-subtle, #d1e7dd);
+  font-weight: 600;
+}
+
+.poe-top-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 1rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: var(--bs-success, #198754);
+  color: #fff;
+}
+
+.poe-readonly-field {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.45rem;
+  background: var(--bs-secondary-bg, #f1f3f5);
+  color: inherit;
+  font: inherit;
+  min-height: 1.8rem;
+  display: flex;
+  align-items: center;
+}
+
+.poe-readonly-field--value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.poe-auto-tag {
+  font-size: 0.78rem;
+  opacity: 0.6;
+  margin-left: 0.3rem;
+}
+
+.poe-auto-note {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.poe-last-sync {
+  margin-right: 0.25rem;
+  white-space: nowrap;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  background: var(--bs-secondary-bg, #f1f3f5);
+}
+
+.poe-last-sync-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.poe-last-sync-value {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+/* Order Entry sync view (OrderEntrySync.tsx): stands in for the order card
+   and grids while a store's sync runs -- headline + % + elapsed, a live
+   striped progress bar, the Store -> Nexora -> Order DB route, per-table
+   steps read from the job log, and the full auto-scrolling log. */
+.oes { display: flex; flex-direction: column; gap: 14px; padding: 20px 22px; }
+.oes-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.oes-head h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.oes-head p { margin: 0; }
+.oes-figures { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.oes-figures strong { font-size: 1.6rem; line-height: 1; font-variant-numeric: tabular-nums; color: var(--bs-primary); }
+.oes-figures span { font-variant-numeric: tabular-nums; font-size: 0.8rem; }
+.oes-bar { height: 10px; border-radius: 999px; background: var(--bs-secondary-bg); overflow: hidden; }
+.oes-bar-fill {
+  height: 100%; border-radius: inherit; transition: width 0.5s ease;
+  background: linear-gradient(90deg, var(--bs-primary-border-subtle, var(--bs-primary)), var(--bs-primary));
+}
+.oes-bar--live .oes-bar-fill {
+  background-image:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18) 25%, transparent 25%, transparent 50%,
+      rgba(255, 255, 255, 0.18) 50%, rgba(255, 255, 255, 0.18) 75%, transparent 75%),
+    linear-gradient(90deg, var(--bs-primary-border-subtle, var(--bs-primary)), var(--bs-primary));
+  background-size: 22px 22px, 100% 100%;
+  animation: oes-stripes 0.8s linear infinite;
+}
+@keyframes oes-stripes { to { background-position: 22px 0, 0 0; } }
+.oes--failed .oes-bar-fill { background: var(--bs-danger); }
+.oes--failed .oes-figures strong { color: var(--bs-danger-text-emphasis); }
+.oes-route { display: flex; gap: 0; margin: 0; padding: 0; list-style: none; font-size: 0.78rem; }
+.oes-route li { flex: 1; text-align: center; padding: 6px 4px; color: var(--bs-secondary-color); border-bottom: 2px solid var(--bs-border-color); }
+.oes-route li.on { color: var(--bs-body-color); border-bottom-color: var(--bs-primary); font-weight: 600; }
+.oes-body { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 1.4fr); gap: 14px; }
+.oes-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.oes-step {
+  display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 0.35rem; background: var(--bs-secondary-bg); font-size: 0.85rem;
+}
+.oes-step-rows { color: var(--bs-secondary-color); font-variant-numeric: tabular-nums; font-size: 0.78rem; }
+.oes-dot {
+  width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; font-weight: 700;
+}
+.oes-step.running .oes-dot { border: 2px solid var(--bs-border-color); border-top-color: var(--bs-primary); animation: oes-spin 0.8s linear infinite; }
+.oes-step.running .oes-step-rows { color: var(--bs-primary); }
+.oes-step.done .oes-dot { background: var(--bs-success); color: #fff; }
+.oes-step.failed .oes-dot { background: var(--bs-danger); color: #fff; }
+.oes-step.failed .oes-step-rows { color: var(--bs-danger-text-emphasis); }
+@keyframes oes-spin { to { transform: rotate(360deg); } }
+.oes-log {
+  max-height: 240px; min-height: 120px; overflow-y: auto; padding: 8px 10px;
+  border: 1px solid var(--bs-border-color); border-radius: 0.35rem; background: var(--bs-secondary-bg);
+  font-family: Consolas, 'Cascadia Mono', monospace; font-size: 0.76rem; line-height: 1.55;
+}
+.oes-log-line span { color: var(--bs-secondary-color); margin-right: 10px; }
+.oes-actions { display: flex; justify-content: flex-end; }
+@media (max-width: 760px) { .oes-body { grid-template-columns: 1fr; } }
+
+/* Order Entry steps: Review pending -> Fetch data / last bill + GRN -> Process order. */
+.oe-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.oe-steps li {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  background: var(--bs-body-bg);
+}
+
+.oe-steps li.is-now { border-color: var(--bs-primary); box-shadow: inset 3px 0 0 var(--bs-primary); }
+.oe-steps li.is-wait { opacity: 0.6; }
+
+.oe-step-no {
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.8rem;
+  background: var(--bs-tertiary-bg, #eee);
+  color: var(--bs-secondary-color, inherit);
+}
+
+.oe-steps li.is-now .oe-step-no { background: var(--bs-primary); color: #fff; }
+.oe-steps li.is-done .oe-step-no { background: var(--bs-success); color: #fff; }
+
+.oe-step-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.oe-step-text b { font-size: 0.86rem; }
+.oe-step-text span { font-size: 0.76rem; color: var(--bs-secondary-color, inherit); overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 1000px) {
+  .oe-steps { grid-template-columns: 1fr; }
+}

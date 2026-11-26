@@ -1,0 +1,217 @@
+.ntm-glass {
+  background: var(--ntm-glass-bg);
+  border: 1px solid var(--ntm-glass-border);
+  box-shadow: var(--ntm-shadow);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+
+.ntm-glass-panel,
+.ntm-glass-card {
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.ntm-glass-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.ntm-glass-button {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--ntm-glass-border);
+  background: var(--ntm-glass-bg);
+  color: var(--ntm-text-primary);
+  cursor: pointer;
+}
+
+.ntm-glass-button:hover {
+  border-color: var(--ntm-accent);
+}
+
+.ntm-glass-button--primary {
+  background: var(--ntm-accent);
+  color: var(--ntm-text-on, #fff);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.ntm-glass-input {
+  height: 32px;
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--ntm-border);
+  background: var(--ntm-table-bg);
+  color: var(--ntm-text-primary);
+  padding: 0 10px;
+}
+
+.ntm-glass-input:focus {
+  outline: 2px solid var(--ntm-accent);
+  outline-offset: 1px;
+}
+
+.ntm-glass-dropdown {
+  position: relative;
+}
+
+.ntm-glass-dropdown__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.ntm-theme-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ntm-glass-dropdown__menu {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 220px;
+  max-height: min(360px, calc(100vh - 72px));
+  overflow: auto;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--ntm-panel);
+  color: var(--ntm-text-primary);
+  box-shadow: var(--ntm-shadow);
+}
+
+.ntm-glass-dropdown__menu.is-fixed {
+  position: fixed;
+  right: auto;
+  margin: 0;
+}
+
+.ntm-glass-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 29, 50, 0.46);
+}
+
+.ntm-glass-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(80vh, 720px);
+  overflow: auto;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.ntm-glass-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ntm-glass-dialog__head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.ntm-glass-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  background: var(--ntm-elevated);
+  color: var(--ntm-text-secondary);
+  border: 1px solid var(--ntm-border);
+}
+
+.ntm-glass-badge--info { color: var(--ntm-accent); }
+.ntm-glass-badge--ok { color: var(--ntm-success); }
+.ntm-glass-badge--warn { color: var(--ntm-warning); }
+
+.ntm-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.ntm-theme-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ntm-theme-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ntm-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ntm-theme-menu__item.is-active,
+.ntm-theme-menu__item:hover {
+  background: var(--ntm-elevated);
+}
+
+.ntm-theme-menu__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ntm-theme-swatch {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.ntm-theme-swatch.is-active {
+  outline: 2px solid var(--ntm-accent);
+  outline-offset: 2px;
+}
+
+.ntm-theme-swatch__bar {
+  display: flex;
+  height: 28px;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.ntm-theme-swatch__bar span {
+  flex: 1;
+}
+
+.ntm-theme-swatch strong {
+  display: block;
+  font-size: 13px;
+}
+
+.ntm-theme-swatch em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--ntm-text-muted);
+}

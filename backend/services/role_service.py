@@ -28,6 +28,16 @@ class RoleService:
     def set_active(self, role_id, is_active):
         return RoleRepository().set_active(role_id, is_active)
 
+    def is_superadmin_tier_role(self, role_id):
+        r = RoleRepository().get_role_by_id(role_id)
+        return bool(r) and r[1] in ("SUPER_ADMIN", "PLATFORM_OWNER")
+
+    def remaining_superadmins_if_role_deactivated(self, role_id):
+        return RoleRepository().count_active_superadmin_assignments(exclude_role_id=role_id)
+
+    def remaining_superadmins_if_user_deactivated(self, user_id):
+        return RoleRepository().count_active_superadmin_assignments(exclude_user_id=user_id)
+
     @staticmethod
     def _serialize(r):
         return {

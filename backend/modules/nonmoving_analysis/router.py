@@ -166,13 +166,14 @@ def own_store(
     supplier: Optional[str] = None,
     min_days: Optional[int] = Query(None, ge=0),
     max_days: Optional[int] = Query(None, ge=0),
-    expiry: Optional[str] = Query(None, description="expired | near | risk"),
+    expiry: Optional[str] = Query(None, description="expired | near | risk | valid"),
     include_zero: bool = False,
     non_moving_only: bool = False,
     sort: str = "cost_value",
     direction: str = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(200, ge=1, le=service.MAX_PAGE),
+    all_rows: bool = Query(False, description="Return every filtered row, unpaged (the grid's own load)"),
     refresh: bool = False,
     bands: Optional[str] = None,
     new_days: Optional[int] = Query(None, ge=1, le=730),
@@ -185,7 +186,7 @@ def own_store(
     filters = dict(search=search, classes=classes, ptype=ptype, supplier=supplier, min_days=min_days,
                    max_days=max_days, expiry=expiry, include_zero=include_zero, non_moving_only=non_moving_only)
     xlsx = format.lower() == "xlsx"
-    res = service.own_store(tenant_id, store_id, cfg, filters, sort, direction, page, page_size, refresh, all_rows=xlsx)
+    res = service.own_store(tenant_id, store_id, cfg, filters, sort, direction, page, page_size, refresh, all_rows=(xlsx or all_rows))
     if not xlsx:
         return res
     code = res["store"]["store_code"]
@@ -220,6 +221,19 @@ def product_batches(
     scope = _assert_allowed(current_user, tenant_id)
     _check_store(scope, store_id)
     return service.product_batches(tenant_id, store_id, product_code)
+
+
+@router.get("/product/sales-trend")
+def product_sales_trend(
+    tenant_id: str = Query(...),
+    store_id: str = Query(...),
+    product_code: str = Query(...),
+    months: int = Query(6, ge=1, le=24),
+    current_user: dict = Depends(get_current_user),
+):
+    scope = _assert_allowed(current_user, tenant_id)
+    _check_store(scope, store_id)
+    return service.product_sales_trend(tenant_id, store_id, product_code, months)
 
 
 @router.get("/other-stores")

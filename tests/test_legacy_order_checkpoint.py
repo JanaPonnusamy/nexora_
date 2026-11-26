@@ -211,3 +211,36 @@ def test_compare_mode_wins_and_previous_pending_uses_the_previous_order(monkeypa
     monkeypatch.setattr(service.repository, "compare_previous_order",
                         lambda store, oid: calls.append(oid) or {"order_id": oid, "affected_rows": 3})
     assert service._compare_for_mode("j", "NMC", "PREVIOUS_PENDING")["order_ids"] == [7] and calls == [7]
+
+
+def test_pending_list_mode_compares_only_the_pending_list(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "_update", lambda job_id, **f: None)
+    monkeypatch.setattr(service.repository, "todays_previous_order_ids", lambda store: calls.append("today") or [5])
+    monkeypatch.setattr(service.repository, "compare_previous_order", lambda store, oid: {"affected_rows": 2})
+    monkeypatch.setattr(service.repository, "compare_pending_list",
+                        lambda store: calls.append("pending") or {"pending_products": 3, "covered": 2, "reduced": 1, "affected_rows": 3})
+    assert service._compare_for_mode("j", "NMC", "PENDING_LIST")["affected_rows"] == 3 and calls == ["pending"]
+
+
+def test_today_pending_mode_runs_today_then_the_pending_list(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "_update", lambda job_id, **f: None)
+    monkeypatch.setattr(service.repository, "todays_previous_order_ids", lambda store: calls.append("today") or [5])
+    monkeypatch.setattr(service.repository, "compare_previous_order", lambda store, oid: {"affected_rows": 2})
+    monkeypatch.setattr(service.repository, "compare_pending_list",
+                        lambda store: calls.append("pending") or {"pending_products": 3, "covered": 2, "reduced": 1, "affected_rows": 3})
+    result = service._compare_for_mode("j", "NMC", "TODAY_PENDING")
+    assert calls == ["today", "pending"] and result["affected_rows"] == 5 and result["order_ids"] == [5]
+
+
+def test_order_entry_requires_the_current_orders_gap_review(monkeypatch):
+    monkeypatch.setattr(service.repository, "gap_review_status",
+                        lambda store: {"required": True, "done": False, "order_id": 20261126183004})
+    with pytest.raises(service.GapReviewRequired, match="20261126183004"):
+        service.require_gap_review("NMG")
+    monkeypatch.setattr(service.repository, "gap_review_status",
+                        lambda store: {"required": True, "done": True, "order_id": 20261126183004})
+    assert service.require_gap_review("NMG")["done"] is True
+    monkeypatch.setattr(service.repository, "gap_review_status", lambda store: {"required": False, "done": True})
+    assert service.require_gap_review("NMG")["required"] is False

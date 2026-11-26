@@ -143,6 +143,25 @@ def get_product_core(tenant_id, store_id, product_code, months=3):
     }
 
 
+def get_product_core_split(tenant_id, store_id, product_code, months, mode):
+    """batches + movement + ONLY the active mode's purchases-or-sales, in one
+    round trip (see usp_ProductCoreSplit). Replaces the 2-3 separate
+    get_batch_details/get_monthly_movement/get_purchase_or_sales_history
+    calls product_core_bulk_split used to issue per store."""
+    batches, purchases, sales, movement = _run_sp_multi(
+        "EXEC stock.usp_ProductCoreSplit "
+        "@TenantId=?, @StoreId=?, @ProductCode=?, @Months=?, @Mode=?",
+        (tenant_id, store_id, product_code, months, mode),
+        4,
+    )
+    return {
+        "batches": batches,
+        "purchases": purchases,
+        "sales": sales,
+        "movement": movement,
+    }
+
+
 def get_purchase_history(tenant_id, store_id, product_code):
     return _run_sp(
         "EXEC stock.usp_PurchaseHistory "

@@ -565,6 +565,7 @@ BEGIN
     SELECT
         ROW_NUMBER() OVER (ORDER BY p.ProductName)    AS line_no,
         bm.SalesmanName                               AS salesman,
+        CAST(p.ProductCode AS NVARCHAR(100))          AS product_code,
         p.ProductName                                 AS product_name,
         p.UnitDescription                             AS sale_unit,
         SUM(ISNULL(psi.Quantity, 0))                  AS qty,
@@ -583,7 +584,7 @@ BEGIN
            AND p.store_id    = psi.store_id
            AND p.ProductCode = psi.ProductCode
     WHERE ISNULL(psi.TransactionValidity, 0) = 0
-    GROUP BY bm.SalesmanName, p.ProductName, p.UnitDescription
+    GROUP BY bm.SalesmanName, p.ProductCode, p.ProductName, p.UnitDescription
     ORDER BY p.ProductName;
 END
 GO
@@ -761,6 +762,137 @@ BEGIN
         ISNULL(t.AdjustmentQuantity, 0)          AS adj,
         ISNULL(t.StockInHand, 0)                 AS stk
     FROM months mo
+    LEFT JOIN sync.ProductTrans t
+           ON t.tenant_id = @TenantId
+          AND t.store_id  = @StoreId
+          AND t.ProductCode = @ProductCode
+          AND YEAR(t.MonthOfStatistics)  = YEAR(mo.m)
+          AND MONTH(t.MonthOfStatistics) = MONTH(mo.m)
+    ORDER BY mo.m
+    OPTION (MAXRECURSION 100);
+END
+GO
+
+/* ===========================================================================
+   9) stock.usp_ProductCoreSplit   (Quick Stock Sales/Purchase toggle, 1 round trip)
+   Same batches + movement as usp_ProductCore (result sets 1 and 4), but only
+   ONE of purchases/sales (per @Mode) instead of both -- cuts the all-stores
+   detail view from 2-3 round trips per store down to 1, matching
+   usp_ProductCore's single-connection pattern. Kept byte-for-byte in sync
+   with usp_BatchDetails / usp_PurchaseHistory / usp_SalesHistory / usp_MonthlyMovement.
+   @Mode: 'sales' or 'purchase'.
+   OUTPUT: result set 1 = batches, result set 2 = purchases (empty unless
+   @Mode='purchase'), result set 3 = sales (empty unless @Mode='sales'),
+   result set 4 = monthly movement.
+   =========================================================================== */
+IF OBJECT_ID(N'stock.usp_ProductCoreSplit', N'P') IS NOT NULL DROP PROCEDURE stock.usp_ProductCoreSplit;
+GO
+CREATE PROCEDURE stock.usp_ProductCoreSplit
+    @TenantId     UNIQUEIDENTIFIER,
+    @StoreId      UNIQUEIDENTIFIER,
+    @ProductCode  INT,
+    @Months       INT = 4,
+    @Mode         VARCHAR(10) = 'sales'
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Result set 1: batches (== stock.usp_BatchDetails)
+    SELECT
+        CAST(b.BatchCode AS VARCHAR(50))         AS batch_no,
+        ISNULL(b.Stock, 0)                       AS stock,
+        CAST(b.ExpiryDate AS DATE)                AS expiry_date,
+        ISNULL(b.PurchasePrice, 0)               AS ptr,
+        ISNULL(b.MRP, 0)                         AS mrp,
+        b.SaleUnit                               AS sale_unit,
+        CAST(b.GrnDate AS DATE)                   AS last_purchase_date,
+        CAST(b.LastSaleDate AS DATE)              AS last_sale_date,
+        DATEDIFF(DAY, b.GrnDate, GETDATE())      AS purchase_age_days,
+        DATEDIFF(DAY, b.LastSaleDate, GETDATE()) AS sales_age_days
+    FROM sync.Batches b
+    WHERE b.tenant_id = @TenantId
+      AND b.store_id  = @StoreId
+      AND b.ProductCode = @ProductCode
+    ORDER BY
+        CASE WHEN ISNULL(b.Stock, 0) > 0 THEN 0 ELSE 1 END,
+        b.ExpiryDate;
+
+    -- Result set 2: purchases (== stock.usp_PurchaseHistory), only when @Mode='purchase'
+    SELECT TOP (15)
+        CAST(pt.Grnnumber AS NVARCHAR(50)) AS grn_no,
+        CAST(pt.grndate AS DATE)           AS [date],
+        ISNULL(pt.stockreceived, 0)        AS qty,
+        ISNULL(pt.FreeQty, 0)              AS free,
+        ISNULL(pt.ProductDiscPercent, 0)   AS dis,
+        ISNULL(pt.itemcost, 0)             AS cost,
+        ISNULL(pt.purchaseprice, 0)        AS ptr,
+        ISNULL(pt.mrp, 0)                  AS mrp,
+        RTRIM(pt.InvoiceSeries)            AS invoice_series,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN 'transfer' ELSE 'supplier' END AS party_type,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI'
+             THEN ISNULL(NULLIF(RTRIM(wh.store_code), ''), 'Transfer')
+             ELSE ISNULL(NULLIF(RTRIM(s.suppliername), ''), CAST(pt.SupplierCode AS NVARCHAR(100)))
+        END                                AS supplier,
+        CASE WHEN RTRIM(pt.InvoiceSeries) = 'TI' THEN wh.store_name END AS source_store_name
+    FROM sync.PurchaseTrans pt
+    LEFT JOIN sync.Suppliers s
+           ON s.tenant_id = pt.tenant_id
+          AND s.store_id  = pt.store_id
+          AND CAST(s.suppliercode AS VARCHAR(100)) = CAST(pt.SupplierCode AS VARCHAR(100))
+    OUTER APPLY (
+        SELECT TOP (1) w.store_code, w.store_name
+        FROM dbo.stores w
+        WHERE w.tenant_id = pt.tenant_id AND w.is_warehouse = 1
+        ORDER BY w.store_code
+    ) wh
+    WHERE @Mode = 'purchase'
+      AND pt.tenant_id = @TenantId
+      AND pt.store_id  = @StoreId
+      AND pt.ProductCode = @ProductCode
+    ORDER BY pt.grndate DESC;
+
+    -- Result set 3: sales (== stock.usp_SalesHistory), only when @Mode='sales'
+    SELECT TOP (50)
+        CAST(psi.TransactionDate AS DATE)   AS [date],
+        psi.Bnumber                         AS bill_no,
+        si.CustomerName                     AS customer,
+        ISNULL(psi.Quantity, 0)             AS qty,
+        ISNULL(psi.MRP, 0)                  AS mrp,
+        ISNULL(psi.DiscountPercentage, 0)   AS discount
+    FROM sync.ProductSaleInformation psi
+    LEFT JOIN sync.SaleInformation si
+           ON si.tenant_id = psi.tenant_id
+          AND si.store_id  = psi.store_id
+          AND si.BNumber   = psi.Bnumber
+          AND CAST(si.BillDate AS DATE) = CAST(psi.TransactionDate AS DATE)
+    WHERE @Mode = 'sales'
+      AND psi.tenant_id = @TenantId
+      AND psi.store_id  = @StoreId
+      AND psi.ProductCode = @ProductCode
+      AND ISNULL(psi.TransactionValidity, 0) = 0
+    ORDER BY psi.TransactionDate DESC;
+
+    -- Result set 4: monthly movement (== stock.usp_MonthlyMovement)
+    DECLARE @start2 DATE =
+        DATEADD(MONTH, -(@Months - 1), DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1));
+
+    ;WITH months2 AS
+    (
+        SELECT @start2 AS m
+        UNION ALL
+        SELECT DATEADD(MONTH, 1, m)
+        FROM months2
+        WHERE m < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+    )
+    SELECT
+        FORMAT(mo.m, 'MMM yyyy')                 AS period,
+        ISNULL(t.PurchaseQuantity, 0)            AS pur,
+        ISNULL(t.SaleQuantity, 0)                AS sal,
+        ISNULL(t.TransferInQuantity, 0)          AS tin,
+        ISNULL(t.TransferOutQuantity, 0)         AS tout,
+        ISNULL(t.AdjustmentQuantity, 0)          AS adj,
+        ISNULL(t.StockInHand, 0)                 AS stk
+    FROM months2 mo
     LEFT JOIN sync.ProductTrans t
            ON t.tenant_id = @TenantId
           AND t.store_id  = @StoreId

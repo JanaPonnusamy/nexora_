@@ -1,0 +1,115 @@
+.ntm-ai__panel {
+  background: var(--ntm-panel);
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-md);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.ntm-ai__panel h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.ntm-ai__panel p {
+  margin: 0 0 10px;
+  color: var(--ntm-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ntm-ai__warn {
+  color: var(--ntm-warning);
+}
+
+.ntm-ai__field {
+  display: block;
+  margin: 12px 0 6px;
+  font-size: 13px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-ai__input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--ntm-border);
+  border-radius: var(--ntm-radius-sm);
+  background: var(--ntm-bg);
+  color: var(--ntm-text-primary);
+  padding: 8px 10px;
+  font: 13px/1.4 var(--ntm-font-sans);
+}
+
+.ntm-ai__check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 10px 0;
+  font-size: 13px;
+  color: var(--ntm-text-secondary);
+}
+
+.ntm-ai__actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.ntm-ai__meta {
+  font-size: 12px;
+  color: var(--ntm-text-muted);
+}
+
+.ntm-ai__vocab {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.ntm-ai__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ntm-ai__table th,
+.ntm-ai__table td {
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--ntm-border);
+  padding: 8px 10px 8px 0;
+}
+
+.ntm-ai__table th {
+  color: var(--ntm-text-muted);
+  font-weight: 600;
+}
+
+.ntm-ai__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px 16px;
+  margin: 0 0 12px;
+}
+
+.ntm-ai__facts dt {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ntm-text-muted);
+}
+
+.ntm-ai__facts dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+.ntm-ai__result[data-outcome='model_unavailable'] {
+  border-left: 3px solid var(--ntm-warning);
+  padding-left: 12px;
+}

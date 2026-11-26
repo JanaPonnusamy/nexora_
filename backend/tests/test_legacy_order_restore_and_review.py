@@ -137,6 +137,16 @@ def thread_spy(monkeypatch):
     return created
 
 
+def _unwrap_tenant_scoped(target):
+    """start_order_process wraps every thread target in
+    database.tenant_scoped() so tenant context crosses the thread boundary
+    (see database.py). Unwrap it to assert against the real worker fn."""
+    freevars = target.__code__.co_freevars
+    if "fn" in freevars and target.__closure__:
+        return target.__closure__[freevars.index("fn")].cell_contents
+    return target
+
+
 @pytest.fixture
 def base_env(monkeypatch):
     monkeypatch.setattr(service, "_resolve_store", lambda sn: dict(_NMA_STORE))
@@ -238,7 +248,7 @@ def test_start_order_process_agent_synced_store_skips_both_warnings(thread_spy, 
 
     assert job_id
     assert thread_spy
-    assert thread_spy[0].target is service._run_agent_sync_then_order
+    assert _unwrap_tenant_scoped(thread_spy[0].target) is service._run_agent_sync_then_order
 
 
 def test_start_order_process_stale_confirm_also_clears_qtycheck_warning(base_env, thread_spy, monkeypatch):

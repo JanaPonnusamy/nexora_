@@ -20,12 +20,13 @@ const runtimeBase =
 // cross-origin CORS and ERR_CONNECTION_REFUSED regardless of the host/IP used to
 // open the SPA.
 const buildBase = import.meta.env.VITE_API_BASE_URL
-const BASE_URL =
+export const API_BASE_URL =
   runtimeBase !== undefined && runtimeBase !== null
     ? runtimeBase
     : buildBase !== undefined
       ? buildBase
       : 'http://122.252.246.181:8443'
+const BASE_URL = API_BASE_URL
 
 export class ApiError extends Error {
   status: number

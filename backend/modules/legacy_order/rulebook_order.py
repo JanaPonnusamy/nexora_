@@ -80,6 +80,25 @@ IF COL_LENGTH('dbo.LegacyOrderEngine', 'CompareTodayPrevious') IS NULL
 -- CompareTodayPrevious (TODAY when on, NONE when off).
 IF COL_LENGTH('dbo.LegacyOrderEngine', 'CompareMode') IS NULL
     ALTER TABLE dbo.LegacyOrderEngine ADD CompareMode VARCHAR(16) NULL;
+-- Per-store Min/Max/Recency overrides; NULL = the global/warehouse default
+-- (service.DEFAULT_MIN_DAYS etc.) still applies.
+IF COL_LENGTH('dbo.LegacyOrderEngine', 'MinDays') IS NULL
+    ALTER TABLE dbo.LegacyOrderEngine ADD MinDays INT NULL;
+IF COL_LENGTH('dbo.LegacyOrderEngine', 'MaxDays') IS NULL
+    ALTER TABLE dbo.LegacyOrderEngine ADD MaxDays INT NULL;
+IF COL_LENGTH('dbo.LegacyOrderEngine', 'RecencyDays') IS NULL
+    ALTER TABLE dbo.LegacyOrderEngine ADD RecencyDays INT NULL;
+-- Last successful manual (non-evening) Order Process for the store, so the
+-- evening schedule can skip a store the operator already ran by hand today
+-- instead of generating a second order for it.
+IF COL_LENGTH('dbo.LegacyOrderEngine', 'LastManualOrderAt') IS NULL
+    ALTER TABLE dbo.LegacyOrderEngine ADD LastManualOrderAt DATETIME2(0) NULL;
+-- Fixed per-store Source for the evening schedule (owner request 2026-11-24:
+-- the schedule must use fixed settings, not whatever the live grid happens to
+-- show); NULL = "local", same as a manual run's default. Agent-synced stores
+-- ignore this (service.start_order_process's agent_synced branch always wins).
+IF COL_LENGTH('dbo.LegacyOrderEngine', 'Mode') IS NULL
+    ALTER TABLE dbo.LegacyOrderEngine ADD Mode VARCHAR(16) NULL;
 """
 
 
@@ -118,6 +137,36 @@ def set_store_engine(store_name, engine, actor=None):
     return {"store_name": store_name, "engine": engine}
 
 
+def get_order_mode(store_name):
+    """Fixed Source for this store's evening/scheduled runs; None = 'local'."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        conn.commit()
+        row = cur.execute(
+            "SELECT Mode FROM dbo.LegacyOrderEngine WHERE StoreName = ?", store_name
+        ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def set_order_mode(store_name, mode, actor=None):
+    mode = str(mode or "").strip().lower() or None
+    if mode is not None and mode not in ("local", "remote", "nexora"):
+        raise ValueError("Source must be one of local, remote, nexora.")
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        cur.execute(
+            "MERGE dbo.LegacyOrderEngine AS t USING (SELECT ? AS StoreName) AS s "
+            "ON t.StoreName = s.StoreName "
+            "WHEN MATCHED THEN UPDATE SET Mode = ?, UpdatedAt = SYSUTCDATETIME(), UpdatedBy = ? "
+            "WHEN NOT MATCHED THEN INSERT (StoreName, Mode, UpdatedBy) VALUES (?, ?, ?);",
+            store_name, mode, actor, store_name, mode, actor,
+        )
+        conn.commit()
+    return {"store_name": store_name, "mode": mode}
+
+
 def get_compare_today(store_name):
     """The store's "Compare today's previous order" setting (default off)."""
     with database.get_central_connection() as conn:
@@ -148,9 +197,13 @@ def set_compare_today(store_name, enabled, actor=None):
 # Compare mode for Order Process (owner ruling 2026-11-05):
 #   PREVIOUS_PENDING  compare with the previous order (the original VB.NET compare)
 #   TODAY             compare with every earlier order of today
+#   PENDING_LIST      compare with the PM's pending list (Order Gap Review)
+#   TODAY_PENDING     today's earlier orders, then the pending list
 #   NONE              no compare
 #   HO                an HO / warehouse order: no compare
-COMPARE_MODES = ("PREVIOUS_PENDING", "TODAY", "NONE", "HO")
+# (CompareMode is VARCHAR(16): keep new names within 16 characters.)
+COMPARE_MODES = ("PREVIOUS_PENDING", "TODAY", "PENDING_LIST", "TODAY_PENDING", "NONE", "HO")
+COMPARING_MODES = ("PREVIOUS_PENDING", "TODAY", "PENDING_LIST", "TODAY_PENDING")
 
 
 def get_compare_mode(store_name):
@@ -171,7 +224,7 @@ def set_compare_mode(store_name, mode, actor=None):
     mode = str(mode or "").upper()
     if mode not in COMPARE_MODES:
         raise ValueError(f"Compare mode must be one of {', '.join(COMPARE_MODES)}.")
-    compares = 1 if mode in ("PREVIOUS_PENDING", "TODAY") else 0
+    compares = 1 if mode in COMPARING_MODES else 0
     with database.get_central_connection() as conn:
         cur = conn.cursor()
         _ensure_engine_schema(cur)
@@ -185,6 +238,74 @@ def set_compare_mode(store_name, mode, actor=None):
         )
         conn.commit()
     return {"store_name": store_name, "compare_mode": mode}
+
+
+# Per-store Min/Max/Recency override (owner request: settable defaults, not
+# just a per-run manual override in the UI). None = use the global/warehouse
+# default; set_order_defaults(None, None, None) clears the override.
+
+def get_order_defaults(store_name):
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        conn.commit()
+        row = cur.execute(
+            "SELECT MinDays, MaxDays, RecencyDays FROM dbo.LegacyOrderEngine WHERE StoreName = ?",
+            store_name,
+        ).fetchone()
+    if not row:
+        return {"min_days": None, "max_days": None, "recency_days": None}
+    return {"min_days": row[0], "max_days": row[1], "recency_days": row[2]}
+
+
+def set_order_defaults(store_name, min_days=None, max_days=None, recency_days=None, actor=None):
+    if min_days is not None and max_days is not None and min_days > max_days:
+        raise ValueError("Min days cannot be greater than max days.")
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        cur.execute(
+            "MERGE dbo.LegacyOrderEngine AS t USING (SELECT ? AS StoreName) AS s "
+            "ON t.StoreName = s.StoreName "
+            "WHEN MATCHED THEN UPDATE SET MinDays = ?, MaxDays = ?, RecencyDays = ?, "
+            "UpdatedAt = SYSUTCDATETIME(), UpdatedBy = ? "
+            "WHEN NOT MATCHED THEN INSERT (StoreName, MinDays, MaxDays, RecencyDays, UpdatedBy) VALUES (?, ?, ?, ?, ?);",
+            store_name, min_days, max_days, recency_days, actor,
+            store_name, min_days, max_days, recency_days, actor,
+        )
+        conn.commit()
+    return {"store_name": store_name, "min_days": min_days, "max_days": max_days, "recency_days": recency_days}
+
+
+def mark_manual_order(store_name, when=None):
+    """Records that the store's Order Process just ran outside the evening
+    schedule (a plain manual Generate, or the PM's Order Entry), so the
+    evening loop can skip it for the rest of today instead of generating a
+    second order on top of it."""
+    when = when or datetime.datetime.now()
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        cur.execute(
+            "MERGE dbo.LegacyOrderEngine AS t USING (SELECT ? AS StoreName) AS s "
+            "ON t.StoreName = s.StoreName "
+            "WHEN MATCHED THEN UPDATE SET LastManualOrderAt = ? "
+            "WHEN NOT MATCHED THEN INSERT (StoreName, LastManualOrderAt) VALUES (?, ?);",
+            store_name, when, store_name, when,
+        )
+        conn.commit()
+
+
+def ran_manually_today(store_name, since):
+    """True when the store had a manual Order Process at/after `since`
+    (datetime) -- used to skip it in today's evening run."""
+    with database.get_central_connection() as conn:
+        cur = conn.cursor()
+        _ensure_engine_schema(cur)
+        row = cur.execute(
+            "SELECT LastManualOrderAt FROM dbo.LegacyOrderEngine WHERE StoreName = ?", store_name,
+        ).fetchone()
+    return bool(row and row[0] and row[0] >= since)
 
 
 # ---- parameters ------------------------------------------------------------
